@@ -1,0 +1,29 @@
+name: Migrate TODO to GitHub Issues
+
+on:
+  push:
+    paths:
+      - .migrate-todo-trigger
+
+permissions:
+  contents: write
+  issues: write
+
+jobs:
+  migrate:
+    runs-on: ubuntu-latest
+    env:
+      GH_TOKEN: ${{ github.token }}
+    steps:
+      - uses: actions/checkout@v4
+      - name: Migrate TODO entries
+        run: python tools/migrate_todo_to_github_issues.py
+      - name: Commit migration map
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add TODO-ISSUE-MIGRATION.json
+          if ! git diff --cached --quiet; then
+            git commit -m "Record TODO to GitHub Issue mapping"
+            git push
+          fi
