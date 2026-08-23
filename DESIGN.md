@@ -8,6 +8,14 @@ The recorder must work despite ChatGPT's virtualized conversation UI, partial DO
 
 The architecture is moving toward an API-first design while retaining a production DOM fallback for cases where API/index materialization is unavailable or incomplete.
 
+## Project terminology
+
+### User–Assistant Pair (UAP)
+
+**UAP** is project-specific shorthand, not a general ChatGPT term. A User–Assistant Pair is the logical conversation unit that begins with one User turn and includes the following ChatGPT/Assistant turn or turns associated with that User turn, ending immediately before the next User turn.
+
+The acronym may be used after this definition in internal design, implementation, logging, and TODO material. User-facing documentation should prefer the full term unless the abbreviation has already been introduced in context.
+
 ## Design principles
 
 ### Preserve conversation fidelity
@@ -20,7 +28,7 @@ When two available representations disagree or one is incomplete, the recorder s
 
 ### Stable identity over visual position
 
-Conversation turns and UAPs should be tracked through stable identifiers and metadata where available. Viewport position and currently mounted DOM nodes are transient observations, not durable identity.
+Conversation turns and User–Assistant Pairs (UAPs) should be tracked through stable identifiers and metadata where available. Viewport position and currently mounted DOM nodes are transient observations, not durable identity.
 
 **Why:** ChatGPT virtualizes the conversation DOM, so visible position is not a reliable indication of completeness or identity.
 
@@ -91,7 +99,7 @@ A PASS must represent semantic completion, not merely successful function return
 The current roadmap is:
 
 1. Build and validate the API conversation spine.
-2. Group API records into UAPs.
+2. Group API records into User–Assistant Pairs (UAPs).
 3. Materialize visible User/ChatGPT content from API records where supported.
 4. Extend API materialization to file metadata.
 5. Archive local attachments.
