@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         ChatGPT Conversation Markdown Recorder
 // @namespace    https://chatgpt.com/
-// @version      0.6.118
+// @version      0.6.119
 // @description  Exports the current ChatGPT conversation directly from the Conversation API as Markdown or JSONL.
 // @match        https://chatgpt.com/*
 // @match        https://chat.openai.com/*
@@ -19,6 +19,8 @@
   const PAGE_TURNS = 100;
   const MAX_PAGES = 10000;
   const SCREEN_ON_STORAGE_KEY = 'tm-conversation-recorder-screen-on-when-capturing';
+  const DIAGNOSTIC_LOG_STORAGE_KEY = 'tm-conversation-recorder-diagnostic-log';
+  const MAX_DIAGNOSTIC_LOG_ITEMS = 500;
 
   let originalPageFetch = null;
   let apiRequestContext = null;
@@ -32,6 +34,11 @@
   let statusTimer = null;
   let progressState = null;
   let testInProgress = false;
+  let diagnosticLog = [];
+  try {
+    const storedDiagnosticLog = JSON.parse(sessionStorage.getItem(DIAGNOSTIC_LOG_STORAGE_KEY) || '[]');
+    if (Array.isArray(storedDiagnosticLog)) diagnosticLog = storedDiagnosticLog.slice(-MAX_DIAGNOSTIC_LOG_ITEMS);
+  } catch {}
 
   function assert(condition, message) {
     if (!condition) throw new Error(message);
@@ -1085,6 +1092,17 @@
   function renderConversationMarkdown(spine, onProgress) {
     assert(Array.isArray(spine?.records), 'Conversation API Markdown export requires spine records.');
     const grouping = apiConversationUapFinalGrouping(spine);
+    if (grouping.unresolved_record_count || grouping.conflicting_record_count) {
+      const problemRecords = grouping.classifications
+        .filter(item => item.classification === 'conflict' || item.classification === 'unresolved')
+        .slice(0, 100);
+      logDiagnostic('errors', 'conversation-api-markdown-grouping-failure', {
+        unresolved_record_count: grouping.unresolved_record_count,
+        conflicting_record_count: grouping.conflicting_record_count,
+        problem_records_shown: problemRecords.length,
+        problem_records: problemRecords
+      });
+    }
     assert(grouping.unresolved_record_count === 0,
       `Conversation API Markdown export has ${grouping.unresolved_record_count} unresolved records.`);
     assert(grouping.conflicting_record_count === 0,
@@ -1443,8 +1461,52 @@
     return (DIAGNOSTIC_LEVELS[level] ?? 0) <= (DIAGNOSTIC_LEVELS[diagnosticsLevel] ?? 0);
   }
 
+  function persistDiagnosticLog() {
+    try {
+      sessionStorage.setItem(DIAGNOSTIC_LOG_STORAGE_KEY, JSON.stringify(diagnosticLog));
+    } catch {}
+  }
+
+  function diagnosticLogLine(entry) {
+    const suffix = entry.data === null || entry.data === undefined
+      ? ''
+      : ` ${JSON.stringify(entry.data)}`;
+    return `${entry.timestamp} [${entry.level}] ${entry.message}${suffix}`;
+  }
+
+  function refreshDiagnosticLog() {
+    const panel = document.getElementById(PANEL_ID);
+    if (!panel) return;
+    const count = panel.querySelector('[data-role="log-count"]');
+    const output = panel.querySelector('[data-role="log-output"]');
+    if (count) count.textContent = `Log: ${diagnosticLog.length} item${diagnosticLog.length === 1 ? '' : 's'}`;
+    if (output) {
+      output.textContent = diagnosticLog.map(diagnosticLogLine).join('\n');
+      output.scrollTop = output.scrollHeight;
+    }
+  }
+
+  async function copyDiagnosticLog() {
+    const text = diagnosticLog.map(diagnosticLogLine).join('\n');
+    if (!text) return;
+    await navigator.clipboard.writeText(text);
+  }
+
   function logDiagnostic(level, message, data = null) {
     if (!diagnosticEnabled(level)) return;
+    const entry = {
+      timestamp: new Date().toISOString(),
+      level,
+      message,
+      data
+    };
+    diagnosticLog.push(entry);
+    if (diagnosticLog.length > MAX_DIAGNOSTIC_LOG_ITEMS) {
+      diagnosticLog.splice(0, diagnosticLog.length - MAX_DIAGNOSTIC_LOG_ITEMS);
+    }
+    persistDiagnosticLog();
+    refreshDiagnosticLog();
+
     const args = [`[ChatGPT Recorder ${level}] ${message}`];
     if (data !== null) args.push(data);
     (level === 'errors' ? console.error : level === 'warnings' ? console.warn : console.log)(...args);
@@ -1468,6 +1530,9 @@
       #${PANEL_ID} button:disabled{opacity:.45;cursor:not-allowed}
       #${PANEL_ID} .tm-switch{margin-left:auto;border-radius:999px;padding:6px 13px;font-weight:600}
       #${PANEL_ID} .tm-label{color:#ddd}
+      #${PANEL_ID} .tm-log-head{display:flex;align-items:center;justify-content:space-between;gap:10px;margin-top:12px}
+      #${PANEL_ID} .tm-log-copy{padding:5px 9px}
+      #${PANEL_ID} .tm-log-output{margin:6px 0 0;max-height:190px;overflow:auto;white-space:pre-wrap;overflow-wrap:anywhere;border:1px solid #555;border-radius:8px;background:#111;padding:8px;font:11px/1.35 ui-monospace,SFMono-Regular,Consolas,monospace;color:#ddd}
     `;
     (document.head || document.documentElement).append(style);
   }
@@ -1526,6 +1591,8 @@
       <div class="tm-title" data-role="title"></div>
       <div class="tm-status" data-role="status"></div>
       <div class="tm-row"><span class="tm-label">Diagnostics</span><select data-role="diagnostics"><option value="errors">Errors</option><option value="warnings">Warnings</option><option value="debug">Debug</option><option value="verbose">Verbose</option></select><button data-role="test" type="button">Test</button></div>
+      <div class="tm-log-head"><span class="tm-label" data-role="log-count">Log: 0 items</span><button class="tm-log-copy" data-role="copy-log" type="button">Copy</button></div>
+      <pre class="tm-log-output" data-role="log-output"></pre>
       <div class="tm-row"><span class="tm-label">Screen on when extracting</span><button class="tm-switch" data-role="screen-on" type="button"></button></div>
       <div class="tm-row"><button data-role="extract-jsonl" type="button">Extract JSONL</button><button data-role="extract-md" type="button">Extract MD</button></div>
     `;
@@ -1540,6 +1607,14 @@
       diagnosticsLevel = diagnostics.value;
       localStorage.setItem('tm-conversation-recorder-diagnostics', diagnosticsLevel);
       logDiagnostic('debug', 'diagnostics-level-changed', { diagnostics_level: diagnosticsLevel });
+      refreshDiagnosticLog();
+    });
+    panel.querySelector('[data-role="copy-log"]').addEventListener('click', () => {
+      void copyDiagnosticLog().catch(error => {
+        logDiagnostic('errors', 'diagnostic-log-copy-failure', {
+          message: error instanceof Error ? error.message : String(error)
+        });
+      });
     });
     panel.querySelector('[data-role="test"]').addEventListener('click', () => void runTests());
     panel.querySelector('[data-role="screen-on"]').addEventListener('click', () => {
@@ -1558,6 +1633,7 @@
     });
     document.body.append(panel);
     updateUi();
+    refreshDiagnosticLog();
   }
 
   function bootstrapUi() {
