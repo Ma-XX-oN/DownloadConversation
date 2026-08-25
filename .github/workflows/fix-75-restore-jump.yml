@@ -1,0 +1,237 @@
+name: Fix 75 restore Jump
+
+on:
+  push:
+    branches: [fix-75-restore-jump]
+
+permissions:
+  contents: write
+
+jobs:
+  fix:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: main
+          fetch-depth: 0
+      - name: Restore Jump control
+        shell: bash
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+
+          path = Path('chatgpt-conversation-markdown-export.user.js')
+          text = path.read_text()
+          assert '// @version      0.6.121' in text
+          text = text.replace('// @version      0.6.121', '// @version      0.6.122', 1)
+
+          old = "  let testInProgress = false;\n  let diagnosticLog = [];"
+          new = "  let testInProgress = false;\n  let jumpInProgress = false;\n  let diagnosticLog = [];"
+          assert old in text
+          text = text.replace(old, new, 1)
+
+          marker = "  async function runExport(kind) {"
+          assert marker in text
+          jump_code = r'''  function jumpUserRecords(spine) {
+            return (spine?.records ?? []).filter(record => record?.role === 'user');
+          }
+
+          function resolveJumpIdentifier(spine, identifier) {
+            const value = String(identifier ?? '').trim();
+            assert(value, 'A User/Assistant turn ID or numeric UAP index is required.');
+            const records = spine?.records ?? [];
+            const users = jumpUserRecords(spine);
+            assert(users.length > 0, 'The conversation contains no User turns.');
+
+            if (/^-?\d+$/.test(value)) {
+              const requested = Number(value);
+              assert(Number.isSafeInteger(requested), `UAP index ${value} is not a safe integer.`);
+              const index = requested >= 0 ? requested : users.length + requested;
+              assert(index >= 0 && index < users.length,
+                `UAP index ${requested} is out of range for ${users.length} UAPs.`);
+              return { uap_index: index, role: 'user', message_id: users[index].message_id };
+            }
+
+            const record = records.find(item => item?.message_id === value);
+            assert(record, `Turn ID ${value} was not found in the Conversation API.`);
+            assert(record.role === 'user' || record.role === 'assistant',
+              `Turn ID ${value} belongs to role ${record.role ?? 'unknown'}, not User or Assistant.`);
+            let uapIndex = -1;
+            for (let index = 0; index < users.length; index += 1) {
+              if (users[index].ordinal > record.ordinal) break;
+              uapIndex = index;
+            }
+            assert(uapIndex >= 0, `Turn ID ${value} appears before the first User turn.`);
+            return { uap_index: uapIndex, role: record.role, message_id: record.message_id };
+          }
+
+          function mountedTurnSection(messageId, role = null) {
+            for (const section of document.querySelectorAll('section[data-turn-id]')) {
+              if (role && section.getAttribute('data-turn') !== role) continue;
+              if (section.getAttribute('data-turn-id') === messageId) return section;
+              const message = section.querySelector('[data-message-id]');
+              if (message?.getAttribute('data-message-id') === messageId) return section;
+            }
+            return null;
+          }
+
+          function conversationScrollRoot() {
+            const thread = document.querySelector('#thread');
+            for (let node = thread?.parentElement; node instanceof HTMLElement; node = node.parentElement) {
+              const style = getComputedStyle(node);
+              if ((style.overflowY === 'auto' || style.overflowY === 'scroll') &&
+                  node.scrollHeight > node.clientHeight + 1) return node;
+            }
+            return document.scrollingElement instanceof HTMLElement ? document.scrollingElement : document.documentElement;
+          }
+
+          async function waitForJumpTarget(target, timeoutMs = 12000) {
+            const deadline = performance.now() + timeoutMs;
+            const scrollRoot = conversationScrollRoot();
+            while (performance.now() < deadline) {
+              const section = mountedTurnSection(target.message_id, target.role);
+              if (section instanceof HTMLElement) return section;
+              if (target.role === 'assistant') {
+                scrollRoot.scrollBy({ top: Math.max(140, Math.floor(scrollRoot.clientHeight * 0.45)), behavior: 'auto' });
+              }
+              await new Promise(resolve => setTimeout(resolve, 100));
+            }
+            return null;
+          }
+
+          async function jumpToResolvedTarget(target) {
+            let section = mountedTurnSection(target.message_id, target.role);
+            if (!(section instanceof HTMLElement)) {
+              const toc = document.querySelector(`button[data-toc-item-index="${target.uap_index}"]`);
+              assert(toc instanceof HTMLElement,
+                `Turn ${target.message_id} is not mounted and the conversation does not expose a UAP index control for ${target.uap_index}.`);
+              toc.click();
+              if (target.role === 'assistant') {
+                const userSection = await waitForJumpTarget({
+                  uap_index: target.uap_index,
+                  role: 'user',
+                  message_id: jumpUserRecords(target.spine)[target.uap_index]?.message_id
+                }, 6000);
+                userSection?.scrollIntoView({ block: 'center', behavior: 'auto' });
+              }
+              section = await waitForJumpTarget(target);
+            }
+            assert(section instanceof HTMLElement, `${target.role === 'assistant' ? 'Assistant' : 'User'} turn ${target.message_id} did not materialize.`);
+            section.scrollIntoView({ block: 'center', behavior: 'smooth' });
+            return section;
+          }
+
+          async function runJump() {
+            if (exportInProgress || testInProgress || jumpInProgress) return;
+            const requested = window.prompt('Enter a User or Assistant turn_id, or numeric UAP index (0 = first, -1 = last):');
+            if (requested === null) return;
+            const identifier = requested.trim();
+            if (!identifier) {
+              setStatus('No User/Assistant turn ID or UAP index was entered.');
+              return;
+            }
+            const conversationId = currentConversationId();
+            assert(conversationId, 'Current page is not a ChatGPT conversation.');
+            jumpInProgress = true;
+            updateUi();
+            try {
+              setStatus('Resolving Jump target…');
+              const fetched = await fetchConversationPages(conversationId);
+              const spine = conversationSpineFromPages(fetched.pages);
+              const target = resolveJumpIdentifier(spine, identifier);
+              target.spine = spine;
+              setStatus(`Jumping to ${target.role === 'assistant' ? 'Assistant' : 'User'} turn…`);
+              await jumpToResolvedTarget(target);
+              setStatus(`Jumped to ${target.role === 'assistant' ? 'Assistant' : 'User'} turn ${target.message_id}.`);
+            } catch (error) {
+              setStatus(`Jump failed: ${error instanceof Error ? error.message : String(error)}`);
+            } finally {
+              jumpInProgress = false;
+              updateUi();
+            }
+          }
+
+'''
+          text = text.replace(marker, jump_code + marker, 1)
+
+          text = text.replace(
+            "  async function runExport(kind) {\n    if (exportInProgress || testInProgress) return;",
+            "  async function runExport(kind) {\n    if (exportInProgress || testInProgress || jumpInProgress) return;",
+            1
+          )
+
+          test_marker = "  async function runTests() {"
+          assert test_marker in text
+          test_code = r'''  function testJumpIdentifierResolution() {
+            const records = [
+              { ordinal: 0, message_id: 'u1', role: 'user' },
+              { ordinal: 1, message_id: 'a1', role: 'assistant' },
+              { ordinal: 2, message_id: 'u2', role: 'user' },
+              { ordinal: 3, message_id: 'a2', role: 'assistant' },
+              { ordinal: 4, message_id: 'u3', role: 'user' },
+              { ordinal: 5, message_id: 'a3', role: 'assistant' }
+            ];
+            const spine = { records };
+            const cases = [
+              ['0', 0, 'user', 'u1'],
+              ['1', 1, 'user', 'u2'],
+              ['-1', 2, 'user', 'u3'],
+              ['-2', 1, 'user', 'u2'],
+              ['u2', 1, 'user', 'u2'],
+              ['a2', 1, 'assistant', 'a2']
+            ];
+            for (const [input, index, role, id] of cases) {
+              const resolved = resolveJumpIdentifier(spine, input);
+              assert(resolved.uap_index === index && resolved.role === role && resolved.message_id === id,
+                `Jump resolver failed for ${input}: ${JSON.stringify(resolved)}.`);
+            }
+            for (const input of ['3', '-4']) {
+              let rejected = false;
+              try { resolveJumpIdentifier(spine, input); } catch { rejected = true; }
+              assert(rejected, `Jump resolver did not reject out-of-range index ${input}.`);
+            }
+          }
+
+'''
+          text = text.replace(test_marker, test_code + test_marker, 1)
+          text = text.replace(
+            "  async function runTests() {\n    if (exportInProgress || testInProgress) return;",
+            "  async function runTests() {\n    if (exportInProgress || testInProgress || jumpInProgress) return;",
+            1
+          )
+          needle = "      await run('AI-transcript renderer parity', testRendererParityFeatures);\n"
+          assert needle in text
+          text = text.replace(needle, needle + "      await run('Jump identifier resolution', testJumpIdentifierResolution);\n", 1)
+
+          old_ui = "    const test = panel.querySelector('[data-role=\"test\"]');\n"
+          assert old_ui in text
+          text = text.replace(old_ui, old_ui + "    const jump = panel.querySelector('[data-role=\"jump\"]');\n", 1)
+          text = text.replace("md.disabled = exportInProgress || testInProgress;", "md.disabled = exportInProgress || testInProgress || jumpInProgress;", 1)
+          text = text.replace("jsonl.disabled = exportInProgress || testInProgress;", "jsonl.disabled = exportInProgress || testInProgress || jumpInProgress;", 1)
+          text = text.replace("test.disabled = exportInProgress || testInProgress;", "test.disabled = exportInProgress || testInProgress || jumpInProgress;", 1)
+          ui_needle = "    if (test) {\n      test.disabled = exportInProgress || testInProgress || jumpInProgress;\n      test.textContent = testInProgress ? 'Testing…' : 'Test';\n    }\n"
+          assert ui_needle in text
+          text = text.replace(ui_needle, ui_needle + "    if (jump) {\n      jump.disabled = exportInProgress || testInProgress || jumpInProgress;\n      jump.textContent = jumpInProgress ? 'Jumping…' : 'Jump';\n    }\n", 1)
+
+          panel_needle = "      <div class=\"tm-row\"><button data-role=\"extract-jsonl\" type=\"button\">Extract JSONL</button><button data-role=\"extract-md\" type=\"button\">Extract MD</button></div>\n"
+          assert panel_needle in text
+          text = text.replace(panel_needle, "      <div class=\"tm-row\"><button data-role=\"jump\" type=\"button\">Jump</button></div>\n" + panel_needle, 1)
+          listener_needle = "    panel.querySelector('[data-role=\"test\"]').addEventListener('click', () => void runTests());\n"
+          assert listener_needle in text
+          text = text.replace(listener_needle, listener_needle + "    panel.querySelector('[data-role=\"jump\"]').addEventListener('click', () => void runJump());\n", 1)
+
+          path.write_text(text)
+          PY
+          node --check chatgpt-conversation-markdown-export.user.js
+          grep -q '// @version      0.6.122' chatgpt-conversation-markdown-export.user.js
+          grep -q 'data-role="jump"' chatgpt-conversation-markdown-export.user.js
+          grep -q "\['-2', 1, 'user', 'u2'\]" chatgpt-conversation-markdown-export.user.js
+          grep -q "\['a2', 1, 'assistant', 'a2'\]" chatgpt-conversation-markdown-export.user.js
+          git diff --check
+          git diff -- chatgpt-conversation-markdown-export.user.js
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add chatgpt-conversation-markdown-export.user.js
+          git commit -m 'fix: restore Jump control [skip ci]'
+          git push origin HEAD:main
