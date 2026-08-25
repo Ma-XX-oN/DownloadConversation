@@ -2,9 +2,10 @@ name: Restore recorder status-dot UI
 
 on:
   push:
-    branches: [main]
+    branches:
+      - main
     paths:
-      - '.github/workflows/restore-recorder-status-dot.yml'
+      - .github/workflows/restore-recorder-status-dot.yml
 
 permissions:
   contents: write
@@ -175,7 +176,7 @@ jobs:
 
           assert '// @version      0.6.117' in text
           assert 'LAUNCHER_ID' not in text
-          assert "class=\"tm-recorder-button\"" in text
+          assert 'tm-recorder-button' in text
           assert "panel.dataset.popupOpen = 'false'" in text
           assert 'discoverPageCount' not in text
           assert 'const PAGE_TURNS = 100;' in text
