@@ -1,0 +1,76 @@
+name: Finish v0.6.120 fix
+
+on:
+  push:
+    branches:
+      - main
+    paths:
+      - .github/workflows/finish-v06120-fix.yml
+
+permissions:
+  contents: write
+
+jobs:
+  fix:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Correct indentation and clean failed workflow
+        shell: bash
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+
+          path = Path('chatgpt-conversation-markdown-export.user.js')
+          text = path.read_text(encoding='utf-8')
+          assert '// @version      0.6.120' in text
+
+          def indent_between(source, start_marker, end_marker):
+            start = source.index(start_marker)
+            end = source.index(end_marker, start)
+            block = source[start:end]
+            trailing = block[len(block.rstrip('\r\n')):]
+            lines = block.rstrip('\r\n').splitlines()
+            assert len(lines) >= 3
+            assert lines[0].startswith(start_marker)
+            assert lines[-1].strip() == '}'
+            lines[1:-1] = [('  ' + line) if line else line for line in lines[1:-1]]
+            return source[:start] + '\n'.join(lines) + trailing + source[end:]
+
+          text = indent_between(
+            text,
+            '  function renderConversationMarkdown(spine, onProgress) {',
+            '  function apiRecordsJsonl(spine) {'
+          )
+          text = indent_between(
+            text,
+            '  async function testMultimodalUserAndChronologicalOrder() {',
+            '  async function testConversationApiAccessAndSchema() {'
+          )
+
+          assert "  function renderConversationMarkdown(spine, onProgress) {\n    assert(" in text
+          assert "  async function testMultimodalUserAndChronologicalOrder() {\n    const record" in text
+          assert 'const grouping = apiConversationUapFinalGrouping(spine);' not in text[text.index('  function renderConversationMarkdown'):text.index('  function apiRecordsJsonl')]
+          path.write_text(text, encoding='utf-8')
+          PY
+          rm -f .github/workflows/fix-v06120-indentation.yml
+      - name: Verify source
+        shell: bash
+        run: |
+          node --check chatgpt-conversation-markdown-export.user.js
+          grep -q '@version      0.6.120' chatgpt-conversation-markdown-export.user.js
+          grep -q 'Multimodal User + chronological order' chatgpt-conversation-markdown-export.user.js
+          grep -q "\['text', 'multimodal_text'\]" chatgpt-conversation-markdown-export.user.js
+          ! sed -n '/function renderConversationMarkdown/,/function apiRecordsJsonl/p' chatgpt-conversation-markdown-export.user.js | grep -q 'apiConversationUapFinalGrouping'
+          grep -q 'conversation-api-page-http-failure' chatgpt-conversation-markdown-export.user.js
+          grep -q 'data-role="log-output"' chatgpt-conversation-markdown-export.user.js
+          test ! -e .github/workflows/fix-v06120-indentation.yml
+      - name: Commit correction and remove workflows
+        shell: bash
+        run: |
+          rm -f .github/workflows/finish-v06120-fix.yml
+          git config user.name github-actions[bot]
+          git config user.email 41898282+github-actions[bot]@users.noreply.github.com
+          git add chatgpt-conversation-markdown-export.user.js .github/workflows
+          git commit -m 'Finish v0.6.120 chronological-rendering fix [skip ci]'
+          git push
