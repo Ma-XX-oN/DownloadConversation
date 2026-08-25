@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         ChatGPT Conversation Markdown Recorder
 // @namespace    https://chatgpt.com/
-// @version      0.6.121
+// @version      0.6.122
 // @description  Exports the current ChatGPT conversation directly from the Conversation API as Markdown or JSONL.
 // @match        https://chatgpt.com/*
 // @match        https://chat.openai.com/*
@@ -34,6 +34,7 @@
   let statusTimer = null;
   let progressState = null;
   let testInProgress = false;
+  let jumpInProgress = false;
   let diagnosticLog = [];
   try {
     const storedDiagnosticLog = JSON.parse(sessionStorage.getItem(DIAGNOSTIC_LOG_STORAGE_KEY) || '[]');
@@ -1412,8 +1413,130 @@
     setTimeout(() => URL.revokeObjectURL(url), 1000);
   }
 
+  function jumpUserRecords(spine) {
+    return (spine?.records ?? []).filter(record => record?.role === 'user');
+  }
+
+  function resolveJumpIdentifier(spine, identifier) {
+    const value = String(identifier ?? '').trim();
+    assert(value, 'A User/Assistant turn ID or numeric UAP index is required.');
+    const records = spine?.records ?? [];
+    const users = jumpUserRecords(spine);
+    assert(users.length > 0, 'The conversation contains no User turns.');
+
+    if (/^-?\d+$/.test(value)) {
+      const requested = Number(value);
+      assert(Number.isSafeInteger(requested), `UAP index ${value} is not a safe integer.`);
+      const index = requested >= 0 ? requested : users.length + requested;
+      assert(index >= 0 && index < users.length,
+        `UAP index ${requested} is out of range for ${users.length} UAPs.`);
+      return { uap_index: index, role: 'user', message_id: users[index].message_id };
+    }
+
+    const record = records.find(item => item?.message_id === value);
+    assert(record, `Turn ID ${value} was not found in the Conversation API.`);
+    assert(record.role === 'user' || record.role === 'assistant',
+      `Turn ID ${value} belongs to role ${record.role ?? 'unknown'}, not User or Assistant.`);
+    let uapIndex = -1;
+    for (let index = 0; index < users.length; index += 1) {
+      if (users[index].ordinal > record.ordinal) break;
+      uapIndex = index;
+    }
+    assert(uapIndex >= 0, `Turn ID ${value} appears before the first User turn.`);
+    return { uap_index: uapIndex, role: record.role, message_id: record.message_id };
+  }
+
+  function mountedTurnSection(messageId, role = null) {
+    for (const section of document.querySelectorAll('section[data-turn-id]')) {
+      if (role && section.getAttribute('data-turn') !== role) continue;
+      if (section.getAttribute('data-turn-id') === messageId) return section;
+      const message = section.querySelector('[data-message-id]');
+      if (message?.getAttribute('data-message-id') === messageId) return section;
+    }
+    return null;
+  }
+
+  function conversationScrollRoot() {
+    const thread = document.querySelector('#thread');
+    for (let node = thread?.parentElement; node instanceof HTMLElement; node = node.parentElement) {
+      const style = getComputedStyle(node);
+      if ((style.overflowY === 'auto' || style.overflowY === 'scroll') &&
+          node.scrollHeight > node.clientHeight + 1) return node;
+    }
+    return document.scrollingElement instanceof HTMLElement ? document.scrollingElement : document.documentElement;
+  }
+
+  async function waitForJumpTarget(target, timeoutMs = 12000) {
+    const deadline = performance.now() + timeoutMs;
+    const scrollRoot = conversationScrollRoot();
+    while (performance.now() < deadline) {
+      const section = mountedTurnSection(target.message_id, target.role);
+      if (section instanceof HTMLElement) return section;
+      if (target.role === 'assistant') {
+        scrollRoot.scrollBy({ top: Math.max(140, Math.floor(scrollRoot.clientHeight * 0.45)), behavior: 'auto' });
+      }
+      await new Promise(resolve => setTimeout(resolve, 100));
+    }
+    return null;
+  }
+
+  async function jumpToResolvedTarget(target) {
+    let section = mountedTurnSection(target.message_id, target.role);
+    if (!(section instanceof HTMLElement)) {
+      const toc = document.querySelector(`button[data-toc-item-index="${target.uap_index}"]`);
+      assert(toc instanceof HTMLElement,
+        `Turn ${target.message_id} is not mounted and the conversation does not expose a UAP index control for ${target.uap_index}.`);
+      toc.click();
+      if (target.role === 'assistant') {
+        const userMessageId = jumpUserRecords(target.spine)[target.uap_index]?.message_id;
+        if (userMessageId) {
+          const userSection = await waitForJumpTarget({
+            uap_index: target.uap_index,
+            role: 'user',
+            message_id: userMessageId
+          }, 6000);
+          userSection?.scrollIntoView({ block: 'center', behavior: 'auto' });
+        }
+      }
+      section = await waitForJumpTarget(target);
+    }
+    assert(section instanceof HTMLElement, `${target.role === 'assistant' ? 'Assistant' : 'User'} turn ${target.message_id} did not materialize.`);
+    section.scrollIntoView({ block: 'center', behavior: 'smooth' });
+    return section;
+  }
+
+  async function runJump() {
+    if (exportInProgress || testInProgress || jumpInProgress) return;
+    const requested = window.prompt('Enter a User or Assistant turn_id, or numeric UAP index (0 = first, -1 = last):');
+    if (requested === null) return;
+    const identifier = requested.trim();
+    if (!identifier) {
+      setStatus('No User/Assistant turn ID or UAP index was entered.');
+      return;
+    }
+    const conversationId = currentConversationId();
+    assert(conversationId, 'Current page is not a ChatGPT conversation.');
+    jumpInProgress = true;
+    updateUi();
+    try {
+      setStatus('Resolving Jump target…');
+      const fetched = await fetchConversationPages(conversationId);
+      const spine = conversationSpineFromPages(fetched.pages);
+      const target = resolveJumpIdentifier(spine, identifier);
+      target.spine = spine;
+      setStatus(`Jumping to ${target.role === 'assistant' ? 'Assistant' : 'User'} turn…`);
+      await jumpToResolvedTarget(target);
+      setStatus(`Jumped to ${target.role === 'assistant' ? 'Assistant' : 'User'} turn ${target.message_id}.`);
+    } catch (error) {
+      setStatus(`Jump failed: ${error instanceof Error ? error.message : String(error)}`);
+    } finally {
+      jumpInProgress = false;
+      updateUi();
+    }
+  }
+
   async function runExport(kind) {
-    if (exportInProgress || testInProgress) return;
+    if (exportInProgress || testInProgress || jumpInProgress) return;
     const conversationId = currentConversationId();
     assert(conversationId, 'Current page is not a ChatGPT conversation.');
     exportInProgress = true;
@@ -1600,8 +1723,38 @@
     assert(!markdown.includes(CG_INLINE_TOKEN_START), 'raw ChatGPT inline reference tokens leaked into Markdown.');
   }
 
+  function testJumpIdentifierResolution() {
+    const records = [
+      { ordinal: 0, message_id: 'u1', role: 'user' },
+      { ordinal: 1, message_id: 'a1', role: 'assistant' },
+      { ordinal: 2, message_id: 'u2', role: 'user' },
+      { ordinal: 3, message_id: 'a2', role: 'assistant' },
+      { ordinal: 4, message_id: 'u3', role: 'user' },
+      { ordinal: 5, message_id: 'a3', role: 'assistant' }
+    ];
+    const spine = { records };
+    const cases = [
+      ['0', 0, 'user', 'u1'],
+      ['1', 1, 'user', 'u2'],
+      ['-1', 2, 'user', 'u3'],
+      ['-2', 1, 'user', 'u2'],
+      ['u2', 1, 'user', 'u2'],
+      ['a2', 1, 'assistant', 'a2']
+    ];
+    for (const [input, index, role, id] of cases) {
+      const resolved = resolveJumpIdentifier(spine, input);
+      assert(resolved.uap_index === index && resolved.role === role && resolved.message_id === id,
+        `Jump resolver failed for ${input}: ${JSON.stringify(resolved)}.`);
+    }
+    for (const input of ['3', '-4']) {
+      let rejected = false;
+      try { resolveJumpIdentifier(spine, input); } catch { rejected = true; }
+      assert(rejected, `Jump resolver did not reject out-of-range index ${input}.`);
+    }
+  }
+
   async function runTests() {
-    if (exportInProgress || testInProgress) return;
+    if (exportInProgress || testInProgress || jumpInProgress) return;
     testInProgress = true;
     updateUi();
     const results = [];
@@ -1619,6 +1772,7 @@
       await run('Stable API message IDs', testStableMessageIds);
       await run('Multimodal User + chronological order', testMultimodalUserAndChronologicalOrder);
       await run('AI-transcript renderer parity', testRendererParityFeatures);
+      await run('Jump identifier resolution', testJumpIdentifierResolution);
       await run('Conversation API access/schema', testConversationApiAccessAndSchema);
     } finally {
       testInProgress = false;
@@ -1714,17 +1868,22 @@
     const md = panel.querySelector('[data-role="extract-md"]');
     const jsonl = panel.querySelector('[data-role="extract-jsonl"]');
     const test = panel.querySelector('[data-role="test"]');
+    const jump = panel.querySelector('[data-role="jump"]');
     if (md) {
-      md.disabled = exportInProgress || testInProgress;
+      md.disabled = exportInProgress || testInProgress || jumpInProgress;
       md.textContent = exportInProgress && exportKind === 'md' ? 'Extracting…' : 'Extract MD';
     }
     if (jsonl) {
-      jsonl.disabled = exportInProgress || testInProgress;
+      jsonl.disabled = exportInProgress || testInProgress || jumpInProgress;
       jsonl.textContent = exportInProgress && exportKind === 'jsonl' ? 'Extracting…' : 'Extract JSONL';
     }
     if (test) {
-      test.disabled = exportInProgress || testInProgress;
+      test.disabled = exportInProgress || testInProgress || jumpInProgress;
       test.textContent = testInProgress ? 'Testing…' : 'Test';
+    }
+    if (jump) {
+      jump.disabled = exportInProgress || testInProgress || jumpInProgress;
+      jump.textContent = jumpInProgress ? 'Jumping…' : 'Jump';
     }
     const screen = panel.querySelector('[data-role="screen-on"]');
     if (screen) screen.textContent = screenOnWhenCapturing ? 'ON' : 'OFF';
@@ -1763,6 +1922,7 @@
       <div class="tm-log-head"><span class="tm-label" data-role="log-count">Log: 0 items</span><button class="tm-log-copy" data-role="copy-log" type="button">Copy</button></div>
       <pre class="tm-log-output" data-role="log-output"></pre>
       <div class="tm-row"><span class="tm-label">Screen on when extracting</span><button class="tm-switch" data-role="screen-on" type="button"></button></div>
+      <div class="tm-row"><button data-role="jump" type="button">Jump</button></div>
       <div class="tm-row"><button data-role="extract-jsonl" type="button">Extract JSONL</button><button data-role="extract-md" type="button">Extract MD</button></div>
     `;
     panel.querySelector('.tm-close').addEventListener('click', () => {
@@ -1786,6 +1946,7 @@
       });
     });
     panel.querySelector('[data-role="test"]').addEventListener('click', () => void runTests());
+    panel.querySelector('[data-role="jump"]').addEventListener('click', () => void runJump());
     panel.querySelector('[data-role="screen-on"]').addEventListener('click', () => {
       screenOnWhenCapturing = !screenOnWhenCapturing;
       localStorage.setItem(SCREEN_ON_STORAGE_KEY, String(screenOnWhenCapturing));
