@@ -1,0 +1,25 @@
+name: Apply v0.6.118 multimodal UAP fix
+on:
+  push:
+    branches: [main]
+    paths: ['.github/workflows/apply-multimodal-uap-fix.yml']
+permissions:
+  contents: write
+jobs:
+  apply:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - run: python3 .github/fix_multimodal_uap.py
+      - run: |
+          node --check chatgpt-conversation-markdown-export.user.js
+          grep -q '@version      0.6.118' chatgpt-conversation-markdown-export.user.js
+          grep -q 'testMultimodalUserAndUapIdentity' chatgpt-conversation-markdown-export.user.js
+          ! grep -q 'extractTurn(' chatgpt-conversation-markdown-export.user.js
+      - run: |
+          rm -f .github/workflows/fix-multimodal-uap.yml .github/workflows/fix-multimodal-uap-v2.yml .github/workflows/apply-multimodal-uap-fix.yml .github/fix_multimodal_uap.py
+          git config user.name github-actions[bot]
+          git config user.email 41898282+github-actions[bot]@users.noreply.github.com
+          git add -A
+          git commit -m 'Fix multimodal User rendering and UAP identity in v0.6.118 [skip ci]'
+          git push
