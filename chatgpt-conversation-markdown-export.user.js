@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         ChatGPT Conversation Markdown Recorder
 // @namespace    https://chatgpt.com/
-// @version      0.6.119
+// @version      0.6.120
 // @description  Exports the current ChatGPT conversation directly from the Conversation API as Markdown or JSONL.
 // @match        https://chatgpt.com/*
 // @match        https://chat.openai.com/*
@@ -1090,79 +1090,45 @@
   }
 
   function renderConversationMarkdown(spine, onProgress) {
-    assert(Array.isArray(spine?.records), 'Conversation API Markdown export requires spine records.');
-    const grouping = apiConversationUapFinalGrouping(spine);
-    if (grouping.unresolved_record_count || grouping.conflicting_record_count) {
-      const problemRecords = grouping.classifications
-        .filter(item => item.classification === 'conflict' || item.classification === 'unresolved')
-        .slice(0, 100);
-      logDiagnostic('errors', 'conversation-api-markdown-grouping-failure', {
-        unresolved_record_count: grouping.unresolved_record_count,
-        conflicting_record_count: grouping.conflicting_record_count,
-        problem_records_shown: problemRecords.length,
-        problem_records: problemRecords
-      });
-    }
-    assert(grouping.unresolved_record_count === 0,
-      `Conversation API Markdown export has ${grouping.unresolved_record_count} unresolved records.`);
-    assert(grouping.conflicting_record_count === 0,
-      `Conversation API Markdown export has ${grouping.conflicting_record_count} conflicting records.`);
+  assert(Array.isArray(spine?.records), 'Conversation API Markdown export requires spine records.');
+  const records = spine.records.map(item => item.message).filter(Boolean);
+  const output = [];
+  let pendingThoughts = [];
 
-    const output = [];
-    const renderableRecordCount = grouping.groups.reduce(
-      (sum, group) => sum + group.record_ordinals.length, 0
-    );
-    let renderedRecordCount = 0;
+  const flushAssistantBlock = (body = '', record = null) => {
+    if (!body && !pendingThoughts.length) return;
+    const headingRecord = record ?? pendingThoughts[0];
+    const parts = [transcriptHeading(headingRecord)];
+    const thoughts = cgRenderThoughtBlock(pendingThoughts);
+    if (thoughts) parts.push(thoughts);
+    if (body) parts.push(quoteMarkdown(body));
+    output.push(parts.join('\n\n'));
+    pendingThoughts = [];
+  };
 
-    const renderRecords = records => {
-      let pendingThoughts = [];
-      const blocks = [];
-      const flushAssistantBlock = (body = '', record = null) => {
-        if (!body && !pendingThoughts.length) return;
-        const headingRecord = record ?? pendingThoughts[0];
-        const parts = [transcriptHeading(headingRecord)];
-        const thoughts = cgRenderThoughtBlock(pendingThoughts);
-        if (thoughts) parts.push(thoughts);
-        if (body) parts.push(quoteMarkdown(body));
-        blocks.push(parts.join('\n\n'));
-        pendingThoughts = [];
-      };
-
-      for (const record of records) {
-        renderedRecordCount += 1;
-        onProgress?.({
-          stage: 'rendering',
-          record_number: renderedRecordCount,
-          record_count: renderableRecordCount
-        });
-        const userText = cgVisibleUserText(record);
-        if (userText) {
-          flushAssistantBlock();
-          blocks.push(`${transcriptHeading(record)}\n\n${quoteMarkdown(userText)}`);
-          continue;
-        }
-        const assistantText = cgVisibleAssistantMarkdown(record);
-        if (assistantText) {
-          flushAssistantBlock(assistantText, record);
-          continue;
-        }
-        if (cgRenderThoughtItem(record)) pendingThoughts.push(record);
-      }
+  for (let i = 0; i < records.length; i += 1) {
+    const record = records[i];
+    onProgress?.({
+      stage: 'rendering',
+      record_number: i + 1,
+      record_count: records.length
+    });
+    const userText = cgVisibleUserText(record);
+    if (userText) {
       flushAssistantBlock();
-      return blocks;
-    };
-
-    for (const group of grouping.groups) {
-      const records = group.record_ordinals
-        .map(recordOrdinal => spine.records[recordOrdinal]?.message)
-        .filter(Boolean);
-      const users = records.filter(record => record?.author?.role === 'user');
-      assert(users.length === 1,
-        `Conversation API Markdown export UAP ${group.ordinal + 1} has ${users.length} User records.`);
-      output.push(...renderRecords(records));
+      output.push(`${transcriptHeading(record)}\n\n${quoteMarkdown(userText)}`);
+      continue;
     }
-    return `${output.join('\n\n')}\n`;
+    const assistantText = cgVisibleAssistantMarkdown(record);
+    if (assistantText) {
+      flushAssistantBlock(assistantText, record);
+      continue;
+    }
+    if (cgRenderThoughtItem(record)) pendingThoughts.push(record);
   }
+  flushAssistantBlock();
+  return `${output.join('\n\n')}\n`;
+}
 
   function apiRecordsJsonl(spine) {
     return `${spine.records.map(record => JSON.stringify(record.message)).join('\n')}\n`;
@@ -1391,46 +1357,32 @@
     }
   }
 
-  function testMultimodalUserAndUapIdentity() {
-    const pages = [{
-      messages: [
-        {
-          id: 'u1', author: { role: 'user' },
-          content: { content_type: 'multimodal_text', parts: ['Multimodal question', { content_type: 'image_asset_pointer' }] },
-          metadata: { turn_exchange_id: 'e1', working_turn_id: 'w1' }
-        },
-        {
-          id: 'u2', author: { role: 'user' },
-          content: { content_type: 'text', parts: ['Second question'] },
-          metadata: { turn_exchange_id: 'e2', working_turn_id: 'w2' }
-        },
-        {
-          id: 'a2', author: { role: 'assistant' }, channel: 'final',
-          content: { content_type: 'text', parts: ['Second answer'] },
-          metadata: { turn_exchange_id: 'e2', working_turn_id: 'w2' }
-        },
-        {
-          id: 'a1', author: { role: 'assistant' }, channel: 'final',
-          content: { content_type: 'text', parts: ['Multimodal answer'] },
-          metadata: { turn_exchange_id: 'e1', working_turn_id: 'w1' }
-        }
-      ],
-      page_info: { has_previous_page: false, has_next_page: false }
-    }];
-    const spine = conversationSpineFromPages(pages);
-    const grouping = apiConversationUapFinalGrouping(spine);
-    assert(grouping.groups.length === 2, 'UAP regression did not create two User anchors.');
-    const firstIds = grouping.groups[0].record_ordinals.map(i => spine.records[i].message_id);
-    const secondIds = grouping.groups[1].record_ordinals.map(i => spine.records[i].message_id);
-    assert(firstIds.includes('u1') && firstIds.includes('a1') && !firstIds.includes('a2'),
-      'Exchange identity did not link a1 to u1.');
-    assert(secondIds.includes('u2') && secondIds.includes('a2') && !secondIds.includes('a1'),
-      'Exchange identity did not link a2 to u2.');
-    const markdown = renderConversationMarkdown(spine);
-    assert(markdown.includes('Multimodal question'), 'multimodal_text User text was omitted.');
-    assert(markdown.indexOf('Multimodal answer') < markdown.indexOf('Second question'),
-      'UAP output order followed record adjacency instead of User-anchor identity.');
-  }
+  async function testMultimodalUserAndChronologicalOrder() {
+  const record = (id, role, contentType, parts) => ({
+    id,
+    author: { role },
+    content: { content_type: contentType, parts },
+    metadata: {}
+  });
+  const spine = {
+    records: [
+      { ordinal: 0, message: record('u1', 'user', 'multimodal_text', ['First User', { asset_pointer: 'file-service://example' }]) },
+      { ordinal: 1, message: record('a1', 'assistant', 'text', ['First Assistant']) },
+      { ordinal: 2, message: record('u2', 'user', 'text', ['Second User']) },
+      { ordinal: 3, message: record('a2', 'assistant', 'text', ['Second Assistant']) }
+    ]
+  };
+  const markdown = renderConversationMarkdown(spine);
+  assert(markdown.includes('First User'), 'multimodal_text User content was not rendered.');
+  const u1 = markdown.indexOf('<!-- turn_id=u1 -->');
+  const a1 = markdown.indexOf('<!-- turn_id=a1 -->');
+  const u2 = markdown.indexOf('<!-- turn_id=u2 -->');
+  const a2 = markdown.indexOf('<!-- turn_id=a2 -->');
+  assert(u1 >= 0 && a1 >= 0 && u2 >= 0 && a2 >= 0,
+    'chronological rendering test did not emit all expected headings.');
+  assert(u1 < a1 && a1 < u2 && u2 < a2,
+    'Conversation API Markdown rendering did not preserve chronological record order.');
+}
 
   async function runTests() {
     if (exportInProgress || testInProgress) return;
@@ -1449,7 +1401,7 @@
     try {
       await run('API pagination', testApiPaginationLogic);
       await run('Stable API message IDs', testStableMessageIds);
-      await run('Multimodal User + UAP identity', testMultimodalUserAndUapIdentity);
+      await run('Multimodal User + chronological order', testMultimodalUserAndChronologicalOrder);
       await run('Conversation API access/schema', testConversationApiAccessAndSchema);
     } finally {
       testInProgress = false;
