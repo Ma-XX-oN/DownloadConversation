@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         ChatGPT Conversation Markdown Recorder
 // @namespace    https://chatgpt.com/
-// @version      0.6.114
+// @version      0.6.115
 // @description  Exports the current ChatGPT conversation directly from the Conversation API as Markdown or JSONL.
 // @match        https://chatgpt.com/*
 // @match        https://chat.openai.com/*
@@ -13,6 +13,7 @@
 
   const VERSION = (typeof GM_info !== 'undefined' && GM_info?.script?.version) || 'unknown';
   const PANEL_ID = 'tm-conversation-recorder';
+  const LAUNCHER_ID = 'tm-conversation-recorder-launcher';
   const DIAGNOSTIC_LEVELS = Object.freeze({ errors: 0, warnings: 1, debug: 2, verbose: 3 });
   const DEFAULT_DIAGNOSTICS = 'warnings';
   const PAGE_TURNS = 100;
@@ -994,6 +995,7 @@
     const style = document.createElement('style');
     style.id = `${PANEL_ID}-style`;
     style.textContent = `
+      #${LAUNCHER_ID}{position:fixed;right:18px;bottom:18px;z-index:2147483647;border:1px solid #666;border-radius:9px;background:#292929;color:#fff;padding:9px 16px;font:16px/1.45 system-ui,sans-serif;cursor:pointer}
       #${PANEL_ID}{position:fixed;right:18px;bottom:18px;z-index:2147483647;width:min(405px,calc(100vw - 36px));box-sizing:border-box;padding:16px 18px;border:1px solid #555;border-radius:16px;background:#191919;color:#f2f2f2;box-shadow:0 10px 35px rgba(0,0,0,.5);font:16px/1.45 system-ui,sans-serif}
       #${PANEL_ID} .tm-title{font-size:16px;margin:0 28px 8px 0}
       #${PANEL_ID} .tm-close{position:absolute;right:9px;top:7px;border:0;background:transparent;color:#fff;font-size:24px;cursor:pointer}
@@ -1034,11 +1036,29 @@
     refreshStatus();
   }
 
+  function makeLauncher() {
+  if (document.getElementById(LAUNCHER_ID) || !document.body) return;
+  injectStyles();
+  const launcher = document.createElement('button');
+  launcher.id = LAUNCHER_ID;
+  launcher.type = 'button';
+  launcher.textContent = 'Record';
+  launcher.addEventListener('click', () => {
+    makePanel();
+    const panel = document.getElementById(PANEL_ID);
+    if (panel) panel.style.display = 'block';
+    launcher.style.display = 'none';
+    updateUi();
+  });
+  document.body.append(launcher);
+}
+
   function makePanel() {
     if (document.getElementById(PANEL_ID) || !document.body) return;
     injectStyles();
     const panel = document.createElement('div');
     panel.id = PANEL_ID;
+    panel.style.display = 'none';
     panel.innerHTML = `
       <button class="tm-close" type="button" aria-label="Close">×</button>
       <div class="tm-title" data-role="title"></div>
@@ -1047,7 +1067,11 @@
       <div class="tm-row"><span class="tm-label">Screen on when extracting</span><button class="tm-switch" data-role="screen-on" type="button"></button></div>
       <div class="tm-row"><button data-role="extract-jsonl" type="button">Extract JSONL</button><button data-role="extract-md" type="button">Extract MD</button></div>
     `;
-    panel.querySelector('.tm-close').addEventListener('click', () => panel.remove());
+    panel.querySelector('.tm-close').addEventListener('click', () => {
+      panel.style.display = 'none';
+      const launcher = document.getElementById(LAUNCHER_ID);
+      if (launcher) launcher.style.display = '';
+    });
     const diagnostics = panel.querySelector('[data-role="diagnostics"]');
     diagnostics.value = diagnosticsLevel;
     diagnostics.addEventListener('change', () => {
@@ -1071,12 +1095,14 @@
 
   function bootstrapUi() {
     if (document.body) {
+      makeLauncher();
       makePanel();
       return;
     }
     new MutationObserver((_, observer) => {
       if (!document.body) return;
       observer.disconnect();
+      makeLauncher();
       makePanel();
     }).observe(document.documentElement, { childList: true, subtree: true });
   }
