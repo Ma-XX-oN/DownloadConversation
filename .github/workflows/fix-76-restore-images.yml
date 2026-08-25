@@ -1,0 +1,32 @@
+name: Fix 76 restore images
+
+on:
+  push:
+    branches: [fix-76-restore-images]
+
+permissions:
+  contents: write
+
+jobs:
+  fix:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: main
+          fetch-depth: 0
+      - name: Restore rendered User images
+        shell: bash
+        run: |
+          git show origin/fix-76-restore-images:.github/fix76.py > /tmp/fix76.py
+          python3 /tmp/fix76.py
+          node --check chatgpt-conversation-markdown-export.user.js
+          grep -q '// @version      0.6.123' chatgpt-conversation-markdown-export.user.js
+          grep -q 'recoverUserImages' chatgpt-conversation-markdown-export.user.js
+          grep -q 'recovered multimodal image was not rendered' chatgpt-conversation-markdown-export.user.js
+          git diff --check
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add chatgpt-conversation-markdown-export.user.js
+          git commit -m 'fix: recover rendered User images [skip ci]'
+          git push origin HEAD:main
