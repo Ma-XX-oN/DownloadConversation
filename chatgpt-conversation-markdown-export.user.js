@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         ChatGPT Conversation Markdown Recorder
 // @namespace    https://chatgpt.com/
-// @version      0.6.122
+// @version      0.6.123
 // @description  Exports the current ChatGPT conversation directly from the Conversation API as Markdown or JSONL.
 // @match        https://chatgpt.com/*
 // @match        https://chat.openai.com/*
@@ -1118,13 +1118,13 @@
     return rendered;
   }
 
-  function cgContentTextParts(record, fileRefIndex = new Map()) {
+  function cgContentTextParts(record, fileRefIndex = new Map(), recoveredImages = []) {
     const content = record?.content ?? {};
     const parts = content.parts;
     const role = record?.author?.role ?? '';
     const type = content.content_type ?? '';
     const cleaned = [];
-    const imagePlaceholders = [];
+    let imageOrdinal = 0;
     if (!Array.isArray(parts)) return cleaned;
     for (const part of parts) {
       const texts = [];
@@ -1132,7 +1132,8 @@
         if (part.trim()) texts.push(part);
       } else if (part && typeof part === 'object') {
         if (part.content_type === 'image_asset_pointer') {
-          imagePlaceholders.push('[image missing]');
+          cleaned.push(recoveredImages[imageOrdinal] || '[image missing]');
+          imageOrdinal += 1;
           continue;
         }
         for (const key of ['text', 'content']) {
@@ -1148,24 +1149,23 @@
         if (rendered) cleaned.push(rendered);
       }
     }
-    cleaned.push(...imagePlaceholders);
     return cleaned;
   }
 
-  function cgVisibleUserText(record, fileRefIndex = new Map()) {
+  function cgVisibleUserText(record, fileRefIndex = new Map(), recoveredImages = []) {
     if (cgIsHidden(record) || record?.author?.role !== 'user' ||
         !['text', 'multimodal_text'].includes(record?.content?.content_type)) return '';
-    return cgContentTextParts(record, fileRefIndex).join('\n\n').trim();
+    return cgContentTextParts(record, fileRefIndex, recoveredImages).join('\n\n').trim();
   }
 
-  function cgVisibleAssistantText(record, fileRefIndex = new Map()) {
+  function cgVisibleAssistantText(record, fileRefIndex = new Map(), recoveredImages = []) {
     if (cgIsHidden(record) || record?.author?.role !== 'assistant' ||
         !['text', 'multimodal_text'].includes(record?.content?.content_type)) return '';
-    return cgContentTextParts(record, fileRefIndex).join('\n\n').trim();
+    return cgContentTextParts(record, fileRefIndex, recoveredImages).join('\n\n').trim();
   }
 
-  function cgVisibleAssistantMarkdown(record, fileRefIndex = new Map()) {
-    return cgVisibleAssistantText(record, fileRefIndex);
+  function cgVisibleAssistantMarkdown(record, fileRefIndex = new Map(), recoveredImages = []) {
+    return cgVisibleAssistantText(record, fileRefIndex, recoveredImages);
   }
 
   function cgRecordSearchTexts(record, fileRefIndex = new Map()) {
@@ -1284,7 +1284,7 @@
     return '';
   }
 
-  function renderConversationMarkdown(spine, onProgress) {
+  function renderConversationMarkdown(spine, onProgress, recoveredImageMap = new Map()) {
     assert(Array.isArray(spine?.records), 'Conversation API Markdown export requires spine records.');
     const records = spine.records.map(item => item.message).filter(Boolean);
     const output = [];
@@ -1309,13 +1309,14 @@
         record_number: i + 1,
         record_count: records.length
       });
-      const userText = cgVisibleUserText(record, fileRefIndex);
+      const recoveredImages = recoveredImageMap.get(record.id) ?? [];
+      const userText = cgVisibleUserText(record, fileRefIndex, recoveredImages);
       if (userText) {
         flushAssistantBlock();
         output.push(`${transcriptHeading(record)}\n\n${quoteMarkdown(userText)}`);
         continue;
       }
-      const assistantText = cgVisibleAssistantMarkdown(record, fileRefIndex);
+      const assistantText = cgVisibleAssistantMarkdown(record, fileRefIndex, recoveredImages);
       if (assistantText) {
         flushAssistantBlock(assistantText, record);
         continue;
@@ -1535,6 +1536,89 @@
     }
   }
 
+  function userImagePointerCount(record) {
+    if (record?.author?.role !== 'user' || !Array.isArray(record?.content?.parts)) return 0;
+    return record.content.parts.filter(part =>
+      part && typeof part === 'object' && part.content_type === 'image_asset_pointer'
+    ).length;
+  }
+
+  function mountedUserConversationImages(section) {
+    if (!(section instanceof HTMLElement) || section.getAttribute('data-turn') !== 'user') return [];
+    const images = [];
+    const seen = new Set();
+    for (const image of section.querySelectorAll(
+      'button[aria-label^="Open image:"] img, [class~="group/message-image"] img'
+    )) {
+      if (!(image instanceof HTMLImageElement) || seen.has(image)) continue;
+      const src = image.currentSrc || image.getAttribute('src') || '';
+      if (!src) continue;
+      seen.add(image);
+      images.push(image);
+    }
+    return images;
+  }
+
+  async function imageElementDataUrl(image) {
+    const src = image.currentSrc || image.getAttribute('src') || '';
+    assert(src, 'Conversational image has no source URL.');
+    if (src.startsWith('data:')) return src;
+    const response = await fetch(src, { credentials: 'include' });
+    assert(response.ok, `Conversational image request returned HTTP ${response.status}.`);
+    const blob = await response.blob();
+    return await new Promise((resolve, reject) => {
+      const reader = new FileReader();
+      reader.onload = () => resolve(String(reader.result || ''));
+      reader.onerror = () => reject(reader.error || new Error('Could not read conversational image blob.'));
+      reader.readAsDataURL(blob);
+    });
+  }
+
+  async function recoverUserImages(spine) {
+    const recovered = new Map();
+    const scrollRoot = conversationScrollRoot();
+    const originalScrollTop = scrollRoot.scrollTop;
+    const records = (spine?.records ?? []).filter(record => userImagePointerCount(record?.message) > 0);
+    try {
+      for (const item of records) {
+        const record = item.message;
+        const expected = userImagePointerCount(record);
+        const images = new Array(expected).fill('[image missing]');
+        try {
+          let section = mountedTurnSection(record.id, 'user');
+          if (!(section instanceof HTMLElement)) {
+            const target = resolveJumpIdentifier(spine, record.id);
+            target.spine = spine;
+            section = await jumpToResolvedTarget(target);
+          }
+          const candidates = mountedUserConversationImages(section);
+          for (let index = 0; index < Math.min(expected, candidates.length); index += 1) {
+            try {
+              const dataUrl = await imageElementDataUrl(candidates[index]);
+              if (dataUrl) images[index] = `![image-${record.id}-${index + 1}](${dataUrl})`;
+            } catch (error) {
+              logDiagnostic('warnings', 'conversation-image-recovery-failure', {
+                message_id: record.id,
+                image_ordinal: index + 1,
+                message: error instanceof Error ? error.message : String(error)
+              });
+            }
+          }
+        } catch (error) {
+          logDiagnostic('warnings', 'conversation-image-turn-recovery-failure', {
+            message_id: record.id,
+            expected_image_count: expected,
+            message: error instanceof Error ? error.message : String(error)
+          });
+        }
+        recovered.set(record.id, images);
+      }
+    } finally {
+      scrollRoot.scrollTop = originalScrollTop;
+    }
+    return recovered;
+  }
+
   async function runExport(kind) {
     if (exportInProgress || testInProgress || jumpInProgress) return;
     const conversationId = currentConversationId();
@@ -1569,6 +1653,9 @@
         );
         setStatus(`Extracted ${spine.records.length} API records from ${fetched.pages.length} API page(s) to ${filename}.`);
       } else {
+        progressState.stage = 'recovering-images';
+        setStatus('Recovering conversational images…');
+        const recoveredImageMap = await recoverUserImages(spine);
         progressState.stage = 'rendering';
         progressState.render_started_at = performance.now();
         progressState.record_count = spine.records.length;
@@ -1577,7 +1664,7 @@
           progressState.record_number = progress.record_number;
           progressState.record_count = progress.record_count;
           refreshStatus();
-        });
+        }, recoveredImageMap);
         const filename = `${sanitizeFileName(conversationTitle())}.md`;
         downloadBlob(
           new Blob([markdown], { type: 'text/markdown;charset=utf-8' }),
@@ -1690,9 +1777,13 @@
         { ordinal: 3, message: record('a2', 'assistant', 'text', ['Second Assistant']) }
       ]
     };
-    const markdown = renderConversationMarkdown(spine);
+    const fallbackMarkdown = renderConversationMarkdown(spine);
+    assert(fallbackMarkdown.includes('[image missing]'), 'unrecovered multimodal image pointer did not retain its placeholder.');
+    const recoveredToken = '![image-u1-1](data:image/png;base64,AAAA)';
+    const markdown = renderConversationMarkdown(spine, undefined, new Map([['u1', [recoveredToken]]]));
     assert(markdown.includes('First User'), 'multimodal_text User content was not rendered.');
-    assert(markdown.includes('[image missing]'), 'multimodal image pointer was not preserved as a placeholder.');
+    assert(markdown.includes(recoveredToken), 'recovered multimodal image was not rendered at its API image pointer.');
+    assert(!markdown.includes('[image missing]'), 'recovered multimodal image still rendered as missing.');
     const u1 = markdown.indexOf('<!-- turn_id=u1 -->');
     const a1 = markdown.indexOf('<!-- turn_id=a1 -->');
     const u2 = markdown.indexOf('<!-- turn_id=u2 -->');
@@ -1714,8 +1805,9 @@
       { id: 'a1', author: { role: 'assistant' }, channel: 'final', content: { content_type: 'multimodal_text', parts: [`File ${fileToken}\n\nWeb ${citeToken}\n\nMemory ${memoryToken}`] }, metadata: { content_references: [ { type: 'hidden', matched_text: fileToken }, { type: 'grouped_webpages', matched_text: citeToken, items: [{ url: 'https://example.com/web', attribution: 'Example', title: 'Example source' }] }, { type: 'hidden', matched_text: memoryToken } ], conversation_context_citation_metadata: [{ citation: { url: 'https://example.com/memory', title: 'Prior note' } }] } }
     ];
     const spine = { records: records.map((message, ordinal) => ({ ordinal, message })) };
-    const markdown = renderConversationMarkdown(spine);
-    assert(markdown.includes('[image missing]'), 'image_asset_pointer was not rendered as an image placeholder.');
+    const recoveredToken = '![image-u1-1](data:image/png;base64,AAAA)';
+    const markdown = renderConversationMarkdown(spine, undefined, new Map([['u1', [recoveredToken]]]));
+    assert(markdown.includes(recoveredToken), 'recovered image_asset_pointer was not rendered.');
     assert(markdown.includes('<a href="https://example.com/notes.txt">notes.txt L1-L2</a>'), 'hidden file citation was not resolved to its link.');
     assert(markdown.includes('**(cite:'), 'web citation was not rendered.');
     assert(markdown.includes('**(memory:'), 'memory citation was not rendered.');
