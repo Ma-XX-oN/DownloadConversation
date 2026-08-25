@@ -1,0 +1,182 @@
+name: Fix chronological rendering
+
+on:
+  push:
+    branches:
+      - main
+    paths:
+      - .github/workflows/fix-chronological-rendering.yml
+
+permissions:
+  contents: write
+
+jobs:
+  fix:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Restore chronological Markdown rendering
+        shell: bash
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+
+          path = Path('chatgpt-conversation-markdown-export.user.js')
+          text = path.read_text(encoding='utf-8')
+          assert '// @version      0.6.119' in text
+
+          def extract_js_function(source, name):
+            marker = f'  function {name}('
+            start = source.index(marker)
+            brace = source.index('{', start)
+            depth = 0
+            quote = None
+            escape = False
+            i = brace
+            while i < len(source):
+              ch = source[i]
+              if quote:
+                if escape:
+                  escape = False
+                elif ch == '\\':
+                  escape = True
+                elif ch == quote:
+                  quote = None
+              else:
+                if ch in "'\"`":
+                  quote = ch
+                elif ch == '{':
+                  depth += 1
+                elif ch == '}':
+                  depth -= 1
+                  if depth == 0:
+                    end = i + 1
+                    while end < len(source) and source[end] in '\r\n':
+                      end += 1
+                    return source[start:end]
+              i += 1
+            raise RuntimeError(name)
+
+          old_render = extract_js_function(text, 'renderConversationMarkdown')
+          new_render = '''  function renderConversationMarkdown(spine, onProgress) {
+            assert(Array.isArray(spine?.records), 'Conversation API Markdown export requires spine records.');
+            const records = spine.records.map(item => item.message).filter(Boolean);
+            const output = [];
+            let pendingThoughts = [];
+
+            const flushAssistantBlock = (body = '', record = null) => {
+              if (!body && !pendingThoughts.length) return;
+              const headingRecord = record ?? pendingThoughts[0];
+              const parts = [transcriptHeading(headingRecord)];
+              const thoughts = cgRenderThoughtBlock(pendingThoughts);
+              if (thoughts) parts.push(thoughts);
+              if (body) parts.push(quoteMarkdown(body));
+              output.push(parts.join('\\n\\n'));
+              pendingThoughts = [];
+            };
+
+            for (let i = 0; i < records.length; i += 1) {
+              const record = records[i];
+              onProgress?.({
+                stage: 'rendering',
+                record_number: i + 1,
+                record_count: records.length
+              });
+              const userText = cgVisibleUserText(record);
+              if (userText) {
+                flushAssistantBlock();
+                output.push(`${transcriptHeading(record)}\\n\\n${quoteMarkdown(userText)}`);
+                continue;
+              }
+              const assistantText = cgVisibleAssistantMarkdown(record);
+              if (assistantText) {
+                flushAssistantBlock(assistantText, record);
+                continue;
+              }
+              if (cgRenderThoughtItem(record)) pendingThoughts.push(record);
+            }
+            flushAssistantBlock();
+            return `${output.join('\\n\\n')}\\n`;
+          }
+
+          '''
+          text = text.replace(old_render, new_render, 1)
+
+          old_test = extract_js_function(text, 'testMultimodalUserAndUapIdentity')
+          new_test = '''  async function testMultimodalUserAndChronologicalOrder() {
+            const record = (id, role, contentType, parts) => ({
+              id,
+              author: { role },
+              content: { content_type: contentType, parts },
+              metadata: {}
+            });
+            const spine = {
+              records: [
+                { ordinal: 0, message: record('u1', 'user', 'multimodal_text', ['First User', { asset_pointer: 'file-service://example' }]) },
+                { ordinal: 1, message: record('a1', 'assistant', 'text', ['First Assistant']) },
+                { ordinal: 2, message: record('u2', 'user', 'text', ['Second User']) },
+                { ordinal: 3, message: record('a2', 'assistant', 'text', ['Second Assistant']) }
+              ]
+            };
+            const markdown = renderConversationMarkdown(spine);
+            assert(markdown.includes('First User'), 'multimodal_text User content was not rendered.');
+            const u1 = markdown.indexOf('<!-- turn_id=u1 -->');
+            const a1 = markdown.indexOf('<!-- turn_id=a1 -->');
+            const u2 = markdown.indexOf('<!-- turn_id=u2 -->');
+            const a2 = markdown.indexOf('<!-- turn_id=a2 -->');
+            assert(u1 >= 0 && a1 >= 0 && u2 >= 0 && a2 >= 0,
+              'chronological rendering test did not emit all expected headings.');
+            assert(u1 < a1 && a1 < u2 && u2 < a2,
+              'Conversation API Markdown rendering did not preserve chronological record order.');
+          }
+
+          '''
+          text = text.replace(old_test, new_test, 1)
+          text = text.replace(
+            "      await run('Multimodal User + UAP identity', testMultimodalUserAndUapIdentity);",
+            "      await run('Multimodal User + chronological order', testMultimodalUserAndChronologicalOrder);",
+            1
+          )
+          text = text.replace('// @version      0.6.119', '// @version      0.6.120', 1)
+
+          assert '// @version      0.6.120' in text
+          assert "function testMultimodalUserAndChronologicalOrder()" in text
+          assert "testMultimodalUserAndUapIdentity" not in text
+          assert "const grouping = apiConversationUapFinalGrouping(spine);" not in extract_js_function(text, 'renderConversationMarkdown')
+          assert "spine.records.map(item => item.message)" in extract_js_function(text, 'renderConversationMarkdown')
+          assert "['text', 'multimodal_text'].includes(record?.content?.content_type)" in text
+          assert 'conversation-api-page-http-failure' in text
+          assert 'data-role="log-output"' in text
+          assert 'discoverPageCount' not in text
+          for retired in [
+            'extractTurn(',
+            'extractConversationDomFallback',
+            'buildPersistentUapIndex',
+            'prepareCitationExports',
+            'nodeToMarkdown(',
+            'extractRenderedThoughts',
+            'data-turn-id-container'
+          ]:
+            assert retired not in text, retired
+
+          path.write_text(text, encoding='utf-8')
+          PY
+      - name: Verify source
+        shell: bash
+        run: |
+          node --check chatgpt-conversation-markdown-export.user.js
+          grep -q '@version      0.6.120' chatgpt-conversation-markdown-export.user.js
+          grep -q 'Multimodal User + chronological order' chatgpt-conversation-markdown-export.user.js
+          grep -q "\['text', 'multimodal_text'\]" chatgpt-conversation-markdown-export.user.js
+          ! grep -A80 'function renderConversationMarkdown' chatgpt-conversation-markdown-export.user.js | grep -q 'apiConversationUapFinalGrouping'
+          grep -q 'conversation-api-page-http-failure' chatgpt-conversation-markdown-export.user.js
+          grep -q 'data-role="log-output"' chatgpt-conversation-markdown-export.user.js
+      - name: Commit fix and remove workflow
+        shell: bash
+        run: |
+          rm -f .github/workflows/fix-chronological-rendering.yml
+          git config user.name github-actions[bot]
+          git config user.email 41898282+github-actions[bot]@users.noreply.github.com
+          git add chatgpt-conversation-markdown-export.user.js .github/workflows/fix-chronological-rendering.yml
+          git commit -m 'Restore chronological Markdown rendering in v0.6.120 [skip ci]'
+          git push
