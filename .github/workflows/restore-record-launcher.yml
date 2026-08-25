@@ -15,8 +15,9 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - name: Restore launcher without changing extraction logic
-        shell: python
+        shell: bash
         run: |
+          python - <<'PY'
           from pathlib import Path
 
           path = Path('chatgpt-conversation-markdown-export.user.js')
@@ -33,7 +34,6 @@ jobs:
             "  const PANEL_ID = 'tm-conversation-recorder';\n",
             "  const PANEL_ID = 'tm-conversation-recorder';\n  const LAUNCHER_ID = 'tm-conversation-recorder-launcher';\n"
           )
-
           replace_once(
             "      #${PANEL_ID}{position:fixed;right:18px;bottom:18px;z-index:2147483647;width:min(405px,calc(100vw - 36px));box-sizing:border-box;padding:16px 18px;border:1px solid #555;border-radius:16px;background:#191919;color:#f2f2f2;box-shadow:0 10px 35px rgba(0,0,0,.5);font:16px/1.45 system-ui,sans-serif}\n",
             "      #${LAUNCHER_ID}{position:fixed;right:18px;bottom:18px;z-index:2147483647;border:1px solid #666;border-radius:9px;background:#292929;color:#fff;padding:9px 16px;font:16px/1.45 system-ui,sans-serif;cursor:pointer}\n      #${PANEL_ID}{position:fixed;right:18px;bottom:18px;z-index:2147483647;width:min(405px,calc(100vw - 36px));box-sizing:border-box;padding:16px 18px;border:1px solid #555;border-radius:16px;background:#191919;color:#f2f2f2;box-shadow:0 10px 35px rgba(0,0,0,.5);font:16px/1.45 system-ui,sans-serif}\n"
@@ -41,35 +41,32 @@ jobs:
 
           marker = "  function makePanel() {\n"
           launcher_fn = """  function makeLauncher() {
-    if (document.getElementById(LAUNCHER_ID) || !document.body) return;
-    injectStyles();
-    const launcher = document.createElement('button');
-    launcher.id = LAUNCHER_ID;
-    launcher.type = 'button';
-    launcher.textContent = 'Record';
-    launcher.addEventListener('click', () => {
-      makePanel();
-      const panel = document.getElementById(PANEL_ID);
-      if (panel) panel.style.display = 'block';
-      launcher.style.display = 'none';
-      updateUi();
-    });
-    document.body.append(launcher);
-  }
+            if (document.getElementById(LAUNCHER_ID) || !document.body) return;
+            injectStyles();
+            const launcher = document.createElement('button');
+            launcher.id = LAUNCHER_ID;
+            launcher.type = 'button';
+            launcher.textContent = 'Record';
+            launcher.addEventListener('click', () => {
+              makePanel();
+              const panel = document.getElementById(PANEL_ID);
+              if (panel) panel.style.display = 'block';
+              launcher.style.display = 'none';
+              updateUi();
+            });
+            document.body.append(launcher);
+          }
 
-"""
+          """
           replace_once(marker, launcher_fn + marker)
-
           replace_once(
             "    panel.id = PANEL_ID;\n    panel.innerHTML = `\n",
             "    panel.id = PANEL_ID;\n    panel.style.display = 'none';\n    panel.innerHTML = `\n"
           )
-
           replace_once(
             "    panel.querySelector('.tm-close').addEventListener('click', () => panel.remove());\n",
             "    panel.querySelector('.tm-close').addEventListener('click', () => {\n      panel.style.display = 'none';\n      const launcher = document.getElementById(LAUNCHER_ID);\n      if (launcher) launcher.style.display = '';\n    });\n"
           )
-
           replace_once(
             "    if (document.body) {\n      makePanel();\n      return;\n",
             "    if (document.body) {\n      makeLauncher();\n      makePanel();\n      return;\n"
@@ -79,12 +76,12 @@ jobs:
             "      observer.disconnect();\n      makeLauncher();\n      makePanel();\n"
           )
 
-          assert "discoverPageCount" not in text
-          assert "const PAGE_TURNS = 100;" in text
+          assert 'discoverPageCount' not in text
+          assert 'const PAGE_TURNS = 100;' in text
           assert "textContent = 'Record';" in text
           assert "panel.style.display = 'none';" in text
-
           path.write_text(text, encoding='utf-8')
+          PY
       - name: Syntax check
         run: node --check chatgpt-conversation-markdown-export.user.js
       - name: Commit fix and remove one-time workflow
