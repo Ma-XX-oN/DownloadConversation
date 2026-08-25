@@ -1,0 +1,80 @@
+name: Restore visible diagnostics log
+on:
+  push:
+    branches: [main]
+    paths: ['.github/workflows/restore-visible-diagnostics.yml']
+permissions:
+  contents: write
+jobs:
+  patch:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Patch userscript
+        shell: bash
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+
+          p = Path('chatgpt-conversation-markdown-export.user.js')
+          s = p.read_text(encoding='utf-8')
+
+          s = s.replace('// @version      0.6.118', '// @version      0.6.119', 1)
+
+          old = """  const SCREEN_ON_STORAGE_KEY = 'tm-conversation-recorder-screen-on-when-capturing';\n"""
+          new = """  const SCREEN_ON_STORAGE_KEY = 'tm-conversation-recorder-screen-on-when-capturing';\n  const DIAGNOSTIC_LOG_STORAGE_KEY = 'tm-conversation-recorder-diagnostic-log';\n  const MAX_DIAGNOSTIC_LOG_ITEMS = 500;\n"""
+          assert old in s
+          s = s.replace(old, new, 1)
+
+          old = """  let testInProgress = false;\n"""
+          new = """  let testInProgress = false;\n  let diagnosticLog = [];\n  try {\n    const storedDiagnosticLog = JSON.parse(sessionStorage.getItem(DIAGNOSTIC_LOG_STORAGE_KEY) || '[]');\n    if (Array.isArray(storedDiagnosticLog)) diagnosticLog = storedDiagnosticLog.slice(-MAX_DIAGNOSTIC_LOG_ITEMS);\n  } catch {}\n"""
+          assert old in s
+          s = s.replace(old, new, 1)
+
+          old = """    const grouping = apiConversationUapFinalGrouping(spine);\n    assert(grouping.unresolved_record_count === 0,\n"""
+          new = """    const grouping = apiConversationUapFinalGrouping(spine);\n    if (grouping.unresolved_record_count || grouping.conflicting_record_count) {\n      const problemRecords = grouping.classifications\n        .filter(item => item.classification === 'conflict' || item.classification === 'unresolved')\n        .slice(0, 100);\n      logDiagnostic('errors', 'conversation-api-markdown-grouping-failure', {\n        unresolved_record_count: grouping.unresolved_record_count,\n        conflicting_record_count: grouping.conflicting_record_count,\n        problem_records_shown: problemRecords.length,\n        problem_records: problemRecords\n      });\n    }\n    assert(grouping.unresolved_record_count === 0,\n"""
+          assert old in s
+          s = s.replace(old, new, 1)
+
+          old = """  function diagnosticEnabled(level) {\n    return (DIAGNOSTIC_LEVELS[level] ?? 0) <= (DIAGNOSTIC_LEVELS[diagnosticsLevel] ?? 0);\n  }\n\n  function logDiagnostic(level, message, data = null) {\n    if (!diagnosticEnabled(level)) return;\n    const args = [`[ChatGPT Recorder ${level}] ${message}`];\n    if (data !== null) args.push(data);\n    (level === 'errors' ? console.error : level === 'warnings' ? console.warn : console.log)(...args);\n  }\n"""
+          new = """  function diagnosticEnabled(level) {\n    return (DIAGNOSTIC_LEVELS[level] ?? 0) <= (DIAGNOSTIC_LEVELS[diagnosticsLevel] ?? 0);\n  }\n\n  function persistDiagnosticLog() {\n    try {\n      sessionStorage.setItem(DIAGNOSTIC_LOG_STORAGE_KEY, JSON.stringify(diagnosticLog));\n    } catch {}\n  }\n\n  function diagnosticLogLine(entry) {\n    const suffix = entry.data === null || entry.data === undefined\n      ? ''\n      : ` ${JSON.stringify(entry.data)}`;\n    return `${entry.timestamp} [${entry.level}] ${entry.message}${suffix}`;\n  }\n\n  function refreshDiagnosticLog() {\n    const panel = document.getElementById(PANEL_ID);\n    if (!panel) return;\n    const count = panel.querySelector('[data-role=\"log-count\"]');\n    const output = panel.querySelector('[data-role=\"log-output\"]');\n    if (count) count.textContent = `Log: ${diagnosticLog.length} item${diagnosticLog.length === 1 ? '' : 's'}`;\n    if (output) {\n      output.textContent = diagnosticLog.map(diagnosticLogLine).join('\\n');\n      output.scrollTop = output.scrollHeight;\n    }\n  }\n\n  async function copyDiagnosticLog() {\n    const text = diagnosticLog.map(diagnosticLogLine).join('\\n');\n    if (!text) return;\n    await navigator.clipboard.writeText(text);\n  }\n\n  function logDiagnostic(level, message, data = null) {\n    if (!diagnosticEnabled(level)) return;\n    const entry = {\n      timestamp: new Date().toISOString(),\n      level,\n      message,\n      data\n    };\n    diagnosticLog.push(entry);\n    if (diagnosticLog.length > MAX_DIAGNOSTIC_LOG_ITEMS) {\n      diagnosticLog.splice(0, diagnosticLog.length - MAX_DIAGNOSTIC_LOG_ITEMS);\n    }\n    persistDiagnosticLog();\n    refreshDiagnosticLog();\n\n    const args = [`[ChatGPT Recorder ${level}] ${message}`];\n    if (data !== null) args.push(data);\n    (level === 'errors' ? console.error : level === 'warnings' ? console.warn : console.log)(...args);\n  }\n"""
+          assert old in s
+          s = s.replace(old, new, 1)
+
+          old = """      #${PANEL_ID} .tm-label{color:#ddd}\n"""
+          new = """      #${PANEL_ID} .tm-label{color:#ddd}\n      #${PANEL_ID} .tm-log-head{display:flex;align-items:center;justify-content:space-between;gap:10px;margin-top:12px}\n      #${PANEL_ID} .tm-log-copy{padding:5px 9px}\n      #${PANEL_ID} .tm-log-output{margin:6px 0 0;max-height:190px;overflow:auto;white-space:pre-wrap;overflow-wrap:anywhere;border:1px solid #555;border-radius:8px;background:#111;padding:8px;font:11px/1.35 ui-monospace,SFMono-Regular,Consolas,monospace;color:#ddd}\n"""
+          assert old in s
+          s = s.replace(old, new, 1)
+
+          old = """      <div class=\"tm-row\"><span class=\"tm-label\">Diagnostics</span><select data-role=\"diagnostics\"><option value=\"errors\">Errors</option><option value=\"warnings\">Warnings</option><option value=\"debug\">Debug</option><option value=\"verbose\">Verbose</option></select><button data-role=\"test\" type=\"button\">Test</button></div>\n      <div class=\"tm-row\"><span class=\"tm-label\">Screen on when extracting</span><button class=\"tm-switch\" data-role=\"screen-on\" type=\"button\"></button></div>\n"""
+          new = """      <div class=\"tm-row\"><span class=\"tm-label\">Diagnostics</span><select data-role=\"diagnostics\"><option value=\"errors\">Errors</option><option value=\"warnings\">Warnings</option><option value=\"debug\">Debug</option><option value=\"verbose\">Verbose</option></select><button data-role=\"test\" type=\"button\">Test</button></div>\n      <div class=\"tm-log-head\"><span class=\"tm-label\" data-role=\"log-count\">Log: 0 items</span><button class=\"tm-log-copy\" data-role=\"copy-log\" type=\"button\">Copy</button></div>\n      <pre class=\"tm-log-output\" data-role=\"log-output\"></pre>\n      <div class=\"tm-row\"><span class=\"tm-label\">Screen on when extracting</span><button class=\"tm-switch\" data-role=\"screen-on\" type=\"button\"></button></div>\n"""
+          assert old in s
+          s = s.replace(old, new, 1)
+
+          old = """    diagnostics.addEventListener('change', () => {\n      diagnosticsLevel = diagnostics.value;\n      localStorage.setItem('tm-conversation-recorder-diagnostics', diagnosticsLevel);\n      logDiagnostic('debug', 'diagnostics-level-changed', { diagnostics_level: diagnosticsLevel });\n    });\n    panel.querySelector('[data-role=\"test\"]').addEventListener('click', () => void runTests());\n"""
+          new = """    diagnostics.addEventListener('change', () => {\n      diagnosticsLevel = diagnostics.value;\n      localStorage.setItem('tm-conversation-recorder-diagnostics', diagnosticsLevel);\n      logDiagnostic('debug', 'diagnostics-level-changed', { diagnostics_level: diagnosticsLevel });\n      refreshDiagnosticLog();\n    });\n    panel.querySelector('[data-role=\"copy-log\"]').addEventListener('click', () => {\n      void copyDiagnosticLog().catch(error => {\n        logDiagnostic('errors', 'diagnostic-log-copy-failure', {\n          message: error instanceof Error ? error.message : String(error)\n        });\n      });\n    });\n    panel.querySelector('[data-role=\"test\"]').addEventListener('click', () => void runTests());\n"""
+          assert old in s
+          s = s.replace(old, new, 1)
+
+          old = """    document.body.append(panel);\n    updateUi();\n"""
+          new = """    document.body.append(panel);\n    updateUi();\n    refreshDiagnosticLog();\n"""
+          assert old in s
+          s = s.replace(old, new, 1)
+
+          p.write_text(s, encoding='utf-8')
+          PY
+      - name: Verify
+        run: |
+          node --check chatgpt-conversation-markdown-export.user.js
+          grep -q '@version      0.6.119' chatgpt-conversation-markdown-export.user.js
+          grep -q 'data-role="log-output"' chatgpt-conversation-markdown-export.user.js
+          grep -q 'data-role="copy-log"' chatgpt-conversation-markdown-export.user.js
+          grep -q 'conversation-api-markdown-grouping-failure' chatgpt-conversation-markdown-export.user.js
+      - name: Commit and remove one-time workflow
+        run: |
+          git config user.name github-actions[bot]
+          git config user.email 41898282+github-actions[bot]@users.noreply.github.com
+          git rm .github/workflows/restore-visible-diagnostics.yml
+          git add chatgpt-conversation-markdown-export.user.js
+          git commit -m 'Restore visible diagnostics log in v0.6.119 [skip ci]'
+          git push
