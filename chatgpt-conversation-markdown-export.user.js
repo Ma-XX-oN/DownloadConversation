@@ -1090,44 +1090,44 @@
   }
 
   function renderConversationMarkdown(spine, onProgress) {
-  assert(Array.isArray(spine?.records), 'Conversation API Markdown export requires spine records.');
-  const records = spine.records.map(item => item.message).filter(Boolean);
-  const output = [];
-  let pendingThoughts = [];
+    assert(Array.isArray(spine?.records), 'Conversation API Markdown export requires spine records.');
+    const records = spine.records.map(item => item.message).filter(Boolean);
+    const output = [];
+    let pendingThoughts = [];
 
-  const flushAssistantBlock = (body = '', record = null) => {
-    if (!body && !pendingThoughts.length) return;
-    const headingRecord = record ?? pendingThoughts[0];
-    const parts = [transcriptHeading(headingRecord)];
-    const thoughts = cgRenderThoughtBlock(pendingThoughts);
-    if (thoughts) parts.push(thoughts);
-    if (body) parts.push(quoteMarkdown(body));
-    output.push(parts.join('\n\n'));
-    pendingThoughts = [];
-  };
+    const flushAssistantBlock = (body = '', record = null) => {
+      if (!body && !pendingThoughts.length) return;
+      const headingRecord = record ?? pendingThoughts[0];
+      const parts = [transcriptHeading(headingRecord)];
+      const thoughts = cgRenderThoughtBlock(pendingThoughts);
+      if (thoughts) parts.push(thoughts);
+      if (body) parts.push(quoteMarkdown(body));
+      output.push(parts.join('\n\n'));
+      pendingThoughts = [];
+    };
 
-  for (let i = 0; i < records.length; i += 1) {
-    const record = records[i];
-    onProgress?.({
-      stage: 'rendering',
-      record_number: i + 1,
-      record_count: records.length
-    });
-    const userText = cgVisibleUserText(record);
-    if (userText) {
-      flushAssistantBlock();
-      output.push(`${transcriptHeading(record)}\n\n${quoteMarkdown(userText)}`);
-      continue;
+    for (let i = 0; i < records.length; i += 1) {
+      const record = records[i];
+      onProgress?.({
+        stage: 'rendering',
+        record_number: i + 1,
+        record_count: records.length
+      });
+      const userText = cgVisibleUserText(record);
+      if (userText) {
+        flushAssistantBlock();
+        output.push(`${transcriptHeading(record)}\n\n${quoteMarkdown(userText)}`);
+        continue;
+      }
+      const assistantText = cgVisibleAssistantMarkdown(record);
+      if (assistantText) {
+        flushAssistantBlock(assistantText, record);
+        continue;
+      }
+      if (cgRenderThoughtItem(record)) pendingThoughts.push(record);
     }
-    const assistantText = cgVisibleAssistantMarkdown(record);
-    if (assistantText) {
-      flushAssistantBlock(assistantText, record);
-      continue;
-    }
-    if (cgRenderThoughtItem(record)) pendingThoughts.push(record);
-  }
-  flushAssistantBlock();
-  return `${output.join('\n\n')}\n`;
+    flushAssistantBlock();
+    return `${output.join('\n\n')}\n`;
 }
 
   function apiRecordsJsonl(spine) {
@@ -1358,30 +1358,30 @@
   }
 
   async function testMultimodalUserAndChronologicalOrder() {
-  const record = (id, role, contentType, parts) => ({
-    id,
-    author: { role },
-    content: { content_type: contentType, parts },
-    metadata: {}
-  });
-  const spine = {
-    records: [
-      { ordinal: 0, message: record('u1', 'user', 'multimodal_text', ['First User', { asset_pointer: 'file-service://example' }]) },
-      { ordinal: 1, message: record('a1', 'assistant', 'text', ['First Assistant']) },
-      { ordinal: 2, message: record('u2', 'user', 'text', ['Second User']) },
-      { ordinal: 3, message: record('a2', 'assistant', 'text', ['Second Assistant']) }
-    ]
-  };
-  const markdown = renderConversationMarkdown(spine);
-  assert(markdown.includes('First User'), 'multimodal_text User content was not rendered.');
-  const u1 = markdown.indexOf('<!-- turn_id=u1 -->');
-  const a1 = markdown.indexOf('<!-- turn_id=a1 -->');
-  const u2 = markdown.indexOf('<!-- turn_id=u2 -->');
-  const a2 = markdown.indexOf('<!-- turn_id=a2 -->');
-  assert(u1 >= 0 && a1 >= 0 && u2 >= 0 && a2 >= 0,
-    'chronological rendering test did not emit all expected headings.');
-  assert(u1 < a1 && a1 < u2 && u2 < a2,
-    'Conversation API Markdown rendering did not preserve chronological record order.');
+    const record = (id, role, contentType, parts) => ({
+      id,
+      author: { role },
+      content: { content_type: contentType, parts },
+      metadata: {}
+    });
+    const spine = {
+      records: [
+        { ordinal: 0, message: record('u1', 'user', 'multimodal_text', ['First User', { asset_pointer: 'file-service://example' }]) },
+        { ordinal: 1, message: record('a1', 'assistant', 'text', ['First Assistant']) },
+        { ordinal: 2, message: record('u2', 'user', 'text', ['Second User']) },
+        { ordinal: 3, message: record('a2', 'assistant', 'text', ['Second Assistant']) }
+      ]
+    };
+    const markdown = renderConversationMarkdown(spine);
+    assert(markdown.includes('First User'), 'multimodal_text User content was not rendered.');
+    const u1 = markdown.indexOf('<!-- turn_id=u1 -->');
+    const a1 = markdown.indexOf('<!-- turn_id=a1 -->');
+    const u2 = markdown.indexOf('<!-- turn_id=u2 -->');
+    const a2 = markdown.indexOf('<!-- turn_id=a2 -->');
+    assert(u1 >= 0 && a1 >= 0 && u2 >= 0 && a2 >= 0,
+      'chronological rendering test did not emit all expected headings.');
+    assert(u1 < a1 && a1 < u2 && u2 < a2,
+      'Conversation API Markdown rendering did not preserve chronological record order.');
 }
 
   async function runTests() {
