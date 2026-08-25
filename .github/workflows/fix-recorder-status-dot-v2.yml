@@ -1,0 +1,99 @@
+name: Fix recorder status-dot UI v2
+
+on:
+  push:
+    branches:
+      - main
+    paths:
+      - .github/workflows/fix-recorder-status-dot-v2.yml
+
+permissions:
+  contents: write
+
+jobs:
+  fix:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Restore established compact recorder control
+        shell: bash
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+          import re
+
+          path = Path('chatgpt-conversation-markdown-export.user.js')
+          text = path.read_text(encoding='utf-8')
+
+          def replace_once(old, new):
+            global text
+            count = text.count(old)
+            assert count == 1, f'Expected one match, got {count}: {old[:100]!r}'
+            text = text.replace(old, new, 1)
+
+          replace_once('// @version      0.6.116', '// @version      0.6.117')
+          old_launcher_css = '      #${LAUNCHER_ID}{position:fixed;right:18px;bottom:18px;z-index:2147483647;border:1px solid #666;border-radius:9px;background:#292929;color:#fff;padding:9px 16px;font:16px/1.45 system-ui,sans-serif;cursor:pointer}'
+          new_launcher_css = '      #${LAUNCHER_ID}{position:fixed;right:16px;bottom:16px;z-index:2147483647;width:36px;height:32px;box-sizing:border-box;border:1px solid #777;border-radius:9px;background:#242424;color:#fff;padding:0;display:grid;place-items:center;box-shadow:0 1px 3px rgba(0,0,0,.35);cursor:pointer}'
+          replace_once(old_launcher_css, new_launcher_css + "\n      #${LAUNCHER_ID}::before{content:'';width:16px;height:16px;border-radius:50%;background:#d0d0d0;display:block}")
+          old_panel_css = '      #${PANEL_ID}{position:fixed;right:18px;bottom:18px;z-index:2147483647;width:min(405px,calc(100vw - 36px));box-sizing:border-box;padding:16px 18px;border:1px solid #555;border-radius:16px;background:#191919;color:#f2f2f2;box-shadow:0 10px 35px rgba(0,0,0,.5);font:16px/1.45 system-ui,sans-serif}'
+          new_panel_css = '      #${PANEL_ID}{position:fixed;right:16px;bottom:54px;z-index:2147483647;width:300px;box-sizing:border-box;padding:12px;border:1px solid rgba(127,127,127,.55);border-radius:12px;background:rgba(24,24,24,.97);color:#f2f2f2;box-shadow:0 6px 24px rgba(0,0,0,.35);font:13px/1.35 system-ui,sans-serif}'
+          replace_once(old_panel_css, new_panel_css)
+          replace_once("  launcher.textContent = 'Record';\n", '')
+          replace_once("    launcher.style.display = 'none';\n", '')
+
+          pattern = re.compile(r"  launcher\.addEventListener\('click', \(\) => \{.*?^  \}\);", re.M | re.S)
+          replacement = "\n".join([
+            "  const openRecorderPopup = () => {",
+            "    makePanel();",
+            "    const panel = document.getElementById(PANEL_ID);",
+            "    if (panel) panel.style.display = 'block';",
+            "    updateUi();",
+            "  };",
+            "  launcher.addEventListener('click', openRecorderPopup);",
+            "  launcher.addEventListener('mouseenter', openRecorderPopup);",
+            "  launcher.addEventListener('focus', openRecorderPopup);"
+          ])
+          text, count = pattern.subn(replacement, text, count=1)
+          assert count == 1, f'Launcher event block replacement count was {count}.'
+
+          marker = "    document.body.append(panel);\n    updateUi();"
+          insertion = "\n".join([
+            "    panel.addEventListener('mouseleave', () => {",
+            "      if (!panel.matches(':focus-within') && !exportInProgress && !testInProgress) {",
+            "        panel.style.display = 'none';",
+            "      }",
+            "    });",
+            "    document.body.append(panel);",
+            "    updateUi();"
+          ])
+          replace_once(marker, insertion)
+
+          assert '// @version      0.6.117' in text
+          assert "textContent = 'Record'" not in text
+          assert 'width:36px;height:32px' in text
+          assert "::before{content:'';width:16px;height:16px" in text
+          assert 'right:16px;bottom:16px' in text
+          assert 'right:16px;bottom:54px' in text
+          assert 'const PAGE_TURNS = 100;' in text
+          assert 'conversation-api-page-http-failure' in text
+          assert 'discoverPageCount' not in text
+          path.write_text(text, encoding='utf-8')
+          PY
+      - name: Verify source
+        shell: bash
+        run: |
+          node --check chatgpt-conversation-markdown-export.user.js
+          grep -q '@version      0.6.117' chatgpt-conversation-markdown-export.user.js
+          grep -q 'width:36px;height:32px' chatgpt-conversation-markdown-export.user.js
+          grep -q "::before{content:'';width:16px;height:16px" chatgpt-conversation-markdown-export.user.js
+          ! grep -q "textContent = 'Record'" chatgpt-conversation-markdown-export.user.js
+          grep -q 'conversation-api-page-http-failure' chatgpt-conversation-markdown-export.user.js
+      - name: Commit fix and remove temporary workflows
+        shell: bash
+        run: |
+          rm -f .github/workflows/fix-recorder-status-dot-v2.yml .github/workflows/restore-recorder-status-dot.yml
+          git config user.name github-actions[bot]
+          git config user.email 41898282+github-actions[bot]@users.noreply.github.com
+          git add chatgpt-conversation-markdown-export.user.js .github/workflows
+          git commit -m 'Restore compact recorder status-dot UI in v0.6.117 [skip ci]'
+          git push
