@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         ChatGPT Conversation Markdown Recorder
 // @namespace    https://chatgpt.com/
-// @version      0.6.116
+// @version      0.6.117
 // @description  Exports the current ChatGPT conversation directly from the Conversation API as Markdown or JSONL.
 // @match        https://chatgpt.com/*
 // @match        https://chat.openai.com/*
@@ -1093,8 +1093,9 @@
     const style = document.createElement('style');
     style.id = `${PANEL_ID}-style`;
     style.textContent = `
-      #${LAUNCHER_ID}{position:fixed;right:18px;bottom:18px;z-index:2147483647;border:1px solid #666;border-radius:9px;background:#292929;color:#fff;padding:9px 16px;font:16px/1.45 system-ui,sans-serif;cursor:pointer}
-      #${PANEL_ID}{position:fixed;right:18px;bottom:18px;z-index:2147483647;width:min(405px,calc(100vw - 36px));box-sizing:border-box;padding:16px 18px;border:1px solid #555;border-radius:16px;background:#191919;color:#f2f2f2;box-shadow:0 10px 35px rgba(0,0,0,.5);font:16px/1.45 system-ui,sans-serif}
+      #${LAUNCHER_ID}{position:fixed;right:16px;bottom:16px;z-index:2147483647;width:36px;height:32px;box-sizing:border-box;border:1px solid #777;border-radius:9px;background:#242424;color:#fff;padding:0;display:grid;place-items:center;box-shadow:0 1px 3px rgba(0,0,0,.35);cursor:pointer}
+      #${LAUNCHER_ID}::before{content:'';width:16px;height:16px;border-radius:50%;background:#d0d0d0;display:block}
+      #${PANEL_ID}{position:fixed;right:16px;bottom:54px;z-index:2147483647;width:300px;box-sizing:border-box;padding:12px;border:1px solid rgba(127,127,127,.55);border-radius:12px;background:rgba(24,24,24,.97);color:#f2f2f2;box-shadow:0 6px 24px rgba(0,0,0,.35);font:13px/1.35 system-ui,sans-serif}
       #${PANEL_ID} .tm-title{font-size:16px;margin:0 28px 8px 0}
       #${PANEL_ID} .tm-close{position:absolute;right:9px;top:7px;border:0;background:transparent;color:#fff;font-size:24px;cursor:pointer}
       #${PANEL_ID} .tm-status{white-space:pre-wrap;margin:10px 0 12px;min-height:24px}
@@ -1140,14 +1141,15 @@
   const launcher = document.createElement('button');
   launcher.id = LAUNCHER_ID;
   launcher.type = 'button';
-  launcher.textContent = 'Record';
-  launcher.addEventListener('click', () => {
+  const openRecorderPopup = () => {
     makePanel();
     const panel = document.getElementById(PANEL_ID);
     if (panel) panel.style.display = 'block';
-    launcher.style.display = 'none';
     updateUi();
-  });
+  };
+  launcher.addEventListener('click', openRecorderPopup);
+  launcher.addEventListener('mouseenter', openRecorderPopup);
+  launcher.addEventListener('focus', openRecorderPopup);
   document.body.append(launcher);
 }
 
@@ -1187,6 +1189,11 @@
     });
     panel.querySelector('[data-role="extract-jsonl"]').addEventListener('click', () => void runExport('jsonl'));
     panel.querySelector('[data-role="extract-md"]').addEventListener('click', () => void runExport('md'));
+    panel.addEventListener('mouseleave', () => {
+      if (!panel.matches(':focus-within') && !exportInProgress && !testInProgress) {
+        panel.style.display = 'none';
+      }
+    });
     document.body.append(panel);
     updateUi();
   }
