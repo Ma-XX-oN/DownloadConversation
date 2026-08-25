@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         ChatGPT Conversation Markdown Recorder
 // @namespace    https://chatgpt.com/
-// @version      0.6.113
+// @version      0.6.114
 // @description  Exports the current ChatGPT conversation directly from the Conversation API as Markdown or JSONL.
 // @match        https://chatgpt.com/*
 // @match        https://chat.openai.com/*
@@ -15,10 +15,9 @@
   const PANEL_ID = 'tm-conversation-recorder';
   const DIAGNOSTIC_LEVELS = Object.freeze({ errors: 0, warnings: 1, debug: 2, verbose: 3 });
   const DEFAULT_DIAGNOSTICS = 'warnings';
-  const PAGE_TURNS = 10;
+  const PAGE_TURNS = 100;
   const MAX_PAGES = 10000;
   const SCREEN_ON_STORAGE_KEY = 'tm-conversation-recorder-screen-on-when-capturing';
-  const encoder = new TextEncoder();
 
   let originalPageFetch = null;
   let apiRequestContext = null;
@@ -31,8 +30,7 @@
   let statusText = 'Ready.';
   let statusTimer = null;
   let progressState = null;
-
-  const sleep = milliseconds => new Promise(resolve => setTimeout(resolve, milliseconds));
+  let testInProgress = false;
 
   function assert(condition, message) {
     if (!condition) throw new Error(message);
@@ -108,7 +106,9 @@
       if (typeof headers?.forEach === 'function') {
         headers.forEach((value, key) => put(key, value));
       } else if (Array.isArray(headers)) {
-        for (const entry of headers) if (Array.isArray(entry) && entry.length >= 2) put(entry[0], entry[1]);
+        for (const entry of headers) {
+          if (Array.isArray(entry) && entry.length >= 2) put(entry[0], entry[1]);
+        }
       } else if (headers && typeof headers === 'object') {
         for (const [key, value] of Object.entries(headers)) put(key, value);
       }
@@ -215,59 +215,60 @@
     const response = await apiFetch(url);
     if (!response.ok) throw new Error(`${description} returned HTTP ${response.status}.`);
     const data = await response.json();
-    if (!conversationSchemaOk(data)) throw new Error(`${description} did not contain messages[] and page_info.`);
+    if (!conversationSchemaOk(data)) {
+      throw new Error(`${description} did not contain messages[] and page_info.`);
+    }
     return data;
   }
 
-  async function discoverPageCount(conversationId, onProgress) {
-    let data = await fetchOneConversationPage(pageUrl(conversationId), 'Initial Conversation API request');
-    if (data.page_info.has_next_page === true) {
-      throw new Error('Initial Conversation API page reports has_next_page=true; newest boundary is not established.');
-    }
-    let count = 1;
-    const seen = new Set();
-    onProgress?.({ stage: 'counting', page_count: count });
-    while (data.page_info.has_previous_page === true) {
-      const cursor = data.page_info.start_cursor;
-      if (!cursor) throw new Error('Conversation API reports a previous page but supplied no start_cursor.');
-      if (seen.has(cursor)) throw new Error(`Conversation pagination repeated start_cursor ${cursor}.`);
-      seen.add(cursor);
-      if (count >= MAX_PAGES) throw new Error(`Conversation pagination exceeded the ${MAX_PAGES}-page safety limit.`);
-      data = await fetchOneConversationPage(pageUrl(conversationId, cursor), 'Conversation pagination request');
-      count += 1;
-      onProgress?.({ stage: 'counting', page_count: count });
-    }
-    return count;
-  }
-
-  async function fetchConversationPages(conversationId, totalPages, onProgress) {
+  async function collectConversationPages(fetchPage, onProgress) {
     const pages = [];
-    const seen = new Set();
+    const seenCursors = new Set();
     let rawRecordCount = 0;
-    let data = await fetchOneConversationPage(pageUrl(conversationId), 'Initial Conversation API request');
-    if (data.page_info.has_next_page === true) {
-      throw new Error('Initial Conversation API page reports has_next_page=true; newest boundary is not established.');
-    }
+    let cursor = null;
+
     for (;;) {
+      if (pages.length >= MAX_PAGES) {
+        throw new Error(`Conversation pagination exceeded the ${MAX_PAGES}-page safety limit.`);
+      }
+      const data = await fetchPage(cursor);
+      if (!conversationSchemaOk(data)) {
+        throw new Error('Conversation API page did not contain messages[] and page_info.');
+      }
+      if (pages.length === 0 && data.page_info.has_next_page === true) {
+        throw new Error('Initial Conversation API page reports has_next_page=true; newest boundary is not established.');
+      }
+
       pages.push(data);
       rawRecordCount += data.messages.length;
       onProgress?.({
         stage: 'fetching',
         page_count: pages.length,
-        page_total: totalPages,
         raw_record_count: rawRecordCount
       });
+
       if (data.page_info.has_previous_page !== true) break;
-      const cursor = data.page_info.start_cursor;
-      if (!cursor) throw new Error('Conversation API reports a previous page but supplied no start_cursor.');
-      if (seen.has(cursor)) throw new Error(`Conversation pagination repeated start_cursor ${cursor}.`);
-      seen.add(cursor);
-      if (pages.length >= MAX_PAGES) throw new Error(`Conversation pagination exceeded the ${MAX_PAGES}-page safety limit.`);
-      data = await fetchOneConversationPage(pageUrl(conversationId, cursor), 'Conversation pagination request');
+      cursor = data.page_info.start_cursor;
+      if (!cursor) {
+        throw new Error('Conversation API reports a previous page but supplied no start_cursor.');
+      }
+      if (seenCursors.has(cursor)) {
+        throw new Error(`Conversation pagination repeated start_cursor ${cursor}.`);
+      }
+      seenCursors.add(cursor);
     }
-    assert(pages.length === totalPages,
-      `Conversation API page count changed during export: expected ${totalPages}, fetched ${pages.length}.`);
+
     return { pages, raw_record_count: rawRecordCount };
+  }
+
+  async function fetchConversationPages(conversationId, onProgress) {
+    return collectConversationPages(
+      cursor => fetchOneConversationPage(
+        pageUrl(conversationId, cursor),
+        cursor === null ? 'Initial Conversation API request' : 'Conversation pagination request'
+      ),
+      onProgress
+    );
   }
 
   function conversationSpineFromPages(pages) {
@@ -286,7 +287,11 @@
         messages.push(message);
       }
     }
-    return { pages: [...pages], messages, records: messages.map((message, ordinal) => ({ ordinal, message })) };
+    return {
+      pages: [...pages],
+      messages,
+      records: messages.map((message, ordinal) => ({ ordinal, message }))
+    };
   }
 
   function cgIsHidden(record) {
@@ -355,7 +360,9 @@
         const merged = result.get(key) ?? { title: '', snippet: '', attribution: '' };
         for (const field of ['title', 'snippet', 'attribution']) {
           const value = entry[field];
-          if (!merged[field] && typeof value === 'string' && value.trim()) merged[field] = value.trim();
+          if (!merged[field] && typeof value === 'string' && value.trim()) {
+            merged[field] = value.trim();
+          }
         }
         result.set(key, merged);
       }
@@ -391,7 +398,7 @@
 
   function cgCleanCitationBlurb(text) {
     if (typeof text !== 'string' || !text.trim()) return [];
-    let clean = text.replace(/\s+/g, ' ').trim()
+    const clean = text.replace(/\s+/g, ' ').trim()
       .replace(/\s*Read more\.?$/i, '')
       .replace(/^Abstract\b[:.]?\s*/i, '')
       .replace(/\.\s*\./g, '.')
@@ -402,7 +409,11 @@
     if (dash >= 0) {
       const head = clean.slice(0, dash).trim().replace(/^[- ]+|[- ]+$/g, '');
       const tail = clean.slice(dash + 1).trim();
-      if (tail && (head.toLowerCase().startsWith('by ') || head.toLowerCase().includes('cited by') || /^[A-Z][a-z]{2,8}\.? \d{1,2}, \d{4}$/.test(head))) {
+      if (tail && (
+        head.toLowerCase().startsWith('by ') ||
+        head.toLowerCase().includes('cited by') ||
+        /^[A-Z][a-z]{2,8}\.? \d{1,2}, \d{4}$/.test(head)
+      )) {
         meta = head;
         body = tail;
       }
@@ -426,7 +437,9 @@
       if (wrapped) parts.push(wrapped);
     }
     if (snippet) {
-      for (const block of cgCleanCitationBlurb(snippet)) if (block && !parts.includes(block)) parts.push(block);
+      for (const block of cgCleanCitationBlurb(snippet)) {
+        if (block && !parts.includes(block)) parts.push(block);
+      }
     }
     if (parts.length) return parts.join('\n\n');
     return cgWrapTooltipBlock(fallback, 78, 220);
@@ -444,8 +457,14 @@
       if (typeof url !== 'string' || !url.trim() || seen.has(url.trim())) return;
       const clean = url.trim();
       seen.add(clean);
-      const shown = typeof label === 'string' && label.trim() ? label.trim() : (cgCitationHostname(clean) || 'source');
-      sources.push({ url: clean, label: shown, tooltip: typeof tooltip === 'string' ? tooltip.trim() : '' });
+      const shown = typeof label === 'string' && label.trim()
+        ? label.trim()
+        : (cgCitationHostname(clean) || 'source');
+      sources.push({
+        url: clean,
+        label: shown,
+        tooltip: typeof tooltip === 'string' ? tooltip.trim() : ''
+      });
     };
     const visit = (node, inheritedTooltip = '') => {
       if (!node || typeof node !== 'object') return;
@@ -460,7 +479,9 @@
         inheritedTooltip = tooltip;
       }
       for (const key of ['items', 'supporting_websites', 'webpages', 'sources']) {
-        if (Array.isArray(node[key])) for (const item of node[key]) visit(item, inheritedTooltip);
+        if (Array.isArray(node[key])) {
+          for (const item of node[key]) visit(item, inheritedTooltip);
+        }
       }
     };
     visit(reference);
@@ -473,12 +494,16 @@
   function cgRenderWebCitation(reference, urlIndex = new Map()) {
     const links = [];
     for (const source of cgCollectWebCitationSources(reference, urlIndex)) {
-      const titleAttribute = source.tooltip ? ` title="${escapeHtmlAttribute(source.tooltip).replace(/\n/g, '&#10;')}"` : '';
+      const titleAttribute = source.tooltip
+        ? ` title="${escapeHtmlAttribute(source.tooltip).replace(/\n/g, '&#10;')}"`
+        : '';
       const favicon = cgCitationFavicon(source.url);
       const icon = favicon
         ? `<img alt="" src="${escapeHtmlAttribute(favicon)}" width="15" height="15"${titleAttribute} style="width:0.97em;height:0.97em;vertical-align:-0.13em;margin-right:0.22em;border-radius:2px;">`
         : '';
-      links.push(`<a href="${escapeHtmlAttribute(source.url)}"${titleAttribute} style="display:inline-block;white-space:nowrap;">${icon}${escapeHtmlText(source.label)}</a>`);
+      links.push(
+        `<a href="${escapeHtmlAttribute(source.url)}"${titleAttribute} style="display:inline-block;white-space:nowrap;">${icon}${escapeHtmlText(source.label)}</a>`
+      );
     }
     return links.length ? `**(cite: ${links.join(', ')})**` : '';
   }
@@ -493,7 +518,9 @@
       return '';
     }
     if (reference?.type === 'file') {
-      const name = typeof reference.name === 'string' ? reference.name.trim().replace(/`/g, '') : '';
+      const name = typeof reference.name === 'string'
+        ? reference.name.trim().replace(/`/g, '')
+        : '';
       return `\`${name || 'file'}\``;
     }
     return '';
@@ -501,7 +528,9 @@
 
   function cgRenderInlineReferences(text, record) {
     if (!text) return text;
-    const references = Array.isArray(record?.metadata?.content_references) ? record.metadata.content_references : [];
+    const references = Array.isArray(record?.metadata?.content_references)
+      ? record.metadata.content_references
+      : [];
     if (!references.length) return text;
     const urlIndex = cgSearchResultUrlIndex(record);
     let rendered = text;
@@ -515,12 +544,14 @@
   }
 
   function cgVisibleUserText(record) {
-    if (cgIsHidden(record) || record?.author?.role !== 'user' || record?.content?.content_type !== 'text') return '';
+    if (cgIsHidden(record) || record?.author?.role !== 'user' ||
+        record?.content?.content_type !== 'text') return '';
     return cgTextParts(record.content.parts).join('\n\n').trim();
   }
 
   function cgVisibleAssistantText(record) {
-    if (cgIsHidden(record) || record?.author?.role !== 'assistant' || record?.content?.content_type !== 'text') return '';
+    if (cgIsHidden(record) || record?.author?.role !== 'assistant' ||
+        record?.content?.content_type !== 'text') return '';
     return cgTextParts(record.content.parts).join('\n\n').trim();
   }
 
@@ -533,22 +564,29 @@
     const content = record?.content ?? {};
     const type = content.content_type ?? '';
     const texts = [];
-    if (type === 'text') texts.push(...cgTextParts(content.parts));
-    else if (type === 'thoughts' && Array.isArray(content.thoughts)) {
+    if (type === 'text') {
+      texts.push(...cgTextParts(content.parts));
+    } else if (type === 'thoughts' && Array.isArray(content.thoughts)) {
       for (const thought of content.thoughts) {
         if (!thought || typeof thought !== 'object') continue;
         if (typeof thought.summary === 'string' && thought.summary.trim()) texts.push(thought.summary);
         if (typeof thought.content === 'string' && thought.content.trim()) texts.push(thought.content);
         else if (Array.isArray(thought.chunks)) {
-          for (const chunk of thought.chunks) if (typeof chunk === 'string' && chunk.trim()) texts.push(chunk);
+          for (const chunk of thought.chunks) {
+            if (typeof chunk === 'string' && chunk.trim()) texts.push(chunk);
+          }
         }
       }
     } else if (type === 'code' || type === 'execution_output') {
-      for (const key of ['text', 'content']) if (typeof content[key] === 'string' && content[key].trim()) texts.push(content[key]);
+      for (const key of ['text', 'content']) {
+        if (typeof content[key] === 'string' && content[key].trim()) texts.push(content[key]);
+      }
     } else if (type === 'reasoning_recap') {
       if (typeof content.content === 'string' && content.content.trim()) texts.push(content.content);
     } else if (type === 'model_editable_context') {
-      for (const key of ['model_set_context', 'repo_summary']) if (typeof content[key] === 'string' && content[key].trim()) texts.push(content[key]);
+      for (const key of ['model_set_context', 'repo_summary']) {
+        if (typeof content[key] === 'string' && content[key].trim()) texts.push(content[key]);
+      }
     }
     return texts;
   }
@@ -591,7 +629,9 @@
         if (body) blocks.push(summary ? `**${summary}**\n\n${body}` : body);
         else if (summary) blocks.push(summary);
         else if (Array.isArray(chunks)) {
-          const chunkText = chunks.filter(chunk => typeof chunk === 'string' && chunk.trim()).join('\n\n');
+          const chunkText = chunks
+            .filter(chunk => typeof chunk === 'string' && chunk.trim())
+            .join('\n\n');
           if (chunkText) blocks.push(chunkText);
         }
       }
@@ -608,12 +648,17 @@
     }
     if (role === 'assistant' && type === 'model_editable_context') {
       const texts = cgRecordSearchTexts(record);
-      return texts.length ? cgRenderDetail('editable context', quoteMarkdown(texts.join('\n\n'))) : '';
+      return texts.length
+        ? cgRenderDetail('editable context', quoteMarkdown(texts.join('\n\n')))
+        : '';
     }
     if (role === 'tool') {
       const texts = cgRecordSearchTexts(record);
       if (!texts.length) return '';
-      return cgRenderDetail(`${record?.author?.name || record?.recipient || 'tool'} output`, cgCodeFence(texts.join('\n\n')));
+      return cgRenderDetail(
+        `${record?.author?.name || record?.recipient || 'tool'} output`,
+        cgCodeFence(texts.join('\n\n'))
+      );
     }
     return '';
   }
@@ -631,11 +676,15 @@
 
   function transcriptHeading(record) {
     const id = typeof record?.id === 'string' ? record.id : '';
-    if (record?.author?.role === 'user') return `## User${id ? ` <!-- turn_id=${id} -->` : ''}`;
+    if (record?.author?.role === 'user') {
+      return `## User${id ? ` <!-- turn_id=${id} -->` : ''}`;
+    }
     if (record?.author?.role === 'assistant' && record?.channel === 'commentary') {
       return `## ChatGPT Commentary${id ? ` <!-- turn_id=${id} -->` : ''}`;
     }
-    if (record?.author?.role === 'assistant') return `## ChatGPT${id ? ` <!-- turn_id=${id} -->` : ''}`;
+    if (record?.author?.role === 'assistant') {
+      return `## ChatGPT${id ? ` <!-- turn_id=${id} -->` : ''}`;
+    }
     return '';
   }
 
@@ -657,7 +706,11 @@
 
     for (let index = 0; index < records.length; index += 1) {
       const record = records[index];
-      onProgress?.({ stage: 'rendering', record_number: index + 1, record_count: records.length });
+      onProgress?.({
+        stage: 'rendering',
+        record_number: index + 1,
+        record_count: records.length
+      });
       const userText = cgVisibleUserText(record);
       if (userText) {
         flushAssistantBlock();
@@ -679,30 +732,26 @@
     return `${spine.records.map(record => JSON.stringify(record.message)).join('\n')}\n`;
   }
 
-  function progressStatus(prefix, stageOverride = null) {
+  function progressStatus(prefix) {
     if (!progressState) return statusText;
     const now = performance.now();
     const elapsed = now - progressState.started_at;
-    const stage = stageOverride ?? progressState.stage;
-    let eta = 'calculating…';
-    if (stage === 'fetching' && progressState.page_count > 0 && progressState.page_total > progressState.page_count) {
-      eta = formatDuration((elapsed / progressState.page_count) * (progressState.page_total - progressState.page_count));
-    } else if (stage === 'fetching' && progressState.page_total === progressState.page_count) {
-      eta = '0s';
-    } else if (stage === 'rendering' && progressState.record_number > 0 && progressState.record_count > progressState.record_number) {
-      const renderElapsed = Math.max(0, now - progressState.render_started_at);
-      eta = formatDuration((renderElapsed / progressState.record_number) * (progressState.record_count - progressState.record_number));
-    } else if (stage === 'rendering' && progressState.record_number === progressState.record_count) {
-      eta = '0s';
-    }
+    const stage = progressState.stage;
 
-    if (stage === 'counting') {
-      return `${prefix}: determining total API page count — ${progressState.page_count} page(s) found…\nElapsed: ${formatDuration(elapsed)}`;
-    }
     if (stage === 'fetching') {
-      return `${prefix}: fetched ${progressState.page_count}/${progressState.page_total} API page(s), ${progressState.raw_record_count} raw record(s)…\nElapsed: ${formatDuration(elapsed)} — ETA: ${eta}`;
+      return `${prefix}: fetched ${progressState.page_count} API page(s), ${progressState.raw_record_count} raw record(s)…\nElapsed: ${formatDuration(elapsed)}`;
     }
     if (stage === 'rendering') {
+      let eta = 'calculating…';
+      if (progressState.record_number > 0 && progressState.record_count > progressState.record_number) {
+        const renderElapsed = Math.max(0, now - progressState.render_started_at);
+        eta = formatDuration(
+          (renderElapsed / progressState.record_number) *
+          (progressState.record_count - progressState.record_number)
+        );
+      } else if (progressState.record_number === progressState.record_count) {
+        eta = '0s';
+      }
       return `${prefix}: rendering API record ${progressState.record_number}/${progressState.record_count}…\nElapsed: ${formatDuration(elapsed)} — ETA: ${eta}`;
     }
     return statusText;
@@ -710,7 +759,12 @@
 
   function refreshStatus() {
     const status = document.querySelector(`#${PANEL_ID} [data-role="status"]`);
-    if (status) status.textContent = progressState ? progressStatus(exportKind === 'md' ? 'Extract MD' : 'Extract JSONL') : statusText;
+    if (!status) return;
+    if (progressState) {
+      status.textContent = progressStatus(exportKind === 'md' ? 'Extract MD' : 'Extract JSONL');
+    } else {
+      status.textContent = statusText;
+    }
   }
 
   function setStatus(text) {
@@ -729,11 +783,14 @@
   }
 
   async function acquireWakeLock() {
-    if (!screenOnWhenCapturing || !exportInProgress || document.visibilityState !== 'visible' || !navigator.wakeLock?.request) return;
+    if (!screenOnWhenCapturing || !exportInProgress ||
+        document.visibilityState !== 'visible' || !navigator.wakeLock?.request) return;
     if (wakeLockSentinel) return;
     try {
       wakeLockSentinel = await navigator.wakeLock.request('screen');
-      wakeLockSentinel.addEventListener('release', () => { wakeLockSentinel = null; }, { once: true });
+      wakeLockSentinel.addEventListener('release', () => {
+        wakeLockSentinel = null;
+      }, { once: true });
     } catch {}
   }
 
@@ -741,7 +798,9 @@
     const sentinel = wakeLockSentinel;
     wakeLockSentinel = null;
     if (sentinel) {
-      try { await sentinel.release(); } catch {}
+      try {
+        await sentinel.release();
+      } catch {}
     }
   }
 
@@ -757,16 +816,15 @@
   }
 
   async function runExport(kind) {
-    if (exportInProgress) return;
+    if (exportInProgress || testInProgress) return;
     const conversationId = currentConversationId();
     assert(conversationId, 'Current page is not a ChatGPT conversation.');
     exportInProgress = true;
     exportKind = kind;
     progressState = {
       started_at: performance.now(),
-      stage: 'counting',
+      stage: 'fetching',
       page_count: 0,
-      page_total: 0,
       raw_record_count: 0,
       record_number: 0,
       record_count: 0,
@@ -776,27 +834,20 @@
     updateUi();
     await acquireWakeLock();
     try {
-      const totalPages = await discoverPageCount(conversationId, progress => {
-        progressState.stage = 'counting';
-        progressState.page_count = progress.page_count;
-        refreshStatus();
-      });
-      progressState.stage = 'fetching';
-      progressState.page_count = 0;
-      progressState.page_total = totalPages;
-      progressState.raw_record_count = 0;
-      const fetched = await fetchConversationPages(conversationId, totalPages, progress => {
+      const fetched = await fetchConversationPages(conversationId, progress => {
         progressState.stage = 'fetching';
         progressState.page_count = progress.page_count;
-        progressState.page_total = progress.page_total;
         progressState.raw_record_count = progress.raw_record_count;
         refreshStatus();
       });
       const spine = conversationSpineFromPages(fetched.pages);
       if (kind === 'jsonl') {
         const filename = `${sanitizeFileName(conversationTitle())}.jsonl`;
-        downloadBlob(new Blob([apiRecordsJsonl(spine)], { type: 'application/x-ndjson;charset=utf-8' }), filename);
-        setStatus(`Extracted ${spine.records.length} API records to ${filename}.`);
+        downloadBlob(
+          new Blob([apiRecordsJsonl(spine)], { type: 'application/x-ndjson;charset=utf-8' }),
+          filename
+        );
+        setStatus(`Extracted ${spine.records.length} API records from ${fetched.pages.length} API page(s) to ${filename}.`);
       } else {
         progressState.stage = 'rendering';
         progressState.render_started_at = performance.now();
@@ -808,11 +859,17 @@
           refreshStatus();
         });
         const filename = `${sanitizeFileName(conversationTitle())}.md`;
-        downloadBlob(new Blob([markdown], { type: 'text/markdown;charset=utf-8' }), filename);
-        setStatus(`Extracted ${spine.records.length} API records to ${filename}.`);
+        downloadBlob(
+          new Blob([markdown], { type: 'text/markdown;charset=utf-8' }),
+          filename
+        );
+        setStatus(`Extracted ${spine.records.length} API records from ${fetched.pages.length} API page(s) to ${filename}.`);
       }
     } catch (error) {
-      setStatus(`${kind === 'md' ? 'Markdown' : 'JSONL'} extraction failed: ${error instanceof Error ? error.message : String(error)}`);
+      setStatus(
+        `${kind === 'md' ? 'Markdown' : 'JSONL'} extraction failed: ` +
+        `${error instanceof Error ? error.message : String(error)}`
+      );
     } finally {
       progressState = null;
       exportInProgress = false;
@@ -821,6 +878,103 @@
       await releaseWakeLock();
       updateUi();
       refreshStatus();
+    }
+  }
+
+  async function testApiPaginationLogic() {
+    const calls = [];
+    const pagesByCursor = new Map([
+      [null, {
+        messages: [{ id: 'newest' }],
+        page_info: { has_next_page: false, has_previous_page: true, start_cursor: 'cursor-2' }
+      }],
+      ['cursor-2', {
+        messages: [{ id: 'middle' }],
+        page_info: { has_next_page: true, has_previous_page: true, start_cursor: 'cursor-3' }
+      }],
+      ['cursor-3', {
+        messages: [{ id: 'oldest' }],
+        page_info: { has_next_page: true, has_previous_page: false, start_cursor: null }
+      }]
+    ]);
+    const collected = await collectConversationPages(async cursor => {
+      calls.push(cursor);
+      assert(pagesByCursor.has(cursor), `Unexpected test cursor ${cursor}.`);
+      return pagesByCursor.get(cursor);
+    });
+    assert(collected.pages.length === 3, 'Pagination test did not collect all three pages.');
+    assert(calls.length === 3, 'Pagination test fetched a page more than once.');
+    assert(calls[0] === null && calls[1] === 'cursor-2' && calls[2] === 'cursor-3',
+      'Pagination test followed cursors in the wrong order.');
+
+    let repeatedCursorRejected = false;
+    try {
+      await collectConversationPages(async cursor => ({
+        messages: [{ id: String(cursor ?? 'first') }],
+        page_info: { has_next_page: cursor !== null, has_previous_page: true, start_cursor: 'loop' }
+      }));
+    } catch (error) {
+      repeatedCursorRejected = /repeated start_cursor/.test(String(error?.message ?? error));
+    }
+    assert(repeatedCursorRejected, 'Pagination test did not reject a repeated cursor.');
+  }
+
+  function testStableMessageIds() {
+    const pages = [
+      { messages: [{ id: 'b', marker: 'new-b' }, { id: 'c' }], page_info: {} },
+      { messages: [{ id: 'a' }, { id: 'b', marker: 'old-b' }], page_info: {} }
+    ];
+    const spine = conversationSpineFromPages(pages);
+    assert(spine.messages.length === 3, 'Stable-ID test did not deduplicate overlapping pages.');
+    assert(spine.messages.map(message => message.id).join(',') === 'a,b,c',
+      'Stable-ID test did not preserve oldest-to-newest order.');
+    assert(spine.messages.find(message => message.id === 'b')?.marker === 'new-b',
+      'Stable-ID test did not retain the newer duplicate record.');
+
+    let missingIdRejected = false;
+    try {
+      conversationSpineFromPages([{ messages: [{}], page_info: {} }]);
+    } catch (error) {
+      missingIdRejected = /missing a stable id/.test(String(error?.message ?? error));
+    }
+    assert(missingIdRejected, 'Stable-ID test did not reject a message without an id.');
+  }
+
+  async function testConversationApiAccessAndSchema() {
+    const conversationId = currentConversationId();
+    assert(conversationId, 'Current page is not a ChatGPT conversation.');
+    const data = await fetchOneConversationPage(
+      pageUrl(conversationId),
+      'Conversation API test request'
+    );
+    assert(conversationSchemaOk(data), 'Conversation API test response schema is unsupported.');
+    for (const message of data.messages) {
+      assert(typeof message?.id === 'string' && message.id.length > 0,
+        'Conversation API test page contains a message without a stable id.');
+    }
+  }
+
+  async function runTests() {
+    if (exportInProgress || testInProgress) return;
+    testInProgress = true;
+    updateUi();
+    const results = [];
+    const run = async (name, fn) => {
+      try {
+        await fn();
+        results.push(`✅ ${name}`);
+      } catch (error) {
+        results.push(`❌ ${name}: ${error instanceof Error ? error.message : String(error)}`);
+      }
+      setStatus(results.join('\n'));
+    };
+    try {
+      await run('API pagination', testApiPaginationLogic);
+      await run('Stable API message IDs', testStableMessageIds);
+      await run('Conversation API access/schema', testConversationApiAccessAndSchema);
+    } finally {
+      testInProgress = false;
+      updateUi();
     }
   }
 
@@ -862,13 +1016,18 @@
     if (title) title.textContent = `ChatGPT Recorder v${VERSION}`;
     const md = panel.querySelector('[data-role="extract-md"]');
     const jsonl = panel.querySelector('[data-role="extract-jsonl"]');
+    const test = panel.querySelector('[data-role="test"]');
     if (md) {
-      md.disabled = exportInProgress;
+      md.disabled = exportInProgress || testInProgress;
       md.textContent = exportInProgress && exportKind === 'md' ? 'Extracting…' : 'Extract MD';
     }
     if (jsonl) {
-      jsonl.disabled = exportInProgress;
+      jsonl.disabled = exportInProgress || testInProgress;
       jsonl.textContent = exportInProgress && exportKind === 'jsonl' ? 'Extracting…' : 'Extract JSONL';
+    }
+    if (test) {
+      test.disabled = exportInProgress || testInProgress;
+      test.textContent = testInProgress ? 'Testing…' : 'Test';
     }
     const screen = panel.querySelector('[data-role="screen-on"]');
     if (screen) screen.textContent = screenOnWhenCapturing ? 'ON' : 'OFF';
@@ -884,7 +1043,7 @@
       <button class="tm-close" type="button" aria-label="Close">×</button>
       <div class="tm-title" data-role="title"></div>
       <div class="tm-status" data-role="status"></div>
-      <div class="tm-row"><span class="tm-label">Diagnostics</span><select data-role="diagnostics"><option value="errors">Errors</option><option value="warnings">Warnings</option><option value="debug">Debug</option><option value="verbose">Verbose</option></select></div>
+      <div class="tm-row"><span class="tm-label">Diagnostics</span><select data-role="diagnostics"><option value="errors">Errors</option><option value="warnings">Warnings</option><option value="debug">Debug</option><option value="verbose">Verbose</option></select><button data-role="test" type="button">Test</button></div>
       <div class="tm-row"><span class="tm-label">Screen on when extracting</span><button class="tm-switch" data-role="screen-on" type="button"></button></div>
       <div class="tm-row"><button data-role="extract-jsonl" type="button">Extract JSONL</button><button data-role="extract-md" type="button">Extract MD</button></div>
     `;
@@ -896,6 +1055,7 @@
       localStorage.setItem('tm-conversation-recorder-diagnostics', diagnosticsLevel);
       logDiagnostic('debug', 'diagnostics-level-changed', { diagnostics_level: diagnosticsLevel });
     });
+    panel.querySelector('[data-role="test"]').addEventListener('click', () => void runTests());
     panel.querySelector('[data-role="screen-on"]').addEventListener('click', () => {
       screenOnWhenCapturing = !screenOnWhenCapturing;
       localStorage.setItem(SCREEN_ON_STORAGE_KEY, String(screenOnWhenCapturing));
