@@ -65,6 +65,27 @@ Before changing code or changing/clarifying a requirement:
    decision supersedes it; record the correction or superseding decision in the
    issue history.
 
+### Scope and evidence rule
+
+When implementing a requested fix or update:
+
+- Make only the change the user asked for.
+- Do not alter working production behaviour to address a hypothetical failure
+  mode, theoretical concern, synthetic-only scenario, cleanup opportunity,
+  refactor, or unsolicited improvement.
+- A synthetic test demonstrates what code would do under invented conditions;
+  it is not evidence that the production problem exists.
+- If a separate real issue is discovered, require concrete evidence from the
+  actual implementation, real API/DOM/data, diagnostics, or a reproducible
+  production failure before changing production behaviour for it.
+- Track that separate evidenced issue independently and discuss it with the user
+  rather than silently broadening the current task.
+- Implement a separate issue in its own commit. Do not bundle an unrelated fix,
+  redesign, refactor, cleanup, or speculative protection into the commit for the
+  user's requested change.
+- If stronger validation or diagnostics can gather evidence without changing
+  production behaviour, prefer that over speculative behaviour changes.
+
 Before delivering a revision, compare the implementation and tests against the
 inherited requirements recorded in relevant open and closed issues, including
 shared UI, lifecycle, recovery, file-safety, and validation behaviour. A new
