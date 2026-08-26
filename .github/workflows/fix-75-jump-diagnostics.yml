@@ -1,0 +1,34 @@
+name: Fix 75 Jump diagnostics
+
+on:
+  push:
+    branches: [issue-75-jump-diagnostics]
+
+permissions:
+  contents: write
+
+jobs:
+  fix:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: main
+          fetch-depth: 0
+      - name: Add persistent Jump diagnostics
+        shell: bash
+        run: |
+          git show origin/issue-75-jump-diagnostics:.github/fix75jumpdiag.py > /tmp/fix75jumpdiag.py
+          python3 /tmp/fix75jumpdiag.py
+          node --check chatgpt-conversation-markdown-export.user.js
+          grep -q '// @version      0.6.128' chatgpt-conversation-markdown-export.user.js
+          grep -q 'conversation-jump-request' chatgpt-conversation-markdown-export.user.js
+          grep -q 'conversation-jump-target-resolved' chatgpt-conversation-markdown-export.user.js
+          grep -q 'conversation-jump-materialization-step' chatgpt-conversation-markdown-export.user.js
+          grep -q 'conversation-jump-failure' chatgpt-conversation-markdown-export.user.js
+          git diff --check
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add chatgpt-conversation-markdown-export.user.js
+          git commit -m 'diagnostics: persist Jump request and failure path [skip ci]'
+          git push origin HEAD:main
