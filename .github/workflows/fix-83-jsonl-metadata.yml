@@ -12,10 +12,13 @@ jobs:
       contents: write
     steps:
       - uses: actions/checkout@v4
-        with:
-          ref: main
+      - name: Preserve patch script and switch to main
+        run: |
+          cp .github/fix83.py /tmp/fix83.py
+          git fetch origin main
+          git checkout -B main origin/main
       - name: Apply patch
-        run: python .github/fix83.py
+        run: python /tmp/fix83.py
       - name: Verify and commit
         run: |
           git diff --check
