@@ -1,0 +1,33 @@
+name: Fix 76 direct image URL status
+
+on:
+  push:
+    branches: [fix-76-direct-image-url-status]
+
+permissions:
+  contents: write
+
+jobs:
+  fix:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: main
+          fetch-depth: 0
+      - name: Resolve direct image URL status
+        shell: bash
+        run: |
+          git show origin/fix-76-direct-image-url-status:.github/fix76-direct-url.py > /tmp/fix76-direct.py
+          python3 /tmp/fix76-direct.py
+          node --check chatgpt-conversation-markdown-export.user.js
+          grep -q '// @version      0.6.125' chatgpt-conversation-markdown-export.user.js
+          grep -q 'cgResolveImagePointerMarkdown' chatgpt-conversation-markdown-export.user.js
+          grep -q 'HTTP 404 image was not classified as missing' chatgpt-conversation-markdown-export.user.js
+          grep -q 'HTTP 403 image was not classified as linked image-not-available' chatgpt-conversation-markdown-export.user.js
+          git diff --check
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add chatgpt-conversation-markdown-export.user.js
+          git commit -m 'fix: resolve direct ChatGPT image URLs [skip ci]'
+          git push origin HEAD:main
