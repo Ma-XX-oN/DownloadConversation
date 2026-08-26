@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         ChatGPT Conversation Markdown Recorder
 // @namespace    https://chatgpt.com/
-// @version      0.6.131
+// @version      0.6.132
 // @description  Exports the current ChatGPT conversation directly from the Conversation API as Markdown or JSONL.
 // @match        https://chatgpt.com/*
 // @match        https://chat.openai.com/*
@@ -1533,8 +1533,19 @@
     return `${output.join('\n\n')}\n`;
 }
 
-  function apiRecordsJsonl(spine) {
-    return `${spine.records.map(record => JSON.stringify(record.message)).join('\n')}\n`;
+  function conversationMetadataJsonlRecord(conversationId) {
+    assert(typeof conversationId === 'string' && conversationId.trim(), 'Conversation ID is required for JSONL export metadata.');
+    return {
+      record_type: 'chatgpt_conversation_metadata',
+      schema_version: 1,
+      conversation_id: conversationId.trim()
+    };
+  }
+
+  function apiRecordsJsonl(spine, conversationId = currentConversationId()) {
+    const metadata = conversationMetadataJsonlRecord(conversationId);
+    const records = [metadata, ...spine.records.map(record => record.message)];
+    return `${records.map(record => JSON.stringify(record)).join('\n')}\n`;
   }
 
   function progressStatus(prefix) {
