@@ -1,0 +1,33 @@
+name: Fix 75 auto-populate Jump index
+
+on:
+  push:
+    branches: [issue-75-auto-populate-jump-index]
+
+permissions:
+  contents: write
+
+jobs:
+  fix:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: main
+          fetch-depth: 0
+      - name: Remove manual-scroll prerequisite from Jump
+        shell: bash
+        run: |
+          git show origin/issue-75-auto-populate-jump-index:.github/fix75.py > /tmp/fix75.py
+          python3 /tmp/fix75.py
+          node --check chatgpt-conversation-markdown-export.user.js
+          grep -q '// @version      0.6.130' chatgpt-conversation-markdown-export.user.js
+          grep -q 'populateJumpTocIndex' chatgpt-conversation-markdown-export.user.js
+          grep -q 'toc-index-control-after-autopopulate' chatgpt-conversation-markdown-export.user.js
+          grep -q 'clientHeight \* 0.5' chatgpt-conversation-markdown-export.user.js
+          git diff --check
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add chatgpt-conversation-markdown-export.user.js
+          git commit -m 'fix: auto-populate Jump index when absent [skip ci]'
+          git push origin HEAD:main
