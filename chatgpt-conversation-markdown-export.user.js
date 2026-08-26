@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         ChatGPT Conversation Markdown Recorder
 // @namespace    https://chatgpt.com/
-// @version      0.6.125
+// @version      0.6.126
 // @description  Exports the current ChatGPT conversation directly from the Conversation API as Markdown or JSONL.
 // @match        https://chatgpt.com/*
 // @match        https://chat.openai.com/*
@@ -1573,7 +1573,13 @@
       const target = resolveJumpIdentifier(spine, identifier);
       target.spine = spine;
       setStatus(`Jumping to ${target.role === 'assistant' ? 'Assistant' : 'User'} turn…`);
-      await jumpToResolvedTarget(target);
+      const section = await jumpToResolvedTarget(target);
+      if (target.role === 'user') {
+        const targetRecord = spine.records.find(item => item?.message_id === target.message_id)?.message;
+        if (targetRecord && userImagePointerCount(targetRecord) > 0) {
+          logInternalImagePointerEvidence(targetRecord, section, mountedUserConversationImages(section));
+        }
+      }
       setStatus(`Jumped to ${target.role === 'assistant' ? 'Assistant' : 'User'} turn ${target.message_id}.`);
     } catch (error) {
       setStatus(`Jump failed: ${error instanceof Error ? error.message : String(error)}`);
@@ -1604,6 +1610,104 @@
       images.push(image);
     }
     return images;
+  }
+
+  function internalImagePointerProtocol(source) {
+    const value = String(source ?? '').trim().toLowerCase();
+    if (value.startsWith('sandbox://')) return 'sandbox';
+    if (value.startsWith('sediment://')) return 'sediment';
+    return null;
+  }
+
+  function internalImagePointerAssetKey(source) {
+    const value = String(source ?? '').trim();
+    const protocol = internalImagePointerProtocol(value);
+    if (!protocol) return '';
+    return value
+      .replace(/^[a-z]+:\/\//i, '')
+      .split(/[?#]/, 1)[0]
+      .split('/')
+      .filter(Boolean)
+      .pop() ?? '';
+  }
+
+  function imagePointerDomCandidate(image, ordinal) {
+    if (!(image instanceof HTMLImageElement)) return null;
+    const button = image.closest('button');
+    const anchor = image.closest('a[href]');
+    return {
+      ordinal,
+      src: image.getAttribute('src') || null,
+      current_src: image.currentSrc || null,
+      alt: image.getAttribute('alt') || null,
+      title: image.getAttribute('title') || null,
+      button_aria_label: button?.getAttribute('aria-label') || null,
+      anchor_href: anchor?.getAttribute('href') || null
+    };
+  }
+
+  function imagePointerResourceEvidence(source, domCandidate) {
+    const assetKey = internalImagePointerAssetKey(source);
+    const exactUrls = new Set([
+      domCandidate?.src,
+      domCandidate?.current_src,
+      domCandidate?.anchor_href
+    ].filter(Boolean));
+    const exact = [];
+    const heuristic = [];
+    const entries = performance.getEntriesByType('resource').slice(-500);
+    for (const entry of entries) {
+      if (!(entry instanceof PerformanceResourceTiming)) continue;
+      const name = String(entry.name || '');
+      const record = {
+        url: name,
+        initiator_type: entry.initiatorType || null,
+        response_status: Number.isFinite(entry.responseStatus) ? entry.responseStatus : null,
+        transfer_size: Number.isFinite(entry.transferSize) ? entry.transferSize : null,
+        decoded_body_size: Number.isFinite(entry.decodedBodySize) ? entry.decodedBodySize : null
+      };
+      if (exactUrls.has(name)) {
+        exact.push({ ...record, basis: 'dom-url-match' });
+        continue;
+      }
+      if (assetKey && (name.includes(assetKey) || name.includes(encodeURIComponent(assetKey)))) {
+        exact.push({ ...record, basis: 'asset-token-match' });
+        continue;
+      }
+      if (['img', 'fetch', 'xmlhttprequest'].includes(entry.initiatorType) && /(?:image|file|asset|download|backend-api)/i.test(name)) {
+        heuristic.push({ ...record, basis: 'recent-image-like-resource' });
+      }
+    }
+    return {
+      asset_key: assetKey || null,
+      exact: exact.slice(-20),
+      heuristic: heuristic.slice(-30)
+    };
+  }
+
+  function logInternalImagePointerEvidence(record, section, candidates) {
+    const parts = Array.isArray(record?.content?.parts) ? record.content.parts : [];
+    let imageOrdinal = 0;
+    for (const part of parts) {
+      if (!part || typeof part !== 'object' || part.content_type !== 'image_asset_pointer') continue;
+      imageOrdinal += 1;
+      const source = cgImagePointerSource(part);
+      const protocol = internalImagePointerProtocol(source);
+      if (!protocol) continue;
+      const image = candidates[imageOrdinal - 1] ?? null;
+      const domCandidate = imagePointerDomCandidate(image, imageOrdinal);
+      logDiagnostic('debug', 'conversation-image-pointer-resolution-evidence', {
+        message_id: record.id ?? null,
+        turn_id: section?.getAttribute?.('data-turn-id') ?? null,
+        image_ordinal: imageOrdinal,
+        pointer_protocol: protocol,
+        pointer_source: source,
+        dom_match_basis: domCandidate ? 'same-turn-image-ordinal' : null,
+        dom_candidate: domCandidate,
+        mounted_image_count: candidates.length,
+        resource_candidates: imagePointerResourceEvidence(source, domCandidate)
+      });
+    }
   }
 
   async function imageElementDataUrl(image) {
@@ -1646,6 +1750,7 @@
             section = await jumpToResolvedTarget(target);
           }
           const candidates = mountedUserConversationImages(section);
+          logInternalImagePointerEvidence(record, section, candidates);
           for (let index = 0; index < Math.min(expected, candidates.length); index += 1) {
             try {
               const dataUrl = await imageElementDataUrl(candidates[index]);
