@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         ChatGPT Conversation Markdown Recorder
 // @namespace    https://chatgpt.com/
-// @version      0.6.126
+// @version      0.6.127
 // @description  Exports the current ChatGPT conversation directly from the Conversation API as Markdown or JSONL.
 // @match        https://chatgpt.com/*
 // @match        https://chat.openai.com/*
@@ -35,6 +35,8 @@
   let progressState = null;
   let testInProgress = false;
   let jumpInProgress = false;
+  let clickDiagnosticSequence = 0;
+  let activeClickDiagnostic = null;
   let diagnosticLog = [];
   try {
     const storedDiagnosticLog = JSON.parse(sessionStorage.getItem(DIAGNOSTIC_LOG_STORAGE_KEY) || '[]');
@@ -146,6 +148,127 @@
     } catch {}
   }
 
+  function clickDiagnosticElementSnapshot(element) {
+    if (!(element instanceof Element)) return null;
+    const attributes = {};
+    for (const attribute of [...element.attributes].slice(0, 40)) {
+      if (attribute.name.startsWith('data-') ||
+          ['href', 'src', 'aria-label', 'title', 'alt', 'download', 'target', 'role'].includes(attribute.name)) {
+        attributes[attribute.name] = boundedDiagnosticText(attribute.value, 1000);
+      }
+    }
+    return {
+      tag: element.tagName.toLowerCase(),
+      attributes,
+      href_property: element instanceof HTMLAnchorElement ? element.href || null : null,
+      src_property: element instanceof HTMLImageElement ? element.src || null : null,
+      current_src: element instanceof HTMLImageElement ? element.currentSrc || null : null,
+      text: boundedDiagnosticText(element.textContent?.trim() || '', 500) || null
+    };
+  }
+
+  function clickDiagnosticTurnContext(target) {
+    const section = target instanceof Element ? target.closest('section[data-turn-id]') : null;
+    if (!(section instanceof HTMLElement)) return null;
+    const message = section.querySelector('[data-message-id]');
+    const clickedImage = target.closest('img');
+    let imageOrdinal = null;
+    if (clickedImage instanceof HTMLImageElement) {
+      const images = [...section.querySelectorAll(
+        'button[aria-label^="Open image:"] img, [class~="group/message-image"] img'
+      )];
+      const index = images.indexOf(clickedImage);
+      if (index >= 0) imageOrdinal = index + 1;
+    }
+    return {
+      turn_id: section.getAttribute('data-turn-id') || null,
+      message_id: message?.getAttribute('data-message-id') || null,
+      role: section.getAttribute('data-turn') || null,
+      image_ordinal: imageOrdinal
+    };
+  }
+
+  function recordClickDiagnosticNetworkRequest(url, initiatorType) {
+    const active = activeClickDiagnostic;
+    if (!active || performance.now() > active.deadline) return;
+    const value = typeof url === 'string' ? url : String(url ?? '');
+    if (!value) return;
+    const item = {
+      url: boundedDiagnosticText(value, 2000),
+      initiator_type: initiatorType,
+      elapsed_ms: Math.round(performance.now() - active.started_at)
+    };
+    active.network_requests.push(item);
+    if (active.network_requests.length > 50) active.network_requests.shift();
+    logDiagnostic('debug', 'conversation-click-network-request', {
+      click_sequence: active.sequence,
+      ...item
+    });
+  }
+
+  function finishConversationClickDiagnostic(observation, reason = 'timer') {
+    if (!observation || observation.finished) return;
+    observation.finished = true;
+    if (activeClickDiagnostic === observation) activeClickDiagnostic = null;
+    const endedAt = performance.now();
+    const resources = performance.getEntriesByType('resource')
+      .filter(entry => entry instanceof PerformanceResourceTiming &&
+        entry.startTime >= observation.started_at - 1 && entry.startTime <= endedAt + 1)
+      .slice(-100)
+      .map(entry => ({
+        url: boundedDiagnosticText(entry.name, 2000),
+        initiator_type: entry.initiatorType || null,
+        response_status: Number.isFinite(entry.responseStatus) ? entry.responseStatus : null,
+        transfer_size: Number.isFinite(entry.transferSize) ? entry.transferSize : null,
+        decoded_body_size: Number.isFinite(entry.decodedBodySize) ? entry.decodedBodySize : null,
+        start_offset_ms: Math.round(entry.startTime - observation.started_at),
+        duration_ms: Math.round(entry.duration)
+      }));
+    logDiagnostic('debug', 'conversation-click-resolution-result', {
+      click_sequence: observation.sequence,
+      finish_reason: reason,
+      observation_ms: Math.round(endedAt - observation.started_at),
+      turn: observation.turn,
+      clicked: observation.clicked,
+      closest_anchor: observation.closest_anchor,
+      closest_button: observation.closest_button,
+      closest_image: observation.closest_image,
+      network_requests: observation.network_requests,
+      new_performance_resources: resources
+    });
+  }
+
+  function captureConversationClickDiagnostic(event) {
+    const target = event.target instanceof Element ? event.target : null;
+    if (!target || !target.closest('#thread')) return;
+    const turn = clickDiagnosticTurnContext(target);
+    if (!turn) return;
+    if (activeClickDiagnostic) finishConversationClickDiagnostic(activeClickDiagnostic, 'superseded-by-next-click');
+    const startedAt = performance.now();
+    const observation = {
+      sequence: ++clickDiagnosticSequence,
+      started_at: startedAt,
+      deadline: startedAt + 2500,
+      turn,
+      clicked: clickDiagnosticElementSnapshot(target),
+      closest_anchor: clickDiagnosticElementSnapshot(target.closest('a[href]')),
+      closest_button: clickDiagnosticElementSnapshot(target.closest('button')),
+      closest_image: clickDiagnosticElementSnapshot(target.closest('img')),
+      network_requests: [],
+      finished: false
+    };
+    activeClickDiagnostic = observation;
+    logDiagnostic('debug', 'conversation-click-resolution-start', {
+      click_sequence: observation.sequence,
+      turn: observation.turn,
+      clicked: observation.clicked,
+      closest_anchor: observation.closest_anchor,
+      closest_button: observation.closest_button,
+      closest_image: observation.closest_image
+    });
+    setTimeout(() => finishConversationClickDiagnostic(observation, 'timer'), 2500);
+  }
+
   function installNetworkCapture() {
     if (captureInstalled) return;
     const pageWindow = typeof unsafeWindow !== 'undefined' ? unsafeWindow : window;
@@ -161,7 +284,9 @@
           const PageRequest = pageWindow.Request || Request;
           request = input instanceof PageRequest ? input : new PageRequest(input, init);
         } catch {}
-        rememberApiRequestContext(request?.url ?? String(input), request?.headers, init.headers);
+        const requestUrl = request?.url ?? String(input);
+        rememberApiRequestContext(requestUrl, request?.headers, init.headers);
+        recordClickDiagnosticNetworkRequest(requestUrl, 'fetch');
         return originalFetch.apply(this, args);
       };
     }
@@ -186,7 +311,16 @@
       XHR.prototype.send = function(body) {
         const info = this.__tmApiRequest || { url: '', headers: {} };
         rememberApiRequestContext(info.url, info.headers);
+        recordClickDiagnosticNetworkRequest(info.url, 'xmlhttprequest');
         return originalSend.call(this, body);
+      };
+    }
+
+    if (typeof pageWindow.open === 'function') {
+      const originalOpen = pageWindow.open;
+      pageWindow.open = function(url, ...rest) {
+        recordClickDiagnosticNetworkRequest(url, 'window.open');
+        return originalOpen.call(this, url, ...rest);
       };
     }
 
@@ -2264,6 +2398,8 @@
     else void releaseWakeLock();
   });
 
+  document.addEventListener('click', captureConversationClickDiagnostic, true);
+  window.addEventListener('pagehide', () => finishConversationClickDiagnostic(activeClickDiagnostic, 'pagehide'));
   installNetworkCapture();
   bootstrapUi();
 })();
