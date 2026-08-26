@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         ChatGPT Conversation Markdown Recorder
 // @namespace    https://chatgpt.com/
-// @version      0.6.130
+// @version      0.6.131
 // @description  Exports the current ChatGPT conversation directly from the Conversation API as Markdown or JSONL.
 // @match        https://chatgpt.com/*
 // @match        https://chat.openai.com/*
@@ -2050,11 +2050,14 @@
         const expected = expectedParts.length;
         const images = expectedParts.map(part => cgImagePointerFallback(part));
         try {
-          let section = mountedTurnSection(record.id, 'user');
+          const section = mountedTurnSection(record.id, 'user');
           if (!(section instanceof HTMLElement)) {
-            const target = resolveJumpIdentifier(spine, record.id);
-            target.spine = spine;
-            section = await jumpToResolvedTarget(target);
+            logDiagnostic('debug', 'conversation-image-dom-recovery-skipped', {
+              message_id: record.id,
+              reason: 'turn-not-mounted',
+              expected_image_count: expected
+            });
+            throw new Error(`Turn ${record.id} is not mounted; DOM image recovery skipped to avoid scrolling.`);
           }
           const candidates = mountedUserConversationImages(section);
           logInternalImagePointerEvidence(record, section, candidates);
@@ -2085,6 +2088,9 @@
             expected_image_count: expected,
             message: error instanceof Error ? error.message : String(error)
           });
+          for (let index = 0; index < expected; index += 1) {
+            images[index] = await cgResolveImagePointerMarkdown(expectedParts[index], record.id, index + 1);
+          }
         }
         recovered.set(record.id, images);
       }
