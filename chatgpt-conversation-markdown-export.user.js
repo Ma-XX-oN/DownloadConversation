@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         ChatGPT Conversation Markdown Recorder
 // @namespace    https://chatgpt.com/
-// @version      0.6.128
+// @version      0.6.129
 // @description  Exports the current ChatGPT conversation directly from the Conversation API as Markdown or JSONL.
 // @match        https://chatgpt.com/*
 // @match        https://chat.openai.com/*
@@ -1232,6 +1232,29 @@
     return '';
   }
 
+  function cgGeneratedSandboxDownloadUrl(source, record) {
+    if (record?.author?.role !== 'assistant') return null;
+    const value = String(source ?? '').trim();
+    const match = value.match(/^sandbox:(\/\/)?(\/mnt\/data\/.*)$/i);
+    if (!match) return null;
+    const conversationId = currentConversationId();
+    const messageId = record?.id;
+    if (!conversationId || !messageId) return null;
+    const sandboxPath = match[2];
+    return `${location.origin}/backend-api/conversation/${encodeURIComponent(conversationId)}` +
+      `/interpreter/download?message_id=${encodeURIComponent(messageId)}` +
+      `&sandbox_path=${encodeURIComponent(sandboxPath)}&download_intent=true`;
+  }
+
+  function cgRewriteGeneratedSandboxLinks(text, record) {
+    if (!text || record?.author?.role !== 'assistant') return text;
+    return String(text).replace(/(\[[^\]]*\]\()(sandbox:(?:\/\/)?\/mnt\/data\/[^)]+)(\))/gi,
+      (whole, prefix, source, suffix) => {
+        const url = cgGeneratedSandboxDownloadUrl(source, record);
+        return url ? `${prefix}${url}${suffix}` : whole;
+      });
+  }
+
   function cgRenderInlineReferences(text, record, fileRefIndex = new Map()) {
     if (!text) return text;
     const references = Array.isArray(record?.metadata?.content_references)
@@ -1326,7 +1349,9 @@
         const stripped = value.trim();
         if (role === 'tool' && type === 'multimodal_text' &&
             stripped.startsWith('Make sure to include ') && stripped.includes('cite this file')) continue;
-        const rendered = cgStripInlineTokens(cgRenderInlineReferences(value, record, fileRefIndex)).trim();
+        const rendered = cgRewriteGeneratedSandboxLinks(
+          cgStripInlineTokens(cgRenderInlineReferences(value, record, fileRefIndex)), record
+        ).trim();
         if (rendered) cleaned.push(rendered);
       }
     }
@@ -2235,6 +2260,27 @@
     }
   }
 
+  function testGeneratedSandboxDownloadLink() {
+    const conversationId = currentConversationId();
+    assert(conversationId, 'Sandbox-link test requires a ChatGPT conversation page.');
+    const record = { id: 'assistant-test-id', author: { role: 'assistant' } };
+    const source = 'sandbox:/mnt/data/work107/chatgpt-conversation-markdown-export.user.js';
+    const url = cgGeneratedSandboxDownloadUrl(source, record);
+    assert(url && url.includes(`/backend-api/conversation/${encodeURIComponent(conversationId)}/interpreter/download?`),
+      'sandbox file link did not use the observed interpreter/download route.');
+    assert(url.includes('message_id=assistant-test-id'), 'sandbox file link omitted Assistant message_id.');
+    assert(url.includes('sandbox_path=%2Fmnt%2Fdata%2Fwork107%2Fchatgpt-conversation-markdown-export.user.js'),
+      'sandbox file link did not preserve/encode sandbox_path.');
+    assert(url.endsWith('&download_intent=true'), 'sandbox file link did not force download_intent=true.');
+    const markdown = cgRewriteGeneratedSandboxLinks(`[Download userscript](${source})`, record);
+    assert(markdown === `[Download userscript](${url})`, 'sandbox Markdown link rewrite changed label or URL unexpectedly.');
+    const userRecord = { id: 'user-test-id', author: { role: 'user' } };
+    assert(cgRewriteGeneratedSandboxLinks(`[x](${source})`, userRecord) === `[x](${source})`,
+      'sandbox link rewrite should not apply to User records.');
+    assert(cgRewriteGeneratedSandboxLinks('[x](sediment://file_123)', record) === '[x](sediment://file_123)',
+      'sandbox link rewrite must not rewrite sediment pointers.');
+  }
+
   async function runTests() {
     if (exportInProgress || testInProgress || jumpInProgress) return;
     testInProgress = true;
@@ -2254,6 +2300,7 @@
       await run('Stable API message IDs', testStableMessageIds);
       await run('Multimodal User + chronological order', testMultimodalUserAndChronologicalOrder);
       await run('AI-transcript renderer parity', testRendererParityFeatures);
+      await run('Generated sandbox download link', testGeneratedSandboxDownloadLink);
       await run('Jump identifier resolution', testJumpIdentifierResolution);
       await run('Conversation API access/schema', testConversationApiAccessAndSchema);
     } finally {
