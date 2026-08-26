@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         ChatGPT Conversation Markdown Recorder
 // @namespace    https://chatgpt.com/
-// @version      0.6.124
+// @version      0.6.125
 // @description  Exports the current ChatGPT conversation directly from the Conversation API as Markdown or JSONL.
 // @match        https://chatgpt.com/*
 // @match        https://chat.openai.com/*
@@ -1132,6 +1132,34 @@
     return clean ? `[image not available](${clean})` : '[image not available]';
   }
 
+  function cgImageFailureMarkdown(source, httpStatus = null) {
+    if (httpStatus === 404 || httpStatus === 410) return '[image missing]';
+    return cgImageUnavailableMarkdown(source);
+  }
+
+  async function cgResolveImagePointerMarkdown(part, recordId, imageOrdinal) {
+    const source = cgImagePointerSource(part);
+    if (!source) return '[image missing]';
+    if (source.startsWith('data:image/')) return `![image-${recordId}-${imageOrdinal}](${source})`;
+    let parsed = null;
+    try { parsed = new URL(source, location.href); } catch {}
+    if (!parsed || !['http:', 'https:'].includes(parsed.protocol)) return cgImageUnavailableMarkdown(source);
+    try {
+      const response = await fetch(source, { method: 'GET', credentials: 'include' });
+      if (!response.ok) return cgImageFailureMarkdown(source, response.status);
+      const blob = await response.blob();
+      const dataUrl = await new Promise((resolve, reject) => {
+        const reader = new FileReader();
+        reader.onload = () => resolve(String(reader.result || ''));
+        reader.onerror = () => reject(reader.error || new Error('Could not read conversational image blob.'));
+        reader.readAsDataURL(blob);
+      });
+      return dataUrl ? `![image-${recordId}-${imageOrdinal}](${dataUrl})` : cgImageUnavailableMarkdown(source);
+    } catch {
+      return cgImageUnavailableMarkdown(source);
+    }
+  }
+
   function cgImagePointerFallback(part) {
     const source = cgImagePointerSource(part);
     return source ? cgImageUnavailableMarkdown(source) : '[image missing]';
@@ -1624,13 +1652,9 @@
               if (dataUrl) images[index] = `![image-${record.id}-${index + 1}](${dataUrl})`;
             } catch (error) {
               const status = Number(error?.httpStatus);
-              if (status === 404 || status === 410) {
-                images[index] = '[image missing]';
-              } else {
-                const source = candidates[index]?.currentSrc || candidates[index]?.getAttribute('src') ||
-                  cgImagePointerSource(expectedParts[index]);
-                images[index] = cgImageUnavailableMarkdown(source);
-              }
+              const source = candidates[index]?.currentSrc || candidates[index]?.getAttribute('src') ||
+                cgImagePointerSource(expectedParts[index]);
+              images[index] = cgImageFailureMarkdown(source, status);
               logDiagnostic('warnings', 'conversation-image-recovery-failure', {
                 message_id: record.id,
                 image_ordinal: index + 1,
@@ -1639,6 +1663,9 @@
                 message: error instanceof Error ? error.message : String(error)
               });
             }
+          }
+          for (let index = candidates.length; index < expected; index += 1) {
+            images[index] = await cgResolveImagePointerMarkdown(expectedParts[index], record.id, index + 1);
           }
         } catch (error) {
           logDiagnostic('warnings', 'conversation-image-turn-recovery-failure', {
@@ -1825,6 +1852,11 @@
     assert(fallbackMarkdown.indexOf(unavailableToken) < fallbackMarkdown.indexOf(missingToken) &&
       fallbackMarkdown.indexOf(missingToken) < fallbackMarkdown.indexOf('First User'),
       'image placeholders did not preserve source order before adjacent User text.');
+    assert(cgImageFailureMarkdown('https://example.test/missing.png', 404) === '[image missing]',
+      'HTTP 404 image was not classified as missing.');
+    assert(cgImageFailureMarkdown('https://example.test/private.png', 403) ===
+      '[image not available](https://example.test/private.png)',
+      'HTTP 403 image was not classified as linked image-not-available.');
     const recoveredToken = '![image-u1-1](data:image/png;base64,AAAA)';
     const markdown = renderConversationMarkdown(spine, undefined, new Map([['u1', [recoveredToken, missingToken]]]));
     assert(markdown.includes('First User'), 'multimodal_text User content was not rendered.');
