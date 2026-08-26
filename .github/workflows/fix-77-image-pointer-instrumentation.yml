@@ -1,0 +1,33 @@
+name: Fix 77 image pointer instrumentation
+
+on:
+  push:
+    branches: [issue-77-image-pointer-instrumentation]
+
+permissions:
+  contents: write
+
+jobs:
+  fix:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: main
+          fetch-depth: 0
+      - name: Add image pointer diagnostics
+        shell: bash
+        run: |
+          git show origin/issue-77-image-pointer-instrumentation:.github/fix77.py > /tmp/fix77.py
+          python3 /tmp/fix77.py
+          node --check chatgpt-conversation-markdown-export.user.js
+          grep -q '// @version      0.6.126' chatgpt-conversation-markdown-export.user.js
+          grep -q 'conversation-image-pointer-resolution-evidence' chatgpt-conversation-markdown-export.user.js
+          grep -q 'same-turn-image-ordinal' chatgpt-conversation-markdown-export.user.js
+          grep -q 'asset-token-match' chatgpt-conversation-markdown-export.user.js
+          git diff --check
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add chatgpt-conversation-markdown-export.user.js
+          git commit -m 'diagnostics: trace internal image pointer resolution [skip ci]'
+          git push origin HEAD:main
