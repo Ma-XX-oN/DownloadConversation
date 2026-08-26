@@ -1,0 +1,32 @@
+name: Fix 78 sandbox download links
+
+on:
+  push:
+    branches: [issue-78-sandbox-download-links]
+
+permissions:
+  contents: write
+
+jobs:
+  fix:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: main
+          fetch-depth: 0
+      - name: Translate generated sandbox links
+        shell: bash
+        run: |
+          git show origin/issue-78-sandbox-download-links:.github/fix78.py > /tmp/fix78.py
+          python3 /tmp/fix78.py
+          node --check chatgpt-conversation-markdown-export.user.js
+          grep -q '// @version      0.6.129' chatgpt-conversation-markdown-export.user.js
+          grep -q 'download_intent=true' chatgpt-conversation-markdown-export.user.js
+          grep -q 'testGeneratedSandboxDownloadLink' chatgpt-conversation-markdown-export.user.js
+          git diff --check
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add chatgpt-conversation-markdown-export.user.js
+          git commit -m 'fix: translate generated sandbox download links [skip ci]'
+          git push origin HEAD:main
