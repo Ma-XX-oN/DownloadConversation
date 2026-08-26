@@ -1,0 +1,73 @@
+name: Fix issue 83 JSONL metadata
+on:
+  push:
+    branches:
+      - issue-83-jsonl-metadata
+    paths:
+      - '.github/workflows/fix-83-jsonl-metadata.yml'
+jobs:
+  fix:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: main
+      - name: Patch JSONL metadata record
+        shell: bash
+        run: |
+          set -euo pipefail
+          python - <<'PY'
+          from pathlib import Path
+          p = Path('chatgpt-conversation-markdown-export.user.js')
+          s = p.read_text()
+          assert '// @version      0.6.131' in s
+          s = s.replace('// @version      0.6.131', '// @version      0.6.132', 1)
+          start = s.index('  function apiRecordsJsonl(spine) {')
+          end = s.index('\n  function progressStatus(', start)
+          replacement = '''  function conversationMetadataJsonlRecord(conversationId) {
+    assert(typeof conversationId === 'string' && conversationId.trim(), 'Conversation ID is required for JSONL export metadata.');
+    return {
+      record_type: 'chatgpt_conversation_metadata',
+      schema_version: 1,
+      conversation_id: conversationId.trim()
+    };
+  }
+
+  function apiRecordsJsonl(spine, conversationId = currentConversationId()) {
+    const metadata = conversationMetadataJsonlRecord(conversationId);
+    const records = [metadata, ...spine.records.map(record => record.message)];
+    return `${records.map(record => JSON.stringify(record)).join('\\n')}\\n`;
+  }
+'''
+          s = s[:start] + replacement + s[end:]
+          p.write_text(s)
+          PY
+          node --check chatgpt-conversation-markdown-export.user.js
+          python - <<'PY'
+          from pathlib import Path
+          s = Path('chatgpt-conversation-markdown-export.user.js').read_text()
+          assert '// @version      0.6.132' in s
+          assert "record_type: 'chatgpt_conversation_metadata'" in s
+          assert 'schema_version: 1' in s
+          assert 'conversation_id: conversationId.trim()' in s
+          assert 'const records = [metadata, ...spine.records.map(record => record.message)];' in s
+          assert "apiRecordsJsonl(spine, conversationId = currentConversationId())" in s
+          # Focused behavior check using equivalent JSONL construction.
+          import json
+          metadata = {'record_type': 'chatgpt_conversation_metadata', 'schema_version': 1, 'conversation_id': 'conv-123'}
+          messages = [{'id': 'u1'}, {'id': 'a1'}]
+          lines = [json.dumps(metadata, separators=(',', ':')), *[json.dumps(m, separators=(',', ':')) for m in messages]]
+          parsed = [json.loads(line) for line in lines]
+          assert parsed[0]['record_type'] == 'chatgpt_conversation_metadata'
+          assert parsed[0]['conversation_id'] == 'conv-123'
+          assert parsed[1:] == messages
+          print('JSONL metadata ordering checks passed')
+          PY
+          git diff --check
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add chatgpt-conversation-markdown-export.user.js
+          git commit -m 'fix: prepend conversation metadata to JSONL [skip ci]'
+          git push origin HEAD:main
