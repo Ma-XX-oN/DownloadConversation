@@ -1,0 +1,34 @@
+name: Fix 77 click correlation
+
+on:
+  push:
+    branches: [issue-77-click-correlation]
+
+permissions:
+  contents: write
+
+jobs:
+  fix:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: main
+          fetch-depth: 0
+      - name: Add click correlation diagnostics
+        shell: bash
+        run: |
+          git show origin/issue-77-click-correlation:.github/fix77click.py > /tmp/fix77click.py
+          python3 /tmp/fix77click.py
+          node --check chatgpt-conversation-markdown-export.user.js
+          grep -q '// @version      0.6.127' chatgpt-conversation-markdown-export.user.js
+          grep -q 'conversation-click-resolution-start' chatgpt-conversation-markdown-export.user.js
+          grep -q 'conversation-click-resolution-result' chatgpt-conversation-markdown-export.user.js
+          grep -q 'conversation-click-network-request' chatgpt-conversation-markdown-export.user.js
+          grep -q "document.addEventListener('click', captureConversationClickDiagnostic, true)" chatgpt-conversation-markdown-export.user.js
+          git diff --check
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add chatgpt-conversation-markdown-export.user.js
+          git commit -m 'diagnostics: correlate conversation clicks with resource URLs [skip ci]'
+          git push origin HEAD:main
