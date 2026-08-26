@@ -1,0 +1,32 @@
+name: Fix 76 image status and order
+
+on:
+  push:
+    branches: [fix-76-image-status-order]
+
+permissions:
+  contents: write
+
+jobs:
+  fix:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: main
+          fetch-depth: 0
+      - name: Fix image status and ordering
+        shell: bash
+        run: |
+          git show origin/fix-76-image-status-order:.github/fix76-status-order.py > /tmp/fix76.py
+          python3 /tmp/fix76.py
+          node --check chatgpt-conversation-markdown-export.user.js
+          grep -q '// @version      0.6.124' chatgpt-conversation-markdown-export.user.js
+          grep -q '\[image not available\](sediment://fixture-image)' chatgpt-conversation-markdown-export.user.js
+          grep -q 'httpStatus = response.status' chatgpt-conversation-markdown-export.user.js
+          git diff --check
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add chatgpt-conversation-markdown-export.user.js
+          git commit -m 'fix: preserve image status and source order [skip ci]'
+          git push origin HEAD:main
