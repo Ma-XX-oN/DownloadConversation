@@ -42,7 +42,7 @@ Object.assign(context, {
     return '';
   }
 });
-vm.runInNewContext(`${helperSource}\nthis.__phase5 = { canonicalEventsBySourceRecord, canonicalPlainRecordEligible, canonicalPlainRecordBlock };`, context);
+vm.runInNewContext(`${helperSource}\nthis.__phase5 = { canonicalEventsBySourceRecord, canonicalPlainRecordEligible, canonicalPlainRecordBlock, canonicalPlainAssistantSegmentEligible, canonicalPlainAssistantSegmentBlock };`, context);
 const phase5 = context.__phase5;
 
 const quoteStart = userscript.indexOf('  function quoteMarkdown(markdown) {');
@@ -161,6 +161,32 @@ test('provider-specific rich records stay on the existing DownloadConversation r
   assert.equal(phase5.canonicalPlainRecordEligible(cited), false);
   assert.equal(phase5.canonicalPlainRecordEligible(sandbox), false);
   assert.equal(phase5.canonicalPlainRecordEligible(hidden), false);
-  assert.match(userscript, /pendingThoughts\.length === 0/,
-    'Assistant records with pending thoughts must remain on the existing host composition path.');
+});
+
+test('plain Assistant thought segments use the canonical renderer', () => {
+  const thought = {
+    id: 'thought-1',
+    author: { role: 'assistant', name: null, metadata: {} },
+    create_time: 200,
+    update_time: null,
+    content: {
+      content_type: 'thoughts',
+      thoughts: [{ summary: 'Checking', content: 'Inspecting the request.' }]
+    },
+    metadata: {},
+    recipient: 'all',
+    channel: 'analysis',
+    status: 'finished_successfully',
+    end_turn: false
+  };
+  const final = textRecord('assistant-final', 'assistant', 'Done.', { create_time: 201 });
+  const records = [thought, final];
+  const eventsByRecord = phase5.canonicalEventsBySourceRecord(records);
+  const events = records.map(record => eventsByRecord.get(record.id));
+  assert.equal(phase5.canonicalPlainAssistantSegmentEligible(records), true);
+  const rendered = phase5.canonicalPlainAssistantSegmentBlock(records, events);
+  assert.match(rendered, /^## ChatGPT <!-- turn_id=assistant-final -->/);
+  assert.match(rendered, /<summary>Thoughts<\/summary>/);
+  assert.match(rendered, /Inspecting the request\./);
+  assert.match(rendered, /> Done\./);
 });

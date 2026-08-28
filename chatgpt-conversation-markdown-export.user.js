@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         ChatGPT Conversation Markdown Recorder
 // @namespace    https://chatgpt.com/
-// @version      0.6.138
+// @version      0.6.139
 // @description  Exports the current ChatGPT conversation directly from the Conversation API as Markdown or JSONL.
 // @match        https://chatgpt.com/*
 // @match        https://chat.openai.com/*
@@ -1583,6 +1583,30 @@
       `AIConversationCore rendered an unexpected heading for source record ${record?.id ?? 'unknown'}.`);
     return `${transcriptHeading(record)}${rendered.slice(plainHeading.length)}`;
   }
+
+  function canonicalPlainAssistantSegmentEligible(records) {
+    if (!Array.isArray(records) || records.length < 2) return false;
+    let hasAssistantMessage = false;
+    for (const record of records) {
+      if (cgIsHidden(record)) return false;
+      if (record?.author?.role !== 'assistant') return false;
+      const type = record?.content?.content_type;
+      if (type === 'thoughts') continue;
+      if (type !== 'text' || !canonicalPlainRecordEligible(record)) return false;
+      hasAssistantMessage = true;
+    }
+    return hasAssistantMessage;
+  }
+
+  function canonicalPlainAssistantSegmentBlock(records, events) {
+    assert(canonicalPlainAssistantSegmentEligible(records),
+      'AIConversationCore Assistant segment requires only plain visible Assistant records.');
+    const rendered = canonicalCore().renderCanonicalMarkdown(events).trimEnd();
+    assert(rendered === '## ChatGPT' || rendered.startsWith('## ChatGPT\n'),
+      'AIConversationCore rendered an unexpected Assistant segment heading.');
+    const headingRecord = [...records].reverse().find(record => record?.content?.content_type === 'text') ?? records[0];
+    return `${transcriptHeading(headingRecord)}${rendered.slice('## ChatGPT'.length)}`;
+  }
   // END AIConversationCore Phase 5 integration
 
   function transcriptHeading(record) {
@@ -1636,6 +1660,18 @@
         if (record?.author?.role === 'assistant' && pendingThoughts.length === 0) {
           output.push(canonicalPlainRecordBlock(record, canonicalEvent));
           continue;
+        }
+        if (record?.author?.role === 'assistant' && pendingThoughts.length > 0) {
+          const segmentRecords = [...pendingThoughts, record];
+          const segmentEvents = segmentRecords
+            .map(item => canonicalEventBySourceRecord.get(item.id) ?? null)
+            .filter(Boolean);
+          if (segmentEvents.length === segmentRecords.length &&
+              canonicalPlainAssistantSegmentEligible(segmentRecords)) {
+            output.push(canonicalPlainAssistantSegmentBlock(segmentRecords, segmentEvents));
+            pendingThoughts = [];
+            continue;
+          }
         }
       }
       const userText = cgVisibleUserText(record, fileRefIndex, recoveredImages);
