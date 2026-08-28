@@ -18,3 +18,5 @@ jobs:
         run: node --test tests/core-integration.test.mjs
       - name: Built-in test list UI regression
         run: node --test tests/test-list-ui.test.mjs
+      - name: Recorder panel UI regression
+        run: node --test tests/recorder-panel-ui.test.mjs
