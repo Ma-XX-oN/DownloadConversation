@@ -1,0 +1,293 @@
+name: Phase 5 integrate AIConversationCore once
+
+on:
+  push:
+    paths:
+      - .github/workflows/phase5-integrate-core-once.yml
+
+permissions:
+  contents: write
+
+jobs:
+  integrate:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - name: Patch production userscript and add regression gate
+        shell: python
+        run: |
+          from pathlib import Path
+
+          source_path = Path('chatgpt-conversation-markdown-export.user.js')
+          source = source_path.read_text(encoding='utf-8')
+
+          def replace_once(old, new):
+            global source
+            count = source.count(old)
+            assert count == 1, f'Expected exactly one match for patch anchor, found {count}: {old[:120]!r}'
+            source = source.replace(old, new, 1)
+
+          replace_once('// @version      0.6.133', '// @version      0.6.134')
+          replace_once(
+            '// @match        https://chat.openai.com/*\n// @run-at       document-start',
+            '// @match        https://chat.openai.com/*\n'
+            '// @require      https://raw.githubusercontent.com/Ma-XX-oN/AIConversationCore/456b14c565e0745b1cc89e6522a7f1a160a290ba/dist/aiconversationcore.chatgpt.browser.js\n'
+            '// @run-at       document-start'
+          )
+
+          integration = r'''  // BEGIN AIConversationCore Phase 5 integration
+          function canonicalCore() {
+            const core = globalThis.AIConversationCore;
+            assert(core && typeof core === 'object', 'AIConversationCore browser bundle is not loaded.');
+            assert(typeof core.adaptChatGPTRecords === 'function', 'AIConversationCore ChatGPT adapter is unavailable.');
+            assert(typeof core.renderCanonicalMarkdown === 'function', 'AIConversationCore Markdown renderer is unavailable.');
+            return core;
+          }
+
+          function canonicalEventsBySourceRecord(records) {
+            const events = canonicalCore().adaptChatGPTRecords(records);
+            assert(Array.isArray(events), 'AIConversationCore ChatGPT adapter did not return canonical events.');
+            const bySourceRecord = new Map();
+            for (const event of events) {
+              const sourceIndex = event?.source_index;
+              const sourceRecordId = event?.source_record_id;
+              if (!Number.isInteger(sourceIndex) || typeof sourceRecordId !== 'string' || !sourceRecordId) continue;
+              const original = records[sourceIndex];
+              assert(original?.id === sourceRecordId,
+                `AIConversationCore source record mismatch at JSONL index ${sourceIndex}.`);
+              assert(event?.source?.record_id === sourceRecordId,
+                `AIConversationCore did not preserve source record ID ${sourceRecordId}.`);
+              assert(event?.source?.record_index === sourceIndex,
+                `AIConversationCore did not preserve source record index ${sourceIndex}.`);
+              assert(event?.source?.record_number === sourceIndex + 1,
+                `AIConversationCore did not preserve 1-based record number ${sourceIndex + 1}.`);
+              assert(event?.source?.turn_id === sourceRecordId,
+                `AIConversationCore source turn identity differs from record ${sourceRecordId}.`);
+              assert(event?.source?.create_time === (original?.create_time ?? null),
+                `AIConversationCore did not preserve create_time for ${sourceRecordId}.`);
+              assert(event?.source?.update_time === (original?.update_time ?? null),
+                `AIConversationCore did not preserve update_time for ${sourceRecordId}.`);
+              bySourceRecord.set(sourceRecordId, event);
+            }
+            return bySourceRecord;
+          }
+
+          function canonicalPlainRecordEligible(record) {
+            if (cgIsHidden(record)) return false;
+            if (!['user', 'assistant'].includes(record?.author?.role)) return false;
+            if (record?.content?.content_type !== 'text') return false;
+            const parts = record?.content?.parts;
+            if (!Array.isArray(parts) || !parts.length || parts.some(part => typeof part !== 'string')) return false;
+            if (!parts.some(part => part.trim())) return false;
+            const metadata = record?.metadata && typeof record.metadata === 'object' ? record.metadata : {};
+            if (Array.isArray(metadata.content_references) && metadata.content_references.length) return false;
+            if (Array.isArray(metadata.citations) && metadata.citations.length) return false;
+            const text = parts.join('');
+            if (text.includes(CG_INLINE_TOKEN_START)) return false;
+            if (/sandbox:\/\/?/i.test(text)) return false;
+            return true;
+          }
+
+          function canonicalPlainRecordBlock(record, event) {
+            const role = record?.author?.role;
+            const plainHeading = role === 'user'
+              ? '## User'
+              : record?.channel === 'commentary' ? '## ChatGPT Commentary' : '## ChatGPT';
+            const rendered = canonicalCore().renderCanonicalMarkdown([event]).trimEnd();
+            assert(rendered === plainHeading || rendered.startsWith(`${plainHeading}\n`),
+              `AIConversationCore rendered an unexpected heading for source record ${record?.id ?? 'unknown'}.`);
+            return `${transcriptHeading(record)}${rendered.slice(plainHeading.length)}`;
+          }
+          // END AIConversationCore Phase 5 integration
+
+'''
+          replace_once('  function transcriptHeading(record) {', integration + '  function transcriptHeading(record) {')
+
+          replace_once(
+            "    const fileRefIndex = cgBuildFileReferenceIndex(records);\n    let pendingThoughts = [];",
+            "    const fileRefIndex = cgBuildFileReferenceIndex(records);\n"
+            "    const canonicalEventBySourceRecord = canonicalEventsBySourceRecord(records);\n"
+            "    let pendingThoughts = [];"
+          )
+
+          old_loop = '''      const recoveredImages = recoveredImageMap.get(record.id) ?? [];
+          const userText = cgVisibleUserText(record, fileRefIndex, recoveredImages);
+          if (userText) {
+            flushAssistantBlock();
+            output.push(`${transcriptHeading(record)}\\n\\n${quoteMarkdown(userText)}`);
+            continue;
+          }
+          const assistantText = cgVisibleAssistantMarkdown(record, fileRefIndex, recoveredImages);
+          if (assistantText) {
+            flushAssistantBlock(assistantText, record);
+            continue;
+          }
+'''
+          new_loop = '''      const recoveredImages = recoveredImageMap.get(record.id) ?? [];
+          const canonicalEvent = canonicalEventBySourceRecord.get(record.id) ?? null;
+          if (canonicalEvent && canonicalPlainRecordEligible(record)) {
+            if (record?.author?.role === 'user') {
+              flushAssistantBlock();
+              output.push(canonicalPlainRecordBlock(record, canonicalEvent));
+              continue;
+            }
+            if (record?.author?.role === 'assistant' && pendingThoughts.length === 0) {
+              output.push(canonicalPlainRecordBlock(record, canonicalEvent));
+              continue;
+            }
+          }
+          const userText = cgVisibleUserText(record, fileRefIndex, recoveredImages);
+          if (userText) {
+            flushAssistantBlock();
+            output.push(`${transcriptHeading(record)}\\n\\n${quoteMarkdown(userText)}`);
+            continue;
+          }
+          const assistantText = cgVisibleAssistantMarkdown(record, fileRefIndex, recoveredImages);
+          if (assistantText) {
+            flushAssistantBlock(assistantText, record);
+            continue;
+          }
+'''
+          replace_once(old_loop, new_loop)
+
+          source_path.write_text(source, encoding='utf-8')
+
+          Path('tests').mkdir(exist_ok=True)
+          Path('tests/core-integration.test.mjs').write_text(r'''import assert from 'node:assert/strict';
+          import { readFile } from 'node:fs/promises';
+          import test from 'node:test';
+          import vm from 'node:vm';
+
+          const userscript = await readFile(new URL('../chatgpt-conversation-markdown-export.user.js', import.meta.url), 'utf8');
+          const requireMatch = userscript.match(/^\/\/ @require\s+(https:\/\/raw\.githubusercontent\.com\/Ma-XX-oN\/AIConversationCore\/([0-9a-f]{40})\/dist\/aiconversationcore\.chatgpt\.browser\.js)$/m);
+          assert.ok(requireMatch, 'Production userscript must pin the AIConversationCore browser bundle to an exact commit.');
+          assert.equal(requireMatch[2], '456b14c565e0745b1cc89e6522a7f1a160a290ba');
+
+          const response = await fetch(requireMatch[1]);
+          assert.equal(response.status, 200, `Could not load pinned AIConversationCore bundle: HTTP ${response.status}`);
+          const bundle = await response.text();
+          const context = {};
+          context.globalThis = context;
+          vm.runInNewContext(bundle, context, { filename: 'aiconversationcore.chatgpt.browser.js' });
+          assert.equal(typeof context.AIConversationCore?.adaptChatGPTRecords, 'function');
+          assert.equal(typeof context.AIConversationCore?.renderCanonicalMarkdown, 'function');
+
+          const begin = '  // BEGIN AIConversationCore Phase 5 integration';
+          const end = '  // END AIConversationCore Phase 5 integration';
+          const start = userscript.indexOf(begin);
+          const finish = userscript.indexOf(end, start);
+          assert.ok(start >= 0 && finish > start, 'Production integration helper block is missing.');
+          const helperSource = userscript.slice(start + begin.length, finish);
+
+          Object.assign(context, {
+            assert(condition, message) {
+              if (!condition) throw new Error(message);
+            },
+            cgIsHidden(record) {
+              return Boolean(record?.metadata?.is_visually_hidden_from_conversation);
+            },
+            CG_INLINE_TOKEN_START: '\ue200',
+            transcriptHeading(record) {
+              const id = typeof record?.id === 'string' ? record.id : '';
+              if (record?.author?.role === 'user') return `## User${id ? ` <!-- turn_id=${id} -->` : ''}`;
+              if (record?.author?.role === 'assistant' && record?.channel === 'commentary') {
+                return `## ChatGPT Commentary${id ? ` <!-- turn_id=${id} -->` : ''}`;
+              }
+              if (record?.author?.role === 'assistant') return `## ChatGPT${id ? ` <!-- turn_id=${id} -->` : ''}`;
+              return '';
+            }
+          });
+          vm.runInNewContext(`${helperSource}\nthis.__phase5 = { canonicalEventsBySourceRecord, canonicalPlainRecordEligible, canonicalPlainRecordBlock };`, context);
+          const phase5 = context.__phase5;
+
+          function textRecord(id, role, text, extra = {}) {
+            return {
+              id,
+              author: { role, name: null, metadata: {} },
+              create_time: extra.create_time ?? null,
+              update_time: extra.update_time ?? null,
+              content: { content_type: 'text', parts: [text] },
+              metadata: {
+                turn_exchange_id: extra.turn_exchange_id ?? null,
+                ...(extra.metadata ?? {})
+              },
+              recipient: 'all',
+              channel: extra.channel ?? (role === 'assistant' ? 'final' : null),
+              status: 'finished_successfully',
+              end_turn: role === 'assistant'
+            };
+          }
+
+          test('canonical plain production slice preserves source heading identity and JSONL provenance', () => {
+            const user = textRecord('user-source-id', 'user', 'Hello', {
+              create_time: 101.25,
+              update_time: 102.5,
+              turn_exchange_id: 'exchange-1'
+            });
+            const assistant = textRecord('assistant-source-id', 'assistant', 'Answer', {
+              create_time: 103.75,
+              turn_exchange_id: 'exchange-1'
+            });
+            const records = [user, assistant];
+            const events = phase5.canonicalEventsBySourceRecord(records);
+            const userEvent = events.get(user.id);
+            assert.equal(userEvent.source.record_index, 0);
+            assert.equal(userEvent.source.record_number, 1);
+            assert.equal(userEvent.source.record_id, user.id);
+            assert.equal(userEvent.source.turn_id, user.id);
+            assert.equal(userEvent.source.create_time, 101.25);
+            assert.equal(userEvent.source.update_time, 102.5);
+            assert.equal(phase5.canonicalPlainRecordBlock(user, userEvent),
+              '## User <!-- turn_id=user-source-id -->\n\n> Hello');
+            assert.equal(phase5.canonicalPlainRecordBlock(assistant, events.get(assistant.id)),
+              '## ChatGPT <!-- turn_id=assistant-source-id -->\n\n> Answer');
+          });
+
+          test('literal Markdown footnotes round-trip through the production canonical slice', () => {
+            const record = textRecord(
+              'footnote-source-id',
+              'assistant',
+              'A sentence with a footnote.[^1]\n\n[^1]: The footnote text.'
+            );
+            const event = phase5.canonicalEventsBySourceRecord([record]).get(record.id);
+            const rendered = phase5.canonicalPlainRecordBlock(record, event);
+            assert.ok(rendered.includes('A sentence with a footnote.[^1]'));
+            assert.ok(rendered.includes('[^1]: The footnote text.'));
+            assert.equal(event.citations.length, 0);
+          });
+
+          test('provider-specific rich records stay on the existing DownloadConversation renderer path', () => {
+            const cited = textRecord('cited', 'assistant', 'Token \ue200cite\ue201', {
+              metadata: { content_references: [{ type: 'grouped_webpages' }] }
+            });
+            const sandbox = textRecord('sandbox', 'assistant', '[file](sandbox:/mnt/data/test.txt)');
+            const hidden = textRecord('hidden', 'assistant', 'hidden', {
+              metadata: { is_visually_hidden_from_conversation: true }
+            });
+            assert.equal(phase5.canonicalPlainRecordEligible(cited), false);
+            assert.equal(phase5.canonicalPlainRecordEligible(sandbox), false);
+            assert.equal(phase5.canonicalPlainRecordEligible(hidden), false);
+            assert.match(userscript, /pendingThoughts\.length === 0/,
+              'Assistant records with pending thoughts must remain on the existing host composition path.');
+          });
+          ''', encoding='utf-8')
+
+          Path('.github/workflows/ci.yml').write_text('''name: CI\n\non:\n  push:\n  pull_request:\n\njobs:\n  test:\n    runs-on: ubuntu-latest\n    steps:\n      - uses: actions/checkout@v4\n      - uses: actions/setup-node@v4\n        with:\n          node-version: 22\n      - name: JavaScript syntax\n        run: node --check chatgpt-conversation-markdown-export.user.js\n      - name: Phase 5 integration regression\n        run: node --test tests/*.test.mjs\n''', encoding='utf-8')
+      - name: Verify patched working tree before commit
+        run: |
+          node --check chatgpt-conversation-markdown-export.user.js
+          node --test tests/*.test.mjs
+          grep -Fq '456b14c565e0745b1cc89e6522a7f1a160a290ba/dist/aiconversationcore.chatgpt.browser.js' chatgpt-conversation-markdown-export.user.js
+          test "$(grep -c 'BEGIN AIConversationCore Phase 5 integration' chatgpt-conversation-markdown-export.user.js)" -eq 1
+      - name: Commit verified integration
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add chatgpt-conversation-markdown-export.user.js tests/core-integration.test.mjs .github/workflows/ci.yml
+          git commit -m "feat: integrate canonical plain Markdown rendering"
+          git push
