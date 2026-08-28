@@ -1,0 +1,30 @@
+name: Restore interactive test matrix once
+
+on:
+  push:
+    paths:
+      - 'scripts/issue92-matrix-patch.py'
+      - '.github/workflows/issue92-matrix-once.yml'
+
+permissions:
+  contents: write
+
+jobs:
+  patch:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - run: python scripts/issue92-matrix-patch.py
+      - run: node --check chatgpt-conversation-markdown-export.user.js
+      - run: node --test tests/core-integration.test.mjs
+      - run: node --test tests/test-list-ui.test.mjs
+      - name: Commit Issue 92 matrix restoration
+        run: |
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add chatgpt-conversation-markdown-export.user.js tests/test-list-ui.test.mjs
+          git commit -m 'ui: restore interactive built-in test matrix'
+          git push
