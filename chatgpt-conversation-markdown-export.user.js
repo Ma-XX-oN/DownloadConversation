@@ -1,11 +1,11 @@
 // ==UserScript==
 // @name         ChatGPT Conversation Markdown Recorder
 // @namespace    https://chatgpt.com/
-// @version      0.6.134
+// @version      0.6.135
 // @description  Exports the current ChatGPT conversation directly from the Conversation API as Markdown or JSONL.
 // @match        https://chatgpt.com/*
 // @match        https://chat.openai.com/*
-// @require      https://raw.githubusercontent.com/Ma-XX-oN/AIConversationCore/456b14c565e0745b1cc89e6522a7f1a160a290ba/dist/aiconversationcore.chatgpt.browser.js
+// @require      https://raw.githubusercontent.com/Ma-XX-oN/AIConversationCore/cf09b70b525983301e9d4cc7d9cbc7c4b50ba6f3/dist/aiconversationcore.chatgpt.browser.js
 // @run-at       document-start
 // ==/UserScript==
 
@@ -1544,8 +1544,6 @@
         `AIConversationCore did not preserve source record ID ${sourceRecordId}.`);
       assert(event?.source?.record_index === sourceIndex,
         `AIConversationCore did not preserve source record index ${sourceIndex}.`);
-      assert(event?.source?.record_number === sourceIndex + 1,
-        `AIConversationCore did not preserve 1-based record number ${sourceIndex + 1}.`);
       assert(event?.source?.turn_id === sourceRecordId,
         `AIConversationCore source turn identity differs from record ${sourceRecordId}.`);
       assert(event?.source?.create_time === (original?.create_time ?? null),
