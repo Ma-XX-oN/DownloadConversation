@@ -46,6 +46,20 @@ Fallback paths should reuse established recorder behaviour instead of inventing 
 
 **Why:** duplicated implementations drift. Reusing the same production machinery reduces regressions where one path silently loses previously verified behaviour.
 
+### Shared canonical normalization and rendering
+
+Provider-record interpretation and shared transcript rendering move incrementally into `AIConversationCore`; browser acquisition, authenticated resource resolution, recorder lifecycle, storage, recovery, and other host responsibilities remain in `DownloadConversation`.
+
+The Tampermonkey userscript consumes the deterministic classic-script browser bundle generated from the core's ESM source. Production must pin that bundle to an exact `AIConversationCore` commit rather than a moving branch, and must not copy core source manually into the userscript.
+
+Canonical identity is additional identity. Normalization must preserve the original JSONL provenance needed by later projections, including source record index/number, raw timestamp fields, provider/source record or turn identity, and all contributing records when several source records form one canonical turn. Existing DownloadConversation `turn_id` heading comments continue to refer to provider/source identity; they are not silently replaced by canonical derived turn IDs.
+
+The first production migration slice covers ordinary visible text records. Provider-specific rich handling such as citations, images, `sandbox:` resources, and Assistant thought composition remains on the established DownloadConversation renderer until each behaviour is migrated with its own regression evidence.
+
+Moving rendering into the shared core does not authorize chronology, UAP grouping, User/Assistant association, or ordering changes. Those change only in response to separately established production evidence and separately tracked work.
+
+**Why:** the migration exists to remove duplicated semantic interpretation without changing already-correct recorder behaviour or losing the original database provenance required by other transcript projections.
+
 ### Recovery is granular and non-destructive
 
 Missing User and ChatGPT turn halves are recoverable independently. Incomplete material is preserved rather than discarded.
