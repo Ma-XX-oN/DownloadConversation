@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         ChatGPT Conversation Markdown Recorder
 // @namespace    https://chatgpt.com/
-// @version      0.6.135
+// @version      0.6.136
 // @description  Exports the current ChatGPT conversation directly from the Conversation API as Markdown or JSONL.
 // @match        https://chatgpt.com/*
 // @match        https://chat.openai.com/*
@@ -2513,6 +2513,18 @@
       'sandbox link rewrite must not rewrite sediment pointers.');
   }
 
+  function builtInTests() {
+    return [
+      ['API pagination', testApiPaginationLogic],
+      ['Stable API message IDs', testStableMessageIds],
+      ['Multimodal User + chronological order', testMultimodalUserAndChronologicalOrder],
+      ['AI-transcript renderer parity', testRendererParityFeatures],
+      ['Generated sandbox download link', testGeneratedSandboxDownloadLink],
+      ['Jump identifier resolution', testJumpIdentifierResolution],
+      ['Conversation API access/schema', testConversationApiAccessAndSchema]
+    ];
+  }
+
   async function runTests() {
     if (exportInProgress || testInProgress || jumpInProgress) return;
     testInProgress = true;
@@ -2528,13 +2540,7 @@
       setStatus(results.join('\n'));
     };
     try {
-      await run('API pagination', testApiPaginationLogic);
-      await run('Stable API message IDs', testStableMessageIds);
-      await run('Multimodal User + chronological order', testMultimodalUserAndChronologicalOrder);
-      await run('AI-transcript renderer parity', testRendererParityFeatures);
-      await run('Generated sandbox download link', testGeneratedSandboxDownloadLink);
-      await run('Jump identifier resolution', testJumpIdentifierResolution);
-      await run('Conversation API access/schema', testConversationApiAccessAndSchema);
+      for (const [name, fn] of builtInTests()) await run(name, fn);
     } finally {
       testInProgress = false;
       updateUi();
@@ -2614,6 +2620,7 @@
       #${PANEL_ID} button:disabled{opacity:.45;cursor:not-allowed}
       #${PANEL_ID} .tm-switch{margin-left:auto;border-radius:999px;padding:6px 13px;font-weight:600}
       #${PANEL_ID} .tm-label{color:#ddd}
+      #${PANEL_ID} .tm-test-list{margin:6px 0 0;padding:7px 9px;border:1px solid #555;border-radius:8px;background:#191919;color:#ddd;white-space:pre-wrap;font:11px/1.4 ui-monospace,SFMono-Regular,Consolas,monospace}
       #${PANEL_ID} .tm-log-head{display:flex;align-items:center;justify-content:space-between;gap:10px;margin-top:12px}
       #${PANEL_ID} .tm-log-copy{padding:5px 9px}
       #${PANEL_ID} .tm-log-output{margin:6px 0 0;max-height:190px;overflow:auto;white-space:pre-wrap;overflow-wrap:anywhere;border:1px solid #555;border-radius:8px;background:#111;padding:8px;font:11px/1.35 ui-monospace,SFMono-Regular,Consolas,monospace;color:#ddd}
@@ -2680,6 +2687,7 @@
       <div class="tm-title" data-role="title"></div>
       <div class="tm-status" data-role="status"></div>
       <div class="tm-row"><span class="tm-label">Diagnostics</span><select data-role="diagnostics"><option value="errors">Errors</option><option value="warnings">Warnings</option><option value="debug">Debug</option><option value="verbose">Verbose</option></select><button data-role="test" type="button">Test</button></div>
+      <div class="tm-test-list" data-role="test-list" aria-label="Built-in tests"></div>
       <div class="tm-log-head"><span class="tm-label" data-role="log-count">Log: 0 items</span><button class="tm-log-copy" data-role="copy-log" type="button">Copy</button></div>
       <pre class="tm-log-output" data-role="log-output"></pre>
       <div class="tm-row"><span class="tm-label">Screen on when extracting</span><button class="tm-switch" data-role="screen-on" type="button"></button></div>
@@ -2691,6 +2699,8 @@
       const launcher = document.getElementById(LAUNCHER_ID);
       if (launcher) launcher.style.display = '';
     });
+    const testList = panel.querySelector('[data-role="test-list"]');
+    if (testList) testList.textContent = builtInTests().map(([name]) => `• ${name}`).join('\n');
     const diagnostics = panel.querySelector('[data-role="diagnostics"]');
     diagnostics.value = diagnosticsLevel;
     diagnostics.addEventListener('change', () => {
