@@ -7,17 +7,26 @@ const userscript = await readFile(
   'utf8'
 );
 
-test('built-in tests are visible before Test is pressed and share the execution registry', () => {
+test('Test opens the interactive built-in test matrix instead of immediately running all tests', () => {
   assert.match(userscript, /function builtInTests\(\) \{/,
     'Production userscript must expose one built-in-test registry.');
-  assert.match(userscript, /data-role="test-list" aria-label="Built-in tests"/,
-    'Recorder panel must contain a visible built-in-test list.');
   assert.match(userscript,
-    /testList\.textContent = builtInTests\(\)\.map\(\(\[name\]\) => `• \${name}`\)\.join\('\\n'\)/,
-    'Pre-run test list must be populated from the same registry used for execution.');
+    /panel\.querySelector\('\[data-role="test"\]'\)\.addEventListener\('click', openTestMatrix\);/,
+    'Test button must open the matrix, not immediately execute Run All.');
+  assert.doesNotMatch(userscript, /data-role="test-list"/,
+    'The rejected v0.6.136 static inline list must not remain.');
+  assert.match(userscript, /<strong id="\$\{TEST_MATRIX_ID\}-title">Built-in tests<\/strong>/,
+    'Matrix must identify the built-in test set before execution.');
+  for (const heading of ['Type', 'Previous Result', 'Current Result']) {
+    assert.ok(userscript.includes(`<th>${heading}</th>`), `Matrix is missing ${heading}.`);
+  }
+  assert.match(userscript, /data-role="run-test">Run<\/button>/,
+    'Every matrix row must expose an individual Run control.');
+  assert.match(userscript, /data-role="run-all-tests">Run All<\/button>/,
+    'Matrix must expose Run All.');
   assert.match(userscript,
-    /for \(const \[name, fn\] of builtInTests\(\)\) await run\(name, fn\);/,
-    'Test execution must use the visible built-in-test registry.');
+    /for \(const \[name, fn\] of builtInTests\(\)\) \{/,
+    'Run All must execute the same registry shown by the matrix.');
 
   for (const name of [
     'API pagination',
@@ -28,6 +37,6 @@ test('built-in tests are visible before Test is pressed and share the execution 
     'Jump identifier resolution',
     'Conversation API access/schema'
   ]) {
-    assert.ok(userscript.includes(`['${name}',`), `Visible registry is missing ${name}.`);
+    assert.ok(userscript.includes(`['${name}',`), `Built-in registry is missing ${name}.`);
   }
 });
