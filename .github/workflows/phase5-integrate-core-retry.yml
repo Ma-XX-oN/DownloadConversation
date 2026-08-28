@@ -1,0 +1,49 @@
+name: Phase 5 integrate AIConversationCore retry
+
+on:
+  push:
+    paths:
+      - .github/workflows/phase5-integrate-core-retry.yml
+
+permissions:
+  contents: write
+
+jobs:
+  integrate:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - name: Apply guarded integration patch
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+
+          workflow = Path('.github/workflows/phase5-integrate-core-once.yml').read_text(encoding='utf-8')
+          start_marker = '      - name: Patch production userscript and add regression gate\n        shell: python\n        run: |\n'
+          end_marker = '      - name: Verify patched working tree before commit\n'
+          assert workflow.count(start_marker) == 1
+          assert workflow.count(end_marker) == 1
+          block = workflow.split(start_marker, 1)[1].split(end_marker, 1)[0]
+          lines = block.splitlines()
+          assert lines and all((not line) or line.startswith('          ') for line in lines)
+          code = '\n'.join(line[10:] if line else '' for line in lines) + '\n'
+          exec(compile(code, 'phase5-integration-patch.py', 'exec'), {})
+          PY
+      - name: Verify patched working tree before commit
+        run: |
+          node --check chatgpt-conversation-markdown-export.user.js
+          node --test tests/*.test.mjs
+          grep -Fq '456b14c565e0745b1cc89e6522a7f1a160a290ba/dist/aiconversationcore.chatgpt.browser.js' chatgpt-conversation-markdown-export.user.js
+          test "$(grep -c 'BEGIN AIConversationCore Phase 5 integration' chatgpt-conversation-markdown-export.user.js)" -eq 1
+      - name: Commit verified integration
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add chatgpt-conversation-markdown-export.user.js tests/core-integration.test.mjs .github/workflows/ci.yml
+          git commit -m "feat: integrate canonical plain Markdown rendering"
+          git push
