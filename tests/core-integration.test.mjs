@@ -6,7 +6,7 @@ import vm from 'node:vm';
 const userscript = await readFile(new URL('../chatgpt-conversation-markdown-export.user.js', import.meta.url), 'utf8');
 const requireMatch = userscript.match(/^\/\/ @require\s+(https:\/\/raw\.githubusercontent\.com\/Ma-XX-oN\/AIConversationCore\/([0-9a-f]{40})\/dist\/aiconversationcore\.chatgpt\.browser\.js)$/m);
 assert.ok(requireMatch, 'Production userscript must pin the AIConversationCore browser bundle to an exact commit.');
-assert.equal(requireMatch[2], '456b14c565e0745b1cc89e6522a7f1a160a290ba');
+assert.equal(requireMatch[2], 'cf09b70b525983301e9d4cc7d9cbc7c4b50ba6f3');
 
 const response = await fetch(requireMatch[1]);
 assert.equal(response.status, 200, `Could not load pinned AIConversationCore bundle: HTTP ${response.status}`);
@@ -89,7 +89,8 @@ test('canonical plain production slice preserves source heading identity and JSO
   const events = phase5.canonicalEventsBySourceRecord(records);
   const userEvent = events.get(user.id);
   assert.equal(userEvent.source.record_index, 0);
-  assert.equal(userEvent.source.record_number, 1);
+  assert.equal(userEvent.source.record_index + 1, 1);
+  assert.equal(Object.hasOwn(userEvent.source, 'record_number'), false);
   assert.equal(userEvent.source.record_id, user.id);
   assert.equal(userEvent.source.turn_id, user.id);
   assert.equal(userEvent.source.create_time, 101.25);
