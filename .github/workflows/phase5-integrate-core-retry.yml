@@ -30,8 +30,8 @@ jobs:
           assert workflow.count(end_marker) == 1
           block = workflow.split(start_marker, 1)[1].split(end_marker, 1)[0]
           lines = block.splitlines()
-          assert lines and all((not line.strip()) or line.startswith('          ') for line in lines)
-          code = '\n'.join(line[10:] if line.startswith('          ') else '' for line in lines) + '\n'
+          assert lines
+          code = '\n'.join(line[10:] if line.startswith('          ') else line for line in lines) + '\n'
           exec(compile(code, 'phase5-integration-patch.py', 'exec'), {})
           PY
       - name: Verify patched working tree before commit
