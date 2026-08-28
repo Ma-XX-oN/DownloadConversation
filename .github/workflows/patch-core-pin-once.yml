@@ -1,0 +1,52 @@
+name: Patch canonical provenance pin once
+
+on:
+  push:
+    paths:
+      - '.github/workflows/patch-core-pin-once.yml'
+
+permissions:
+  contents: write
+
+jobs:
+  patch:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - name: Apply exact production patch
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+
+          path = Path('chatgpt-conversation-markdown-export.user.js')
+          text = path.read_text(encoding='utf-8')
+
+          replacements = [
+              ('// @version      0.6.134', '// @version      0.6.135'),
+              ('AIConversationCore/456b14c565e0745b1cc89e6522a7f1a160a290ba/dist/',
+               'AIConversationCore/cf09b70b525983301e9d4cc7d9cbc7c4b50ba6f3/dist/'),
+              ("      assert(event?.source?.record_number === sourceIndex + 1,\n"
+               "        `AIConversationCore did not preserve 1-based record number ${sourceIndex + 1}.`);\n",
+               ''),
+          ]
+
+          for old, new in replacements:
+              count = text.count(old)
+              if count != 1:
+                  raise SystemExit(f'Expected exactly one match, found {count}: {old!r}')
+              text = text.replace(old, new, 1)
+
+          path.write_text(text, encoding='utf-8')
+          PY
+      - run: node --check chatgpt-conversation-markdown-export.user.js
+      - run: node --test tests/core-integration.test.mjs
+      - name: Commit production patch
+        run: |
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add chatgpt-conversation-markdown-export.user.js
+          git commit -m 'provenance: derive display record number from index'
+          git push
