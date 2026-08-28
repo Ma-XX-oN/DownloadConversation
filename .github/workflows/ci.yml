@@ -16,3 +16,5 @@ jobs:
         run: node --check chatgpt-conversation-markdown-export.user.js
       - name: Phase 5 canonical integration regression
         run: node --test tests/core-integration.test.mjs
+      - name: Built-in test list UI regression
+        run: node --test tests/test-list-ui.test.mjs
