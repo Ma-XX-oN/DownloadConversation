@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         ChatGPT Conversation Markdown Recorder
 // @namespace    https://chatgpt.com/
-// @version      0.6.137
+// @version      0.6.138
 // @description  Exports the current ChatGPT conversation directly from the Conversation API as Markdown or JSONL.
 // @match        https://chatgpt.com/*
 // @match        https://chat.openai.com/*
@@ -39,6 +39,8 @@
   let clickDiagnosticSequence = 0;
   let activeClickDiagnostic = null;
   let diagnosticLog = [];
+  let diagnosticLogExpanded = false;
+  let lastModalOpener = null;
   try {
     const storedDiagnosticLog = JSON.parse(sessionStorage.getItem(DIAGNOSTIC_LOG_STORAGE_KEY) || '[]');
     if (Array.isArray(storedDiagnosticLog)) diagnosticLog = storedDiagnosticLog.slice(-MAX_DIAGNOSTIC_LOG_ITEMS);
@@ -2599,7 +2601,6 @@
     refreshTestMatrix();
     try {
       await executeBuiltInTest(name, fn);
-      setStatus(currentTestStatusLines().join('\n'));
     } finally {
       testInProgress = false;
       updateUi();
@@ -2615,7 +2616,6 @@
     try {
       for (const [name, fn] of builtInTests()) {
         await executeBuiltInTest(name, fn);
-        setStatus(currentTestStatusLines().join('\n'));
       }
     } finally {
       testInProgress = false;
@@ -2624,11 +2624,65 @@
     }
   }
 
+  function modalFocusableElements(dialog) {
+    return [...dialog.querySelectorAll(
+      'button:not([disabled]), input:not([disabled]), select:not([disabled]), textarea:not([disabled]), [tabindex]:not([tabindex="-1"])'
+    )].filter(element => element instanceof HTMLElement && !element.hidden && element.offsetParent !== null);
+  }
+
+  function installModalContract(overlay, { defaultButton = null, onClose = null, opener = null } = {}) {
+    lastModalOpener = opener instanceof HTMLElement ? opener : document.activeElement instanceof HTMLElement ? document.activeElement : null;
+    const dialog = overlay.querySelector('[role="dialog"]');
+    if (!(dialog instanceof HTMLElement)) return;
+    const focusables = () => modalFocusableElements(dialog);
+    const close = () => {
+      if (typeof onClose === 'function') onClose();
+      const restore = lastModalOpener;
+      lastModalOpener = null;
+      if (restore?.isConnected) restore.focus({ preventScroll: true });
+    };
+    overlay.addEventListener('keydown', event => {
+      if (event.key === 'Escape') {
+        if (testInProgress) return;
+        event.preventDefault();
+        close();
+        return;
+      }
+      if (event.key === 'Tab') {
+        const items = focusables();
+        if (!items.length) {
+          event.preventDefault();
+          return;
+        }
+        const current = document.activeElement;
+        const index = items.indexOf(current);
+        const next = event.shiftKey
+          ? (index <= 0 ? items.length - 1 : index - 1)
+          : (index < 0 || index === items.length - 1 ? 0 : index + 1);
+        event.preventDefault();
+        items[next].focus();
+        return;
+      }
+      if (event.key === 'Enter') {
+        if (document.activeElement instanceof HTMLTextAreaElement) return;
+        const active = document.activeElement;
+        if (active instanceof HTMLButtonElement) return;
+        const button = typeof defaultButton === 'function' ? defaultButton() : defaultButton;
+        if (button instanceof HTMLButtonElement && !button.disabled) {
+          event.preventDefault();
+          button.click();
+        }
+      }
+    });
+    const initial = typeof defaultButton === 'function' ? defaultButton() : defaultButton;
+    (initial instanceof HTMLElement ? initial : focusables()[0])?.focus({ preventScroll: true });
+  }
+
   function closeTestMatrix() {
     document.getElementById(TEST_MATRIX_ID)?.remove();
   }
 
-  function openTestMatrix() {
+  function openTestMatrix(opener = null) {
     if (document.getElementById(TEST_MATRIX_ID)) return;
     testMatrixPreviousResults = loadTestResultHistory();
     testMatrixCurrentResults = new Map();
@@ -2665,7 +2719,7 @@
       const target = event.target instanceof Element ? event.target : null;
       if (!target) return;
       if (target === overlay || target.closest('[data-role="close-test-matrix"]')) {
-        if (!testInProgress) closeTestMatrix();
+        if (!testInProgress) { closeTestMatrix(); if (opener?.isConnected) opener.focus({ preventScroll: true }); }
         return;
       }
       const row = target.closest('tr[data-test-name]');
@@ -2679,7 +2733,11 @@
     });
     document.body.append(overlay);
     refreshTestMatrix();
-    overlay.querySelector('[data-role="run-all-tests"]')?.focus({ preventScroll: true });
+    installModalContract(overlay, {
+      defaultButton: () => overlay.querySelector('[data-role="run-all-tests"]'),
+      onClose: closeTestMatrix,
+      opener
+    });
   }
 
   function diagnosticEnabled(level) {
@@ -2699,15 +2757,36 @@
     return `${entry.timestamp} [${entry.level}] ${entry.message}${suffix}`;
   }
 
+  function copyIconMarkup() {
+    return '<svg viewBox="0 0 24 24" aria-hidden="true"><rect x="9" y="9" width="10" height="10" rx="2"></rect><path d="M15 7V5a2 2 0 0 0-2-2H5a2 2 0 0 0-2 2v8a2 2 0 0 0 2 2h2"></path></svg>';
+  }
+
+  function checkIconMarkup() {
+    return '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M5 12.5l4 4L19 7"></path></svg>';
+  }
+
   function refreshDiagnosticLog() {
     const panel = document.getElementById(PANEL_ID);
     if (!panel) return;
     const count = panel.querySelector('[data-role="log-count"]');
     const output = panel.querySelector('[data-role="log-output"]');
+    const toggle = panel.querySelector('[data-role="toggle-log"]');
     if (count) count.textContent = `Log: ${diagnosticLog.length} item${diagnosticLog.length === 1 ? '' : 's'}`;
     if (output) {
-      output.textContent = diagnosticLog.map(diagnosticLogLine).join('\n');
+      output.replaceChildren(...diagnosticLog.map(entry => {
+        const row = document.createElement('div');
+        row.className = 'tm-log-row';
+        row.textContent = diagnosticLogLine(entry);
+        return row;
+      }));
+      output.hidden = !diagnosticLogExpanded;
       output.scrollTop = output.scrollHeight;
+    }
+    if (toggle instanceof HTMLButtonElement) {
+      toggle.textContent = diagnosticLogExpanded ? '−' : '+';
+      toggle.setAttribute('aria-expanded', String(diagnosticLogExpanded));
+      toggle.setAttribute('aria-label', diagnosticLogExpanded ? 'Hide diagnostic log' : 'Show diagnostic log');
+      toggle.title = diagnosticLogExpanded ? 'Hide log' : 'Show log';
     }
   }
 
@@ -2715,6 +2794,22 @@
     const text = diagnosticLog.map(diagnosticLogLine).join('\n');
     if (!text) return;
     await navigator.clipboard.writeText(text);
+    const button = document.querySelector(`#${PANEL_ID} [data-role="copy-log"]`);
+    if (!(button instanceof HTMLButtonElement)) return;
+    button.innerHTML = checkIconMarkup();
+    button.classList.add('tm-copy-confirmed');
+    button.setAttribute('aria-label', 'Copied');
+    setTimeout(() => {
+      if (!button.isConnected) return;
+      button.classList.add('tm-copy-fade');
+      setTimeout(() => {
+        if (!button.isConnected) return;
+        button.classList.remove('tm-copy-confirmed');
+        button.innerHTML = copyIconMarkup();
+        button.setAttribute('aria-label', 'Copy diagnostic log');
+        requestAnimationFrame(() => button.classList.remove('tm-copy-fade'));
+      }, 200);
+    }, 800);
   }
 
   function logDiagnostic(level, message, data = null) {
@@ -2753,7 +2848,6 @@
       #${PANEL_ID} select{flex:1;min-width:150px}
       #${PANEL_ID} button{cursor:pointer}
       #${PANEL_ID} button:disabled{opacity:.45;cursor:not-allowed}
-      #${PANEL_ID} .tm-switch{margin-left:auto;border-radius:999px;padding:6px 13px;font-weight:600}
       #${PANEL_ID} .tm-label{color:#ddd}
       #${TEST_MATRIX_ID}{position:fixed;inset:0;z-index:2147483647;background:rgba(0,0,0,.58);display:grid;place-items:center;padding:24px;box-sizing:border-box}
       #${TEST_MATRIX_ID} .tm-test-dialog{width:min(920px,96vw);max-height:88vh;overflow:hidden;display:flex;flex-direction:column;border:1px solid #666;border-radius:12px;background:#202020;color:#f2f2f2;box-shadow:0 10px 40px rgba(0,0,0,.5);font:13px/1.35 system-ui,sans-serif}
@@ -2768,9 +2862,20 @@
       #${TEST_MATRIX_ID} button{border:1px solid #666;border-radius:8px;background:#292929;color:#fff;padding:7px 10px;font:inherit;cursor:pointer}
       #${TEST_MATRIX_ID} button:disabled{opacity:.45;cursor:not-allowed}
       #${TEST_MATRIX_ID} .tm-test-actions{justify-content:flex-end;border-top:1px solid #555}
-      #${PANEL_ID} .tm-log-head{display:flex;align-items:center;justify-content:space-between;gap:10px;margin-top:12px}
-      #${PANEL_ID} .tm-log-copy{padding:5px 9px}
-      #${PANEL_ID} .tm-log-output{margin:6px 0 0;max-height:190px;overflow:auto;white-space:pre-wrap;overflow-wrap:anywhere;border:1px solid #555;border-radius:8px;background:#111;padding:8px;font:11px/1.35 ui-monospace,SFMono-Regular,Consolas,monospace;color:#ddd}
+      #${PANEL_ID} .tm-log-head{display:flex;align-items:center;gap:6px;margin-top:4px}
+      #${PANEL_ID} .tm-log-head [data-role="log-count"]{margin-right:auto}
+      #${PANEL_ID} .tm-icon-button{width:30px;height:28px;padding:4px;display:grid;place-items:center}
+      #${PANEL_ID} .tm-icon-button svg{width:16px;height:16px;fill:none;stroke:currentColor;stroke-width:2;stroke-linecap:round;stroke-linejoin:round}
+      #${PANEL_ID} .tm-icon-button{transition:opacity .2s ease}
+      #${PANEL_ID} .tm-copy-fade{opacity:0}
+      #${PANEL_ID} .tm-log-output{margin:6px 0 10px;max-height:190px;overflow:auto;border:1px solid #555;border-radius:8px;background:#111;font:11px/1.35 ui-monospace,SFMono-Regular,Consolas,monospace;color:#ddd}
+      #${PANEL_ID} .tm-log-row{padding:6px 8px;white-space:pre-wrap;overflow-wrap:anywhere}
+      #${PANEL_ID} .tm-log-row:nth-child(even){background:rgba(255,255,255,.055)}
+      #${PANEL_ID} .tm-switch{margin-left:auto;width:42px;height:24px;padding:2px;border-radius:999px;position:relative}
+      #${PANEL_ID} .tm-switch-thumb{display:block;width:18px;height:18px;border-radius:50%;background:#aaa;transform:translateX(0);transition:transform .16s ease,background .16s ease}
+      #${PANEL_ID} .tm-switch[aria-checked="true"] .tm-switch-thumb{transform:translateX(16px);background:#fff}
+      #${PANEL_ID} .tm-extract-formats{display:grid;grid-template-columns:auto auto auto;gap:6px 12px;align-items:center}
+      #${PANEL_ID} .tm-extract-formats label{display:flex;gap:5px;align-items:center}
     `;
     (document.head || document.documentElement).append(style);
   }
@@ -2780,18 +2885,18 @@
     if (!panel) return;
     const title = panel.querySelector('[data-role="title"]');
     if (title) title.textContent = `ChatGPT Recorder v${VERSION}`;
-    const md = panel.querySelector('[data-role="extract-md"]');
-    const jsonl = panel.querySelector('[data-role="extract-jsonl"]');
+    const extract = panel.querySelector('[data-role="extract"]');
+    const jsonl = panel.querySelector('[data-role="format-jsonl"]');
+    const md = panel.querySelector('[data-role="format-md"]');
     const test = panel.querySelector('[data-role="test"]');
     const jump = panel.querySelector('[data-role="jump"]');
-    if (md) {
-      md.disabled = exportInProgress || testInProgress || jumpInProgress;
-      md.textContent = exportInProgress && exportKind === 'md' ? 'Extracting…' : 'Extract MD';
+    const formatsSelected = Boolean(jsonl?.checked || md?.checked);
+    if (extract) {
+      extract.disabled = exportInProgress || testInProgress || jumpInProgress || !formatsSelected;
+      extract.textContent = exportInProgress ? 'Extracting…' : 'Extract';
     }
-    if (jsonl) {
-      jsonl.disabled = exportInProgress || testInProgress || jumpInProgress;
-      jsonl.textContent = exportInProgress && exportKind === 'jsonl' ? 'Extracting…' : 'Extract JSONL';
-    }
+    if (jsonl) jsonl.disabled = exportInProgress || testInProgress || jumpInProgress;
+    if (md) md.disabled = exportInProgress || testInProgress || jumpInProgress;
     if (test) {
       test.disabled = exportInProgress || testInProgress || jumpInProgress;
       test.textContent = testInProgress ? 'Testing…' : 'Test';
@@ -2801,7 +2906,7 @@
       jump.textContent = jumpInProgress ? 'Jumping…' : 'Jump';
     }
     const screen = panel.querySelector('[data-role="screen-on"]');
-    if (screen) screen.textContent = screenOnWhenCapturing ? 'ON' : 'OFF';
+    if (screen) screen.setAttribute('aria-checked', String(screenOnWhenCapturing));
     refreshStatus();
   }
 
@@ -2832,13 +2937,13 @@
     panel.innerHTML = `
       <button class="tm-close" type="button" aria-label="Close">×</button>
       <div class="tm-title" data-role="title"></div>
+      <div class="tm-log-head"><span class="tm-label" data-role="log-count">Log: 0 items</span><button class="tm-icon-button" data-role="copy-log" type="button" aria-label="Copy diagnostic log" title="Copy log"></button><button class="tm-icon-button" data-role="toggle-log" type="button" aria-label="Show diagnostic log" aria-expanded="false" title="Show log">+</button></div>
+      <div class="tm-log-output" data-role="log-output" hidden></div>
       <div class="tm-status" data-role="status"></div>
       <div class="tm-row"><span class="tm-label">Diagnostics</span><select data-role="diagnostics"><option value="errors">Errors</option><option value="warnings">Warnings</option><option value="debug">Debug</option><option value="verbose">Verbose</option></select><button data-role="test" type="button">Test</button></div>
-      <div class="tm-log-head"><span class="tm-label" data-role="log-count">Log: 0 items</span><button class="tm-log-copy" data-role="copy-log" type="button">Copy</button></div>
-      <pre class="tm-log-output" data-role="log-output"></pre>
-      <div class="tm-row"><span class="tm-label">Screen on when extracting</span><button class="tm-switch" data-role="screen-on" type="button"></button></div>
+      <div class="tm-row"><span class="tm-label">Screen on when extracting</span><button class="tm-switch" data-role="screen-on" type="button" role="switch" aria-checked="false" aria-label="Keep screen on while extracting"><span class="tm-switch-thumb"></span></button></div>
       <div class="tm-row"><button data-role="jump" type="button">Jump</button></div>
-      <div class="tm-row"><button data-role="extract-jsonl" type="button">Extract JSONL</button><button data-role="extract-md" type="button">Extract MD</button></div>
+      <div class="tm-row tm-extract-formats"><button data-role="extract" type="button">Extract</button><label><input data-role="format-jsonl" type="checkbox" checked> JSONL</label><label><input data-role="format-md" type="checkbox"> MD</label></div>
     `;
     panel.querySelector('.tm-close').addEventListener('click', () => {
       panel.style.display = 'none';
@@ -2853,6 +2958,12 @@
       logDiagnostic('debug', 'diagnostics-level-changed', { diagnostics_level: diagnosticsLevel });
       refreshDiagnosticLog();
     });
+    const copyLogButton = panel.querySelector('[data-role="copy-log"]');
+    if (copyLogButton) copyLogButton.innerHTML = copyIconMarkup();
+    panel.querySelector('[data-role="toggle-log"]').addEventListener('click', () => {
+      diagnosticLogExpanded = !diagnosticLogExpanded;
+      refreshDiagnosticLog();
+    });
     panel.querySelector('[data-role="copy-log"]').addEventListener('click', () => {
       void copyDiagnosticLog().catch(error => {
         logDiagnostic('errors', 'diagnostic-log-copy-failure', {
@@ -2860,7 +2971,7 @@
         });
       });
     });
-    panel.querySelector('[data-role="test"]').addEventListener('click', openTestMatrix);
+    panel.querySelector('[data-role="test"]').addEventListener('click', event => openTestMatrix(event.currentTarget));
     panel.querySelector('[data-role="jump"]').addEventListener('click', () => void runJump());
     panel.querySelector('[data-role="screen-on"]').addEventListener('click', () => {
       screenOnWhenCapturing = !screenOnWhenCapturing;
@@ -2869,8 +2980,15 @@
       else void releaseWakeLock();
       updateUi();
     });
-    panel.querySelector('[data-role="extract-jsonl"]').addEventListener('click', () => void runExport('jsonl'));
-    panel.querySelector('[data-role="extract-md"]').addEventListener('click', () => void runExport('md'));
+    const runSelectedExports = async () => {
+      const jsonl = panel.querySelector('[data-role="format-jsonl"]');
+      const md = panel.querySelector('[data-role="format-md"]');
+      if (jsonl?.checked) await runExport('jsonl');
+      if (md?.checked) await runExport('md');
+    };
+    panel.querySelector('[data-role="extract"]').addEventListener('click', () => void runSelectedExports());
+    panel.querySelector('[data-role="format-jsonl"]').addEventListener('change', updateUi);
+    panel.querySelector('[data-role="format-md"]').addEventListener('change', updateUi);
     panel.addEventListener('mouseleave', () => {
       if (!panel.matches(':focus-within') && !exportInProgress && !testInProgress) {
         panel.style.display = 'none';

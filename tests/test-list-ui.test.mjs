@@ -11,8 +11,8 @@ test('Test opens the interactive built-in test matrix instead of immediately run
   assert.match(userscript, /function builtInTests\(\) \{/,
     'Production userscript must expose one built-in-test registry.');
   assert.match(userscript,
-    /panel\.querySelector\('\[data-role="test"\]'\)\.addEventListener\('click', openTestMatrix\);/,
-    'Test button must open the matrix, not immediately execute Run All.');
+    /panel\.querySelector\('\[data-role="test"\]'\)\.addEventListener\('click', event => openTestMatrix\(event\.currentTarget\)\);/,
+    'Test button must open the matrix with its opener for focus restoration, not immediately execute Run All.');
   assert.doesNotMatch(userscript, /data-role="test-list"/,
     'The rejected v0.6.136 static inline list must not remain.');
   assert.match(userscript, /<strong id="\$\{TEST_MATRIX_ID\}-title">Built-in tests<\/strong>/,
