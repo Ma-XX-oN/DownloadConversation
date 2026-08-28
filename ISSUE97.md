@@ -1,1 +1,0 @@
-Temporary staging marker for Issue 97. This file will be removed after the staged implementation is verified.
