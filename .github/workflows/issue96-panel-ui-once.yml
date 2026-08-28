@@ -4,6 +4,7 @@ on:
   push:
     paths:
       - 'scripts/issue96-panel-ui-patch.py'
+      - 'scripts/issue96-panel-ui-fixup.py'
       - '.github/workflows/issue96-panel-ui-once.yml'
 
 permissions:
@@ -18,6 +19,7 @@ jobs:
         with:
           node-version: 22
       - run: python scripts/issue96-panel-ui-patch.py
+      - run: python scripts/issue96-panel-ui-fixup.py
       - run: node --check chatgpt-conversation-markdown-export.user.js
       - run: node --test tests/core-integration.test.mjs
       - run: node --test tests/test-list-ui.test.mjs
@@ -26,6 +28,6 @@ jobs:
         run: |
           git config user.name 'github-actions[bot]'
           git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
-          git add chatgpt-conversation-markdown-export.user.js tests/recorder-panel-ui.test.mjs .github/workflows/ci.yml
+          git add chatgpt-conversation-markdown-export.user.js tests/test-list-ui.test.mjs tests/recorder-panel-ui.test.mjs .github/workflows/ci.yml
           git commit -m 'ui: restore recorder panel controls'
           git push
