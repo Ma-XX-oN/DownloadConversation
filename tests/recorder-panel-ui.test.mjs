@@ -33,8 +33,9 @@ test('recorder panel restores dialog/log/switch/extract UI contracts', () => {
   assert.match(userscript, /screen\.setAttribute\('aria-checked', String\(screenOnWhenCapturing\)\)/);
 
   assert.match(userscript, /data-role="extract" type="button">Extract<\/button>/);
-  assert.match(userscript, /data-role="format-jsonl" type="checkbox" checked/);
-  assert.match(userscript, /data-role="format-md" type="checkbox"/);
+  assert.match(userscript, /data-role="format-jsonl" type="checkbox"> JSONL/);
+  assert.doesNotMatch(userscript, /data-role="format-jsonl" type="checkbox" checked/);
+  assert.match(userscript, /data-role="format-md" type="checkbox" checked> MD/);
   assert.doesNotMatch(userscript, /data-role="extract-jsonl"/);
   assert.doesNotMatch(userscript, /data-role="extract-md"/);
   assert.match(userscript, /if \(jsonl\?\.checked\) await runExport\('jsonl'\)/);
