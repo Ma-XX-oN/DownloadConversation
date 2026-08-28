@@ -45,6 +45,13 @@ Object.assign(context, {
 vm.runInNewContext(`${helperSource}\nthis.__phase5 = { canonicalEventsBySourceRecord, canonicalPlainRecordEligible, canonicalPlainRecordBlock };`, context);
 const phase5 = context.__phase5;
 
+const quoteStart = userscript.indexOf('  function quoteMarkdown(markdown) {');
+const quoteEnd = userscript.indexOf('\n  }', quoteStart);
+assert.ok(quoteStart >= 0 && quoteEnd > quoteStart, 'Production quoteMarkdown implementation is missing.');
+const quoteSource = userscript.slice(quoteStart, quoteEnd + '\n  }'.length);
+vm.runInNewContext(`${quoteSource}\nthis.__productionQuoteMarkdown = quoteMarkdown;`, context);
+assert.equal(typeof context.__productionQuoteMarkdown, 'function');
+
 function textRecord(id, role, text, extra = {}) {
   return {
     id,
@@ -61,6 +68,11 @@ function textRecord(id, role, text, extra = {}) {
     status: 'finished_successfully',
     end_turn: role === 'assistant'
   };
+}
+
+function productionPlainBlock(record) {
+  const text = record.content.parts.join('');
+  return `${context.transcriptHeading(record)}\n\n${context.__productionQuoteMarkdown(text)}`;
 }
 
 test('canonical plain production slice preserves source heading identity and JSONL provenance', () => {
@@ -82,10 +94,45 @@ test('canonical plain production slice preserves source heading identity and JSO
   assert.equal(userEvent.source.turn_id, user.id);
   assert.equal(userEvent.source.create_time, 101.25);
   assert.equal(userEvent.source.update_time, 102.5);
-  assert.equal(phase5.canonicalPlainRecordBlock(user, userEvent),
-    '## User <!-- turn_id=user-source-id -->\n\n> Hello');
-  assert.equal(phase5.canonicalPlainRecordBlock(assistant, events.get(assistant.id)),
-    '## ChatGPT <!-- turn_id=assistant-source-id -->\n\n> Answer');
+  assert.equal(phase5.canonicalPlainRecordBlock(user, userEvent), productionPlainBlock(user));
+  assert.equal(phase5.canonicalPlainRecordBlock(assistant, events.get(assistant.id)), productionPlainBlock(assistant));
+});
+
+test('migrated canonical plain renderer is byte-identical to production legacy quoting for rich Markdown syntax', () => {
+  const markdown = [
+    '# H1 Heading',
+    '',
+    '## H2 Heading',
+    '',
+    'This paragraph shows **bold**, *italic*, ***bold-italic***, ~~strikethrough~~, `inline code`, and a [link](https://example.com).',
+    '',
+    '```python',
+    'def greet(name):',
+    '  return `Hello`',
+    '',
+    'print(greet("world"))',
+    '```',
+    '',
+    '> Level one',
+    '>',
+    '> > Level two',
+    '',
+    '| Left | Center | Right |',
+    '|:-----|:------:|------:|',
+    '| a | b | c |',
+    '',
+    'A sentence with a footnote.[^1]',
+    '',
+    '[^1]: The footnote text.'
+  ].join('\n');
+  for (const record of [
+    textRecord('markdown-user', 'user', markdown),
+    textRecord('markdown-assistant', 'assistant', markdown),
+    textRecord('markdown-commentary', 'assistant', markdown, { channel: 'commentary' })
+  ]) {
+    const event = phase5.canonicalEventsBySourceRecord([record]).get(record.id);
+    assert.equal(phase5.canonicalPlainRecordBlock(record, event), productionPlainBlock(record));
+  }
 });
 
 test('literal Markdown footnotes round-trip through the production canonical slice', () => {
@@ -96,6 +143,7 @@ test('literal Markdown footnotes round-trip through the production canonical sli
   );
   const event = phase5.canonicalEventsBySourceRecord([record]).get(record.id);
   const rendered = phase5.canonicalPlainRecordBlock(record, event);
+  assert.equal(rendered, productionPlainBlock(record));
   assert.ok(rendered.includes('A sentence with a footnote.[^1]'));
   assert.ok(rendered.includes('[^1]: The footnote text.'));
   assert.equal(event.citations.length, 0);
