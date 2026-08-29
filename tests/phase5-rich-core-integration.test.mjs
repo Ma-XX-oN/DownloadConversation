@@ -153,7 +153,7 @@ test('generated Assistant sandbox link uses browser conversation identity throug
   const rendered = phase5.canonicalRecordBlock(record, event);
   assert.match(rendered, /\/backend-api\/conversation\/conversation-123\/interpreter\/download\?/);
   assert.match(rendered, /message_id=assistant-sandbox/);
-  assert.match(rendered, /sandbox_path=%2Fmnt%2Fdata%2Fa%28b%29\.txt/);
+  assert.match(rendered, /sandbox_path=%2Fmnt%2Fdata%2Fa\(b\)\.txt/);
   assert.match(rendered, /download_intent=true/);
   assert.equal(rendered.includes('sandbox:/mnt/data/a(b).txt'), false);
 });
