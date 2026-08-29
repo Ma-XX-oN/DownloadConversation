@@ -6,7 +6,7 @@ import vm from 'node:vm';
 const userscript = await readFile(new URL('../chatgpt-conversation-markdown-export.user.js', import.meta.url), 'utf8');
 const requireMatch = userscript.match(/^\/\/ @require\s+(https:\/\/raw\.githubusercontent\.com\/Ma-XX-oN\/AIConversationCore\/([0-9a-f]{40})\/dist\/aiconversationcore\.chatgpt\.browser\.js)$/m);
 assert.ok(requireMatch, 'Production userscript must pin the AIConversationCore browser bundle to an exact commit.');
-assert.equal(requireMatch[2], '0382415b13b2e9266beeb94f702475272b86d038');
+assert.equal(requireMatch[2], '06e1d62c6024865f8c07aefbaa0b4d2c26082eda');
 
 const response = await fetch(requireMatch[1]);
 assert.equal(response.status, 200, `Could not load pinned AIConversationCore bundle: HTTP ${response.status}`);
@@ -242,6 +242,57 @@ test('Thoughts, tool call/result, and final Assistant message render as one cano
   assert.match(rendered, /container\.exec code/);
   assert.match(rendered, /container\.exec output/);
   assert.match(rendered, /> Done\./);
+});
+
+test('commentary plus tool activity uses canonical adaptive containment', () => {
+  const call = textRecord('commentary-call', 'assistant', '', {
+    channel: 'analysis',
+    recipient: 'api_tool',
+    end_turn: false,
+    content: { content_type: 'code', text: 'inspect()', language: 'javascript' }
+  });
+  const payload = [
+    '[L1] literal tool payload',
+    '````',
+    '[L2] nested four-backtick fence',
+    '````',
+    "[L3] reference?.matched_text === 'memcite'"
+  ].join('\n');
+  const result = textRecord('commentary-result', 'tool', '', {
+    author_name: 'api_tool',
+    end_turn: false,
+    content: { content_type: 'execution_output', text: payload }
+  });
+  const commentary = textRecord('commentary-message', 'assistant', 'Continuing after the tool.', {
+    channel: 'commentary',
+    end_turn: false
+  });
+  const records = [call, result, commentary];
+  const byRecord = phase5.canonicalEventsBySourceRecord(records);
+  const events = records.map(record => byRecord.get(record.id));
+  assert.deepEqual(events.map(event => [event?.kind, event?.role, event?.visibility]), [
+    ['tool_call', 'assistant', 'visible'],
+    ['tool_result', 'tool', 'visible'],
+    ['commentary', 'assistant', 'visible']
+  ]);
+  assert.equal(phase5.canonicalThoughtRecordEligible(call, events[0]), true, 'tool call eligibility');
+  assert.equal(phase5.canonicalThoughtRecordEligible(result, events[1]), true, 'tool result eligibility');
+  assert.equal(phase5.canonicalMessageRecordEligible(commentary, events[2]), true, 'commentary eligibility');
+  assert.equal(phase5.canonicalAssistantSegmentEligible(records, events), true, 'whole segment eligibility');
+  const rendered = phase5.canonicalAssistantSegmentBlock(records, events);
+  assert.match(rendered, /^## ChatGPT Commentary <!-- turn_id=commentary-message -->/);
+  assert.equal((rendered.match(/^## ChatGPT$/gm) ?? []).length, 0,
+    'Commentary + tool activity must not manufacture a second ChatGPT section.');
+  assert.match(rendered, /\n`````\n\[L1\] literal tool payload/);
+  assert.match(rendered, /\n`````\n\n<\/details>/);
+  assert.match(rendered, /reference\?\.matched_text === 'memcite'/);
+  assert.equal((rendered.match(/\*\*\(memory:/g) ?? []).length, 0,
+    'Literal memcite text inside tool output must not become a semantic memory citation.');
+  const payloadAt = rendered.indexOf(payload);
+  const closeFenceAt = rendered.indexOf('`````', payloadAt + payload.length);
+  const commentaryAt = rendered.indexOf('> Continuing after the tool.');
+  assert.ok(payloadAt >= 0 && closeFenceAt > payloadAt && commentaryAt > closeFenceAt,
+    'Commentary following the tool must remain outside the adaptive fence.');
 });
 
 test('defensive host fallback remains for unresolved inline tokens, hidden records, and User sandbox links', () => {

@@ -1,11 +1,11 @@
 // ==UserScript==
 // @name         ChatGPT Conversation Markdown Recorder
 // @namespace    https://chatgpt.com/
-// @version      0.6.142
+// @version      0.6.143
 // @description  Exports the current ChatGPT conversation directly from the Conversation API as Markdown or JSONL.
 // @match        https://chatgpt.com/*
 // @match        https://chat.openai.com/*
-// @require      https://raw.githubusercontent.com/Ma-XX-oN/AIConversationCore/0382415b13b2e9266beeb94f702475272b86d038/dist/aiconversationcore.chatgpt.browser.js
+// @require      https://raw.githubusercontent.com/Ma-XX-oN/AIConversationCore/06e1d62c6024865f8c07aefbaa0b4d2c26082eda/dist/aiconversationcore.chatgpt.browser.js
 // @run-at       document-start
 // ==/UserScript==
 
@@ -1639,7 +1639,6 @@
       return false;
     }
     let messageIndex = -1;
-    let hasTool = false;
     let hasAssistantSource = false;
     for (let index = 0; index < records.length; index += 1) {
       const record = records[index];
@@ -1651,13 +1650,15 @@
         continue;
       }
       if (!canonicalThoughtRecordEligible(record, event)) return false;
-      if (event.kind === 'tool_call' || event.kind === 'tool_result') hasTool = true;
     }
     if (!hasAssistantSource) return false;
     if (messageIndex >= 0 && messageIndex !== records.length - 1) return false;
-    if (messageIndex >= 0 && records[messageIndex]?.channel === 'commentary' && hasTool) return false;
     const rendered = canonicalCore().renderCanonicalMarkdown(events);
-    return Boolean(rendered.trim()) && !canonicalRenderedHasUnresolvedInlineTokens(rendered);
+    // Tool payloads are opaque literal data and may legitimately contain ChatGPT
+    // inline-token character sequences. Message/commentary records were already
+    // checked individually above, so do not reject the whole segment by scanning
+    // rendered tool payload text.
+    return Boolean(rendered.trim());
   }
 
   function canonicalAssistantSegmentBlock(records, events) {
