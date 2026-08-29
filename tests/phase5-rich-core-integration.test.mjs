@@ -32,6 +32,14 @@ Object.assign(context, {
   currentConversationId() {
     return 'conversation-123';
   },
+  diagnosticEnabled() {
+    return false;
+  },
+  logDiagnostic() {},
+  boundedDiagnosticText(value, maxChars = 2000) {
+    const text = String(value ?? '');
+    return text.length <= maxChars ? text : `${text.slice(0, maxChars)}…`;
+  },
   CG_INLINE_TOKEN_START: '\ue200',
   transcriptHeading(record) {
     const id = typeof record?.id === 'string' ? record.id : '';

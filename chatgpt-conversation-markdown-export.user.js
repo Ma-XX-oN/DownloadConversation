@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         ChatGPT Conversation Markdown Recorder
 // @namespace    https://chatgpt.com/
-// @version      0.6.145
+// @version      0.6.146
 // @description  Exports the current ChatGPT conversation directly from the Conversation API as Markdown or JSONL.
 // @match        https://chatgpt.com/*
 // @match        https://chat.openai.com/*
@@ -1592,8 +1592,38 @@
         `AIConversationCore did not preserve create_time for ${sourceRecordId}.`);
       assert(event?.source?.update_time === (original?.update_time ?? null),
         `AIConversationCore did not preserve update_time for ${sourceRecordId}.`);
-      bySourceRecord.set(sourceRecordId,
-        canonicalEnrichRecoveredImages(event, recoveredImageMap.get(sourceRecordId) ?? []));
+      const enrichedEvent = canonicalEnrichRecoveredImages(
+        event, recoveredImageMap.get(sourceRecordId) ?? []);
+      bySourceRecord.set(sourceRecordId, enrichedEvent);
+      if (diagnosticEnabled('debug')) {
+        const diagnosticBlocks = Array.isArray(enrichedEvent?.blocks)
+          ? enrichedEvent.blocks.filter(block =>
+            block?.type === 'tool_call' || block?.type === 'tool_result')
+          : [];
+        if (diagnosticBlocks.length) {
+          logDiagnostic('debug', 'canonical-tool-normalization', {
+            source_record_id: sourceRecordId,
+            source_index: sourceIndex,
+            source_role: original?.author?.role ?? null,
+            source_recipient: original?.recipient ?? null,
+            source_channel: original?.channel ?? null,
+            source_content_type: original?.content?.content_type ?? null,
+            source_language: original?.content?.language ?? null,
+            event_kind: enrichedEvent?.kind ?? null,
+            event_role: enrichedEvent?.role ?? null,
+            event_visibility: enrichedEvent?.visibility ?? null,
+            blocks: diagnosticBlocks.map(block => ({
+              type: block?.type ?? null,
+              name: block?.name ?? null,
+              input_format: block?.input_format ?? null,
+              language: block?.language ?? null,
+              source_language: block?.source_language ?? null,
+              input_prefix: boundedDiagnosticText(block?.input ?? '', 240),
+              source_input_prefix: boundedDiagnosticText(block?.source_input ?? '', 240)
+            }))
+          });
+        }
+      }
     }
     return bySourceRecord;
   }
@@ -1790,8 +1820,36 @@
           const segmentEvents = segmentRecords
             .map(item => canonicalEventBySourceRecord.get(item.id) ?? null)
             .filter(Boolean);
-          if (segmentEvents.length === segmentRecords.length &&
-              canonicalAssistantSegmentEligible(segmentRecords, segmentEvents)) {
+          const canonicalSegmentComplete = segmentEvents.length === segmentRecords.length;
+          const canonicalSegmentEligible = canonicalSegmentComplete &&
+            canonicalAssistantSegmentEligible(segmentRecords, segmentEvents);
+          if (diagnosticEnabled('debug') && segmentRecords.some(item =>
+              item?.content?.content_type === 'code' || item?.author?.role === 'tool')) {
+            logDiagnostic('debug', 'canonical-tool-segment-routing', {
+              complete: canonicalSegmentComplete,
+              eligible: canonicalSegmentEligible,
+              records: segmentRecords.map((item, index) => ({
+                source_record_id: item?.id ?? null,
+                source_role: item?.author?.role ?? null,
+                source_recipient: item?.recipient ?? null,
+                source_channel: item?.channel ?? null,
+                source_content_type: item?.content?.content_type ?? null,
+                source_language: item?.content?.language ?? null,
+                event_kind: segmentEvents[index]?.kind ?? null,
+                event_role: segmentEvents[index]?.role ?? null,
+                event_blocks: Array.isArray(segmentEvents[index]?.blocks)
+                  ? segmentEvents[index].blocks.map(block => ({
+                    type: block?.type ?? null,
+                    name: block?.name ?? null,
+                    input_format: block?.input_format ?? null,
+                    language: block?.language ?? null,
+                    source_language: block?.source_language ?? null
+                  }))
+                  : []
+              }))
+            });
+          }
+          if (canonicalSegmentEligible) {
             output.push(canonicalAssistantSegmentBlock(segmentRecords, segmentEvents));
             pendingThoughts = [];
             continue;
