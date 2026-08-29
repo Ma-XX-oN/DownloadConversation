@@ -1,0 +1,135 @@
+name: Fix fallback adaptive fence once
+
+on:
+  push:
+    paths:
+      - .github/workflows/fix-fallback-adaptive-fence-once.yml
+
+permissions:
+  contents: write
+
+jobs:
+  fix:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - name: Apply guarded production and regression fix
+        shell: python
+        run: |
+          from pathlib import Path
+
+          script = Path('chatgpt-conversation-markdown-export.user.js')
+          text = script.read_text(encoding='utf-8')
+          assert text.count('// @version      0.6.143') == 1
+          text = text.replace('// @version      0.6.143', '// @version      0.6.144', 1)
+
+          old = '''  function cgCodeFence(text, language = '') {
+            const body = String(text ?? '').replace(/\\s+$/, '');
+            const fence = body.includes('```') ? '````' : '```';
+            return `${fence}${language || ''}\\n${body}\\n${fence}`;
+          }
+          '''
+          new = '''  function cgCodeFence(text, language = '') {
+            const body = String(text ?? '').replace(/\\s+$/, '');
+            const runs = body.match(/`+/g) ?? [];
+            const longest = runs.reduce((max, run) => Math.max(max, run.length), 0);
+            const fence = '`'.repeat(Math.max(3, longest + 1));
+            return `${fence}${language || ''}\\n${body}\\n${fence}`;
+          }
+          '''
+          assert text.count(old) == 1
+          text = text.replace(old, new, 1)
+          script.write_text(text, encoding='utf-8')
+
+          integration = Path('tests/phase5-rich-core-integration.test.mjs')
+          test_text = integration.read_text(encoding='utf-8')
+          old_result = '''  const result = textRecord('commentary-result', 'tool', '', {
+            author_name: 'api_tool',
+            end_turn: false,
+            content: { content_type: 'execution_output', text: payload }
+          });
+          '''
+          new_result = '''  const result = textRecord('commentary-result', 'tool', '', {
+            author_name: 'api_tool',
+            end_turn: false,
+            content: {
+              content_type: 'multimodal_text',
+              parts: [
+                'Make sure to include a file citation in your response.',
+                payload
+              ]
+            }
+          });
+          '''
+          assert test_text.count(old_result) == 1
+          test_text = test_text.replace(old_result, new_result, 1)
+          integration.write_text(test_text, encoding='utf-8')
+
+          regression = Path('tests/fallback-adaptive-fence.test.mjs')
+          regression.write_text(r'''import assert from 'node:assert/strict';
+          import { readFile } from 'node:fs/promises';
+          import test from 'node:test';
+          import vm from 'node:vm';
+
+          const userscript = await readFile(
+            new URL('../chatgpt-conversation-markdown-export.user.js', import.meta.url),
+            'utf8'
+          );
+          const start = userscript.indexOf("  function cgCodeFence(text, language = '') {");
+          const end = userscript.indexOf('\n\n  function cgRenderDetail', start);
+          assert.ok(start >= 0 && end > start, 'Production cgCodeFence helper is missing.');
+          const context = {};
+          vm.runInNewContext(`${userscript.slice(start, end)}\nthis.cgCodeFence = cgCodeFence;`, context);
+
+          test('fallback tool fence exceeds the longest literal backtick run', () => {
+            const payload = [
+              '[L1] literal tool payload',
+              '````',
+              '[L2] nested four-backtick fence',
+              '````',
+              '<details>',
+              '<summary>literal payload HTML</summary>',
+              '</details>'
+            ].join('\n');
+            const rendered = context.cgCodeFence(payload);
+            const lines = rendered.split('\n');
+            assert.equal(lines[0], '`````');
+            assert.equal(lines.at(-1), '`````');
+            assert.equal(rendered.includes(`\n${payload}\n`), true);
+          });
+
+          test('fallback fence remains minimal when payload has no dangerous run', () => {
+            assert.equal(context.cgCodeFence('plain text'), '```\nplain text\n```');
+            assert.equal(context.cgCodeFence('literal ``` line').startsWith('````\n'), true);
+          });
+          ''', encoding='utf-8')
+
+          ci = Path('.github/workflows/ci.yml')
+          ci_text = ci.read_text(encoding='utf-8')
+          old_ci = 'run: node --test tests/core-integration.test.mjs tests/phase5-rich-core-integration.test.mjs'
+          new_ci = 'run: node --test tests/core-integration.test.mjs tests/phase5-rich-core-integration.test.mjs tests/fallback-adaptive-fence.test.mjs'
+          assert ci_text.count(old_ci) == 1
+          ci.write_text(ci_text.replace(old_ci, new_ci, 1), encoding='utf-8')
+      - name: JavaScript syntax
+        run: node --check chatgpt-conversation-markdown-export.user.js
+      - name: Focused and permanent regression suite
+        run: |
+          node --test tests/core-integration.test.mjs tests/phase5-rich-core-integration.test.mjs tests/fallback-adaptive-fence.test.mjs
+          node --test tests/test-list-ui.test.mjs
+          node --test tests/recorder-panel-ui.test.mjs
+      - name: Verify scoped diff
+        run: |
+          git status --short
+          test -z "$(git status --short | grep -vE '^( M|\?\?) (chatgpt-conversation-markdown-export.user.js|tests/phase5-rich-core-integration.test.mjs|tests/fallback-adaptive-fence.test.mjs|.github/workflows/ci.yml)$')"
+      - name: Commit verified fix
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add chatgpt-conversation-markdown-export.user.js tests/phase5-rich-core-integration.test.mjs tests/fallback-adaptive-fence.test.mjs .github/workflows/ci.yml
+          git commit -m "fix: contain fallback tool payload fences"
+          git push
