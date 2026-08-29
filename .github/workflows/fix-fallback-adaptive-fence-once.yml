@@ -28,44 +28,28 @@ jobs:
           assert text.count('// @version      0.6.143') == 1
           text = text.replace('// @version      0.6.143', '// @version      0.6.144', 1)
 
-          old = '''  function cgCodeFence(text, language = '') {
-            const body = String(text ?? '').replace(/\\s+$/, '');
-            const fence = body.includes('```') ? '````' : '```';
-            return `${fence}${language || ''}\\n${body}\\n${fence}`;
-          }
-          '''
-          new = '''  function cgCodeFence(text, language = '') {
-            const body = String(text ?? '').replace(/\\s+$/, '');
-            const runs = body.match(/`+/g) ?? [];
-            const longest = runs.reduce((max, run) => Math.max(max, run.length), 0);
-            const fence = '`'.repeat(Math.max(3, longest + 1));
-            return `${fence}${language || ''}\\n${body}\\n${fence}`;
-          }
-          '''
-          assert text.count(old) == 1
-          text = text.replace(old, new, 1)
+          old_fence = "    const fence = body.includes('```') ? '````' : '```';"
+          new_fence = "\n".join([
+            "    const runs = body.match(/`+/g) ?? [];",
+            "    const longest = runs.reduce((max, run) => Math.max(max, run.length), 0);",
+            "    const fence = '`'.repeat(Math.max(3, longest + 1));"
+          ])
+          assert text.count(old_fence) == 1
+          text = text.replace(old_fence, new_fence, 1)
           script.write_text(text, encoding='utf-8')
 
           integration = Path('tests/phase5-rich-core-integration.test.mjs')
           test_text = integration.read_text(encoding='utf-8')
-          old_result = '''  const result = textRecord('commentary-result', 'tool', '', {
-            author_name: 'api_tool',
-            end_turn: false,
-            content: { content_type: 'execution_output', text: payload }
-          });
-          '''
-          new_result = '''  const result = textRecord('commentary-result', 'tool', '', {
-            author_name: 'api_tool',
-            end_turn: false,
-            content: {
-              content_type: 'multimodal_text',
-              parts: [
-                'Make sure to include a file citation in your response.',
-                payload
-              ]
-            }
-          });
-          '''
+          old_result = "    content: { content_type: 'execution_output', text: payload }"
+          new_result = "\n".join([
+            "    content: {",
+            "      content_type: 'multimodal_text',",
+            "      parts: [",
+            "        'Make sure to include a file citation in your response.',",
+            "        payload",
+            "      ]",
+            "    }"
+          ])
           assert test_text.count(old_result) == 1
           test_text = test_text.replace(old_result, new_result, 1)
           integration.write_text(test_text, encoding='utf-8')
