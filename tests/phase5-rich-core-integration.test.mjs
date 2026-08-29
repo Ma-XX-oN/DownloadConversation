@@ -261,7 +261,13 @@ test('commentary plus tool activity uses canonical adaptive containment', () => 
   const result = textRecord('commentary-result', 'tool', '', {
     author_name: 'api_tool',
     end_turn: false,
-    content: { content_type: 'execution_output', text: payload }
+    content: {
+      content_type: 'multimodal_text',
+      parts: [
+        'Make sure to include a file citation in your response.',
+        payload
+      ]
+    }
   });
   const commentary = textRecord('commentary-message', 'assistant', 'Continuing after the tool.', {
     channel: 'commentary',

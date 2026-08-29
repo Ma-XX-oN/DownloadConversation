@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         ChatGPT Conversation Markdown Recorder
 // @namespace    https://chatgpt.com/
-// @version      0.6.143
+// @version      0.6.144
 // @description  Exports the current ChatGPT conversation directly from the Conversation API as Markdown or JSONL.
 // @match        https://chatgpt.com/*
 // @match        https://chat.openai.com/*
@@ -1455,7 +1455,9 @@
 
   function cgCodeFence(text, language = '') {
     const body = String(text ?? '').replace(/\s+$/, '');
-    const fence = body.includes('```') ? '````' : '```';
+    const runs = body.match(/`+/g) ?? [];
+    const longest = runs.reduce((max, run) => Math.max(max, run.length), 0);
+    const fence = '`'.repeat(Math.max(3, longest + 1));
     return `${fence}${language || ''}\n${body}\n${fence}`;
   }
 
