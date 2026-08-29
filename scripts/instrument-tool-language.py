@@ -103,17 +103,14 @@ test('tool language diagnostics expose canonical normalization and production ro
 });
 """, encoding='utf-8')
 
-rich = Path('tests/phase5-rich-core-integration.test.mjs')
-rich_text = rich.read_text(encoding='utf-8')
-old = """  currentConversationId() {
-    return 'conversation-123';
-  },
-  CG_INLINE_TOKEN_START: '\\ue200',
+for name in ['tests/phase5-rich-core-integration.test.mjs', 'tests/core-integration.test.mjs']:
+  path = Path(name)
+  value = path.read_text(encoding='utf-8')
+  if 'diagnosticEnabled()' in value:
+    continue
+  anchor = """  CG_INLINE_TOKEN_START: '\\ue200',
 """
-new = """  currentConversationId() {
-    return 'conversation-123';
-  },
-  diagnosticEnabled() {
+  replacement = """  diagnosticEnabled() {
     return false;
   },
   logDiagnostic() {},
@@ -123,5 +120,5 @@ new = """  currentConversationId() {
   },
   CG_INLINE_TOKEN_START: '\\ue200',
 """
-assert rich_text.count(old) == 1, 'rich integration diagnostic harness insertion point changed'
-rich.write_text(rich_text.replace(old, new, 1), encoding='utf-8')
+  assert value.count(anchor) == 1, f'{name}: diagnostic harness insertion point changed'
+  path.write_text(value.replace(anchor, replacement, 1), encoding='utf-8')
