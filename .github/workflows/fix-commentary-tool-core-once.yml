@@ -41,6 +41,11 @@ jobs:
           for removal in removals:
               assert text.count(removal) == 1, removal
               text = text.replace(removal, '', 1)
+
+          old_segment_return = '''    const rendered = canonicalCore().renderCanonicalMarkdown(events);\n    return Boolean(rendered.trim()) && !canonicalRenderedHasUnresolvedInlineTokens(rendered);\n  }\n\n  function canonicalAssistantSegmentBlock'''
+          new_segment_return = '''    const rendered = canonicalCore().renderCanonicalMarkdown(events);\n    // Tool payloads are opaque literal data and may legitimately contain ChatGPT\n    // inline-token character sequences. Message/commentary records were already\n    // checked individually above, so do not reject the whole segment by scanning\n    // rendered tool payload text.\n    return Boolean(rendered.trim());\n  }\n\n  function canonicalAssistantSegmentBlock'''
+          assert text.count(old_segment_return) == 1
+          text = text.replace(old_segment_return, new_segment_return, 1)
           userscript.write_text(text, encoding='utf-8')
 
           for test_name in ['tests/core-integration.test.mjs', 'tests/phase5-rich-core-integration.test.mjs']:
