@@ -23,10 +23,15 @@ jobs:
         run: |
           from pathlib import Path
 
+          old_core = '0382415b13b2e9266beeb94f702475272b86d038'
+          new_core = '06e1d62c6024865f8c07aefbaa0b4d2c26082eda'
+
           userscript = Path('chatgpt-conversation-markdown-export.user.js')
           text = userscript.read_text(encoding='utf-8')
           assert text.count('// @version      0.6.142') == 1
-          text = text.replace('// @version      0.6.142', '// @version      0.6.143')
+          assert text.count(old_core) == 1
+          text = text.replace('// @version      0.6.142', '// @version      0.6.143', 1)
+          text = text.replace(old_core, new_core, 1)
 
           removals = [
               '    let hasTool = false;\n',
@@ -38,10 +43,17 @@ jobs:
               text = text.replace(removal, '', 1)
           userscript.write_text(text, encoding='utf-8')
 
+          for test_name in ['tests/core-integration.test.mjs', 'tests/phase5-rich-core-integration.test.mjs']:
+              path = Path(test_name)
+              test_text = path.read_text(encoding='utf-8')
+              assert test_text.count(old_core) == 1, test_name
+              path.write_text(test_text.replace(old_core, new_core, 1), encoding='utf-8')
+
           test_path = Path('tests/phase5-rich-core-integration.test.mjs')
           test_text = test_path.read_text(encoding='utf-8')
           anchor = "test('defensive host fallback remains for unresolved inline tokens, hidden records, and User sandbox links', () => {"
           assert test_text.count(anchor) == 1
+          assert "commentary plus tool activity uses canonical adaptive containment" not in test_text
           added = r'''test('commentary plus tool activity uses canonical adaptive containment', () => {
             const call = textRecord('commentary-call', 'assistant', '', {
               channel: 'analysis',
@@ -71,12 +83,18 @@ jobs:
             assert.equal(phase5.canonicalAssistantSegmentEligible(records, events), true);
             const rendered = phase5.canonicalAssistantSegmentBlock(records, events);
             assert.match(rendered, /^## ChatGPT Commentary <!-- turn_id=commentary-message -->/);
+            assert.equal((rendered.match(/^## ChatGPT$/gm) ?? []).length, 0,
+              'Commentary + tool activity must not manufacture a second ChatGPT section.');
             assert.match(rendered, /\n`````\n\[L1\] literal tool payload/);
             assert.match(rendered, /\n`````\n\n<\/details>/);
             assert.match(rendered, /reference\?\.matched_text === 'memcite'/);
             assert.equal((rendered.match(/\*\*\(memory:/g) ?? []).length, 0,
               'Literal memcite text inside tool output must not become a semantic memory citation.');
-            assert.match(rendered, /> Continuing after the tool\./);
+            const payloadAt = rendered.indexOf(payload);
+            const closeFenceAt = rendered.indexOf('`````', payloadAt + payload.length);
+            const commentaryAt = rendered.indexOf('> Continuing after the tool.');
+            assert.ok(payloadAt >= 0 && closeFenceAt > payloadAt && commentaryAt > closeFenceAt,
+              'Commentary following the tool must remain outside the adaptive fence.');
           });
 
           '''
@@ -87,14 +105,16 @@ jobs:
           node --check chatgpt-conversation-markdown-export.user.js
           node --test tests/*.test.mjs
           grep -Fq '// @version      0.6.143' chatgpt-conversation-markdown-export.user.js
+          grep -Fq 'AIConversationCore/06e1d62c6024865f8c07aefbaa0b4d2c26082eda/dist/aiconversationcore.chatgpt.browser.js' chatgpt-conversation-markdown-export.user.js
           ! grep -Fq "records[messageIndex]?.channel === 'commentary' && hasTool" chatgpt-conversation-markdown-export.user.js
+          test "$(grep -RFl '0382415b13b2e9266beeb94f702475272b86d038' chatgpt-conversation-markdown-export.user.js tests | wc -l)" -eq 0
       - name: Verify scoped diff
         run: |
-          test -z "$(git status --short | grep -vE '^( M|\?\?) (chatgpt-conversation-markdown-export.user.js|tests/phase5-rich-core-integration.test.mjs)$')"
+          test -z "$(git status --short | grep -vE '^( M|\?\?) (chatgpt-conversation-markdown-export.user.js|tests/core-integration.test.mjs|tests/phase5-rich-core-integration.test.mjs)$')"
       - name: Commit verified fix
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git add chatgpt-conversation-markdown-export.user.js tests/phase5-rich-core-integration.test.mjs
+          git add chatgpt-conversation-markdown-export.user.js tests/core-integration.test.mjs tests/phase5-rich-core-integration.test.mjs
           git commit -m "fix: route commentary tool segments through core"
           git push
