@@ -1,11 +1,11 @@
 // ==UserScript==
 // @name         ChatGPT Conversation Markdown Recorder
 // @namespace    https://chatgpt.com/
-// @version      0.6.144
+// @version      0.6.145
 // @description  Exports the current ChatGPT conversation directly from the Conversation API as Markdown or JSONL.
 // @match        https://chatgpt.com/*
 // @match        https://chat.openai.com/*
-// @require      https://raw.githubusercontent.com/Ma-XX-oN/AIConversationCore/06e1d62c6024865f8c07aefbaa0b4d2c26082eda/dist/aiconversationcore.chatgpt.browser.js
+// @require      https://raw.githubusercontent.com/Ma-XX-oN/AIConversationCore/fdf4cfef6c387fcb6e130486a18af4045c30bd9b/dist/aiconversationcore.chatgpt.browser.js
 // @run-at       document-start
 // ==/UserScript==
 

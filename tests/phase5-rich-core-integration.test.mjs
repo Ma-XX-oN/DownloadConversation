@@ -6,7 +6,7 @@ import vm from 'node:vm';
 const userscript = await readFile(new URL('../chatgpt-conversation-markdown-export.user.js', import.meta.url), 'utf8');
 const requireMatch = userscript.match(/^\/\/ @require\s+(https:\/\/raw\.githubusercontent\.com\/Ma-XX-oN\/AIConversationCore\/([0-9a-f]{40})\/dist\/aiconversationcore\.chatgpt\.browser\.js)$/m);
 assert.ok(requireMatch, 'Production userscript must pin the AIConversationCore browser bundle to an exact commit.');
-assert.equal(requireMatch[2], '06e1d62c6024865f8c07aefbaa0b4d2c26082eda');
+assert.equal(requireMatch[2], 'fdf4cfef6c387fcb6e130486a18af4045c30bd9b');
 
 const response = await fetch(requireMatch[1]);
 assert.equal(response.status, 200, `Could not load pinned AIConversationCore bundle: HTTP ${response.status}`);
@@ -299,6 +299,63 @@ test('commentary plus tool activity uses canonical adaptive containment', () => 
   const commentaryAt = rendered.indexOf('> Continuing after the tool.');
   assert.ok(payloadAt >= 0 && closeFenceAt > payloadAt && commentaryAt > closeFenceAt,
     'Commentary following the tool must remain outside the adaptive fence.');
+});
+
+test('pinned core normalizes the live tool-call language and Python -c shapes', () => {
+  const apiSource = '{"path":"/files/list","args":{"surface":"conversation","limit":20}}';
+  const apiCall = textRecord('api-tool-language', 'assistant', '', {
+    channel: 'commentary',
+    recipient: 'api_tool.call_tool',
+    end_turn: false,
+    content: { content_type: 'code', text: apiSource, language: 'python3' }
+  });
+  const bashSource = 'bash -lc grep -n -F "browser packaging" file.md | head -5';
+  const bashCall = textRecord('bash-tool-language', 'assistant', '', {
+    channel: 'commentary',
+    recipient: 'container.exec',
+    end_turn: false,
+    content: { content_type: 'code', text: bashSource, language: 'unknown' }
+  });
+  const pythonSource = [
+    'python -c from pathlib import Path',
+    "p=Path('/mnt/data/H1 Heading.jsonl')",
+    "print(p.read_text(encoding='utf-8', errors='replace')[:12000])"
+  ].join('\n');
+  const pythonCall = textRecord('python-tool-language', 'assistant', '', {
+    channel: 'commentary',
+    recipient: 'container.exec',
+    end_turn: false,
+    content: { content_type: 'code', text: pythonSource, language: 'unknown' }
+  });
+
+  const byRecord = phase5.canonicalEventsBySourceRecord([apiCall, bashCall, pythonCall]);
+  const apiBlock = byRecord.get(apiCall.id).blocks[0];
+  const bashBlock = byRecord.get(bashCall.id).blocks[0];
+  const pythonBlock = byRecord.get(pythonCall.id).blocks[0];
+
+  assert.equal(apiBlock.language, 'json');
+  assert.equal(apiBlock.input_format, 'json');
+  assert.equal(apiBlock.source_language, 'python3');
+  assert.equal(apiBlock.input, apiSource);
+
+  assert.equal(bashBlock.language, 'bash');
+  assert.equal(bashBlock.source_language, 'unknown');
+  assert.equal(bashBlock.input, bashSource);
+
+  assert.equal(pythonBlock.language, 'python');
+  assert.equal(pythonBlock.source_language, 'unknown');
+  assert.equal(pythonBlock.source_input, pythonSource);
+  assert.equal(pythonBlock.input.startsWith('from pathlib import Path\n'), true);
+  assert.equal(pythonBlock.input.includes('python -c '), false);
+
+  const rendered = context.AIConversationCore.renderCanonicalMarkdown([
+    byRecord.get(apiCall.id),
+    byRecord.get(bashCall.id),
+    byRecord.get(pythonCall.id)
+  ]);
+  assert.match(rendered, /<summary>api_tool\.call_tool code<\/summary>\n\n```json\n/);
+  assert.match(rendered, /<summary>container\.exec code<\/summary>\n\n```bash\n/);
+  assert.match(rendered, /<summary>container\.exec code<\/summary>\n\n```python\nfrom pathlib import Path\n/);
 });
 
 test('defensive host fallback remains for unresolved inline tokens, hidden records, and User sandbox links', () => {
