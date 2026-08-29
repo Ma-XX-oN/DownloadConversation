@@ -6,7 +6,7 @@ import vm from 'node:vm';
 const userscript = await readFile(new URL('../chatgpt-conversation-markdown-export.user.js', import.meta.url), 'utf8');
 const requireMatch = userscript.match(/^\/\/ @require\s+(https:\/\/raw\.githubusercontent\.com\/Ma-XX-oN\/AIConversationCore\/([0-9a-f]{40})\/dist\/aiconversationcore\.chatgpt\.browser\.js)$/m);
 assert.ok(requireMatch, 'Production userscript must pin the AIConversationCore browser bundle to an exact commit.');
-assert.equal(requireMatch[2], 'fdf4cfef6c387fcb6e130486a18af4045c30bd9b');
+assert.equal(requireMatch[2], 'd6d5f90aabab4d106265113bad09fc5984f4808e');
 
 const response = await fetch(requireMatch[1]);
 assert.equal(response.status, 200, `Could not load pinned AIConversationCore bundle: HTTP ${response.status}`);
@@ -375,5 +375,48 @@ test('defensive host fallback remains for unresolved inline tokens, hidden recor
   for (const record of [unresolved, hidden, userSandbox]) {
     const event = phase5.canonicalEventsBySourceRecord([record]).get(record.id);
     assert.equal(phase5.canonicalMessageRecordEligible(record, event), false);
+  }
+});
+
+
+test('tool-role text/code results keep complete Assistant segments canonical', () => {
+  for (const [contentType, content, expectedOutput] of [
+    ['text', { content_type: 'text', parts: ['text tool output'] }, 'text tool output'],
+    ['code', { content_type: 'code', text: '{"code":true}', language: 'json' }, '{"code":true}']
+  ]) {
+    const call = textRecord(`call-${contentType}`, 'assistant', '', {
+      channel: 'analysis',
+      recipient: 'example_tool',
+      end_turn: false,
+      content: { content_type: 'code', text: '{"request":true}', language: 'json' }
+    });
+    const result = textRecord(`result-${contentType}`, 'tool', '', {
+      author_name: 'example_tool',
+      channel: 'commentary',
+      end_turn: false,
+      content
+    });
+    const commentary = textRecord(`commentary-${contentType}`, 'assistant', 'After tool.', {
+      channel: 'commentary',
+      end_turn: false
+    });
+    const records = [call, result, commentary];
+    const byRecord = phase5.canonicalEventsBySourceRecord(records);
+    const events = records.map(record => byRecord.get(record.id));
+
+    assert.equal(events[1]?.kind, 'tool_result', `${contentType} tool record kind`);
+    assert.equal(events[1]?.blocks?.[0]?.type, 'tool_result', `${contentType} tool block type`);
+    assert.equal(events[1]?.blocks?.[0]?.output_format, contentType, `${contentType} source format`);
+    assert.equal(events[1]?.blocks?.[0]?.output, expectedOutput, `${contentType} payload`);
+    assert.equal(phase5.canonicalThoughtRecordEligible(result, events[1]), true,
+      `${contentType} result must be eligible thought/tool activity`);
+    assert.equal(phase5.canonicalAssistantSegmentEligible(records, events), true,
+      `${contentType} complete Assistant/tool segment must stay canonical`);
+
+    const rendered = phase5.canonicalAssistantSegmentBlock(records, events);
+    assert.match(rendered, new RegExp(`^## ChatGPT Commentary <!-- turn_id=commentary-${contentType} -->`));
+    assert.match(rendered, /<summary>example_tool output<\/summary>/);
+    assert.ok(rendered.includes(expectedOutput), `${contentType} output must be rendered`);
+    assert.match(rendered, /> After tool\./);
   }
 });
