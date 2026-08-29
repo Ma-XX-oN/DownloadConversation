@@ -1,0 +1,250 @@
+name: Fix single export snapshot once
+
+on:
+  push:
+    paths:
+      - .github/workflows/fix-single-export-snapshot-once.yml
+
+permissions:
+  contents: write
+
+jobs:
+  fix:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - name: Apply guarded export orchestration fix
+        shell: python
+        run: |
+          from pathlib import Path
+
+          userscript = Path('chatgpt-conversation-markdown-export.user.js')
+          text = userscript.read_text(encoding='utf-8')
+          assert text.count('// @version      0.6.143') == 1
+          text = text.replace('// @version      0.6.143', '// @version      0.6.144', 1)
+
+          start = text.index('  async function runExport(kind) {')
+          end = text.index('\n  async function testApiPaginationLogic()', start)
+          old = text[start:end]
+          assert old.count('await fetchConversationPages(') == 1
+          new = '''  async function runExport(kinds) {
+            if (exportInProgress || testInProgress || jumpInProgress) return;
+            const selectedKinds = [...new Set((Array.isArray(kinds) ? kinds : [kinds])
+              .filter(kind => kind === 'jsonl' || kind === 'md'))];
+            assert(selectedKinds.length > 0, 'At least one export format must be selected.');
+            const conversationId = currentConversationId();
+            assert(conversationId, 'Current page is not a ChatGPT conversation.');
+            exportInProgress = true;
+            exportKind = selectedKinds.join('+');
+            progressState = {
+              started_at: performance.now(),
+              stage: 'fetching',
+              page_count: 0,
+              raw_record_count: 0,
+              record_number: 0,
+              record_count: 0,
+              render_started_at: 0
+            };
+            startStatusTimer();
+            updateUi();
+            await acquireWakeLock();
+            try {
+              // One Extract action owns one authoritative Conversation API snapshot.
+              // Every selected output is generated from this exact in-memory spine.
+              const fetched = await fetchConversationPages(conversationId, progress => {
+                progressState.stage = 'fetching';
+                progressState.page_count = progress.page_count;
+                progressState.raw_record_count = progress.raw_record_count;
+                refreshStatus();
+              });
+              const spine = conversationSpineFromPages(fetched.pages);
+              const filenames = [];
+
+              if (selectedKinds.includes('jsonl')) {
+                const filename = `${sanitizeFileName(conversationTitle())}.jsonl`;
+                downloadBlob(
+                  new Blob([apiRecordsJsonl(spine)], { type: 'application/x-ndjson;charset=utf-8' }),
+                  filename
+                );
+                filenames.push(filename);
+              }
+
+              if (selectedKinds.includes('md')) {
+                progressState.stage = 'recovering-images';
+                setStatus('Recovering conversational images…');
+                const recoveredImageMap = await recoverUserImages(spine);
+                progressState.stage = 'rendering';
+                progressState.render_started_at = performance.now();
+                progressState.record_count = spine.records.length;
+                const markdown = renderConversationMarkdown(spine, progress => {
+                  progressState.stage = 'rendering';
+                  progressState.record_number = progress.record_number;
+                  progressState.record_count = progress.record_count;
+                  refreshStatus();
+                }, recoveredImageMap);
+                const filename = `${sanitizeFileName(conversationTitle())}.md`;
+                downloadBlob(
+                  new Blob([markdown], { type: 'text/markdown;charset=utf-8' }),
+                  filename
+                );
+                filenames.push(filename);
+              }
+
+              setStatus(
+                `Extracted ${spine.records.length} API records from ${fetched.pages.length} API page(s) to ` +
+                `${filenames.join(' and ')}.`
+              );
+            } catch (error) {
+              const label = selectedKinds.length === 1
+                ? selectedKinds[0] === 'md' ? 'Markdown' : 'JSONL'
+                : 'Export';
+              setStatus(`${label} extraction failed: ${error instanceof Error ? error.message : String(error)}`);
+            } finally {
+              progressState = null;
+              exportInProgress = false;
+              exportKind = null;
+              stopStatusTimer();
+              await releaseWakeLock();
+              updateUi();
+              refreshStatus();
+            }
+          }
+'''
+          text = text[:start] + new + text[end:]
+
+          old_ui = '''    const runSelectedExports = async () => {
+              const jsonl = panel.querySelector('[data-role="format-jsonl"]');
+              const md = panel.querySelector('[data-role="format-md"]');
+              if (jsonl?.checked) await runExport('jsonl');
+              if (md?.checked) await runExport('md');
+            };
+'''
+          new_ui = '''    const runSelectedExports = async () => {
+              const jsonl = panel.querySelector('[data-role="format-jsonl"]');
+              const md = panel.querySelector('[data-role="format-md"]');
+              const kinds = [];
+              if (jsonl?.checked) kinds.push('jsonl');
+              if (md?.checked) kinds.push('md');
+              if (kinds.length) await runExport(kinds);
+            };
+'''
+          assert text.count(old_ui) == 1
+          text = text.replace(old_ui, new_ui, 1)
+          userscript.write_text(text, encoding='utf-8')
+
+          test_path = Path('tests/export-orchestration.test.mjs')
+          assert not test_path.exists()
+          test_path.write_text(r'''import assert from 'node:assert/strict';
+          import { readFile } from 'node:fs/promises';
+          import test from 'node:test';
+          import vm from 'node:vm';
+
+          const userscript = await readFile(new URL('../chatgpt-conversation-markdown-export.user.js', import.meta.url), 'utf8');
+          const start = userscript.indexOf('  async function runExport(kinds) {');
+          const end = userscript.indexOf('\n  async function testApiPaginationLogic()', start);
+          assert.ok(start >= 0 && end > start, 'Production runExport implementation is missing.');
+          const source = userscript.slice(start, end);
+
+          function harness() {
+            const state = {
+              fetchCount: 0,
+              spineBuildCount: 0,
+              jsonlSpine: null,
+              markdownSpine: null,
+              recoverySpine: null,
+              downloads: []
+            };
+            const context = {
+              exportInProgress: false,
+              testInProgress: false,
+              jumpInProgress: false,
+              exportKind: null,
+              progressState: null,
+              performance: { now: () => 1 },
+              Blob,
+              assert(condition, message) { if (!condition) throw new Error(message); },
+              currentConversationId: () => 'conversation-1',
+              startStatusTimer() {}, stopStatusTimer() {}, updateUi() {}, refreshStatus() {},
+              acquireWakeLock: async () => {}, releaseWakeLock: async () => {},
+              setStatus() {},
+              async fetchConversationPages(_conversationId, onProgress) {
+                state.fetchCount += 1;
+                onProgress?.({ page_count: 1, raw_record_count: 2 });
+                return { pages: [{ messages: [{ id: 'a' }, { id: 'b' }] }] };
+              },
+              conversationSpineFromPages(pages) {
+                state.spineBuildCount += 1;
+                return { records: pages[0].messages.map(message => ({ message })) };
+              },
+              sanitizeFileName: value => value,
+              conversationTitle: () => 'Conversation',
+              apiRecordsJsonl(spine) { state.jsonlSpine = spine; return 'jsonl'; },
+              async recoverUserImages(spine) { state.recoverySpine = spine; return new Map(); },
+              renderConversationMarkdown(spine, onProgress) {
+                state.markdownSpine = spine;
+                onProgress?.({ record_number: 2, record_count: 2 });
+                return 'markdown';
+              },
+              downloadBlob(_blob, filename) { state.downloads.push(filename); }
+            };
+            context.globalThis = context;
+            vm.runInNewContext(`${source}\nthis.__runExport = runExport;`, context);
+            return { state, runExport: context.__runExport };
+          }
+
+          test('JSONL-only extraction acquires the Conversation API once', async () => {
+            const { state, runExport } = harness();
+            await runExport(['jsonl']);
+            assert.equal(state.fetchCount, 1);
+            assert.equal(state.spineBuildCount, 1);
+            assert.ok(state.jsonlSpine);
+            assert.equal(state.markdownSpine, null);
+            assert.deepEqual(state.downloads, ['Conversation.jsonl']);
+          });
+
+          test('Markdown-only extraction acquires the Conversation API once', async () => {
+            const { state, runExport } = harness();
+            await runExport(['md']);
+            assert.equal(state.fetchCount, 1);
+            assert.equal(state.spineBuildCount, 1);
+            assert.ok(state.markdownSpine);
+            assert.equal(state.jsonlSpine, null);
+            assert.strictEqual(state.recoverySpine, state.markdownSpine);
+            assert.deepEqual(state.downloads, ['Conversation.md']);
+          });
+
+          test('dual-format extraction acquires once and both outputs share one spine', async () => {
+            const { state, runExport } = harness();
+            await runExport(['jsonl', 'md']);
+            assert.equal(state.fetchCount, 1);
+            assert.equal(state.spineBuildCount, 1);
+            assert.strictEqual(state.jsonlSpine, state.markdownSpine,
+              'JSONL and Markdown must use the identical in-memory source snapshot.');
+            assert.strictEqual(state.recoverySpine, state.markdownSpine,
+              'Image recovery must use that same source snapshot.');
+            assert.deepEqual(state.downloads, ['Conversation.jsonl', 'Conversation.md']);
+          });
+          ''', encoding='utf-8')
+      - name: Run complete DownloadConversation preflight
+        run: |
+          node --check chatgpt-conversation-markdown-export.user.js
+          node --test tests/*.test.mjs
+          grep -Fq '// @version      0.6.144' chatgpt-conversation-markdown-export.user.js
+          test "$(sed -n '/async function runExport(kinds)/,/async function testApiPaginationLogic/p' chatgpt-conversation-markdown-export.user.js | grep -c 'await fetchConversationPages')" -eq 1
+          ! grep -Fq "if (jsonl?.checked) await runExport('jsonl')" chatgpt-conversation-markdown-export.user.js
+          ! grep -Fq "if (md?.checked) await runExport('md')" chatgpt-conversation-markdown-export.user.js
+      - name: Verify scoped diff
+        run: |
+          test -z "$(git status --short | grep -vE '^( M|\?\?) (chatgpt-conversation-markdown-export.user.js|tests/export-orchestration.test.mjs)$')"
+      - name: Commit verified fix
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add chatgpt-conversation-markdown-export.user.js tests/export-orchestration.test.mjs
+          git commit -m "fix: reuse one API snapshot for selected exports"
+          git push
