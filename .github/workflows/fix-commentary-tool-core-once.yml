@@ -80,7 +80,15 @@ jobs:
             const records = [call, result, commentary];
             const byRecord = phase5.canonicalEventsBySourceRecord(records);
             const events = records.map(record => byRecord.get(record.id));
-            assert.equal(phase5.canonicalAssistantSegmentEligible(records, events), true);
+            assert.deepEqual(events.map(event => [event?.kind, event?.role, event?.visibility]), [
+              ['tool_call', 'assistant', 'visible'],
+              ['tool_result', 'tool', 'visible'],
+              ['commentary', 'assistant', 'visible']
+            ]);
+            assert.equal(phase5.canonicalThoughtRecordEligible(call, events[0]), true, 'tool call eligibility');
+            assert.equal(phase5.canonicalThoughtRecordEligible(result, events[1]), true, 'tool result eligibility');
+            assert.equal(phase5.canonicalMessageRecordEligible(commentary, events[2]), true, 'commentary eligibility');
+            assert.equal(phase5.canonicalAssistantSegmentEligible(records, events), true, 'whole segment eligibility');
             const rendered = phase5.canonicalAssistantSegmentBlock(records, events);
             assert.match(rendered, /^## ChatGPT Commentary <!-- turn_id=commentary-message -->/);
             assert.equal((rendered.match(/^## ChatGPT$/gm) ?? []).length, 0,
