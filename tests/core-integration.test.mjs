@@ -6,7 +6,7 @@ import vm from 'node:vm';
 const userscript = await readFile(new URL('../chatgpt-conversation-markdown-export.user.js', import.meta.url), 'utf8');
 const requireMatch = userscript.match(/^\/\/ @require\s+(https:\/\/raw\.githubusercontent\.com\/Ma-XX-oN\/AIConversationCore\/([0-9a-f]{40})\/dist\/aiconversationcore\.chatgpt\.browser\.js)$/m);
 assert.ok(requireMatch, 'Production userscript must pin the AIConversationCore browser bundle to an exact commit.');
-assert.equal(requireMatch[2], 'cf09b70b525983301e9d4cc7d9cbc7c4b50ba6f3');
+assert.equal(requireMatch[2], 'b5afdafee5a732b35e491a2227c892b34c86370f');
 
 const response = await fetch(requireMatch[1]);
 assert.equal(response.status, 200, `Could not load pinned AIConversationCore bundle: HTTP ${response.status}`);

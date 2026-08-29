@@ -1,11 +1,11 @@
 // ==UserScript==
 // @name         ChatGPT Conversation Markdown Recorder
 // @namespace    https://chatgpt.com/
-// @version      0.6.140
+// @version      0.6.141
 // @description  Exports the current ChatGPT conversation directly from the Conversation API as Markdown or JSONL.
 // @match        https://chatgpt.com/*
 // @match        https://chat.openai.com/*
-// @require      https://raw.githubusercontent.com/Ma-XX-oN/AIConversationCore/cf09b70b525983301e9d4cc7d9cbc7c4b50ba6f3/dist/aiconversationcore.chatgpt.browser.js
+// @require      https://raw.githubusercontent.com/Ma-XX-oN/AIConversationCore/b5afdafee5a732b35e491a2227c892b34c86370f/dist/aiconversationcore.chatgpt.browser.js
 // @run-at       document-start
 // ==/UserScript==
 
@@ -1531,8 +1531,45 @@
     return core;
   }
 
-  function canonicalEventsBySourceRecord(records) {
-    const events = canonicalCore().adaptChatGPTRecords(records);
+  function canonicalRecoveredImageState(markdown) {
+    const value = String(markdown ?? '').trim();
+    if (!value) return null;
+    if (value === '[image missing]') return { status: 'missing' };
+    const data = value.match(/^!\[[^\]]*\]\((data:image\/[^)]+)\)$/s);
+    if (data) return { status: 'available', data_url: data[1] };
+    if (value === '[image not available]') return { status: 'unavailable' };
+    const unavailable = value.match(/^\[image not available\]\((.*)\)$/s);
+    if (unavailable) return { status: 'unavailable', source_pointer: unavailable[1] };
+    return null;
+  }
+
+  function canonicalEnrichRecoveredImages(event, recoveredImages = []) {
+    if (!event || !Array.isArray(recoveredImages) || !recoveredImages.length) return event;
+    let imageIndex = 0;
+    const resources = (event.resources ?? []).map(resource => {
+      if (resource?.type !== 'image' || resource?.resource_kind !== 'conversation_image') return resource;
+      const recovered = canonicalRecoveredImageState(recoveredImages[imageIndex]);
+      imageIndex += 1;
+      if (!recovered) return resource;
+      const enriched = { ...resource, ...recovered };
+      if (recovered.data_url) enriched.data_url = recovered.data_url;
+      if (recovered.source_pointer) enriched.source_pointer = recovered.source_pointer;
+      return enriched;
+    });
+    return { ...event, resources };
+  }
+
+  function canonicalEventsBySourceRecord(records, recoveredImageMap = new Map()) {
+    const conversationId = typeof currentConversationId === 'function' ? currentConversationId() : null;
+    const hasMetadata = records.some(record => record?.record_type === 'chatgpt_conversation_metadata');
+    const adapterRecords = conversationId && !hasMetadata
+      ? [...records, {
+          record_type: 'chatgpt_conversation_metadata',
+          schema_version: 1,
+          conversation_id: conversationId
+        }]
+      : records;
+    const events = canonicalCore().adaptChatGPTRecords(adapterRecords);
     assert(Array.isArray(events), 'AIConversationCore ChatGPT adapter did not return canonical events.');
     const bySourceRecord = new Map();
     for (const event of events) {
@@ -1540,6 +1577,7 @@
       const sourceRecordId = event?.source_record_id;
       if (!Number.isInteger(sourceIndex) || typeof sourceRecordId !== 'string' || !sourceRecordId) continue;
       const original = records[sourceIndex];
+      if (!original) continue;
       assert(original?.id === sourceRecordId,
         `AIConversationCore source record mismatch at JSONL index ${sourceIndex}.`);
       assert(event?.source?.record_id === sourceRecordId,
@@ -1552,11 +1590,94 @@
         `AIConversationCore did not preserve create_time for ${sourceRecordId}.`);
       assert(event?.source?.update_time === (original?.update_time ?? null),
         `AIConversationCore did not preserve update_time for ${sourceRecordId}.`);
-      bySourceRecord.set(sourceRecordId, event);
+      bySourceRecord.set(sourceRecordId,
+        canonicalEnrichRecoveredImages(event, recoveredImageMap.get(sourceRecordId) ?? []));
     }
     return bySourceRecord;
   }
 
+  function canonicalRenderedHasUnresolvedInlineTokens(rendered) {
+    return String(rendered ?? '').includes(CG_INLINE_TOKEN_START);
+  }
+
+  function canonicalMessageRecordEligible(record, event) {
+    if (!event || cgIsHidden(record) || event?.visibility === 'hidden') return false;
+    const role = record?.author?.role;
+    if (!['user', 'assistant'].includes(role)) return false;
+    if (role === 'user' && event.kind !== 'message') return false;
+    if (role === 'assistant' && !['message', 'commentary'].includes(event.kind)) return false;
+    if (!['text', 'multimodal_text'].includes(record?.content?.content_type)) return false;
+    if (!(event.blocks ?? []).some(block => block?.type === 'text' || block?.type === 'image')) return false;
+    const sourceText = Array.isArray(record?.content?.parts)
+      ? record.content.parts.filter(part => typeof part === 'string').join('')
+      : '';
+    if (role === 'user' && /sandbox:\/\/?/i.test(sourceText)) return false;
+    const rendered = canonicalCore().renderCanonicalMarkdown([event]);
+    return Boolean(rendered.trim()) && !canonicalRenderedHasUnresolvedInlineTokens(rendered);
+  }
+
+  function canonicalRecordBlock(record, event) {
+    assert(canonicalMessageRecordEligible(record, event),
+      `AIConversationCore message record ${record?.id ?? 'unknown'} is not eligible for canonical rendering.`);
+    const role = record?.author?.role;
+    const plainHeading = role === 'user'
+      ? '## User'
+      : record?.channel === 'commentary' ? '## ChatGPT Commentary' : '## ChatGPT';
+    const rendered = canonicalCore().renderCanonicalMarkdown([event]).trimEnd();
+    assert(rendered === plainHeading || rendered.startsWith(`${plainHeading}\n`),
+      `AIConversationCore rendered an unexpected heading for source record ${record?.id ?? 'unknown'}.`);
+    return `${transcriptHeading(record)}${rendered.slice(plainHeading.length)}`;
+  }
+
+  function canonicalThoughtRecordEligible(record, event) {
+    if (!event || cgIsHidden(record) || event?.visibility === 'hidden') return false;
+    return ['reasoning_summary', 'tool_call', 'tool_result'].includes(event.kind);
+  }
+
+  function canonicalAssistantSegmentEligible(records, events) {
+    if (!Array.isArray(records) || !records.length || !Array.isArray(events) || events.length !== records.length) {
+      return false;
+    }
+    let messageIndex = -1;
+    let hasTool = false;
+    let hasAssistantSource = false;
+    for (let index = 0; index < records.length; index += 1) {
+      const record = records[index];
+      const event = events[index];
+      if (record?.author?.role === 'assistant') hasAssistantSource = true;
+      if (canonicalMessageRecordEligible(record, event)) {
+        if (record?.author?.role !== 'assistant' || messageIndex >= 0) return false;
+        messageIndex = index;
+        continue;
+      }
+      if (!canonicalThoughtRecordEligible(record, event)) return false;
+      if (event.kind === 'tool_call' || event.kind === 'tool_result') hasTool = true;
+    }
+    if (!hasAssistantSource) return false;
+    if (messageIndex >= 0 && messageIndex !== records.length - 1) return false;
+    if (messageIndex >= 0 && records[messageIndex]?.channel === 'commentary' && hasTool) return false;
+    const rendered = canonicalCore().renderCanonicalMarkdown(events);
+    return Boolean(rendered.trim()) && !canonicalRenderedHasUnresolvedInlineTokens(rendered);
+  }
+
+  function canonicalAssistantSegmentBlock(records, events) {
+    assert(canonicalAssistantSegmentEligible(records, events),
+      'AIConversationCore Assistant segment contains an unsupported record.');
+    const rendered = canonicalCore().renderCanonicalMarkdown(events).trimEnd();
+    const messageRecord = [...records].reverse().find((record, indexFromEnd) => {
+      const index = records.length - 1 - indexFromEnd;
+      return canonicalMessageRecordEligible(record, events[index]);
+    }) ?? null;
+    const headingRecord = messageRecord ?? records.find(record => record?.author?.role === 'assistant') ?? records[0];
+    const plainHeading = messageRecord?.channel === 'commentary' ? '## ChatGPT Commentary' : '## ChatGPT';
+    assert(rendered === plainHeading || rendered.startsWith(`${plainHeading}\n`),
+      'AIConversationCore rendered an unexpected Assistant segment heading.');
+    assert(!rendered.slice(plainHeading.length).includes('\n## ChatGPT'),
+      'AIConversationCore Assistant segment unexpectedly produced multiple transcript sections.');
+    return `${transcriptHeading(headingRecord)}${rendered.slice(plainHeading.length)}`;
+  }
+
+  // Compatibility helpers retained for the already-established #93/#97 regressions.
   function canonicalPlainRecordEligible(record) {
     if (cgIsHidden(record)) return false;
     if (!['user', 'assistant'].includes(record?.author?.role)) return false;
@@ -1574,14 +1695,7 @@
   }
 
   function canonicalPlainRecordBlock(record, event) {
-    const role = record?.author?.role;
-    const plainHeading = role === 'user'
-      ? '## User'
-      : record?.channel === 'commentary' ? '## ChatGPT Commentary' : '## ChatGPT';
-    const rendered = canonicalCore().renderCanonicalMarkdown([event]).trimEnd();
-    assert(rendered === plainHeading || rendered.startsWith(`${plainHeading}\n`),
-      `AIConversationCore rendered an unexpected heading for source record ${record?.id ?? 'unknown'}.`);
-    return `${transcriptHeading(record)}${rendered.slice(plainHeading.length)}`;
+    return canonicalRecordBlock(record, event);
   }
 
   function canonicalPlainAssistantSegmentEligible(records) {
@@ -1601,11 +1715,7 @@
   function canonicalPlainAssistantSegmentBlock(records, events) {
     assert(canonicalPlainAssistantSegmentEligible(records),
       'AIConversationCore Assistant segment requires only plain visible Assistant records.');
-    const rendered = canonicalCore().renderCanonicalMarkdown(events).trimEnd();
-    assert(rendered === '## ChatGPT' || rendered.startsWith('## ChatGPT\n'),
-      'AIConversationCore rendered an unexpected Assistant segment heading.');
-    const headingRecord = [...records].reverse().find(record => record?.content?.content_type === 'text') ?? records[0];
-    return `${transcriptHeading(headingRecord)}${rendered.slice('## ChatGPT'.length)}`;
+    return canonicalAssistantSegmentBlock(records, events);
   }
   // END AIConversationCore Phase 5 integration
 
@@ -1628,7 +1738,7 @@
     const records = spine.records.map(item => item.message).filter(Boolean);
     const output = [];
     const fileRefIndex = cgBuildFileReferenceIndex(records);
-    const canonicalEventBySourceRecord = canonicalEventsBySourceRecord(records);
+    const canonicalEventBySourceRecord = canonicalEventsBySourceRecord(records, recoveredImageMap);
     let pendingThoughts = [];
 
     const flushAssistantBlock = (body = '', record = null) => {
@@ -1642,6 +1752,20 @@
       pendingThoughts = [];
     };
 
+    const flushPendingAssistant = () => {
+      if (!pendingThoughts.length) return;
+      const events = pendingThoughts
+        .map(record => canonicalEventBySourceRecord.get(record.id) ?? null)
+        .filter(Boolean);
+      if (events.length === pendingThoughts.length &&
+          canonicalAssistantSegmentEligible(pendingThoughts, events)) {
+        output.push(canonicalAssistantSegmentBlock(pendingThoughts, events));
+        pendingThoughts = [];
+        return;
+      }
+      flushAssistantBlock();
+    };
+
     for (let i = 0; i < records.length; i += 1) {
       const record = records[i];
       onProgress?.({
@@ -1651,14 +1775,11 @@
       });
       const recoveredImages = recoveredImageMap.get(record.id) ?? [];
       const canonicalEvent = canonicalEventBySourceRecord.get(record.id) ?? null;
-      if (canonicalEvent && canonicalPlainRecordEligible(record)) {
+
+      if (canonicalEvent && canonicalMessageRecordEligible(record, canonicalEvent)) {
         if (record?.author?.role === 'user') {
-          flushAssistantBlock();
-          output.push(canonicalPlainRecordBlock(record, canonicalEvent));
-          continue;
-        }
-        if (record?.author?.role === 'assistant' && pendingThoughts.length === 0) {
-          output.push(canonicalPlainRecordBlock(record, canonicalEvent));
+          flushPendingAssistant();
+          output.push(canonicalRecordBlock(record, canonicalEvent));
           continue;
         }
         if (record?.author?.role === 'assistant' && pendingThoughts.length > 0) {
@@ -1667,16 +1788,26 @@
             .map(item => canonicalEventBySourceRecord.get(item.id) ?? null)
             .filter(Boolean);
           if (segmentEvents.length === segmentRecords.length &&
-              canonicalPlainAssistantSegmentEligible(segmentRecords)) {
-            output.push(canonicalPlainAssistantSegmentBlock(segmentRecords, segmentEvents));
+              canonicalAssistantSegmentEligible(segmentRecords, segmentEvents)) {
+            output.push(canonicalAssistantSegmentBlock(segmentRecords, segmentEvents));
             pendingThoughts = [];
             continue;
           }
         }
+        if (record?.author?.role === 'assistant' && pendingThoughts.length === 0) {
+          output.push(canonicalRecordBlock(record, canonicalEvent));
+          continue;
+        }
       }
+
+      if (canonicalEvent && canonicalThoughtRecordEligible(record, canonicalEvent)) {
+        pendingThoughts.push(record);
+        continue;
+      }
+
       const userText = cgVisibleUserText(record, fileRefIndex, recoveredImages);
       if (userText) {
-        flushAssistantBlock();
+        flushPendingAssistant();
         output.push(`${transcriptHeading(record)}\n\n${quoteMarkdown(userText)}`);
         continue;
       }
@@ -1687,9 +1818,9 @@
       }
       if (cgRenderThoughtItem(record, fileRefIndex)) pendingThoughts.push(record);
     }
-    flushAssistantBlock();
+    flushPendingAssistant();
     return `${output.join('\n\n')}\n`;
-}
+  }
 
   function conversationMetadataJsonlRecord(conversationId) {
     assert(typeof conversationId === 'string' && conversationId.trim(), 'Conversation ID is required for JSONL export metadata.');
