@@ -30,11 +30,11 @@ jobs:
       - name: Verify scoped diff
         run: |
           git status --short
-          test -z "$(git status --short | grep -vE '^( M|\?\?) (chatgpt-conversation-markdown-export.user.js|tests/tool-language-diagnostics.test.mjs)$')"
+          test -z "$(git status --short | grep -vE '^( M|\?\?) (chatgpt-conversation-markdown-export.user.js|tests/tool-language-diagnostics.test.mjs|tests/core-integration.test.mjs|tests/phase5-rich-core-integration.test.mjs)$')"
       - name: Commit verified instrumentation
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git add chatgpt-conversation-markdown-export.user.js tests/tool-language-diagnostics.test.mjs
+          git add chatgpt-conversation-markdown-export.user.js tests/tool-language-diagnostics.test.mjs tests/core-integration.test.mjs tests/phase5-rich-core-integration.test.mjs
           git commit -m "debug: instrument tool language rendering path"
           git push
