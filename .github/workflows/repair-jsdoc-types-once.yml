@@ -22,7 +22,9 @@ jobs:
       - name: Install TypeScript for inference
         run: npm install --no-save --package-lock=false typescript
       - name: Repair semantic JSDoc types
-        run: node scripts/repair-jsdoc-types-once.mjs
+        run: |
+          sed -i "s/import ts from 'typescript';/import * as ts from 'typescript';/" scripts/repair-jsdoc-types-once.mjs
+          node scripts/repair-jsdoc-types-once.mjs
       - name: Audit permanent JSDoc contract
         run: node scripts/check-jsdoc.mjs
       - name: Syntax
