@@ -2,10 +2,14 @@ import fs from 'node:fs';
 
 const file = 'chatgpt-conversation-markdown-export.user.js';
 const text = fs.readFileSync(file, 'utf8');
+
+// Match declaration starts rather than trying to parse the complete parameter
+// list with a regular expression. Default values such as `new Map()` may contain
+// nested parentheses, but they do not change where the named function begins.
 const patterns = [
-  /^(?<indent>[ \t]*)(?:(?:async\s+)?function\*?\s+(?<name>[A-Za-z_$][\w$]*)\s*\([^)]*\)\s*\{)/gm,
-  /^(?<indent>[ \t]*)(?:(?:const|let|var)\s+(?<name>[A-Za-z_$][\w$]*)\s*=\s*(?:async\s*)?(?:\([^)]*\)|[A-Za-z_$][\w$]*)\s*=>)/gm,
-  /^(?<indent>[ \t]*)(?:(?:const|let|var)\s+(?<name>[A-Za-z_$][\w$]*)\s*=\s*(?:async\s+)?function\*?\s*\([^)]*\)\s*\{)/gm
+  /^(?<indent>[ \t]*)(?:(?:async\s+)?function\*?\s+(?<name>[A-Za-z_$][\w$]*)\s*\()/gm,
+  /^(?<indent>[ \t]*)(?:(?:const|let|var)\s+(?<name>[A-Za-z_$][\w$]*)\s*=\s*(?:async\s+)?function\*?\s*\()/gm,
+  /^(?<indent>[ \t]*)(?:(?:const|let|var)\s+(?<name>[A-Za-z_$][\w$]*)\s*=\s*(?:async\s*)?[^\n;]*=>)/gm
 ];
 
 const failures = [];
