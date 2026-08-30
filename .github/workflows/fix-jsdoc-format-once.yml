@@ -5,6 +5,7 @@ on:
     paths:
       - .github/workflows/fix-jsdoc-format-once.yml
       - scripts/fix-jsdoc-contract-once.py
+      - scripts/check-jsdoc.mjs
 
 permissions:
   contents: write
