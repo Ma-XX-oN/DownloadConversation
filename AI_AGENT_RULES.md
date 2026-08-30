@@ -129,11 +129,23 @@ parameter represents. Every function must have a typed `@returns` tag whose
 description states what the return value represents; functions with no
 meaningful return value use `@returns {void}`.
 
+Every production-scope constant and variable must also have an immediately
+associated explanatory comment stating what the value represents, controls, or
+tracks. This includes top-level `const`, `let`, and `var` declarations throughout
+the userscript, not only the declarations near the file header. Local variables
+must be commented when their role is not self-evident from the identifier and
+immediate expression. In particular, document state/lifecycle guards, protocol
+or ordering state, correlation state, cursor/ordinal semantics, caches/lookups,
+recovery state, and other variables whose meaning depends on an invariant.
+Trivial loop counters and direct one-use values should not receive redundant
+comments merely to increase comment density.
+
 JSDoc indentation is part of the code style contract. The opening `/**` and
 closing `*/` must use the same indentation as the declaration they document.
 Every interior JSDoc line must use that same indentation followed by exactly one
 space and `*`. Tags and blank `*` lines must follow the same alignment. Do not
-emit partially de-indented generated blocks.
+emit partially de-indented generated blocks. Inline comments for local state
+must use the same indentation as the declaration or statement they explain.
 
 Types must describe what the implementation actually accepts and returns. Do
 not use broad placeholder unions or guessed types merely to satisfy the audit.
