@@ -100,6 +100,27 @@ function alignedJsdoc(doc, indent) {
   return lines.slice(1, -1).every(line => line === `${indent} *` || line.startsWith(`${indent} * `));
 }
 
+function topLevelVariablesIn(source) {
+  const results = [];
+  const pattern = /^  (?:const|let|var)\s+(?<name>[A-Za-z_$][\w$]*)\b/gm;
+  for (let match; (match = pattern.exec(source)); ) {
+    results.push({ start: match.index, indent: '  ', name: match.groups.name });
+  }
+  return results;
+}
+
+function immediateVariableComment(source, variable) {
+  const prefix = source.slice(0, variable.start).trimEnd();
+  const lastLineStart = prefix.lastIndexOf('\n') + 1;
+  const lastLine = prefix.slice(lastLineStart);
+  if (lastLine.startsWith(`${variable.indent}//`) && lastLine.slice(variable.indent.length + 2).trim()) {
+    return true;
+  }
+  if (/^  \/\*\*\s+\S.*\*\/$/.test(lastLine)) return true;
+  const jsdoc = immediateJsdoc(source, variable.start);
+  return Boolean(jsdoc && alignedJsdoc(jsdoc.text, variable.indent));
+}
+
 const placeholderType = 'Object|boolean|string|number|null';
 const placeholderPhrases = [
   'The result produced by',
@@ -143,8 +164,19 @@ for (const fn of functionsIn(text)) {
   }
 }
 
+let globalVariableCount = 0;
+for (const variable of topLevelVariablesIn(text)) {
+  globalVariableCount += 1;
+  if (!immediateVariableComment(text, variable)) {
+    failures.push(`${file}: ${variable.name}: top-level variable lacks an aligned explanatory comment`);
+  }
+}
+
 if (failures.length) {
-  console.error('Complete JSDoc contract failures:\n' + failures.join('\n'));
+  console.error('Complete JSDoc/variable documentation failures:\n' + failures.join('\n'));
   process.exit(1);
 }
-console.log(`Complete typed/aligned JSDoc audit passed for ${functionCount} named production functions.`);
+console.log(
+  `Documentation audit passed for ${functionCount} named production functions and ` +
+  `${globalVariableCount} top-level variables.`
+);
