@@ -8,7 +8,7 @@ const userscript = await readFile(
   'utf8'
 );
 const start = userscript.indexOf("  function cgCodeFence(text, language = '') {");
-const end = userscript.indexOf('\n\n  function cgRenderDetail', start);
+const end = userscript.indexOf('  function cgRenderDetail', start);
 assert.ok(start >= 0 && end > start, 'Production cgCodeFence helper is missing.');
 const context = {};
 vm.runInNewContext(`${userscript.slice(start, end)}\nthis.cgCodeFence = cgCodeFence;`, context);
