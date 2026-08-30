@@ -48,21 +48,21 @@
 
   /**
    * Handles assert.
- *
- * @param {Object} condition - The condition value used by this operation.
- * @param {string} message - The message value used by this operation.
- * @returns {void} No value is returned.
- */
+   *
+   * @param {Object} condition - The condition that must be true.
+   * @param {string} message - The assertion failure message.
+   * @returns {void} No value is returned.
+   */
   function assert(condition, message) {
     if (!condition) throw new Error(message);
   }
 
   /**
    * Formats duration.
- *
- * @param {Object} milliseconds - The milliseconds value used by this operation.
- * @returns {string} The text representation produced by `formatDuration`.
- */
+   *
+   * @param {Object} milliseconds - The duration in milliseconds.
+   * @returns {string} The string produced by `formatDuration`.
+   */
   function formatDuration(milliseconds) {
     const totalSeconds = Math.max(0, Math.round(milliseconds / 1000));
     if (totalSeconds < 60) return `${totalSeconds}s`;
@@ -76,10 +76,10 @@
 
   /**
    * Handles escape HTML text.
- *
- * @param {string} text - The text to process.
- * @returns {string} The text representation produced by `escapeHtmlText`.
- */
+   *
+   * @param {string} text - The text to process.
+   * @returns {string} The string produced by `escapeHtmlText`.
+   */
   function escapeHtmlText(text) {
     return String(text ?? '')
       .replace(/&/g, '&amp;')
@@ -89,10 +89,10 @@
 
   /**
    * Handles escape HTML attribute.
- *
- * @param {string} text - The text to process.
- * @returns {string} The text representation produced by `escapeHtmlAttribute`.
- */
+   *
+   * @param {string} text - The text to process.
+   * @returns {string} The string produced by `escapeHtmlAttribute`.
+   */
   function escapeHtmlAttribute(text) {
     return String(text ?? '')
       .replace(/&/g, '&amp;')
@@ -103,10 +103,10 @@
 
   /**
    * Quotes literal message text as the transcript blockquote representation while preserving line order.
- *
- * @param {string} markdown - The Markdown text to process.
- * @returns {string} The input text represented as Markdown blockquote lines.
- */
+   *
+   * @param {string} markdown - The Markdown text to process.
+   * @returns {string} The string produced by `quoteMarkdown`.
+   */
   function quoteMarkdown(markdown) {
     const text = String(markdown ?? '').replace(/\s+$/, '');
     if (!text) return '>';
@@ -115,9 +115,9 @@
 
   /**
    * Handles conversation title.
- *
- * @returns {Object|boolean|string|number|null} The result produced by `conversationTitle` according to the operation outcome.
- */
+   *
+   * @returns {string} The string produced by `conversationTitle`.
+   */
   function conversationTitle() {
     const heading = document.querySelector('h1')?.textContent?.trim();
     const title = heading || document.title || 'ChatGPT conversation';
@@ -126,10 +126,10 @@
 
   /**
    * Sanitizes file name.
- *
- * @param {string} name - The name value used by this operation.
- * @returns {boolean} The Boolean result produced by `sanitizeFileName`.
- */
+   *
+   * @param {string} name - The name to process.
+   * @returns {string} The string produced by `sanitizeFileName`.
+   */
   function sanitizeFileName(name) {
     return String(name || 'ChatGPT conversation')
       .replace(/[<>:"/\\|?*\x00-\x1f]/g, '_')
@@ -139,19 +139,19 @@
 
   /**
    * Handles current conversation ID.
- *
- * @returns {Object|boolean|string|number|null} The result produced by `currentConversationId` according to the operation outcome.
- */
+   *
+   * @returns {string|null} The string produced by `currentConversationId`, or `null` when no value is available.
+   */
   function currentConversationId() {
     return location.pathname.match(/\/c\/([^/?#]+)/)?.[1] ?? null;
   }
 
   /**
    * Checks whether conversation API URL.
- *
- * @param {string} url - The url value used by this operation.
- * @returns {boolean} Whether the condition checked by `isConversationApiUrl` is satisfied.
- */
+   *
+   * @param {string} url - The URL to process.
+   * @returns {boolean} `true` when `isConversationApiUrl` succeeds or its predicate is satisfied; otherwise `false`.
+   */
   function isConversationApiUrl(url) {
     try {
       const parsed = new URL(url, location.href);
@@ -164,19 +164,19 @@
 
   /**
    * Handles raw headers to object.
- *
- * @param {Object} headers - The headers value used by this operation.
- * @returns {Object|boolean|string|number|null} The result produced by `rawHeadersToObject` according to the operation outcome.
- */
+   *
+   * @param {Object} headers - The HTTP header values to inspect.
+   * @returns {void} No value is returned.
+   */
   function rawHeadersToObject(headers) {
     const result = {};
     /**
      * Handles put.
- *
- * @param {string} name - The name value used by this operation.
- * @param {string} value - The value value used by this operation.
- * @returns {Object|boolean|string|number|null} The result produced by `put` according to the operation outcome.
- */
+     *
+     * @param {string} name - The name to process.
+     * @param {string} value - The value to process.
+     * @returns {void} No value is returned.
+     */
     const put = (name, value) => {
       if (name == null || value == null) return;
       const key = String(name).toLowerCase();
@@ -198,11 +198,11 @@
 
   /**
    * Handles remember API request context.
- *
- * @param {string} url - The url value used by this operation.
- * @param {Array<Object>} headerCandidates - The header candidates value used by this operation.
- * @returns {Object|boolean|string|number|null} The result produced by `rememberApiRequestContext` according to the operation outcome.
- */
+   *
+   * @param {string} url - The URL to process.
+   * @param {Array<Object>} headerCandidates - The HTTP header values to inspect.
+   * @returns {void} No value is returned.
+   */
   function rememberApiRequestContext(url, ...headerCandidates) {
     if (!isConversationApiUrl(url)) return;
     try {
@@ -226,10 +226,10 @@
 
   /**
    * Handles click diagnostic element snapshot.
- *
- * @param {Element} element - The DOM element to inspect or update.
- * @returns {Object|boolean|string|number|null} The result produced by `clickDiagnosticElementSnapshot` according to the operation outcome.
- */
+   *
+   * @param {Element} element - The DOM element to inspect or update.
+   * @returns {string|null} The string produced by `clickDiagnosticElementSnapshot`, or `null` when no value is available.
+   */
   function clickDiagnosticElementSnapshot(element) {
     if (!(element instanceof Element)) return null;
     const attributes = {};
@@ -251,10 +251,10 @@
 
   /**
    * Handles click diagnostic turn context.
- *
- * @param {EventTarget|null} target - The target value used by this operation.
- * @returns {Object|boolean|string|number|null} The result produced by `clickDiagnosticTurnContext` according to the operation outcome.
- */
+   *
+   * @param {EventTarget|null} target - The target element or resolved jump target.
+   * @returns {Object|null} The value produced by `clickDiagnosticTurnContext`, or `null` when no value is available.
+   */
   function clickDiagnosticTurnContext(target) {
     const section = target instanceof Element ? target.closest('section[data-turn-id]') : null;
     if (!(section instanceof HTMLElement)) return null;
@@ -278,11 +278,11 @@
 
   /**
    * Handles record click diagnostic network request.
- *
- * @param {string} url - The url value used by this operation.
- * @param {Object} initiatorType - The initiator type value used by this operation.
- * @returns {Object|boolean|string|number|null} The result produced by `recordClickDiagnosticNetworkRequest` according to the operation outcome.
- */
+   *
+   * @param {string} url - The URL to process.
+   * @param {Object} initiatorType - The initiatorType value required by this function.
+   * @returns {void} No value is returned.
+   */
   function recordClickDiagnosticNetworkRequest(url, initiatorType) {
     const active = activeClickDiagnostic;
     if (!active || performance.now() > active.deadline) return;
@@ -303,11 +303,11 @@
 
   /**
    * Handles finish conversation click diagnostic.
- *
- * @param {Object} observation - The observation value used by this operation.
- * @param {string} reason - The reason value used by this operation.
- * @returns {Object|boolean|string|number|null} The result produced by `finishConversationClickDiagnostic` according to the operation outcome.
- */
+   *
+   * @param {Object} observation - The observation value required by this function.
+   * @param {string} reason - The reason the operation is being completed.
+   * @returns {void} No value is returned.
+   */
   function finishConversationClickDiagnostic(observation, reason = 'timer') {
     if (!observation || observation.finished) return;
     observation.finished = true;
@@ -342,10 +342,10 @@
 
   /**
    * Handles capture conversation click diagnostic.
- *
- * @param {Event|Object} event - The event or event-like object being handled.
- * @returns {Object|boolean|string|number|null} The result produced by `captureConversationClickDiagnostic` according to the operation outcome.
- */
+   *
+   * @param {Event|Object} event - The event or event-like object being handled.
+   * @returns {void} No value is returned.
+   */
   function captureConversationClickDiagnostic(event) {
     const target = event.target instanceof Element ? event.target : null;
     if (!target || !target.closest('#thread')) return;
@@ -379,9 +379,9 @@
 
   /**
    * Handles install network capture.
- *
- * @returns {Object|boolean|string|number|null} The result produced by `installNetworkCapture` according to the operation outcome.
- */
+   *
+   * @returns {void} No value is returned.
+   */
   function installNetworkCapture() {
     if (captureInstalled) return;
     const pageWindow = typeof unsafeWindow !== 'undefined' ? unsafeWindow : window;
@@ -442,10 +442,10 @@
 
   /**
    * Handles API fetch.
- *
- * @param {string} url - The url value used by this operation.
- * @returns {Promise<Object|boolean|string|number|null>} A promise resolving to the result produced by `apiFetch` according to the operation outcome.
- */
+   *
+   * @param {string} url - The URL to process.
+   * @returns {Promise<Object|boolean|string|number|null>} A promise that resolves to the Object|boolean|string|number|null result produced by `apiFetch`.
+   */
   async function apiFetch(url) {
     const conversationId = currentConversationId();
     const context = apiRequestContext;
@@ -463,10 +463,10 @@
 
   /**
    * Handles conversation schema ok.
- *
- * @param {Object} data - The data value used by this operation.
- * @returns {Object|boolean|string|number|null} The result produced by `conversationSchemaOk` according to the operation outcome.
- */
+   *
+   * @param {Object} data - The data value required by this function.
+   * @returns {boolean} `true` when `conversationSchemaOk` succeeds or its predicate is satisfied; otherwise `false`.
+   */
   function conversationSchemaOk(data) {
     return !!data && typeof data === 'object' && Array.isArray(data.messages) &&
       !!data.page_info && typeof data.page_info === 'object';
@@ -474,11 +474,11 @@
 
   /**
    * Handles page URL.
- *
- * @param {string} conversationId - The conversation id value used by this operation.
- * @param {Object|null} cursor - The cursor value used by this operation.
- * @returns {string} The text representation produced by `pageUrl`.
- */
+   *
+   * @param {string} conversationId - The Conversation API conversation identifier.
+   * @param {Object|null} cursor - The pagination cursor, or null for the first page.
+   * @returns {string} The string produced by `pageUrl`.
+   */
   function pageUrl(conversationId, cursor = null) {
     if (cursor === null) {
       return `${location.origin}/backend-api/conversations/${encodeURIComponent(conversationId)}?include_has_versions=true&num_turns=${PAGE_TURNS}`;
@@ -488,11 +488,11 @@
 
   /**
    * Handles bounded diagnostic text.
- *
- * @param {string} text - The text to process.
- * @param {number} maxChars - The max chars value used by this operation.
- * @returns {string} The text representation produced by `boundedDiagnosticText`.
- */
+   *
+   * @param {string} text - The text to process.
+   * @param {number} maxChars - The maximum number of characters to retain.
+   * @returns {string} The string produced by `boundedDiagnosticText`.
+   */
   function boundedDiagnosticText(text, maxChars = 2000) {
     const value = typeof text === 'string' ? text : String(text ?? '');
     if (value.length <= maxChars) return value;
@@ -501,10 +501,10 @@
 
   /**
    * Handles diagnostic request path.
- *
- * @param {string} url - The url value used by this operation.
- * @returns {string} The text representation produced by `diagnosticRequestPath`.
- */
+   *
+   * @param {string} url - The URL to process.
+   * @returns {string} The string produced by `diagnosticRequestPath`.
+   */
   function diagnosticRequestPath(url) {
     try {
       const parsed = new URL(url, location.href);
@@ -516,12 +516,12 @@
 
   /**
    * Fetches one conversation page.
- *
- * @param {string} url - The url value used by this operation.
- * @param {Object} description - The description value used by this operation.
- * @param {Object} requestInfo - The request info value used by this operation.
- * @returns {Promise<Object|boolean|string|number|null>} A promise resolving to the result produced by `fetchOneConversationPage` according to the operation outcome.
- */
+   *
+   * @param {string} url - The URL to process.
+   * @param {Object} description - The description value required by this function.
+   * @param {Object} requestInfo - The requestInfo value required by this function.
+   * @returns {Promise<Object|boolean|string|number|null>} A promise that resolves to the Object|boolean|string|number|null result produced by `fetchOneConversationPage`.
+   */
   async function fetchOneConversationPage(url, description, requestInfo = {}) {
     const startedAt = performance.now();
     const requestDetails = {
@@ -604,11 +604,11 @@
 
   /**
    * Collects conversation pages.
- *
- * @param {Object} fetchPage - The fetch page value used by this operation.
- * @param {Object} onProgress - The on progress value used by this operation.
- * @returns {Promise<Object>} A promise resolving to the structured value produced by `collectConversationPages`.
- */
+   *
+   * @param {Object} fetchPage - The callback used to fetch one Conversation API page.
+   * @param {Object} onProgress - The callback invoked with progress updates.
+   * @returns {Promise<Object>} A promise that resolves to the Object result produced by `collectConversationPages`.
+   */
   async function collectConversationPages(fetchPage, onProgress) {
     const pages = [];
     const seenCursors = new Set();
@@ -652,11 +652,11 @@
 
   /**
    * Fetches conversation pages.
- *
- * @param {string} conversationId - The conversation id value used by this operation.
- * @param {Object} onProgress - The on progress value used by this operation.
- * @returns {Promise<Object|boolean|string|number|null>} A promise resolving to the result produced by `fetchConversationPages` according to the operation outcome.
- */
+   *
+   * @param {string} conversationId - The Conversation API conversation identifier.
+   * @param {Object} onProgress - The callback invoked with progress updates.
+   * @returns {Promise<Array<unknown>>} A promise that resolves to the Array<unknown> result produced by `fetchConversationPages`.
+   */
   async function fetchConversationPages(conversationId, onProgress) {
     return collectConversationPages(
       (cursor, pageNumber, previousPageInfo) => fetchOneConversationPage(
@@ -680,10 +680,10 @@
 
   /**
    * Handles conversation spine from pages.
- *
- * @param {Object} pages - The pages value used by this operation.
- * @returns {Object|boolean|string|number|null} The result produced by `conversationSpineFromPages` according to the operation outcome.
- */
+   *
+   * @param {Object} pages - The ordered Conversation API pages.
+   * @returns {Object} The Object value produced by `conversationSpineFromPages`.
+   */
   function conversationSpineFromPages(pages) {
     const messageIndexById = new Map();
     const messages = [];
@@ -751,10 +751,10 @@
 
   /**
    * Handles API linkage key is identifier like.
- *
- * @param {string} key - The key value used by this operation.
- * @returns {Object|boolean|string|number|null} The result produced by `apiLinkageKeyIsIdentifierLike` according to the operation outcome.
- */
+   *
+   * @param {string} key - The lookup key to process.
+   * @returns {void} No value is returned.
+   */
   function apiLinkageKeyIsIdentifierLike(key) {
     return /(?:^id$|_id$|_ids$|call|parent|source|reference|tool|exchange|working|request|response)/i
       .test(String(key ?? ''));
@@ -762,11 +762,11 @@
 
   /**
    * Handles API linkage scalar is safe.
- *
- * @param {string} key - The key value used by this operation.
- * @param {string} value - The value value used by this operation.
- * @returns {boolean} The Boolean result produced by `apiLinkageScalarIsSafe`.
- */
+   *
+   * @param {string} key - The lookup key to process.
+   * @param {string} value - The value to process.
+   * @returns {boolean} `true` when `apiLinkageScalarIsSafe` succeeds or its predicate is satisfied; otherwise `false`.
+   */
   function apiLinkageScalarIsSafe(key, value) {
     if (value === null || value === undefined) return false;
     if (!['string', 'number'].includes(typeof value)) return false;
@@ -777,10 +777,10 @@
 
   /**
    * Handles API record identifier scalars.
- *
- * @param {Object} record - The provider/source record to process.
- * @returns {Object|boolean|string|number|null} The result produced by `apiRecordIdentifierScalars` according to the operation outcome.
- */
+   *
+   * @param {Object} record - The provider/source record to process.
+   * @returns {void} No value is returned.
+   */
   function apiRecordIdentifierScalars(record) {
     const raw = record?.message && typeof record.message === 'object' ? record.message : {};
     const result = [];
@@ -790,12 +790,12 @@
     ]);
     /**
      * Handles walk.
- *
- * @param {string} value - The value value used by this operation.
- * @param {string} path - The path value used by this operation.
- * @param {Object} depth - The depth value used by this operation.
- * @returns {Object|boolean|string|number|null} The result produced by `walk` according to the operation outcome.
- */
+     *
+     * @param {string} value - The value to process.
+     * @param {string} path - The property path being traversed.
+     * @param {Object} depth - The current traversal depth.
+     * @returns {void} No value is returned.
+     */
     const walk = (value, path, depth) => {
       if (depth > 8 || value === null || value === undefined) return;
       if (Array.isArray(value)) {
@@ -824,10 +824,10 @@
 
   /**
    * Handles API conversation UAP grouping.
- *
- * @param {Object} spine - The spine value used by this operation.
- * @returns {Object|boolean|string|number|null} The result produced by `apiConversationUapGrouping` according to the operation outcome.
- */
+   *
+   * @param {Object} spine - The ordered Conversation API source-record spine.
+   * @returns {Object} The Object value produced by `apiConversationUapGrouping`.
+   */
   function apiConversationUapGrouping(spine) {
     const anchors = spine?.uap_anchors ?? [];
     const records = spine?.records ?? [];
@@ -835,12 +835,12 @@
     const workingToAnchors = new Map();
     /**
      * Handles add.
- *
- * @param {Map<unknown, unknown>} map - The map value used by this operation.
- * @param {string} key - The key value used by this operation.
- * @param {number} ordinal - The ordinal value used by this operation.
- * @returns {Object|boolean|string|number|null} The result produced by `add` according to the operation outcome.
- */
+     *
+     * @param {Map<unknown, unknown>} map - The map value required by this function.
+     * @param {string} key - The lookup key to process.
+     * @param {number} ordinal - The ordinal position to process.
+     * @returns {void} No value is returned.
+     */
     const add = (map, key, ordinal) => {
       if (!key) return;
       const values = map.get(key) ?? [];
@@ -867,10 +867,10 @@
 
     /**
      * Handles chronological anchor.
- *
- * @param {number} recordOrdinal - The record ordinal value used by this operation.
- * @returns {Object|boolean|string|number|null} The result produced by `chronologicalAnchor` according to the operation outcome.
- */
+     *
+     * @param {number} recordOrdinal - The zero-based record ordinal.
+     * @returns {void} No value is returned.
+     */
     const chronologicalAnchor = recordOrdinal => {
       let candidate = null;
       for (const anchor of anchors) {
@@ -925,30 +925,30 @@
 
   /**
    * Handles API unresolved UAP linkage analysis.
- *
- * @param {Object} spine - The spine value used by this operation.
- * @param {Object} primary - The primary value used by this operation.
- * @returns {Object|boolean|string|number|null} The result produced by `apiUnresolvedUapLinkageAnalysis` according to the operation outcome.
- */
+   *
+   * @param {Object} spine - The ordered Conversation API source-record spine.
+   * @param {Object} primary - The primary value required by this function.
+   * @returns {Object} The Object value produced by `apiUnresolvedUapLinkageAnalysis`.
+   */
   function apiUnresolvedUapLinkageAnalysis(spine, primary) {
     const records = spine?.records ?? [];
     const exactMessageToUap = new Map();
     const exactIdentifierToUaps = new Map();
     /**
      * Handles key for.
- *
- * @param {string} value - The value value used by this operation.
- * @returns {void} No value is returned.
- */
+     *
+     * @param {string} value - The value to process.
+     * @returns {void} No value is returned.
+     */
     const keyFor = value => `${typeof value}:${String(value)}`;
     /**
      * Handles add ref.
- *
- * @param {Map<unknown, unknown>} map - The map value used by this operation.
- * @param {string} value - The value value used by this operation.
- * @param {number} uapOrdinal - The uap ordinal value used by this operation.
- * @returns {void} No value is returned.
- */
+     *
+     * @param {Map<unknown, unknown>} map - The map value required by this function.
+     * @param {string} value - The value to process.
+     * @param {number} uapOrdinal - The zero-based uap ordinal.
+     * @returns {void} No value is returned.
+     */
     const addRef = (map, value, uapOrdinal) => {
       const key = keyFor(value);
       const values = map.get(key) ?? new Set();
@@ -967,10 +967,10 @@
 
     /**
      * Handles exact before after.
- *
- * @param {number} ordinal - The ordinal value used by this operation.
- * @returns {Object|boolean|string|number|null} The result produced by `exactBeforeAfter` according to the operation outcome.
- */
+     *
+     * @param {number} ordinal - The ordinal position to process.
+     * @returns {Object} The Object value produced by `exactBeforeAfter`.
+     */
     const exactBeforeAfter = ordinal => {
       let before = null;
       let after = null;
@@ -1015,10 +1015,10 @@
 
   /**
    * Handles API conversation UAP final grouping.
- *
- * @param {Object} spine - The spine value used by this operation.
- * @returns {Object|boolean|string|number|null} The result produced by `apiConversationUapFinalGrouping` according to the operation outcome.
- */
+   *
+   * @param {Object} spine - The ordered Conversation API source-record spine.
+   * @returns {Object} The Object value produced by `apiConversationUapFinalGrouping`.
+   */
   function apiConversationUapFinalGrouping(spine) {
     const primary = apiConversationUapGrouping(spine);
     const linkage = apiUnresolvedUapLinkageAnalysis(spine, primary);
@@ -1094,20 +1094,20 @@
 
   /**
    * Handles fallback is hidden.
- *
- * @param {Object} record - The provider/source record to process.
- * @returns {Object|boolean|string|number|null} The result produced by `cgIsHidden` according to the operation outcome.
- */
+   *
+   * @param {Object} record - The provider/source record to process.
+   * @returns {boolean} `true` when `cgIsHidden` succeeds or its predicate is satisfied; otherwise `false`.
+   */
   function cgIsHidden(record) {
     return Boolean(record?.metadata?.is_visually_hidden_from_conversation);
   }
 
   /**
    * Handles fallback text parts.
- *
- * @param {Array<unknown>} parts - The parts value used by this operation.
- * @returns {Object|boolean|string|number|null} The result produced by `cgTextParts` according to the operation outcome.
- */
+   *
+   * @param {Array<unknown>} parts - The ordered parts values to process.
+   * @returns {Array<unknown>} The ordered values produced by `cgTextParts`.
+   */
   function cgTextParts(parts) {
     const texts = [];
     if (!Array.isArray(parts)) return texts;
@@ -1126,10 +1126,10 @@
 
   /**
    * Handles fallback citation root.
- *
- * @param {string} url - The url value used by this operation.
- * @returns {string} The text representation produced by `cgCitationRoot`.
- */
+   *
+   * @param {string} url - The URL to process.
+   * @returns {string} The string produced by `cgCitationRoot`.
+   */
   function cgCitationRoot(url) {
     try {
       const parsed = new URL(url);
@@ -1141,10 +1141,10 @@
 
   /**
    * Handles fallback citation hostname.
- *
- * @param {string} url - The url value used by this operation.
- * @returns {string} The text representation produced by `cgCitationHostname`.
- */
+   *
+   * @param {string} url - The URL to process.
+   * @returns {string} The string produced by `cgCitationHostname`.
+   */
   function cgCitationHostname(url) {
     try {
       return new URL(url).hostname.toLowerCase().replace(/^www\./, '');
@@ -1155,10 +1155,10 @@
 
   /**
    * Handles fallback normalize citation URL.
- *
- * @param {string} url - The url value used by this operation.
- * @returns {string} The text representation produced by `cgNormalizeCitationUrl`.
- */
+   *
+   * @param {string} url - The URL to process.
+   * @returns {string} The string produced by `cgNormalizeCitationUrl`.
+   */
   function cgNormalizeCitationUrl(url) {
     if (typeof url !== 'string' || !url.trim()) return '';
     const raw = url.trim();
@@ -1176,10 +1176,10 @@
 
   /**
    * Handles fallback search result URL index.
- *
- * @param {Object} record - The provider/source record to process.
- * @returns {Map<unknown, unknown>} The lookup map produced by `cgSearchResultUrlIndex`.
- */
+   *
+   * @param {Object} record - The provider/source record to process.
+   * @returns {Map<unknown, unknown>} The lookup map produced by `cgSearchResultUrlIndex`.
+   */
   function cgSearchResultUrlIndex(record) {
     const metadata = record?.metadata;
     const groups = metadata && typeof metadata === 'object' ? metadata.search_result_groups : null;
@@ -1206,11 +1206,11 @@
 
   /**
    * Handles fallback shorten inline text.
- *
- * @param {string} text - The text to process.
- * @param {number} maxChars - The max chars value used by this operation.
- * @returns {string} The text representation produced by `cgShortenInlineText`.
- */
+   *
+   * @param {string} text - The text to process.
+   * @param {number} maxChars - The maximum number of characters to retain.
+   * @returns {string} The string produced by `cgShortenInlineText`.
+   */
   function cgShortenInlineText(text, maxChars = 200) {
     const clean = String(text ?? '').replace(/\s+/g, ' ').trim();
     if (clean.length <= maxChars) return clean;
@@ -1221,12 +1221,12 @@
 
   /**
    * Handles fallback wrap tooltip block.
- *
- * @param {string} text - The text to process.
- * @param {number} width - The width value used by this operation.
- * @param {number} maxChars - The max chars value used by this operation.
- * @returns {string} The text representation produced by `cgWrapTooltipBlock`.
- */
+   *
+   * @param {string} text - The text to process.
+   * @param {number} width - The maximum wrapped line width in characters.
+   * @param {number} maxChars - The maximum number of characters to retain.
+   * @returns {string} The string produced by `cgWrapTooltipBlock`.
+   */
   function cgWrapTooltipBlock(text, width = 78, maxChars = 520) {
     const shortened = cgShortenInlineText(text, maxChars);
     if (!shortened) return '';
@@ -1247,10 +1247,10 @@
 
   /**
    * Handles fallback clean citation blurb.
- *
- * @param {string} text - The text to process.
- * @returns {Array<unknown>} The ordered values produced by `cgCleanCitationBlurb`.
- */
+   *
+   * @param {string} text - The text to process.
+   * @returns {Array<unknown>} The ordered values produced by `cgCleanCitationBlurb`.
+   */
   function cgCleanCitationBlurb(text) {
     if (typeof text !== 'string' || !text.trim()) return [];
     const clean = text.replace(/\s+/g, ' ').trim()
@@ -1283,12 +1283,12 @@
 
   /**
    * Handles fallback citation tooltip.
- *
- * @param {Node} node - The node value used by this operation.
- * @param {Object} urlInfo - The url info value used by this operation.
- * @param {string} fallback - The fallback value used by this operation.
- * @returns {Object|boolean|string|number|null} The result produced by `cgCitationTooltip` according to the operation outcome.
- */
+   *
+   * @param {Node} node - The node to process.
+   * @param {Object} urlInfo - The urlInfo value required by this function.
+   * @param {string} fallback - The fallback value required by this function.
+   * @returns {string} The string produced by `cgCitationTooltip`.
+   */
   function cgCitationTooltip(node, urlInfo = {}, fallback = '') {
     let title = typeof node?.title === 'string' ? node.title.trim() : '';
     if (!title) title = typeof urlInfo?.title === 'string' ? urlInfo.title.trim() : '';
@@ -1310,10 +1310,10 @@
 
   /**
    * Handles fallback citation favicon.
- *
- * @param {string} url - The url value used by this operation.
- * @returns {Object|boolean|string|number|null} The result produced by `cgCitationFavicon` according to the operation outcome.
- */
+   *
+   * @param {string} url - The URL to process.
+   * @returns {string} The string produced by `cgCitationFavicon`.
+   */
   function cgCitationFavicon(url) {
     const root = cgCitationRoot(url);
     return root ? `https://www.google.com/s2/favicons?domain=${root}&sz=32` : '';
@@ -1321,22 +1321,22 @@
 
   /**
    * Handles fallback collect web citation sources.
- *
- * @param {Object} reference - The reference value used by this operation.
- * @param {Map<unknown, unknown>} urlIndex - The zero-based url index.
- * @returns {Object|boolean|string|number|null} The result produced by `cgCollectWebCitationSources` according to the operation outcome.
- */
+   *
+   * @param {Object} reference - The provider reference object to process.
+   * @param {Map<unknown, unknown>} urlIndex - The zero-based url index.
+   * @returns {Array<unknown>} The ordered values produced by `cgCollectWebCitationSources`.
+   */
   function cgCollectWebCitationSources(reference, urlIndex = new Map()) {
     const sources = [];
     const seen = new Set();
     /**
      * Handles append.
- *
- * @param {string} url - The url value used by this operation.
- * @param {string} label - The label value used by this operation.
- * @param {Object} tooltip - The tooltip value used by this operation.
- * @returns {Object|boolean|string|number|null} The result produced by `append` according to the operation outcome.
- */
+     *
+     * @param {string} url - The URL to process.
+     * @param {string} label - The label value required by this function.
+     * @param {Object} tooltip - The tooltip value required by this function.
+     * @returns {void} No value is returned.
+     */
     const append = (url, label, tooltip) => {
       if (typeof url !== 'string' || !url.trim() || seen.has(url.trim())) return;
       const clean = url.trim();
@@ -1352,11 +1352,11 @@
     };
     /**
      * Handles visit.
- *
- * @param {Node} node - The node value used by this operation.
- * @param {string} inheritedTooltip - The inherited tooltip value used by this operation.
- * @returns {Object|boolean|string|number|null} The result produced by `visit` according to the operation outcome.
- */
+     *
+     * @param {Node} node - The node to process.
+     * @param {string} inheritedTooltip - The inheritedTooltip value required by this function.
+     * @returns {void} No value is returned.
+     */
     const visit = (node, inheritedTooltip = '') => {
       if (!node || typeof node !== 'object') return;
       const url = node.url;
@@ -1384,11 +1384,11 @@
 
   /**
    * Handles fallback render web citation.
- *
- * @param {Object} reference - The reference value used by this operation.
- * @param {Map<unknown, unknown>} urlIndex - The zero-based url index.
- * @returns {Object|boolean|string|number|null} The result produced by `cgRenderWebCitation` according to the operation outcome.
- */
+   *
+   * @param {Object} reference - The provider reference object to process.
+   * @param {Map<unknown, unknown>} urlIndex - The zero-based url index.
+   * @returns {string} The string produced by `cgRenderWebCitation`.
+   */
   function cgRenderWebCitation(reference, urlIndex = new Map()) {
     const links = [];
     for (const source of cgCollectWebCitationSources(reference, urlIndex)) {
@@ -1413,10 +1413,10 @@
 
   /**
    * Handles fallback inline token segments.
- *
- * @param {Object} token - The token value used by this operation.
- * @returns {Array<unknown>} The ordered values produced by `cgInlineTokenSegments`.
- */
+   *
+   * @param {Object} token - The inline token to parse or render.
+   * @returns {Array<unknown>} The ordered values produced by `cgInlineTokenSegments`.
+   */
   function cgInlineTokenSegments(token) {
     if (typeof token !== 'string' ||
         !token.startsWith(CG_INLINE_TOKEN_START) ||
@@ -1426,20 +1426,20 @@
 
   /**
    * Handles fallback strip inline tokens.
- *
- * @param {string} text - The text to process.
- * @returns {Object|boolean|string|number|null} The result produced by `cgStripInlineTokens` according to the operation outcome.
- */
+   *
+   * @param {string} text - The text to process.
+   * @returns {string} The string produced by `cgStripInlineTokens`.
+   */
   function cgStripInlineTokens(text) {
     return typeof text === 'string' ? text.replace(CG_INLINE_TOKEN_RX, '') : '';
   }
 
   /**
    * Handles fallback file token spec.
- *
- * @param {Object} token - The token value used by this operation.
- * @returns {Object|boolean|string|number|null} The result produced by `cgFileTokenSpec` according to the operation outcome.
- */
+   *
+   * @param {Object} token - The inline token to parse or render.
+   * @returns {string|Object} The string|Object value produced by `cgFileTokenSpec`.
+   */
   function cgFileTokenSpec(token) {
     const segments = cgInlineTokenSegments(token);
     if (segments.length < 2 || segments[0] !== 'filecite') return { key: null, lineRef: '' };
@@ -1453,11 +1453,11 @@
 
   /**
    * Handles fallback register file reference.
- *
- * @param {number} index - The index value used by this operation.
- * @param {Object} record - The provider/source record to process.
- * @returns {Object|boolean|string|number|null} The result produced by `cgRegisterFileReference` according to the operation outcome.
- */
+   *
+   * @param {number} index - The zero-based index to process.
+   * @param {Object} record - The provider/source record to process.
+   * @returns {void} No value is returned.
+   */
   function cgRegisterFileReference(index, record) {
     if (!(index instanceof Map) || !record?.metadata || typeof record.metadata !== 'object') return;
     const metadata = record.metadata;
@@ -1474,10 +1474,10 @@
 
   /**
    * Handles fallback build file reference index.
- *
- * @param {Array<Object>} records - The ordered provider/source records to process.
- * @returns {Object|boolean|string|number|null} The result produced by `cgBuildFileReferenceIndex` according to the operation outcome.
- */
+   *
+   * @param {Array<Object>} records - The ordered provider/source records to process.
+   * @returns {Map<unknown, unknown>} The lookup map produced by `cgBuildFileReferenceIndex`.
+   */
   function cgBuildFileReferenceIndex(records) {
     const index = new Map();
     for (const record of records ?? []) cgRegisterFileReference(index, record);
@@ -1486,10 +1486,10 @@
 
   /**
    * Handles fallback collect memory citation sources.
- *
- * @param {Object} record - The provider/source record to process.
- * @returns {Object|boolean|string|number|null} The result produced by `cgCollectMemoryCitationSources` according to the operation outcome.
- */
+   *
+   * @param {Object} record - The provider/source record to process.
+   * @returns {Array<unknown>} The ordered values produced by `cgCollectMemoryCitationSources`.
+   */
   function cgCollectMemoryCitationSources(record) {
     const entries = Array.isArray(record?.metadata?.conversation_context_citation_metadata)
       ? record.metadata.conversation_context_citation_metadata
@@ -1514,11 +1514,11 @@
 
   /**
    * Handles fallback render source citation.
- *
- * @param {Object} kind - The kind value used by this operation.
- * @param {Object} sources - The sources value used by this operation.
- * @returns {Object|boolean|string|number|null} The result produced by `cgRenderSourceCitation` according to the operation outcome.
- */
+   *
+   * @param {Object} kind - The export kind to execute.
+   * @param {Object} sources - The sources value required by this function.
+   * @returns {string} The string produced by `cgRenderSourceCitation`.
+   */
   function cgRenderSourceCitation(kind, sources) {
     const links = [];
     for (const source of sources ?? []) {
@@ -1540,10 +1540,10 @@
 
   /**
    * Handles fallback render memory citation.
- *
- * @param {Object} record - The provider/source record to process.
- * @returns {Object|boolean|string|number|null} The result produced by `cgRenderMemoryCitation` according to the operation outcome.
- */
+   *
+   * @param {Object} record - The provider/source record to process.
+   * @returns {void} No value is returned.
+   */
   function cgRenderMemoryCitation(record) {
     const sources = cgCollectMemoryCitationSources(record);
     return sources.length ? cgRenderSourceCitation('memory', sources) : '**(memory context)**';
@@ -1551,10 +1551,10 @@
 
   /**
    * Handles fallback display file URL.
- *
- * @param {string} url - The url value used by this operation.
- * @returns {string} The text representation produced by `cgDisplayFileUrl`.
- */
+   *
+   * @param {string} url - The URL to process.
+   * @returns {string} The string produced by `cgDisplayFileUrl`.
+   */
   function cgDisplayFileUrl(url) {
     if (typeof url !== 'string' || !url.trim()) return '';
     const cleaned = url.trim();
@@ -1581,11 +1581,11 @@
 
   /**
    * Handles fallback display file label.
- *
- * @param {string} name - The name value used by this operation.
- * @param {string} url - The url value used by this operation.
- * @returns {string} The text representation produced by `cgDisplayFileLabel`.
- */
+   *
+   * @param {string} name - The name to process.
+   * @param {string} url - The URL to process.
+   * @returns {string} The string produced by `cgDisplayFileLabel`.
+   */
   function cgDisplayFileLabel(name, url) {
     let shown = typeof name === 'string' ? name.trim().replace(/`/g, '') : '';
     const displayUrl = cgDisplayFileUrl(url);
@@ -1607,12 +1607,12 @@
 
   /**
    * Handles fallback render named file reference.
- *
- * @param {string} name - The name value used by this operation.
- * @param {string} matchedText - The matched text value used by this operation.
- * @param {string} url - The url value used by this operation.
- * @returns {string} The text representation produced by `cgRenderNamedFileReference`.
- */
+   *
+   * @param {string} name - The name to process.
+   * @param {string} matchedText - The matchedText value required by this function.
+   * @param {string} url - The URL to process.
+   * @returns {string} The string produced by `cgRenderNamedFileReference`.
+   */
   function cgRenderNamedFileReference(name, matchedText = '', url = '') {
     const shown = cgDisplayFileLabel(name, url);
     const { lineRef } = cgFileTokenSpec(matchedText);
@@ -1624,12 +1624,12 @@
 
   /**
    * Handles fallback hidden file reference.
- *
- * @param {Object} reference - The reference value used by this operation.
- * @param {Object} record - The provider/source record to process.
- * @param {number} fileRefIndex - The zero-based file ref index.
- * @returns {string} The text representation produced by `cgHiddenFileReference`.
- */
+   *
+   * @param {Object} reference - The provider reference object to process.
+   * @param {Object} record - The provider/source record to process.
+   * @param {number} fileRefIndex - The zero-based file ref index.
+   * @returns {string} The string produced by `cgHiddenFileReference`.
+   */
   function cgHiddenFileReference(reference, record, fileRefIndex) {
     const token = reference?.matched_text ?? '';
     const { key } = cgFileTokenSpec(token);
@@ -1651,13 +1651,13 @@
    * Renders one provider-native inline content reference on the legacy/fallback Markdown path.
    *
    * Source -> output transformation: grouped web, alt-text, file, memory, and retrieved-file references are converted to their established visible Markdown/HTML representation; unsupported reference kinds render no replacement.
- *
- * @param {Object} reference - The reference value used by this operation.
- * @param {Object} record - The provider/source record to process.
- * @param {Map<unknown, unknown>} urlIndex - The zero-based url index.
- * @param {Map<unknown, unknown>} fileRefIndex - The zero-based file ref index.
- * @returns {string} The text representation produced by `cgRenderInlineReference`.
- */
+   *
+   * @param {Object} reference - The provider reference object to process.
+   * @param {Object} record - The provider/source record to process.
+   * @param {Map<unknown, unknown>} urlIndex - The zero-based url index.
+   * @param {Map<unknown, unknown>} fileRefIndex - The zero-based file ref index.
+   * @returns {string} The string produced by `cgRenderInlineReference`.
+   */
   function cgRenderInlineReference(reference, record, urlIndex = new Map(), fileRefIndex = new Map()) {
     if (reference?.type === 'grouped_webpages') return cgRenderWebCitation(reference, urlIndex);
     if (reference?.type === 'alt_text') {
@@ -1681,12 +1681,12 @@
 
   /**
    * Handles fallback render unstructured inline token.
- *
- * @param {Object} token - The token value used by this operation.
- * @param {Object} record - The provider/source record to process.
- * @param {number} fileRefIndex - The zero-based file ref index.
- * @returns {string} The text representation produced by `cgRenderUnstructuredInlineToken`.
- */
+   *
+   * @param {Object} token - The inline token to parse or render.
+   * @param {Object} record - The provider/source record to process.
+   * @param {number} fileRefIndex - The zero-based file ref index.
+   * @returns {string} The string produced by `cgRenderUnstructuredInlineToken`.
+   */
   function cgRenderUnstructuredInlineToken(token, record, fileRefIndex) {
     const segments = cgInlineTokenSegments(token);
     if (!segments.length) return '';
@@ -1697,11 +1697,11 @@
 
   /**
    * Handles fallback generated sandbox download URL.
- *
- * @param {Object} source - The source value used by this operation.
- * @param {Object} record - The provider/source record to process.
- * @returns {string} The text representation produced by `cgGeneratedSandboxDownloadUrl`.
- */
+   *
+   * @param {Object} source - The source value to inspect.
+   * @param {Object} record - The provider/source record to process.
+   * @returns {string|null} The string produced by `cgGeneratedSandboxDownloadUrl`, or `null` when no value is available.
+   */
   function cgGeneratedSandboxDownloadUrl(source, record) {
     if (record?.author?.role !== 'assistant') return null;
     const value = String(source ?? '').trim();
@@ -1718,11 +1718,11 @@
 
   /**
    * Handles fallback rewrite generated sandbox links.
- *
- * @param {string} text - The text to process.
- * @param {Object} record - The provider/source record to process.
- * @returns {Object|boolean|string|number|null} The result produced by `cgRewriteGeneratedSandboxLinks` according to the operation outcome.
- */
+   *
+   * @param {string} text - The text to process.
+   * @param {Object} record - The provider/source record to process.
+   * @returns {void} No value is returned.
+   */
   function cgRewriteGeneratedSandboxLinks(text, record) {
     if (!text || record?.author?.role !== 'assistant') return text;
     const value = String(text);
@@ -1777,12 +1777,12 @@
 
   /**
    * Handles fallback render inline references.
- *
- * @param {string} text - The text to process.
- * @param {Object} record - The provider/source record to process.
- * @param {Map<unknown, unknown>} fileRefIndex - The zero-based file ref index.
- * @returns {Object|boolean|string|number|null} The result produced by `cgRenderInlineReferences` according to the operation outcome.
- */
+   *
+   * @param {string} text - The text to process.
+   * @param {Object} record - The provider/source record to process.
+   * @param {Map<unknown, unknown>} fileRefIndex - The zero-based file ref index.
+   * @returns {void} No value is returned.
+   */
   function cgRenderInlineReferences(text, record, fileRefIndex = new Map()) {
     if (!text) return text;
     const references = Array.isArray(record?.metadata?.content_references)
@@ -1805,10 +1805,10 @@
 
   /**
    * Handles fallback image pointer source.
- *
- * @param {Object} part - The part value used by this operation.
- * @returns {string} The text representation produced by `cgImagePointerSource`.
- */
+   *
+   * @param {Object} part - The provider content part to process.
+   * @returns {string} The string produced by `cgImagePointerSource`.
+   */
   function cgImagePointerSource(part) {
     if (!part || typeof part !== 'object') return '';
     const metadata = part.metadata && typeof part.metadata === 'object' ? part.metadata : {};
@@ -1820,10 +1820,10 @@
 
   /**
    * Handles fallback image unavailable Markdown.
- *
- * @param {Object} source - The source value used by this operation.
- * @returns {string} The text representation produced by `cgImageUnavailableMarkdown`.
- */
+   *
+   * @param {Object} source - The source value to inspect.
+   * @returns {string} The string produced by `cgImageUnavailableMarkdown`.
+   */
   function cgImageUnavailableMarkdown(source) {
     const clean = typeof source === 'string' ? source.trim() : '';
     return clean ? `[image not available](${clean})` : '[image not available]';
@@ -1831,11 +1831,11 @@
 
   /**
    * Handles fallback image failure Markdown.
- *
- * @param {Object} source - The source value used by this operation.
- * @param {Object|null} httpStatus - The http status value used by this operation.
- * @returns {string} The text representation produced by `cgImageFailureMarkdown`.
- */
+   *
+   * @param {Object} source - The source value to inspect.
+   * @param {Object|null} httpStatus - The httpStatus value required by this function.
+   * @returns {string} The string produced by `cgImageFailureMarkdown`.
+   */
   function cgImageFailureMarkdown(source, httpStatus = null) {
     if (httpStatus === 404 || httpStatus === 410) return '[image missing]';
     return cgImageUnavailableMarkdown(source);
@@ -1843,12 +1843,12 @@
 
   /**
    * Handles fallback resolve image pointer Markdown.
- *
- * @param {Object} part - The part value used by this operation.
- * @param {string} recordId - The record id value used by this operation.
- * @param {number} imageOrdinal - The image ordinal value used by this operation.
- * @returns {Promise<string>} A promise resolving to the text representation produced by `cgResolveImagePointerMarkdown`.
- */
+   *
+   * @param {Object} part - The provider content part to process.
+   * @param {string} recordId - The provider/source record identifier.
+   * @param {number} imageOrdinal - The zero-based image ordinal within the source record.
+   * @returns {Promise<string>} A promise that resolves to the string result produced by `cgResolveImagePointerMarkdown`.
+   */
   async function cgResolveImagePointerMarkdown(part, recordId, imageOrdinal) {
     const source = cgImagePointerSource(part);
     if (!source) return '[image missing]';
@@ -1877,10 +1877,10 @@
 
   /**
    * Handles fallback image pointer fallback.
- *
- * @param {Object} part - The part value used by this operation.
- * @returns {Object|boolean|string|number|null} The result produced by `cgImagePointerFallback` according to the operation outcome.
- */
+   *
+   * @param {Object} part - The provider content part to process.
+   * @returns {void} No value is returned.
+   */
   function cgImagePointerFallback(part) {
     const source = cgImagePointerSource(part);
     return source ? cgImageUnavailableMarkdown(source) : '[image missing]';
@@ -1888,12 +1888,12 @@
 
   /**
    * Handles fallback content text parts.
- *
- * @param {Object} record - The provider/source record to process.
- * @param {Map<unknown, unknown>} fileRefIndex - The zero-based file ref index.
- * @param {Array<unknown>} recoveredImages - The recovered images value used by this operation.
- * @returns {Object|boolean|string|number|null} The result produced by `cgContentTextParts` according to the operation outcome.
- */
+   *
+   * @param {Object} record - The provider/source record to process.
+   * @param {Map<unknown, unknown>} fileRefIndex - The zero-based file ref index.
+   * @param {Array<unknown>} recoveredImages - The recovered image state used while rendering.
+   * @returns {Array<unknown>} The ordered values produced by `cgContentTextParts`.
+   */
   function cgContentTextParts(record, fileRefIndex = new Map(), recoveredImages = []) {
     const content = record?.content ?? {};
     const parts = content.parts;
@@ -1932,12 +1932,12 @@
 
   /**
    * Handles fallback visible user text.
- *
- * @param {Object} record - The provider/source record to process.
- * @param {Map<unknown, unknown>} fileRefIndex - The zero-based file ref index.
- * @param {Array<unknown>} recoveredImages - The recovered images value used by this operation.
- * @returns {string} The text representation produced by `cgVisibleUserText`.
- */
+   *
+   * @param {Object} record - The provider/source record to process.
+   * @param {Map<unknown, unknown>} fileRefIndex - The zero-based file ref index.
+   * @param {Array<unknown>} recoveredImages - The recovered image state used while rendering.
+   * @returns {string} The string produced by `cgVisibleUserText`.
+   */
   function cgVisibleUserText(record, fileRefIndex = new Map(), recoveredImages = []) {
     if (cgIsHidden(record) || record?.author?.role !== 'user' ||
         !['text', 'multimodal_text'].includes(record?.content?.content_type)) return '';
@@ -1946,12 +1946,12 @@
 
   /**
    * Handles fallback visible assistant text.
- *
- * @param {Object} record - The provider/source record to process.
- * @param {Map<unknown, unknown>} fileRefIndex - The zero-based file ref index.
- * @param {Array<unknown>} recoveredImages - The recovered images value used by this operation.
- * @returns {string} The text representation produced by `cgVisibleAssistantText`.
- */
+   *
+   * @param {Object} record - The provider/source record to process.
+   * @param {Map<unknown, unknown>} fileRefIndex - The zero-based file ref index.
+   * @param {Array<unknown>} recoveredImages - The recovered image state used while rendering.
+   * @returns {string} The string produced by `cgVisibleAssistantText`.
+   */
   function cgVisibleAssistantText(record, fileRefIndex = new Map(), recoveredImages = []) {
     if (cgIsHidden(record) || record?.author?.role !== 'assistant' ||
         !['text', 'multimodal_text'].includes(record?.content?.content_type)) return '';
@@ -1960,23 +1960,23 @@
 
   /**
    * Handles fallback visible assistant markdown.
- *
- * @param {Object} record - The provider/source record to process.
- * @param {Map<unknown, unknown>} fileRefIndex - The zero-based file ref index.
- * @param {Array<unknown>} recoveredImages - The recovered images value used by this operation.
- * @returns {string} The text representation produced by `cgVisibleAssistantMarkdown`.
- */
+   *
+   * @param {Object} record - The provider/source record to process.
+   * @param {Map<unknown, unknown>} fileRefIndex - The zero-based file ref index.
+   * @param {Array<unknown>} recoveredImages - The recovered image state used while rendering.
+   * @returns {string} The string produced by `cgVisibleAssistantMarkdown`.
+   */
   function cgVisibleAssistantMarkdown(record, fileRefIndex = new Map(), recoveredImages = []) {
     return cgVisibleAssistantText(record, fileRefIndex, recoveredImages);
   }
 
   /**
    * Handles fallback record search texts.
- *
- * @param {Object} record - The provider/source record to process.
- * @param {Map<unknown, unknown>} fileRefIndex - The zero-based file ref index.
- * @returns {Array<unknown>} The ordered values produced by `cgRecordSearchTexts`.
- */
+   *
+   * @param {Object} record - The provider/source record to process.
+   * @param {Map<unknown, unknown>} fileRefIndex - The zero-based file ref index.
+   * @returns {Array<unknown>} The ordered values produced by `cgRecordSearchTexts`.
+   */
   function cgRecordSearchTexts(record, fileRefIndex = new Map()) {
     if (cgIsHidden(record) || record?.author?.role === 'system') return [];
     const content = record?.content ?? {};
@@ -2014,11 +2014,11 @@
    * Wraps opaque source/tool payload text in a collision-safe Markdown code fence.
    *
    * Source -> output transformation: scans the literal payload for its longest run of backtick characters, then emits an outer fence one character longer (minimum three). The payload itself is not rewritten.
- *
- * @param {string} text - The text to process.
- * @param {string} language - The language value used by this operation.
- * @returns {string} A collision-safe Markdown code fence containing the literal payload.
- */
+   *
+   * @param {string} text - The text to process.
+   * @param {string} language - The code-fence language identifier.
+   * @returns {string} The string produced by `cgCodeFence`.
+   */
   function cgCodeFence(text, language = '') {
     const body = String(text ?? '').replace(/\s+$/, '');
     const runs = body.match(/`+/g) ?? [];
@@ -2032,11 +2032,11 @@
 
   /**
    * Wraps a summary and opaque body in the HTML `details` structure used by fallback Markdown output.
- *
- * @param {Object} summary - The summary value used by this operation.
- * @param {Object} body - The body value used by this operation.
- * @returns {string} The fallback HTML details block containing the supplied summary and body.
- */
+   *
+   * @param {Object} summary - The summary label to render.
+   * @param {Object} body - The body content to render.
+   * @returns {string} The string produced by `cgRenderDetail`.
+   */
   function cgRenderDetail(summary, body) {
     return body ? `<details>\n<summary>${summary}</summary>\n\n${body}\n\n</details>` : '';
   }
@@ -2045,12 +2045,12 @@
    * Infers a Markdown fence language only for the legacy/fallback renderer when no stronger canonical language is available.
    *
    * Source -> output transformation: explicit source language wins; otherwise provider metadata/recipient and limited code-prefix evidence may map to a fence language such as `python` or `bash`. This fallback does not alter payload text.
- *
- * @param {Object} record - The provider/source record to process.
- * @param {Object} code - The code value used by this operation.
- * @param {string} explicitLanguage - The explicit language value used by this operation.
- * @returns {string} The inferred fallback Markdown fence language, or an empty string when no language is justified.
- */
+   *
+   * @param {Object} record - The provider/source record to process.
+   * @param {Object} code - The source code to classify.
+   * @param {string} explicitLanguage - The provider-supplied language label, when available.
+   * @returns {string} The string produced by `cgInferCodeLanguage`.
+   */
   function cgInferCodeLanguage(record, code, explicitLanguage = '') {
     if (typeof explicitLanguage === 'string' && explicitLanguage.trim()) return explicitLanguage.trim();
     const language = record?.metadata?.language;
@@ -2065,11 +2065,11 @@
 
   /**
    * Handles fallback render thought item.
- *
- * @param {Object} record - The provider/source record to process.
- * @param {Map<unknown, unknown>} fileRefIndex - The zero-based file ref index.
- * @returns {string} The fallback Markdown representation of one Assistant reasoning/tool source record.
- */
+   *
+   * @param {Object} record - The provider/source record to process.
+   * @param {Map<unknown, unknown>} fileRefIndex - The zero-based file ref index.
+   * @returns {string} The string produced by `cgRenderThoughtItem`.
+   */
   function cgRenderThoughtItem(record, fileRefIndex = new Map()) {
     if (cgIsHidden(record)) return '';
     const role = record?.author?.role ?? '';
@@ -2113,11 +2113,11 @@
 
   /**
    * Handles fallback render thought block.
- *
- * @param {Array<Object>} items - The items value used by this operation.
- * @param {Map<unknown, unknown>} fileRefIndex - The zero-based file ref index.
- * @returns {string} The fallback Thoughts details block for the ordered reasoning/tool records.
- */
+   *
+   * @param {Array<Object>} items - The ordered items values to process.
+   * @param {Map<unknown, unknown>} fileRefIndex - The zero-based file ref index.
+   * @returns {string} The string produced by `cgRenderThoughtBlock`.
+   */
   function cgRenderThoughtBlock(items, fileRefIndex = new Map()) {
     const rendered = [];
     for (const record of items) {
@@ -2130,9 +2130,9 @@
   // BEGIN AIConversationCore Phase 5 integration
   /**
    * Returns the loaded AIConversationCore browser API after asserting the required adapter and renderer entry points are available.
- *
- * @returns {Object} The loaded AIConversationCore browser API after required entry points are validated.
- */
+   *
+   * @returns {boolean} `true` when `canonicalCore` succeeds or its predicate is satisfied; otherwise `false`.
+   */
   function canonicalCore() {
     const core = globalThis.AIConversationCore;
     assert(core && typeof core === 'object', 'AIConversationCore browser bundle is not loaded.');
@@ -2145,10 +2145,10 @@
    * Converts DownloadConversation recovery Markdown for one image into canonical image-resource state.
    *
    * Source -> canonical transformation: recovered data-image Markdown becomes `status: available` plus `data_url`; missing/unavailable placeholders become the corresponding canonical status and optional source pointer.
- *
- * @param {string} markdown - The Markdown text to process.
- * @returns {Object} The canonical availability state derived from one recovered image representation.
- */
+   *
+   * @param {string} markdown - The Markdown text to process.
+   * @returns {Object|null} The value produced by `canonicalRecoveredImageState`, or `null` when no value is available.
+   */
   function canonicalRecoveredImageState(markdown) {
     const value = String(markdown ?? '').trim();
     if (!value) return null;
@@ -2165,11 +2165,11 @@
    * Enriches canonical conversation-image resources with host-recovered image state without changing canonical event order.
    *
    * Source -> canonical transformation: the already-normalized image resource remains the identity-bearing object; recovery Markdown contributes only availability/data/source-pointer fields at the matching source image ordinal.
- *
- * @param {Event|Object} event - The event or event-like object being handled.
- * @param {Array<unknown>} recoveredImages - The recovered images value used by this operation.
- * @returns {Array<Object>} The canonical events with matching image resources enriched by recovered image state.
- */
+   *
+   * @param {Event|Object} event - The event or event-like object being handled.
+   * @param {Array<unknown>} recoveredImages - The recovered image state used while rendering.
+   * @returns {Object} The Object value produced by `canonicalEnrichRecoveredImages`.
+   */
   function canonicalEnrichRecoveredImages(event, recoveredImages = []) {
     if (!event || !Array.isArray(recoveredImages) || !recoveredImages.length) return event;
     let imageIndex = 0;
@@ -2191,11 +2191,11 @@
 
   /**
    * Handles canonical events by source record.
- *
- * @param {Array<Object>} records - The ordered provider/source records to process.
- * @param {Map<unknown, unknown>} recoveredImageMap - The recovered image map value used by this operation.
- * @returns {Map<string, Array<Object>>} Canonical events indexed by their preserved source record identifiers.
- */
+   *
+   * @param {Array<Object>} records - The ordered provider/source records to process.
+   * @param {Map<unknown, unknown>} recoveredImageMap - The recovered-image lookup keyed by source record.
+   * @returns {boolean} `true` when `canonicalEventsBySourceRecord` succeeds or its predicate is satisfied; otherwise `false`.
+   */
   function canonicalEventsBySourceRecord(records, recoveredImageMap = new Map()) {
     const conversationId = typeof currentConversationId === 'function' ? currentConversationId() : null;
     /**
@@ -2268,10 +2268,10 @@
 
   /**
    * Handles canonical rendered has unresolved inline tokens.
- *
- * @param {Object} rendered - The rendered value used by this operation.
- * @returns {boolean} Whether the condition checked by `canonicalRenderedHasUnresolvedInlineTokens` is satisfied.
- */
+   *
+   * @param {Object} rendered - The rendered value required by this function.
+   * @returns {string} The string produced by `canonicalRenderedHasUnresolvedInlineTokens`.
+   */
   function canonicalRenderedHasUnresolvedInlineTokens(rendered) {
     return String(rendered ?? '').includes(CG_INLINE_TOKEN_START);
   }
@@ -2280,11 +2280,11 @@
    * Determines whether one source User/Assistant record and its canonical event can be rendered by the shared canonical Markdown renderer.
    *
    * Source/canonical -> routing transformation: returns only an eligibility decision. It never rewrites the source record or canonical event; unsupported shapes remain on the legacy fallback path.
- *
- * @param {Object} record - The provider/source record to process.
- * @param {Event|Object} event - The event or event-like object being handled.
- * @returns {boolean} Whether the source message record can be rendered by the canonical renderer without losing required semantics.
- */
+   *
+   * @param {Object} record - The provider/source record to process.
+   * @param {Event|Object} event - The event or event-like object being handled.
+   * @returns {string|boolean} The string|boolean value produced by `canonicalMessageRecordEligible`.
+   */
   function canonicalMessageRecordEligible(record, event) {
     if (!event || cgIsHidden(record) || event?.visibility === 'hidden') return false;
     const role = record?.author?.role;
@@ -2305,11 +2305,11 @@
    * Renders one eligible canonical message event while preserving DownloadConversation source-turn identity in the transcript heading.
    *
    * Canonical -> output transformation: AIConversationCore supplies the plain canonical heading/body; DownloadConversation replaces only that heading with its existing source-record `turn_id` comment and preserves the rendered body.
- *
- * @param {Object} record - The provider/source record to process.
- * @param {Event|Object} event - The event or event-like object being handled.
- * @returns {string|null} The rendered canonical Markdown block with DownloadConversation source identity, or `null` when canonical rendering is unavailable.
- */
+   *
+   * @param {Object} record - The provider/source record to process.
+   * @param {Event|Object} event - The event or event-like object being handled.
+   * @returns {string} The string produced by `canonicalRecordBlock`.
+   */
   function canonicalRecordBlock(record, event) {
     assert(canonicalMessageRecordEligible(record, event),
       `AIConversationCore message record ${record?.id ?? 'unknown'} is not eligible for canonical rendering.`);
@@ -2327,11 +2327,11 @@
    * Determines whether one non-message canonical Assistant activity event is supported by the shared canonical Markdown renderer.
    *
    * Canonical -> routing transformation: reasoning summaries, tool calls, and tool results are eligible; the event payload is not modified.
- *
- * @param {Object} record - The provider/source record to process.
- * @param {Event|Object} event - The event or event-like object being handled.
- * @returns {boolean} Whether the canonical Assistant activity event is supported by the shared canonical renderer.
- */
+   *
+   * @param {Object} record - The provider/source record to process.
+   * @param {Event|Object} event - The event or event-like object being handled.
+   * @returns {boolean} `true` when `canonicalThoughtRecordEligible` succeeds or its predicate is satisfied; otherwise `false`.
+   */
   function canonicalThoughtRecordEligible(record, event) {
     if (!event || cgIsHidden(record) || event?.visibility === 'hidden') return false;
     return ['reasoning_summary', 'tool_call', 'tool_result'].includes(event.kind);
@@ -2341,11 +2341,11 @@
    * Determines whether an ordered Assistant activity segment can be rendered wholly by AIConversationCore without changing its source association.
    *
    * Source/canonical -> routing transformation: validates semantic event combinations and returns a Boolean; it does not regroup, reorder, or rewrite records.
- *
- * @param {Array<Object>} records - The ordered provider/source records to process.
- * @param {Array<Object>} events - The events value used by this operation.
- * @returns {boolean} Whether the complete Assistant activity segment can be rendered canonically as-is.
- */
+   *
+   * @param {Array<Object>} records - The ordered provider/source records to process.
+   * @param {Array<Object>} events - The canonical events associated with the source records.
+   * @returns {string|boolean} The string|boolean value produced by `canonicalAssistantSegmentEligible`.
+   */
   function canonicalAssistantSegmentEligible(records, events) {
     if (!Array.isArray(records) || !records.length || !Array.isArray(events) || events.length !== records.length) {
       return false;
@@ -2385,11 +2385,11 @@
    * Renders one eligible canonical Assistant activity segment while preserving DownloadConversation source-turn identity in the transcript heading.
    *
    * Canonical -> output transformation: AIConversationCore renders the ordered segment; DownloadConversation substitutes only its established source-record heading/comment for the plain canonical heading. Tool payloads and rendered body remain opaque.
- *
- * @param {Array<Object>} records - The ordered provider/source records to process.
- * @param {Array<Object>} events - The events value used by this operation.
- * @returns {string|null} The rendered canonical Assistant segment with DownloadConversation source identity, or `null` when canonical rendering is unavailable.
- */
+   *
+   * @param {Array<Object>} records - The ordered provider/source records to process.
+   * @param {Array<Object>} events - The canonical events associated with the source records.
+   * @returns {string} The string produced by `canonicalAssistantSegmentBlock`.
+   */
   function canonicalAssistantSegmentBlock(records, events) {
     assert(canonicalAssistantSegmentEligible(records, events),
       'AIConversationCore Assistant segment contains an unsupported record.');
@@ -2414,10 +2414,10 @@
   // Compatibility helpers retained for the already-established #93/#97 regressions.
   /**
    * Handles canonical plain record eligible.
- *
- * @param {Object} record - The provider/source record to process.
- * @returns {boolean} Whether the condition checked by `canonicalPlainRecordEligible` is satisfied.
- */
+   *
+   * @param {Object} record - The provider/source record to process.
+   * @returns {boolean} `true` when `canonicalPlainRecordEligible` succeeds or its predicate is satisfied; otherwise `false`.
+   */
   function canonicalPlainRecordEligible(record) {
     if (cgIsHidden(record)) return false;
     if (!['user', 'assistant'].includes(record?.author?.role)) return false;
@@ -2436,21 +2436,21 @@
 
   /**
    * Handles canonical plain record block.
- *
- * @param {Object} record - The provider/source record to process.
- * @param {Event|Object} event - The event or event-like object being handled.
- * @returns {boolean} Whether the condition checked by `canonicalPlainRecordBlock` is satisfied.
- */
+   *
+   * @param {Object} record - The provider/source record to process.
+   * @param {Event|Object} event - The event or event-like object being handled.
+   * @returns {boolean} `true` when `canonicalPlainRecordBlock` succeeds or its predicate is satisfied; otherwise `false`.
+   */
   function canonicalPlainRecordBlock(record, event) {
     return canonicalRecordBlock(record, event);
   }
 
   /**
    * Handles canonical plain assistant segment eligible.
- *
- * @param {Array<Object>} records - The ordered provider/source records to process.
- * @returns {boolean} Whether the condition checked by `canonicalPlainAssistantSegmentEligible` is satisfied.
- */
+   *
+   * @param {Array<Object>} records - The ordered provider/source records to process.
+   * @returns {boolean} `true` when `canonicalPlainAssistantSegmentEligible` succeeds or its predicate is satisfied; otherwise `false`.
+   */
   function canonicalPlainAssistantSegmentEligible(records) {
     if (!Array.isArray(records) || records.length < 2) return false;
     let hasAssistantMessage = false;
@@ -2467,11 +2467,11 @@
 
   /**
    * Handles canonical plain assistant segment block.
- *
- * @param {Array<Object>} records - The ordered provider/source records to process.
- * @param {Array<Object>} events - The events value used by this operation.
- * @returns {boolean} Whether the condition checked by `canonicalPlainAssistantSegmentBlock` is satisfied.
- */
+   *
+   * @param {Array<Object>} records - The ordered provider/source records to process.
+   * @param {Array<Object>} events - The canonical events associated with the source records.
+   * @returns {boolean} `true` when `canonicalPlainAssistantSegmentBlock` succeeds or its predicate is satisfied; otherwise `false`.
+   */
   function canonicalPlainAssistantSegmentBlock(records, events) {
     assert(canonicalPlainAssistantSegmentEligible(records),
       'AIConversationCore Assistant segment requires only plain visible Assistant records.');
@@ -2483,10 +2483,10 @@
    * Builds the DownloadConversation transcript heading from the actual provider/source record.
    *
    * Source -> output transformation: the source record ID is emitted as the `turn_id` comment; it is intentionally not replaced by AIConversationCore derived turn identity.
- *
- * @param {Object} record - The provider/source record to process.
- * @returns {string} The Markdown heading containing the provider/source turn identity.
- */
+   *
+   * @param {Object} record - The provider/source record to process.
+   * @returns {string} The string produced by `transcriptHeading`.
+   */
   function transcriptHeading(record) {
     const id = typeof record?.id === 'string' ? record.id : '';
     if (record?.author?.role === 'user') {
@@ -2503,12 +2503,12 @@
 
   /**
    * Renders conversation markdown.
- *
- * @param {Object} spine - The spine value used by this operation.
- * @param {Object} onProgress - The on progress value used by this operation.
- * @param {Map<unknown, unknown>} recoveredImageMap - The recovered image map value used by this operation.
- * @returns {string} The complete DownloadConversation Markdown transcript in established source-record order.
- */
+   *
+   * @param {Object} spine - The ordered Conversation API source-record spine.
+   * @param {Object} onProgress - The callback invoked with progress updates.
+   * @param {Map<unknown, unknown>} recoveredImageMap - The recovered-image lookup keyed by source record.
+   * @returns {string} The string produced by `renderConversationMarkdown`.
+   */
   function renderConversationMarkdown(spine, onProgress, recoveredImageMap = new Map()) {
     assert(Array.isArray(spine?.records), 'Conversation API Markdown export requires spine records.');
     /**
@@ -2522,11 +2522,11 @@
 
     /**
      * Handles flush assistant block.
- *
- * @param {string} body - The body value used by this operation.
- * @param {Object|null} record - The provider/source record to process.
- * @returns {Object|boolean|string|number|null} The result produced by `flushAssistantBlock` according to the operation outcome.
- */
+     *
+     * @param {string} body - The body content to render.
+     * @param {Object|null} record - The provider/source record to process.
+     * @returns {void} No value is returned.
+     */
     const flushAssistantBlock = (body = '', record = null) => {
       if (!body && !pendingThoughts.length) return;
       const headingRecord = record ?? pendingThoughts[0];
@@ -2540,9 +2540,9 @@
 
     /**
      * Handles flush pending assistant.
- *
- * @returns {Object|boolean|string|number|null} The result produced by `flushPendingAssistant` according to the operation outcome.
- */
+     *
+     * @returns {void} No value is returned.
+     */
     const flushPendingAssistant = () => {
       if (!pendingThoughts.length) return;
       const events = pendingThoughts
@@ -2643,10 +2643,10 @@
 
   /**
    * Builds the DownloadConversation metadata record prepended to a JSONL export.
- *
- * @param {string} conversationId - The conversation id value used by this operation.
- * @returns {Object} The DownloadConversation metadata object prepended to a JSONL export.
- */
+   *
+   * @param {string} conversationId - The Conversation API conversation identifier.
+   * @returns {string} The string produced by `conversationMetadataJsonlRecord`.
+   */
   function conversationMetadataJsonlRecord(conversationId) {
     assert(typeof conversationId === 'string' && conversationId.trim(), 'Conversation ID is required for JSONL export metadata.');
     return {
@@ -2658,11 +2658,11 @@
 
   /**
    * Handles api records jsonl.
- *
- * @param {Object} spine - The spine value used by this operation.
- * @param {string} conversationId - The conversation id value used by this operation.
- * @returns {string} The complete JSONL export containing metadata followed by source API records in established order.
- */
+   *
+   * @param {Object} spine - The ordered Conversation API source-record spine.
+   * @param {string} conversationId - The Conversation API conversation identifier.
+   * @returns {string} The string produced by `apiRecordsJsonl`.
+   */
   function apiRecordsJsonl(spine, conversationId = currentConversationId()) {
     const metadata = conversationMetadataJsonlRecord(conversationId);
     /**
@@ -2674,10 +2674,10 @@
 
   /**
    * Handles progress status.
- *
- * @param {Object} prefix - The prefix value used by this operation.
- * @returns {string} The text representation produced by `progressStatus`.
- */
+   *
+   * @param {Object} prefix - The status text prefix.
+   * @returns {string} The string produced by `progressStatus`.
+   */
   function progressStatus(prefix) {
     if (!progressState) return statusText;
     const now = performance.now();
@@ -2705,9 +2705,9 @@
 
   /**
    * Refreshes status.
- *
- * @returns {Object|boolean|string|number|null} The result produced by `refreshStatus` according to the operation outcome.
- */
+   *
+   * @returns {void} No value is returned.
+   */
   function refreshStatus() {
     const status = document.querySelector(`#${PANEL_ID} [data-role="status"]`);
     if (!status) return;
@@ -2720,10 +2720,10 @@
 
   /**
    * Sets status.
- *
- * @param {string} text - The text to process.
- * @returns {void} No value is returned.
- */
+   *
+   * @param {string} text - The text to process.
+   * @returns {void} No value is returned.
+   */
   function setStatus(text) {
     statusText = text;
     refreshStatus();
@@ -2731,9 +2731,9 @@
 
   /**
    * Handles start status timer.
- *
- * @returns {void} No value is returned.
- */
+   *
+   * @returns {void} No value is returned.
+   */
   function startStatusTimer() {
     if (statusTimer !== null) clearInterval(statusTimer);
     statusTimer = setInterval(refreshStatus, 1000);
@@ -2741,9 +2741,9 @@
 
   /**
    * Handles stop status timer.
- *
- * @returns {void} No value is returned.
- */
+   *
+   * @returns {void} No value is returned.
+   */
   function stopStatusTimer() {
     if (statusTimer !== null) clearInterval(statusTimer);
     statusTimer = null;
@@ -2751,9 +2751,9 @@
 
   /**
    * Handles acquire wake lock.
- *
- * @returns {Promise<Object|boolean|string|number|null>} A promise resolving to the result produced by `acquireWakeLock` according to the operation outcome.
- */
+   *
+   * @returns {Promise<void>} A promise that resolves to the void result produced by `acquireWakeLock`.
+   */
   async function acquireWakeLock() {
     if (!screenOnWhenCapturing || !exportInProgress ||
         document.visibilityState !== 'visible' || !navigator.wakeLock?.request) return;
@@ -2768,9 +2768,9 @@
 
   /**
    * Handles release wake lock.
- *
- * @returns {Promise<void>} A promise resolving to no value is returned.
- */
+   *
+   * @returns {Promise<void>} A promise that resolves to the void result produced by `releaseWakeLock`.
+   */
   async function releaseWakeLock() {
     const sentinel = wakeLockSentinel;
     wakeLockSentinel = null;
@@ -2783,11 +2783,11 @@
 
   /**
    * Handles download blob.
- *
- * @param {Blob} blob - The blob value used by this operation.
- * @param {Object} filename - The filename value used by this operation.
- * @returns {void} No value is returned.
- */
+   *
+   * @param {Blob} blob - The Blob to download.
+   * @param {Object} filename - The filename to use for the download.
+   * @returns {void} No value is returned.
+   */
   function downloadBlob(blob, filename) {
     const url = URL.createObjectURL(blob);
     const anchor = document.createElement('a');
@@ -2801,21 +2801,21 @@
 
   /**
    * Handles conversation jump user records.
- *
- * @param {Object} spine - The spine value used by this operation.
- * @returns {Object|boolean|string|number|null} The result produced by `jumpUserRecords` according to the operation outcome.
- */
+   *
+   * @param {Object} spine - The ordered Conversation API source-record spine.
+   * @returns {Array<unknown>} The ordered values produced by `jumpUserRecords`.
+   */
   function jumpUserRecords(spine) {
     return (spine?.records ?? []).filter(record => record?.role === 'user');
   }
 
   /**
    * Resolves jump identifier.
- *
- * @param {Object} spine - The spine value used by this operation.
- * @param {Object} identifier - The identifier value used by this operation.
- * @returns {Object|null} The value resolved by `resolveJumpIdentifier`, or `null` when no matching value is available.
- */
+   *
+   * @param {Object} spine - The ordered Conversation API source-record spine.
+   * @param {Object} identifier - The identifier value required by this function.
+   * @returns {Object} The Object value produced by `resolveJumpIdentifier`.
+   */
   function resolveJumpIdentifier(spine, identifier) {
     const value = String(identifier ?? '').trim();
     assert(value, 'A User/Assistant turn ID or numeric UAP index is required.');
@@ -2850,11 +2850,11 @@
 
   /**
    * Returns mounted turn section.
- *
- * @param {string} messageId - The provider/source message identifier.
- * @param {Object|null} role - The role value used by this operation.
- * @returns {Object|boolean|string|number|null} The result produced by `mountedTurnSection` according to the operation outcome.
- */
+   *
+   * @param {string} messageId - The provider/source message identifier.
+   * @param {Object|null} role - The message role to match.
+   * @returns {null} The null value produced by `mountedTurnSection`.
+   */
   function mountedTurnSection(messageId, role = null) {
     for (const section of document.querySelectorAll('section[data-turn-id]')) {
       if (role && section.getAttribute('data-turn') !== role) continue;
@@ -2867,9 +2867,9 @@
 
   /**
    * Handles conversation scroll root.
- *
- * @returns {Object|boolean|string|number|null} The result produced by `conversationScrollRoot` according to the operation outcome.
- */
+   *
+   * @returns {void} No value is returned.
+   */
   function conversationScrollRoot() {
     const thread = document.querySelector('#thread');
     for (let node = thread?.parentElement; node instanceof HTMLElement; node = node.parentElement) {
@@ -2882,11 +2882,11 @@
 
   /**
    * Waits for for jump target.
- *
- * @param {EventTarget|null} target - The target value used by this operation.
- * @param {number} timeoutMs - The timeout duration in milliseconds.
- * @returns {Promise<Object|boolean|string|number|null>} A promise resolving to the result produced by `waitForJumpTarget` according to the operation outcome.
- */
+   *
+   * @param {EventTarget|null} target - The target element or resolved jump target.
+   * @param {number} timeoutMs - The timeout duration in milliseconds.
+   * @returns {Promise<null>} A promise that resolves to the null result produced by `waitForJumpTarget`.
+   */
   async function waitForJumpTarget(target, timeoutMs = 12000) {
     const deadline = performance.now() + timeoutMs;
     const scrollRoot = conversationScrollRoot();
@@ -2903,21 +2903,21 @@
 
   /**
    * Handles conversation jump TOC index control.
- *
- * @param {number} uapIndex - The zero-based uap index.
- * @returns {Object|boolean|string|number|null} The result produced by `jumpTocIndexControl` according to the operation outcome.
- */
+   *
+   * @param {number} uapIndex - The zero-based uap index.
+   * @returns {Element|null} The value produced by `jumpTocIndexControl`, or `null` when no value is available.
+   */
   function jumpTocIndexControl(uapIndex) {
     return document.querySelector(`button[data-toc-item-index="${uapIndex}"]`);
   }
 
   /**
    * Handles populate jump TOC index.
- *
- * @param {number} uapIndex - The zero-based uap index.
- * @param {number} timeoutMs - The timeout duration in milliseconds.
- * @returns {Promise<Object|boolean|string|number|null>} A promise resolving to the result produced by `populateJumpTocIndex` according to the operation outcome.
- */
+   *
+   * @param {number} uapIndex - The zero-based uap index.
+   * @param {number} timeoutMs - The timeout duration in milliseconds.
+   * @returns {Promise<Map<unknown, unknown>>} A promise that resolves to the Map<unknown, unknown> result produced by `populateJumpTocIndex`.
+   */
   async function populateJumpTocIndex(uapIndex, timeoutMs = 60000) {
     let toc = jumpTocIndexControl(uapIndex);
     if (toc instanceof HTMLElement) return toc;
@@ -2985,10 +2985,10 @@
 
   /**
    * Handles conversation jump to resolved target.
- *
- * @param {EventTarget|null} target - The target value used by this operation.
- * @returns {Promise<Object|boolean|string|number|null>} A promise resolving to the result produced by `jumpToResolvedTarget` according to the operation outcome.
- */
+   *
+   * @param {EventTarget|null} target - The target element or resolved jump target.
+   * @returns {Promise<Object|boolean|string|number|null>} A promise that resolves to the Object|boolean|string|number|null result produced by `jumpToResolvedTarget`.
+   */
   async function jumpToResolvedTarget(target) {
     let section = mountedTurnSection(target.message_id, target.role);
     logDiagnostic('debug', 'conversation-jump-materialization-step', {
@@ -3068,9 +3068,9 @@
 
   /**
    * Handles run jump.
- *
- * @returns {Promise<Object|boolean|string|number|null>} A promise resolving to the result produced by `runJump` according to the operation outcome.
- */
+   *
+   * @returns {Promise<void>} A promise that resolves to the void result produced by `runJump`.
+   */
   async function runJump() {
     if (exportInProgress || testInProgress || jumpInProgress) return;
     const requested = window.prompt('Enter a User or Assistant turn_id, or numeric UAP index (0 = first, -1 = last):');
@@ -3139,10 +3139,10 @@
 
   /**
    * Handles user image pointer count.
- *
- * @param {Object} record - The provider/source record to process.
- * @returns {Object|boolean|string|number|null} The result produced by `userImagePointerCount` according to the operation outcome.
- */
+   *
+   * @param {Object} record - The provider/source record to process.
+   * @returns {number|boolean} The number|boolean value produced by `userImagePointerCount`.
+   */
   function userImagePointerCount(record) {
     if (record?.author?.role !== 'user' || !Array.isArray(record?.content?.parts)) return 0;
     return record.content.parts.filter(part =>
@@ -3152,10 +3152,10 @@
 
   /**
    * Returns mounted user conversation images.
- *
- * @param {HTMLElement} section - The section value used by this operation.
- * @returns {Array<unknown>} The ordered values produced by `mountedUserConversationImages`.
- */
+   *
+   * @param {HTMLElement} section - The mounted conversation-turn section.
+   * @returns {Array<unknown>} The ordered values produced by `mountedUserConversationImages`.
+   */
   function mountedUserConversationImages(section) {
     if (!(section instanceof HTMLElement) || section.getAttribute('data-turn') !== 'user') return [];
     const images = [];
@@ -3174,10 +3174,10 @@
 
   /**
    * Handles internal image pointer protocol.
- *
- * @param {Object} source - The source value used by this operation.
- * @returns {string} The text representation produced by `internalImagePointerProtocol`.
- */
+   *
+   * @param {Object} source - The source value to inspect.
+   * @returns {string|null} The string produced by `internalImagePointerProtocol`, or `null` when no value is available.
+   */
   function internalImagePointerProtocol(source) {
     const value = String(source ?? '').trim().toLowerCase();
     if (value.startsWith('sandbox://')) return 'sandbox';
@@ -3187,10 +3187,10 @@
 
   /**
    * Handles internal image pointer asset key.
- *
- * @param {Object} source - The source value used by this operation.
- * @returns {string} The text representation produced by `internalImagePointerAssetKey`.
- */
+   *
+   * @param {Object} source - The source value to inspect.
+   * @returns {string} The string produced by `internalImagePointerAssetKey`.
+   */
   function internalImagePointerAssetKey(source) {
     const value = String(source ?? '').trim();
     const protocol = internalImagePointerProtocol(value);
@@ -3205,11 +3205,11 @@
 
   /**
    * Handles image pointer DOM candidate.
- *
- * @param {Object} image - The image value used by this operation.
- * @param {number} ordinal - The ordinal value used by this operation.
- * @returns {Object|boolean|string|number|null} The result produced by `imagePointerDomCandidate` according to the operation outcome.
- */
+   *
+   * @param {Object} image - The image element to inspect.
+   * @param {number} ordinal - The ordinal position to process.
+   * @returns {Object|null} The value produced by `imagePointerDomCandidate`, or `null` when no value is available.
+   */
   function imagePointerDomCandidate(image, ordinal) {
     if (!(image instanceof HTMLImageElement)) return null;
     const button = image.closest('button');
@@ -3227,11 +3227,11 @@
 
   /**
    * Handles image pointer resource evidence.
- *
- * @param {Object} source - The source value used by this operation.
- * @param {Object} domCandidate - The dom candidate value used by this operation.
- * @returns {Object|boolean|string|number|null} The result produced by `imagePointerResourceEvidence` according to the operation outcome.
- */
+   *
+   * @param {Object} source - The source value to inspect.
+   * @param {Object} domCandidate - The domCandidate value required by this function.
+   * @returns {Object} The Object value produced by `imagePointerResourceEvidence`.
+   */
   function imagePointerResourceEvidence(source, domCandidate) {
     const assetKey = internalImagePointerAssetKey(source);
     const exactUrls = new Set([
@@ -3273,12 +3273,12 @@
 
   /**
    * Logs internal image pointer evidence.
- *
- * @param {Object} record - The provider/source record to process.
- * @param {HTMLElement} section - The section value used by this operation.
- * @param {boolean} candidates - The candidates value used by this operation.
- * @returns {void} No value is returned.
- */
+   *
+   * @param {Object} record - The provider/source record to process.
+   * @param {HTMLElement} section - The mounted conversation-turn section.
+   * @param {boolean} candidates - Whether candidates is enabled.
+   * @returns {void} No value is returned.
+   */
   function logInternalImagePointerEvidence(record, section, candidates) {
     const parts = Array.isArray(record?.content?.parts) ? record.content.parts : [];
     let imageOrdinal = 0;
@@ -3306,10 +3306,10 @@
 
   /**
    * Handles image element data URL.
- *
- * @param {Object} image - The image value used by this operation.
- * @returns {Promise<Object|boolean|string|number|null>} A promise resolving to the result produced by `imageElementDataUrl` according to the operation outcome.
- */
+   *
+   * @param {Object} image - The image element to inspect.
+   * @returns {Promise<boolean>} A promise that resolves to the boolean result produced by `imageElementDataUrl`.
+   */
   async function imageElementDataUrl(image) {
     const src = image.currentSrc || image.getAttribute('src') || '';
     assert(src, 'Conversational image has no source URL.');
@@ -3331,10 +3331,10 @@
 
   /**
    * Recovers user images.
- *
- * @param {Object} spine - The spine value used by this operation.
- * @returns {Promise<Object|boolean|string|number|null>} A promise resolving to the result produced by `recoverUserImages` according to the operation outcome.
- */
+   *
+   * @param {Object} spine - The ordered Conversation API source-record spine.
+   * @returns {Promise<Array<unknown>>} A promise that resolves to the Array<unknown> result produced by `recoverUserImages`.
+   */
   async function recoverUserImages(spine) {
     const recovered = new Map();
     const scrollRoot = conversationScrollRoot();
@@ -3410,10 +3410,10 @@
 
   /**
    * Runs one requested Conversation API export from acquisition through optional image recovery, rendering/serialization, download, status, and failure diagnostics.
- *
- * @param {Object} kind - The kind value used by this operation.
- * @returns {Promise<void>} A promise that resolves after the requested export completes or its failure has been reported.
- */
+   *
+   * @param {Object} kind - The export kind to execute.
+   * @returns {Promise<void>} A promise that resolves to the void result produced by `runExport`.
+   */
   async function runExport(kind) {
     if (exportInProgress || testInProgress || jumpInProgress) return;
     const conversationId = currentConversationId();
@@ -3498,9 +3498,9 @@
 
   /**
    * Tests API pagination logic.
- *
- * @returns {Promise<Object|boolean|string|number|null>} A promise resolving to the result produced by `testApiPaginationLogic` according to the operation outcome.
- */
+   *
+   * @returns {Promise<Object|boolean|string|number|null>} A promise that resolves to the Object|boolean|string|number|null result produced by `testApiPaginationLogic`.
+   */
   async function testApiPaginationLogic() {
     const calls = [];
     const pagesByCursor = new Map([
@@ -3544,9 +3544,9 @@
 
   /**
    * Tests stable message ids.
- *
- * @returns {void} No value is returned.
- */
+   *
+   * @returns {void} No value is returned.
+   */
   function testStableMessageIds() {
     const pages = [
       { messages: [{ id: 'b', marker: 'new-b' }, { id: 'c' }], page_info: {} },
@@ -3570,9 +3570,9 @@
 
   /**
    * Tests conversation API access and schema.
- *
- * @returns {Promise<void>} A promise resolving to no value is returned.
- */
+   *
+   * @returns {Promise<void>} A promise that resolves to the void result produced by `testConversationApiAccessAndSchema`.
+   */
   async function testConversationApiAccessAndSchema() {
     const conversationId = currentConversationId();
     assert(conversationId, 'Current page is not a ChatGPT conversation.');
@@ -3590,19 +3590,19 @@
 
   /**
    * Tests multimodal user and chronological order.
- *
- * @returns {Promise<void>} A promise resolving to no value is returned.
- */
+   *
+   * @returns {Promise<void>} A promise that resolves to the void result produced by `testMultimodalUserAndChronologicalOrder`.
+   */
   async function testMultimodalUserAndChronologicalOrder() {
     /**
      * Handles record.
- *
- * @param {string} id - The id value used by this operation.
- * @param {Object} role - The role value used by this operation.
- * @param {string} contentType - The content type value used by this operation.
- * @param {Array<unknown>} parts - The parts value used by this operation.
- * @returns {void} No value is returned.
- */
+     *
+     * @param {string} id - The id value required by this function.
+     * @param {Object} role - The message role to match.
+     * @param {string} contentType - The contentType value required by this function.
+     * @param {Array<unknown>} parts - The ordered parts values to process.
+     * @returns {void} No value is returned.
+     */
     const record = (id, role, contentType, parts) => ({
       id,
       author: { role },
@@ -3653,9 +3653,9 @@
 
   /**
    * Tests renderer parity features.
- *
- * @returns {void} No value is returned.
- */
+   *
+   * @returns {void} No value is returned.
+   */
   function testRendererParityFeatures() {
     const fileToken = `${CG_INLINE_TOKEN_START}filecite${CG_INLINE_TOKEN_SEP}turn7file2${CG_INLINE_TOKEN_SEP}L1-L2${CG_INLINE_TOKEN_END}`;
     const citeToken = `${CG_INLINE_TOKEN_START}cite${CG_INLINE_TOKEN_SEP}web${CG_INLINE_TOKEN_END}`;
@@ -3684,9 +3684,9 @@
 
   /**
    * Tests jump identifier resolution.
- *
- * @returns {void} No value is returned.
- */
+   *
+   * @returns {void} No value is returned.
+   */
   function testJumpIdentifierResolution() {
     const records = [
       { ordinal: 0, message_id: 'u1', role: 'user' },
@@ -3719,9 +3719,9 @@
 
   /**
    * Tests generated sandbox download link.
- *
- * @returns {void} No value is returned.
- */
+   *
+   * @returns {void} No value is returned.
+   */
   function testGeneratedSandboxDownloadLink() {
     const conversationId = currentConversationId();
     assert(conversationId, 'Sandbox-link test requires a ChatGPT conversation page.');
@@ -3766,9 +3766,9 @@
 
   /**
    * Handles built in tests.
- *
- * @returns {Array<unknown>} The ordered values produced by `builtInTests`.
- */
+   *
+   * @returns {Array<unknown>} The ordered values produced by `builtInTests`.
+   */
   function builtInTests() {
     return [
       ['API pagination', testApiPaginationLogic],
@@ -3783,9 +3783,9 @@
 
   /**
    * Loads test result history.
- *
- * @returns {Map<unknown, unknown>} The lookup map produced by `loadTestResultHistory`.
- */
+   *
+   * @returns {Map<unknown, unknown>} The lookup map produced by `loadTestResultHistory`.
+   */
   function loadTestResultHistory() {
     try {
       const parsed = JSON.parse(localStorage.getItem(TEST_RESULT_HISTORY_KEY) || '{}');
@@ -3798,9 +3798,9 @@
 
   /**
    * Saves test result history.
- *
- * @returns {void} No value is returned.
- */
+   *
+   * @returns {void} No value is returned.
+   */
   function saveTestResultHistory() {
     try {
       const history = loadTestResultHistory();
@@ -3811,19 +3811,19 @@
 
   /**
    * Tests matrix result text.
- *
- * @param {Object} result - The result value used by this operation.
- * @returns {string} The text representation produced by `testMatrixResultText`.
- */
+   *
+   * @param {Object} result - The test result to format.
+   * @returns {string} The string produced by `testMatrixResultText`.
+   */
   function testMatrixResultText(result) {
     return result?.status || '—';
   }
 
   /**
    * Refreshes test matrix.
- *
- * @returns {Object|boolean|string|number|null} The result produced by `refreshTestMatrix` according to the operation outcome.
- */
+   *
+   * @returns {void} No value is returned.
+   */
   function refreshTestMatrix() {
     const matrix = document.getElementById(TEST_MATRIX_ID);
     if (!matrix) return;
@@ -3842,11 +3842,11 @@
 
   /**
    * Handles execute built in test.
- *
- * @param {string} name - The name value used by this operation.
- * @param {Function} fn - The fn value used by this operation.
- * @returns {Promise<string>} A promise resolving to the text representation produced by `executeBuiltInTest`.
- */
+   *
+   * @param {string} name - The name to process.
+   * @param {Function} fn - The test function to execute.
+   * @returns {Promise<string>} A promise that resolves to the string result produced by `executeBuiltInTest`.
+   */
   async function executeBuiltInTest(name, fn) {
     try {
       await fn();
@@ -3864,9 +3864,9 @@
 
   /**
    * Handles current test status lines.
- *
- * @returns {Object|boolean|string|number|null} The result produced by `currentTestStatusLines` according to the operation outcome.
- */
+   *
+   * @returns {Array<unknown>} The ordered values produced by `currentTestStatusLines`.
+   */
   function currentTestStatusLines() {
     return builtInTests()
       .filter(([name]) => testMatrixCurrentResults.has(name))
@@ -3878,11 +3878,11 @@
 
   /**
    * Handles run one test.
- *
- * @param {string} name - The name value used by this operation.
- * @param {Function} fn - The fn value used by this operation.
- * @returns {Promise<Object|boolean|string|number|null>} A promise resolving to the result produced by `runOneTest` according to the operation outcome.
- */
+   *
+   * @param {string} name - The name to process.
+   * @param {Function} fn - The test function to execute.
+   * @returns {Promise<void>} A promise that resolves to the void result produced by `runOneTest`.
+   */
   async function runOneTest(name, fn) {
     if (exportInProgress || testInProgress || jumpInProgress) return;
     testInProgress = true;
@@ -3899,9 +3899,9 @@
 
   /**
    * Handles run tests.
- *
- * @returns {Promise<Object|boolean|string|number|null>} A promise resolving to the result produced by `runTests` according to the operation outcome.
- */
+   *
+   * @returns {Promise<void>} A promise that resolves to the void result produced by `runTests`.
+   */
   async function runTests() {
     if (exportInProgress || testInProgress || jumpInProgress) return;
     testInProgress = true;
@@ -3920,10 +3920,10 @@
 
   /**
    * Handles modal focusable elements.
- *
- * @param {HTMLElement} dialog - The dialog value used by this operation.
- * @returns {Array<unknown>} The ordered values produced by `modalFocusableElements`.
- */
+   *
+   * @param {HTMLElement} dialog - The dialog element whose focusable controls are requested.
+   * @returns {boolean} `true` when `modalFocusableElements` succeeds or its predicate is satisfied; otherwise `false`.
+   */
   function modalFocusableElements(dialog) {
     return [...dialog.querySelectorAll(
       'button:not([disabled]), input:not([disabled]), select:not([disabled]), textarea:not([disabled]), [tabindex]:not([tabindex="-1"])'
@@ -3932,32 +3932,32 @@
 
   /**
    * Handles install modal contract.
- *
- * @param {Object} overlay - The overlay value used by this operation.
- * @param {Object} options2 - The destructured options object used by this operation.
- * @param {Object} options2.defaultButton - The default button value used by this operation.
- * @param {Object} options2.null - The null value used by this operation.
- * @param {Object} options2.onClose - The on close value used by this operation.
- * @param {Object} options2.null - The null value used by this operation.
- * @param {Object} options2.opener - The opener value used by this operation.
- * @param {Object} options2.null - The null value used by this operation.
- * @returns {Object|boolean|string|number|null} The result produced by `installModalContract` according to the operation outcome.
- */
+   *
+   * @param {Object} overlay - The modal overlay element.
+   * @param {Object} options2 - The destructured options object used by this operation.
+   * @param {Object} options2.defaultButton - The defaultButton value required by this function.
+   * @param {Object} options2.null - The null value required by this function.
+   * @param {Object} options2.onClose - The onClose value required by this function.
+   * @param {Object} options2.null - The null value required by this function.
+   * @param {Object} options2.opener - The element that opened the modal.
+   * @param {Object} options2.null - The null value required by this function.
+   * @returns {void} No value is returned.
+   */
   function installModalContract(overlay, { defaultButton = null, onClose = null, opener = null } = {}) {
     lastModalOpener = opener instanceof HTMLElement ? opener : document.activeElement instanceof HTMLElement ? document.activeElement : null;
     const dialog = overlay.querySelector('[role="dialog"]');
     if (!(dialog instanceof HTMLElement)) return;
     /**
      * Handles focusables.
- *
- * @returns {void} No value is returned.
- */
+     *
+     * @returns {void} No value is returned.
+     */
     const focusables = () => modalFocusableElements(dialog);
     /**
      * Handles close.
- *
- * @returns {void} No value is returned.
- */
+     *
+     * @returns {void} No value is returned.
+     */
     const close = () => {
       if (typeof onClose === 'function') onClose();
       const restore = lastModalOpener;
@@ -4003,19 +4003,19 @@
 
   /**
    * Closes test matrix.
- *
- * @returns {void} No value is returned.
- */
+   *
+   * @returns {void} No value is returned.
+   */
   function closeTestMatrix() {
     document.getElementById(TEST_MATRIX_ID)?.remove();
   }
 
   /**
    * Opens test matrix.
- *
- * @param {Object|null} opener - The opener value used by this operation.
- * @returns {Object|boolean|string|number|null} The result produced by `openTestMatrix` according to the operation outcome.
- */
+   *
+   * @param {Object|null} opener - The element that opened the modal.
+   * @returns {void} No value is returned.
+   */
   function openTestMatrix(opener = null) {
     if (document.getElementById(TEST_MATRIX_ID)) return;
     testMatrixPreviousResults = loadTestResultHistory();
@@ -4079,19 +4079,19 @@
 
   /**
    * Handles diagnostic enabled.
- *
- * @param {Object} level - The level value used by this operation.
- * @returns {Object|boolean|string|number|null} The result produced by `diagnosticEnabled` according to the operation outcome.
- */
+   *
+   * @param {Object} level - The diagnostics severity level.
+   * @returns {boolean} `true` when `diagnosticEnabled` succeeds or its predicate is satisfied; otherwise `false`.
+   */
   function diagnosticEnabled(level) {
     return (DIAGNOSTIC_LEVELS[level] ?? 0) <= (DIAGNOSTIC_LEVELS[diagnosticsLevel] ?? 0);
   }
 
   /**
    * Handles persist diagnostic log.
- *
- * @returns {void} No value is returned.
- */
+   *
+   * @returns {void} No value is returned.
+   */
   function persistDiagnosticLog() {
     try {
       sessionStorage.setItem(DIAGNOSTIC_LOG_STORAGE_KEY, JSON.stringify(diagnosticLog));
@@ -4100,10 +4100,10 @@
 
   /**
    * Handles diagnostic log line.
- *
- * @param {Object} entry - The entry value used by this operation.
- * @returns {string} The text representation produced by `diagnosticLogLine`.
- */
+   *
+   * @param {Object} entry - The diagnostics entry to format.
+   * @returns {string} The string produced by `diagnosticLogLine`.
+   */
   function diagnosticLogLine(entry) {
     const suffix = entry.data === null || entry.data === undefined
       ? ''
@@ -4113,27 +4113,27 @@
 
   /**
    * Handles copy icon markup.
- *
- * @returns {string} The text representation produced by `copyIconMarkup`.
- */
+   *
+   * @returns {string} The string produced by `copyIconMarkup`.
+   */
   function copyIconMarkup() {
     return '<svg viewBox="0 0 24 24" aria-hidden="true"><rect x="9" y="9" width="10" height="10" rx="2"></rect><path d="M15 7V5a2 2 0 0 0-2-2H5a2 2 0 0 0-2 2v8a2 2 0 0 0 2 2h2"></path></svg>';
   }
 
   /**
    * Handles check icon markup.
- *
- * @returns {string} The text representation produced by `checkIconMarkup`.
- */
+   *
+   * @returns {string} The string produced by `checkIconMarkup`.
+   */
   function checkIconMarkup() {
     return '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M5 12.5l4 4L19 7"></path></svg>';
   }
 
   /**
    * Refreshes diagnostic log.
- *
- * @returns {Object|boolean|string|number|null} The result produced by `refreshDiagnosticLog` according to the operation outcome.
- */
+   *
+   * @returns {void} No value is returned.
+   */
   function refreshDiagnosticLog() {
     const panel = document.getElementById(PANEL_ID);
     if (!panel) return;
@@ -4161,9 +4161,9 @@
 
   /**
    * Handles copy diagnostic log.
- *
- * @returns {Promise<Object|boolean|string|number|null>} A promise resolving to the result produced by `copyDiagnosticLog` according to the operation outcome.
- */
+   *
+   * @returns {Promise<void>} A promise that resolves to the void result produced by `copyDiagnosticLog`.
+   */
   async function copyDiagnosticLog() {
     const text = diagnosticLog.map(diagnosticLogLine).join('\n');
     if (!text) return;
@@ -4188,12 +4188,12 @@
 
   /**
    * Logs diagnostic.
- *
- * @param {Object} level - The level value used by this operation.
- * @param {string} message - The message value used by this operation.
- * @param {Object|null} data - The data value used by this operation.
- * @returns {Object|boolean|string|number|null} The result produced by `logDiagnostic` according to the operation outcome.
- */
+   *
+   * @param {Object} level - The diagnostics severity level.
+   * @param {string} message - The assertion failure message.
+   * @param {Object|null} data - The data value required by this function.
+   * @returns {void} No value is returned.
+   */
   function logDiagnostic(level, message, data = null) {
     if (!diagnosticEnabled(level)) return;
     const entry = {
@@ -4216,9 +4216,9 @@
 
   /**
    * Handles inject styles.
- *
- * @returns {Object|boolean|string|number|null} The result produced by `injectStyles` according to the operation outcome.
- */
+   *
+   * @returns {void} No value is returned.
+   */
   function injectStyles() {
     if (document.getElementById(`${PANEL_ID}-style`)) return;
     const style = document.createElement('style');
@@ -4269,9 +4269,9 @@
 
   /**
    * Updates UI.
- *
- * @returns {Object|boolean|string|number|null} The result produced by `updateUi` according to the operation outcome.
- */
+   *
+   * @returns {void} No value is returned.
+   */
   function updateUi() {
     const panel = document.getElementById(PANEL_ID);
     if (!panel) return;
@@ -4304,9 +4304,9 @@
 
   /**
    * Handles make launcher.
- *
- * @returns {Object} The structured value produced by `makeLauncher`.
- */
+   *
+   * @returns {void} No value is returned.
+   */
   function makeLauncher() {
   if (document.getElementById(LAUNCHER_ID) || !document.body) return;
   injectStyles();
@@ -4315,9 +4315,9 @@
   launcher.type = 'button';
   /**
    * Opens recorder popup.
- *
- * @returns {void} No value is returned.
- */
+   *
+   * @returns {void} No value is returned.
+   */
   const openRecorderPopup = () => {
     makePanel();
     const panel = document.getElementById(PANEL_ID);
@@ -4332,9 +4332,9 @@
 
   /**
    * Handles make panel.
- *
- * @returns {Object} The structured value produced by `makePanel`.
- */
+   *
+   * @returns {void} No value is returned.
+   */
   function makePanel() {
     if (document.getElementById(PANEL_ID) || !document.body) return;
     injectStyles();
@@ -4389,9 +4389,9 @@
     });
     /**
      * Handles run selected exports.
- *
- * @returns {Promise<void>} A promise resolving to no value is returned.
- */
+     *
+     * @returns {Promise<void>} A promise that resolves to the void result produced by `runSelectedExports`.
+     */
     const runSelectedExports = async () => {
       const jsonl = panel.querySelector('[data-role="format-jsonl"]');
       const md = panel.querySelector('[data-role="format-md"]');
@@ -4413,9 +4413,9 @@
 
   /**
    * Handles bootstrap UI.
- *
- * @returns {Object|boolean|string|number|null} The result produced by `bootstrapUi` according to the operation outcome.
- */
+   *
+   * @returns {void} No value is returned.
+   */
   function bootstrapUi() {
     if (document.body) {
       makeLauncher();
