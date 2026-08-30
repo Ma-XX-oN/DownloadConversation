@@ -27,7 +27,7 @@ jobs:
           from pathlib import Path
           path = Path('scripts/repair-jsdoc-types-once.mjs')
           text = path.read_text()
-          text = text.replace("import ts from 'typescript';", "import { createRequire } from 'node:module';\nconst require = createRequire(import.meta.url);\nconst ts = require('typescript');")
+          text = text.replace("import ts from 'typescript';", "import { createRequire } from 'node:module';\nconst require = createRequire(import.meta.url);\nconst tsModule = require('typescript');\nconst ts = tsModule.default ?? tsModule;")
           path.write_text(text)
           PY
           node scripts/repair-jsdoc-types-once.mjs
