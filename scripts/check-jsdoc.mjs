@@ -35,7 +35,8 @@ function immediateJsdoc(source, start) {
   const stripped = prefix.trimEnd();
   if (!stripped.endsWith('*/')) return null;
   const begin = stripped.lastIndexOf('/**');
-  return begin < 0 ? null : stripped.slice(begin);
+  if (begin < 0) return null;
+  return { text: stripped.slice(begin), start: begin };
 }
 
 function findClosingParen(source, open) {
@@ -73,6 +74,7 @@ function functionsIn(source) {
       if (patternIndex === 2 && !/^\s*=>/.test(source.slice(close + 1))) continue;
       results.push({
         start: match.index,
+        indent: match.groups.indent,
         name: match.groups.name,
         params: splitTopLevel(source.slice(open + 1, close))
       });
@@ -80,19 +82,44 @@ function functionsIn(source) {
   }
   const single = /^(?<indent>[ \t]*)(?:const|let|var)\s+(?<name>[A-Za-z_$][\w$]*)\s*=\s*(?:async\s+)?(?<param>[A-Za-z_$][\w$]*)\s*=>/gm;
   for (let match; (match = single.exec(source)); ) {
-    results.push({ start: match.index, name: match.groups.name, params: [match.groups.param] });
+    results.push({
+      start: match.index,
+      indent: match.groups.indent,
+      name: match.groups.name,
+      params: [match.groups.param]
+    });
   }
   return [...new Map(results.map(item => [item.start, item])).values()];
 }
+
+function alignedJsdoc(doc, indent) {
+  const lines = doc.split('\n');
+  if (lines[0] !== `${indent}/**`) return false;
+  if (lines.at(-1) !== `${indent} */`) return false;
+  return lines.slice(1, -1).every(line => line === `${indent} *` || line.startsWith(`${indent} * `));
+}
+
+const placeholderType = 'Object|boolean|string|number|null';
+const placeholderPhrases = [
+  'The result produced by',
+  'The Boolean result produced by',
+  'value used by this operation',
+  'according to the operation outcome'
+];
 
 const failures = [];
 let functionCount = 0;
 for (const fn of functionsIn(text)) {
   functionCount += 1;
-  const doc = immediateJsdoc(text, fn.start);
-  if (!doc) {
+  const found = immediateJsdoc(text, fn.start);
+  if (!found) {
     failures.push(`${file}: ${fn.name}: missing immediate JSDoc`);
     continue;
+  }
+  const doc = found.text;
+
+  if (!alignedJsdoc(doc, fn.indent)) {
+    failures.push(`${file}: ${fn.name}: JSDoc indentation does not match the declaration`);
   }
 
   const paramTags = [...doc.matchAll(/@param\s+\{([^}]+)\}\s+([^\s]+)\s+-\s+(.+)/g)];
@@ -102,15 +129,21 @@ for (const fn of functionsIn(text)) {
   }
   for (const tag of paramTags) {
     if (!tag[1].trim() || !tag[3].trim()) failures.push(`${file}: ${fn.name}: incomplete @param ${tag[2]}`);
+    if (tag[1].trim() === placeholderType) failures.push(`${file}: ${fn.name}: placeholder @param type`);
+    if (placeholderPhrases.some(phrase => tag[3].includes(phrase))) failures.push(`${file}: ${fn.name}: placeholder @param description for ${tag[2]}`);
   }
 
   const returns = doc.match(/@returns?\s+\{([^}]+)\}\s+(.+)/);
   if (!returns) failures.push(`${file}: ${fn.name}: missing typed/described @returns`);
-  else if (!returns[1].trim() || !returns[2].trim()) failures.push(`${file}: ${fn.name}: incomplete @returns`);
+  else {
+    if (!returns[1].trim() || !returns[2].trim()) failures.push(`${file}: ${fn.name}: incomplete @returns`);
+    if (returns[1].trim() === placeholderType) failures.push(`${file}: ${fn.name}: placeholder @returns type`);
+    if (placeholderPhrases.some(phrase => returns[2].includes(phrase))) failures.push(`${file}: ${fn.name}: placeholder @returns description`);
+  }
 }
 
 if (failures.length) {
   console.error('Complete JSDoc contract failures:\n' + failures.join('\n'));
   process.exit(1);
 }
-console.log(`Complete typed JSDoc audit passed for ${functionCount} named production functions.`);
+console.log(`Complete typed/aligned JSDoc audit passed for ${functionCount} named production functions.`);
