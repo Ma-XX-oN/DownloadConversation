@@ -140,7 +140,7 @@
   /**
    * Handles current conversation ID.
    *
-   * @returns {string|null} The string produced by `currentConversationId`, or `null` when no value is available.
+   * @returns {null} The value produced by `currentConversationId`, or `null` when unavailable.
    */
   function currentConversationId() {
     return location.pathname.match(/\/c\/([^/?#]+)/)?.[1] ?? null;
@@ -166,7 +166,7 @@
    * Handles raw headers to object.
    *
    * @param {Object} headers - The HTTP header values to inspect.
-   * @returns {void} No value is returned.
+   * @returns {Object} The Object value produced by `rawHeadersToObject`.
    */
   function rawHeadersToObject(headers) {
     const result = {};
@@ -228,7 +228,7 @@
    * Handles click diagnostic element snapshot.
    *
    * @param {Element} element - The DOM element to inspect or update.
-   * @returns {string|null} The string produced by `clickDiagnosticElementSnapshot`, or `null` when no value is available.
+   * @returns {Object|null} The value produced by `clickDiagnosticElementSnapshot`, or `null` when unavailable.
    */
   function clickDiagnosticElementSnapshot(element) {
     if (!(element instanceof Element)) return null;
@@ -753,7 +753,7 @@
    * Handles API linkage key is identifier like.
    *
    * @param {string} key - The lookup key to process.
-   * @returns {void} No value is returned.
+   * @returns {boolean} `true` when the api linkage key is identifier like condition is satisfied; otherwise `false`.
    */
   function apiLinkageKeyIsIdentifierLike(key) {
     return /(?:^id$|_id$|_ids$|call|parent|source|reference|tool|exchange|working|request|response)/i
@@ -779,7 +779,7 @@
    * Handles API record identifier scalars.
    *
    * @param {Object} record - The provider/source record to process.
-   * @returns {void} No value is returned.
+   * @returns {Array<unknown>} The ordered values produced by `apiRecordIdentifierScalars`.
    */
   function apiRecordIdentifierScalars(record) {
     const raw = record?.message && typeof record.message === 'object' ? record.message : {};
@@ -869,7 +869,7 @@
      * Handles chronological anchor.
      *
      * @param {number} recordOrdinal - The zero-based record ordinal.
-     * @returns {void} No value is returned.
+     * @returns {null} The value produced by `chronologicalAnchor`, or `null` when unavailable.
      */
     const chronologicalAnchor = recordOrdinal => {
       let candidate = null;
@@ -1438,7 +1438,7 @@
    * Handles fallback file token spec.
    *
    * @param {Object} token - The inline token to parse or render.
-   * @returns {string|Object} The string|Object value produced by `cgFileTokenSpec`.
+   * @returns {Object} The Object value produced by `cgFileTokenSpec`.
    */
   function cgFileTokenSpec(token) {
     const segments = cgInlineTokenSegments(token);
@@ -1542,7 +1542,7 @@
    * Handles fallback render memory citation.
    *
    * @param {Object} record - The provider/source record to process.
-   * @returns {void} No value is returned.
+   * @returns {string} The string produced by `cgRenderMemoryCitation`.
    */
   function cgRenderMemoryCitation(record) {
     const sources = cgCollectMemoryCitationSources(record);
@@ -1721,7 +1721,7 @@
    *
    * @param {string} text - The text to process.
    * @param {Object} record - The provider/source record to process.
-   * @returns {void} No value is returned.
+   * @returns {string} The string produced by `cgRewriteGeneratedSandboxLinks`.
    */
   function cgRewriteGeneratedSandboxLinks(text, record) {
     if (!text || record?.author?.role !== 'assistant') return text;
@@ -1781,7 +1781,7 @@
    * @param {string} text - The text to process.
    * @param {Object} record - The provider/source record to process.
    * @param {Map<unknown, unknown>} fileRefIndex - The zero-based file ref index.
-   * @returns {void} No value is returned.
+   * @returns {string} The string produced by `cgRenderInlineReferences`.
    */
   function cgRenderInlineReferences(text, record, fileRefIndex = new Map()) {
     if (!text) return text;
@@ -1879,7 +1879,7 @@
    * Handles fallback image pointer fallback.
    *
    * @param {Object} part - The provider content part to process.
-   * @returns {void} No value is returned.
+   * @returns {string} The string produced by `cgImagePointerFallback`.
    */
   function cgImagePointerFallback(part) {
     const source = cgImagePointerSource(part);
@@ -2194,7 +2194,7 @@
    *
    * @param {Array<Object>} records - The ordered provider/source records to process.
    * @param {Map<unknown, unknown>} recoveredImageMap - The recovered-image lookup keyed by source record.
-   * @returns {boolean} `true` when `canonicalEventsBySourceRecord` succeeds or its predicate is satisfied; otherwise `false`.
+   * @returns {Map<unknown, unknown>} The lookup map produced by `canonicalEventsBySourceRecord`.
    */
   function canonicalEventsBySourceRecord(records, recoveredImageMap = new Map()) {
     const conversationId = typeof currentConversationId === 'function' ? currentConversationId() : null;
@@ -2270,7 +2270,7 @@
    * Handles canonical rendered has unresolved inline tokens.
    *
    * @param {Object} rendered - The rendered value required by this function.
-   * @returns {string} The string produced by `canonicalRenderedHasUnresolvedInlineTokens`.
+   * @returns {boolean} `true` when the canonical rendered has unresolved inline tokens condition is satisfied; otherwise `false`.
    */
   function canonicalRenderedHasUnresolvedInlineTokens(rendered) {
     return String(rendered ?? '').includes(CG_INLINE_TOKEN_START);
@@ -2283,7 +2283,7 @@
    *
    * @param {Object} record - The provider/source record to process.
    * @param {Event|Object} event - The event or event-like object being handled.
-   * @returns {string|boolean} The string|boolean value produced by `canonicalMessageRecordEligible`.
+   * @returns {boolean} `true` when the canonical message record eligible condition is satisfied; otherwise `false`.
    */
   function canonicalMessageRecordEligible(record, event) {
     if (!event || cgIsHidden(record) || event?.visibility === 'hidden') return false;
@@ -2344,7 +2344,7 @@
    *
    * @param {Array<Object>} records - The ordered provider/source records to process.
    * @param {Array<Object>} events - The canonical events associated with the source records.
-   * @returns {string|boolean} The string|boolean value produced by `canonicalAssistantSegmentEligible`.
+   * @returns {boolean} `true` when the canonical assistant segment eligible condition is satisfied; otherwise `false`.
    */
   function canonicalAssistantSegmentEligible(records, events) {
     if (!Array.isArray(records) || !records.length || !Array.isArray(events) || events.length !== records.length) {
@@ -2645,7 +2645,7 @@
    * Builds the DownloadConversation metadata record prepended to a JSONL export.
    *
    * @param {string} conversationId - The Conversation API conversation identifier.
-   * @returns {string} The string produced by `conversationMetadataJsonlRecord`.
+   * @returns {Object} The Object value produced by `conversationMetadataJsonlRecord`.
    */
   function conversationMetadataJsonlRecord(conversationId) {
     assert(typeof conversationId === 'string' && conversationId.trim(), 'Conversation ID is required for JSONL export metadata.');
@@ -2752,7 +2752,7 @@
   /**
    * Handles acquire wake lock.
    *
-   * @returns {Promise<void>} A promise that resolves to the void result produced by `acquireWakeLock`.
+   * @returns {void} No value is returned.
    */
   async function acquireWakeLock() {
     if (!screenOnWhenCapturing || !exportInProgress ||
@@ -2769,7 +2769,7 @@
   /**
    * Handles release wake lock.
    *
-   * @returns {Promise<void>} A promise that resolves to the void result produced by `releaseWakeLock`.
+   * @returns {void} No value is returned.
    */
   async function releaseWakeLock() {
     const sentinel = wakeLockSentinel;
@@ -2868,7 +2868,7 @@
   /**
    * Handles conversation scroll root.
    *
-   * @returns {void} No value is returned.
+   * @returns {Element} The Element value produced by `conversationScrollRoot`.
    */
   function conversationScrollRoot() {
     const thread = document.querySelector('#thread');
@@ -2916,7 +2916,7 @@
    *
    * @param {number} uapIndex - The zero-based uap index.
    * @param {number} timeoutMs - The timeout duration in milliseconds.
-   * @returns {Promise<Map<unknown, unknown>>} A promise that resolves to the Map<unknown, unknown> result produced by `populateJumpTocIndex`.
+   * @returns {Promise<null>} A promise resolving to the value produced by `populateJumpTocIndex`.
    */
   async function populateJumpTocIndex(uapIndex, timeoutMs = 60000) {
     let toc = jumpTocIndexControl(uapIndex);
@@ -3069,7 +3069,7 @@
   /**
    * Handles run jump.
    *
-   * @returns {Promise<void>} A promise that resolves to the void result produced by `runJump`.
+   * @returns {void} No value is returned.
    */
   async function runJump() {
     if (exportInProgress || testInProgress || jumpInProgress) return;
@@ -3141,7 +3141,7 @@
    * Handles user image pointer count.
    *
    * @param {Object} record - The provider/source record to process.
-   * @returns {number|boolean} The number|boolean value produced by `userImagePointerCount`.
+   * @returns {number} The numeric value produced by `userImagePointerCount`.
    */
   function userImagePointerCount(record) {
     if (record?.author?.role !== 'user' || !Array.isArray(record?.content?.parts)) return 0;
@@ -3308,7 +3308,7 @@
    * Handles image element data URL.
    *
    * @param {Object} image - The image element to inspect.
-   * @returns {Promise<boolean>} A promise that resolves to the boolean result produced by `imageElementDataUrl`.
+   * @returns {Promise<string|Object>} A promise resolving to the value produced by `imageElementDataUrl`.
    */
   async function imageElementDataUrl(image) {
     const src = image.currentSrc || image.getAttribute('src') || '';
@@ -3333,7 +3333,7 @@
    * Recovers user images.
    *
    * @param {Object} spine - The ordered Conversation API source-record spine.
-   * @returns {Promise<Array<unknown>>} A promise that resolves to the Array<unknown> result produced by `recoverUserImages`.
+   * @returns {Promise<Map<unknown, unknown>>} A promise resolving to the value produced by `recoverUserImages`.
    */
   async function recoverUserImages(spine) {
     const recovered = new Map();
@@ -3412,7 +3412,7 @@
    * Runs one requested Conversation API export from acquisition through optional image recovery, rendering/serialization, download, status, and failure diagnostics.
    *
    * @param {Object} kind - The export kind to execute.
-   * @returns {Promise<void>} A promise that resolves to the void result produced by `runExport`.
+   * @returns {void} No value is returned.
    */
   async function runExport(kind) {
     if (exportInProgress || testInProgress || jumpInProgress) return;
@@ -3499,7 +3499,7 @@
   /**
    * Tests API pagination logic.
    *
-   * @returns {Promise<Object|boolean|string|number|null>} A promise that resolves to the Object|boolean|string|number|null result produced by `testApiPaginationLogic`.
+   * @returns {void} No value is returned.
    */
   async function testApiPaginationLogic() {
     const calls = [];
@@ -3571,7 +3571,7 @@
   /**
    * Tests conversation API access and schema.
    *
-   * @returns {Promise<void>} A promise that resolves to the void result produced by `testConversationApiAccessAndSchema`.
+   * @returns {void} No value is returned.
    */
   async function testConversationApiAccessAndSchema() {
     const conversationId = currentConversationId();
@@ -3591,7 +3591,7 @@
   /**
    * Tests multimodal user and chronological order.
    *
-   * @returns {Promise<void>} A promise that resolves to the void result produced by `testMultimodalUserAndChronologicalOrder`.
+   * @returns {void} No value is returned.
    */
   async function testMultimodalUserAndChronologicalOrder() {
     /**
@@ -3881,7 +3881,7 @@
    *
    * @param {string} name - The name to process.
    * @param {Function} fn - The test function to execute.
-   * @returns {Promise<void>} A promise that resolves to the void result produced by `runOneTest`.
+   * @returns {void} No value is returned.
    */
   async function runOneTest(name, fn) {
     if (exportInProgress || testInProgress || jumpInProgress) return;
@@ -3900,7 +3900,7 @@
   /**
    * Handles run tests.
    *
-   * @returns {Promise<void>} A promise that resolves to the void result produced by `runTests`.
+   * @returns {void} No value is returned.
    */
   async function runTests() {
     if (exportInProgress || testInProgress || jumpInProgress) return;
@@ -3922,7 +3922,7 @@
    * Handles modal focusable elements.
    *
    * @param {HTMLElement} dialog - The dialog element whose focusable controls are requested.
-   * @returns {boolean} `true` when `modalFocusableElements` succeeds or its predicate is satisfied; otherwise `false`.
+   * @returns {Array<unknown>} The ordered values produced by `modalFocusableElements`.
    */
   function modalFocusableElements(dialog) {
     return [...dialog.querySelectorAll(
@@ -4162,7 +4162,7 @@
   /**
    * Handles copy diagnostic log.
    *
-   * @returns {Promise<void>} A promise that resolves to the void result produced by `copyDiagnosticLog`.
+   * @returns {void} No value is returned.
    */
   async function copyDiagnosticLog() {
     const text = diagnosticLog.map(diagnosticLogLine).join('\n');
@@ -4390,7 +4390,7 @@
     /**
      * Handles run selected exports.
      *
-     * @returns {Promise<void>} A promise that resolves to the void result produced by `runSelectedExports`.
+     * @returns {void} No value is returned.
      */
     const runSelectedExports = async () => {
       const jsonl = panel.querySelector('[data-role="format-jsonl"]');
