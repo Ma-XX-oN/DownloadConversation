@@ -614,6 +614,9 @@
       }
     }
 
+    /**
+     * Handles records.
+     */
     const records = messages.map((message, ordinal) => {
       const metadata = message?.metadata && typeof message.metadata === 'object'
         ? message.metadata
@@ -737,6 +740,9 @@
       add(workingToAnchors, anchor.working_turn_id, anchor.ordinal);
     }
 
+    /**
+     * Handles groups.
+     */
     const groups = anchors.map(anchor => ({
       ordinal: anchor.ordinal,
       user_message_id: anchor.user_message_id,
@@ -887,6 +893,9 @@
       linkage.unresolved.map(item => [item.record_ordinal, item])
     );
     const records = spine?.records ?? [];
+    /**
+     * Handles groups.
+     */
     const groups = (spine?.uap_anchors ?? []).map(anchor => ({
       ordinal: anchor.ordinal,
       user_message_id: anchor.user_message_id,
@@ -1139,6 +1148,9 @@
     return root ? `https://www.google.com/s2/favicons?domain=${root}&sz=32` : '';
   }
 
+  /**
+   * Handles fallback collect web citation sources.
+   */
   function cgCollectWebCitationSources(reference, urlIndex = new Map()) {
     const sources = [];
     const seen = new Set();
@@ -1186,6 +1198,9 @@
     return sources;
   }
 
+  /**
+   * Handles fallback render web citation.
+   */
   function cgRenderWebCitation(reference, urlIndex = new Map()) {
     const links = [];
     for (const source of cgCollectWebCitationSources(reference, urlIndex)) {
@@ -1337,6 +1352,9 @@
       const ref = parsed.searchParams.get('ref') || 'main';
       if (!relative.length) return `https://github.com/${owner}/${repo}/tree/${encodeURIComponent(ref)}`;
       const target = relative[relative.length - 1].includes('.') ? 'blob' : 'tree';
+      /**
+       * Handles rel.
+       */
       const rel = relative.map(segment => encodeURIComponent(segment)).join('/');
       return `https://github.com/${owner}/${repo}/${target}/${encodeURIComponent(ref)}/${rel}`;
     } catch {
@@ -1398,6 +1416,11 @@
     return cgRenderNamedFileReference(citation?.title ?? '', token, citation?.url ?? '');
   }
 
+  /**
+   * Renders one provider-native inline content reference on the legacy/fallback Markdown path.
+   *
+   * Source -> output transformation: grouped web, alt-text, file, memory, and retrieved-file references are converted to their established visible Markdown/HTML representation; unsupported reference kinds render no replacement.
+   */
   function cgRenderInlineReference(reference, record, urlIndex = new Map(), fileRefIndex = new Map()) {
     if (reference?.type === 'grouped_webpages') return cgRenderWebCitation(reference, urlIndex);
     if (reference?.type === 'alt_text') {
@@ -1502,6 +1525,9 @@
     return rendered + value.slice(cursor);
   }
 
+  /**
+   * Handles fallback render inline references.
+   */
   function cgRenderInlineReferences(text, record, fileRefIndex = new Map()) {
     if (!text) return text;
     const references = Array.isArray(record?.metadata?.content_references)
@@ -1564,6 +1590,9 @@
       const response = await fetch(source, { method: 'GET', credentials: 'include' });
       if (!response.ok) return cgImageFailureMarkdown(source, response.status);
       const blob = await response.blob();
+      /**
+       * Handles data url.
+       */
       const dataUrl = await new Promise((resolve, reject) => {
         const reader = new FileReader();
         reader.onload = () => resolve(String(reader.result || ''));
@@ -1584,6 +1613,9 @@
     return source ? cgImageUnavailableMarkdown(source) : '[image missing]';
   }
 
+  /**
+   * Handles fallback content text parts.
+   */
   function cgContentTextParts(record, fileRefIndex = new Map(), recoveredImages = []) {
     const content = record?.content ?? {};
     const parts = content.parts;
@@ -1620,22 +1652,34 @@
     return cleaned;
   }
 
+  /**
+   * Handles fallback visible user text.
+   */
   function cgVisibleUserText(record, fileRefIndex = new Map(), recoveredImages = []) {
     if (cgIsHidden(record) || record?.author?.role !== 'user' ||
         !['text', 'multimodal_text'].includes(record?.content?.content_type)) return '';
     return cgContentTextParts(record, fileRefIndex, recoveredImages).join('\n\n').trim();
   }
 
+  /**
+   * Handles fallback visible assistant text.
+   */
   function cgVisibleAssistantText(record, fileRefIndex = new Map(), recoveredImages = []) {
     if (cgIsHidden(record) || record?.author?.role !== 'assistant' ||
         !['text', 'multimodal_text'].includes(record?.content?.content_type)) return '';
     return cgContentTextParts(record, fileRefIndex, recoveredImages).join('\n\n').trim();
   }
 
+  /**
+   * Handles fallback visible assistant markdown.
+   */
   function cgVisibleAssistantMarkdown(record, fileRefIndex = new Map(), recoveredImages = []) {
     return cgVisibleAssistantText(record, fileRefIndex, recoveredImages);
   }
 
+  /**
+   * Handles fallback record search texts.
+   */
   function cgRecordSearchTexts(record, fileRefIndex = new Map()) {
     if (cgIsHidden(record) || record?.author?.role === 'system') return [];
     const content = record?.content ?? {};
@@ -1677,6 +1721,9 @@
   function cgCodeFence(text, language = '') {
     const body = String(text ?? '').replace(/\s+$/, '');
     const runs = body.match(/`+/g) ?? [];
+    /**
+     * Handles longest.
+     */
     const longest = runs.reduce((max, run) => Math.max(max, run.length), 0);
     const fence = '`'.repeat(Math.max(3, longest + 1));
     return `${fence}${language || ''}\n${body}\n${fence}`;
@@ -1706,6 +1753,9 @@
     return '';
   }
 
+  /**
+   * Handles fallback render thought item.
+   */
   function cgRenderThoughtItem(record, fileRefIndex = new Map()) {
     if (cgIsHidden(record)) return '';
     const role = record?.author?.role ?? '';
@@ -1720,6 +1770,9 @@
         if (body) blocks.push(summary ? `**${summary}**\n\n${body}` : body);
         else if (summary) blocks.push(summary);
         else if (Array.isArray(thought.chunks)) {
+          /**
+           * Handles chunk text.
+           */
           const chunkText = thought.chunks.filter(chunk => typeof chunk === 'string' && chunk.trim()).join('\n\n');
           if (chunkText) blocks.push(chunkText);
         }
@@ -1744,6 +1797,9 @@
     return '';
   }
 
+  /**
+   * Handles fallback render thought block.
+   */
   function cgRenderThoughtBlock(items, fileRefIndex = new Map()) {
     const rendered = [];
     for (const record of items) {
@@ -1790,6 +1846,9 @@
   function canonicalEnrichRecoveredImages(event, recoveredImages = []) {
     if (!event || !Array.isArray(recoveredImages) || !recoveredImages.length) return event;
     let imageIndex = 0;
+    /**
+     * Handles resources.
+     */
     const resources = (event.resources ?? []).map(resource => {
       if (resource?.type !== 'image' || resource?.resource_kind !== 'conversation_image') return resource;
       const recovered = canonicalRecoveredImageState(recoveredImages[imageIndex]);
@@ -1803,8 +1862,14 @@
     return { ...event, resources };
   }
 
+  /**
+   * Handles canonical events by source record.
+   */
   function canonicalEventsBySourceRecord(records, recoveredImageMap = new Map()) {
     const conversationId = typeof currentConversationId === 'function' ? currentConversationId() : null;
+    /**
+     * Handles has metadata.
+     */
     const hasMetadata = records.some(record => record?.record_type === 'chatgpt_conversation_metadata');
     const adapterRecords = conversationId && !hasMetadata
       ? [...records, {
@@ -1975,10 +2040,16 @@
     assert(canonicalAssistantSegmentEligible(records, events),
       'AIConversationCore Assistant segment contains an unsupported record.');
     const rendered = canonicalCore().renderCanonicalMarkdown(events).trimEnd();
+    /**
+     * Handles message record.
+     */
     const messageRecord = [...records].reverse().find((record, indexFromEnd) => {
       const index = records.length - 1 - indexFromEnd;
       return canonicalMessageRecordEligible(record, events[index]);
     }) ?? null;
+    /**
+     * Handles heading record.
+     */
     const headingRecord = messageRecord ?? records.find(record => record?.author?.role === 'assistant') ?? records[0];
     const plainHeading = messageRecord?.channel === 'commentary' ? '## ChatGPT Commentary' : '## ChatGPT';
     assert(rendered === plainHeading || rendered.startsWith(`${plainHeading}\n`),
@@ -2059,8 +2130,14 @@
     return '';
   }
 
+  /**
+   * Renders conversation markdown.
+   */
   function renderConversationMarkdown(spine, onProgress, recoveredImageMap = new Map()) {
     assert(Array.isArray(spine?.records), 'Conversation API Markdown export requires spine records.');
+    /**
+     * Handles records.
+     */
     const records = spine.records.map(item => item.message).filter(Boolean);
     const output = [];
     const fileRefIndex = cgBuildFileReferenceIndex(records);
@@ -2194,8 +2271,14 @@
     };
   }
 
+  /**
+   * Handles api records jsonl.
+   */
   function apiRecordsJsonl(spine, conversationId = currentConversationId()) {
     const metadata = conversationMetadataJsonlRecord(conversationId);
+    /**
+     * Handles records.
+     */
     const records = [metadata, ...spine.records.map(record => record.message)];
     return `${records.map(record => JSON.stringify(record)).join('\n')}\n`;
   }
@@ -2333,6 +2416,9 @@
       return { uap_index: index, role: 'user', message_id: users[index].message_id };
     }
 
+    /**
+     * Handles record.
+     */
     const record = records.find(item => item?.message_id === value);
     assert(record, `Turn ID ${value} was not found in the Conversation API.`);
     assert(record.role === 'user' || record.role === 'assistant',
@@ -2584,6 +2670,9 @@
       setStatus(`Jumping to ${target.role === 'assistant' ? 'Assistant' : 'User'} turn…`);
       const section = await jumpToResolvedTarget(target);
       if (target.role === 'user') {
+        /**
+         * Handles target record.
+         */
         const targetRecord = spine.records.find(item => item?.message_id === target.message_id)?.message;
         if (targetRecord && userImagePointerCount(targetRecord) > 0) {
           logInternalImagePointerEvidence(targetRecord, section, mountedUserConversationImages(section));
@@ -2781,14 +2870,23 @@
     const recovered = new Map();
     const scrollRoot = conversationScrollRoot();
     const originalScrollTop = scrollRoot.scrollTop;
+    /**
+     * Handles records.
+     */
     const records = (spine?.records ?? []).filter(record => userImagePointerCount(record?.message) > 0);
     try {
       for (const item of records) {
         const record = item.message;
+        /**
+         * Handles expected parts.
+         */
         const expectedParts = record.content.parts.filter(part =>
           part && typeof part === 'object' && part.content_type === 'image_asset_pointer'
         );
         const expected = expectedParts.length;
+        /**
+         * Handles image s.
+         */
         const images = expectedParts.map(part => cgImagePointerFallback(part));
         try {
           const section = mountedTurnSection(record.id, 'user');
@@ -2863,6 +2961,9 @@
     updateUi();
     await acquireWakeLock();
     try {
+      /**
+       * Fetches ed.
+       */
       const fetched = await fetchConversationPages(conversationId, progress => {
         progressState.stage = 'fetching';
         progressState.page_count = progress.page_count;
@@ -2884,6 +2985,9 @@
         progressState.stage = 'rendering';
         progressState.render_started_at = performance.now();
         progressState.record_count = spine.records.length;
+        /**
+         * Handles markdown.
+         */
         const markdown = renderConversationMarkdown(spine, progress => {
           progressState.stage = 'rendering';
           progressState.record_number = progress.record_number;
@@ -2939,6 +3043,9 @@
         page_info: { has_next_page: true, has_previous_page: false, start_cursor: null }
       }]
     ]);
+    /**
+     * Collects ed.
+     */
     const collected = await collectConversationPages(async cursor => {
       calls.push(cursor);
       assert(pagesByCursor.has(cursor), `Unexpected test cursor ${cursor}.`);
@@ -3071,6 +3178,9 @@
       { id: 'tool1', author: { role: 'tool', name: 'tether_browsing_display' }, content: { content_type: 'tether_browsing_display', summary: 'Waiting for sources.' }, metadata: {} },
       { id: 'a1', author: { role: 'assistant' }, channel: 'final', content: { content_type: 'multimodal_text', parts: [`File ${fileToken}\n\nWeb ${citeToken}\n\nMemory ${memoryToken}`] }, metadata: { content_references: [ { type: 'hidden', matched_text: fileToken }, { type: 'grouped_webpages', matched_text: citeToken, items: [{ url: 'https://example.com/web', attribution: 'Example', title: 'Example source' }] }, { type: 'hidden', matched_text: memoryToken } ], conversation_context_citation_metadata: [{ citation: { url: 'https://example.com/memory', title: 'Prior note' } }] } }
     ];
+    /**
+     * Handles spine.
+     */
     const spine = { records: records.map((message, ordinal) => ({ ordinal, message })) };
     const recoveredToken = '![image-u1-1](data:image/png;base64,AAAA)';
     const markdown = renderConversationMarkdown(spine, undefined, new Map([['u1', [recoveredToken]]]));
@@ -3412,6 +3522,9 @@
       const row = target.closest('tr[data-test-name]');
       if (target.closest('[data-role="run-test"]') && row) {
         const name = row.getAttribute('data-test-name');
+        /**
+         * Handles test.
+         */
         const test = tests.find(([candidate]) => candidate === name);
         if (test) void runOneTest(test[0], test[1]);
         return;
