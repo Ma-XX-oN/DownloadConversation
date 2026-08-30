@@ -1,0 +1,40 @@
+name: Fix canonical payload heading once
+
+on:
+  push:
+    paths:
+      - .github/workflows/fix-canonical-segment-payload-heading-once.yml
+      - scripts/fix-canonical-segment-payload-heading.py
+
+permissions:
+  contents: write
+
+jobs:
+  apply:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - name: Apply guarded patch
+        run: python scripts/fix-canonical-segment-payload-heading.py
+      - name: JavaScript syntax
+        run: node --check chatgpt-conversation-markdown-export.user.js
+      - name: Focused regressions
+        run: node --test tests/phase5-rich-core-integration.test.mjs tests/core-integration.test.mjs
+      - name: Full tests
+        run: node --test tests/*.test.mjs
+      - name: Verify scoped diff
+        run: |
+          git status --short
+          test -z "$(git status --short | grep -vE '^( M|\?\?) (chatgpt-conversation-markdown-export.user.js|tests/phase5-rich-core-integration.test.mjs|tests/core-integration.test.mjs)$')"
+      - name: Commit verified fix
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add chatgpt-conversation-markdown-export.user.js tests/phase5-rich-core-integration.test.mjs tests/core-integration.test.mjs
+          git commit -m "fix: keep tool payload headings opaque"
+          git push
