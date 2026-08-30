@@ -46,10 +46,16 @@
     if (Array.isArray(storedDiagnosticLog)) diagnosticLog = storedDiagnosticLog.slice(-MAX_DIAGNOSTIC_LOG_ITEMS);
   } catch {}
 
+  /**
+   * Handles assert.
+   */
   function assert(condition, message) {
     if (!condition) throw new Error(message);
   }
 
+  /**
+   * Formats duration.
+   */
   function formatDuration(milliseconds) {
     const totalSeconds = Math.max(0, Math.round(milliseconds / 1000));
     if (totalSeconds < 60) return `${totalSeconds}s`;
@@ -61,6 +67,9 @@
     return minutes ? `${hours}h ${minutes}m` : `${hours}h`;
   }
 
+  /**
+   * Handles escape HTML text.
+   */
   function escapeHtmlText(text) {
     return String(text ?? '')
       .replace(/&/g, '&amp;')
@@ -68,6 +77,9 @@
       .replace(/>/g, '&gt;');
   }
 
+  /**
+   * Handles escape HTML attribute.
+   */
   function escapeHtmlAttribute(text) {
     return String(text ?? '')
       .replace(/&/g, '&amp;')
@@ -76,18 +88,27 @@
       .replace(/>/g, '&gt;');
   }
 
+  /**
+   * Quotes literal message text as the transcript blockquote representation while preserving line order.
+   */
   function quoteMarkdown(markdown) {
     const text = String(markdown ?? '').replace(/\s+$/, '');
     if (!text) return '>';
     return text.split('\n').map(line => line.length ? `> ${line}` : '>').join('\n');
   }
 
+  /**
+   * Handles conversation title.
+   */
   function conversationTitle() {
     const heading = document.querySelector('h1')?.textContent?.trim();
     const title = heading || document.title || 'ChatGPT conversation';
     return title.replace(/\s*[-–—]\s*ChatGPT\s*$/i, '').trim() || 'ChatGPT conversation';
   }
 
+  /**
+   * Sanitizes file name.
+   */
   function sanitizeFileName(name) {
     return String(name || 'ChatGPT conversation')
       .replace(/[<>:"/\\|?*\x00-\x1f]/g, '_')
@@ -95,10 +116,16 @@
       .trim() || 'ChatGPT conversation';
   }
 
+  /**
+   * Handles current conversation ID.
+   */
   function currentConversationId() {
     return location.pathname.match(/\/c\/([^/?#]+)/)?.[1] ?? null;
   }
 
+  /**
+   * Checks whether conversation API URL.
+   */
   function isConversationApiUrl(url) {
     try {
       const parsed = new URL(url, location.href);
@@ -109,8 +136,14 @@
     }
   }
 
+  /**
+   * Handles raw headers to object.
+   */
   function rawHeadersToObject(headers) {
     const result = {};
+    /**
+     * Handles put.
+     */
     const put = (name, value) => {
       if (name == null || value == null) return;
       const key = String(name).toLowerCase();
@@ -130,6 +163,9 @@
     return result;
   }
 
+  /**
+   * Handles remember API request context.
+   */
   function rememberApiRequestContext(url, ...headerCandidates) {
     if (!isConversationApiUrl(url)) return;
     try {
@@ -151,6 +187,9 @@
     } catch {}
   }
 
+  /**
+   * Handles click diagnostic element snapshot.
+   */
   function clickDiagnosticElementSnapshot(element) {
     if (!(element instanceof Element)) return null;
     const attributes = {};
@@ -170,6 +209,9 @@
     };
   }
 
+  /**
+   * Handles click diagnostic turn context.
+   */
   function clickDiagnosticTurnContext(target) {
     const section = target instanceof Element ? target.closest('section[data-turn-id]') : null;
     if (!(section instanceof HTMLElement)) return null;
@@ -191,6 +233,9 @@
     };
   }
 
+  /**
+   * Handles record click diagnostic network request.
+   */
   function recordClickDiagnosticNetworkRequest(url, initiatorType) {
     const active = activeClickDiagnostic;
     if (!active || performance.now() > active.deadline) return;
@@ -209,6 +254,9 @@
     });
   }
 
+  /**
+   * Handles finish conversation click diagnostic.
+   */
   function finishConversationClickDiagnostic(observation, reason = 'timer') {
     if (!observation || observation.finished) return;
     observation.finished = true;
@@ -241,6 +289,9 @@
     });
   }
 
+  /**
+   * Handles capture conversation click diagnostic.
+   */
   function captureConversationClickDiagnostic(event) {
     const target = event.target instanceof Element ? event.target : null;
     if (!target || !target.closest('#thread')) return;
@@ -272,6 +323,9 @@
     setTimeout(() => finishConversationClickDiagnostic(observation, 'timer'), 2500);
   }
 
+  /**
+   * Handles install network capture.
+   */
   function installNetworkCapture() {
     if (captureInstalled) return;
     const pageWindow = typeof unsafeWindow !== 'undefined' ? unsafeWindow : window;
@@ -330,6 +384,9 @@
     captureInstalled = true;
   }
 
+  /**
+   * Handles API fetch.
+   */
   async function apiFetch(url) {
     const conversationId = currentConversationId();
     const context = apiRequestContext;
@@ -345,11 +402,17 @@
     });
   }
 
+  /**
+   * Handles conversation schema ok.
+   */
   function conversationSchemaOk(data) {
     return !!data && typeof data === 'object' && Array.isArray(data.messages) &&
       !!data.page_info && typeof data.page_info === 'object';
   }
 
+  /**
+   * Handles page URL.
+   */
   function pageUrl(conversationId, cursor = null) {
     if (cursor === null) {
       return `${location.origin}/backend-api/conversations/${encodeURIComponent(conversationId)}?include_has_versions=true&num_turns=${PAGE_TURNS}`;
@@ -357,12 +420,18 @@
     return `${location.origin}/backend-api/conversations/${encodeURIComponent(conversationId)}/messages?before=${encodeURIComponent(cursor)}&include_has_versions=true&num_turns=${PAGE_TURNS}`;
   }
 
+  /**
+   * Handles bounded diagnostic text.
+   */
   function boundedDiagnosticText(text, maxChars = 2000) {
     const value = typeof text === 'string' ? text : String(text ?? '');
     if (value.length <= maxChars) return value;
     return `${value.slice(0, maxChars)}… [truncated ${value.length - maxChars} chars]`;
   }
 
+  /**
+   * Handles diagnostic request path.
+   */
   function diagnosticRequestPath(url) {
     try {
       const parsed = new URL(url, location.href);
@@ -372,6 +441,9 @@
     }
   }
 
+  /**
+   * Fetches one conversation page.
+   */
   async function fetchOneConversationPage(url, description, requestInfo = {}) {
     const startedAt = performance.now();
     const requestDetails = {
@@ -452,6 +524,9 @@
     return data;
   }
 
+  /**
+   * Collects conversation pages.
+   */
   async function collectConversationPages(fetchPage, onProgress) {
     const pages = [];
     const seenCursors = new Set();
@@ -493,6 +568,9 @@
     return { pages, raw_record_count: rawRecordCount };
   }
 
+  /**
+   * Fetches conversation pages.
+   */
   async function fetchConversationPages(conversationId, onProgress) {
     return collectConversationPages(
       (cursor, pageNumber, previousPageInfo) => fetchOneConversationPage(
@@ -514,6 +592,9 @@
     );
   }
 
+  /**
+   * Handles conversation spine from pages.
+   */
   function conversationSpineFromPages(pages) {
     const messageIndexById = new Map();
     const messages = [];
@@ -576,11 +657,17 @@
     };
   }
 
+  /**
+   * Handles API linkage key is identifier like.
+   */
   function apiLinkageKeyIsIdentifierLike(key) {
     return /(?:^id$|_id$|_ids$|call|parent|source|reference|tool|exchange|working|request|response)/i
       .test(String(key ?? ''));
   }
 
+  /**
+   * Handles API linkage scalar is safe.
+   */
   function apiLinkageScalarIsSafe(key, value) {
     if (value === null || value === undefined) return false;
     if (!['string', 'number'].includes(typeof value)) return false;
@@ -589,6 +676,9 @@
     return true;
   }
 
+  /**
+   * Handles API record identifier scalars.
+   */
   function apiRecordIdentifierScalars(record) {
     const raw = record?.message && typeof record.message === 'object' ? record.message : {};
     const result = [];
@@ -596,6 +686,9 @@
     const freeformKeys = new Set([
       'text', 'parts', 'thinking', 'summary', 'message', 'prompt', 'output', 'input', 'content'
     ]);
+    /**
+     * Handles walk.
+     */
     const walk = (value, path, depth) => {
       if (depth > 8 || value === null || value === undefined) return;
       if (Array.isArray(value)) {
@@ -622,11 +715,17 @@
     return result;
   }
 
+  /**
+   * Handles API conversation UAP grouping.
+   */
   function apiConversationUapGrouping(spine) {
     const anchors = spine?.uap_anchors ?? [];
     const records = spine?.records ?? [];
     const exchangeToAnchors = new Map();
     const workingToAnchors = new Map();
+    /**
+     * Handles add.
+     */
     const add = (map, key, ordinal) => {
       if (!key) return;
       const values = map.get(key) ?? [];
@@ -648,6 +747,9 @@
     const classifications = [];
     const counts = { exact: 0, fallback: 0, ungrouped: 0, conflict: 0 };
 
+    /**
+     * Handles chronological anchor.
+     */
     const chronologicalAnchor = recordOrdinal => {
       let candidate = null;
       for (const anchor of anchors) {
@@ -700,11 +802,20 @@
     return { groups, classifications, counts };
   }
 
+  /**
+   * Handles API unresolved UAP linkage analysis.
+   */
   function apiUnresolvedUapLinkageAnalysis(spine, primary) {
     const records = spine?.records ?? [];
     const exactMessageToUap = new Map();
     const exactIdentifierToUaps = new Map();
+    /**
+     * Handles key for.
+     */
     const keyFor = value => `${typeof value}:${String(value)}`;
+    /**
+     * Handles add ref.
+     */
     const addRef = (map, value, uapOrdinal) => {
       const key = keyFor(value);
       const values = map.get(key) ?? new Set();
@@ -721,6 +832,9 @@
       }
     }
 
+    /**
+     * Handles exact before after.
+     */
     const exactBeforeAfter = ordinal => {
       let before = null;
       let after = null;
@@ -763,6 +877,9 @@
     return { unresolved };
   }
 
+  /**
+   * Handles API conversation UAP final grouping.
+   */
   function apiConversationUapFinalGrouping(spine) {
     const primary = apiConversationUapGrouping(spine);
     const linkage = apiUnresolvedUapLinkageAnalysis(spine, primary);
@@ -833,10 +950,16 @@
     };
   }
 
+  /**
+   * Handles fallback is hidden.
+   */
   function cgIsHidden(record) {
     return Boolean(record?.metadata?.is_visually_hidden_from_conversation);
   }
 
+  /**
+   * Handles fallback text parts.
+   */
   function cgTextParts(parts) {
     const texts = [];
     if (!Array.isArray(parts)) return texts;
@@ -853,6 +976,9 @@
     return texts;
   }
 
+  /**
+   * Handles fallback citation root.
+   */
   function cgCitationRoot(url) {
     try {
       const parsed = new URL(url);
@@ -862,6 +988,9 @@
     }
   }
 
+  /**
+   * Handles fallback citation hostname.
+   */
   function cgCitationHostname(url) {
     try {
       return new URL(url).hostname.toLowerCase().replace(/^www\./, '');
@@ -870,6 +999,9 @@
     }
   }
 
+  /**
+   * Handles fallback normalize citation URL.
+   */
   function cgNormalizeCitationUrl(url) {
     if (typeof url !== 'string' || !url.trim()) return '';
     const raw = url.trim();
@@ -885,6 +1017,9 @@
     }
   }
 
+  /**
+   * Handles fallback search result URL index.
+   */
   function cgSearchResultUrlIndex(record) {
     const metadata = record?.metadata;
     const groups = metadata && typeof metadata === 'object' ? metadata.search_result_groups : null;
@@ -909,6 +1044,9 @@
     return result;
   }
 
+  /**
+   * Handles fallback shorten inline text.
+   */
   function cgShortenInlineText(text, maxChars = 200) {
     const clean = String(text ?? '').replace(/\s+/g, ' ').trim();
     if (clean.length <= maxChars) return clean;
@@ -917,6 +1055,9 @@
     return `${clipped.replace(/[ ,;:-]+$/g, '')}…`;
   }
 
+  /**
+   * Handles fallback wrap tooltip block.
+   */
   function cgWrapTooltipBlock(text, width = 78, maxChars = 520) {
     const shortened = cgShortenInlineText(text, maxChars);
     if (!shortened) return '';
@@ -935,6 +1076,9 @@
     return lines.join('\n');
   }
 
+  /**
+   * Handles fallback clean citation blurb.
+   */
   function cgCleanCitationBlurb(text) {
     if (typeof text !== 'string' || !text.trim()) return [];
     const clean = text.replace(/\s+/g, ' ').trim()
@@ -965,6 +1109,9 @@
     return blocks;
   }
 
+  /**
+   * Handles fallback citation tooltip.
+   */
   function cgCitationTooltip(node, urlInfo = {}, fallback = '') {
     let title = typeof node?.title === 'string' ? node.title.trim() : '';
     if (!title) title = typeof urlInfo?.title === 'string' ? urlInfo.title.trim() : '';
@@ -984,6 +1131,9 @@
     return cgWrapTooltipBlock(fallback, 78, 220);
   }
 
+  /**
+   * Handles fallback citation favicon.
+   */
   function cgCitationFavicon(url) {
     const root = cgCitationRoot(url);
     return root ? `https://www.google.com/s2/favicons?domain=${root}&sz=32` : '';
@@ -992,6 +1142,9 @@
   function cgCollectWebCitationSources(reference, urlIndex = new Map()) {
     const sources = [];
     const seen = new Set();
+    /**
+     * Handles append.
+     */
     const append = (url, label, tooltip) => {
       if (typeof url !== 'string' || !url.trim() || seen.has(url.trim())) return;
       const clean = url.trim();
@@ -1005,6 +1158,9 @@
         tooltip: typeof tooltip === 'string' ? tooltip.trim() : ''
       });
     };
+    /**
+     * Handles visit.
+     */
     const visit = (node, inheritedTooltip = '') => {
       if (!node || typeof node !== 'object') return;
       const url = node.url;
@@ -1052,6 +1208,9 @@
   const CG_INLINE_TOKEN_SEP = '\ue202';
   const CG_INLINE_TOKEN_RX = /\ue200[^\ue201]*\ue201/g;
 
+  /**
+   * Handles fallback inline token segments.
+   */
   function cgInlineTokenSegments(token) {
     if (typeof token !== 'string' ||
         !token.startsWith(CG_INLINE_TOKEN_START) ||
@@ -1059,10 +1218,16 @@
     return token.slice(1, -1).split(CG_INLINE_TOKEN_SEP);
   }
 
+  /**
+   * Handles fallback strip inline tokens.
+   */
   function cgStripInlineTokens(text) {
     return typeof text === 'string' ? text.replace(CG_INLINE_TOKEN_RX, '') : '';
   }
 
+  /**
+   * Handles fallback file token spec.
+   */
   function cgFileTokenSpec(token) {
     const segments = cgInlineTokenSegments(token);
     if (segments.length < 2 || segments[0] !== 'filecite') return { key: null, lineRef: '' };
@@ -1074,6 +1239,9 @@
     };
   }
 
+  /**
+   * Handles fallback register file reference.
+   */
   function cgRegisterFileReference(index, record) {
     if (!(index instanceof Map) || !record?.metadata || typeof record.metadata !== 'object') return;
     const metadata = record.metadata;
@@ -1088,12 +1256,18 @@
     index.set(`${turnNumber}:${fileIndex}`, citation);
   }
 
+  /**
+   * Handles fallback build file reference index.
+   */
   function cgBuildFileReferenceIndex(records) {
     const index = new Map();
     for (const record of records ?? []) cgRegisterFileReference(index, record);
     return index;
   }
 
+  /**
+   * Handles fallback collect memory citation sources.
+   */
   function cgCollectMemoryCitationSources(record) {
     const entries = Array.isArray(record?.metadata?.conversation_context_citation_metadata)
       ? record.metadata.conversation_context_citation_metadata
@@ -1116,6 +1290,9 @@
     return sources;
   }
 
+  /**
+   * Handles fallback render source citation.
+   */
   function cgRenderSourceCitation(kind, sources) {
     const links = [];
     for (const source of sources ?? []) {
@@ -1135,11 +1312,17 @@
     return links.length ? `**(${kind}: ${links.join(', ')})**` : '';
   }
 
+  /**
+   * Handles fallback render memory citation.
+   */
   function cgRenderMemoryCitation(record) {
     const sources = cgCollectMemoryCitationSources(record);
     return sources.length ? cgRenderSourceCitation('memory', sources) : '**(memory context)**';
   }
 
+  /**
+   * Handles fallback display file URL.
+   */
   function cgDisplayFileUrl(url) {
     if (typeof url !== 'string' || !url.trim()) return '';
     const cleaned = url.trim();
@@ -1161,6 +1344,9 @@
     }
   }
 
+  /**
+   * Handles fallback display file label.
+   */
   function cgDisplayFileLabel(name, url) {
     let shown = typeof name === 'string' ? name.trim().replace(/`/g, '') : '';
     const displayUrl = cgDisplayFileUrl(url);
@@ -1180,6 +1366,9 @@
     return shown || 'file';
   }
 
+  /**
+   * Handles fallback render named file reference.
+   */
   function cgRenderNamedFileReference(name, matchedText = '', url = '') {
     const shown = cgDisplayFileLabel(name, url);
     const { lineRef } = cgFileTokenSpec(matchedText);
@@ -1189,6 +1378,9 @@
     return lineRef ? `\`${shown}\` ${lineRef}` : `\`${shown}\``;
   }
 
+  /**
+   * Handles fallback hidden file reference.
+   */
   function cgHiddenFileReference(reference, record, fileRefIndex) {
     const token = reference?.matched_text ?? '';
     const { key } = cgFileTokenSpec(token);
@@ -1227,6 +1419,9 @@
     return '';
   }
 
+  /**
+   * Handles fallback render unstructured inline token.
+   */
   function cgRenderUnstructuredInlineToken(token, record, fileRefIndex) {
     const segments = cgInlineTokenSegments(token);
     if (!segments.length) return '';
@@ -1235,6 +1430,9 @@
     return '';
   }
 
+  /**
+   * Handles fallback generated sandbox download URL.
+   */
   function cgGeneratedSandboxDownloadUrl(source, record) {
     if (record?.author?.role !== 'assistant') return null;
     const value = String(source ?? '').trim();
@@ -1249,6 +1447,9 @@
       `&sandbox_path=${encodeURIComponent(sandboxPath)}&download_intent=true`;
   }
 
+  /**
+   * Handles fallback rewrite generated sandbox links.
+   */
   function cgRewriteGeneratedSandboxLinks(text, record) {
     if (!text || record?.author?.role !== 'assistant') return text;
     const value = String(text);
@@ -1321,6 +1522,9 @@
     return rendered;
   }
 
+  /**
+   * Handles fallback image pointer source.
+   */
   function cgImagePointerSource(part) {
     if (!part || typeof part !== 'object') return '';
     const metadata = part.metadata && typeof part.metadata === 'object' ? part.metadata : {};
@@ -1330,16 +1534,25 @@
     return '';
   }
 
+  /**
+   * Handles fallback image unavailable Markdown.
+   */
   function cgImageUnavailableMarkdown(source) {
     const clean = typeof source === 'string' ? source.trim() : '';
     return clean ? `[image not available](${clean})` : '[image not available]';
   }
 
+  /**
+   * Handles fallback image failure Markdown.
+   */
   function cgImageFailureMarkdown(source, httpStatus = null) {
     if (httpStatus === 404 || httpStatus === 410) return '[image missing]';
     return cgImageUnavailableMarkdown(source);
   }
 
+  /**
+   * Handles fallback resolve image pointer Markdown.
+   */
   async function cgResolveImagePointerMarkdown(part, recordId, imageOrdinal) {
     const source = cgImagePointerSource(part);
     if (!source) return '[image missing]';
@@ -1363,6 +1576,9 @@
     }
   }
 
+  /**
+   * Handles fallback image pointer fallback.
+   */
   function cgImagePointerFallback(part) {
     const source = cgImagePointerSource(part);
     return source ? cgImageUnavailableMarkdown(source) : '[image missing]';
@@ -1453,6 +1669,11 @@
     return texts;
   }
 
+  /**
+   * Wraps opaque source/tool payload text in a collision-safe Markdown code fence.
+   *
+   * Source -> output transformation: scans the literal payload for its longest run of backtick characters, then emits an outer fence one character longer (minimum three). The payload itself is not rewritten.
+   */
   function cgCodeFence(text, language = '') {
     const body = String(text ?? '').replace(/\s+$/, '');
     const runs = body.match(/`+/g) ?? [];
@@ -1461,10 +1682,18 @@
     return `${fence}${language || ''}\n${body}\n${fence}`;
   }
 
+  /**
+   * Wraps a summary and opaque body in the HTML `details` structure used by fallback Markdown output.
+   */
   function cgRenderDetail(summary, body) {
     return body ? `<details>\n<summary>${summary}</summary>\n\n${body}\n\n</details>` : '';
   }
 
+  /**
+   * Infers a Markdown fence language only for the legacy/fallback renderer when no stronger canonical language is available.
+   *
+   * Source -> output transformation: explicit source language wins; otherwise provider metadata/recipient and limited code-prefix evidence may map to a fence language such as `python` or `bash`. This fallback does not alter payload text.
+   */
   function cgInferCodeLanguage(record, code, explicitLanguage = '') {
     if (typeof explicitLanguage === 'string' && explicitLanguage.trim()) return explicitLanguage.trim();
     const language = record?.metadata?.language;
@@ -1525,6 +1754,9 @@
   }
 
   // BEGIN AIConversationCore Phase 5 integration
+  /**
+   * Returns the loaded AIConversationCore browser API after asserting the required adapter and renderer entry points are available.
+   */
   function canonicalCore() {
     const core = globalThis.AIConversationCore;
     assert(core && typeof core === 'object', 'AIConversationCore browser bundle is not loaded.');
@@ -1533,6 +1765,11 @@
     return core;
   }
 
+  /**
+   * Converts DownloadConversation recovery Markdown for one image into canonical image-resource state.
+   *
+   * Source -> canonical transformation: recovered data-image Markdown becomes `status: available` plus `data_url`; missing/unavailable placeholders become the corresponding canonical status and optional source pointer.
+   */
   function canonicalRecoveredImageState(markdown) {
     const value = String(markdown ?? '').trim();
     if (!value) return null;
@@ -1545,6 +1782,11 @@
     return null;
   }
 
+  /**
+   * Enriches canonical conversation-image resources with host-recovered image state without changing canonical event order.
+   *
+   * Source -> canonical transformation: the already-normalized image resource remains the identity-bearing object; recovery Markdown contributes only availability/data/source-pointer fields at the matching source image ordinal.
+   */
   function canonicalEnrichRecoveredImages(event, recoveredImages = []) {
     if (!event || !Array.isArray(recoveredImages) || !recoveredImages.length) return event;
     let imageIndex = 0;
@@ -1628,10 +1870,18 @@
     return bySourceRecord;
   }
 
+  /**
+   * Handles canonical rendered has unresolved inline tokens.
+   */
   function canonicalRenderedHasUnresolvedInlineTokens(rendered) {
     return String(rendered ?? '').includes(CG_INLINE_TOKEN_START);
   }
 
+  /**
+   * Determines whether one source User/Assistant record and its canonical event can be rendered by the shared canonical Markdown renderer.
+   *
+   * Source/canonical -> routing transformation: returns only an eligibility decision. It never rewrites the source record or canonical event; unsupported shapes remain on the legacy fallback path.
+   */
   function canonicalMessageRecordEligible(record, event) {
     if (!event || cgIsHidden(record) || event?.visibility === 'hidden') return false;
     const role = record?.author?.role;
@@ -1648,6 +1898,11 @@
     return Boolean(rendered.trim()) && !canonicalRenderedHasUnresolvedInlineTokens(rendered);
   }
 
+  /**
+   * Renders one eligible canonical message event while preserving DownloadConversation source-turn identity in the transcript heading.
+   *
+   * Canonical -> output transformation: AIConversationCore supplies the plain canonical heading/body; DownloadConversation replaces only that heading with its existing source-record `turn_id` comment and preserves the rendered body.
+   */
   function canonicalRecordBlock(record, event) {
     assert(canonicalMessageRecordEligible(record, event),
       `AIConversationCore message record ${record?.id ?? 'unknown'} is not eligible for canonical rendering.`);
@@ -1661,11 +1916,21 @@
     return `${transcriptHeading(record)}${rendered.slice(plainHeading.length)}`;
   }
 
+  /**
+   * Determines whether one non-message canonical Assistant activity event is supported by the shared canonical Markdown renderer.
+   *
+   * Canonical -> routing transformation: reasoning summaries, tool calls, and tool results are eligible; the event payload is not modified.
+   */
   function canonicalThoughtRecordEligible(record, event) {
     if (!event || cgIsHidden(record) || event?.visibility === 'hidden') return false;
     return ['reasoning_summary', 'tool_call', 'tool_result'].includes(event.kind);
   }
 
+  /**
+   * Determines whether an ordered Assistant activity segment can be rendered wholly by AIConversationCore without changing its source association.
+   *
+   * Source/canonical -> routing transformation: validates semantic event combinations and returns a Boolean; it does not regroup, reorder, or rewrite records.
+   */
   function canonicalAssistantSegmentEligible(records, events) {
     if (!Array.isArray(records) || !records.length || !Array.isArray(events) || events.length !== records.length) {
       return false;
@@ -1701,6 +1966,11 @@
     return Boolean(rendered.trim());
   }
 
+  /**
+   * Renders one eligible canonical Assistant activity segment while preserving DownloadConversation source-turn identity in the transcript heading.
+   *
+   * Canonical -> output transformation: AIConversationCore renders the ordered segment; DownloadConversation substitutes only its established source-record heading/comment for the plain canonical heading. Tool payloads and rendered body remain opaque.
+   */
   function canonicalAssistantSegmentBlock(records, events) {
     assert(canonicalAssistantSegmentEligible(records, events),
       'AIConversationCore Assistant segment contains an unsupported record.');
@@ -1717,6 +1987,9 @@
   }
 
   // Compatibility helpers retained for the already-established #93/#97 regressions.
+  /**
+   * Handles canonical plain record eligible.
+   */
   function canonicalPlainRecordEligible(record) {
     if (cgIsHidden(record)) return false;
     if (!['user', 'assistant'].includes(record?.author?.role)) return false;
@@ -1733,10 +2006,16 @@
     return true;
   }
 
+  /**
+   * Handles canonical plain record block.
+   */
   function canonicalPlainRecordBlock(record, event) {
     return canonicalRecordBlock(record, event);
   }
 
+  /**
+   * Handles canonical plain assistant segment eligible.
+   */
   function canonicalPlainAssistantSegmentEligible(records) {
     if (!Array.isArray(records) || records.length < 2) return false;
     let hasAssistantMessage = false;
@@ -1751,6 +2030,9 @@
     return hasAssistantMessage;
   }
 
+  /**
+   * Handles canonical plain assistant segment block.
+   */
   function canonicalPlainAssistantSegmentBlock(records, events) {
     assert(canonicalPlainAssistantSegmentEligible(records),
       'AIConversationCore Assistant segment requires only plain visible Assistant records.');
@@ -1758,6 +2040,11 @@
   }
   // END AIConversationCore Phase 5 integration
 
+  /**
+   * Builds the DownloadConversation transcript heading from the actual provider/source record.
+   *
+   * Source -> output transformation: the source record ID is emitted as the `turn_id` comment; it is intentionally not replaced by AIConversationCore derived turn identity.
+   */
   function transcriptHeading(record) {
     const id = typeof record?.id === 'string' ? record.id : '';
     if (record?.author?.role === 'user') {
@@ -1780,6 +2067,9 @@
     const canonicalEventBySourceRecord = canonicalEventsBySourceRecord(records, recoveredImageMap);
     let pendingThoughts = [];
 
+    /**
+     * Handles flush assistant block.
+     */
     const flushAssistantBlock = (body = '', record = null) => {
       if (!body && !pendingThoughts.length) return;
       const headingRecord = record ?? pendingThoughts[0];
@@ -1791,6 +2081,9 @@
       pendingThoughts = [];
     };
 
+    /**
+     * Handles flush pending assistant.
+     */
     const flushPendingAssistant = () => {
       if (!pendingThoughts.length) return;
       const events = pendingThoughts
@@ -1889,6 +2182,9 @@
     return `${output.join('\n\n')}\n`;
   }
 
+  /**
+   * Builds the DownloadConversation metadata record prepended to a JSONL export.
+   */
   function conversationMetadataJsonlRecord(conversationId) {
     assert(typeof conversationId === 'string' && conversationId.trim(), 'Conversation ID is required for JSONL export metadata.');
     return {
@@ -1904,6 +2200,9 @@
     return `${records.map(record => JSON.stringify(record)).join('\n')}\n`;
   }
 
+  /**
+   * Handles progress status.
+   */
   function progressStatus(prefix) {
     if (!progressState) return statusText;
     const now = performance.now();
@@ -1929,6 +2228,9 @@
     return statusText;
   }
 
+  /**
+   * Refreshes status.
+   */
   function refreshStatus() {
     const status = document.querySelector(`#${PANEL_ID} [data-role="status"]`);
     if (!status) return;
@@ -1939,21 +2241,33 @@
     }
   }
 
+  /**
+   * Sets status.
+   */
   function setStatus(text) {
     statusText = text;
     refreshStatus();
   }
 
+  /**
+   * Handles start status timer.
+   */
   function startStatusTimer() {
     if (statusTimer !== null) clearInterval(statusTimer);
     statusTimer = setInterval(refreshStatus, 1000);
   }
 
+  /**
+   * Handles stop status timer.
+   */
   function stopStatusTimer() {
     if (statusTimer !== null) clearInterval(statusTimer);
     statusTimer = null;
   }
 
+  /**
+   * Handles acquire wake lock.
+   */
   async function acquireWakeLock() {
     if (!screenOnWhenCapturing || !exportInProgress ||
         document.visibilityState !== 'visible' || !navigator.wakeLock?.request) return;
@@ -1966,6 +2280,9 @@
     } catch {}
   }
 
+  /**
+   * Handles release wake lock.
+   */
   async function releaseWakeLock() {
     const sentinel = wakeLockSentinel;
     wakeLockSentinel = null;
@@ -1976,6 +2293,9 @@
     }
   }
 
+  /**
+   * Handles download blob.
+   */
   function downloadBlob(blob, filename) {
     const url = URL.createObjectURL(blob);
     const anchor = document.createElement('a');
@@ -1987,10 +2307,16 @@
     setTimeout(() => URL.revokeObjectURL(url), 1000);
   }
 
+  /**
+   * Handles conversation jump user records.
+   */
   function jumpUserRecords(spine) {
     return (spine?.records ?? []).filter(record => record?.role === 'user');
   }
 
+  /**
+   * Resolves jump identifier.
+   */
   function resolveJumpIdentifier(spine, identifier) {
     const value = String(identifier ?? '').trim();
     assert(value, 'A User/Assistant turn ID or numeric UAP index is required.');
@@ -2020,6 +2346,9 @@
     return { uap_index: uapIndex, role: record.role, message_id: record.message_id };
   }
 
+  /**
+   * Returns mounted turn section.
+   */
   function mountedTurnSection(messageId, role = null) {
     for (const section of document.querySelectorAll('section[data-turn-id]')) {
       if (role && section.getAttribute('data-turn') !== role) continue;
@@ -2030,6 +2359,9 @@
     return null;
   }
 
+  /**
+   * Handles conversation scroll root.
+   */
   function conversationScrollRoot() {
     const thread = document.querySelector('#thread');
     for (let node = thread?.parentElement; node instanceof HTMLElement; node = node.parentElement) {
@@ -2040,6 +2372,9 @@
     return document.scrollingElement instanceof HTMLElement ? document.scrollingElement : document.documentElement;
   }
 
+  /**
+   * Waits for for jump target.
+   */
   async function waitForJumpTarget(target, timeoutMs = 12000) {
     const deadline = performance.now() + timeoutMs;
     const scrollRoot = conversationScrollRoot();
@@ -2054,10 +2389,16 @@
     return null;
   }
 
+  /**
+   * Handles conversation jump TOC index control.
+   */
   function jumpTocIndexControl(uapIndex) {
     return document.querySelector(`button[data-toc-item-index="${uapIndex}"]`);
   }
 
+  /**
+   * Handles populate jump TOC index.
+   */
   async function populateJumpTocIndex(uapIndex, timeoutMs = 60000) {
     let toc = jumpTocIndexControl(uapIndex);
     if (toc instanceof HTMLElement) return toc;
@@ -2123,6 +2464,9 @@
     return toc instanceof HTMLElement ? toc : null;
   }
 
+  /**
+   * Handles conversation jump to resolved target.
+   */
   async function jumpToResolvedTarget(target) {
     let section = mountedTurnSection(target.message_id, target.role);
     logDiagnostic('debug', 'conversation-jump-materialization-step', {
@@ -2200,6 +2544,9 @@
     return section;
   }
 
+  /**
+   * Handles run jump.
+   */
   async function runJump() {
     if (exportInProgress || testInProgress || jumpInProgress) return;
     const requested = window.prompt('Enter a User or Assistant turn_id, or numeric UAP index (0 = first, -1 = last):');
@@ -2263,6 +2610,9 @@
     }
   }
 
+  /**
+   * Handles user image pointer count.
+   */
   function userImagePointerCount(record) {
     if (record?.author?.role !== 'user' || !Array.isArray(record?.content?.parts)) return 0;
     return record.content.parts.filter(part =>
@@ -2270,6 +2620,9 @@
     ).length;
   }
 
+  /**
+   * Returns mounted user conversation images.
+   */
   function mountedUserConversationImages(section) {
     if (!(section instanceof HTMLElement) || section.getAttribute('data-turn') !== 'user') return [];
     const images = [];
@@ -2286,6 +2639,9 @@
     return images;
   }
 
+  /**
+   * Handles internal image pointer protocol.
+   */
   function internalImagePointerProtocol(source) {
     const value = String(source ?? '').trim().toLowerCase();
     if (value.startsWith('sandbox://')) return 'sandbox';
@@ -2293,6 +2649,9 @@
     return null;
   }
 
+  /**
+   * Handles internal image pointer asset key.
+   */
   function internalImagePointerAssetKey(source) {
     const value = String(source ?? '').trim();
     const protocol = internalImagePointerProtocol(value);
@@ -2305,6 +2664,9 @@
       .pop() ?? '';
   }
 
+  /**
+   * Handles image pointer DOM candidate.
+   */
   function imagePointerDomCandidate(image, ordinal) {
     if (!(image instanceof HTMLImageElement)) return null;
     const button = image.closest('button');
@@ -2320,6 +2682,9 @@
     };
   }
 
+  /**
+   * Handles image pointer resource evidence.
+   */
   function imagePointerResourceEvidence(source, domCandidate) {
     const assetKey = internalImagePointerAssetKey(source);
     const exactUrls = new Set([
@@ -2359,6 +2724,9 @@
     };
   }
 
+  /**
+   * Logs internal image pointer evidence.
+   */
   function logInternalImagePointerEvidence(record, section, candidates) {
     const parts = Array.isArray(record?.content?.parts) ? record.content.parts : [];
     let imageOrdinal = 0;
@@ -2384,6 +2752,9 @@
     }
   }
 
+  /**
+   * Handles image element data URL.
+   */
   async function imageElementDataUrl(image) {
     const src = image.currentSrc || image.getAttribute('src') || '';
     assert(src, 'Conversational image has no source URL.');
@@ -2403,6 +2774,9 @@
     });
   }
 
+  /**
+   * Recovers user images.
+   */
   async function recoverUserImages(spine) {
     const recovered = new Map();
     const scrollRoot = conversationScrollRoot();
@@ -2467,6 +2841,9 @@
     return recovered;
   }
 
+  /**
+   * Runs one requested Conversation API export from acquisition through optional image recovery, rendering/serialization, download, status, and failure diagnostics.
+   */
   async function runExport(kind) {
     if (exportInProgress || testInProgress || jumpInProgress) return;
     const conversationId = currentConversationId();
@@ -2543,6 +2920,9 @@
     }
   }
 
+  /**
+   * Tests API pagination logic.
+   */
   async function testApiPaginationLogic() {
     const calls = [];
     const pagesByCursor = new Map([
@@ -2581,6 +2961,9 @@
     assert(repeatedCursorRejected, 'Pagination test did not reject a repeated cursor.');
   }
 
+  /**
+   * Tests stable message ids.
+   */
   function testStableMessageIds() {
     const pages = [
       { messages: [{ id: 'b', marker: 'new-b' }, { id: 'c' }], page_info: {} },
@@ -2602,6 +2985,9 @@
     assert(missingIdRejected, 'Stable-ID test did not reject a message without an id.');
   }
 
+  /**
+   * Tests conversation API access and schema.
+   */
   async function testConversationApiAccessAndSchema() {
     const conversationId = currentConversationId();
     assert(conversationId, 'Current page is not a ChatGPT conversation.');
@@ -2617,7 +3003,13 @@
     }
   }
 
+  /**
+   * Tests multimodal user and chronological order.
+   */
   async function testMultimodalUserAndChronologicalOrder() {
+    /**
+     * Handles record.
+     */
     const record = (id, role, contentType, parts) => ({
       id,
       author: { role },
@@ -2666,6 +3058,9 @@
       'Conversation API Markdown rendering did not preserve chronological record order.');
 }
 
+  /**
+   * Tests renderer parity features.
+   */
   function testRendererParityFeatures() {
     const fileToken = `${CG_INLINE_TOKEN_START}filecite${CG_INLINE_TOKEN_SEP}turn7file2${CG_INLINE_TOKEN_SEP}L1-L2${CG_INLINE_TOKEN_END}`;
     const citeToken = `${CG_INLINE_TOKEN_START}cite${CG_INLINE_TOKEN_SEP}web${CG_INLINE_TOKEN_END}`;
@@ -2689,6 +3084,9 @@
     assert(!markdown.includes(CG_INLINE_TOKEN_START), 'raw ChatGPT inline reference tokens leaked into Markdown.');
   }
 
+  /**
+   * Tests jump identifier resolution.
+   */
   function testJumpIdentifierResolution() {
     const records = [
       { ordinal: 0, message_id: 'u1', role: 'user' },
@@ -2719,6 +3117,9 @@
     }
   }
 
+  /**
+   * Tests generated sandbox download link.
+   */
   function testGeneratedSandboxDownloadLink() {
     const conversationId = currentConversationId();
     assert(conversationId, 'Sandbox-link test requires a ChatGPT conversation page.');
@@ -2761,6 +3162,9 @@
   let testMatrixPreviousResults = new Map();
   let testMatrixCurrentResults = new Map();
 
+  /**
+   * Handles built in tests.
+   */
   function builtInTests() {
     return [
       ['API pagination', testApiPaginationLogic],
@@ -2773,6 +3177,9 @@
     ];
   }
 
+  /**
+   * Loads test result history.
+   */
   function loadTestResultHistory() {
     try {
       const parsed = JSON.parse(localStorage.getItem(TEST_RESULT_HISTORY_KEY) || '{}');
@@ -2783,6 +3190,9 @@
     }
   }
 
+  /**
+   * Saves test result history.
+   */
   function saveTestResultHistory() {
     try {
       const history = loadTestResultHistory();
@@ -2791,10 +3201,16 @@
     } catch {}
   }
 
+  /**
+   * Tests matrix result text.
+   */
   function testMatrixResultText(result) {
     return result?.status || '—';
   }
 
+  /**
+   * Refreshes test matrix.
+   */
   function refreshTestMatrix() {
     const matrix = document.getElementById(TEST_MATRIX_ID);
     if (!matrix) return;
@@ -2811,6 +3227,9 @@
     if (runAll instanceof HTMLButtonElement) runAll.disabled = testInProgress || exportInProgress || jumpInProgress;
   }
 
+  /**
+   * Handles execute built in test.
+   */
   async function executeBuiltInTest(name, fn) {
     try {
       await fn();
@@ -2826,6 +3245,9 @@
     }
   }
 
+  /**
+   * Handles current test status lines.
+   */
   function currentTestStatusLines() {
     return builtInTests()
       .filter(([name]) => testMatrixCurrentResults.has(name))
@@ -2835,6 +3257,9 @@
       });
   }
 
+  /**
+   * Handles run one test.
+   */
   async function runOneTest(name, fn) {
     if (exportInProgress || testInProgress || jumpInProgress) return;
     testInProgress = true;
@@ -2849,6 +3274,9 @@
     }
   }
 
+  /**
+   * Handles run tests.
+   */
   async function runTests() {
     if (exportInProgress || testInProgress || jumpInProgress) return;
     testInProgress = true;
@@ -2865,17 +3293,29 @@
     }
   }
 
+  /**
+   * Handles modal focusable elements.
+   */
   function modalFocusableElements(dialog) {
     return [...dialog.querySelectorAll(
       'button:not([disabled]), input:not([disabled]), select:not([disabled]), textarea:not([disabled]), [tabindex]:not([tabindex="-1"])'
     )].filter(element => element instanceof HTMLElement && !element.hidden && element.offsetParent !== null);
   }
 
+  /**
+   * Handles install modal contract.
+   */
   function installModalContract(overlay, { defaultButton = null, onClose = null, opener = null } = {}) {
     lastModalOpener = opener instanceof HTMLElement ? opener : document.activeElement instanceof HTMLElement ? document.activeElement : null;
     const dialog = overlay.querySelector('[role="dialog"]');
     if (!(dialog instanceof HTMLElement)) return;
+    /**
+     * Handles focusables.
+     */
     const focusables = () => modalFocusableElements(dialog);
+    /**
+     * Handles close.
+     */
     const close = () => {
       if (typeof onClose === 'function') onClose();
       const restore = lastModalOpener;
@@ -2919,10 +3359,16 @@
     (initial instanceof HTMLElement ? initial : focusables()[0])?.focus({ preventScroll: true });
   }
 
+  /**
+   * Closes test matrix.
+   */
   function closeTestMatrix() {
     document.getElementById(TEST_MATRIX_ID)?.remove();
   }
 
+  /**
+   * Opens test matrix.
+   */
   function openTestMatrix(opener = null) {
     if (document.getElementById(TEST_MATRIX_ID)) return;
     testMatrixPreviousResults = loadTestResultHistory();
@@ -2981,16 +3427,25 @@
     });
   }
 
+  /**
+   * Handles diagnostic enabled.
+   */
   function diagnosticEnabled(level) {
     return (DIAGNOSTIC_LEVELS[level] ?? 0) <= (DIAGNOSTIC_LEVELS[diagnosticsLevel] ?? 0);
   }
 
+  /**
+   * Handles persist diagnostic log.
+   */
   function persistDiagnosticLog() {
     try {
       sessionStorage.setItem(DIAGNOSTIC_LOG_STORAGE_KEY, JSON.stringify(diagnosticLog));
     } catch {}
   }
 
+  /**
+   * Handles diagnostic log line.
+   */
   function diagnosticLogLine(entry) {
     const suffix = entry.data === null || entry.data === undefined
       ? ''
@@ -2998,14 +3453,23 @@
     return `${entry.timestamp} [${entry.level}] ${entry.message}${suffix}`;
   }
 
+  /**
+   * Handles copy icon markup.
+   */
   function copyIconMarkup() {
     return '<svg viewBox="0 0 24 24" aria-hidden="true"><rect x="9" y="9" width="10" height="10" rx="2"></rect><path d="M15 7V5a2 2 0 0 0-2-2H5a2 2 0 0 0-2 2v8a2 2 0 0 0 2 2h2"></path></svg>';
   }
 
+  /**
+   * Handles check icon markup.
+   */
   function checkIconMarkup() {
     return '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M5 12.5l4 4L19 7"></path></svg>';
   }
 
+  /**
+   * Refreshes diagnostic log.
+   */
   function refreshDiagnosticLog() {
     const panel = document.getElementById(PANEL_ID);
     if (!panel) return;
@@ -3031,6 +3495,9 @@
     }
   }
 
+  /**
+   * Handles copy diagnostic log.
+   */
   async function copyDiagnosticLog() {
     const text = diagnosticLog.map(diagnosticLogLine).join('\n');
     if (!text) return;
@@ -3053,6 +3520,9 @@
     }, 800);
   }
 
+  /**
+   * Logs diagnostic.
+   */
   function logDiagnostic(level, message, data = null) {
     if (!diagnosticEnabled(level)) return;
     const entry = {
@@ -3073,6 +3543,9 @@
     (level === 'errors' ? console.error : level === 'warnings' ? console.warn : console.log)(...args);
   }
 
+  /**
+   * Handles inject styles.
+   */
   function injectStyles() {
     if (document.getElementById(`${PANEL_ID}-style`)) return;
     const style = document.createElement('style');
@@ -3121,6 +3594,9 @@
     (document.head || document.documentElement).append(style);
   }
 
+  /**
+   * Updates UI.
+   */
   function updateUi() {
     const panel = document.getElementById(PANEL_ID);
     if (!panel) return;
@@ -3151,12 +3627,18 @@
     refreshStatus();
   }
 
+  /**
+   * Handles make launcher.
+   */
   function makeLauncher() {
   if (document.getElementById(LAUNCHER_ID) || !document.body) return;
   injectStyles();
   const launcher = document.createElement('button');
   launcher.id = LAUNCHER_ID;
   launcher.type = 'button';
+  /**
+   * Opens recorder popup.
+   */
   const openRecorderPopup = () => {
     makePanel();
     const panel = document.getElementById(PANEL_ID);
@@ -3169,6 +3651,9 @@
   document.body.append(launcher);
 }
 
+  /**
+   * Handles make panel.
+   */
   function makePanel() {
     if (document.getElementById(PANEL_ID) || !document.body) return;
     injectStyles();
@@ -3221,6 +3706,9 @@
       else void releaseWakeLock();
       updateUi();
     });
+    /**
+     * Handles run selected exports.
+     */
     const runSelectedExports = async () => {
       const jsonl = panel.querySelector('[data-role="format-jsonl"]');
       const md = panel.querySelector('[data-role="format-md"]');
@@ -3240,6 +3728,9 @@
     refreshDiagnosticLog();
   }
 
+  /**
+   * Handles bootstrap UI.
+   */
   function bootstrapUi() {
     if (document.body) {
       makeLauncher();

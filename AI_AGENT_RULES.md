@@ -119,6 +119,12 @@ GitHub issue #1 predates the migration, so migrated legacy issue numbers do not
 match GitHub issue numbers. Consult `TODO-ISSUE-MIGRATION.json` instead of
 assuming an arithmetic relationship.
 
+## Code documentation standard
+
+Every named production JavaScript function and named function-valued constant must have an immediately preceding JSDoc block using `/** ... */`. The comment must state the function's purpose. When a function normalizes, transforms, projects, or otherwise changes the representation of source/provider data, its documentation must also state the actual source representation and the canonical/output representation when they differ.
+
+Do not use ordinary `//` comments as the function-level documentation marker. Inline comments remain appropriate for local algorithm details and rationale. Anonymous inline callbacks do not require separate JSDoc unless they are promoted to named reusable functions.
+
 ## Verification
 
 Perform the established project preflight for code revisions, including syntax
