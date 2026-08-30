@@ -1,0 +1,46 @@
+name: Fix JSDoc formatting once
+
+on:
+  push:
+    paths:
+      - .github/workflows/fix-jsdoc-format-once.yml
+      - scripts/fix-jsdoc-contract-once.py
+
+permissions:
+  contents: write
+
+jobs:
+  apply:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - name: Apply JSDoc repair
+        run: python scripts/fix-jsdoc-contract-once.py
+      - name: Audit JSDoc contract
+        run: node scripts/check-jsdoc.mjs
+      - name: JavaScript syntax
+        run: node --check chatgpt-conversation-markdown-export.user.js
+      - name: Full tests
+        run: node --test tests/*.test.mjs
+      - name: Verify production change is comments only
+        run: |
+          python - <<'PY'
+          import re, subprocess
+          before = subprocess.check_output(['git','show','HEAD:chatgpt-conversation-markdown-export.user.js'], text=True)
+          after = open('chatgpt-conversation-markdown-export.user.js', encoding='utf-8').read()
+          strip = lambda s: re.sub(r'/\*\*[\s\S]*?\*/', '', s)
+          assert strip(before) == strip(after), 'Non-JSDoc production bytes changed'
+          PY
+          git diff --check
+      - name: Commit verified documentation
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add chatgpt-conversation-markdown-export.user.js
+          git commit -m "docs: align and correct JSDoc contracts"
+          git push
