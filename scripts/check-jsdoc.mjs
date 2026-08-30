@@ -34,9 +34,10 @@ function immediateJsdoc(source, start) {
   const prefix = source.slice(0, start);
   const stripped = prefix.trimEnd();
   if (!stripped.endsWith('*/')) return null;
-  const begin = stripped.lastIndexOf('/**');
-  if (begin < 0) return null;
-  return { text: stripped.slice(begin), start: begin };
+  const marker = stripped.lastIndexOf('/**');
+  if (marker < 0) return null;
+  const lineStart = stripped.lastIndexOf('\n', marker - 1) + 1;
+  return { text: stripped.slice(lineStart), start: lineStart };
 }
 
 function findClosingParen(source, open) {
