@@ -1,0 +1,35 @@
+name: Comment variable state once
+
+on:
+  push:
+    paths:
+      - .github/workflows/comment-variable-state-once.yml
+      - scripts/comment-variable-state-once.py
+
+permissions:
+  contents: write
+
+jobs:
+  apply:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: Add variable documentation
+        run: python scripts/comment-variable-state-once.py
+      - name: JavaScript syntax
+        run: node --check chatgpt-conversation-markdown-export.user.js
+      - name: Existing JSDoc contract
+        run: node scripts/check-jsdoc.mjs
+      - name: Full tests
+        run: node --test tests/*.test.mjs
+      - name: Diff hygiene
+        run: git diff --check
+      - name: Commit verified documentation
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add chatgpt-conversation-markdown-export.user.js
+          git commit -m "docs: explain global and stateful variables"
+          git push
