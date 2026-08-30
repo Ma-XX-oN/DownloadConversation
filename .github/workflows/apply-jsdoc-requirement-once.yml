@@ -6,6 +6,7 @@ on:
       - .github/workflows/apply-jsdoc-requirement-once.yml
       - scripts/apply-jsdoc-requirement.py
       - scripts/check-jsdoc.mjs
+      - tests/fallback-adaptive-fence.test.mjs
 
 permissions:
   contents: write
