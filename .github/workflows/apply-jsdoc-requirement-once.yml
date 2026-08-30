@@ -5,6 +5,7 @@ on:
     paths:
       - .github/workflows/apply-jsdoc-requirement-once.yml
       - scripts/apply-jsdoc-requirement.py
+      - scripts/fill-missed-jsdoc.py
       - scripts/check-jsdoc.mjs
       - tests/fallback-adaptive-fence.test.mjs
 
@@ -25,8 +26,8 @@ jobs:
         run: |
           grep -F '// @version      0.6.148' chatgpt-conversation-markdown-export.user.js
           grep -F 'd6d5f90aabab4d106265113bad09fc5984f4808e/dist/aiconversationcore.chatgpt.browser.js' chatgpt-conversation-markdown-export.user.js
-      - name: Apply JSDoc pass
-        run: python scripts/apply-jsdoc-requirement.py
+      - name: Fill any named functions missed by the initial pass
+        run: python scripts/fill-missed-jsdoc.py
       - name: JSDoc audit
         run: node scripts/check-jsdoc.mjs
       - name: JavaScript syntax
@@ -50,6 +51,6 @@ jobs:
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git add chatgpt-conversation-markdown-export.user.js AI_AGENT_RULES.md scripts/check-jsdoc.mjs
-          git commit -m "docs: document production functions and transformations"
+          git add chatgpt-conversation-markdown-export.user.js
+          git commit -m "docs: complete named-function documentation"
           git push
