@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         ChatGPT Conversation Markdown Recorder
 // @namespace    https://chatgpt.com/
-// @version      0.6.147
+// @version      0.6.148
 // @description  Exports the current ChatGPT conversation directly from the Conversation API as Markdown or JSONL.
 // @match        https://chatgpt.com/*
 // @match        https://chat.openai.com/*
@@ -1671,20 +1671,28 @@
       return false;
     }
     let messageIndex = -1;
+    let messageEventKind = null;
     let hasAssistantSource = false;
+    let hasCommentaryEvent = false;
     for (let index = 0; index < records.length; index += 1) {
       const record = records[index];
       const event = events[index];
       if (record?.author?.role === 'assistant') hasAssistantSource = true;
+      if (event?.kind === 'commentary') hasCommentaryEvent = true;
       if (canonicalMessageRecordEligible(record, event)) {
         if (record?.author?.role !== 'assistant' || messageIndex >= 0) return false;
         messageIndex = index;
+        messageEventKind = event?.kind ?? null;
         continue;
       }
       if (!canonicalThoughtRecordEligible(record, event)) return false;
     }
     if (!hasAssistantSource) return false;
     if (messageIndex >= 0 && messageIndex !== records.length - 1) return false;
+    // AIConversationCore projects commentary and a final Assistant message as
+    // separate transcript sections. Reject that semantic combination here
+    // rather than scanning rendered payload text for heading-looking lines.
+    if (messageEventKind === 'message' && hasCommentaryEvent) return false;
     const rendered = canonicalCore().renderCanonicalMarkdown(events);
     // Tool payloads are opaque literal data and may legitimately contain ChatGPT
     // inline-token character sequences. Message/commentary records were already
@@ -1705,8 +1713,6 @@
     const plainHeading = messageRecord?.channel === 'commentary' ? '## ChatGPT Commentary' : '## ChatGPT';
     assert(rendered === plainHeading || rendered.startsWith(`${plainHeading}\n`),
       'AIConversationCore rendered an unexpected Assistant segment heading.');
-    assert(!rendered.slice(plainHeading.length).includes('\n## ChatGPT'),
-      'AIConversationCore Assistant segment unexpectedly produced multiple transcript sections.');
     return `${transcriptHeading(headingRecord)}${rendered.slice(plainHeading.length)}`;
   }
 
@@ -2515,9 +2521,16 @@
         setStatus(`Extracted ${spine.records.length} API records from ${fetched.pages.length} API page(s) to ${filename}.`);
       }
     } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      logDiagnostic('errors', 'conversation-export-failure', {
+        kind,
+        stage: progressState?.stage ?? null,
+        record_number: progressState?.record_number ?? null,
+        record_count: progressState?.record_count ?? null,
+        message
+      });
       setStatus(
-        `${kind === 'md' ? 'Markdown' : 'JSONL'} extraction failed: ` +
-        `${error instanceof Error ? error.message : String(error)}`
+        `${kind === 'md' ? 'Markdown' : 'JSONL'} extraction failed: ${message}`
       );
     } finally {
       progressState = null;

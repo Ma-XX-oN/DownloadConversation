@@ -198,3 +198,14 @@ test('plain Assistant thought segments use the canonical renderer', () => {
   assert.match(rendered, /Inspecting the request\./);
   assert.match(rendered, /> Done\./);
 });
+
+
+test('production export catch records exact extraction failure diagnostics', () => {
+  const start = userscript.indexOf('  async function runExport(kind)');
+  const end = userscript.indexOf('\n  async function testApiPaginationLogic()', start);
+  assert.ok(start >= 0 && end > start, 'runExport production function is missing.');
+  const production = userscript.slice(start, end);
+  assert.match(production, /logDiagnostic\('errors', 'conversation-export-failure'/);
+  assert.match(production, /record_number: progressState\?\.record_number \?\? null/);
+  assert.match(production, /record_count: progressState\?\.record_count \?\? null/);
+});

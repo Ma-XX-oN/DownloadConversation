@@ -420,3 +420,44 @@ test('tool-role text/code results keep complete Assistant segments canonical', (
     assert.match(rendered, /> After tool\./);
   }
 });
+
+
+test('literal ChatGPT heading inside tool output stays opaque', () => {
+  const call = textRecord('opaque-heading-call', 'assistant', '', {
+    channel: 'analysis',
+    recipient: 'file_search',
+    end_turn: false,
+    content: { content_type: 'code', text: '{"query":"heading"}', language: 'json' }
+  });
+  const result = textRecord('opaque-heading-result', 'tool', '', {
+    author_name: 'file_search',
+    end_turn: false,
+    content: {
+      content_type: 'text',
+      parts: ['retrieved transcript snippet\n\n## ChatGPT\n\nThis is literal tool payload.']
+    }
+  });
+  const final = textRecord('opaque-heading-final', 'assistant', 'Done.');
+  const records = [call, result, final];
+  const byRecord = phase5.canonicalEventsBySourceRecord(records);
+  const events = records.map(record => byRecord.get(record.id));
+
+  assert.equal(phase5.canonicalAssistantSegmentEligible(records, events), true);
+  const rendered = phase5.canonicalAssistantSegmentBlock(records, events);
+  assert.match(rendered, /^## ChatGPT <!-- turn_id=opaque-heading-final -->/);
+  assert.match(rendered, /retrieved transcript snippet/);
+  assert.match(rendered, /## ChatGPT\n\nThis is literal tool payload\./);
+  assert.match(rendered, /> Done\./);
+});
+
+test('commentary plus final message is rejected semantically before canonical block rendering', () => {
+  const commentary = textRecord('split-commentary', 'assistant', 'Interim.', {
+    channel: 'commentary',
+    end_turn: false
+  });
+  const final = textRecord('split-final', 'assistant', 'Final.');
+  const records = [commentary, final];
+  const byRecord = phase5.canonicalEventsBySourceRecord(records);
+  const events = records.map(record => byRecord.get(record.id));
+  assert.equal(phase5.canonicalAssistantSegmentEligible(records, events), false);
+});
