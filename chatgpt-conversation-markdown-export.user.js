@@ -12,34 +12,62 @@
 (() => {
   'use strict';
 
+  /** Installed userscript version reported in diagnostics and runtime metadata. */
   const VERSION = (typeof GM_info !== 'undefined' && GM_info?.script?.version) || 'unknown';
+  /** DOM id of the recorder panel so UI lookups share one stable selector. */
   const PANEL_ID = 'tm-conversation-recorder';
+  /** DOM id of the floating launcher button that opens the recorder panel. */
   const LAUNCHER_ID = 'tm-conversation-recorder-launcher';
+  /** Numeric severity ordering used to decide which diagnostic entries are emitted. */
   const DIAGNOSTIC_LEVELS = Object.freeze({ errors: 0, warnings: 1, debug: 2, verbose: 3 });
+  /** Default diagnostic threshold when the user has not stored a preference. */
   const DEFAULT_DIAGNOSTICS = 'warnings';
+  /** Conversation API page size requested while walking backward through history. */
   const PAGE_TURNS = 100;
+  /** Safety cap that prevents malformed pagination from running without bound. */
   const MAX_PAGES = 10000;
+  /** Local-storage key for the keep-screen-on capture preference. */
   const SCREEN_ON_STORAGE_KEY = 'tm-conversation-recorder-screen-on-when-capturing';
+  /** Session-storage key for the retained recorder diagnostic log. */
   const DIAGNOSTIC_LOG_STORAGE_KEY = 'tm-conversation-recorder-diagnostic-log';
+  /** Maximum number of diagnostic entries retained in memory and session storage. */
   const MAX_DIAGNOSTIC_LOG_ITEMS = 500;
 
+  /** Unwrapped page-realm fetch implementation captured before installing interception. */
   let originalPageFetch = null;
+  /** Latest captured Conversation API authorization/header context for direct requests. */
   let apiRequestContext = null;
+  /** Guards network interception so page hooks are installed only once. */
   let captureInstalled = false;
+  /** Currently selected diagnostic threshold, restored from local storage at startup. */
   let diagnosticsLevel = localStorage.getItem('tm-conversation-recorder-diagnostics') || DEFAULT_DIAGNOSTICS;
+  /** Whether active exports should request a screen wake lock. */
   let screenOnWhenCapturing = localStorage.getItem(SCREEN_ON_STORAGE_KEY) !== 'false';
+  /** Active screen wake-lock handle, or null when no lock is held. */
   let wakeLockSentinel = null;
+  /** Serializes export work so overlapping extraction runs cannot start. */
   let exportInProgress = false;
+  /** Format of the active export, used by shared status/progress rendering. */
   let exportKind = null;
+  /** Persistent status message shown when no structured progress state is active. */
   let statusText = 'Ready.';
+  /** Interval handle used to refresh elapsed time and ETA while work is active. */
   let statusTimer = null;
+  /** Structured state for the active fetch/render progress display. */
   let progressState = null;
+  /** Guards the built-in test runner against overlapping operations. */
   let testInProgress = false;
+  /** Guards turn-jump navigation against overlapping operations. */
   let jumpInProgress = false;
+  /** Monotonic identifier assigned to click-correlation diagnostic observations. */
   let clickDiagnosticSequence = 0;
+  /** Click observation currently collecting correlated network/resource evidence. */
   let activeClickDiagnostic = null;
+  /** In-memory diagnostic history mirrored to session storage for the panel. */
   let diagnosticLog = [];
+  /** Whether the recorder panel currently shows the expanded diagnostic history. */
   let diagnosticLogExpanded = false;
+  /** Element to refocus after the active recorder modal closes. */
   let lastModalOpener = null;
   try {
     const storedDiagnosticLog = JSON.parse(sessionStorage.getItem(DIAGNOSTIC_LOG_STORAGE_KEY) || '[]');
@@ -260,6 +288,7 @@
     if (!(section instanceof HTMLElement)) return null;
     const message = section.querySelector('[data-message-id]');
     const clickedImage = target.closest('img');
+    // One-based image ordinal used to correlate a click with the matching source image.
     let imageOrdinal = null;
     if (clickedImage instanceof HTMLImageElement) {
       const images = [...section.querySelectorAll(
@@ -284,6 +313,7 @@
    * @returns {void} No value is returned.
    */
   function recordClickDiagnosticNetworkRequest(url, initiatorType) {
+    // Snapshot the observation so this request is attributed to one click consistently.
     const active = activeClickDiagnostic;
     if (!active || performance.now() > active.deadline) return;
     const value = typeof url === 'string' ? url : String(url ?? '');
@@ -384,6 +414,7 @@
    */
   function installNetworkCapture() {
     if (captureInstalled) return;
+    // Use the page realm rather than the userscript sandbox when intercepting page networking.
     const pageWindow = typeof unsafeWindow !== 'undefined' ? unsafeWindow : window;
 
     if (typeof pageWindow.fetch === 'function') {
@@ -404,6 +435,7 @@
       };
     }
 
+    // Retain the page-realm XHR constructor whose prototype is patched for capture.
     const XHR = pageWindow.XMLHttpRequest;
     if (XHR?.prototype) {
       const originalOpen = XHR.prototype.open;
@@ -448,11 +480,14 @@
    */
   async function apiFetch(url) {
     const conversationId = currentConversationId();
+    // Snapshot the captured request context used to authorize this direct API request.
     const context = apiRequestContext;
     if (!context?.headers?.authorization || context.conversation_id !== conversationId) {
       throw new Error('No authenticated Conversation API context is available. Reload this conversation, then try again.');
     }
+    // Use the page realm rather than the userscript sandbox when intercepting page networking.
     const pageWindow = typeof unsafeWindow !== 'undefined' ? unsafeWindow : window;
+    // Prefer the pre-interception fetch implementation to avoid recursively capturing ourselves.
     const fetchFn = originalPageFetch || pageWindow.fetch;
     return fetchFn.call(pageWindow, url, {
       method: 'GET',
@@ -610,9 +645,13 @@
    * @returns {Promise<Object>} A promise that resolves to the Object result produced by `collectConversationPages`.
    */
   async function collectConversationPages(fetchPage, onProgress) {
+    // Pages are accumulated newest-to-oldest as the API previous-page cursor is followed.
     const pages = [];
+    // Tracks pagination cursors already consumed so a server loop is detected immediately.
     const seenCursors = new Set();
+    // Running count of source records fetched across all Conversation API pages.
     let rawRecordCount = 0;
+    // Null requests the newest page; later values request progressively older pages.
     let cursor = null;
 
     for (;;) {
@@ -685,8 +724,11 @@
    * @returns {Object} The Object value produced by `conversationSpineFromPages`.
    */
   function conversationSpineFromPages(pages) {
+    // Maps each stable message id to its slot so duplicate page overlap can be replaced in place.
     const messageIndexById = new Map();
+    // De-duplicated Conversation API messages in chronological source order.
     const messages = [];
+    // Counts page-overlap records whose stable message id was already present.
     let duplicateMessageIds = 0;
     for (const page of [...pages].reverse()) {
       for (const message of page?.messages ?? []) {
@@ -728,6 +770,7 @@
       };
     });
 
+    // User records become chronological UAP anchors for associating following activity.
     const uapAnchors = [];
     for (const record of records) {
       if (record.role !== 'user') continue;
@@ -785,6 +828,7 @@
     const raw = record?.message && typeof record.message === 'object' ? record.message : {};
     const result = [];
     const seen = new Set();
+    // Content-bearing fields are excluded from identifier linkage scanning to avoid false matches.
     const freeformKeys = new Set([
       'text', 'parts', 'thinking', 'summary', 'message', 'prompt', 'output', 'input', 'content'
     ]);
@@ -831,7 +875,9 @@
   function apiConversationUapGrouping(spine) {
     const anchors = spine?.uap_anchors ?? [];
     const records = spine?.records ?? [];
+    // Maps each exact turn-exchange id to the UAP anchor ordinals that carry it.
     const exchangeToAnchors = new Map();
+    // Maps each exact working-turn id to the UAP anchor ordinals that carry it.
     const workingToAnchors = new Map();
     /**
      * Handles add.
@@ -862,7 +908,9 @@
       record_ordinals: [],
       exact_record_ordinals: []
     }));
+    // Stores one association classification for every source record in spine order.
     const classifications = [];
+    // Summarizes association evidence without affecting the grouping decisions themselves.
     const counts = { exact: 0, fallback: 0, ungrouped: 0, conflict: 0 };
 
     /**
@@ -932,7 +980,9 @@
    */
   function apiUnresolvedUapLinkageAnalysis(spine, primary) {
     const records = spine?.records ?? [];
+    // Reverse lookup from exactly-associated message ids to their proven UAP ordinal.
     const exactMessageToUap = new Map();
+    // Reverse lookup from identifier-like source values to UAPs established by exact records.
     const exactIdentifierToUaps = new Map();
     /**
      * Handles key for.
@@ -1022,6 +1072,7 @@
   function apiConversationUapFinalGrouping(spine) {
     const primary = apiConversationUapGrouping(spine);
     const linkage = apiUnresolvedUapLinkageAnalysis(spine, primary);
+    // Indexes unresolved-linkage analysis by source ordinal for the refinement pass.
     const linkageByOrdinal = new Map(
       linkage.unresolved.map(item => [item.record_ordinal, item])
     );
@@ -1034,6 +1085,7 @@
       user_message_id: anchor.user_message_id,
       record_ordinals: []
     }));
+    // Stores one association classification for every source record in spine order.
     const classifications = [];
     const counts = { exact: 0, linked: 0, bounded: 0, global: 0, conflict: 0, unresolved: 0 };
 
@@ -1406,9 +1458,13 @@
     return links.length ? `**(cite: ${links.join(', ')})**` : '';
   }
 
+  /** Private-use marker that begins a fallback inline-reference token. */
   const CG_INLINE_TOKEN_START = '\ue200';
+  /** Private-use marker that terminates a fallback inline-reference token. */
   const CG_INLINE_TOKEN_END = '\ue201';
+  /** Private-use separator between fields inside a fallback inline-reference token. */
   const CG_INLINE_TOKEN_SEP = '\ue202';
+  /** Matcher for complete fallback inline-reference tokens embedded in source text. */
   const CG_INLINE_TOKEN_RX = /\ue200[^\ue201]*\ue201/g;
 
   /**
@@ -1726,7 +1782,9 @@
   function cgRewriteGeneratedSandboxLinks(text, record) {
     if (!text || record?.author?.role !== 'assistant') return text;
     const value = String(text);
+    // Accumulates rewritten Markdown while cursor tracks the next unread source character.
     let rendered = '';
+    // Offset of the next source character not yet copied into the rewritten Markdown.
     let cursor = 0;
     while (cursor < value.length) {
       const destinationPrefix = value.indexOf('](', cursor);
@@ -1740,7 +1798,9 @@
         continue;
       }
 
+      // Tracks parentheses nested inside the Markdown link destination being scanned.
       let nestedParentheses = 0;
+      // Index of the closing parenthesis for the current sandbox link destination.
       let sourceEnd = -1;
       for (let index = sourceStart; index < value.length; index += 1) {
         const character = value[index];
@@ -2172,6 +2232,7 @@
    */
   function canonicalEnrichRecoveredImages(event, recoveredImages = []) {
     if (!event || !Array.isArray(recoveredImages) || !recoveredImages.length) return event;
+    // Advances only across canonical conversation-image resources to preserve source ordinals.
     let imageIndex = 0;
     /**
      * Handles resources.
@@ -2211,6 +2272,7 @@
       : records;
     const events = canonicalCore().adaptChatGPTRecords(adapterRecords);
     assert(Array.isArray(events), 'AIConversationCore ChatGPT adapter did not return canonical events.');
+    // Maps stable source record ids back to their adapted canonical events.
     const bySourceRecord = new Map();
     for (const event of events) {
       const sourceIndex = event?.source_index;
@@ -2350,6 +2412,7 @@
     if (!Array.isArray(records) || !records.length || !Array.isArray(events) || events.length !== records.length) {
       return false;
     }
+    // Tracks the single final Assistant message position allowed in a canonical activity segment.
     let messageIndex = -1;
     let messageEventKind = null;
     let hasAssistantSource = false;
@@ -2516,8 +2579,11 @@
      */
     const records = spine.records.map(item => item.message).filter(Boolean);
     const output = [];
+    // Fallback citation lookup keyed by ChatGPT retrieval turn/file coordinates.
     const fileRefIndex = cgBuildFileReferenceIndex(records);
+    // Canonical-event lookup kept in source-record identity space for order-preserving rendering.
     const canonicalEventBySourceRecord = canonicalEventsBySourceRecord(records, recoveredImageMap);
+    // Buffers Assistant reasoning/tool activity until its complete output segment can be rendered.
     let pendingThoughts = [];
 
     /**
@@ -2772,6 +2838,7 @@
    * @returns {void} No value is returned.
    */
   async function releaseWakeLock() {
+    // Detach the current wake-lock handle before awaiting release to avoid stale global state.
     const sentinel = wakeLockSentinel;
     wakeLockSentinel = null;
     if (sentinel) {
@@ -2839,6 +2906,7 @@
     assert(record, `Turn ID ${value} was not found in the Conversation API.`);
     assert(record.role === 'user' || record.role === 'assistant',
       `Turn ID ${value} belongs to role ${record.role ?? 'unknown'}, not User or Assistant.`);
+    // Tracks the latest User anchor at or before the requested source record.
     let uapIndex = -1;
     for (let index = 0; index < users.length; index += 1) {
       if (users[index].ordinal > record.ordinal) break;
@@ -2923,6 +2991,7 @@
     if (toc instanceof HTMLElement) return toc;
 
     const scrollRoot = conversationScrollRoot();
+    // Preserve the caller scroll position so image recovery can restore the page exactly.
     const originalScrollTop = scrollRoot.scrollTop;
     const deadline = performance.now() + timeoutMs;
     let steps = 0;
@@ -3234,6 +3303,7 @@
    */
   function imagePointerResourceEvidence(source, domCandidate) {
     const assetKey = internalImagePointerAssetKey(source);
+    // DOM-derived URLs are exact evidence candidates before broader resource heuristics are tried.
     const exactUrls = new Set([
       domCandidate?.src,
       domCandidate?.current_src,
@@ -3336,8 +3406,10 @@
    * @returns {Promise<Map<unknown, unknown>>} A promise resolving to the value produced by `recoverUserImages`.
    */
   async function recoverUserImages(spine) {
+    // Recovered image Markdown is keyed by source message id for later canonical enrichment.
     const recovered = new Map();
     const scrollRoot = conversationScrollRoot();
+    // Preserve the caller scroll position so image recovery can restore the page exactly.
     const originalScrollTop = scrollRoot.scrollTop;
     /**
      * Handles records.
@@ -3759,9 +3831,13 @@
       'sandbox link rewrite must not rewrite sediment pointers.');
   }
 
+  /** DOM id of the built-in test matrix overlay. */
   const TEST_MATRIX_ID = `${PANEL_ID}-test-matrix`;
+  /** Local-storage key for the previous built-in test outcomes. */
   const TEST_RESULT_HISTORY_KEY = 'tm-conversation-recorder-test-result-history';
+  /** Last persisted PASS/FAIL result for each built-in test. */
   let testMatrixPreviousResults = new Map();
+  /** Results produced during the current built-in test session. */
   let testMatrixCurrentResults = new Map();
 
   /**
@@ -4310,6 +4386,7 @@
   function makeLauncher() {
   if (document.getElementById(LAUNCHER_ID) || !document.body) return;
   injectStyles();
+  /** Floating button that remains available to open the recorder panel. */
   const launcher = document.createElement('button');
   launcher.id = LAUNCHER_ID;
   launcher.type = 'button';
