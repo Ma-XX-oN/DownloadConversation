@@ -12,6 +12,8 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: 22
+      - name: Production JSDoc coverage
+        run: node scripts/check-jsdoc.mjs
       - name: JavaScript syntax
         run: node --check chatgpt-conversation-markdown-export.user.js
       - name: Phase 5 canonical integration regression
