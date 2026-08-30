@@ -114,7 +114,6 @@ def top_level_returns(body):
           elif c == ';' and par == br == cr == 0:
             break
           elif c == '\n' and par == br == cr == 0:
-            # ASI return expression normally ends here unless line clearly continues.
             snippet = body[after:j].strip()
             if snippet:
               break
@@ -128,8 +127,7 @@ def top_level_returns(body):
 
 def infer_expr_type(expr, name):
   e = expr.strip()
-  if not e:
-    return 'void'
+  if not e: return 'void'
   if e == 'null': return 'null'
   if e in ('true', 'false'): return 'boolean'
   if re.match(r'^[-+]?\d+(?:\.\d+)?(?:\s|$)', e): return 'number'
@@ -344,7 +342,6 @@ def normalize_doc(doc, indent, name, body, async_fn):
 functions = []
 for m in DECL.finditer(text):
   name = m.group('name1') or m.group('name2') or m.group('name3')
-  # Parenthesized arrow declarations are accepted only when the closing paren is followed by =>.
   if m.group('name3'):
     open_pos = text.find('(', m.start())
     close_pos = find_closing(text, open_pos, '(', ')')
@@ -361,9 +358,10 @@ for start, indent, name in functions:
   stripped = prefix.rstrip()
   if not stripped.endswith('*/'):
     continue
-  doc_start = stripped.rfind('/**')
-  if doc_start < 0:
+  marker = stripped.rfind('/**')
+  if marker < 0:
     continue
+  doc_start = stripped.rfind('\n', 0, marker) + 1
   doc_end = len(stripped)
   doc = text[doc_start:doc_end]
   body, async_fn = function_body(text, start)
