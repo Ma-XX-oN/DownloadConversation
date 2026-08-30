@@ -1,0 +1,48 @@
+name: Repair JSDoc types once
+
+on:
+  push:
+    paths:
+      - .github/workflows/repair-jsdoc-types-once.yml
+      - scripts/repair-jsdoc-types-once.mjs
+
+permissions:
+  contents: write
+
+jobs:
+  apply:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - name: Install TypeScript for inference
+        run: npm install --no-save --package-lock=false typescript
+      - name: Repair semantic JSDoc types
+        run: node scripts/repair-jsdoc-types-once.mjs
+      - name: Audit permanent JSDoc contract
+        run: node scripts/check-jsdoc.mjs
+      - name: Syntax
+        run: node --check chatgpt-conversation-markdown-export.user.js
+      - name: Tests
+        run: node --test tests/*.test.mjs
+      - name: Verify userscript changes are JSDoc only
+        run: |
+          python - <<'PY'
+          import re, subprocess
+          before = subprocess.check_output(['git','show','HEAD:chatgpt-conversation-markdown-export.user.js'], text=True)
+          after = open('chatgpt-conversation-markdown-export.user.js', encoding='utf-8').read()
+          strip = lambda s: re.sub(r'/\*\*[\s\S]*?\*/', '', s)
+          assert strip(before) == strip(after), 'Non-JSDoc production bytes changed'
+          PY
+          git diff --check
+      - name: Commit verified documentation
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add chatgpt-conversation-markdown-export.user.js
+          git commit -m "docs: correct JSDoc types and descriptions"
+          git push
