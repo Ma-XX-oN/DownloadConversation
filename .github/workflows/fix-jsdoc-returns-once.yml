@@ -21,6 +21,17 @@ jobs:
           node-version: 22
       - name: Install Acorn
         run: npm install --no-save --package-lock=false acorn
+      - name: Add the two source-evidenced return overrides
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+          path = Path('scripts/fix-jsdoc-returns-once.cjs')
+          text = path.read_text()
+          old = "  const inferred = union(valueReturns.map(node => infer(node, vars)));\n"
+          new = "  let inferred = union(valueReturns.map(node => infer(node, vars)));\n  if (!inferred && item.name === 'cgRenderInlineReferences') inferred = 'string';\n  if (!inferred && item.name === 'conversationScrollRoot') inferred = 'Element';\n"
+          assert old in text
+          path.write_text(text.replace(old, new))
+          PY
       - name: Repair return contracts from AST evidence
         run: node scripts/fix-jsdoc-returns-once.cjs
       - name: Audit JSDoc contract
