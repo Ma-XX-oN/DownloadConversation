@@ -23,5 +23,6 @@ jobs:
           PY
       - name: Infer declarations from implementation
         run: |
-          npx --yes --package typescript tsc /tmp/userscript.js --allowJs --declaration --emitDeclarationOnly --noCheck --target ES2022 --module None --outFile /tmp/userscript.d.ts
-          cat /tmp/userscript.d.ts
+          mkdir -p /tmp/inferred
+          npx --yes --package typescript tsc /tmp/userscript.js --allowJs --declaration --emitDeclarationOnly --noCheck --target ES2022 --module commonjs --outDir /tmp/inferred
+          cat /tmp/inferred/userscript.d.ts
