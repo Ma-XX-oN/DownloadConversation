@@ -23,7 +23,13 @@ jobs:
         run: npm install --no-save --package-lock=false typescript
       - name: Repair semantic JSDoc types
         run: |
-          sed -i "s/import ts from 'typescript';/import * as ts from 'typescript';/" scripts/repair-jsdoc-types-once.mjs
+          python - <<'PY'
+          from pathlib import Path
+          path = Path('scripts/repair-jsdoc-types-once.mjs')
+          text = path.read_text()
+          text = text.replace("import ts from 'typescript';", "import { createRequire } from 'node:module';\nconst require = createRequire(import.meta.url);\nconst ts = require('typescript');")
+          path.write_text(text)
+          PY
           node scripts/repair-jsdoc-types-once.mjs
       - name: Audit permanent JSDoc contract
         run: node scripts/check-jsdoc.mjs
