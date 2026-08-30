@@ -121,9 +121,31 @@ assuming an arithmetic relationship.
 
 ## Code documentation standard
 
-Every named production JavaScript function and named function-valued constant must have an immediately preceding JSDoc block using `/** ... */`. The comment must state the function's purpose. Every declared parameter must have an `@param` tag with the expected JSDoc type and a description of what the parameter represents. Every function must have a typed `@returns` tag whose description states what the return value represents; functions with no meaningful return value use `@returns {void}`. When a function normalizes, transforms, projects, or otherwise changes the representation of source/provider data, its documentation must also state the actual source representation and the canonical/output representation when they differ.
+Every named production JavaScript function and named function-valued constant
+must have an immediately preceding JSDoc block using `/** ... */`. The comment
+must state the function's purpose. Every declared parameter must have an
+`@param` tag with the actual expected JSDoc type and a description of what the
+parameter represents. Every function must have a typed `@returns` tag whose
+description states what the return value represents; functions with no
+meaningful return value use `@returns {void}`.
 
-Do not use ordinary `//` comments as the function-level documentation marker. Inline comments remain appropriate for local algorithm details and rationale. Anonymous inline callbacks do not require separate JSDoc unless they are promoted to named reusable functions.
+JSDoc indentation is part of the code style contract. The opening `/**` and
+closing `*/` must use the same indentation as the declaration they document.
+Every interior JSDoc line must use that same indentation followed by exactly one
+space and `*`. Tags and blank `*` lines must follow the same alignment. Do not
+emit partially de-indented generated blocks.
+
+Types must describe what the implementation actually accepts and returns. Do
+not use broad placeholder unions or guessed types merely to satisfy the audit.
+When a function normalizes, transforms, projects, or otherwise changes the
+representation of source/provider data, its documentation must also state the
+actual source representation and the canonical/output representation when they
+differ.
+
+Do not use ordinary `//` comments as the function-level documentation marker.
+Inline comments remain appropriate for local algorithm details and rationale.
+Anonymous inline callbacks do not require separate JSDoc unless they are
+promoted to named reusable functions.
 
 ## Verification
 
