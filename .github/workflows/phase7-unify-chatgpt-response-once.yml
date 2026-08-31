@@ -32,7 +32,7 @@ jobs:
           git clone https://github.com/Ma-XX-oN/AIConversationCore.git .phase7-core
           git -C .phase7-core checkout 29a9fea4903f0214d450e1399a7af8e20823fcd1
           git clone https://github.com/Ma-XX-oN/AI-General-Memory.git .phase7-aigm
-          git -C .phase7-aigm checkout e51859299761d8cd6901b0b5dca187bead1ee075
+          git -C .phase7-aigm checkout 264379d7f5db42217dc56498605ce03da0459b60
           python -m pip install colorama regex
           PHASE7_CORE_ROOT="$PWD/.phase7-core" PHASE7_AIGM_ROOT="$PWD/.phase7-aigm" node tests/phase7-cross-consumer-parity.mjs
       - name: Remaining regressions
@@ -44,6 +44,6 @@ jobs:
           rm -rf .phase7-core .phase7-aigm
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git add chatgpt-conversation-markdown-export.user.js tests/phase5-rich-core-integration.test.mjs
+          git add chatgpt-conversation-markdown-export.user.js tests/core-integration.test.mjs tests/phase5-rich-core-integration.test.mjs
           git commit -m "phase7: keep commentary inside one ChatGPT response"
           git push
