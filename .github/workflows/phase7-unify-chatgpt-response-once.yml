@@ -5,6 +5,7 @@ on:
     paths:
       - .github/workflows/phase7-unify-chatgpt-response-once.yml
       - scripts/phase7-unify-chatgpt-response.py
+      - tests/phase7-cross-consumer-parity.mjs
 
 permissions:
   contents: write
