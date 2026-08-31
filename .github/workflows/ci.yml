@@ -32,13 +32,13 @@ jobs:
         uses: actions/checkout@v4
         with:
           repository: Ma-XX-oN/AIConversationCore
-          ref: 2b746b121ed0e44cfe86ba8377969b8d8bf197c7
+          ref: 29a9fea4903f0214d450e1399a7af8e20823fcd1
           path: .phase7-core
       - name: Check out pinned AI-General-Memory
         uses: actions/checkout@v4
         with:
           repository: Ma-XX-oN/AI-General-Memory
-          ref: e51859299761d8cd6901b0b5dca187bead1ee075
+          ref: 264379d7f5db42217dc56498605ce03da0459b60
           path: .phase7-aigm
       - uses: actions/setup-node@v4
         with:
