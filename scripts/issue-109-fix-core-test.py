@@ -1,5 +1,6 @@
 from pathlib import Path
 
+# Trigger the completion runner after separating workflow-file cleanup.
 path = Path('tests/core-integration.test.mjs')
 text = path.read_text(encoding='utf-8')
 old = "  showTimestamps: false,\n  showRecordNumbers: false,\n"
