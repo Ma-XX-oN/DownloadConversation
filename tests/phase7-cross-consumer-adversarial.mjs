@@ -67,6 +67,9 @@ async function downloadConversationMarkdown() {
   vm.runInNewContext(bundle, context, { filename: 'aiconversationcore.chatgpt.browser.js' });
 
   Object.assign(context, {
+  showTimestamps: false,
+  showRecordNumbers: false,
+  showTurnIds: true,
     assert(condition, message) {
       if (!condition) throw new Error(message);
     },

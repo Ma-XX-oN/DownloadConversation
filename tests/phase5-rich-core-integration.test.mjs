@@ -25,6 +25,7 @@ const helperSource = userscript.slice(start + begin.length, finish);
 Object.assign(context, {
   showTimestamps: false,
   showRecordNumbers: false,
+  showTurnIds: true,
   assert(condition, message) {
     if (!condition) throw new Error(message);
   },

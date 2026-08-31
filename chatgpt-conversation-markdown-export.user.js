@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         ChatGPT Conversation Markdown Recorder
 // @namespace    https://chatgpt.com/
-// @version      0.6.151
+// @version      0.6.152
 // @description  Exports the current ChatGPT conversation directly from the Conversation API as Markdown or JSONL.
 // @match        https://chatgpt.com/*
 // @match        https://chat.openai.com/*
@@ -32,6 +32,8 @@
   const SHOW_TIMESTAMPS_STORAGE_KEY = 'tm-conversation-recorder-show-timestamps';
   /** Local-storage key for Markdown JSONL record-number visibility. */
   const SHOW_RECORD_NUMBERS_STORAGE_KEY = 'tm-conversation-recorder-show-record-numbers';
+  /** Local-storage key for Markdown source/provider turn-ID visibility. */
+  const SHOW_TURN_IDS_STORAGE_KEY = 'tm-conversation-recorder-show-turn-ids';
   /** Session-storage key for the retained recorder diagnostic log. */
   const DIAGNOSTIC_LOG_STORAGE_KEY = 'tm-conversation-recorder-diagnostic-log';
   /** Maximum number of diagnostic entries retained in memory and session storage. */
@@ -51,6 +53,8 @@
   let showTimestamps = localStorage.getItem(SHOW_TIMESTAMPS_STORAGE_KEY) === 'true';
   /** Whether Markdown headings should include one-based JSONL record numbers. */
   let showRecordNumbers = localStorage.getItem(SHOW_RECORD_NUMBERS_STORAGE_KEY) === 'true';
+  /** Whether Markdown headings should include source/provider turn IDs. */
+  let showTurnIds = localStorage.getItem(SHOW_TURN_IDS_STORAGE_KEY) !== 'false';
   /** Active screen wake-lock handle, or null when no lock is held. */
   let wakeLockSentinel = null;
   /** Serializes export work so overlapping extraction runs cannot start. */
@@ -2424,7 +2428,7 @@
     assert(canonicalMessageRecordEligible(record, event),
       `AIConversationCore message record ${record?.id ?? 'unknown'} is not eligible for canonical rendering.`);
     // Provider/source ID projected onto renderer-generated headings for this record.
-    const sourceId = typeof record?.id === 'string' ? record.id : '';
+    const sourceId = showTurnIds && typeof record?.id === 'string' ? record.id : '';
     const headingMetadata = canonicalHeadingMetadata(record, recordNumber);
     const hasHeadingMetadata = Object.keys(headingMetadata).length > 0;
     // Canonical event clone carrying DownloadConversation presentation metadata.
@@ -2524,10 +2528,10 @@
      */
     const headingRecord = messageRecord ?? records.find(record => record?.author?.role === 'assistant') ?? records[0];
     // Source ID retained on the one enclosing ChatGPT response heading.
-    const headingSourceId = typeof headingRecord?.id === 'string' ? headingRecord.id : '';
+    const headingSourceId = showTurnIds && typeof headingRecord?.id === 'string' ? headingRecord.id : '';
     // Canonical event sequence decorated only with source heading identities.
     const projectedEvents = events.map((event, index) => {
-      const commentarySourceId = event?.kind === 'commentary' && typeof records[index]?.id === 'string'
+      const commentarySourceId = showTurnIds && event?.kind === 'commentary' && typeof records[index]?.id === 'string'
         ? records[index].id
         : '';
       const sourceId = commentarySourceId || (index === 0 ? headingSourceId : '');
@@ -2642,7 +2646,7 @@
     if (headingMetadata.timestamp != null) fields.push(`[${headingMetadata.timestamp}]:`);
     if (headingMetadata.record_number != null) fields.push(`${headingMetadata.record_number}:`);
     const metadata = fields.length ? ` ${fields.join(' ')}` : '';
-    const turnId = id ? ` <!-- turn_id=${id} -->` : '';
+    const turnId = showTurnIds && id ? ` <!-- turn_id=${id} -->` : '';
     if (record?.author?.role === 'user') return `## User${metadata}${turnId}`;
     if (record?.author?.role === 'assistant' && record?.channel === 'commentary') {
       return `## ChatGPT Commentary${metadata}${turnId}`;
@@ -4453,6 +4457,7 @@
     const md = panel.querySelector('[data-role="format-md"]');
     const timestamps = panel.querySelector('[data-role="show-timestamps"]');
     const recordNumbers = panel.querySelector('[data-role="show-record-numbers"]');
+    const turnIds = panel.querySelector('[data-role="show-turn-ids"]');
     const test = panel.querySelector('[data-role="test"]');
     const jump = panel.querySelector('[data-role="jump"]');
     const formatsSelected = Boolean(jsonl?.checked || md?.checked);
@@ -4465,6 +4470,7 @@
     const metadataDisabled = exportInProgress || testInProgress || jumpInProgress || !md?.checked;
     if (timestamps) timestamps.disabled = metadataDisabled;
     if (recordNumbers) recordNumbers.disabled = metadataDisabled;
+    if (turnIds) turnIds.disabled = metadataDisabled;
     if (test) {
       test.disabled = exportInProgress || testInProgress || jumpInProgress;
       test.textContent = testInProgress ? 'Testing…' : 'Test';
@@ -4528,7 +4534,7 @@
       <div class="tm-row"><span class="tm-label">Screen on when extracting</span><button class="tm-switch" data-role="screen-on" type="button" role="switch" aria-checked="false" aria-label="Keep screen on while extracting"><span class="tm-switch-thumb"></span></button></div>
       <div class="tm-row"><button data-role="jump" type="button">Jump</button></div>
       <div class="tm-row tm-extract-formats"><button data-role="extract" type="button">Extract</button><label><input data-role="format-jsonl" type="checkbox"> JSONL</label><label><input data-role="format-md" type="checkbox" checked> MD</label></div>
-      <div class="tm-row tm-md-metadata"><span class="tm-label">MD headings</span><label><input data-role="show-timestamps" type="checkbox"> Timestamp</label><label><input data-role="show-record-numbers" type="checkbox"> Record #</label></div>
+      <div class="tm-row tm-md-metadata"><span class="tm-label">MD headings</span><label><input data-role="show-timestamps" type="checkbox"> Timestamp</label><label><input data-role="show-record-numbers" type="checkbox"> Record #</label><label><input data-role="show-turn-ids" type="checkbox"> Turn ID</label></div>
     `;
     panel.querySelector('.tm-close').addEventListener('click', () => {
       panel.style.display = 'none';
@@ -4567,6 +4573,7 @@
     });
     const timestamps = panel.querySelector('[data-role="show-timestamps"]');
     const recordNumbers = panel.querySelector('[data-role="show-record-numbers"]');
+    const turnIds = panel.querySelector('[data-role="show-turn-ids"]');
     if (timestamps) {
       timestamps.checked = showTimestamps;
       timestamps.addEventListener('change', () => {
@@ -4580,6 +4587,14 @@
       recordNumbers.addEventListener('change', () => {
         showRecordNumbers = recordNumbers.checked;
         localStorage.setItem(SHOW_RECORD_NUMBERS_STORAGE_KEY, String(showRecordNumbers));
+        updateUi();
+      });
+    }
+    if (turnIds) {
+      turnIds.checked = showTurnIds;
+      turnIds.addEventListener('change', () => {
+        showTurnIds = turnIds.checked;
+        localStorage.setItem(SHOW_TURN_IDS_STORAGE_KEY, String(showTurnIds));
         updateUi();
       });
     }

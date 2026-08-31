@@ -38,8 +38,11 @@ test('recorder panel restores dialog/log/switch/extract UI contracts', () => {
   assert.match(userscript, /data-role="format-md" type="checkbox" checked> MD/);
   assert.match(userscript, /data-role="show-timestamps" type="checkbox"> Timestamp/);
   assert.match(userscript, /data-role="show-record-numbers" type="checkbox"> Record #/);
+  assert.match(userscript, /data-role="show-turn-ids" type="checkbox"> Turn ID/);
   assert.match(userscript, /SHOW_TIMESTAMPS_STORAGE_KEY/);
   assert.match(userscript, /SHOW_RECORD_NUMBERS_STORAGE_KEY/);
+  assert.match(userscript, /SHOW_TURN_IDS_STORAGE_KEY/);
+  assert.match(userscript, /showTurnIds = localStorage\.getItem\(SHOW_TURN_IDS_STORAGE_KEY\) !== 'false'/);
   assert.doesNotMatch(userscript, /data-role="extract-jsonl"/);
   assert.doesNotMatch(userscript, /data-role="extract-md"/);
   assert.match(userscript, /if \(jsonl\?\.checked\) await runExport\('jsonl'\)/);

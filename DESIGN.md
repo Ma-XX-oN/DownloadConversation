@@ -136,3 +136,20 @@ DownloadConversation prepends a conversation-metadata record, the first
 Conversation API message is JSONL record 2.  Existing source `turn_id` comments
 remain unchanged.  Canonical records pass this metadata through
 AIConversationCore; the legacy fallback path preserves the same visible format.
+
+## Optional Markdown heading metadata
+
+DownloadConversation exposes three independent persistent Markdown-heading controls:
+
+- **Timestamp**: source create/update time rendered in local `YYYY-MM-DD HH:MM:SS`
+  form.  Default: off.
+- **Record #**: the one-based JSONL record number.  Because JSONL record 1 is
+  conversation metadata, the first visible source message is record 2.  Default:
+  off.
+- **Turn ID**: the ChatGPT source message ID rendered using the established
+  `<!-- turn_id=... -->` heading comment.  Default: on so existing Markdown output
+  remains unchanged unless the user disables it.
+
+These are presentation-only controls.  They do not change chronology, grouping,
+UAP association, API pagination, recovery, or canonical normalization.
+
