@@ -127,7 +127,7 @@ async function downloadConversationMarkdown() {
   const renderSource = userscript.slice(headingStart, renderEnd);
 
   vm.runInNewContext(
-    `${integrationSource}\n${renderSource}\nthis.__phase7Render = renderConversationMarkdown;`,
+    `${integrationSource}\n${renderSource}\nthis.__phase7 = { renderConversationMarkdown, canonicalEventsBySourceRecord, canonicalMessageRecordEligible };`,
     context
   );
 
@@ -143,7 +143,22 @@ async function downloadConversationMarkdown() {
     'user-1',
     ['[image not available](sediment://fixture-image-1)', '[image missing]']
   ]]);
-  return context.__phase7Render(spine, null, recoveredImageMap);
+  const events = context.__phase7.canonicalEventsBySourceRecord(records, recoveredImageMap);
+  const user = records.find(record => record.id === 'user-1');
+  const userEvent = events.get('user-1');
+  assert.ok(userEvent, 'DownloadConversation produced no canonical event for user-1.');
+  assert.equal(
+    context.__phase7.canonicalMessageRecordEligible(user, userEvent),
+    true,
+    `DownloadConversation rejected canonical user-1: ${JSON.stringify({
+      kind: userEvent.kind,
+      role: userEvent.role,
+      visibility: userEvent.visibility,
+      blocks: userEvent.blocks,
+      resources: userEvent.resources
+    })}`
+  );
+  return context.__phase7.renderConversationMarkdown(spine, null, recoveredImageMap);
 }
 
 const direct = await directCoreMarkdown();
