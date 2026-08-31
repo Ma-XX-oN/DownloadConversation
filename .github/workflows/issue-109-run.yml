@@ -38,6 +38,13 @@ jobs:
             raise SystemExit('pad helper patch point not found')
           helper.write_text(text.replace(old, new, 1), encoding='utf-8')
           exec(compile(helper.read_text(encoding='utf-8'), str(helper), 'exec'))
+
+          old_pin = '29a9fea4903f0214d450e1399a7af8e20823fcd1'
+          new_pin = '3233cba838bbf2d2cea5a2a6f1900ed6014dcfb0'
+          for test_path in Path('tests').glob('*.mjs'):
+            test_text = test_path.read_text(encoding='utf-8')
+            if old_pin in test_text:
+              test_path.write_text(test_text.replace(old_pin, new_pin), encoding='utf-8')
       - name: Run repository gates
         run: |
           node --check chatgpt-conversation-markdown-export.user.js
@@ -50,6 +57,6 @@ jobs:
         run: |
           git config user.name 'github-actions[bot]'
           git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
-          git add chatgpt-conversation-markdown-export.user.js tests/core-integration.test.mjs tests/recorder-panel-ui.test.mjs DESIGN.md
+          git add chatgpt-conversation-markdown-export.user.js tests/core-integration.test.mjs tests/phase5-rich-core-integration.test.mjs tests/recorder-panel-ui.test.mjs DESIGN.md
           git commit -m 'export: add Markdown heading metadata controls'
           git push
