@@ -24,7 +24,7 @@ old_test = '''test('commentary plus final message is rejected semantically befor
   const events = records.map(record => byRecord.get(record.id));
   assert.equal(phase5.canonicalAssistantSegmentEligible(records, events), false);
 });'''
-new_test = '''test('commentary plus final message is accepted as one canonical ChatGPT response', () => {
+new_test = r'''test('commentary plus final message is accepted as one canonical ChatGPT response', () => {
   const commentary = textRecord('split-commentary', 'assistant', 'Interim.', {
     channel: 'commentary',
     end_turn: false
@@ -43,7 +43,18 @@ new_test = '''test('commentary plus final message is accepted as one canonical C
 });'''
 if old_test not in restored_test:
   raise SystemExit('obsolete commentary/final regression anchor not found in restored test')
-test_path.write_text(restored_test.replace(old_test, new_test, 1), encoding='utf-8')
+restored_test = restored_test.replace(old_test, new_test, 1)
+if CORE_OLD not in restored_test:
+  raise SystemExit('restored rich-core test pin anchor not found')
+restored_test = restored_test.replace(CORE_OLD, CORE_NEW, 1)
+test_path.write_text(restored_test, encoding='utf-8')
+
+# Move the plain integration test's exact pin expectation with the production pin.
+core_test_path = Path('tests/core-integration.test.mjs')
+core_test_text = core_test_path.read_text(encoding='utf-8')
+if CORE_OLD not in core_test_text:
+  raise SystemExit('core-integration pin anchor not found')
+core_test_path.write_text(core_test_text.replace(CORE_OLD, CORE_NEW, 1), encoding='utf-8')
 
 path = Path('chatgpt-conversation-markdown-export.user.js')
 text = path.read_text(encoding='utf-8')
