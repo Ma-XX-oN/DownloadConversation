@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 from pathlib import Path
 
+# Phase 7 production patch: commentary remains inside its enclosing ChatGPT response.
 path = Path('chatgpt-conversation-markdown-export.user.js')
 text = path.read_text(encoding='utf-8')
 
