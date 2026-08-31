@@ -18,7 +18,7 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: 22
-      - name: Update completed core pin and permanent rendering regression list
+      - name: Update completed core pin and known stale Phase 5 expectations
         run: |
           python - <<'PY'
           from pathlib import Path
@@ -32,11 +32,20 @@ jobs:
             raise SystemExit('old userscript core pin not found')
           userscript.write_text(text.replace(old, new, 1), encoding='utf-8')
 
-          test = Path('tests/phase5-rich-core-integration.test.mjs')
-          text = test.read_text(encoding='utf-8')
-          if old not in text:
-            raise SystemExit('old phase5 test core pin not found')
-          test.write_text(text.replace(old, new, 1), encoding='utf-8')
+          for filename in ['tests/core-integration.test.mjs', 'tests/phase5-rich-core-integration.test.mjs']:
+            path = Path(filename)
+            text = path.read_text(encoding='utf-8')
+            if old not in text:
+              raise SystemExit(f'old test core pin not found in {filename}')
+            path.write_text(text.replace(old, new, 1), encoding='utf-8')
+
+          rich = Path('tests/phase5-rich-core-integration.test.mjs')
+          text = rich.read_text(encoding='utf-8')
+          old_thought = "assert.match(rendered, /<summary>Thoughts<\\/summary>/);"
+          new_thought = "assert.match(rendered, /<summary>Having a thought<\\/summary>/);"
+          if old_thought not in text:
+            raise SystemExit('stale thought-summary expectation not found')
+          rich.write_text(text.replace(old_thought, new_thought, 1), encoding='utf-8')
 
           ci = Path('.github/workflows/ci.yml')
           text = ci.read_text(encoding='utf-8')
@@ -45,6 +54,15 @@ jobs:
           if old_cmd not in text:
             raise SystemExit('CI rendering regression command not found')
           ci.write_text(text.replace(old_cmd, new_cmd, 1), encoding='utf-8')
+          PY
+      - name: Show current production Assistant segment bridge
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+          text = Path('chatgpt-conversation-markdown-export.user.js').read_text(encoding='utf-8')
+          start = text.index('  function canonicalAssistantSegmentBlock(')
+          end = text.index('\n  function ', start + 10)
+          print(text[start:end])
           PY
       - name: Production JSDoc coverage
         run: node scripts/check-jsdoc.mjs
@@ -60,6 +78,6 @@ jobs:
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git add chatgpt-conversation-markdown-export.user.js tests/phase5-rich-core-integration.test.mjs .github/workflows/ci.yml
+          git add chatgpt-conversation-markdown-export.user.js tests/core-integration.test.mjs tests/phase5-rich-core-integration.test.mjs .github/workflows/ci.yml
           git commit -m "phase7: pin completed core and run rendering diagnostics"
           git push
