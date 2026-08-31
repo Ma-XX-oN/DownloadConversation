@@ -30,7 +30,7 @@ jobs:
       - name: Cross-consumer final-render regression
         run: |
           git clone https://github.com/Ma-XX-oN/AIConversationCore.git .phase7-core
-          git -C .phase7-core checkout 2b746b121ed0e44cfe86ba8377969b8d8bf197c7
+          git -C .phase7-core checkout 29a9fea4903f0214d450e1399a7af8e20823fcd1
           git clone https://github.com/Ma-XX-oN/AI-General-Memory.git .phase7-aigm
           git -C .phase7-aigm checkout e51859299761d8cd6901b0b5dca187bead1ee075
           python -m pip install colorama regex
@@ -44,6 +44,6 @@ jobs:
           rm -rf .phase7-core .phase7-aigm
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git add chatgpt-conversation-markdown-export.user.js
+          git add chatgpt-conversation-markdown-export.user.js tests/phase5-rich-core-integration.test.mjs
           git commit -m "phase7: keep commentary inside one ChatGPT response"
           git push
