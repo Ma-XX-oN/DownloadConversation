@@ -58,3 +58,8 @@ jobs:
           PHASE7_CORE_ROOT: ${{ github.workspace }}/.phase7-core
           PHASE7_AIGM_ROOT: ${{ github.workspace }}/.phase7-aigm
         run: node tests/phase7-cross-consumer-markdown-shape.mjs
+      - name: Adversarial containment and normalization parity
+        env:
+          PHASE7_CORE_ROOT: ${{ github.workspace }}/.phase7-core
+          PHASE7_AIGM_ROOT: ${{ github.workspace }}/.phase7-aigm
+        run: node tests/phase7-cross-consumer-adversarial.mjs
