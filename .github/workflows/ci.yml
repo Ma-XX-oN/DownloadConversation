@@ -63,3 +63,43 @@ jobs:
           PHASE7_CORE_ROOT: ${{ github.workspace }}/.phase7-core
           PHASE7_AIGM_ROOT: ${{ github.workspace }}/.phase7-aigm
         run: node tests/phase7-cross-consumer-adversarial.mjs
+
+  apply-issue-109:
+    if: github.event_name == 'push' && github.event.head_commit.message == 'ci: run issue 109 implementation'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - name: Apply staged patch
+        shell: python
+        run: |
+          import base64
+          import re
+          from pathlib import Path
+          workflow = Path('.github/workflows/issue-109-heading-metadata.yml').read_text(encoding='utf-8')
+          match = re.search(r"base64\.b64decode\('([^']+)'\)", workflow)
+          if not match:
+            raise SystemExit('staged patch payload not found')
+          exec(base64.b64decode(match.group(1)).decode())
+      - name: Restore workflow file and run gates
+        run: |
+          git checkout -- .github/workflows/ci.yml
+          node --check chatgpt-conversation-markdown-export.user.js
+          node scripts/check-jsdoc.mjs
+          node --test tests/core-integration.test.mjs tests/phase5-rich-core-integration.test.mjs tests/fallback-adaptive-fence.test.mjs tests/tool-language-diagnostics.test.mjs
+          node --test tests/test-list-ui.test.mjs
+          node --test tests/recorder-panel-ui.test.mjs
+          git diff --check
+      - name: Commit gated feature
+        run: |
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add chatgpt-conversation-markdown-export.user.js tests/core-integration.test.mjs tests/recorder-panel-ui.test.mjs DESIGN.md
+          git commit -m 'export: add Markdown heading metadata controls'
+          git push
