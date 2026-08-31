@@ -66,7 +66,9 @@ async function downloadConversationMarkdown() {
     path.join(coreRoot, 'dist', 'aiconversationcore.chatgpt.browser.js'),
     'utf8'
   );
-  const context = {};
+  // Mirror browser globals the canonical bundle actually relies on. Node vm contexts
+  // do not provide the Web URL constructor automatically, while production browsers do.
+  const context = { URL };
   context.globalThis = context;
   vm.runInNewContext(bundle, context, { filename: 'aiconversationcore.chatgpt.browser.js' });
 
