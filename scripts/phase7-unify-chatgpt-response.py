@@ -1,13 +1,59 @@
 #!/usr/bin/env python3
+import subprocess
 from pathlib import Path
 
-# Phase 7 production patch: commentary remains inside its enclosing ChatGPT response.
+CORE_OLD = '2b746b121ed0e44cfe86ba8377969b8d8bf197c7'
+CORE_NEW = '29a9fea4903f0214d450e1399a7af8e20823fcd1'
+RESTORE_TEST_REF = 'da5ef383b368a639cb1792417e2b5f7d2db05399'
+
+# Restore the exact regression file from before the accidental broad test edit.
+test_path = Path('tests/phase5-rich-core-integration.test.mjs')
+restored_test = subprocess.check_output(
+  ['git', 'show', f'{RESTORE_TEST_REF}:{test_path.as_posix()}'],
+  text=True,
+  encoding='utf-8'
+)
+old_test = '''test('commentary plus final message is rejected semantically before canonical block rendering', () => {
+  const commentary = textRecord('split-commentary', 'assistant', 'Interim.', {
+    channel: 'commentary',
+    end_turn: false
+  });
+  const final = textRecord('split-final', 'assistant', 'Final.');
+  const records = [commentary, final];
+  const byRecord = phase5.canonicalEventsBySourceRecord(records);
+  const events = records.map(record => byRecord.get(record.id));
+  assert.equal(phase5.canonicalAssistantSegmentEligible(records, events), false);
+});'''
+new_test = '''test('commentary plus final message is accepted as one canonical ChatGPT response', () => {
+  const commentary = textRecord('split-commentary', 'assistant', 'Interim.', {
+    channel: 'commentary',
+    end_turn: false
+  });
+  const final = textRecord('split-final', 'assistant', 'Final.');
+  const records = [commentary, final];
+  const byRecord = phase5.canonicalEventsBySourceRecord(records);
+  const events = records.map(record => byRecord.get(record.id));
+  assert.equal(phase5.canonicalAssistantSegmentEligible(records, events), true);
+  const rendered = phase5.canonicalAssistantSegmentBlock(records, events);
+  assert.match(rendered, /^## ChatGPT <!-- turn_id=split-final -->/);
+  assert.match(rendered, /^### ChatGPT Commentary <!-- turn_id=split-commentary -->$/m);
+  assert.equal((rendered.match(/^## ChatGPT(?: |$)/gm) ?? []).length, 1);
+  assert.match(rendered, /> Interim\./);
+  assert.match(rendered, /> Final\./);
+});'''
+if old_test not in restored_test:
+  raise SystemExit('obsolete commentary/final regression anchor not found in restored test')
+test_path.write_text(restored_test.replace(old_test, new_test, 1), encoding='utf-8')
+
 path = Path('chatgpt-conversation-markdown-export.user.js')
 text = path.read_text(encoding='utf-8')
 
 if '// @version      0.6.149' not in text:
   raise SystemExit('userscript version anchor not found')
 text = text.replace('// @version      0.6.149', '// @version      0.6.150', 1)
+if CORE_OLD not in text:
+  raise SystemExit('AIConversationCore pin anchor not found')
+text = text.replace(CORE_OLD, CORE_NEW, 1)
 
 start = text.find('  function canonicalAssistantSegmentEligible(')
 end = text.find('\n\n  /**\n   * Renders one eligible canonical Assistant activity segment', start)
@@ -44,14 +90,50 @@ replacement = '''  function canonicalAssistantSegmentEligible(records, events) {
   }'''
 text = text[:start] + replacement + text[end:]
 
-old = '''      if (canonicalEvent && canonicalMessageRecordEligible(record, canonicalEvent)) {
+old_projection = '''    const projectedEvents = events.map((event, index) => {
+      const commentarySourceId = event?.kind === 'commentary' && typeof records[index]?.id === 'string'
+        ? records[index].id
+        : '';
+      const sourceId = commentarySourceId || (index === 0 ? headingSourceId : '');
+      if (!sourceId) return event;
+      return {
+        ...event,
+        projection: {
+          ...(event?.projection ?? {}),
+          heading_suffix: ` <!-- turn_id=${sourceId} -->`
+        }
+      };
+    });'''
+new_projection = '''    const projectedEvents = events.map((event, index) => {
+      const commentarySourceId = event?.kind === 'commentary' && typeof records[index]?.id === 'string'
+        ? records[index].id
+        : '';
+      const sourceId = commentarySourceId || (index === 0 ? headingSourceId : '');
+      const responseHeadingSuffix = index === 0 && headingSourceId
+        ? ` <!-- turn_id=${headingSourceId} -->`
+        : '';
+      if (!sourceId && !responseHeadingSuffix) return event;
+      return {
+        ...event,
+        projection: {
+          ...(event?.projection ?? {}),
+          ...(sourceId ? { heading_suffix: ` <!-- turn_id=${sourceId} -->` } : {}),
+          ...(responseHeadingSuffix ? { response_heading_suffix: responseHeadingSuffix } : {})
+        }
+      };
+    });'''
+if old_projection not in text:
+  raise SystemExit('Assistant projection anchor not found')
+text = text.replace(old_projection, new_projection, 1)
+
+old_routing = '''      if (canonicalEvent && canonicalMessageRecordEligible(record, canonicalEvent)) {
         if (record?.author?.role === 'user') {
           flushPendingAssistant();
           output.push(canonicalRecordBlock(record, canonicalEvent));
           continue;
         }
         if (record?.author?.role === 'assistant' && pendingThoughts.length > 0) {'''
-new = '''      if (canonicalEvent && canonicalMessageRecordEligible(record, canonicalEvent)) {
+new_routing = '''      if (canonicalEvent && canonicalMessageRecordEligible(record, canonicalEvent)) {
         if (record?.author?.role === 'user') {
           flushPendingAssistant();
           output.push(canonicalRecordBlock(record, canonicalEvent));
@@ -62,8 +144,8 @@ new = '''      if (canonicalEvent && canonicalMessageRecordEligible(record, cano
           continue;
         }
         if (record?.author?.role === 'assistant' && pendingThoughts.length > 0) {'''
-if old not in text:
+if old_routing not in text:
   raise SystemExit('renderConversationMarkdown commentary routing anchor not found')
-text = text.replace(old, new, 1)
+text = text.replace(old_routing, new_routing, 1)
 
 path.write_text(text, encoding='utf-8')
