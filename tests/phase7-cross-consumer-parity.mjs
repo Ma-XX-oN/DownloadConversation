@@ -92,14 +92,32 @@ async function downloadConversationMarkdown() {
     cgBuildFileReferenceIndex() {
       return new Map();
     },
-    cgVisibleUserText() {
-      throw new Error('Phase 7 fixture unexpectedly entered DownloadConversation User fallback rendering.');
+    cgVisibleUserText(record) {
+      const visibleUser = !record?.metadata?.is_visually_hidden_from_conversation &&
+        record?.author?.role === 'user' &&
+        ['text', 'multimodal_text'].includes(record?.content?.content_type);
+      if (visibleUser) {
+        throw new Error(`Phase 7 fixture unexpectedly entered DownloadConversation User fallback rendering for ${record?.id ?? 'unknown'}.`);
+      }
+      return '';
     },
-    cgVisibleAssistantMarkdown() {
-      throw new Error('Phase 7 fixture unexpectedly entered DownloadConversation Assistant fallback rendering.');
+    cgVisibleAssistantMarkdown(record) {
+      const visibleAssistant = !record?.metadata?.is_visually_hidden_from_conversation &&
+        record?.author?.role === 'assistant' &&
+        ['text', 'multimodal_text'].includes(record?.content?.content_type);
+      if (visibleAssistant) {
+        throw new Error(`Phase 7 fixture unexpectedly entered DownloadConversation Assistant fallback rendering for ${record?.id ?? 'unknown'}.`);
+      }
+      return '';
     },
-    cgRenderThoughtItem() {
-      throw new Error('Phase 7 fixture unexpectedly entered DownloadConversation thought fallback rendering.');
+    cgRenderThoughtItem(record) {
+      if (record?.metadata?.is_visually_hidden_from_conversation) return '';
+      const role = record?.author?.role;
+      const type = record?.content?.content_type;
+      if ((role === 'assistant' && ['thoughts', 'code', 'execution_output'].includes(type)) || role === 'tool') {
+        throw new Error(`Phase 7 fixture unexpectedly entered DownloadConversation thought/tool fallback rendering for ${record?.id ?? 'unknown'}.`);
+      }
+      return '';
     },
     cgRenderThoughtBlock() {
       throw new Error('Phase 7 fixture unexpectedly entered DownloadConversation thought-block fallback rendering.');
