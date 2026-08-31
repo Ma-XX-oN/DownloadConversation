@@ -4,6 +4,7 @@ on:
   push:
     paths:
       - scripts/issue-109-finish.py
+      - scripts/issue-109-fix-core-test.py
 
 permissions:
   contents: write
@@ -20,6 +21,8 @@ jobs:
           node-version: 22
       - name: Apply issue 109 final patch
         run: python scripts/issue-109-finish.py
+      - name: Patch core integration harness
+        run: python scripts/issue-109-fix-core-test.py
       - name: JSDoc
         run: node scripts/check-jsdoc.mjs
       - name: Syntax
@@ -29,7 +32,7 @@ jobs:
       - name: Commit final patch and remove helpers
         shell: bash
         run: |
-          rm scripts/issue-109-finish.py .github/workflows/issue-109-finish.yml
+          rm scripts/issue-109-finish.py scripts/issue-109-fix-core-test.py .github/workflows/issue-109-finish.yml
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
           git add -A
