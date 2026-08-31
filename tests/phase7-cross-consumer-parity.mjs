@@ -139,7 +139,11 @@ async function downloadConversationMarkdown() {
       message
     }))
   };
-  return context.__phase7Render(spine, null, new Map());
+  const recoveredImageMap = new Map([[
+    'user-1',
+    ['[image not available](sediment://fixture-image-1)', '[image missing]']
+  ]]);
+  return context.__phase7Render(spine, null, recoveredImageMap);
 }
 
 const direct = await directCoreMarkdown();
