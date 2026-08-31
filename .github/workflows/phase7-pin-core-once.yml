@@ -47,7 +47,9 @@ jobs:
           text = replace_function(text, 'canonicalRecordBlock', '''  function canonicalRecordBlock(record, event) {
             assert(canonicalMessageRecordEligible(record, event),
               `AIConversationCore message record ${record?.id ?? 'unknown'} is not eligible for canonical rendering.`);
+            // Provider/source ID projected onto renderer-generated headings for this record.
             const sourceId = typeof record?.id === 'string' ? record.id : '';
+            // Canonical event clone carrying only DownloadConversation heading decoration.
             const projectedEvent = sourceId
               ? {
                   ...event,
@@ -74,7 +76,9 @@ jobs:
              * Handles heading record.
              */
             const headingRecord = messageRecord ?? records.find(record => record?.author?.role === 'assistant') ?? records[0];
+            // Source ID retained on the one enclosing ChatGPT response heading.
             const headingSourceId = typeof headingRecord?.id === 'string' ? headingRecord.id : '';
+            // Canonical event sequence decorated only with source heading identities.
             const projectedEvents = events.map((event, index) => {
               const commentarySourceId = event?.kind === 'commentary' && typeof records[index]?.id === 'string'
                 ? records[index].id
