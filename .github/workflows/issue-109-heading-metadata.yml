@@ -1,0 +1,385 @@
+name: Apply heading metadata controls
+
+on:
+  push:
+    paths:
+      - '.github/workflows/issue-109-heading-metadata.yml'
+
+permissions:
+  contents: write
+
+jobs:
+  apply:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - name: Apply implementation
+        shell: python
+        run: |
+          from pathlib import Path
+
+          path = Path('chatgpt-conversation-markdown-export.user.js')
+          text = path.read_text(encoding='utf-8')
+          text = text.replace('// @version      0.6.150', '// @version      0.6.151', 1)
+          text = text.replace(
+            'AIConversationCore/29a9fea4903f0214d450e1399a7af8e20823fcd1/dist/',
+            'AIConversationCore/3233cba838bbf2d2cea5a2a6f1900ed6014dcfb0/dist/',
+            1,
+          )
+
+          old = """  /** Local-storage key for the keep-screen-on capture preference. */
+            const SCREEN_ON_STORAGE_KEY = 'tm-conversation-recorder-screen-on-when-capturing';
+          """
+          new = """  /** Local-storage key for the keep-screen-on capture preference. */
+            const SCREEN_ON_STORAGE_KEY = 'tm-conversation-recorder-screen-on-when-capturing';
+            /** Local-storage key for Markdown heading timestamp visibility. */
+            const SHOW_TIMESTAMPS_STORAGE_KEY = 'tm-conversation-recorder-show-timestamps';
+            /** Local-storage key for Markdown JSONL record-number visibility. */
+            const SHOW_RECORD_NUMBERS_STORAGE_KEY = 'tm-conversation-recorder-show-record-numbers';
+          """
+          if old not in text:
+            raise SystemExit('storage-key insertion point not found')
+          text = text.replace(old, new, 1)
+
+          old = """  /** Whether active exports should request a screen wake lock. */
+            let screenOnWhenCapturing = localStorage.getItem(SCREEN_ON_STORAGE_KEY) !== 'false';
+          """
+          new = """  /** Whether active exports should request a screen wake lock. */
+            let screenOnWhenCapturing = localStorage.getItem(SCREEN_ON_STORAGE_KEY) !== 'false';
+            /** Whether Markdown headings should include local-time source timestamps. */
+            let showTimestamps = localStorage.getItem(SHOW_TIMESTAMPS_STORAGE_KEY) === 'true';
+            /** Whether Markdown headings should include one-based JSONL record numbers. */
+            let showRecordNumbers = localStorage.getItem(SHOW_RECORD_NUMBERS_STORAGE_KEY) === 'true';
+          """
+          if old not in text:
+            raise SystemExit('state insertion point not found')
+          text = text.replace(old, new, 1)
+
+          marker = """  /**
+             * Renders one eligible canonical message event while preserving DownloadConversation source-turn identity in the transcript heading.
+          """
+          helper = r'''  /**
+             * Formats one ChatGPT source timestamp like AI-transcript.py's default -d output.
+             *
+             * @param {Object} record - The provider/source record to inspect.
+             * @returns {string|null} Local-time YYYY-MM-DD HH:MM:SS, or null when unavailable.
+             */
+            function transcriptTimestamp(record) {
+              const raw = record?.create_time ?? record?.update_time;
+              if (raw == null) return null;
+              const date = new Date(Number(raw) * 1000);
+              if (!Number.isFinite(date.getTime())) return null;
+              const pad = value => String(value).padStart(2, '0');
+              return `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())} ` +
+                `${pad(date.getHours())}:${pad(date.getMinutes())}:${pad(date.getSeconds())}`;
+            }
+
+            /**
+             * Builds shared-core heading metadata for one ChatGPT source record.
+             *
+             * DownloadConversation's JSONL export prepends one metadata record, so
+             * canonical source index zero corresponds to JSONL record number two.
+             *
+             * @param {Object} record - The provider/source record to inspect.
+             * @param {Event|Object} event - The canonical event for that source record.
+             * @returns {Object} Consumer heading metadata understood by AIConversationCore.
+             */
+            function canonicalHeadingMetadata(record, event) {
+              const metadata = {};
+              if (showTimestamps) {
+                const timestamp = transcriptTimestamp(record);
+                if (timestamp) metadata.timestamp = timestamp;
+              }
+              if (showRecordNumbers && Number.isInteger(event?.source_index)) {
+                metadata.record_number = event.source_index + 2;
+              }
+              return metadata;
+            }
+
+'''
+          if marker not in text:
+            raise SystemExit('canonical heading helper insertion point not found')
+          text = text.replace(marker, helper + marker, 1)
+
+          old = r'''    // Provider/source ID projected onto renderer-generated headings for this record.
+                const sourceId = typeof record?.id === 'string' ? record.id : '';
+                // Canonical event clone carrying only DownloadConversation heading decoration.
+                const projectedEvent = sourceId
+                  ? {
+                      ...event,
+                      projection: {
+                        ...(event?.projection ?? {}),
+                        heading_suffix: ` <!-- turn_id=${sourceId} -->`
+                      }
+                    }
+                  : event;
+          '''
+          new = r'''    // Provider/source ID projected onto renderer-generated headings for this record.
+                const sourceId = typeof record?.id === 'string' ? record.id : '';
+                const headingMetadata = canonicalHeadingMetadata(record, event);
+                const hasHeadingMetadata = Object.keys(headingMetadata).length > 0;
+                // Canonical event clone carrying only DownloadConversation heading decoration.
+                const projectedEvent = (sourceId || hasHeadingMetadata)
+                  ? {
+                      ...event,
+                      projection: {
+                        ...(event?.projection ?? {}),
+                        ...(hasHeadingMetadata ? {
+                          heading_metadata: {
+                            ...(event?.projection?.heading_metadata ?? {}),
+                            ...headingMetadata
+                          }
+                        } : {}),
+                        ...(sourceId ? { heading_suffix: ` <!-- turn_id=${sourceId} -->` } : {})
+                      }
+                    }
+                  : event;
+          '''
+          if old not in text:
+            raise SystemExit('canonicalRecordBlock projection block not found')
+          text = text.replace(old, new, 1)
+
+          old = r'''      const sourceId = commentarySourceId || (index === 0 ? headingSourceId : '');
+                const responseHeadingSuffix = index === 0 && headingSourceId
+                  ? ` <!-- turn_id=${headingSourceId} -->`
+                  : '';
+                if (!sourceId && !responseHeadingSuffix) return event;
+                return {
+                  ...event,
+                  projection: {
+                    ...(event?.projection ?? {}),
+                    ...(sourceId ? { heading_suffix: ` <!-- turn_id=${sourceId} -->` } : {}),
+                    ...(responseHeadingSuffix ? { response_heading_suffix: responseHeadingSuffix } : {})
+                  }
+                };
+          '''
+          new = r'''      const sourceId = commentarySourceId || (index === 0 ? headingSourceId : '');
+                const responseHeadingSuffix = index === 0 && headingSourceId
+                  ? ` <!-- turn_id=${headingSourceId} -->`
+                  : '';
+                const headingMetadata = canonicalHeadingMetadata(records[index], event);
+                const hasHeadingMetadata = Object.keys(headingMetadata).length > 0;
+                if (!sourceId && !responseHeadingSuffix && !hasHeadingMetadata) return event;
+                return {
+                  ...event,
+                  projection: {
+                    ...(event?.projection ?? {}),
+                    ...(hasHeadingMetadata ? {
+                      heading_metadata: {
+                        ...(event?.projection?.heading_metadata ?? {}),
+                        ...headingMetadata
+                      }
+                    } : {}),
+                    ...(sourceId ? { heading_suffix: ` <!-- turn_id=${sourceId} -->` } : {}),
+                    ...(responseHeadingSuffix ? { response_heading_suffix: responseHeadingSuffix } : {})
+                  }
+                };
+          '''
+          if old not in text:
+            raise SystemExit('assistant segment projection block not found')
+          text = text.replace(old, new, 1)
+
+          old = r'''  function transcriptHeading(record) {
+                const id = typeof record?.id === 'string' ? record.id : '';
+                if (record?.author?.role === 'user') {
+                  return `## User${id ? ` <!-- turn_id=${id} -->` : ''}`;
+                }
+                if (record?.author?.role === 'assistant' && record?.channel === 'commentary') {
+                  return `## ChatGPT Commentary${id ? ` <!-- turn_id=${id} -->` : ''}`;
+                }
+                if (record?.author?.role === 'assistant') {
+                  return `## ChatGPT${id ? ` <!-- turn_id=${id} -->` : ''}`;
+                }
+                return '';
+              }
+          '''
+          new = r'''  function transcriptHeading(record, recordNumber = null) {
+                const id = typeof record?.id === 'string' ? record.id : '';
+                const fields = [];
+                if (showTimestamps) {
+                  const timestamp = transcriptTimestamp(record);
+                  if (timestamp) fields.push(`[${timestamp}]:`);
+                }
+                if (showRecordNumbers && Number.isInteger(recordNumber)) fields.push(`${recordNumber}:`);
+                const metadata = fields.length ? ` ${fields.join(' ')}` : '';
+                const turnId = id ? ` <!-- turn_id=${id} -->` : '';
+                if (record?.author?.role === 'user') return `## User${metadata}${turnId}`;
+                if (record?.author?.role === 'assistant' && record?.channel === 'commentary') {
+                  return `## ChatGPT Commentary${metadata}${turnId}`;
+                }
+                if (record?.author?.role === 'assistant') return `## ChatGPT${metadata}${turnId}`;
+                return '';
+              }
+          '''
+          if old not in text:
+            raise SystemExit('transcriptHeading block not found')
+          text = text.replace(old, new, 1)
+
+          old = """    const records = spine.records.map(item => item.message).filter(Boolean);
+                const output = [];
+          """
+          new = """    const records = spine.records.map(item => item.message).filter(Boolean);
+                const recordNumberById = new Map();
+                spine.records.forEach((item, index) => {
+                  if (typeof item?.message?.id === 'string') recordNumberById.set(item.message.id, index + 2);
+                });
+                const output = [];
+          """
+          if old not in text:
+            raise SystemExit('record-number map insertion point not found')
+          text = text.replace(old, new, 1)
+          text = text.replace(
+            'const parts = [transcriptHeading(headingRecord)];',
+            'const parts = [transcriptHeading(headingRecord, recordNumberById.get(headingRecord?.id) ?? null)];',
+            1,
+          )
+          text = text.replace(
+            'output.push(`${transcriptHeading(record)}\\n\\n${quoteMarkdown(userText)}`);',
+            'output.push(`${transcriptHeading(record, recordNumberById.get(record.id) ?? null)}\\n\\n${quoteMarkdown(userText)}`);',
+            1,
+          )
+
+          old = """    const md = panel.querySelector('[data-role=\"format-md\"]');
+                const test = panel.querySelector('[data-role=\"test\"]');
+          """
+          new = """    const md = panel.querySelector('[data-role=\"format-md\"]');
+                const timestamps = panel.querySelector('[data-role=\"show-timestamps\"]');
+                const recordNumbers = panel.querySelector('[data-role=\"show-record-numbers\"]');
+                const test = panel.querySelector('[data-role=\"test\"]');
+          """
+          if old not in text:
+            raise SystemExit('updateUi control lookup insertion point not found')
+          text = text.replace(old, new, 1)
+          old = """    if (jsonl) jsonl.disabled = exportInProgress || testInProgress || jumpInProgress;
+                if (md) md.disabled = exportInProgress || testInProgress || jumpInProgress;
+          """
+          new = """    if (jsonl) jsonl.disabled = exportInProgress || testInProgress || jumpInProgress;
+                if (md) md.disabled = exportInProgress || testInProgress || jumpInProgress;
+                const metadataDisabled = exportInProgress || testInProgress || jumpInProgress || !md?.checked;
+                if (timestamps) timestamps.disabled = metadataDisabled;
+                if (recordNumbers) recordNumbers.disabled = metadataDisabled;
+          """
+          if old not in text:
+            raise SystemExit('updateUi disabled block not found')
+          text = text.replace(old, new, 1)
+
+          old = """      <div class=\"tm-row tm-extract-formats\"><button data-role=\"extract\" type=\"button\">Extract</button><label><input data-role=\"format-jsonl\" type=\"checkbox\"> JSONL</label><label><input data-role=\"format-md\" type=\"checkbox\" checked> MD</label></div>
+          """
+          new = """      <div class=\"tm-row tm-extract-formats\"><button data-role=\"extract\" type=\"button\">Extract</button><label><input data-role=\"format-jsonl\" type=\"checkbox\"> JSONL</label><label><input data-role=\"format-md\" type=\"checkbox\" checked> MD</label></div>
+                <div class=\"tm-row tm-md-metadata\"><span class=\"tm-label\">MD headings</span><label><input data-role=\"show-timestamps\" type=\"checkbox\"> Timestamp</label><label><input data-role=\"show-record-numbers\" type=\"checkbox\"> Record #</label></div>
+          """
+          if old not in text:
+            raise SystemExit('panel metadata row insertion point not found')
+          text = text.replace(old, new, 1)
+
+          marker = """    /**
+                 * Handles run selected exports.
+          """
+          listeners = """    const timestamps = panel.querySelector('[data-role=\"show-timestamps\"]');
+                const recordNumbers = panel.querySelector('[data-role=\"show-record-numbers\"]');
+                if (timestamps) {
+                  timestamps.checked = showTimestamps;
+                  timestamps.addEventListener('change', () => {
+                    showTimestamps = timestamps.checked;
+                    localStorage.setItem(SHOW_TIMESTAMPS_STORAGE_KEY, String(showTimestamps));
+                    updateUi();
+                  });
+                }
+                if (recordNumbers) {
+                  recordNumbers.checked = showRecordNumbers;
+                  recordNumbers.addEventListener('change', () => {
+                    showRecordNumbers = recordNumbers.checked;
+                    localStorage.setItem(SHOW_RECORD_NUMBERS_STORAGE_KEY, String(showRecordNumbers));
+                    updateUi();
+                  });
+                }
+"""
+          if marker not in text:
+            raise SystemExit('panel listener insertion point not found')
+          text = text.replace(marker, listeners + marker, 1)
+
+          path.write_text(text, encoding='utf-8')
+
+          core_test = Path('tests/core-integration.test.mjs')
+          t = core_test.read_text(encoding='utf-8')
+          t = t.replace(
+            "assert.equal(requireMatch[2], '29a9fea4903f0214d450e1399a7af8e20823fcd1');",
+            "assert.equal(requireMatch[2], '3233cba838bbf2d2cea5a2a6f1900ed6014dcfb0');",
+            1,
+          )
+          t = t.replace(
+            "Object.assign(context, {\n",
+            "Object.assign(context, {\n  showTimestamps: false,\n  showRecordNumbers: false,\n",
+            1,
+          )
+          insert_after = """test('canonical plain production slice preserves source heading identity and JSONL provenance', () => {
+          """
+          feature_test = r'''test('canonical heading metadata uses shared core and DownloadConversation JSONL numbering', () => {
+            const record = textRecord('metadata-user', 'user', 'Hello', { create_time: 1767225600 });
+            const event = phase5.canonicalEventsBySourceRecord([record]).get(record.id);
+            context.showRecordNumbers = true;
+            const numbered = phase5.canonicalPlainRecordBlock(record, event);
+            assert.match(numbered, /^## User 2: <!-- turn_id=metadata-user -->/);
+            context.showTimestamps = true;
+            const dated = phase5.canonicalPlainRecordBlock(record, event);
+            assert.match(dated, /^## User \[\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}\]: 2: <!-- turn_id=metadata-user -->/);
+            context.showTimestamps = false;
+            context.showRecordNumbers = false;
+          });
+
+'''
+          if insert_after not in t:
+            raise SystemExit('core test insertion point not found')
+          t = t.replace(insert_after, feature_test + insert_after, 1)
+          core_test.write_text(t, encoding='utf-8')
+
+          ui_test = Path('tests/recorder-panel-ui.test.mjs')
+          u = ui_test.read_text(encoding='utf-8')
+          needle = """  assert.match(userscript, /data-role=\"format-md\" type=\"checkbox\" checked> MD/);
+          """
+          replacement = needle + """  assert.match(userscript, /data-role=\"show-timestamps\" type=\"checkbox\"> Timestamp/);
+            assert.match(userscript, /data-role=\"show-record-numbers\" type=\"checkbox\"> Record #/);
+            assert.match(userscript, /SHOW_TIMESTAMPS_STORAGE_KEY/);
+            assert.match(userscript, /SHOW_RECORD_NUMBERS_STORAGE_KEY/);
+          """
+          if needle not in u:
+            raise SystemExit('UI test insertion point not found')
+          ui_test.write_text(u.replace(needle, replacement, 1), encoding='utf-8')
+
+          ci = Path('.github/workflows/ci.yml')
+          c = ci.read_text(encoding='utf-8')
+          c = c.replace(
+            'ref: 29a9fea4903f0214d450e1399a7af8e20823fcd1',
+            'ref: 3233cba838bbf2d2cea5a2a6f1900ed6014dcfb0',
+            1,
+          )
+          ci.write_text(c, encoding='utf-8')
+
+          design = Path('DESIGN.md')
+          d = design.read_text(encoding='utf-8')
+          section = '''\n## Optional Markdown heading metadata\n\nThe recorder exposes independent **Timestamp** and **Record #** controls for\nMarkdown exports.  Both are presentation-only.  Timestamp formatting matches\n`AI-transcript.py -d` (`YYYY-MM-DD HH:MM:SS` in local time), while record\nnumbers are the one-based JSONL line numbers from the paired export.  Because\nDownloadConversation prepends a conversation-metadata record, the first\nConversation API message is JSONL record 2.  Existing source `turn_id` comments\nremain unchanged.  Canonical records pass this metadata through\nAIConversationCore; the legacy fallback path preserves the same visible format.\n'''
+          if '## Optional Markdown heading metadata' not in d:
+            design.write_text(d.rstrip() + '\n' + section, encoding='utf-8')
+      - name: Syntax and focused regressions
+        run: |
+          node --check chatgpt-conversation-markdown-export.user.js
+          node --test tests/core-integration.test.mjs tests/recorder-panel-ui.test.mjs
+      - name: Full repository gate
+        run: |
+          node scripts/check-jsdoc.mjs
+          node --test tests/core-integration.test.mjs tests/phase5-rich-core-integration.test.mjs tests/fallback-adaptive-fence.test.mjs tests/tool-language-diagnostics.test.mjs
+          node --test tests/test-list-ui.test.mjs
+          node --test tests/recorder-panel-ui.test.mjs
+          git diff --check
+      - name: Commit production changes
+        run: |
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add chatgpt-conversation-markdown-export.user.js tests/core-integration.test.mjs tests/recorder-panel-ui.test.mjs DESIGN.md .github/workflows/ci.yml
+          git commit -m 'export: add Markdown heading metadata controls'
+          git push
