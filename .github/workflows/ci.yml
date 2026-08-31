@@ -65,7 +65,7 @@ jobs:
         run: node tests/phase7-cross-consumer-adversarial.mjs
 
   apply-issue-109:
-    if: github.event_name == 'push' && github.event.head_commit.message == 'ci: run issue 109 implementation'
+    if: github.event_name == 'push' && github.event.head_commit.message == 'ci-run-109'
     runs-on: ubuntu-latest
     permissions:
       contents: write
