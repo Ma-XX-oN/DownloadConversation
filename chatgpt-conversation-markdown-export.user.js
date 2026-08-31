@@ -1,11 +1,11 @@
 // ==UserScript==
 // @name         ChatGPT Conversation Markdown Recorder
 // @namespace    https://chatgpt.com/
-// @version      0.6.148
+// @version      0.6.149
 // @description  Exports the current ChatGPT conversation directly from the Conversation API as Markdown or JSONL.
 // @match        https://chatgpt.com/*
 // @match        https://chat.openai.com/*
-// @require      https://raw.githubusercontent.com/Ma-XX-oN/AIConversationCore/d6d5f90aabab4d106265113bad09fc5984f4808e/dist/aiconversationcore.chatgpt.browser.js
+// @require      https://raw.githubusercontent.com/Ma-XX-oN/AIConversationCore/2b746b121ed0e44cfe86ba8377969b8d8bf197c7/dist/aiconversationcore.chatgpt.browser.js
 // @run-at       document-start
 // ==/UserScript==
 
@@ -2375,14 +2375,19 @@
   function canonicalRecordBlock(record, event) {
     assert(canonicalMessageRecordEligible(record, event),
       `AIConversationCore message record ${record?.id ?? 'unknown'} is not eligible for canonical rendering.`);
-    const role = record?.author?.role;
-    const plainHeading = role === 'user'
-      ? '## User'
-      : record?.channel === 'commentary' ? '## ChatGPT Commentary' : '## ChatGPT';
-    const rendered = canonicalCore().renderCanonicalMarkdown([event]).trimEnd();
-    assert(rendered === plainHeading || rendered.startsWith(`${plainHeading}\n`),
-      `AIConversationCore rendered an unexpected heading for source record ${record?.id ?? 'unknown'}.`);
-    return `${transcriptHeading(record)}${rendered.slice(plainHeading.length)}`;
+    // Provider/source ID projected onto renderer-generated headings for this record.
+    const sourceId = typeof record?.id === 'string' ? record.id : '';
+    // Canonical event clone carrying only DownloadConversation heading decoration.
+    const projectedEvent = sourceId
+      ? {
+          ...event,
+          projection: {
+            ...(event?.projection ?? {}),
+            heading_suffix: ` <!-- turn_id=${sourceId} -->`
+          }
+        }
+      : event;
+    return canonicalCore().renderCanonicalMarkdown([projectedEvent]).trimEnd();
   }
 
   /**
@@ -2456,7 +2461,6 @@
   function canonicalAssistantSegmentBlock(records, events) {
     assert(canonicalAssistantSegmentEligible(records, events),
       'AIConversationCore Assistant segment contains an unsupported record.');
-    const rendered = canonicalCore().renderCanonicalMarkdown(events).trimEnd();
     /**
      * Handles message record.
      */
@@ -2468,10 +2472,24 @@
      * Handles heading record.
      */
     const headingRecord = messageRecord ?? records.find(record => record?.author?.role === 'assistant') ?? records[0];
-    const plainHeading = messageRecord?.channel === 'commentary' ? '## ChatGPT Commentary' : '## ChatGPT';
-    assert(rendered === plainHeading || rendered.startsWith(`${plainHeading}\n`),
-      'AIConversationCore rendered an unexpected Assistant segment heading.');
-    return `${transcriptHeading(headingRecord)}${rendered.slice(plainHeading.length)}`;
+    // Source ID retained on the one enclosing ChatGPT response heading.
+    const headingSourceId = typeof headingRecord?.id === 'string' ? headingRecord.id : '';
+    // Canonical event sequence decorated only with source heading identities.
+    const projectedEvents = events.map((event, index) => {
+      const commentarySourceId = event?.kind === 'commentary' && typeof records[index]?.id === 'string'
+        ? records[index].id
+        : '';
+      const sourceId = commentarySourceId || (index === 0 ? headingSourceId : '');
+      if (!sourceId) return event;
+      return {
+        ...event,
+        projection: {
+          ...(event?.projection ?? {}),
+          heading_suffix: ` <!-- turn_id=${sourceId} -->`
+        }
+      };
+    });
+    return canonicalCore().renderCanonicalMarkdown(projectedEvents).trimEnd();
   }
 
   // Compatibility helpers retained for the already-established #93/#97 regressions.

@@ -6,7 +6,7 @@ import vm from 'node:vm';
 const userscript = await readFile(new URL('../chatgpt-conversation-markdown-export.user.js', import.meta.url), 'utf8');
 const requireMatch = userscript.match(/^\/\/ @require\s+(https:\/\/raw\.githubusercontent\.com\/Ma-XX-oN\/AIConversationCore\/([0-9a-f]{40})\/dist\/aiconversationcore\.chatgpt\.browser\.js)$/m);
 assert.ok(requireMatch, 'Production userscript must pin the AIConversationCore browser bundle to an exact commit.');
-assert.equal(requireMatch[2], 'd6d5f90aabab4d106265113bad09fc5984f4808e');
+assert.equal(requireMatch[2], '2b746b121ed0e44cfe86ba8377969b8d8bf197c7');
 
 const response = await fetch(requireMatch[1]);
 assert.equal(response.status, 200, `Could not load pinned AIConversationCore bundle: HTTP ${response.status}`);
@@ -245,7 +245,7 @@ test('Thoughts, tool call/result, and final Assistant message render as one cano
   assert.equal(phase5.canonicalAssistantSegmentEligible(records, events), true);
   const rendered = phase5.canonicalAssistantSegmentBlock(records, events);
   assert.match(rendered, /^## ChatGPT <!-- turn_id=assistant-final-rich -->/);
-  assert.match(rendered, /<summary>Thoughts<\/summary>/);
+  assert.match(rendered, /<summary>Having a thought<\/summary>/);
   assert.match(rendered, /Inspecting\./);
   assert.match(rendered, /container\.exec code/);
   assert.match(rendered, /container\.exec output/);
@@ -294,9 +294,10 @@ test('commentary plus tool activity uses canonical adaptive containment', () => 
   assert.equal(phase5.canonicalMessageRecordEligible(commentary, events[2]), true, 'commentary eligibility');
   assert.equal(phase5.canonicalAssistantSegmentEligible(records, events), true, 'whole segment eligibility');
   const rendered = phase5.canonicalAssistantSegmentBlock(records, events);
-  assert.match(rendered, /^## ChatGPT Commentary <!-- turn_id=commentary-message -->/);
-  assert.equal((rendered.match(/^## ChatGPT$/gm) ?? []).length, 0,
-    'Commentary + tool activity must not manufacture a second ChatGPT section.');
+  assert.match(rendered, /^## ChatGPT <!-- turn_id=commentary-message -->/);
+  assert.match(rendered, /^### ChatGPT Commentary <!-- turn_id=commentary-message -->$/m);
+  assert.equal((rendered.match(/^## ChatGPT(?: |$)/gm) ?? []).length, 1,
+    'Commentary + tool activity must remain inside exactly one ChatGPT response section.');
   assert.match(rendered, /\n`````\n\[L1\] literal tool payload/);
   assert.match(rendered, /\n`````\n\n<\/details>/);
   assert.match(rendered, /reference\?\.matched_text === 'memcite'/);
@@ -414,7 +415,8 @@ test('tool-role text/code results keep complete Assistant segments canonical', (
       `${contentType} complete Assistant/tool segment must stay canonical`);
 
     const rendered = phase5.canonicalAssistantSegmentBlock(records, events);
-    assert.match(rendered, new RegExp(`^## ChatGPT Commentary <!-- turn_id=commentary-${contentType} -->`));
+    assert.match(rendered, new RegExp(`^## ChatGPT <!-- turn_id=commentary-${contentType} -->`));
+    assert.match(rendered, new RegExp(`^### ChatGPT Commentary <!-- turn_id=commentary-${contentType} -->$`, 'm'));
     assert.match(rendered, /<summary>example_tool output<\/summary>/);
     assert.ok(rendered.includes(expectedOutput), `${contentType} output must be rendered`);
     assert.match(rendered, /> After tool\./);

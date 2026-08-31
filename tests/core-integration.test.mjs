@@ -6,7 +6,7 @@ import vm from 'node:vm';
 const userscript = await readFile(new URL('../chatgpt-conversation-markdown-export.user.js', import.meta.url), 'utf8');
 const requireMatch = userscript.match(/^\/\/ @require\s+(https:\/\/raw\.githubusercontent\.com\/Ma-XX-oN\/AIConversationCore\/([0-9a-f]{40})\/dist\/aiconversationcore\.chatgpt\.browser\.js)$/m);
 assert.ok(requireMatch, 'Production userscript must pin the AIConversationCore browser bundle to an exact commit.');
-assert.equal(requireMatch[2], 'd6d5f90aabab4d106265113bad09fc5984f4808e');
+assert.equal(requireMatch[2], '2b746b121ed0e44cfe86ba8377969b8d8bf197c7');
 
 const response = await fetch(requireMatch[1]);
 assert.equal(response.status, 200, `Could not load pinned AIConversationCore bundle: HTTP ${response.status}`);
@@ -136,12 +136,17 @@ test('migrated canonical plain renderer is byte-identical to production legacy q
   ].join('\n');
   for (const record of [
     textRecord('markdown-user', 'user', markdown),
-    textRecord('markdown-assistant', 'assistant', markdown),
-    textRecord('markdown-commentary', 'assistant', markdown, { channel: 'commentary' })
+    textRecord('markdown-assistant', 'assistant', markdown)
   ]) {
     const event = phase5.canonicalEventsBySourceRecord([record]).get(record.id);
     assert.equal(phase5.canonicalPlainRecordBlock(record, event), productionPlainBlock(record));
   }
+  const commentary = textRecord('markdown-commentary', 'assistant', markdown, { channel: 'commentary' });
+  const commentaryEvent = phase5.canonicalEventsBySourceRecord([commentary]).get(commentary.id);
+  const commentaryRendered = phase5.canonicalPlainRecordBlock(commentary, commentaryEvent);
+  assert.match(commentaryRendered, /^## ChatGPT <!-- turn_id=markdown-commentary -->/);
+  assert.match(commentaryRendered, /^### ChatGPT Commentary <!-- turn_id=markdown-commentary -->$/m);
+  assert.ok(commentaryRendered.endsWith(context.__productionQuoteMarkdown(markdown)));
 });
 
 test('literal Markdown footnotes round-trip through the production canonical slice', () => {
@@ -194,7 +199,7 @@ test('plain Assistant thought segments use the canonical renderer', () => {
   assert.equal(phase5.canonicalPlainAssistantSegmentEligible(records), true);
   const rendered = phase5.canonicalPlainAssistantSegmentBlock(records, events);
   assert.match(rendered, /^## ChatGPT <!-- turn_id=assistant-final -->/);
-  assert.match(rendered, /<summary>Thoughts<\/summary>/);
+  assert.match(rendered, /<summary>Having a thought<\/summary>/);
   assert.match(rendered, /Inspecting the request\./);
   assert.match(rendered, /> Done\./);
 });
