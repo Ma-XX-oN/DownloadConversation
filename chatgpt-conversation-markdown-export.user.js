@@ -1,11 +1,11 @@
 // ==UserScript==
 // @name         ChatGPT Conversation Markdown Recorder
 // @namespace    https://chatgpt.com/
-// @version      0.6.149
+// @version      0.6.150
 // @description  Exports the current ChatGPT conversation directly from the Conversation API as Markdown or JSONL.
 // @match        https://chatgpt.com/*
 // @match        https://chat.openai.com/*
-// @require      https://raw.githubusercontent.com/Ma-XX-oN/AIConversationCore/2b746b121ed0e44cfe86ba8377969b8d8bf197c7/dist/aiconversationcore.chatgpt.browser.js
+// @require      https://raw.githubusercontent.com/Ma-XX-oN/AIConversationCore/29a9fea4903f0214d450e1399a7af8e20823fcd1/dist/aiconversationcore.chatgpt.browser.js
 // @run-at       document-start
 // ==/UserScript==
 
@@ -2417,30 +2417,24 @@
     if (!Array.isArray(records) || !records.length || !Array.isArray(events) || events.length !== records.length) {
       return false;
     }
-    // Tracks the single final Assistant message position allowed in a canonical activity segment.
-    let messageIndex = -1;
-    let messageEventKind = null;
+    // Tracks the one ordinary final Assistant message allowed in a canonical response segment.
+    let finalMessageIndex = -1;
     let hasAssistantSource = false;
-    let hasCommentaryEvent = false;
     for (let index = 0; index < records.length; index += 1) {
       const record = records[index];
       const event = events[index];
       if (record?.author?.role === 'assistant') hasAssistantSource = true;
-      if (event?.kind === 'commentary') hasCommentaryEvent = true;
       if (canonicalMessageRecordEligible(record, event)) {
-        if (record?.author?.role !== 'assistant' || messageIndex >= 0) return false;
-        messageIndex = index;
-        messageEventKind = event?.kind ?? null;
+        if (record?.author?.role !== 'assistant') return false;
+        if (event?.kind === 'commentary') continue;
+        if (event?.kind !== 'message' || finalMessageIndex >= 0) return false;
+        finalMessageIndex = index;
         continue;
       }
       if (!canonicalThoughtRecordEligible(record, event)) return false;
     }
     if (!hasAssistantSource) return false;
-    if (messageIndex >= 0 && messageIndex !== records.length - 1) return false;
-    // AIConversationCore projects commentary and a final Assistant message as
-    // separate transcript sections. Reject that semantic combination here
-    // rather than scanning rendered payload text for heading-looking lines.
-    if (messageEventKind === 'message' && hasCommentaryEvent) return false;
+    if (finalMessageIndex >= 0 && finalMessageIndex !== records.length - 1) return false;
     const rendered = canonicalCore().renderCanonicalMarkdown(events);
     // Tool payloads are opaque literal data and may legitimately contain ChatGPT
     // inline-token character sequences. Message/commentary records were already
@@ -2480,12 +2474,16 @@
         ? records[index].id
         : '';
       const sourceId = commentarySourceId || (index === 0 ? headingSourceId : '');
-      if (!sourceId) return event;
+      const responseHeadingSuffix = index === 0 && headingSourceId
+        ? ` <!-- turn_id=${headingSourceId} -->`
+        : '';
+      if (!sourceId && !responseHeadingSuffix) return event;
       return {
         ...event,
         projection: {
           ...(event?.projection ?? {}),
-          heading_suffix: ` <!-- turn_id=${sourceId} -->`
+          ...(sourceId ? { heading_suffix: ` <!-- turn_id=${sourceId} -->` } : {}),
+          ...(responseHeadingSuffix ? { response_heading_suffix: responseHeadingSuffix } : {})
         }
       };
     });
@@ -2655,6 +2653,10 @@
         if (record?.author?.role === 'user') {
           flushPendingAssistant();
           output.push(canonicalRecordBlock(record, canonicalEvent));
+          continue;
+        }
+        if (record?.author?.role === 'assistant' && canonicalEvent?.kind === 'commentary') {
+          pendingThoughts.push(record);
           continue;
         }
         if (record?.author?.role === 'assistant' && pendingThoughts.length > 0) {
