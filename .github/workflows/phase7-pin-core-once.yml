@@ -1,0 +1,65 @@
+name: Phase 7 pin completed core once
+
+on:
+  push:
+    paths:
+      - .github/workflows/phase7-pin-core-once.yml
+
+permissions:
+  contents: write
+
+jobs:
+  pin:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - name: Update completed core pin and permanent rendering regression list
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+
+          old = 'd6d5f90aabab4d106265113bad09fc5984f4808e'
+          new = '2fd5473ab6d38ade17d2202319b0745efd4564dd'
+
+          userscript = Path('chatgpt-conversation-markdown-export.user.js')
+          text = userscript.read_text(encoding='utf-8')
+          if old not in text:
+            raise SystemExit('old userscript core pin not found')
+          userscript.write_text(text.replace(old, new, 1), encoding='utf-8')
+
+          test = Path('tests/phase5-rich-core-integration.test.mjs')
+          text = test.read_text(encoding='utf-8')
+          if old not in text:
+            raise SystemExit('old phase5 test core pin not found')
+          test.write_text(text.replace(old, new, 1), encoding='utf-8')
+
+          ci = Path('.github/workflows/ci.yml')
+          text = ci.read_text(encoding='utf-8')
+          old_cmd = 'node --test tests/core-integration.test.mjs tests/phase5-rich-core-integration.test.mjs tests/fallback-adaptive-fence.test.mjs'
+          new_cmd = old_cmd + ' tests/tool-language-diagnostics.test.mjs'
+          if old_cmd not in text:
+            raise SystemExit('CI rendering regression command not found')
+          ci.write_text(text.replace(old_cmd, new_cmd, 1), encoding='utf-8')
+          PY
+      - name: Production JSDoc coverage
+        run: node scripts/check-jsdoc.mjs
+      - name: JavaScript syntax
+        run: node --check chatgpt-conversation-markdown-export.user.js
+      - name: All rendering regressions against completed core
+        run: node --test tests/core-integration.test.mjs tests/phase5-rich-core-integration.test.mjs tests/fallback-adaptive-fence.test.mjs tests/tool-language-diagnostics.test.mjs
+      - name: Remaining permanent regressions
+        run: node --test tests/test-list-ui.test.mjs tests/recorder-panel-ui.test.mjs
+      - name: Diff hygiene
+        run: git diff --check
+      - name: Commit verified Phase 7 pin slice
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add chatgpt-conversation-markdown-export.user.js tests/phase5-rich-core-integration.test.mjs .github/workflows/ci.yml
+          git commit -m "phase7: pin completed core and run rendering diagnostics"
+          git push
