@@ -125,3 +125,14 @@ The current roadmap is:
 11. Retire obsolete primary dependencies while preserving required fallbacks.
 
 Until those later phases are complete, the DOM recorder remains part of the production architecture.
+
+## Optional Markdown heading metadata
+
+The recorder exposes independent **Timestamp** and **Record #** controls for
+Markdown exports.  Both are presentation-only.  Timestamp formatting matches
+`AI-transcript.py -d` (`YYYY-MM-DD HH:MM:SS` in local time), while record
+numbers are the one-based JSONL line numbers from the paired export.  Because
+DownloadConversation prepends a conversation-metadata record, the first
+Conversation API message is JSONL record 2.  Existing source `turn_id` comments
+remain unchanged.  Canonical records pass this metadata through
+AIConversationCore; the legacy fallback path preserves the same visible format.

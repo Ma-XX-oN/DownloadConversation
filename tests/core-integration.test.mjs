@@ -6,7 +6,7 @@ import vm from 'node:vm';
 const userscript = await readFile(new URL('../chatgpt-conversation-markdown-export.user.js', import.meta.url), 'utf8');
 const requireMatch = userscript.match(/^\/\/ @require\s+(https:\/\/raw\.githubusercontent\.com\/Ma-XX-oN\/AIConversationCore\/([0-9a-f]{40})\/dist\/aiconversationcore\.chatgpt\.browser\.js)$/m);
 assert.ok(requireMatch, 'Production userscript must pin the AIConversationCore browser bundle to an exact commit.');
-assert.equal(requireMatch[2], '29a9fea4903f0214d450e1399a7af8e20823fcd1');
+assert.equal(requireMatch[2], '3233cba838bbf2d2cea5a2a6f1900ed6014dcfb0');
 
 const response = await fetch(requireMatch[1]);
 assert.equal(response.status, 200, `Could not load pinned AIConversationCore bundle: HTTP ${response.status}`);
@@ -25,6 +25,8 @@ assert.ok(start >= 0 && finish > start, 'Production integration helper block is 
 const helperSource = userscript.slice(start + begin.length, finish);
 
 Object.assign(context, {
+  showTimestamps: false,
+  showRecordNumbers: false,
   assert(condition, message) {
     if (!condition) throw new Error(message);
   },
@@ -82,6 +84,19 @@ function productionPlainBlock(record) {
   const text = record.content.parts.join('');
   return `${context.transcriptHeading(record)}\n\n${context.__productionQuoteMarkdown(text)}`;
 }
+
+test('canonical heading metadata uses the shared core and paired JSONL numbering', () => {
+  const record = textRecord('metadata-user', 'user', 'Hello', { create_time: 1767225600 });
+  const event = phase5.canonicalEventsBySourceRecord([record]).get(record.id);
+  context.showRecordNumbers = true;
+  const numbered = phase5.canonicalPlainRecordBlock(record, event, 2);
+  assert.match(numbered, /^## User 2: <!-- turn_id=metadata-user -->/);
+  context.showTimestamps = true;
+  const dated = phase5.canonicalPlainRecordBlock(record, event, 2);
+  assert.match(dated, /^## User \[\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}\]: 2: <!-- turn_id=metadata-user -->/);
+  context.showTimestamps = false;
+  context.showRecordNumbers = false;
+});
 
 test('canonical plain production slice preserves source heading identity and JSONL provenance', () => {
   const user = textRecord('user-source-id', 'user', 'Hello', {

@@ -6,7 +6,7 @@ import vm from 'node:vm';
 const userscript = await readFile(new URL('../chatgpt-conversation-markdown-export.user.js', import.meta.url), 'utf8');
 const requireMatch = userscript.match(/^\/\/ @require\s+(https:\/\/raw\.githubusercontent\.com\/Ma-XX-oN\/AIConversationCore\/([0-9a-f]{40})\/dist\/aiconversationcore\.chatgpt\.browser\.js)$/m);
 assert.ok(requireMatch, 'Production userscript must pin the AIConversationCore browser bundle to an exact commit.');
-assert.equal(requireMatch[2], '29a9fea4903f0214d450e1399a7af8e20823fcd1');
+assert.equal(requireMatch[2], '3233cba838bbf2d2cea5a2a6f1900ed6014dcfb0');
 
 const response = await fetch(requireMatch[1]);
 assert.equal(response.status, 200, `Could not load pinned AIConversationCore bundle: HTTP ${response.status}`);
@@ -23,6 +23,8 @@ assert.ok(start >= 0 && finish > start, 'Production Phase 5 helper block is miss
 const helperSource = userscript.slice(start + begin.length, finish);
 
 Object.assign(context, {
+  showTimestamps: false,
+  showRecordNumbers: false,
   assert(condition, message) {
     if (!condition) throw new Error(message);
   },
@@ -79,7 +81,9 @@ test('production render loop routes rich messages and thought/tool segments thro
   assert.match(production, /canonicalMessageRecordEligible\(record, canonicalEvent\)/);
   assert.match(production, /canonicalThoughtRecordEligible\(record, canonicalEvent\)/);
   assert.match(production, /canonicalAssistantSegmentEligible\(segmentRecords, segmentEvents\)/);
-  assert.match(production, /canonicalRecordBlock\(record, canonicalEvent\)/);
+  assert.match(production, /canonicalAssistantSegmentBlock\(segmentRecords, segmentEvents, recordNumberById\)/);
+  assert.match(production, /canonicalAssistantSegmentBlock\(pendingThoughts, events, recordNumberById\)/);
+  assert.match(production, /canonicalRecordBlock\(record, canonicalEvent, recordNumberById\.get\(record\.id\) \?\? null\)/);
 });
 
 test('rich web citation renders through AIConversationCore while preserving source turn_id', () => {

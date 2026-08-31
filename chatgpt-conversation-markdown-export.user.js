@@ -1,11 +1,11 @@
 // ==UserScript==
 // @name         ChatGPT Conversation Markdown Recorder
 // @namespace    https://chatgpt.com/
-// @version      0.6.150
+// @version      0.6.151
 // @description  Exports the current ChatGPT conversation directly from the Conversation API as Markdown or JSONL.
 // @match        https://chatgpt.com/*
 // @match        https://chat.openai.com/*
-// @require      https://raw.githubusercontent.com/Ma-XX-oN/AIConversationCore/29a9fea4903f0214d450e1399a7af8e20823fcd1/dist/aiconversationcore.chatgpt.browser.js
+// @require      https://raw.githubusercontent.com/Ma-XX-oN/AIConversationCore/3233cba838bbf2d2cea5a2a6f1900ed6014dcfb0/dist/aiconversationcore.chatgpt.browser.js
 // @run-at       document-start
 // ==/UserScript==
 
@@ -28,6 +28,10 @@
   const MAX_PAGES = 10000;
   /** Local-storage key for the keep-screen-on capture preference. */
   const SCREEN_ON_STORAGE_KEY = 'tm-conversation-recorder-screen-on-when-capturing';
+  /** Local-storage key for Markdown heading timestamp visibility. */
+  const SHOW_TIMESTAMPS_STORAGE_KEY = 'tm-conversation-recorder-show-timestamps';
+  /** Local-storage key for Markdown JSONL record-number visibility. */
+  const SHOW_RECORD_NUMBERS_STORAGE_KEY = 'tm-conversation-recorder-show-record-numbers';
   /** Session-storage key for the retained recorder diagnostic log. */
   const DIAGNOSTIC_LOG_STORAGE_KEY = 'tm-conversation-recorder-diagnostic-log';
   /** Maximum number of diagnostic entries retained in memory and session storage. */
@@ -43,6 +47,10 @@
   let diagnosticsLevel = localStorage.getItem('tm-conversation-recorder-diagnostics') || DEFAULT_DIAGNOSTICS;
   /** Whether active exports should request a screen wake lock. */
   let screenOnWhenCapturing = localStorage.getItem(SCREEN_ON_STORAGE_KEY) !== 'false';
+  /** Whether Markdown headings should include local-time source timestamps. */
+  let showTimestamps = localStorage.getItem(SHOW_TIMESTAMPS_STORAGE_KEY) === 'true';
+  /** Whether Markdown headings should include one-based JSONL record numbers. */
+  let showRecordNumbers = localStorage.getItem(SHOW_RECORD_NUMBERS_STORAGE_KEY) === 'true';
   /** Active screen wake-lock handle, or null when no lock is held. */
   let wakeLockSentinel = null;
   /** Serializes export work so overlapping extraction runs cannot start. */
@@ -2364,26 +2372,74 @@
   }
 
   /**
+   * Formats one ChatGPT source timestamp like AI-transcript.py's default -d output.
+   *
+   * @param {Object} record - The provider/source record to inspect.
+   * @returns {string|null} Local-time YYYY-MM-DD HH:MM:SS, or null when unavailable.
+   */
+  function transcriptTimestamp(record) {
+    const raw = record?.create_time ?? record?.update_time;
+    if (raw == null) return null;
+    const date = new Date(Number(raw) * 1000);
+    if (!Number.isFinite(date.getTime())) return null;
+    /**
+     * Zero-pads one date/time component to two digits.
+     *
+     * @param {number} value - Numeric date/time component to pad.
+     * @returns {string} Two-character decimal representation.
+     */
+    const pad = value => String(value).padStart(2, '0');
+    return `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())} ` +
+      `${pad(date.getHours())}:${pad(date.getMinutes())}:${pad(date.getSeconds())}`;
+  }
+
+  /**
+   * Builds shared-core heading metadata for one ChatGPT source record.
+   *
+   * @param {Object} record - The provider/source record to inspect.
+   * @param {number|null} recordNumber - The one-based paired JSONL record number.
+   * @returns {Object} Consumer heading metadata understood by AIConversationCore.
+   */
+  function canonicalHeadingMetadata(record, recordNumber = null) {
+    const metadata = {};
+    if (showTimestamps) {
+      const timestamp = transcriptTimestamp(record);
+      if (timestamp) metadata.timestamp = timestamp;
+    }
+    if (showRecordNumbers && Number.isInteger(recordNumber)) metadata.record_number = recordNumber;
+    return metadata;
+  }
+
+  /**
    * Renders one eligible canonical message event while preserving DownloadConversation source-turn identity in the transcript heading.
    *
    * Canonical -> output transformation: AIConversationCore supplies the plain canonical heading/body; DownloadConversation replaces only that heading with its existing source-record `turn_id` comment and preserves the rendered body.
    *
    * @param {Object} record - The provider/source record to process.
    * @param {Event|Object} event - The event or event-like object being handled.
+   * @param {number|null} recordNumber - The one-based paired JSONL record number.
    * @returns {string} The string produced by `canonicalRecordBlock`.
    */
-  function canonicalRecordBlock(record, event) {
+  function canonicalRecordBlock(record, event, recordNumber = null) {
     assert(canonicalMessageRecordEligible(record, event),
       `AIConversationCore message record ${record?.id ?? 'unknown'} is not eligible for canonical rendering.`);
     // Provider/source ID projected onto renderer-generated headings for this record.
     const sourceId = typeof record?.id === 'string' ? record.id : '';
-    // Canonical event clone carrying only DownloadConversation heading decoration.
-    const projectedEvent = sourceId
+    const headingMetadata = canonicalHeadingMetadata(record, recordNumber);
+    const hasHeadingMetadata = Object.keys(headingMetadata).length > 0;
+    // Canonical event clone carrying DownloadConversation presentation metadata.
+    const projectedEvent = (sourceId || hasHeadingMetadata)
       ? {
           ...event,
           projection: {
             ...(event?.projection ?? {}),
-            heading_suffix: ` <!-- turn_id=${sourceId} -->`
+            ...(hasHeadingMetadata ? {
+              heading_metadata: {
+                ...(event?.projection?.heading_metadata ?? {}),
+                ...headingMetadata
+              }
+            } : {}),
+            ...(sourceId ? { heading_suffix: ` <!-- turn_id=${sourceId} -->` } : {})
           }
         }
       : event;
@@ -2450,9 +2506,10 @@
    *
    * @param {Array<Object>} records - The ordered provider/source records to process.
    * @param {Array<Object>} events - The canonical events associated with the source records.
+   * @param {Map<unknown, unknown>} recordNumberById - Paired JSONL record numbers keyed by source ID.
    * @returns {string} The string produced by `canonicalAssistantSegmentBlock`.
    */
-  function canonicalAssistantSegmentBlock(records, events) {
+  function canonicalAssistantSegmentBlock(records, events, recordNumberById = new Map()) {
     assert(canonicalAssistantSegmentEligible(records, events),
       'AIConversationCore Assistant segment contains an unsupported record.');
     /**
@@ -2477,11 +2534,21 @@
       const responseHeadingSuffix = index === 0 && headingSourceId
         ? ` <!-- turn_id=${headingSourceId} -->`
         : '';
-      if (!sourceId && !responseHeadingSuffix) return event;
+      const headingMetadata = canonicalHeadingMetadata(
+        records[index], recordNumberById.get(records[index]?.id) ?? null
+      );
+      const hasHeadingMetadata = Object.keys(headingMetadata).length > 0;
+      if (!sourceId && !responseHeadingSuffix && !hasHeadingMetadata) return event;
       return {
         ...event,
         projection: {
           ...(event?.projection ?? {}),
+          ...(hasHeadingMetadata ? {
+            heading_metadata: {
+              ...(event?.projection?.heading_metadata ?? {}),
+              ...headingMetadata
+            }
+          } : {}),
           ...(sourceId ? { heading_suffix: ` <!-- turn_id=${sourceId} -->` } : {}),
           ...(responseHeadingSuffix ? { response_heading_suffix: responseHeadingSuffix } : {})
         }
@@ -2518,10 +2585,11 @@
    *
    * @param {Object} record - The provider/source record to process.
    * @param {Event|Object} event - The event or event-like object being handled.
+   * @param {number|null} recordNumber - The one-based paired JSONL record number.
    * @returns {boolean} `true` when `canonicalPlainRecordBlock` succeeds or its predicate is satisfied; otherwise `false`.
    */
-  function canonicalPlainRecordBlock(record, event) {
-    return canonicalRecordBlock(record, event);
+  function canonicalPlainRecordBlock(record, event, recordNumber = null) {
+    return canonicalRecordBlock(record, event, recordNumber);
   }
 
   /**
@@ -2564,19 +2632,22 @@
    * Source -> output transformation: the source record ID is emitted as the `turn_id` comment; it is intentionally not replaced by AIConversationCore derived turn identity.
    *
    * @param {Object} record - The provider/source record to process.
+   * @param {number|null} recordNumber - The one-based paired JSONL record number.
    * @returns {string} The string produced by `transcriptHeading`.
    */
-  function transcriptHeading(record) {
+  function transcriptHeading(record, recordNumber = null) {
     const id = typeof record?.id === 'string' ? record.id : '';
-    if (record?.author?.role === 'user') {
-      return `## User${id ? ` <!-- turn_id=${id} -->` : ''}`;
-    }
+    const headingMetadata = canonicalHeadingMetadata(record, recordNumber);
+    const fields = [];
+    if (headingMetadata.timestamp != null) fields.push(`[${headingMetadata.timestamp}]:`);
+    if (headingMetadata.record_number != null) fields.push(`${headingMetadata.record_number}:`);
+    const metadata = fields.length ? ` ${fields.join(' ')}` : '';
+    const turnId = id ? ` <!-- turn_id=${id} -->` : '';
+    if (record?.author?.role === 'user') return `## User${metadata}${turnId}`;
     if (record?.author?.role === 'assistant' && record?.channel === 'commentary') {
-      return `## ChatGPT Commentary${id ? ` <!-- turn_id=${id} -->` : ''}`;
+      return `## ChatGPT Commentary${metadata}${turnId}`;
     }
-    if (record?.author?.role === 'assistant') {
-      return `## ChatGPT${id ? ` <!-- turn_id=${id} -->` : ''}`;
-    }
+    if (record?.author?.role === 'assistant') return `## ChatGPT${metadata}${turnId}`;
     return '';
   }
 
@@ -2594,6 +2665,10 @@
      * Handles records.
      */
     const records = spine.records.map(item => item.message).filter(Boolean);
+    const recordNumberById = new Map();
+    spine.records.forEach((item, index) => {
+      if (typeof item?.message?.id === 'string') recordNumberById.set(item.message.id, index + 2);
+    });
     const output = [];
     // Fallback citation lookup keyed by ChatGPT retrieval turn/file coordinates.
     const fileRefIndex = cgBuildFileReferenceIndex(records);
@@ -2612,7 +2687,7 @@
     const flushAssistantBlock = (body = '', record = null) => {
       if (!body && !pendingThoughts.length) return;
       const headingRecord = record ?? pendingThoughts[0];
-      const parts = [transcriptHeading(headingRecord)];
+      const parts = [transcriptHeading(headingRecord, recordNumberById.get(headingRecord?.id) ?? null)];
       const thoughts = cgRenderThoughtBlock(pendingThoughts, fileRefIndex);
       if (thoughts) parts.push(thoughts);
       if (body) parts.push(quoteMarkdown(body));
@@ -2632,7 +2707,7 @@
         .filter(Boolean);
       if (events.length === pendingThoughts.length &&
           canonicalAssistantSegmentEligible(pendingThoughts, events)) {
-        output.push(canonicalAssistantSegmentBlock(pendingThoughts, events));
+        output.push(canonicalAssistantSegmentBlock(pendingThoughts, events, recordNumberById));
         pendingThoughts = [];
         return;
       }
@@ -2652,7 +2727,7 @@
       if (canonicalEvent && canonicalMessageRecordEligible(record, canonicalEvent)) {
         if (record?.author?.role === 'user') {
           flushPendingAssistant();
-          output.push(canonicalRecordBlock(record, canonicalEvent));
+          output.push(canonicalRecordBlock(record, canonicalEvent, recordNumberById.get(record.id) ?? null));
           continue;
         }
         if (record?.author?.role === 'assistant' && canonicalEvent?.kind === 'commentary') {
@@ -2694,13 +2769,13 @@
             });
           }
           if (canonicalSegmentEligible) {
-            output.push(canonicalAssistantSegmentBlock(segmentRecords, segmentEvents));
+            output.push(canonicalAssistantSegmentBlock(segmentRecords, segmentEvents, recordNumberById));
             pendingThoughts = [];
             continue;
           }
         }
         if (record?.author?.role === 'assistant' && pendingThoughts.length === 0) {
-          output.push(canonicalRecordBlock(record, canonicalEvent));
+          output.push(canonicalRecordBlock(record, canonicalEvent, recordNumberById.get(record.id) ?? null));
           continue;
         }
       }
@@ -2713,7 +2788,7 @@
       const userText = cgVisibleUserText(record, fileRefIndex, recoveredImages);
       if (userText) {
         flushPendingAssistant();
-        output.push(`${transcriptHeading(record)}\n\n${quoteMarkdown(userText)}`);
+        output.push(`${transcriptHeading(record, recordNumberById.get(record.id) ?? null)}\n\n${quoteMarkdown(userText)}`);
         continue;
       }
       const assistantText = cgVisibleAssistantMarkdown(record, fileRefIndex, recoveredImages);
@@ -4376,6 +4451,8 @@
     const extract = panel.querySelector('[data-role="extract"]');
     const jsonl = panel.querySelector('[data-role="format-jsonl"]');
     const md = panel.querySelector('[data-role="format-md"]');
+    const timestamps = panel.querySelector('[data-role="show-timestamps"]');
+    const recordNumbers = panel.querySelector('[data-role="show-record-numbers"]');
     const test = panel.querySelector('[data-role="test"]');
     const jump = panel.querySelector('[data-role="jump"]');
     const formatsSelected = Boolean(jsonl?.checked || md?.checked);
@@ -4385,6 +4462,9 @@
     }
     if (jsonl) jsonl.disabled = exportInProgress || testInProgress || jumpInProgress;
     if (md) md.disabled = exportInProgress || testInProgress || jumpInProgress;
+    const metadataDisabled = exportInProgress || testInProgress || jumpInProgress || !md?.checked;
+    if (timestamps) timestamps.disabled = metadataDisabled;
+    if (recordNumbers) recordNumbers.disabled = metadataDisabled;
     if (test) {
       test.disabled = exportInProgress || testInProgress || jumpInProgress;
       test.textContent = testInProgress ? 'Testing…' : 'Test';
@@ -4448,6 +4528,7 @@
       <div class="tm-row"><span class="tm-label">Screen on when extracting</span><button class="tm-switch" data-role="screen-on" type="button" role="switch" aria-checked="false" aria-label="Keep screen on while extracting"><span class="tm-switch-thumb"></span></button></div>
       <div class="tm-row"><button data-role="jump" type="button">Jump</button></div>
       <div class="tm-row tm-extract-formats"><button data-role="extract" type="button">Extract</button><label><input data-role="format-jsonl" type="checkbox"> JSONL</label><label><input data-role="format-md" type="checkbox" checked> MD</label></div>
+      <div class="tm-row tm-md-metadata"><span class="tm-label">MD headings</span><label><input data-role="show-timestamps" type="checkbox"> Timestamp</label><label><input data-role="show-record-numbers" type="checkbox"> Record #</label></div>
     `;
     panel.querySelector('.tm-close').addEventListener('click', () => {
       panel.style.display = 'none';
@@ -4484,6 +4565,24 @@
       else void releaseWakeLock();
       updateUi();
     });
+    const timestamps = panel.querySelector('[data-role="show-timestamps"]');
+    const recordNumbers = panel.querySelector('[data-role="show-record-numbers"]');
+    if (timestamps) {
+      timestamps.checked = showTimestamps;
+      timestamps.addEventListener('change', () => {
+        showTimestamps = timestamps.checked;
+        localStorage.setItem(SHOW_TIMESTAMPS_STORAGE_KEY, String(showTimestamps));
+        updateUi();
+      });
+    }
+    if (recordNumbers) {
+      recordNumbers.checked = showRecordNumbers;
+      recordNumbers.addEventListener('change', () => {
+        showRecordNumbers = recordNumbers.checked;
+        localStorage.setItem(SHOW_RECORD_NUMBERS_STORAGE_KEY, String(showRecordNumbers));
+        updateUi();
+      });
+    }
     /**
      * Handles run selected exports.
      *
