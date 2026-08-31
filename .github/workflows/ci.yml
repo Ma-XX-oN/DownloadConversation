@@ -22,3 +22,34 @@ jobs:
         run: node --test tests/test-list-ui.test.mjs
       - name: Recorder panel UI regression
         run: node --test tests/recorder-panel-ui.test.mjs
+
+  cross-consumer-final-render:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out DownloadConversation
+        uses: actions/checkout@v4
+      - name: Check out pinned AIConversationCore
+        uses: actions/checkout@v4
+        with:
+          repository: Ma-XX-oN/AIConversationCore
+          ref: 2b746b121ed0e44cfe86ba8377969b8d8bf197c7
+          path: .phase7-core
+      - name: Check out pinned AI-General-Memory
+        uses: actions/checkout@v4
+        with:
+          repository: Ma-XX-oN/AI-General-Memory
+          ref: e51859299761d8cd6901b0b5dca187bead1ee075
+          path: .phase7-aigm
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.13'
+      - name: Install AI-transcript presentation dependencies
+        run: python -m pip install colorama regex
+      - name: Complete final-render parity
+        env:
+          PHASE7_CORE_ROOT: ${{ github.workspace }}/.phase7-core
+          PHASE7_AIGM_ROOT: ${{ github.workspace }}/.phase7-aigm
+        run: node tests/phase7-cross-consumer-parity.mjs
