@@ -19,7 +19,25 @@ jobs:
         with:
           node-version: 22
       - name: Apply feature patch
-        run: python scripts/issue-109-apply.py
+        shell: python
+        run: |
+          from pathlib import Path
+          helper = Path('scripts/issue-109-apply.py')
+          text = helper.read_text(encoding='utf-8')
+          old = '  "    /** Zero-pads one date/time component to two digits. */",\n  "    const pad = value => String(value).padStart(2, \'0\');",'
+          new = '\n'.join([
+            '  "    /**",',
+            '  "     * Zero-pads one date/time component to two digits.",',
+            '  "     *",',
+            '  "     * @param {number} value - Numeric date/time component to pad.",',
+            '  "     * @returns {string} Two-character decimal representation.",',
+            '  "     */",',
+            '  "    const pad = value => String(value).padStart(2, \'0\');",',
+          ])
+          if old not in text:
+            raise SystemExit('pad helper patch point not found')
+          helper.write_text(text.replace(old, new, 1), encoding='utf-8')
+          exec(compile(helper.read_text(encoding='utf-8'), str(helper), 'exec'))
       - name: Run repository gates
         run: |
           node --check chatgpt-conversation-markdown-export.user.js
