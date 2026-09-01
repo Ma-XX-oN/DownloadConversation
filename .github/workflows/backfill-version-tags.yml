@@ -77,8 +77,7 @@ jobs:
               exit 1
             fi
 
-            existing=$(gh api "repos/${GITHUB_REPOSITORY}/git/ref/tags/${tag}" --jq .object.sha 2>/dev/null || true)
-            if [[ -n "$existing" ]]; then
+            if existing=$(gh api "repos/${GITHUB_REPOSITORY}/git/ref/tags/${tag}" --jq .object.sha 2>/dev/null); then
               if [[ "$existing" != "$sha" ]]; then
                 echo "${tag} already exists at ${existing}, expected introduction commit ${sha}." >&2
                 exit 1
