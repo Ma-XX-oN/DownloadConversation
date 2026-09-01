@@ -82,7 +82,6 @@ text = replace_once(
   "    if (consoleOutput) {\n      consoleOutput.checked = consoleDiagnostics;\n      consoleOutput.addEventListener('change', () => {\n        consoleDiagnostics = consoleOutput.checked;\n        localStorage.setItem(CONSOLE_DIAGNOSTICS_STORAGE_KEY, String(consoleDiagnostics));\n        logDiagnostic('debug', 'console-diagnostics-changed', { enabled: consoleDiagnostics });\n      });\n    }\n    const copyLogButton = panel.querySelector('[data-role=\"copy-log\"]');",
   'console listener')
 
-# Add lifecycle diagnostics specifically useful when the launcher/panel vanishes during hydration.
 text = replace_once(
   text,
   "  function makePanel() {\n    if (document.getElementById(PANEL_ID) || !document.body) return;",
