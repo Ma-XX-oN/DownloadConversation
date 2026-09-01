@@ -172,3 +172,5 @@ jobs:
               -f message='maintenance: record tag backfill result' \
               -f content="$encoded" >/dev/null
           fi
+
+# retrigger 2026-09-01
