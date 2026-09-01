@@ -1,0 +1,57 @@
+name: Tag userscript versions
+
+on:
+  push:
+    branches:
+      - main
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  tag-versions:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out complete history
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Create missing version tags
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          script='chatgpt-conversation-markdown-export.user.js'
+
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+
+          declare -A seen_versions=()
+
+          while IFS= read -r commit; do
+            if ! content="$(git show "${commit}:${script}" 2>/dev/null)"; then
+              continue
+            fi
+
+            version="$(printf '%s\n' "$content" | sed -nE 's#^//[[:space:]]*@version[[:space:]]+([^[:space:]]+).*$#\1#p' | head -n 1)"
+            if [[ -z "$version" ]]; then
+              continue
+            fi
+
+            if [[ -n "${seen_versions[$version]:-}" ]]; then
+              continue
+            fi
+            seen_versions[$version]=1
+
+            tag="v${version}"
+            if git rev-parse -q --verify "refs/tags/${tag}" >/dev/null; then
+              continue
+            fi
+
+            git tag "$tag" "$commit"
+            echo "Created ${tag} at ${commit}"
+          done < <(git rev-list --reverse main -- "$script")
+
+          git push origin --tags
