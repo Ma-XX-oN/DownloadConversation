@@ -23,49 +23,58 @@ jobs:
             exit 1
           fi
 
-      - name: Verify version targets and create missing tags
+      - name: Check out complete history
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Derive exact version commits and create missing tags
         shell: bash
         run: |
           set -euo pipefail
+          product='chatgpt-conversation-markdown-export.user.js'
 
-          mappings=$(cat <<'EOF'
-          0.6.133 ecdbc112fc1b29e8f14281c74b79123a31490e84
-          0.6.134 dc5084e2edc88f139cf5930f4c65c33cf9a848a9
-          0.6.135 79a910dd8534533e0ed93a337d773010a76511a0
-          0.6.136 b98b35f630ea61aa7ee761649282371180e33b16
-          0.6.137 457bdc749e7f8f508c6cffd98911002fb3f19e4c
-          0.6.138 c48b4aef5c687fd6cec4647ab85feb5aed070e43
-          0.6.139 628862e6e88be23537122357c311d309b659515d
-          0.6.140 c57ccf11d1ac3c5fa8d9a1c724173b02ce5cb4cd
-          0.6.141 67e4447e1fe1a093590ea8d33c0bbb410925b17c
-          0.6.142 84cad667f366e03f967c17a1065bb0db580a1ae6
-          0.6.143 5d4602bd4f9a16ed99dcc5e98839ac5d89dd7dcc
-          0.6.144 1b38e4f82128a33494908b72a067fcc3d8dad0ff
-          0.6.145 da8b770375a6b667b234760b462f911be6fc0d25
-          0.6.146 da7680b84e0dcf3e794bdbbaa62fc32a3a289dcd
-          0.6.147 d1cc2cab79f1105f340dba55babb583ab5a4a369
-          0.6.148 8a0ab61dc1d3d01d696fd266420d9becb50f1859
-          0.6.149 39d5a2a448b98c0ae4b0dd498416edde7070a966
-          0.6.150 02298a8d1473b328e98d87530a39a236687aaa07
-          0.6.151 e3437d4a71428c95355129085149496878d5a7c7
-          0.6.152 e78ddce89c4b788805aadc4f1b46d7de98682504
-          EOF
-          )
+          find_version_commit() {
+            local version="$1"
+            local expected="// @version      ${version}"
+            local sha parent
 
-          while read -r version sha; do
-            [[ -n "$version" ]] || continue
+            while read -r sha; do
+              git show "${sha}:${product}" 2>/dev/null | grep -Fqx "$expected" || continue
+              parent=$(git rev-parse "${sha}^" 2>/dev/null || true)
+              if [[ -z "$parent" ]] || ! git show "${parent}:${product}" 2>/dev/null | grep -Fqx "$expected"; then
+                printf '%s\n' "$sha"
+                return 0
+              fi
+            done < <(git log --reverse --format='%H' v0.6.132..HEAD -- "$product")
+
+            return 1
+          }
+
+          for patch in $(seq 133 152); do
+            version="0.6.${patch}"
             tag="v${version}"
+            sha=$(find_version_commit "$version") || {
+              echo "Could not find the commit that introduced ${version}." >&2
+              exit 1
+            }
 
-            file=$(gh api "repos/${GITHUB_REPOSITORY}/contents/chatgpt-conversation-markdown-export.user.js?ref=${sha}" --jq .content | tr -d '\n' | base64 --decode)
-            if ! grep -Fqx "// @version      ${version}" <<<"$file"; then
-              echo "Target ${sha} does not contain userscript version ${version}." >&2
+            expected="// @version      ${version}"
+            git show "${sha}:${product}" | grep -Fqx "$expected" || {
+              echo "Derived target ${sha} does not contain ${version}." >&2
+              exit 1
+            }
+
+            parent=$(git rev-parse "${sha}^" 2>/dev/null || true)
+            if [[ -n "$parent" ]] && git show "${parent}:${product}" 2>/dev/null | grep -Fqx "$expected"; then
+              echo "Derived target ${sha} is not the introduction commit for ${version}." >&2
               exit 1
             fi
 
             existing=$(gh api "repos/${GITHUB_REPOSITORY}/git/ref/tags/${tag}" --jq .object.sha 2>/dev/null || true)
             if [[ -n "$existing" ]]; then
               if [[ "$existing" != "$sha" ]]; then
-                echo "${tag} already exists at ${existing}, expected ${sha}." >&2
+                echo "${tag} already exists at ${existing}, expected introduction commit ${sha}." >&2
                 exit 1
               fi
               echo "${tag} already correct at ${sha}."
@@ -76,41 +85,44 @@ jobs:
               -f ref="refs/tags/${tag}" \
               -f sha="${sha}" >/dev/null
             echo "Created ${tag} -> ${sha}."
-          done <<<"$mappings"
+          done
 
-      - name: Verify all backfilled tags
+      - name: Verify all backfilled tags against history
         shell: bash
         run: |
           set -euo pipefail
-          expected='0.6.133:ecdbc112fc1b29e8f14281c74b79123a31490e84
-          0.6.134:dc5084e2edc88f139cf5930f4c65c33cf9a848a9
-          0.6.135:79a910dd8534533e0ed93a337d773010a76511a0
-          0.6.136:b98b35f630ea61aa7ee761649282371180e33b16
-          0.6.137:457bdc749e7f8f508c6cffd98911002fb3f19e4c
-          0.6.138:c48b4aef5c687fd6cec4647ab85feb5aed070e43
-          0.6.139:628862e6e88be23537122357c311d309b659515d
-          0.6.140:c57ccf11d1ac3c5fa8d9a1c724173b02ce5cb4cd
-          0.6.141:67e4447e1fe1a093590ea8d33c0bbb410925b17c
-          0.6.142:84cad667f366e03f967c17a1065bb0db580a1ae6
-          0.6.143:5d4602bd4f9a16ed99dcc5e98839ac5d89dd7dcc
-          0.6.144:1b38e4f82128a33494908b72a067fcc3d8dad0ff
-          0.6.145:da8b770375a6b667b234760b462f911be6fc0d25
-          0.6.146:da7680b84e0dcf3e794bdbbaa62fc32a3a289dcd
-          0.6.147:d1cc2cab79f1105f340dba55babb583ab5a4a369
-          0.6.148:8a0ab61dc1d3d01d696fd266420d9becb50f1859
-          0.6.149:39d5a2a448b98c0ae4b0dd498416edde7070a966
-          0.6.150:02298a8d1473b328e98d87530a39a236687aaa07
-          0.6.151:e3437d4a71428c95355129085149496878d5a7c7
-          0.6.152:e78ddce89c4b788805aadc4f1b46d7de98682504'
+          product='chatgpt-conversation-markdown-export.user.js'
 
-          while IFS=: read -r version sha; do
-            actual=$(gh api "repos/${GITHUB_REPOSITORY}/git/ref/tags/v${version}" --jq .object.sha)
-            [[ "$actual" == "$sha" ]] || {
-              echo "v${version} resolves to ${actual}, expected ${sha}." >&2
+          find_version_commit() {
+            local version="$1"
+            local expected="// @version      ${version}"
+            local sha parent
+
+            while read -r sha; do
+              git show "${sha}:${product}" 2>/dev/null | grep -Fqx "$expected" || continue
+              parent=$(git rev-parse "${sha}^" 2>/dev/null || true)
+              if [[ -z "$parent" ]] || ! git show "${parent}:${product}" 2>/dev/null | grep -Fqx "$expected"; then
+                printf '%s\n' "$sha"
+                return 0
+              fi
+            done < <(git log --reverse --format='%H' v0.6.132..HEAD -- "$product")
+
+            return 1
+          }
+
+          for patch in $(seq 133 152); do
+            version="0.6.${patch}"
+            expected=$(find_version_commit "$version") || {
+              echo "Could not re-derive ${version}." >&2
               exit 1
             }
-            echo "Verified v${version} -> ${sha}."
-          done <<<"$expected"
+            actual=$(gh api "repos/${GITHUB_REPOSITORY}/git/ref/tags/v${version}" --jq .object.sha)
+            [[ "$actual" == "$expected" ]] || {
+              echo "v${version} resolves to ${actual}, expected ${expected}." >&2
+              exit 1
+            }
+            echo "Verified v${version} -> ${actual}."
+          done
 
       - name: Record workflow result
         if: always()
