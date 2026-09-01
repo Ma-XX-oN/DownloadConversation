@@ -24,34 +24,26 @@ jobs:
           set -euo pipefail
 
           script='chatgpt-conversation-markdown-export.user.js'
+          previous_version=''
 
           git config user.name 'github-actions[bot]'
           git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
-
-          declare -A seen_versions=()
+          git fetch --force --tags origin
 
           while IFS= read -r commit; do
-            if ! content="$(git show "${commit}:${script}" 2>/dev/null)"; then
+            version="$(git show "${commit}:${script}" 2>/dev/null | sed -nE 's#^//[[:space:]]*@version[[:space:]]+([^[:space:]]+).*$#\1#p' | head -n 1 || true)"
+            if [[ -z "$version" || "$version" == "$previous_version" ]]; then
               continue
             fi
-
-            version="$(printf '%s\n' "$content" | sed -nE 's#^//[[:space:]]*@version[[:space:]]+([^[:space:]]+).*$#\1#p' | head -n 1)"
-            if [[ -z "$version" ]]; then
-              continue
-            fi
-
-            if [[ -n "${seen_versions[$version]:-}" ]]; then
-              continue
-            fi
-            seen_versions[$version]=1
+            previous_version="$version"
 
             tag="v${version}"
             if git rev-parse -q --verify "refs/tags/${tag}" >/dev/null; then
+              echo "Existing ${tag}"
               continue
             fi
 
             git tag "$tag" "$commit"
+            git push origin "refs/tags/${tag}"
             echo "Created ${tag} at ${commit}"
-          done < <(git rev-list --reverse main -- "$script")
-
-          git push origin --tags
+          done < <(git rev-list --reverse "${GITHUB_SHA}" -- "$script")
