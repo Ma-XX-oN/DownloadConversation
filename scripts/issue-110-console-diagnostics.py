@@ -16,16 +16,18 @@ text = replace_once(text, '// @version      0.6.152', '// @version      0.6.153'
 text = replace_once(text, "  /** Session-storage key for the retained recorder diagnostic log. */\n  const DIAGNOSTIC_LOG_STORAGE_KEY", "  /** Local-storage key controlling DevTools console diagnostic output. */\n  const CONSOLE_DIAGNOSTICS_STORAGE_KEY = 'tm-conversation-recorder-console-diagnostics';\n  /** Session-storage key for the retained recorder diagnostic log. */\n  const DIAGNOSTIC_LOG_STORAGE_KEY", 'storage key')
 text = replace_once(text, "  /** Whether active exports should request a screen wake lock. */\n  let screenOnWhenCapturing", "  /** Whether diagnostics should also be mirrored to the DevTools console. */\n  let consoleDiagnostics = localStorage.getItem(CONSOLE_DIAGNOSTICS_STORAGE_KEY) !== 'false';\n  /** Whether active exports should request a screen wake lock. */\n  let screenOnWhenCapturing", 'state')
 
-pattern = re.compile(r"function logDiagnostic\(level, message, data = null\).*?function persistDiagnosticLog", re.S)
-match = pattern.search(text)
-if not match:
-  raise RuntimeError('logDiagnostic block not found')
-replacement = """function logDiagnostic(level, message, data = null) {
-    const entry = {
-      timestamp: new Date().toISOString(),
-      level,
-      message,
-      data
+text, count = re.subn(
+  r"(function logDiagnostic\(level, message, data = null\) \{\r?\n)\s*if \(!diagnosticEnabled\(level\)\) return;\r?\n",
+  r"\1",
+  text,
+  count=1)
+if count != 1:
+  raise RuntimeError(f'early diagnostic filter: expected one match, found {count}')
+
+needle = """      data
+    };
+    diagnosticLog.push(entry);"""
+insert = """      data
     };
     if (consoleDiagnostics) {
       const method = level === 'errors' ? 'error' : level === 'warnings' ? 'warn' :
@@ -35,21 +37,8 @@ replacement = """function logDiagnostic(level, message, data = null) {
       else console[method](prefix, data);
     }
     if (!diagnosticEnabled(level)) return;
-    diagnosticLog.push(entry);
-    if (diagnosticLog.length > MAX_DIAGNOSTIC_LOG_ITEMS) {
-      diagnosticLog.splice(0, diagnosticLog.length - MAX_DIAGNOSTIC_LOG_ITEMS);
-    }
-    persistDiagnosticLog();
-    refreshDiagnosticLog();
-  }
-
-  /**
-   * Handles persist diagnostic log.
-   *
-   * @returns {void} No value is returned.
-   */
-  function persistDiagnosticLog"""
-text = text[:match.start()] + replacement + text[match.end():]
+    diagnosticLog.push(entry);"""
+text = replace_once(text, needle, insert, 'console insert')
 
 text = replace_once(text, '<div class="tm-row"><span class="tm-label">Diagnostics</span><select data-role="diagnostics"><option value="errors">Errors</option><option value="warnings">Warnings</option><option value="debug">Debug</option><option value="verbose">Verbose</option></select><button data-role="test" type="button">Test</button></div>', '<div class="tm-row"><span class="tm-label">Diagnostics</span><select data-role="diagnostics"><option value="errors">Errors</option><option value="warnings">Warnings</option><option value="debug">Debug</option><option value="verbose">Verbose</option></select><label><input data-role="console-diagnostics" type="checkbox"> Console</label><button data-role="test" type="button">Test</button></div>', 'UI')
 text = replace_once(text, "    const diagnostics = panel.querySelector('[data-role=\"diagnostics\"]');\n    diagnostics.value = diagnosticsLevel;", "    const diagnostics = panel.querySelector('[data-role=\"diagnostics\"]');\n    const consoleOutput = panel.querySelector('[data-role=\"console-diagnostics\"]');\n    diagnostics.value = diagnosticsLevel;", 'query')
