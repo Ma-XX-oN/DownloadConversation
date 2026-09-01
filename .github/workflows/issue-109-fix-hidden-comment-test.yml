@@ -1,0 +1,37 @@
+name: Repair issue 109 hidden comment assertion
+
+on:
+  push:
+    paths:
+      - .github/workflows/issue-109-fix-hidden-comment-test.yml
+
+permissions:
+  contents: write
+
+jobs:
+  repair:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: Constrain assertion to an actual one-line HTML comment
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+
+          path = Path('.github/workflows/issue-109-final-semantics.yml')
+          text = path.read_text(encoding='utf-8')
+          old = "  assert.doesNotMatch(userscript, /<!-- turn_id=[^>]+-->/);"
+          new = "  assert.doesNotMatch(userscript, /<!-- turn_id=[^>\\r\\n]+-->/);"
+          if text.count(old) != 1:
+            raise RuntimeError(f'expected one broad hidden-comment assertion, found {text.count(old)}')
+          path.write_text(text.replace(old, new, 1), encoding='utf-8')
+          PY
+      - name: Commit repaired gate
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add .github/workflows/issue-109-final-semantics.yml
+          git commit -m "ci: constrain issue 109 hidden comment assertion"
+          git push
