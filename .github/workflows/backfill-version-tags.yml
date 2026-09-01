@@ -6,7 +6,7 @@ on:
       - .github/workflows/backfill-version-tags.yml
 
 permissions:
-  contents: read
+  contents: write
 
 jobs:
   backfill:
@@ -111,3 +111,27 @@ jobs:
             }
             echo "Verified v${version} -> ${sha}."
           done <<<"$expected"
+
+      - name: Record workflow result
+        if: always()
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RESULT: ${{ job.status }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          body=$(printf 'run_id=%s\nrun_attempt=%s\nstatus=%s\ncommit=%s\n' \
+            "$GITHUB_RUN_ID" "$GITHUB_RUN_ATTEMPT" "$RESULT" "$GITHUB_SHA")
+          encoded=$(printf '%s' "$body" | base64 -w0)
+          endpoint="repos/${GITHUB_REPOSITORY}/contents/.tag-backfill-status.txt"
+          existing=$(gh api "$endpoint" --jq .sha 2>/dev/null || true)
+          if [[ -n "$existing" ]]; then
+            gh api --method PUT "$endpoint" \
+              -f message='maintenance: record tag backfill result' \
+              -f content="$encoded" \
+              -f sha="$existing" >/dev/null
+          else
+            gh api --method PUT "$endpoint" \
+              -f message='maintenance: record tag backfill result' \
+              -f content="$encoded" >/dev/null
+          fi
