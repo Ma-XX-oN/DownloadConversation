@@ -23,6 +23,19 @@ jobs:
             exit 1
           fi
 
+      - name: Verify PAT repository access
+        shell: bash
+        run: |
+          set -euo pipefail
+          login=$(gh api user --jq .login)
+          echo "PAT authenticates as ${login}."
+          if ! repo=$(gh api "repos/${GITHUB_REPOSITORY}" --jq .full_name 2>/tmp/tag-pat-repo-error); then
+            echo "PAT cannot access ${GITHUB_REPOSITORY}." >&2
+            cat /tmp/tag-pat-repo-error >&2
+            exit 1
+          fi
+          echo "PAT can access ${repo}."
+
       - name: Check out complete history
         uses: actions/checkout@v4
         with:
