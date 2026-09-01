@@ -34,15 +34,22 @@ jobs:
           set -euo pipefail
           product='chatgpt-conversation-markdown-export.user.js'
 
+          commit_has_version() {
+            local sha="$1"
+            local version="$2"
+            local content
+            content=$(git show "${sha}:${product}" 2>/dev/null) || return 1
+            grep -Fqx "// @version      ${version}" <<<"$content"
+          }
+
           find_version_commit() {
             local version="$1"
-            local expected="// @version      ${version}"
             local sha parent
 
             while read -r sha; do
-              git show "${sha}:${product}" 2>/dev/null | grep -Fqx "$expected" || continue
+              commit_has_version "$sha" "$version" || continue
               parent=$(git rev-parse "${sha}^" 2>/dev/null || true)
-              if [[ -z "$parent" ]] || ! git show "${parent}:${product}" 2>/dev/null | grep -Fqx "$expected"; then
+              if [[ -z "$parent" ]] || ! commit_has_version "$parent" "$version"; then
                 printf '%s\n' "$sha"
                 return 0
               fi
@@ -59,14 +66,13 @@ jobs:
               exit 1
             }
 
-            expected="// @version      ${version}"
-            git show "${sha}:${product}" | grep -Fqx "$expected" || {
+            commit_has_version "$sha" "$version" || {
               echo "Derived target ${sha} does not contain ${version}." >&2
               exit 1
             }
 
             parent=$(git rev-parse "${sha}^" 2>/dev/null || true)
-            if [[ -n "$parent" ]] && git show "${parent}:${product}" 2>/dev/null | grep -Fqx "$expected"; then
+            if [[ -n "$parent" ]] && commit_has_version "$parent" "$version"; then
               echo "Derived target ${sha} is not the introduction commit for ${version}." >&2
               exit 1
             fi
@@ -93,15 +99,22 @@ jobs:
           set -euo pipefail
           product='chatgpt-conversation-markdown-export.user.js'
 
+          commit_has_version() {
+            local sha="$1"
+            local version="$2"
+            local content
+            content=$(git show "${sha}:${product}" 2>/dev/null) || return 1
+            grep -Fqx "// @version      ${version}" <<<"$content"
+          }
+
           find_version_commit() {
             local version="$1"
-            local expected="// @version      ${version}"
             local sha parent
 
             while read -r sha; do
-              git show "${sha}:${product}" 2>/dev/null | grep -Fqx "$expected" || continue
+              commit_has_version "$sha" "$version" || continue
               parent=$(git rev-parse "${sha}^" 2>/dev/null || true)
-              if [[ -z "$parent" ]] || ! git show "${parent}:${product}" 2>/dev/null | grep -Fqx "$expected"; then
+              if [[ -z "$parent" ]] || ! commit_has_version "$parent" "$version"; then
                 printf '%s\n' "$sha"
                 return 0
               fi
