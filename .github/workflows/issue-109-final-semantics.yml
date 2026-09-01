@@ -1,0 +1,146 @@
+name: Issue 109 final semantics gate
+
+on:
+  push:
+    paths:
+      - .github/workflows/issue-109-final-semantics.yml
+
+permissions:
+  contents: write
+
+jobs:
+  patch-test-commit:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.13'
+      - name: Apply issue 109 final semantics
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+
+          CORE = 'f34f0dc931d03862e88ca185cdddf8c964a25325'
+          AIGM = '6af424b6330c54fd8f903f4e50339a645a78896a'
+
+          def replace_once(text, old, new, label):
+            count = text.count(old)
+            if count != 1:
+              raise RuntimeError(f'{label}: expected one match, found {count}')
+            return text.replace(old, new, 1)
+
+          user_path = Path('chatgpt-conversation-markdown-export.user.js')
+          text = user_path.read_text(encoding='utf-8')
+          text = replace_once(text, '// @version      0.6.152', '// @version      0.6.153', 'version')
+          text = replace_once(
+            text,
+            'https://raw.githubusercontent.com/Ma-XX-oN/AIConversationCore/3233cba838bbf2d2cea5a2a6f1900ed6014dcfb0/dist/aiconversationcore.chatgpt.browser.js',
+            f'https://raw.githubusercontent.com/Ma-XX-oN/AIConversationCore/{CORE}/dist/aiconversationcore.chatgpt.browser.js',
+            'core require pin')
+          text = replace_once(
+            text,
+            "let showTurnIds = localStorage.getItem(SHOW_TURN_IDS_STORAGE_KEY) !== 'false';",
+            "let showTurnIds = localStorage.getItem(SHOW_TURN_IDS_STORAGE_KEY) === 'true';",
+            'turn id default')
+
+          text = replace_once(
+            text,
+            "    if (showRecordNumbers && Number.isInteger(recordNumber)) metadata.record_number = recordNumber;\n    return metadata;",
+            "    if (showRecordNumbers && Number.isInteger(recordNumber)) metadata.record_number = recordNumber;\n    if (showTurnIds && typeof record?.id === 'string' && record.id) {\n      metadata.show_turn_id = true;\n      metadata.turn_id = record.id;\n    }\n    return metadata;",
+            'canonical heading metadata turn id')
+
+          old = """    // Provider/source ID projected onto renderer-generated headings for this record.\n    const sourceId = showTurnIds && typeof record?.id === 'string' ? record.id : '';\n    const headingMetadata = canonicalHeadingMetadata(record, recordNumber);\n    const hasHeadingMetadata = Object.keys(headingMetadata).length > 0;\n    // Canonical event clone carrying DownloadConversation presentation metadata.\n    const projectedEvent = (sourceId || hasHeadingMetadata)\n      ? {\n          ...event,\n          projection: {\n            ...(event?.projection ?? {}),\n            ...(hasHeadingMetadata ? {\n              heading_metadata: {\n                ...(event?.projection?.heading_metadata ?? {}),\n                ...headingMetadata\n              }\n            } : {}),\n            ...(sourceId ? { heading_suffix: ` <!-- turn_id=${sourceId} -->` } : {})\n          }\n        }\n      : event;\n"""
+          new = """    const headingMetadata = canonicalHeadingMetadata(record, recordNumber);\n    const hasHeadingMetadata = Object.keys(headingMetadata).length > 0;\n    // Canonical event clone carrying DownloadConversation presentation metadata.\n    const projectedEvent = hasHeadingMetadata\n      ? {\n          ...event,\n          projection: {\n            ...(event?.projection ?? {}),\n            heading_metadata: {\n              ...(event?.projection?.heading_metadata ?? {}),\n              ...headingMetadata\n            }\n          }\n        }\n      : event;\n"""
+          text = replace_once(text, old, new, 'canonical record heading projection')
+
+          start_marker = "    // Source ID retained on the one enclosing ChatGPT response heading.\n"
+          end_marker = "    return canonicalCore().renderCanonicalMarkdown(projectedEvents).trimEnd();"
+          start = text.index(start_marker)
+          end = text.index(end_marker, start)
+          grouped = """    // The enclosing response keeps the established final-message source identity\n    // while per-event provenance remains unchanged.\n    const projectedEvents = events.map((event, index) => {\n      const headingMetadata = canonicalHeadingMetadata(\n        records[index], recordNumberById.get(records[index]?.id) ?? null\n      );\n      if (index === 0 && showTurnIds && typeof headingRecord?.id === 'string' && headingRecord.id) {\n        headingMetadata.show_turn_id = true;\n        headingMetadata.turn_id = headingRecord.id;\n      }\n      const hasHeadingMetadata = Object.keys(headingMetadata).length > 0;\n      if (!hasHeadingMetadata) return event;\n      return {\n        ...event,\n        projection: {\n          ...(event?.projection ?? {}),\n          heading_metadata: {\n            ...(event?.projection?.heading_metadata ?? {}),\n            ...headingMetadata\n          }\n        }\n      };\n    });\n"""
+          text = text[:start] + grouped + text[end:]
+
+          old = """    if (headingMetadata.timestamp != null) fields.push(`[${headingMetadata.timestamp}]:`);\n    if (headingMetadata.record_number != null) fields.push(`${headingMetadata.record_number}:`);\n    const metadata = fields.length ? ` ${fields.join(' ')}` : '';\n    const turnId = showTurnIds && id ? ` <!-- turn_id=${id} -->` : '';\n    if (record?.author?.role === 'user') return `## User${metadata}${turnId}`;\n    if (record?.author?.role === 'assistant' && record?.channel === 'commentary') {\n      return `## ChatGPT Commentary${metadata}${turnId}`;\n    }\n    if (record?.author?.role === 'assistant') return `## ChatGPT${metadata}${turnId}`;\n"""
+          new = """    if (headingMetadata.timestamp != null) fields.push(`[${headingMetadata.timestamp}]:`);\n    if (headingMetadata.record_number != null) fields.push(`${headingMetadata.record_number}:`);\n    if (headingMetadata.show_turn_id && id) fields.push(`turn_id=${id}`);\n    const metadata = fields.length ? ` ${fields.join(' ')}` : '';\n    if (record?.author?.role === 'user') return `## User${metadata}`;\n    if (record?.author?.role === 'assistant' && record?.channel === 'commentary') {\n      return `## ChatGPT Commentary${metadata}`;\n    }\n    if (record?.author?.role === 'assistant') return `## ChatGPT${metadata}`;\n"""
+          text = replace_once(text, old, new, 'fallback visible turn id')
+
+          text = text.replace(
+            'Renders one eligible canonical message event while preserving DownloadConversation source-turn identity in the transcript heading.',
+            'Renders one eligible canonical message event with optional first-class heading metadata.')
+          text = text.replace(
+            'Canonical -> output transformation: AIConversationCore supplies the plain canonical heading/body; DownloadConversation replaces only that heading with its existing source-record `turn_id` comment and preserves the rendered body.',
+            'Canonical -> output transformation: DownloadConversation supplies presentation-only heading metadata and preserves canonical event provenance and rendered body.')
+          text = text.replace(
+            'Renders one eligible canonical Assistant activity segment while preserving DownloadConversation source-turn identity in the transcript heading.',
+            'Renders one eligible canonical Assistant activity segment with optional first-class heading metadata.')
+          text = text.replace(
+            'Canonical -> output transformation: AIConversationCore renders the ordered segment; DownloadConversation substitutes only its established source-record heading/comment for the plain canonical heading. Tool payloads and rendered body remain opaque.',
+            'Canonical -> output transformation: AIConversationCore renders the ordered segment while DownloadConversation supplies presentation-only heading metadata. Tool payloads and rendered body remain opaque.')
+          text = text.replace(
+            'Source -> output transformation: the source record ID is emitted as the `turn_id` comment; it is intentionally not replaced by AIConversationCore derived turn identity.',
+            'Source -> output transformation: when enabled, the source record ID is emitted as visible first-class `turn_id` heading metadata.')
+
+          if '<!-- turn_id=${' in text:
+            raise RuntimeError('ordinary turn-id HTML comment template remains in production userscript')
+          user_path.write_text(text, encoding='utf-8')
+
+          design = Path('DESIGN.md')
+          text = design.read_text(encoding='utf-8')
+          first = text.index('## Optional Markdown heading metadata')
+          replacement = """## Optional Markdown heading metadata\n\nDownloadConversation exposes three independent persistent Markdown-heading\ncontrols.  All are presentation-only and default off:\n\n- **Timestamp**: source create/update time in local `YYYY-MM-DD HH:MM:SS` form.\n- **Record #**: the one-based JSONL record number.  Because JSONL record 1 is\n  conversation metadata, the first visible source message is record 2.\n- **Turn ID**: the ChatGPT native source message ID rendered as visible\n  `turn_id=...` heading metadata.\n\nVisible metadata order is timestamp, record number, then Turn ID.  Ordinary\nexports do not encode Turn ID in an HTML comment; HTML comments are reserved for\nexplicit debug/provenance output in consumers that expose it.  Canonical records\npass this presentation metadata through AIConversationCore, and the fallback path\nuses the same visible heading format.\n\nThese controls do not change chronology, grouping, UAP association, API\npagination, recovery, or canonical normalization.\n"""
+          text = text[:first] + replacement
+          design.write_text(text, encoding='utf-8')
+
+          Path('tests/heading-metadata-controls.test.mjs').write_text("""import assert from 'node:assert/strict';\nimport { readFile } from 'node:fs/promises';\nimport test from 'node:test';\n\nconst userscript = await readFile(new URL('../chatgpt-conversation-markdown-export.user.js', import.meta.url), 'utf8');\n\ntest('heading metadata controls default off and preserve JSONL numbering', () => {\n  assert.match(userscript, /\\/\\/ @version      0\\.6\\.153/);\n  assert.match(userscript, /showTimestamps = localStorage\\.getItem\\(SHOW_TIMESTAMPS_STORAGE_KEY\\) === 'true'/);\n  assert.match(userscript, /showRecordNumbers = localStorage\\.getItem\\(SHOW_RECORD_NUMBERS_STORAGE_KEY\\) === 'true'/);\n  assert.match(userscript, /showTurnIds = localStorage\\.getItem\\(SHOW_TURN_IDS_STORAGE_KEY\\) === 'true'/);\n  assert.match(userscript, /recordNumberById\\.set\\(item\\.message\\.id, index \\+ 2\\)/,\n    'First visible source message must be JSONL record 2 because record 1 is conversation metadata.');\n});\n\ntest('turn ID is first-class visible heading metadata in canonical and fallback paths', () => {\n  assert.match(userscript, /metadata\\.show_turn_id = true;/);\n  assert.match(userscript, /metadata\\.turn_id = record\\.id;/);\n  assert.match(userscript, /headingMetadata\\.turn_id = headingRecord\\.id;/);\n  assert.match(userscript, /fields\\.push\\(`turn_id=\\$\\{id\\}`\\)/);\n  assert.doesNotMatch(userscript, /heading_suffix:\\s*` <!-- turn_id=/);\n  assert.doesNotMatch(userscript, /response_heading_suffix:\\s*` <!-- turn_id=/);\n  assert.doesNotMatch(userscript, /const turnId = .*<!-- turn_id=/);\n});\n\ntest('three independent Markdown heading controls are persistent UI state', () => {\n  assert.match(userscript, /data-role=\"show-timestamps\" type=\"checkbox\"> Timestamp/);\n  assert.match(userscript, /data-role=\"show-record-numbers\" type=\"checkbox\"> Record #/);\n  assert.match(userscript, /data-role=\"show-turn-ids\" type=\"checkbox\"> Turn ID/);\n  assert.match(userscript, /localStorage\\.setItem\\(SHOW_TURN_IDS_STORAGE_KEY, String\\(showTurnIds\\)\\)/);\n  assert.match(userscript, /if \\(turnIds\\) turnIds\\.disabled = metadataDisabled/);\n});\n""", encoding='utf-8')
+
+          phase5 = Path('tests/phase5-rich-core-integration.test.mjs')
+          text = phase5.read_text(encoding='utf-8')
+          text = replace_once(text, "assert.equal(requireMatch[2], '3233cba838bbf2d2cea5a2a6f1900ed6014dcfb0');", f"assert.equal(requireMatch[2], '{CORE}');", 'phase5 core pin')
+          text = replace_once(text, '  showTurnIds: true,', '  showTurnIds: false,', 'phase5 default turn id')
+          phase5.write_text(text, encoding='utf-8')
+
+          parity = Path('tests/phase7-cross-consumer-parity.mjs')
+          text = parity.read_text(encoding='utf-8')
+          old = """function projectedDownloadConversationGolden(canonical) {\n  let rendered = canonical;\n  rendered = rendered.replace('## User\\n', '## User <!-- turn_id=user-1 -->\\n');\n  rendered = rendered.replace('## ChatGPT\\n', '## ChatGPT <!-- turn_id=final-1 -->\\n');\n  rendered = rendered.replace(\n    '### ChatGPT Commentary\\n',\n    '### ChatGPT Commentary <!-- turn_id=commentary-1 -->\\n'\n  );\n  // DownloadConversation's file serializer deliberately emits exactly one EOF newline\n  // after trim-ended canonical blocks. Preserve that consumer transport contract while\n  // keeping every rendered byte before the EOF terminator subject to exact comparison.\n  if (rendered.endsWith('\\n\\n')) rendered = rendered.slice(0, -1);\n  return rendered;\n}\n"""
+          new = """function projectedDownloadConversationGolden(canonical) {\n  let rendered = canonical;\n  // DownloadConversation's file serializer deliberately emits exactly one EOF newline\n  // after trim-ended canonical blocks. Preserve that consumer transport contract while\n  // keeping every rendered byte before the EOF terminator subject to exact comparison.\n  if (rendered.endsWith('\\n\\n')) rendered = rendered.slice(0, -1);\n  return rendered;\n}\n"""
+          text = replace_once(text, old, new, 'phase7 default golden')
+          text = replace_once(text, '  showTurnIds: true,', '  showTurnIds: false,', 'phase7 parity default')
+          parity.write_text(text, encoding='utf-8')
+
+          for name in ('phase7-cross-consumer-markdown-shape.mjs', 'phase7-cross-consumer-adversarial.mjs'):
+            path = Path('tests') / name
+            text = path.read_text(encoding='utf-8')
+            count = text.count('showTurnIds: true,')
+            if count != 1:
+              raise RuntimeError(f'{name}: expected one showTurnIds true, found {count}')
+            path.write_text(text.replace('showTurnIds: true,', 'showTurnIds: false,', 1), encoding='utf-8')
+
+          ci = Path('.github/workflows/ci.yml')
+          text = ci.read_text(encoding='utf-8')
+          text = replace_once(text, 'ref: 3233cba838bbf2d2cea5a2a6f1900ed6014dcfb0', f'ref: {CORE}', 'CI core pin')
+          text = replace_once(text, 'ref: 070e7436ca68d4897f99cf86e92f9ee97b87ee02', f'ref: {AIGM}', 'CI AIGM pin')
+          ci.write_text(text, encoding='utf-8')
+          PY
+      - name: Install AI-transcript presentation dependencies
+        run: python -m pip install colorama regex
+      - name: JavaScript syntax
+        run: node --check chatgpt-conversation-markdown-export.user.js
+      - name: JSDoc coverage
+        run: node scripts/check-jsdoc.mjs
+      - name: Focused local regressions
+        run: node --test tests/core-integration.test.mjs tests/phase5-rich-core-integration.test.mjs tests/fallback-adaptive-fence.test.mjs tests/tool-language-diagnostics.test.mjs tests/test-list-ui.test.mjs tests/recorder-panel-ui.test.mjs tests/heading-metadata-controls.test.mjs
+      - name: Diff hygiene
+        run: git diff --check
+      - name: Commit product change
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add chatgpt-conversation-markdown-export.user.js DESIGN.md tests/heading-metadata-controls.test.mjs tests/phase5-rich-core-integration.test.mjs tests/phase7-cross-consumer-parity.mjs tests/phase7-cross-consumer-markdown-shape.mjs tests/phase7-cross-consumer-adversarial.mjs .github/workflows/ci.yml
+          git commit -m "export: finalize first-class heading metadata controls"
+          git push
