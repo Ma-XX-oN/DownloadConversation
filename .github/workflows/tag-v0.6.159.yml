@@ -1,0 +1,30 @@
+name: Tag v0.6.159
+
+on:
+  push:
+    paths:
+      - .github/workflows/tag-v0.6.159.yml
+
+permissions:
+  contents: write
+
+jobs:
+  tag:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Create and verify exact product tag
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          target='7cb9b8b66097ae39d6b93a9f19bca239bfd82dc5'
+          tag='v0.6.159'
+          if existing=$(gh api "repos/${GITHUB_REPOSITORY}/git/ref/tags/${tag}" --jq .object.sha 2>/dev/null); then
+            test "$existing" = "$target"
+          else
+            gh api --method POST "repos/${GITHUB_REPOSITORY}/git/refs" -f ref="refs/tags/${tag}" -f sha="$target" >/dev/null
+          fi
+          actual=$(gh api "repos/${GITHUB_REPOSITORY}/git/ref/tags/${tag}" --jq .object.sha)
+          test "$actual" = "$target"
+          echo "Verified ${tag} -> ${actual}."
