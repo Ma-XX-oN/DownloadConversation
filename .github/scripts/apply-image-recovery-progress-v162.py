@@ -1,0 +1,69 @@
+from pathlib import Path
+
+script_path = Path('chatgpt-conversation-markdown-export.user.js')
+text = script_path.read_text(encoding='utf-8')
+
+old = '// @version      0.6.161'
+new = '// @version      0.6.162'
+if text.count(old) != 1:
+  raise SystemExit(f'userscript version: expected 1 match, found {text.count(old)}')
+text = text.replace(old, new, 1)
+
+old = """    const records = (spine?.records ?? []).filter(record => userImagePointerCount(record?.message) > 0);
+    try {
+"""
+new = """    const records = (spine?.records ?? []).filter(record => userImagePointerCount(record?.message) > 0);
+    const totalImages = records.reduce((total, item) => total + userImagePointerCount(item?.message), 0);
+    let recoveredImages = 0;
+    setStatus(`Recovering conversational images… ${recoveredImages}/${totalImages}`);
+    try {
+"""
+if text.count(old) != 1:
+  raise SystemExit(f'recovery progress setup: expected 1 match, found {text.count(old)}')
+text = text.replace(old, new, 1)
+
+old = """        recovered.set(record.id, images);
+      }
+"""
+new = """        recovered.set(record.id, images);
+        recoveredImages += expected;
+        setStatus(`Recovering conversational images… ${recoveredImages}/${totalImages}`);
+      }
+"""
+if text.count(old) != 1:
+  raise SystemExit(f'recovery progress increment: expected 1 match, found {text.count(old)}')
+text = text.replace(old, new, 1)
+
+old = """        progressState.stage = 'recovering-images';
+        setStatus('Recovering conversational images…');
+        const recoveredImageMap = await recoverUserImages(spine);
+"""
+new = """        progressState.stage = 'recovering-images';
+        const recoveredImageMap = await recoverUserImages(spine);
+"""
+if text.count(old) != 1:
+  raise SystemExit(f'recovery caller status: expected 1 match, found {text.count(old)}')
+text = text.replace(old, new, 1)
+script_path.write_text(text, encoding='utf-8')
+
+heading_path = Path('tests/heading-metadata-controls.test.mjs')
+heading = heading_path.read_text(encoding='utf-8')
+old = r"assert.match(userscript, /\/\/ @version      0\.6\.161/);"
+new = r"assert.match(userscript, /\/\/ @version      0\.6\.162/);"
+if heading.count(old) != 1:
+  raise SystemExit(f'heading version: expected 1 match, found {heading.count(old)}')
+heading_path.write_text(heading.replace(old, new, 1), encoding='utf-8')
+
+panel_path = Path('tests/recorder-panel-ui.test.mjs')
+panel = panel_path.read_text(encoding='utf-8')
+anchor = "  assert.match(userscript, /if \\(md\\?\\.checked\\) await runExport\\('md'\\)/);\n"
+addition = anchor + """  assert.match(userscript, /const totalImages = records\\.reduce\\(\\(total, item\\) => total \\+ userImagePointerCount\\(item\\?\\.message\\), 0\\);/,
+    'Image recovery must calculate the total image count before recovery begins.');
+  assert.match(userscript, /Recovering conversational images… \\${recoveredImages}\\/\\${totalImages}/,
+    'Image recovery status must display recovered/total image counts.');
+  assert.match(userscript, /recoveredImages \\+= expected;/,
+    'Image recovery progress must advance by the number of images processed in each source message.');
+"""
+if panel.count(anchor) != 1:
+  raise SystemExit(f'panel progress assertion anchor: expected 1 match, found {panel.count(anchor)}')
+panel_path.write_text(panel.replace(anchor, addition, 1), encoding='utf-8')
