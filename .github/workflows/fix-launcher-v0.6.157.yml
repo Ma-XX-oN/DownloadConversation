@@ -57,8 +57,8 @@ jobs:
 
           heading_path = Path('tests/heading-metadata-controls.test.mjs')
           heading = heading_path.read_text(encoding='utf-8')
-          old = r"assert.match(userscript, /\\/\\/ @version      0\\.6\\.156/);"
-          new = r"assert.match(userscript, /\\/\\/ @version      0\\.6\\.157/);"
+          old = r"assert.match(userscript, /\/\/ @version      0\.6\.156/);"
+          new = r"assert.match(userscript, /\/\/ @version      0\.6\.157/);"
           if heading.count(old) != 1:
             raise SystemExit(f'heading version expectation: expected exactly one match, found {heading.count(old)}')
           heading_path.write_text(heading.replace(old, new, 1), encoding='utf-8')
