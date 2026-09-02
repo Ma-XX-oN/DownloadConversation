@@ -4663,12 +4663,19 @@
     }, 100);
   }
 
+  /** Stable page-local identities assigned to nodes observed by topology diagnostics. */
   const launcherTopologyNodeIds = new WeakMap();
+  /** Initial direct-BODY index for each node present when topology observation begins. */
   const launcherTopologyInitialBodyIndexes = new WeakMap();
+  /** Mutation and lifetime counters for direct-BODY children considered as mount candidates. */
   const launcherTopologyCandidateStats = new WeakMap();
+  /** Next page-local node identity number assigned by topology diagnostics. */
   let launcherTopologyNextNodeId = 1;
+  /** Performance timestamp when topology observation began. */
   let launcherTopologyStartedAt = performance.now();
+  /** Performance timestamp of the most recent direct-BODY child mutation. */
   let launcherTopologyLastBodyMutationAt = launcherTopologyStartedAt;
+  /** Pending timer that reports a 500 ms direct-BODY structural quiet interval. */
   let launcherTopologyQuietTimer = null;
 
   /**
@@ -4767,6 +4774,12 @@
     launcherTopologyStartedAt = performance.now();
     launcherTopologyLastBodyMutationAt = launcherTopologyStartedAt;
 
+    /**
+     * Begins topology observation for the BODY instance that exists during startup.
+     *
+     * @param {HTMLBodyElement} body - BODY element whose direct children are tracked.
+     * @returns {void} No value is returned.
+     */
     const startForBody = body => {
       const initialChildren = [...body.childNodes];
       initialChildren.forEach((node, index) => {
