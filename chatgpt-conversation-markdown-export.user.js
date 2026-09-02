@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         ChatGPT Conversation Markdown Recorder
 // @namespace    https://chatgpt.com/
-// @version      0.6.154
+// @version      0.6.155
 // @description  Exports the current ChatGPT conversation directly from the Conversation API as Markdown or JSONL.
 // @match        https://chatgpt.com/*
 // @match        https://chat.openai.com/*
@@ -4557,7 +4557,10 @@
     const originalBody = document.body;
     let previous = launcherLifecycleState(launcher);
     let mutationCount = 0;
+    let disconnectedLogged = false;
+    let timer = null;
     const relevantMutations = [];
+    const recentMutations = [];
     console.log(`[DownloadConversation v${VERSION}] launcher appended`, previous);
 
     /**
@@ -4568,6 +4571,12 @@
      * @returns {void} No value is returned.
      */
     const logDisconnected = (source, current) => {
+      if (disconnectedLogged) return;
+      disconnectedLogged = true;
+      if (timer !== null) {
+        clearInterval(timer);
+        timer = null;
+      }
       const payload = {
         version: VERSION,
         source,
@@ -4575,7 +4584,8 @@
         original_body_is_current_body: originalBody === document.body,
         previous,
         current,
-        relevant_mutations: relevantMutations
+        relevant_mutations: relevantMutations,
+        recent_mutations: recentMutations
       };
       console.warn(
         `[DownloadConversation v${VERSION}] launcher disconnected JSON\n${JSON.stringify(payload, null, 2)}`
@@ -4586,8 +4596,11 @@
       mutationCount += records.length;
       for (const record of records) {
         const summary = launcherMutationSummary(record, launcher, originalBody);
-        if (summary.removes_launcher || summary.removes_original_body ||
-            summary.target_is_original_body) relevantMutations.push(summary);
+        recentMutations.push(summary);
+        if (recentMutations.length > 20) recentMutations.shift();
+        if (summary.removes_launcher || summary.removes_original_body) {
+          relevantMutations.push(summary);
+        }
       }
 
       const current = launcherLifecycleState(launcher);
@@ -4622,11 +4635,10 @@
     });
 
     const startedAt = performance.now();
-    const timer = setInterval(() => {
+    timer = setInterval(() => {
       const current = launcherLifecycleState(launcher);
       if (!current.connected) {
         logDisconnected('poll', current);
-        clearInterval(timer);
         observer.disconnect();
         previous = current;
         return;
