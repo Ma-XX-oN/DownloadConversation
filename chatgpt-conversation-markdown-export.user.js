@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         ChatGPT Conversation Markdown Recorder
 // @namespace    https://chatgpt.com/
-// @version      0.6.161
+// @version      0.6.162
 // @description  Exports the current ChatGPT conversation directly from the Conversation API as Markdown or JSONL.
 // @match        https://chatgpt.com/*
 // @match        https://chat.openai.com/*
@@ -3517,6 +3517,9 @@
      * Handles records.
      */
     const records = (spine?.records ?? []).filter(record => userImagePointerCount(record?.message) > 0);
+    const totalImages = records.reduce((total, item) => total + userImagePointerCount(item?.message), 0);
+    let recoveredImages = 0;
+    setStatus(`Recovering conversational images… ${recoveredImages}/${totalImages}`);
     try {
       for (const item of records) {
         const record = item.message;
@@ -3575,6 +3578,8 @@
           }
         }
         recovered.set(record.id, images);
+        recoveredImages += expected;
+        setStatus(`Recovering conversational images… ${recoveredImages}/${totalImages}`);
       }
     } finally {
       scrollRoot.scrollTop = originalScrollTop;
@@ -3626,7 +3631,6 @@
         setStatus(`Extracted ${spine.records.length} API records from ${fetched.pages.length} API page(s) to ${filename}.`);
       } else {
         progressState.stage = 'recovering-images';
-        setStatus('Recovering conversational images…');
         const recoveredImageMap = await recoverUserImages(spine);
         progressState.stage = 'rendering';
         progressState.render_started_at = performance.now();
