@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         ChatGPT Conversation Markdown Recorder
 // @namespace    https://chatgpt.com/
-// @version      0.6.157
+// @version      0.6.158
 // @description  Exports the current ChatGPT conversation directly from the Conversation API as Markdown or JSONL.
 // @match        https://chatgpt.com/*
 // @match        https://chat.openai.com/*
@@ -4664,34 +4664,135 @@
   }
 
   /**
-   * Reattaches the launcher if host-page reconciliation removes the userscript's direct BODY child.
+   * Logs a DOM operation that is about to remove or replace the launcher.
    *
-   * The observer watches only direct BODY child-list changes, so normal conversation subtree
-   * updates do not invoke it.  Recovery is deferred to the next animation frame so the host
-   * reconciliation that removed the launcher can finish before the launcher is restored.
+   * This is diagnostic-only.  It never restores, moves, or otherwise changes the launcher.
+   * The stack is captured before the native DOM operation so the caller that initiated the
+   * removal remains visible in DevTools.
    *
-   * @param {HTMLElement} launcher - The launcher element to keep mounted.
+   * @param {string} operation - DOM operation being performed.
+   * @param {Node|null} affectedNode - Node whose removal/replacement would affect the launcher.
+   * @param {Object} [details={}] - Operation-specific diagnostic details.
    * @returns {void} No value is returned.
    */
-  function keepLauncherMounted(launcher) {
+  function logLauncherRemovalOperation(operation, affectedNode, details = {}) {
+    const launcher = document.getElementById(LAUNCHER_ID);
+    if (!(launcher instanceof HTMLElement) || !(affectedNode instanceof Node)) return;
+    if (affectedNode !== launcher && !affectedNode.contains(launcher)) return;
     const body = document.body;
-    if (!(body instanceof HTMLBodyElement)) return;
-    let recoveryPending = false;
-    const observer = new MutationObserver(records => {
-      if (launcher.isConnected || recoveryPending) return;
-      const removed = records.some(record => [...record.removedNodes].some(node =>
-        node === launcher || (node instanceof Element && node.contains(launcher))));
-      if (!removed) return;
-      recoveryPending = true;
-      requestAnimationFrame(() => {
-        recoveryPending = false;
-        if (launcher.isConnected || document.body !== body) return;
-        body.append(launcher);
-        console.warn(`[DownloadConversation v${VERSION}] launcher restored after host-page removal`,
-          launcherLifecycleState(launcher));
+    const bodyChildren = body ? [...body.childNodes] : [];
+    const bodyChildIndex = launcher.parentNode === body ? bodyChildren.indexOf(launcher) : -1;
+    const payload = {
+      version: VERSION,
+      operation,
+      stack: new Error(`launcher removal via ${operation}`).stack || null,
+      affected_node: launcherNodeSummary(affectedNode),
+      details,
+      launcher: launcherLifecycleState(launcher),
+      body_child_index: bodyChildIndex,
+      body_child_count: bodyChildren.length,
+      previous_body_sibling: bodyChildIndex > 0 ? launcherNodeSummary(bodyChildren[bodyChildIndex - 1]) : null,
+      next_body_sibling: bodyChildIndex >= 0 && bodyChildIndex + 1 < bodyChildren.length
+        ? launcherNodeSummary(bodyChildren[bodyChildIndex + 1])
+        : null
+    };
+    console.warn(
+      `[DownloadConversation v${VERSION}] launcher removal operation JSON\n${JSON.stringify(payload, null, 2)}`
+    );
+  }
+
+  /**
+   * Installs targeted DOM-operation wrappers used to identify who removes the launcher.
+   *
+   * Wrappers preserve the native return values and exceptions.  They only log when the exact
+   * operation would remove the launcher or an ancestor that contains it.  No recovery behavior
+   * is installed here.
+   *
+   * @returns {void} No value is returned.
+   */
+  function installLauncherRemovalDiagnostics() {
+    const originalRemoveChild = Node.prototype.removeChild;
+    Node.prototype.removeChild = function(child) {
+      logLauncherRemovalOperation('Node.removeChild', child, {
+        parent: launcherNodeSummary(this),
+        child_index: child instanceof Node ? [...this.childNodes].indexOf(child) : -1
       });
-    });
-    observer.observe(body, { childList: true });
+      return Reflect.apply(originalRemoveChild, this, [child]);
+    };
+
+    const originalReplaceChild = Node.prototype.replaceChild;
+    Node.prototype.replaceChild = function(newChild, oldChild) {
+      logLauncherRemovalOperation('Node.replaceChild', oldChild, {
+        parent: launcherNodeSummary(this),
+        old_child_index: oldChild instanceof Node ? [...this.childNodes].indexOf(oldChild) : -1,
+        new_child: launcherNodeSummary(newChild)
+      });
+      return Reflect.apply(originalReplaceChild, this, [newChild, oldChild]);
+    };
+
+    const originalRemove = Element.prototype.remove;
+    Element.prototype.remove = function() {
+      logLauncherRemovalOperation('Element.remove', this, {
+        parent: launcherNodeSummary(this.parentNode)
+      });
+      return Reflect.apply(originalRemove, this, []);
+    };
+
+    const originalReplaceWith = Element.prototype.replaceWith;
+    Element.prototype.replaceWith = function(...nodes) {
+      logLauncherRemovalOperation('Element.replaceWith', this, {
+        parent: launcherNodeSummary(this.parentNode),
+        replacement_count: nodes.length
+      });
+      return Reflect.apply(originalReplaceWith, this, nodes);
+    };
+
+    const originalReplaceChildren = Element.prototype.replaceChildren;
+    Element.prototype.replaceChildren = function(...nodes) {
+      logLauncherRemovalOperation('Element.replaceChildren', this, {
+        replacement_count: nodes.length
+      });
+      return Reflect.apply(originalReplaceChildren, this, nodes);
+    };
+
+    const innerHtml = Object.getOwnPropertyDescriptor(Element.prototype, 'innerHTML');
+    if (innerHtml?.set) {
+      Object.defineProperty(Element.prototype, 'innerHTML', {
+        ...innerHtml,
+        set(value) {
+          logLauncherRemovalOperation('Element.innerHTML=', this, {
+            replacement_length: typeof value === 'string' ? value.length : null
+          });
+          return Reflect.apply(innerHtml.set, this, [value]);
+        }
+      });
+    }
+
+    const textContent = Object.getOwnPropertyDescriptor(Node.prototype, 'textContent');
+    if (textContent?.set) {
+      Object.defineProperty(Node.prototype, 'textContent', {
+        ...textContent,
+        set(value) {
+          logLauncherRemovalOperation('Node.textContent=', this, {
+            replacement_length: typeof value === 'string' ? value.length : null
+          });
+          return Reflect.apply(textContent.set, this, [value]);
+        }
+      });
+    }
+
+    const outerHtml = Object.getOwnPropertyDescriptor(Element.prototype, 'outerHTML');
+    if (outerHtml?.set) {
+      Object.defineProperty(Element.prototype, 'outerHTML', {
+        ...outerHtml,
+        set(value) {
+          logLauncherRemovalOperation('Element.outerHTML=', this, {
+            replacement_length: typeof value === 'string' ? value.length : null
+          });
+          return Reflect.apply(outerHtml.set, this, [value]);
+        }
+      });
+    }
   }
 
   /**
@@ -4728,7 +4829,6 @@
     launcher.addEventListener('mouseenter', openRecorderPopup);
     launcher.addEventListener('focus', openRecorderPopup);
     document.body.append(launcher);
-    keepLauncherMounted(launcher);
     watchLauncherLifecycle(launcher);
   }
 
@@ -4854,6 +4954,7 @@
     });
     if (document.body) {
       makeLauncher();
+      makePanel();
       return;
     }
     new MutationObserver((_, observer) => {
@@ -4864,6 +4965,7 @@
         body: launcherNodeSummary(document.body)
       });
       makeLauncher();
+      makePanel();
     }).observe(document.documentElement, { childList: true, subtree: true });
   }
 
@@ -4874,6 +4976,7 @@
 
   document.addEventListener('click', captureConversationClickDiagnostic, true);
   window.addEventListener('pagehide', () => finishConversationClickDiagnostic(activeClickDiagnostic, 'pagehide'));
+  installLauncherRemovalDiagnostics();
   installNetworkCapture();
   bootstrapUi();
 })();
