@@ -1,0 +1,86 @@
+name: Fix v0.6.159 documentation
+
+on:
+  push:
+    paths:
+      - .github/workflows/fix-v0.6.159-jsdoc.yml
+
+permissions:
+  contents: write
+
+jobs:
+  patch:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - name: Add required documentation
+        shell: bash
+        run: |
+          set -euo pipefail
+          python - <<'PY'
+          from pathlib import Path
+
+          path = Path('chatgpt-conversation-markdown-export.user.js')
+          text = path.read_text(encoding='utf-8')
+
+          old = '''  const launcherTopologyNodeIds = new WeakMap();
+  const launcherTopologyInitialBodyIndexes = new WeakMap();
+  const launcherTopologyCandidateStats = new WeakMap();
+  let launcherTopologyNextNodeId = 1;
+  let launcherTopologyStartedAt = performance.now();
+  let launcherTopologyLastBodyMutationAt = launcherTopologyStartedAt;
+  let launcherTopologyQuietTimer = null;
+'''
+          new = '''  /** Stable page-local identities assigned to nodes observed by topology diagnostics. */
+  const launcherTopologyNodeIds = new WeakMap();
+  /** Initial direct-BODY index for each node present when topology observation begins. */
+  const launcherTopologyInitialBodyIndexes = new WeakMap();
+  /** Mutation and lifetime counters for direct-BODY children considered as mount candidates. */
+  const launcherTopologyCandidateStats = new WeakMap();
+  /** Next page-local node identity number assigned by topology diagnostics. */
+  let launcherTopologyNextNodeId = 1;
+  /** Performance timestamp when topology observation began. */
+  let launcherTopologyStartedAt = performance.now();
+  /** Performance timestamp of the most recent direct-BODY child mutation. */
+  let launcherTopologyLastBodyMutationAt = launcherTopologyStartedAt;
+  /** Pending timer that reports a 500 ms direct-BODY structural quiet interval. */
+  let launcherTopologyQuietTimer = null;
+'''
+          if text.count(old) != 1:
+            raise SystemExit(f'topology variable block: expected 1 match, found {text.count(old)}')
+          text = text.replace(old, new, 1)
+
+          old = '''    const startForBody = body => {
+'''
+          new = '''    /**
+     * Begins topology observation for the BODY instance that exists during startup.
+     *
+     * @param {HTMLBodyElement} body - BODY element whose direct children are tracked.
+     * @returns {void} No value is returned.
+     */
+    const startForBody = body => {
+'''
+          if text.count(old) != 1:
+            raise SystemExit(f'startForBody declaration: expected 1 match, found {text.count(old)}')
+          path.write_text(text.replace(old, new, 1), encoding='utf-8')
+          PY
+          node scripts/check-jsdoc.mjs
+          node --check chatgpt-conversation-markdown-export.user.js
+          node --test tests/*.test.mjs
+          git diff --check
+      - name: Commit fix and self-clean workflow
+        shell: bash
+        run: |
+          set -euo pipefail
+          rm .github/workflows/fix-v0.6.159-jsdoc.yml
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add -A
+          git diff --cached --check
+          git commit -m 'docs: document launcher topology diagnostics'
+          git push origin HEAD:main
