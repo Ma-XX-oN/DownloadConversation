@@ -1,0 +1,253 @@
+from pathlib import Path
+
+script_path = Path('chatgpt-conversation-markdown-export.user.js')
+text = script_path.read_text(encoding='utf-8')
+
+old = '// @version      0.6.160'
+new = '// @version      0.6.161'
+if text.count(old) != 1:
+  raise SystemExit(f'userscript version: expected 1 match, found {text.count(old)}')
+text = text.replace(old, new, 1)
+
+old = "  /** DOM id of the floating launcher button that opens the recorder panel. */\n  const LAUNCHER_ID = 'tm-conversation-recorder-launcher';\n"
+new = old + "  /** Enables invasive launcher topology/call-stack diagnostics when manually set true. */\n  const DEEP_LAUNCHER_DIAGNOSTICS = false;\n"
+if text.count(old) != 1:
+  raise SystemExit(f'launcher constant anchor: expected 1 match, found {text.count(old)}')
+text = text.replace(old, new, 1)
+
+old = "    document.body.append(launcher);\n    watchLauncherLifecycle(launcher);\n"
+new = "    document.body.append(launcher);\n    if (DEEP_LAUNCHER_DIAGNOSTICS) watchLauncherLifecycle(launcher);\n"
+if text.count(old) != 1:
+  raise SystemExit(f'launcher lifecycle call: expected 1 match, found {text.count(old)}')
+text = text.replace(old, new, 1)
+
+old = '''  /**
+   * Mounts the launcher only after the host has loaded and direct BODY reconciliation is quiet.
+   *
+   * ChatGPT can remove direct BODY children during its post-load React reconciliation.  Keeping
+   * the observer alive also remounts the launcher after a later full BODY-child reconciliation,
+   * while the recorder panel remains lazy and is created only when the launcher is used.
+   *
+   * @returns {void} No value is returned.
+   */
+  function bootstrapUi() {
+    console.log(`[DownloadConversation v${VERSION}] bootstrapUi`, {
+      ready_state: document.readyState,
+      has_body: Boolean(document.body),
+      body: launcherNodeSummary(document.body)
+    });
+
+    const quietMs = 1000;
+    let loadReady = document.readyState === 'complete';
+    let bodyObserver = null;
+    let quietTimer = null;
+
+    /**
+     * Schedules one launcher mount after the current direct-BODY quiet interval.
+     *
+     * @returns {void} No value is returned.
+     */
+    const scheduleLauncherMount = () => {
+      if (!loadReady || !document.body) return;
+      if (quietTimer !== null) clearTimeout(quietTimer);
+      quietTimer = setTimeout(() => {
+        quietTimer = null;
+        if (!document.body) return;
+        console.log(`[DownloadConversation v${VERSION}] launcher mount after BODY quiet`, {
+          ready_state: document.readyState,
+          quiet_ms: quietMs,
+          has_launcher: Boolean(document.getElementById(LAUNCHER_ID))
+        });
+        makeLauncher();
+      }, quietMs);
+    };
+
+    /**
+     * Observes the current BODY so host reconciliation resets the launcher quiet interval.
+     *
+     * @param {HTMLBodyElement} body - Current BODY whose direct children are observed.
+     * @returns {void} No value is returned.
+     */
+    const observeBody = body => {
+      bodyObserver?.disconnect();
+      bodyObserver = new MutationObserver(records => {
+        if (!records.some(record => record.type === 'childList' && record.target === body)) return;
+        scheduleLauncherMount();
+      });
+      bodyObserver.observe(body, { childList: true });
+      scheduleLauncherMount();
+    };
+
+    if (document.body) observeBody(document.body);
+    else {
+      new MutationObserver((_, observer) => {
+        if (!document.body) return;
+        observer.disconnect();
+        console.log(`[DownloadConversation v${VERSION}] bootstrapUi body appeared`, {
+          ready_state: document.readyState,
+          body: launcherNodeSummary(document.body)
+        });
+        observeBody(document.body);
+      }).observe(document.documentElement, { childList: true, subtree: true });
+    }
+
+    if (!loadReady) {
+      window.addEventListener('load', () => {
+        loadReady = true;
+        scheduleLauncherMount();
+      }, { once: true });
+    }
+  }
+'''
+new = '''  /**
+   * Mounts the launcher only after the host has loaded and direct BODY reconciliation is quiet.
+   *
+   * Lightweight lifecycle logging stays enabled permanently.  Expensive topology and DOM-method
+   * instrumentation remains available behind `DEEP_LAUNCHER_DIAGNOSTICS` for future regressions.
+   *
+   * @returns {void} No value is returned.
+   */
+  function bootstrapUi() {
+    console.log(`[DownloadConversation v${VERSION}] bootstrap`, {
+      ready_state: document.readyState,
+      has_body: Boolean(document.body)
+    });
+
+    const quietMs = 1000;
+    let loadReady = document.readyState === 'complete';
+    let bodyObserver = null;
+    let quietTimer = null;
+    let launcherMountCount = 0;
+    let launcherRemovalReported = false;
+
+    /**
+     * Schedules one launcher mount after the current direct-BODY quiet interval.
+     *
+     * @returns {void} No value is returned.
+     */
+    const scheduleLauncherMount = () => {
+      if (!loadReady || !document.body) return;
+      if (quietTimer !== null) clearTimeout(quietTimer);
+      quietTimer = setTimeout(() => {
+        quietTimer = null;
+        if (!document.body || document.getElementById(LAUNCHER_ID)) return;
+        const reason = launcherMountCount === 0 ? 'initial' : 'remount-after-body-reconciliation';
+        makeLauncher();
+        const launcher = document.getElementById(LAUNCHER_ID);
+        if (!(launcher instanceof HTMLElement)) return;
+        launcherMountCount += 1;
+        launcherRemovalReported = false;
+        const children = [...document.body.childNodes];
+        console.log(`[DownloadConversation v${VERSION}] launcher mounted`, {
+          reason,
+          ready_state: document.readyState,
+          quiet_ms: quietMs,
+          body_child_count: children.length,
+          body_child_index: children.indexOf(launcher)
+        });
+      }, quietMs);
+    };
+
+    /**
+     * Observes the current BODY so host reconciliation resets the launcher quiet interval.
+     *
+     * @param {HTMLBodyElement} body - Current BODY whose direct children are observed.
+     * @returns {void} No value is returned.
+     */
+    const observeBody = body => {
+      bodyObserver?.disconnect();
+      bodyObserver = new MutationObserver(records => {
+        if (!records.some(record => record.type === 'childList' && record.target === body)) return;
+        if (launcherMountCount > 0 && !document.getElementById(LAUNCHER_ID) && !launcherRemovalReported) {
+          launcherRemovalReported = true;
+          console.warn(`[DownloadConversation v${VERSION}] launcher disconnected; waiting for BODY quiet`, {
+            ready_state: document.readyState,
+            body_child_count: body.childNodes.length,
+            quiet_ms: quietMs
+          });
+        }
+        scheduleLauncherMount();
+      });
+      bodyObserver.observe(body, { childList: true });
+      scheduleLauncherMount();
+    };
+
+    if (document.body) observeBody(document.body);
+    else {
+      new MutationObserver((_, observer) => {
+        if (!document.body) return;
+        observer.disconnect();
+        console.log(`[DownloadConversation v${VERSION}] BODY appeared`, {
+          ready_state: document.readyState
+        });
+        observeBody(document.body);
+      }).observe(document.documentElement, { childList: true, subtree: true });
+    }
+
+    if (!loadReady) {
+      window.addEventListener('load', () => {
+        loadReady = true;
+        console.log(`[DownloadConversation v${VERSION}] load complete; waiting for BODY quiet`, {
+          quiet_ms: quietMs
+        });
+        scheduleLauncherMount();
+      }, { once: true });
+    }
+  }
+'''
+if text.count(old) != 1:
+  raise SystemExit(f'bootstrapUi block: expected 1 match, found {text.count(old)}')
+text = text.replace(old, new, 1)
+
+old = '''  installLauncherRemovalDiagnostics();
+  installLauncherTopologyDiagnostics();
+  installNetworkCapture();
+  bootstrapUi();
+'''
+new = '''  if (DEEP_LAUNCHER_DIAGNOSTICS) {
+    installLauncherRemovalDiagnostics();
+    installLauncherTopologyDiagnostics();
+  }
+  installNetworkCapture();
+  bootstrapUi();
+'''
+if text.count(old) != 1:
+  raise SystemExit(f'diagnostic startup block: expected 1 match, found {text.count(old)}')
+text = text.replace(old, new, 1)
+script_path.write_text(text, encoding='utf-8')
+
+heading_path = Path('tests/heading-metadata-controls.test.mjs')
+heading = heading_path.read_text(encoding='utf-8')
+old = "assert.match(userscript, /\\/\\/ @version      0\\.6\\.160/);"
+new = "assert.match(userscript, /\\/\\/ @version      0\\.6\\.161/);"
+if heading.count(old) != 1:
+  raise SystemExit(f'heading version: expected 1 match, found {heading.count(old)}')
+heading_path.write_text(heading.replace(old, new, 1), encoding='utf-8')
+
+panel_path = Path('tests/recorder-panel-ui.test.mjs')
+panel = panel_path.read_text(encoding='utf-8')
+old = '''  assert.match(userscript, /installLauncherRemovalDiagnostics\\(\\);\\n  installLauncherTopologyDiagnostics\\(\\);\\n  installNetworkCapture\\(\\);\\n  bootstrapUi\\(\\);/,
+    'Removal and topology diagnostics must be installed before UI bootstrap.');
+'''
+new = '''  assert.match(userscript, /const DEEP_LAUNCHER_DIAGNOSTICS = false;/,
+    'Invasive launcher diagnostics must be disabled in normal production runs.');
+  assert.match(userscript, /if \\(DEEP_LAUNCHER_DIAGNOSTICS\\) \\{\\n    installLauncherRemovalDiagnostics\\(\\);\\n    installLauncherTopologyDiagnostics\\(\\);\\n  \\}/,
+    'Deep launcher diagnostics must remain available behind the disabled flag.');
+'''
+if panel.count(old) != 1:
+  raise SystemExit(f'diagnostic install assertion: expected 1 match, found {panel.count(old)}')
+panel = panel.replace(old, new, 1)
+
+old = '''  assert.match(userscript, /launcher mount after BODY quiet/,
+    'Launcher bootstrap must expose the delayed-mount diagnostic.');
+'''
+new = '''  assert.match(userscript, /launcher mounted/,
+    'Launcher bootstrap must retain a compact successful-mount lifecycle log.');
+  assert.match(userscript, /launcher disconnected; waiting for BODY quiet/,
+    'Launcher bootstrap must retain a compact disconnection lifecycle warning.');
+  assert.match(userscript, /remount-after-body-reconciliation/,
+    'Launcher bootstrap must distinguish a later remount from the initial mount.');
+'''
+if panel.count(old) != 1:
+  raise SystemExit(f'mount diagnostic assertion: expected 1 match, found {panel.count(old)}')
+panel_path.write_text(panel.replace(old, new, 1), encoding='utf-8')
