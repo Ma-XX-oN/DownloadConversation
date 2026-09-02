@@ -67,8 +67,10 @@ test('recorder panel restores dialog/log/switch/extract UI contracts', () => {
     'Topology diagnostics must report an empirically quiet BODY interval.');
   assert.match(userscript, /topology: launcherTopologyContext\(\)/,
     'Removal diagnostics must include the full BODY topology at removal time.');
-  assert.match(userscript, /installLauncherRemovalDiagnostics\(\);\n  installLauncherTopologyDiagnostics\(\);\n  installNetworkCapture\(\);\n  bootstrapUi\(\);/,
-    'Removal and topology diagnostics must be installed before UI bootstrap.');
+  assert.match(userscript, /const DEEP_LAUNCHER_DIAGNOSTICS = false;/,
+    'Invasive launcher diagnostics must be disabled in normal production runs.');
+  assert.match(userscript, /if \(DEEP_LAUNCHER_DIAGNOSTICS\) \{\n    installLauncherRemovalDiagnostics\(\);\n    installLauncherTopologyDiagnostics\(\);\n  \}/,
+    'Deep launcher diagnostics must remain available behind the disabled flag.');
   assert.match(userscript, /const quietMs = 1000;/,
     'Launcher bootstrap must wait for a full second of direct-BODY quiet.');
   assert.match(userscript, /let loadReady = document\.readyState === 'complete';/,
@@ -77,8 +79,12 @@ test('recorder panel restores dialog/log/switch/extract UI contracts', () => {
     'Launcher bootstrap must observe direct BODY reconciliation.');
   assert.match(userscript, /window\.addEventListener\('load', \(\) => \{/,
     'Launcher bootstrap must start its quiet timer when load completes.');
-  assert.match(userscript, /launcher mount after BODY quiet/,
-    'Launcher bootstrap must expose the delayed-mount diagnostic.');
+  assert.match(userscript, /launcher mounted/,
+    'Launcher bootstrap must retain a compact successful-mount lifecycle log.');
+  assert.match(userscript, /launcher disconnected; waiting for BODY quiet/,
+    'Launcher bootstrap must retain a compact disconnection lifecycle warning.');
+  assert.match(userscript, /remount-after-body-reconciliation/,
+    'Launcher bootstrap must distinguish a later remount from the initial mount.');
   const bootstrapAt = userscript.indexOf('function bootstrapUi()');
   const bootstrapEnd = userscript.indexOf("document.addEventListener('visibilitychange'", bootstrapAt);
   const bootstrapSource = userscript.slice(bootstrapAt, bootstrapEnd);

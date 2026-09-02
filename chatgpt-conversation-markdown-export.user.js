@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         ChatGPT Conversation Markdown Recorder
 // @namespace    https://chatgpt.com/
-// @version      0.6.160
+// @version      0.6.161
 // @description  Exports the current ChatGPT conversation directly from the Conversation API as Markdown or JSONL.
 // @match        https://chatgpt.com/*
 // @match        https://chat.openai.com/*
@@ -19,6 +19,8 @@
   const PANEL_ID = 'tm-conversation-recorder';
   /** DOM id of the floating launcher button that opens the recorder panel. */
   const LAUNCHER_ID = 'tm-conversation-recorder-launcher';
+  /** Enables invasive launcher topology/call-stack diagnostics when manually set true. */
+  const DEEP_LAUNCHER_DIAGNOSTICS = false;
   /** Numeric severity ordering used to decide which diagnostic entries are emitted. */
   const DIAGNOSTIC_LEVELS = Object.freeze({ errors: 0, warnings: 1, debug: 2, verbose: 3 });
   /** Default diagnostic threshold when the user has not stored a preference. */
@@ -5046,7 +5048,7 @@
     launcher.addEventListener('mouseenter', openRecorderPopup);
     launcher.addEventListener('focus', openRecorderPopup);
     document.body.append(launcher);
-    watchLauncherLifecycle(launcher);
+    if (DEEP_LAUNCHER_DIAGNOSTICS) watchLauncherLifecycle(launcher);
   }
 
   /**
@@ -5161,23 +5163,23 @@
   /**
    * Mounts the launcher only after the host has loaded and direct BODY reconciliation is quiet.
    *
-   * ChatGPT can remove direct BODY children during its post-load React reconciliation.  Keeping
-   * the observer alive also remounts the launcher after a later full BODY-child reconciliation,
-   * while the recorder panel remains lazy and is created only when the launcher is used.
+   * Lightweight lifecycle logging stays enabled permanently.  Expensive topology and DOM-method
+   * instrumentation remains available behind `DEEP_LAUNCHER_DIAGNOSTICS` for future regressions.
    *
    * @returns {void} No value is returned.
    */
   function bootstrapUi() {
-    console.log(`[DownloadConversation v${VERSION}] bootstrapUi`, {
+    console.log(`[DownloadConversation v${VERSION}] bootstrap`, {
       ready_state: document.readyState,
-      has_body: Boolean(document.body),
-      body: launcherNodeSummary(document.body)
+      has_body: Boolean(document.body)
     });
 
     const quietMs = 1000;
     let loadReady = document.readyState === 'complete';
     let bodyObserver = null;
     let quietTimer = null;
+    let launcherMountCount = 0;
+    let launcherRemovalReported = false;
 
     /**
      * Schedules one launcher mount after the current direct-BODY quiet interval.
@@ -5189,13 +5191,21 @@
       if (quietTimer !== null) clearTimeout(quietTimer);
       quietTimer = setTimeout(() => {
         quietTimer = null;
-        if (!document.body) return;
-        console.log(`[DownloadConversation v${VERSION}] launcher mount after BODY quiet`, {
+        if (!document.body || document.getElementById(LAUNCHER_ID)) return;
+        const reason = launcherMountCount === 0 ? 'initial' : 'remount-after-body-reconciliation';
+        makeLauncher();
+        const launcher = document.getElementById(LAUNCHER_ID);
+        if (!(launcher instanceof HTMLElement)) return;
+        launcherMountCount += 1;
+        launcherRemovalReported = false;
+        const children = [...document.body.childNodes];
+        console.log(`[DownloadConversation v${VERSION}] launcher mounted`, {
+          reason,
           ready_state: document.readyState,
           quiet_ms: quietMs,
-          has_launcher: Boolean(document.getElementById(LAUNCHER_ID))
+          body_child_count: children.length,
+          body_child_index: children.indexOf(launcher)
         });
-        makeLauncher();
       }, quietMs);
     };
 
@@ -5209,6 +5219,14 @@
       bodyObserver?.disconnect();
       bodyObserver = new MutationObserver(records => {
         if (!records.some(record => record.type === 'childList' && record.target === body)) return;
+        if (launcherMountCount > 0 && !document.getElementById(LAUNCHER_ID) && !launcherRemovalReported) {
+          launcherRemovalReported = true;
+          console.warn(`[DownloadConversation v${VERSION}] launcher disconnected; waiting for BODY quiet`, {
+            ready_state: document.readyState,
+            body_child_count: body.childNodes.length,
+            quiet_ms: quietMs
+          });
+        }
         scheduleLauncherMount();
       });
       bodyObserver.observe(body, { childList: true });
@@ -5220,9 +5238,8 @@
       new MutationObserver((_, observer) => {
         if (!document.body) return;
         observer.disconnect();
-        console.log(`[DownloadConversation v${VERSION}] bootstrapUi body appeared`, {
-          ready_state: document.readyState,
-          body: launcherNodeSummary(document.body)
+        console.log(`[DownloadConversation v${VERSION}] BODY appeared`, {
+          ready_state: document.readyState
         });
         observeBody(document.body);
       }).observe(document.documentElement, { childList: true, subtree: true });
@@ -5231,6 +5248,9 @@
     if (!loadReady) {
       window.addEventListener('load', () => {
         loadReady = true;
+        console.log(`[DownloadConversation v${VERSION}] load complete; waiting for BODY quiet`, {
+          quiet_ms: quietMs
+        });
         scheduleLauncherMount();
       }, { once: true });
     }
@@ -5243,8 +5263,10 @@
 
   document.addEventListener('click', captureConversationClickDiagnostic, true);
   window.addEventListener('pagehide', () => finishConversationClickDiagnostic(activeClickDiagnostic, 'pagehide'));
-  installLauncherRemovalDiagnostics();
-  installLauncherTopologyDiagnostics();
+  if (DEEP_LAUNCHER_DIAGNOSTICS) {
+    installLauncherRemovalDiagnostics();
+    installLauncherTopologyDiagnostics();
+  }
   installNetworkCapture();
   bootstrapUi();
 })();
