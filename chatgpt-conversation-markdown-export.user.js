@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         ChatGPT Conversation Markdown Recorder
 // @namespace    https://chatgpt.com/
-// @version      0.6.159
+// @version      0.6.160
 // @description  Exports the current ChatGPT conversation directly from the Conversation API as Markdown or JSONL.
 // @match        https://chatgpt.com/*
 // @match        https://chat.openai.com/*
@@ -5159,7 +5159,11 @@
   }
 
   /**
-   * Handles bootstrap UI.
+   * Mounts the launcher only after the host has loaded and direct BODY reconciliation is quiet.
+   *
+   * ChatGPT can remove direct BODY children during its post-load React reconciliation.  Keeping
+   * the observer alive also remounts the launcher after a later full BODY-child reconciliation,
+   * while the recorder panel remains lazy and is created only when the launcher is used.
    *
    * @returns {void} No value is returned.
    */
@@ -5169,21 +5173,67 @@
       has_body: Boolean(document.body),
       body: launcherNodeSummary(document.body)
     });
-    if (document.body) {
-      makeLauncher();
-      makePanel();
-      return;
-    }
-    new MutationObserver((_, observer) => {
-      if (!document.body) return;
-      observer.disconnect();
-      console.log(`[DownloadConversation v${VERSION}] bootstrapUi body appeared`, {
-        ready_state: document.readyState,
-        body: launcherNodeSummary(document.body)
+
+    const quietMs = 1000;
+    let loadReady = document.readyState === 'complete';
+    let bodyObserver = null;
+    let quietTimer = null;
+
+    /**
+     * Schedules one launcher mount after the current direct-BODY quiet interval.
+     *
+     * @returns {void} No value is returned.
+     */
+    const scheduleLauncherMount = () => {
+      if (!loadReady || !document.body) return;
+      if (quietTimer !== null) clearTimeout(quietTimer);
+      quietTimer = setTimeout(() => {
+        quietTimer = null;
+        if (!document.body) return;
+        console.log(`[DownloadConversation v${VERSION}] launcher mount after BODY quiet`, {
+          ready_state: document.readyState,
+          quiet_ms: quietMs,
+          has_launcher: Boolean(document.getElementById(LAUNCHER_ID))
+        });
+        makeLauncher();
+      }, quietMs);
+    };
+
+    /**
+     * Observes the current BODY so host reconciliation resets the launcher quiet interval.
+     *
+     * @param {HTMLBodyElement} body - Current BODY whose direct children are observed.
+     * @returns {void} No value is returned.
+     */
+    const observeBody = body => {
+      bodyObserver?.disconnect();
+      bodyObserver = new MutationObserver(records => {
+        if (!records.some(record => record.type === 'childList' && record.target === body)) return;
+        scheduleLauncherMount();
       });
-      makeLauncher();
-      makePanel();
-    }).observe(document.documentElement, { childList: true, subtree: true });
+      bodyObserver.observe(body, { childList: true });
+      scheduleLauncherMount();
+    };
+
+    if (document.body) observeBody(document.body);
+    else {
+      new MutationObserver((_, observer) => {
+        if (!document.body) return;
+        observer.disconnect();
+        console.log(`[DownloadConversation v${VERSION}] bootstrapUi body appeared`, {
+          ready_state: document.readyState,
+          body: launcherNodeSummary(document.body)
+        });
+        observeBody(document.body);
+      }).observe(document.documentElement, { childList: true, subtree: true });
+    }
+
+    if (!loadReady) {
+      window.addEventListener('load', () => {
+        loadReady = true;
+        scheduleLauncherMount();
+      }, { once: true });
+    }
   }
 
   document.addEventListener('visibilitychange', () => {

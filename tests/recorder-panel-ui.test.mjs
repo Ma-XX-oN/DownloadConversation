@@ -69,6 +69,21 @@ test('recorder panel restores dialog/log/switch/extract UI contracts', () => {
     'Removal diagnostics must include the full BODY topology at removal time.');
   assert.match(userscript, /installLauncherRemovalDiagnostics\(\);\n  installLauncherTopologyDiagnostics\(\);\n  installNetworkCapture\(\);\n  bootstrapUi\(\);/,
     'Removal and topology diagnostics must be installed before UI bootstrap.');
-  assert.match(userscript, /if \(document\.body\) \{\n      makeLauncher\(\);\n      makePanel\(\);/,
-    'Diagnostic build must preserve the pre-recovery bootstrap behavior.');
+  assert.match(userscript, /const quietMs = 1000;/,
+    'Launcher bootstrap must wait for a full second of direct-BODY quiet.');
+  assert.match(userscript, /let loadReady = document\.readyState === 'complete';/,
+    'Launcher bootstrap must not consider the host stable before load completes.');
+  assert.match(userscript, /bodyObserver\.observe\(body, \{ childList: true \}\);/,
+    'Launcher bootstrap must observe direct BODY reconciliation.');
+  assert.match(userscript, /window\.addEventListener\('load', \(\) => \{/,
+    'Launcher bootstrap must start its quiet timer when load completes.');
+  assert.match(userscript, /launcher mount after BODY quiet/,
+    'Launcher bootstrap must expose the delayed-mount diagnostic.');
+  const bootstrapAt = userscript.indexOf('function bootstrapUi()');
+  const bootstrapEnd = userscript.indexOf("document.addEventListener('visibilitychange'", bootstrapAt);
+  const bootstrapSource = userscript.slice(bootstrapAt, bootstrapEnd);
+  assert.match(bootstrapSource, /makeLauncher\(\);/,
+    'Delayed bootstrap must create the launcher after the quiet interval.');
+  assert.doesNotMatch(bootstrapSource, /makePanel\(\);/,
+    'Recorder panel must remain lazy and must not be inserted during host reconciliation.');
 });
