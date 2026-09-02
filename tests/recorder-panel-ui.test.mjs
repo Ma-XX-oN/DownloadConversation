@@ -57,8 +57,18 @@ test('recorder panel restores dialog/log/switch/extract UI contracts', () => {
     'Removal diagnostics must record the launcher direct-BODY index.');
   assert.match(userscript, /stack: new Error\(`launcher removal via \${operation}`\)\.stack/,
     'Removal diagnostics must capture a pre-operation stack.');
-  assert.match(userscript, /installLauncherRemovalDiagnostics\(\);\n  installNetworkCapture\(\);\n  bootstrapUi\(\);/,
-    'Removal diagnostics must be installed before UI bootstrap.');
+  assert.match(userscript, /function installLauncherTopologyDiagnostics\(\)/,
+    'Topology diagnostics must monitor BODY structure and startup timing.');
+  assert.match(userscript, /launcherTopologyInitialBodyIndexes = new WeakMap\(\)/,
+    'Topology diagnostics must retain stable identity-to-initial-index mapping.');
+  assert.match(userscript, /logLauncherTopology\('body-child-mutation'/,
+    'Direct BODY child mutations must be logged.');
+  assert.match(userscript, /logLauncherTopology\('body-quiet-500ms'\)/,
+    'Topology diagnostics must report an empirically quiet BODY interval.');
+  assert.match(userscript, /topology: launcherTopologyContext\(\)/,
+    'Removal diagnostics must include the full BODY topology at removal time.');
+  assert.match(userscript, /installLauncherRemovalDiagnostics\(\);\n  installLauncherTopologyDiagnostics\(\);\n  installNetworkCapture\(\);\n  bootstrapUi\(\);/,
+    'Removal and topology diagnostics must be installed before UI bootstrap.');
   assert.match(userscript, /if \(document\.body\) \{\n      makeLauncher\(\);\n      makePanel\(\);/,
     'Diagnostic build must preserve the pre-recovery bootstrap behavior.');
 });
