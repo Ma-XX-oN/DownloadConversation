@@ -16,18 +16,11 @@ jobs:
         with:
           fetch-depth: 0
 
-      - name: Extract instrumentation script
+      - name: Apply instrumentation
         shell: bash
         run: |
           set -euo pipefail
-          awk '
-            /^      - name: Instrument launcher lifecycle$/ { found=1; next }
-            found && /^        run: \|$/ { capture=1; next }
-            capture && /^      - name: Commit instrumentation$/ { exit }
-            capture { sub(/^          /, ""); print }
-          ' .github/workflows/instrument-launcher-lifecycle-v154.yml > /tmp/instrument-launcher-v154.py
-          test -s /tmp/instrument-launcher-v154.py
-          python /tmp/instrument-launcher-v154.py
+          python scripts/instrument-launcher-v154.py
 
       - name: Commit instrumentation
         shell: bash
