@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         ChatGPT Conversation Markdown Recorder
 // @namespace    https://chatgpt.com/
-// @version      0.6.156
+// @version      0.6.157
 // @description  Exports the current ChatGPT conversation directly from the Conversation API as Markdown or JSONL.
 // @match        https://chatgpt.com/*
 // @match        https://chat.openai.com/*
@@ -4664,6 +4664,37 @@
   }
 
   /**
+   * Reattaches the launcher if host-page reconciliation removes the userscript's direct BODY child.
+   *
+   * The observer watches only direct BODY child-list changes, so normal conversation subtree
+   * updates do not invoke it.  Recovery is deferred to the next animation frame so the host
+   * reconciliation that removed the launcher can finish before the launcher is restored.
+   *
+   * @param {HTMLElement} launcher - The launcher element to keep mounted.
+   * @returns {void} No value is returned.
+   */
+  function keepLauncherMounted(launcher) {
+    const body = document.body;
+    if (!(body instanceof HTMLBodyElement)) return;
+    let recoveryPending = false;
+    const observer = new MutationObserver(records => {
+      if (launcher.isConnected || recoveryPending) return;
+      const removed = records.some(record => [...record.removedNodes].some(node =>
+        node === launcher || (node instanceof Element && node.contains(launcher))));
+      if (!removed) return;
+      recoveryPending = true;
+      requestAnimationFrame(() => {
+        recoveryPending = false;
+        if (launcher.isConnected || document.body !== body) return;
+        body.append(launcher);
+        console.warn(`[DownloadConversation v${VERSION}] launcher restored after host-page removal`,
+          launcherLifecycleState(launcher));
+      });
+    });
+    observer.observe(body, { childList: true });
+  }
+
+  /**
    * Handles make launcher.
    *
    * @returns {void} No value is returned.
@@ -4697,6 +4728,7 @@
     launcher.addEventListener('mouseenter', openRecorderPopup);
     launcher.addEventListener('focus', openRecorderPopup);
     document.body.append(launcher);
+    keepLauncherMounted(launcher);
     watchLauncherLifecycle(launcher);
   }
 
@@ -4822,7 +4854,6 @@
     });
     if (document.body) {
       makeLauncher();
-      makePanel();
       return;
     }
     new MutationObserver((_, observer) => {
@@ -4833,7 +4864,6 @@
         body: launcherNodeSummary(document.body)
       });
       makeLauncher();
-      makePanel();
     }).observe(document.documentElement, { childList: true, subtree: true });
   }
 

@@ -47,4 +47,14 @@ test('recorder panel restores dialog/log/switch/extract UI contracts', () => {
   assert.doesNotMatch(userscript, /data-role="extract-md"/);
   assert.match(userscript, /if \(jsonl\?\.checked\) await runExport\('jsonl'\)/);
   assert.match(userscript, /if \(md\?\.checked\) await runExport\('md'\)/);
+  assert.match(userscript, /function keepLauncherMounted\(launcher\)/,
+    'Launcher must install a host-removal recovery observer.');
+  assert.match(userscript, /observer\.observe\(body, \{ childList: true \}\)/,
+    'Launcher recovery must observe only direct BODY child-list mutations.');
+  assert.match(userscript, /requestAnimationFrame\(\(\) => \{[\s\S]*body\.append\(launcher\)/,
+    'Launcher recovery must defer reattachment until host reconciliation finishes.');
+  assert.match(userscript, /document\.body\.append\(launcher\);\n    keepLauncherMounted\(launcher\);/,
+    'Launcher recovery must be installed immediately after the initial mount.');
+  assert.doesNotMatch(userscript, /if \(document\.body\) \{\n      makeLauncher\(\);\n      makePanel\(\);/,
+    'Bootstrap must not pre-create the hidden panel during host hydration.');
 });
