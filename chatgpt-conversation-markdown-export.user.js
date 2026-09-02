@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         ChatGPT Conversation Markdown Recorder
 // @namespace    https://chatgpt.com/
-// @version      0.6.152
+// @version      0.6.153
 // @description  Exports the current ChatGPT conversation directly from the Conversation API as Markdown or JSONL.
 // @match        https://chatgpt.com/*
 // @match        https://chat.openai.com/*
@@ -14,6 +14,7 @@
 
   /** Installed userscript version reported in diagnostics and runtime metadata. */
   const VERSION = (typeof GM_info !== 'undefined' && GM_info?.script?.version) || 'unknown';
+  console.log(`[DownloadConversation] version ${VERSION}`);
   /** DOM id of the recorder panel so UI lookups share one stable selector. */
   const PANEL_ID = 'tm-conversation-recorder';
   /** DOM id of the floating launcher button that opens the recorder panel. */
@@ -4485,33 +4486,147 @@
   }
 
   /**
+   * Summarizes one DOM node for launcher-lifecycle console diagnostics.
+   *
+   * @param {Node|null} node - The DOM node to summarize.
+   * @returns {Object|null} A compact node summary, or null when unavailable.
+   */
+  function launcherNodeSummary(node) {
+    if (!(node instanceof Node)) return null;
+    if (!(node instanceof Element)) return { node_name: node.nodeName };
+    return {
+      node_name: node.nodeName,
+      id: node.id || null,
+      class_name: typeof node.className === 'string' ? node.className : null
+    };
+  }
+
+  /**
+   * Returns the current launcher lifecycle state for console diagnostics.
+   *
+   * @param {HTMLElement} launcher - The launcher element being observed.
+   * @returns {Object} A compact lifecycle snapshot.
+   */
+  function launcherLifecycleState(launcher) {
+    const style = launcher.isConnected ? getComputedStyle(launcher) : null;
+    const rect = launcher.isConnected ? launcher.getBoundingClientRect() : null;
+    return {
+      connected: launcher.isConnected,
+      parent: launcherNodeSummary(launcher.parentNode),
+      document_body: launcherNodeSummary(document.body),
+      display: style?.display ?? null,
+      visibility: style?.visibility ?? null,
+      opacity: style?.opacity ?? null,
+      width: rect ? Math.round(rect.width) : null,
+      height: rect ? Math.round(rect.height) : null
+    };
+  }
+
+  /**
+   * Watches one launcher instance until it disconnects or the startup observation window ends.
+   *
+   * @param {HTMLElement} launcher - The launcher element being observed.
+   * @returns {void} No value is returned.
+   */
+  function watchLauncherLifecycle(launcher) {
+    let previous = launcherLifecycleState(launcher);
+    console.log(`[DownloadConversation v${VERSION}] launcher appended`, previous);
+
+    const observer = new MutationObserver(records => {
+      const current = launcherLifecycleState(launcher);
+      const changed = current.connected !== previous.connected ||
+        current.parent?.node_name !== previous.parent?.node_name ||
+        current.parent?.id !== previous.parent?.id ||
+        current.display !== previous.display ||
+        current.visibility !== previous.visibility ||
+        current.opacity !== previous.opacity ||
+        current.width !== previous.width ||
+        current.height !== previous.height;
+      if (!changed) return;
+
+      const mutations = records.slice(-12).map(record => ({
+        type: record.type,
+        target: launcherNodeSummary(record.target),
+        attribute_name: record.attributeName || null,
+        added_nodes: [...record.addedNodes].slice(0, 8).map(launcherNodeSummary),
+        removed_nodes: [...record.removedNodes].slice(0, 8).map(launcherNodeSummary)
+      }));
+      console.warn(`[DownloadConversation v${VERSION}] launcher lifecycle changed`, {
+        previous,
+        current,
+        mutations
+      });
+      previous = current;
+      if (!current.connected) observer.disconnect();
+    });
+    observer.observe(document.documentElement, {
+      childList: true,
+      subtree: true,
+      attributes: true,
+      attributeFilter: ['style', 'class', 'hidden']
+    });
+
+    const startedAt = performance.now();
+    const timer = setInterval(() => {
+      const current = launcherLifecycleState(launcher);
+      if (current.connected !== previous.connected ||
+current.parent?.node_name !== previous.parent?.node_name ||
+current.parent?.id !== previous.parent?.id ||
+current.display !== previous.display ||
+current.visibility !== previous.visibility ||
+current.opacity !== previous.opacity ||
+current.width !== previous.width ||
+current.height !== previous.height) {
+        console.warn(`[DownloadConversation v${VERSION}] launcher lifecycle poll changed`, {
+previous,
+current
+        });
+        previous = current;
+      }
+      if (!current.connected || performance.now() - startedAt >= 15000) {
+        clearInterval(timer);
+        observer.disconnect();
+        console.log(`[DownloadConversation v${VERSION}] launcher lifecycle watch ended`, current);
+      }
+    }, 100);
+  }
+
+  /**
    * Handles make launcher.
    *
    * @returns {void} No value is returned.
    */
   function makeLauncher() {
-  if (document.getElementById(LAUNCHER_ID) || !document.body) return;
-  injectStyles();
-  /** Floating button that remains available to open the recorder panel. */
-  const launcher = document.createElement('button');
-  launcher.id = LAUNCHER_ID;
-  launcher.type = 'button';
-  /**
-   * Opens recorder popup.
-   *
-   * @returns {void} No value is returned.
-   */
-  const openRecorderPopup = () => {
-    makePanel();
-    const panel = document.getElementById(PANEL_ID);
-    if (panel) panel.style.display = 'block';
-    updateUi();
-  };
-  launcher.addEventListener('click', openRecorderPopup);
-  launcher.addEventListener('mouseenter', openRecorderPopup);
-  launcher.addEventListener('focus', openRecorderPopup);
-  document.body.append(launcher);
-}
+    const existing = document.getElementById(LAUNCHER_ID);
+    if (existing || !document.body) {
+      console.log(`[DownloadConversation v${VERSION}] makeLauncher skipped`, {
+        existing: launcherNodeSummary(existing),
+        has_body: Boolean(document.body)
+      });
+      return;
+    }
+    injectStyles();
+    /** Floating button that remains available to open the recorder panel. */
+    const launcher = document.createElement('button');
+    launcher.id = LAUNCHER_ID;
+    launcher.type = 'button';
+    /**
+     * Opens recorder popup.
+     *
+     * @returns {void} No value is returned.
+     */
+    const openRecorderPopup = () => {
+      makePanel();
+      const panel = document.getElementById(PANEL_ID);
+      if (panel) panel.style.display = 'block';
+      updateUi();
+    };
+    launcher.addEventListener('click', openRecorderPopup);
+    launcher.addEventListener('mouseenter', openRecorderPopup);
+    launcher.addEventListener('focus', openRecorderPopup);
+    document.body.append(launcher);
+    watchLauncherLifecycle(launcher);
+  }
 
   /**
    * Handles make panel.
@@ -4628,6 +4743,11 @@
    * @returns {void} No value is returned.
    */
   function bootstrapUi() {
+    console.log(`[DownloadConversation v${VERSION}] bootstrapUi`, {
+      ready_state: document.readyState,
+      has_body: Boolean(document.body),
+      body: launcherNodeSummary(document.body)
+    });
     if (document.body) {
       makeLauncher();
       makePanel();
@@ -4636,6 +4756,10 @@
     new MutationObserver((_, observer) => {
       if (!document.body) return;
       observer.disconnect();
+      console.log(`[DownloadConversation v${VERSION}] bootstrapUi body appeared`, {
+        ready_state: document.readyState,
+        body: launcherNodeSummary(document.body)
+      });
       makeLauncher();
       makePanel();
     }).observe(document.documentElement, { childList: true, subtree: true });
