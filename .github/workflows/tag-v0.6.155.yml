@@ -1,0 +1,32 @@
+name: Tag v0.6.155
+
+on:
+  push:
+    paths:
+      - .github/workflows/tag-v0.6.155.yml
+
+permissions:
+  contents: read
+
+jobs:
+  tag:
+    runs-on: ubuntu-latest
+    env:
+      GH_TOKEN: ${{ secrets.TAG_BACKFILL_PAT }}
+    steps:
+      - name: Create and verify tag
+        shell: bash
+        run: |
+          set -euo pipefail
+          target='06c272b97c2aa87eadd7922c85ac4be78d5ae214'
+          tag='v0.6.155'
+          if existing=$(gh api "repos/${GITHUB_REPOSITORY}/git/ref/tags/${tag}" --jq .object.sha 2>/dev/null); then
+            test "$existing" = "$target"
+          else
+            gh api --method POST "repos/${GITHUB_REPOSITORY}/git/refs" \
+              -f ref="refs/tags/${tag}" \
+              -f sha="$target" >/dev/null
+          fi
+          actual=$(gh api "repos/${GITHUB_REPOSITORY}/git/ref/tags/${tag}" --jq .object.sha)
+          test "$actual" = "$target"
+          echo "Verified ${tag} -> ${actual}."
