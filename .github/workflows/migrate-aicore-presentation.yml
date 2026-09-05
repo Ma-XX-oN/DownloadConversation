@@ -1,0 +1,121 @@
+name: Migrate AIConversationCore presentation contract
+
+on:
+  push:
+    branches:
+      - feature/aicore-presentation-contract
+    paths:
+      - .github/workflows/migrate-aicore-presentation.yml
+
+permissions:
+  contents: write
+
+jobs:
+  migrate:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out migration branch
+        uses: actions/checkout@v4
+        with:
+          ref: feature/aicore-presentation-contract
+          fetch-depth: 0
+
+      - name: Update production integration and regression tests
+        shell: python
+        run: |
+          from pathlib import Path
+
+          OLD = '3233cba838bbf2d2cea5a2a6f1900ed6014dcfb0'
+          NEW = 'c9c618ab1181109a2cf16f6d5596e886513799ba'
+
+          def replace_once(path, old, new):
+            file_path = Path(path)
+            text = file_path.read_text(encoding='utf-8')
+            count = text.count(old)
+            if count != 1:
+              raise RuntimeError(f'{path}: expected one match, found {count}')
+            file_path.write_text(text.replace(old, new, 1), encoding='utf-8')
+
+          userscript = Path('chatgpt-conversation-markdown-export.user.js')
+          text = userscript.read_text(encoding='utf-8')
+          if text.count(OLD) != 1:
+            raise RuntimeError(f'userscript: expected one old core pin, found {text.count(OLD)}')
+          text = text.replace(OLD, NEW, 1)
+          text = text.replace('// @version      0.6.162', '// @version      0.6.163', 1)
+
+          old_core = """    assert(typeof core.adaptChatGPTRecords === 'function', 'AIConversationCore ChatGPT adapter is unavailable.');
+    assert(typeof core.renderCanonicalMarkdown === 'function', 'AIConversationCore Markdown renderer is unavailable.');
+    return core;"""
+          new_core = """    assert(typeof core.adaptChatGPTRecords === 'function', 'AIConversationCore ChatGPT adapter is unavailable.');
+    assert(typeof core.renderCanonicalMarkdown === 'function', 'AIConversationCore Markdown renderer is unavailable.');
+    assert(typeof core.projectCanonicalConversation === 'function', 'AIConversationCore structured projection is unavailable.');
+    return core;"""
+          if text.count(old_core) != 1:
+            raise RuntimeError(f'userscript: canonicalCore seam count was {text.count(old_core)}')
+          text = text.replace(old_core, new_core, 1)
+
+          old_projection = """    const events = canonicalCore().adaptChatGPTRecords(adapterRecords);
+    assert(Array.isArray(events), 'AIConversationCore ChatGPT adapter did not return canonical events.');
+    // Maps stable source record ids back to their adapted canonical events."""
+          new_projection = """    const core = canonicalCore();
+    const events = core.adaptChatGPTRecords(adapterRecords);
+    assert(Array.isArray(events), 'AIConversationCore ChatGPT adapter did not return canonical events.');
+    const projection = core.projectCanonicalConversation(events);
+    const presentation = projection?.presentation;
+    assert(presentation?.schema_version === 1, 'AIConversationCore presentation schema mismatch.');
+    assert(
+      presentation?.split_policy === 'record-anchor-except-declared-atomic-unit',
+      'AIConversationCore presentation split policy mismatch.'
+    );
+    assert(
+      presentation?.structural_unit_marker_class === 'aicore-structural-unit',
+      'AIConversationCore structural-unit marker mismatch.'
+    );
+    assert(Array.isArray(presentation?.structural_units), 'AIConversationCore structural units are unavailable.');
+    // Maps stable source record ids back to their adapted canonical events."""
+          if text.count(old_projection) != 1:
+            raise RuntimeError(f'userscript: canonical event seam count was {text.count(old_projection)}')
+          text = text.replace(old_projection, new_projection, 1)
+          userscript.write_text(text, encoding='utf-8')
+
+          tests = Path('tests/core-integration.test.mjs')
+          text = tests.read_text(encoding='utf-8')
+          if text.count(OLD) != 1:
+            raise RuntimeError(f'core test: expected one old pin, found {text.count(OLD)}')
+          text = text.replace(OLD, NEW, 1)
+          old_api = """assert.equal(typeof context.AIConversationCore?.adaptChatGPTRecords, 'function');
+assert.equal(typeof context.AIConversationCore?.renderCanonicalMarkdown, 'function');"""
+          new_api = """assert.equal(typeof context.AIConversationCore?.adaptChatGPTRecords, 'function');
+assert.equal(typeof context.AIConversationCore?.renderCanonicalMarkdown, 'function');
+assert.equal(typeof context.AIConversationCore?.projectCanonicalConversation, 'function');"""
+          if text.count(old_api) != 1:
+            raise RuntimeError(f'core test: API assertion seam count was {text.count(old_api)}')
+          text = text.replace(old_api, new_api, 1)
+
+          old_thought = """  assert.match(rendered, /Inspecting the request\\./);
+  assert.match(rendered, /> Done\\./);"""
+          new_thought = """  assert.match(rendered, /Inspecting the request\\./);
+  assert.match(rendered, /> Done\\./);
+  assert.doesNotMatch(rendered, /aicore-structural-unit/);
+  assert.doesNotMatch(rendered, /data-aicore-unit-id/);"""
+          if text.count(old_thought) != 1:
+            raise RuntimeError(f'core test: thought assertion seam count was {text.count(old_thought)}')
+          text = text.replace(old_thought, new_thought, 1)
+          tests.write_text(text, encoding='utf-8')
+
+      - name: Validate migrated production slice
+        run: |
+          node --check chatgpt-conversation-markdown-export.user.js
+          node scripts/check-jsdoc.mjs
+          node --test tests/core-integration.test.mjs tests/phase5-rich-core-integration.test.mjs tests/fallback-adaptive-fence.test.mjs tests/tool-language-diagnostics.test.mjs
+
+      - name: Commit migration
+        shell: bash
+        run: |
+          set -euo pipefail
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add chatgpt-conversation-markdown-export.user.js tests/core-integration.test.mjs
+          git diff --cached --check
+          git commit -m 'consume shared core presentation contract'
+          git push origin HEAD:feature/aicore-presentation-contract
