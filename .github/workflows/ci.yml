@@ -38,7 +38,7 @@ jobs:
         uses: actions/checkout@v4
         with:
           repository: Ma-XX-oN/AI-General-Memory
-          ref: 070e7436ca68d4897f99cf86e92f9ee97b87ee02
+          ref: 4281a0a40d0ac4122409800f12cc9158757242e3
           path: .phase7-aigm
       - uses: actions/setup-node@v4
         with:
