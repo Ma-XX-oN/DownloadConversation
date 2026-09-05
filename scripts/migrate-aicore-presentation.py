@@ -56,8 +56,8 @@ text = replace_once(
 )
 userscript.write_text(text, encoding='utf-8')
 
-tests = Path('tests/core-integration.test.mjs')
-text = tests.read_text(encoding='utf-8')
+core_tests = Path('tests/core-integration.test.mjs')
+text = core_tests.read_text(encoding='utf-8')
 text = replace_once(text, OLD, NEW, 'core test pin')
 text = replace_once(
   text,
@@ -78,4 +78,9 @@ text = replace_once(
   assert.doesNotMatch(rendered, /data-aicore-unit-id/);""",
   'core test thought seam'
 )
-tests.write_text(text, encoding='utf-8')
+core_tests.write_text(text, encoding='utf-8')
+
+rich_tests = Path('tests/phase5-rich-core-integration.test.mjs')
+text = rich_tests.read_text(encoding='utf-8')
+text = replace_once(text, OLD, NEW, 'rich core test pin')
+rich_tests.write_text(text, encoding='utf-8')
