@@ -1,11 +1,11 @@
 // ==UserScript==
 // @name         ChatGPT Conversation Markdown Recorder
 // @namespace    https://chatgpt.com/
-// @version      0.6.162
+// @version      0.6.163
 // @description  Exports the current ChatGPT conversation directly from the Conversation API as Markdown or JSONL.
 // @match        https://chatgpt.com/*
 // @match        https://chat.openai.com/*
-// @require      https://raw.githubusercontent.com/Ma-XX-oN/AIConversationCore/3233cba838bbf2d2cea5a2a6f1900ed6014dcfb0/dist/aiconversationcore.chatgpt.browser.js
+// @require      https://raw.githubusercontent.com/Ma-XX-oN/AIConversationCore/c9c618ab1181109a2cf16f6d5596e886513799ba/dist/aiconversationcore.chatgpt.browser.js
 // @run-at       document-start
 // ==/UserScript==
 
@@ -2213,6 +2213,7 @@
     assert(core && typeof core === 'object', 'AIConversationCore browser bundle is not loaded.');
     assert(typeof core.adaptChatGPTRecords === 'function', 'AIConversationCore ChatGPT adapter is unavailable.');
     assert(typeof core.renderCanonicalMarkdown === 'function', 'AIConversationCore Markdown renderer is unavailable.');
+    assert(typeof core.projectCanonicalConversation === 'function', 'AIConversationCore structured projection is unavailable.');
     return core;
   }
 
@@ -2285,8 +2286,21 @@
           conversation_id: conversationId
         }]
       : records;
-    const events = canonicalCore().adaptChatGPTRecords(adapterRecords);
+    const core = canonicalCore();
+    const events = core.adaptChatGPTRecords(adapterRecords);
     assert(Array.isArray(events), 'AIConversationCore ChatGPT adapter did not return canonical events.');
+    const projection = core.projectCanonicalConversation(events);
+    const presentation = projection?.presentation;
+    assert(presentation?.schema_version === 1, 'AIConversationCore presentation schema mismatch.');
+    assert(
+      presentation?.split_policy === 'record-anchor-except-declared-atomic-unit',
+      'AIConversationCore presentation split policy mismatch.'
+    );
+    assert(
+      presentation?.structural_unit_marker_class === 'aicore-structural-unit',
+      'AIConversationCore structural-unit marker mismatch.'
+    );
+    assert(Array.isArray(presentation?.structural_units), 'AIConversationCore structural units are unavailable.');
     // Maps stable source record ids back to their adapted canonical events.
     const bySourceRecord = new Map();
     for (const event of events) {
