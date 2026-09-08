@@ -118,9 +118,7 @@ accepted_segment_new = '''          if (canonicalSegmentEligible) {
               event_kinds: segmentEvents.map(event => event?.kind ?? null),
               output_index_before_append: output.length
             });
-            const renderedSegment = canonicalAssistantSegmentBlock(
-              segmentRecords, segmentEvents, recordNumberById
-            );
+            const renderedSegment = canonicalAssistantSegmentBlock(segmentRecords, segmentEvents, recordNumberById);
             output.push(renderedSegment);
             logDiagnostic('debug', 'conversation-markdown-block-appended', {
               route: 'canonical-assistant-segment',
