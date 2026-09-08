@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         ChatGPT Conversation Markdown Recorder
 // @namespace    https://chatgpt.com/
-// @version      0.6.162
+// @version      0.6.163
 // @description  Exports the current ChatGPT conversation directly from the Conversation API as Markdown or JSONL.
 // @match        https://chatgpt.com/*
 // @match        https://chat.openai.com/*
@@ -547,6 +547,38 @@
     const value = typeof text === 'string' ? text : String(text ?? '');
     if (value.length <= maxChars) return value;
     return `${value.slice(0, maxChars)}… [truncated ${value.length - maxChars} chars]`;
+  }
+
+  /**
+   * Computes a deterministic FNV-1a fingerprint for diagnostic correlation without logging transcript content.
+   *
+   * @param {string} text - The rendered text whose diagnostic fingerprint is required.
+   * @returns {string} Eight-character lowercase hexadecimal FNV-1a fingerprint.
+   */
+  function diagnosticTextHash(text) {
+    const value = String(text ?? '');
+    let hash = 0x811c9dc5;
+    for (let index = 0; index < value.length; index += 1) {
+      hash ^= value.charCodeAt(index);
+      hash = Math.imul(hash, 0x01000193);
+    }
+    return (hash >>> 0).toString(16).padStart(8, '0');
+  }
+
+  /**
+   * Summarizes source turn IDs present in rendered Markdown so pipeline stages can be compared without logging message bodies.
+   *
+   * @param {string} markdown - The rendered Markdown whose turn IDs are summarized.
+   * @param {number} tailCount - Maximum number of trailing turn IDs to retain.
+   * @returns {Object} Count and trailing source turn IDs found in the rendered Markdown.
+   */
+  function diagnosticMarkdownTurnInventory(markdown, tailCount = 12) {
+    const ids = [...String(markdown ?? '').matchAll(/<!-- turn_id=([^\s>]+) -->/g)]
+      .map(match => match[1]);
+    return {
+      count: ids.length,
+      tail: ids.slice(-Math.max(0, tailCount))
+    };
   }
 
   /**
@@ -2561,7 +2593,18 @@
         }
       };
     });
-    return canonicalCore().renderCanonicalMarkdown(projectedEvents).trimEnd();
+    const rendered = canonicalCore().renderCanonicalMarkdown(projectedEvents).trimEnd();
+    if (diagnosticEnabled('debug')) {
+      logDiagnostic('debug', 'canonical-assistant-segment-rendered', {
+        source_record_ids: records.map(record => record?.id ?? null),
+        final_source_record_id: messageRecord?.id ?? null,
+        event_kinds: events.map(event => event?.kind ?? null),
+        rendered_length: rendered.length,
+        rendered_hash: diagnosticTextHash(rendered),
+        rendered_turn_ids: diagnosticMarkdownTurnInventory(rendered)
+      });
+    }
+    return rendered;
   }
 
   // Compatibility helpers retained for the already-established #93/#97 regressions.
@@ -2754,6 +2797,9 @@
             logDiagnostic('debug', 'canonical-tool-segment-routing', {
               complete: canonicalSegmentComplete,
               eligible: canonicalSegmentEligible,
+              rejection_reason: canonicalSegmentEligible
+                ? null
+                : (!canonicalSegmentComplete ? 'missing-canonical-events' : 'unsupported-canonical-segment'),
               records: segmentRecords.map((item, index) => ({
                 source_record_id: item?.id ?? null,
                 source_role: item?.author?.role ?? null,
@@ -2776,7 +2822,23 @@
             });
           }
           if (canonicalSegmentEligible) {
-            output.push(canonicalAssistantSegmentBlock(segmentRecords, segmentEvents, recordNumberById));
+            logDiagnostic('debug', 'conversation-markdown-segment-render-request', {
+              source_record_ids: segmentRecords.map(item => item?.id ?? null),
+              final_source_record_id: record?.id ?? null,
+              event_kinds: segmentEvents.map(event => event?.kind ?? null),
+              output_index_before_append: output.length
+            });
+            const renderedSegment = canonicalAssistantSegmentBlock(segmentRecords, segmentEvents, recordNumberById);
+            output.push(renderedSegment);
+            logDiagnostic('debug', 'conversation-markdown-block-appended', {
+              route: 'canonical-assistant-segment',
+              output_index: output.length - 1,
+              source_record_ids: segmentRecords.map(item => item?.id ?? null),
+              final_source_record_id: record?.id ?? null,
+              block_length: renderedSegment.length,
+              block_hash: diagnosticTextHash(renderedSegment),
+              block_turn_ids: diagnosticMarkdownTurnInventory(renderedSegment)
+            });
             pendingThoughts = [];
             continue;
           }
@@ -2803,10 +2865,45 @@
         flushAssistantBlock(assistantText, record);
         continue;
       }
-      if (cgRenderThoughtItem(record, fileRefIndex)) pendingThoughts.push(record);
+      const fallbackThought = cgRenderThoughtItem(record, fileRefIndex);
+      if (fallbackThought) {
+        pendingThoughts.push(record);
+        continue;
+      }
+      if (diagnosticEnabled('debug') && i >= Math.max(0, records.length - 32)) {
+        logDiagnostic('debug', 'conversation-markdown-record-excluded', {
+          source_index: i,
+          source_record_id: record?.id ?? null,
+          source_role: record?.author?.role ?? null,
+          source_recipient: record?.recipient ?? null,
+          source_channel: record?.channel ?? null,
+          source_content_type: record?.content?.content_type ?? null,
+          event_kind: canonicalEvent?.kind ?? null,
+          event_visibility: canonicalEvent?.visibility ?? null,
+          reason: 'no-canonical-or-fallback-renderer-produced-output'
+        });
+      }
     }
     flushPendingAssistant();
-    return `${output.join('\n\n')}\n`;
+    const markdown = `${output.join('\n\n')}\n`;
+    if (diagnosticEnabled('debug')) {
+      logDiagnostic('debug', 'conversation-markdown-assembled', {
+        source_record_count: records.length,
+        output_block_count: output.length,
+        markdown_length: markdown.length,
+        markdown_hash: diagnosticTextHash(markdown),
+        markdown_turn_ids: diagnosticMarkdownTurnInventory(markdown, 32),
+        source_tail: records.slice(-32).map((record, offset) => ({
+          source_index: records.length - Math.min(32, records.length) + offset,
+          source_record_id: record?.id ?? null,
+          source_role: record?.author?.role ?? null,
+          source_recipient: record?.recipient ?? null,
+          source_channel: record?.channel ?? null,
+          source_content_type: record?.content?.content_type ?? null
+        }))
+      });
+    }
+    return markdown;
   }
 
   /**
@@ -2958,6 +3055,11 @@
    * @returns {void} No value is returned.
    */
   function downloadBlob(blob, filename) {
+    logDiagnostic('debug', 'conversation-download-triggered', {
+      filename: String(filename ?? ''),
+      blob_size: Number.isFinite(blob?.size) ? blob.size : null,
+      blob_type: typeof blob?.type === 'string' ? blob.type : null
+    });
     const url = URL.createObjectURL(blob);
     const anchor = document.createElement('a');
     anchor.href = url;
@@ -3645,10 +3747,28 @@
           refreshStatus();
         }, recoveredImageMap);
         const filename = `${sanitizeFileName(conversationTitle())}.md`;
-        downloadBlob(
-          new Blob([markdown], { type: 'text/markdown;charset=utf-8' }),
-          filename
-        );
+        logDiagnostic('debug', 'conversation-export-markdown-ready', {
+          filename,
+          source_record_count: spine.records.length,
+          source_tail: spine.records.slice(-32).map(item => ({
+            source_record_id: item?.message_id ?? item?.message?.id ?? null,
+            source_role: item?.role ?? item?.message?.author?.role ?? null,
+            source_channel: item?.channel ?? item?.message?.channel ?? null,
+            source_content_type: item?.content_type ?? item?.message?.content?.content_type ?? null
+          })),
+          markdown_length: markdown.length,
+          markdown_hash: diagnosticTextHash(markdown),
+          markdown_turn_ids: diagnosticMarkdownTurnInventory(markdown, 32)
+        });
+        const markdownBlob = new Blob([markdown], { type: 'text/markdown;charset=utf-8' });
+        logDiagnostic('debug', 'conversation-export-blob-created', {
+          filename,
+          markdown_length: markdown.length,
+          markdown_hash: diagnosticTextHash(markdown),
+          blob_size: markdownBlob.size,
+          blob_type: markdownBlob.type
+        });
+        downloadBlob(markdownBlob, filename);
         setStatus(`Extracted ${spine.records.length} API records from ${fetched.pages.length} API page(s) to ${filename}.`);
       }
     } catch (error) {

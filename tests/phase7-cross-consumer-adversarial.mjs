@@ -67,9 +67,9 @@ async function downloadConversationMarkdown() {
   vm.runInNewContext(bundle, context, { filename: 'aiconversationcore.chatgpt.browser.js' });
 
   Object.assign(context, {
-  showTimestamps: false,
-  showRecordNumbers: false,
-  showTurnIds: true,
+    showTimestamps: false,
+    showRecordNumbers: false,
+    showTurnIds: true,
     assert(condition, message) {
       if (!condition) throw new Error(message);
     },
@@ -83,6 +83,12 @@ async function downloadConversationMarkdown() {
       return false;
     },
     logDiagnostic() {},
+    diagnosticTextHash() {
+      return '';
+    },
+    diagnosticMarkdownTurnInventory() {
+      return { count: 0, tail: [] };
+    },
     boundedDiagnosticText(value, maxChars = 2000) {
       const text = String(value ?? '');
       return text.length <= maxChars ? text : `${text.slice(0, maxChars)}…`;

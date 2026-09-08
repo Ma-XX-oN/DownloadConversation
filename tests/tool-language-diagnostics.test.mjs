@@ -14,3 +14,18 @@ test('tool language diagnostics expose canonical normalization and production ro
   assert.match(userscript, /complete: canonicalSegmentComplete/);
   assert.match(userscript, /eligible: canonicalSegmentEligible/);
 });
+
+
+test('issue 114 traces an accepted assistant segment through Markdown assembly and download boundaries', () => {
+  assert.match(userscript, /logDiagnostic\('debug', 'canonical-assistant-segment-rendered'/);
+  assert.match(userscript, /logDiagnostic\('debug', 'conversation-markdown-segment-render-request'/);
+  assert.match(userscript, /logDiagnostic\('debug', 'conversation-markdown-block-appended'/);
+  assert.match(userscript, /logDiagnostic\('debug', 'conversation-markdown-assembled'/);
+  assert.match(userscript, /logDiagnostic\('debug', 'conversation-export-markdown-ready'/);
+  assert.match(userscript, /logDiagnostic\('debug', 'conversation-export-blob-created'/);
+  assert.match(userscript, /logDiagnostic\('debug', 'conversation-download-triggered'/);
+  assert.match(userscript, /rejection_reason: canonicalSegmentEligible/);
+  assert.match(userscript, /reason: 'no-canonical-or-fallback-renderer-produced-output'/);
+  assert.match(userscript, /function diagnosticTextHash\(text\)/);
+  assert.match(userscript, /function diagnosticMarkdownTurnInventory\(markdown, tailCount = 12\)/);
+});
