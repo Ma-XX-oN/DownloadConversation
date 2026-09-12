@@ -31,13 +31,22 @@ jobs:
           python scripts/issue-119-image-export-timing.py
           python - <<'PY'
           from pathlib import Path
-          path = Path('chatgpt-conversation-markdown-export.user.js')
-          text = path.read_text(encoding='utf-8')
+
+          userscript = Path('chatgpt-conversation-markdown-export.user.js')
+          text = userscript.read_text(encoding='utf-8')
           old = 'http_status: timing.http_status ?? Number(error?.httpStatus) || null,'
           new = 'http_status: (timing.http_status ?? Number(error?.httpStatus)) || null,'
           if text.count(old) != 1:
             raise SystemExit(f'Generated syntax correction expected one match, found {text.count(old)}')
-          path.write_text(text.replace(old, new, 1), encoding='utf-8')
+          userscript.write_text(text.replace(old, new, 1), encoding='utf-8')
+
+          tests = Path('tests/tool-language-diagnostics.test.mjs')
+          text = tests.read_text(encoding='utf-8')
+          old = '''  const tailStart = userscript.lastIndexOf("if (diagnosticEnabled('debug'))", readyIndex);\n  assert.ok(tailStart > 0, 'Markdown-ready diagnostics must be debug-gated before fingerprint evaluation.');\n  const readyBlock = userscript.slice(tailStart, blobIndex + 400);\n  assert.match(readyBlock, /markdownHash = diagnosticTextHash\\(markdown\\)/);\n  assert.match(readyBlock, /markdown_hash: markdownHash/);\n  assert.equal((readyBlock.match(/diagnosticTextHash\\(markdown\\)/g) ?? []).length, 1,\n    'The export tail should calculate its full Markdown fingerprint only once.');\n'''
+          new = '''  const diagnosticStart = userscript.lastIndexOf('const diagnosticStartedAt = performance.now();', readyIndex);\n  const diagnosticEnd = userscript.indexOf('const blobStartedAt = performance.now();', readyIndex);\n  assert.ok(diagnosticStart > 0 && diagnosticEnd > diagnosticStart,\n    'Markdown-ready diagnostics must have a bounded debug-only phase.');\n  const diagnosticBlock = userscript.slice(diagnosticStart, diagnosticEnd);\n  assert.match(diagnosticBlock, /markdownHash = diagnosticTextHash\\(markdown\\)/);\n  assert.match(diagnosticBlock, /markdown_hash: markdownHash/);\n  assert.equal((diagnosticBlock.match(/diagnosticTextHash\\(markdown\\)/g) ?? []).length, 1,\n    'The export-tail diagnostic phase should calculate its full Markdown fingerprint only once.');\n'''
+          if text.count(old) != 1:
+            raise SystemExit(f'Generated regression-scope correction expected one match, found {text.count(old)}')
+          tests.write_text(text.replace(old, new, 1), encoding='utf-8')
           PY
 
       - name: Verify intended product files only
