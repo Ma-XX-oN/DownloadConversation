@@ -1,0 +1,77 @@
+name: Issue 119 image export timing
+
+on:
+  push:
+    branches:
+      - issue-119-image-export-timing
+
+permissions:
+  contents: write
+
+jobs:
+  implement:
+    if: github.actor != 'github-actions[bot]'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.13'
+
+      - name: Patch helper syntax
+        run: python -m py_compile scripts/issue-119-image-export-timing.py
+
+      - name: Apply issue 119 instrumentation
+        run: python scripts/issue-119-image-export-timing.py
+
+      - name: Verify intended product files only
+        run: |
+          python - <<'PY'
+          import subprocess
+          changed = set(subprocess.check_output(['git', 'diff', '--name-only'], text=True).splitlines())
+          expected = {
+            'DESIGN.md',
+            'chatgpt-conversation-markdown-export.user.js',
+            'tests/heading-metadata-controls.test.mjs',
+            'tests/tool-language-diagnostics.test.mjs',
+          }
+          if changed != expected:
+            raise SystemExit(f'Unexpected changed files: {sorted(changed)}')
+          PY
+
+      - name: Verify version and pinned AIConversationCore
+        run: |
+          grep -F '// @version      0.6.164' chatgpt-conversation-markdown-export.user.js
+          grep -F '@require      https://raw.githubusercontent.com/Ma-XX-oN/AIConversationCore/3233cba838bbf2d2cea5a2a6f1900ed6014dcfb0/dist/aiconversationcore.chatgpt.browser.js' chatgpt-conversation-markdown-export.user.js
+
+      - name: Production JSDoc coverage
+        run: node scripts/check-jsdoc.mjs
+
+      - name: JavaScript syntax
+        run: node --check chatgpt-conversation-markdown-export.user.js
+
+      - name: Focused issue 119 diagnostics regressions
+        run: node --test tests/tool-language-diagnostics.test.mjs tests/heading-metadata-controls.test.mjs
+
+      - name: Existing image and final-render regressions
+        run: node --test tests/core-integration.test.mjs tests/phase5-rich-core-integration.test.mjs tests/fallback-adaptive-fence.test.mjs
+
+      - name: Existing UI regressions
+        run: node --test tests/test-list-ui.test.mjs tests/recorder-panel-ui.test.mjs
+
+      - name: Diff preflight
+        run: git diff --check
+
+      - name: Commit verified issue 119 product changes
+        run: |
+          git config user.name github-actions[bot]
+          git config user.email 41898282+github-actions[bot]@users.noreply.github.com
+          git add DESIGN.md chatgpt-conversation-markdown-export.user.js tests/heading-metadata-controls.test.mjs tests/tool-language-diagnostics.test.mjs
+          git diff --check --cached
+          git commit -m 'perf: instrument image export timing (#119)'
+          git push origin HEAD:issue-119-image-export-timing
