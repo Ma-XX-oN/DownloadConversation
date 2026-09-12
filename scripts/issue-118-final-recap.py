@@ -196,8 +196,7 @@ tests = replace_once(
   "assert.match(userscript, /\\/\\/ @version      0\\.6\\.166/);",
   "assert.match(userscript, /\\/\\/ @version      0\\.6\\.167/);",
   'test version assertion')
-tests = tests.replace("'Thought for a sec'", "'Thought for less than a sec'")
-tests = tests.replace('/Thought for a sec/g', '/Thought for less than a sec/g')
+tests = tests.replace('Thought for a sec', 'Thought for less than a sec')
 
 marker = "test('worked-duration annotation clears timing when a boundary has no rendered timestamp', () => {"
 real_fixture_test = r'''test('real 03:07 response gives every Having-N group its verified cumulative total, including the final recap-only group', () => {
@@ -257,8 +256,9 @@ real_fixture_test = r'''test('real 03:07 response gives every Having-N group its
   assert.equal((annotated.match(/Worked for 4m 53s/g) ?? []).length, 1);
   assert.equal((annotated.match(/Worked for 13m 57s/g) ?? []).length, 1,
     'The rendered final recap supplies the summary total and must not be duplicated.');
-  assert.match(annotated,
-    /final reasoning\n\nWorked for 13m 57s\n\n<\/details>\n\n> ## Why I wasn\\'t catching them/);
+  assert.ok(annotated.includes(
+    "final reasoning\n\nWorked for 13m 57s\n\n</details>\n\n> ## Why I wasn't catching them"
+  ));
   assert.doesNotMatch(annotated, /Having 8 thoughts — 99m 0s<\/summary>/,
     'Nested tool/detail text must not be mistaken for the terminal reasoning recap.');
 });
