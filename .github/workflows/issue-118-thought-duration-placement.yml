@@ -1,0 +1,73 @@
+name: Issue 118 thought-duration placement
+
+on:
+  push:
+    branches:
+      - issue-118-worked-duration
+
+permissions:
+  contents: write
+
+jobs:
+  implement:
+    if: github.actor != 'github-actions[bot]'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.13'
+      - name: Apply thought-duration placement patch
+        run: python scripts/issue-118-thought-duration-placement.py
+      - name: Preserve exact sub-second wording
+        shell: bash
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+          paths = [
+            Path('chatgpt-conversation-markdown-export.user.js'),
+            Path('tests/heading-metadata-controls.test.mjs'),
+            Path('DESIGN.md'),
+          ]
+          for path in paths:
+            text = path.read_text(encoding='utf-8')
+            text = text.replace('less than a sec', 'a sec')
+            path.write_text(text, encoding='utf-8')
+          PY
+      - name: Verify intended product files only
+        shell: bash
+        run: |
+          expected=$'DESIGN.md\nchatgpt-conversation-markdown-export.user.js\ntests/heading-metadata-controls.test.mjs'
+          actual="$(git diff --name-only | sort)"
+          test "$actual" = "$expected"
+      - name: Verify pinned AIConversationCore is unchanged
+        run: |
+          grep -F '// @require      https://raw.githubusercontent.com/Ma-XX-oN/AIConversationCore/3233cba838bbf2d2cea5a2a6f1900ed6014dcfb0/dist/aiconversationcore.chatgpt.browser.js' chatgpt-conversation-markdown-export.user.js
+          test "$(grep -c 'AIConversationCore/3233cba838bbf2d2cea5a2a6f1900ed6014dcfb0/dist/aiconversationcore.chatgpt.browser.js' chatgpt-conversation-markdown-export.user.js)" -eq 1
+      - name: Production JSDoc coverage
+        run: node scripts/check-jsdoc.mjs
+      - name: JavaScript syntax
+        run: node --check chatgpt-conversation-markdown-export.user.js
+      - name: Worked-duration regressions
+        run: node --test tests/heading-metadata-controls.test.mjs
+      - name: Existing repository tests
+        run: node --test tests/core-integration.test.mjs tests/phase5-rich-core-integration.test.mjs tests/fallback-adaptive-fence.test.mjs tests/tool-language-diagnostics.test.mjs tests/test-list-ui.test.mjs tests/recorder-panel-ui.test.mjs tests/heading-metadata-controls.test.mjs
+      - name: Diff preflight
+        run: git diff --check
+      - name: Commit production placement correction
+        shell: bash
+        run: |
+          rm scripts/issue-118-thought-duration-placement.py
+          rm .github/workflows/issue-118-thought-duration-placement.yml
+          git config user.name github-actions[bot]
+          git config user.email 41898282+github-actions[bot]@users.noreply.github.com
+          git add -A
+          git diff --cached --check
+          git diff --cached --quiet && exit 1
+          git commit -m 'fix: keep duration annotations inside reasoning groups (#118)'
+          git push
