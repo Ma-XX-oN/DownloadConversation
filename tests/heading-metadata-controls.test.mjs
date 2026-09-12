@@ -6,7 +6,7 @@ import vm from 'node:vm';
 const userscript = await readFile(new URL('../chatgpt-conversation-markdown-export.user.js', import.meta.url), 'utf8');
 
 test('heading metadata controls retain historical defaults and JSONL numbering', () => {
-  assert.match(userscript, /\/\/ @version      0\.6\.166/);
+  assert.match(userscript, /\/\/ @version      0\.6\.167/);
   assert.match(userscript, /showTimestamps = localStorage\.getItem\(SHOW_TIMESTAMPS_STORAGE_KEY\) === 'true'/);
   assert.match(userscript, /showRecordNumbers = localStorage\.getItem\(SHOW_RECORD_NUMBERS_STORAGE_KEY\) === 'true'/);
   assert.match(userscript, /showTurnIds = localStorage\.getItem\(SHOW_TURN_IDS_STORAGE_KEY\) !== 'false'/);
@@ -53,8 +53,8 @@ function annotateWorkedDuration(markdown, showTimestamps = true) {
 
 test('worked-duration labels preserve the specified signed thresholds and complete time fields', () => {
   assert.equal(workedDuration.workDurationLabel(-2), 'Duration error -2s');
-  assert.equal(workedDuration.workDurationLabel(-1), 'Thought for a sec');
-  assert.equal(workedDuration.workDurationLabel(0), 'Thought for a sec');
+  assert.equal(workedDuration.workDurationLabel(-1), 'Thought for less than a sec');
+  assert.equal(workedDuration.workDurationLabel(0), 'Thought for less than a sec');
   assert.equal(workedDuration.workDurationLabel(1), 'Worked for 0m 1s');
   assert.equal(workedDuration.workDurationLabel(1598), 'Worked for 26m 38s');
   assert.equal(workedDuration.workDurationLabel(5198), 'Worked for 1h 26m 38s');
@@ -86,8 +86,8 @@ test('worked-duration annotation stays inside the reasoning group and ignores th
   const annotated = annotateWorkedDuration(markdown, true);
   assert.match(annotated, /<summary>Having a thought — a sec<\/summary>/);
   assert.match(annotated,
-    /agent work\n\nThought for a sec\n\n<\/details>\n\n### ChatGPT Commentary/);
-  assert.doesNotMatch(annotated, /<\/details>\n\nThought for a sec/);
+    /agent work\n\nThought for less than a sec\n\n<\/details>\n\n### ChatGPT Commentary/);
+  assert.doesNotMatch(annotated, /<\/details>\n\nThought for less than a sec/);
   assert.doesNotMatch(annotated, /Duration error -59s/);
 });
 
@@ -185,6 +185,70 @@ test('multi-thought summary totals are cumulative from User while interval label
   assert.match(annotated, /Having 10 thoughts — 9m 0s<\/summary>/);
   assert.equal((annotated.match(/Worked for 2m 0s/g) ?? []).length, 1);
   assert.equal((annotated.match(/Worked for 3m 30s/g) ?? []).length, 2);
+});
+
+test('real 03:07 response gives every Having-N group its verified cumulative total, including the final recap-only group', () => {
+  const markdown = [
+    '## User [2026-09-12 03:07:32]: <!-- turn_id=4992cda1-969d-4b9b-bfe9-50a03ed9a927 -->',
+    '',
+    '> prompt',
+    '',
+    '## ChatGPT [2026-09-12 03:07:33]: <!-- turn_id=21a25614-d1f5-448f-9927-675934e27aa2 -->',
+    '',
+    '### ChatGPT Commentary [2026-09-12 03:07:33]:',
+    '',
+    '> opening output',
+    '',
+    '<details><summary>Having 14 thoughts</summary>',
+    '',
+    'first phase',
+    '',
+    '</details>',
+    '',
+    '### ChatGPT Commentary [2026-09-12 03:13:23]:',
+    '',
+    '> second output',
+    '',
+    '<details><summary>Having 13 thoughts</summary>',
+    '',
+    'second phase',
+    '',
+    '</details>',
+    '',
+    '### ChatGPT Commentary [2026-09-12 03:18:16]: <!-- turn_id=3311e2f7-13bd-495e-9474-f828cba2d72e -->',
+    '',
+    '> third output',
+    '',
+    '<details><summary>Having 8 thoughts</summary>',
+    '',
+    '<details>',
+    '<summary>tool output</summary>',
+    '',
+    'Worked for 99m 0s',
+    '',
+    '</details>',
+    '',
+    'final reasoning',
+    '',
+    'Worked for 13m 57s',
+    '',
+    '</details>',
+    '',
+    '> ## Why I wasn\'t catching them'
+  ].join('\n');
+  const annotated = annotateWorkedDuration(markdown);
+  assert.match(annotated, /Having 14 thoughts — 5m 51s<\/summary>/);
+  assert.match(annotated, /Having 13 thoughts — 10m 44s<\/summary>/);
+  assert.match(annotated, /Having 8 thoughts — 13m 57s<\/summary>/);
+  assert.equal((annotated.match(/Worked for 5m 50s/g) ?? []).length, 1);
+  assert.equal((annotated.match(/Worked for 4m 53s/g) ?? []).length, 1);
+  assert.equal((annotated.match(/Worked for 13m 57s/g) ?? []).length, 1,
+    'The rendered final recap supplies the summary total and must not be duplicated.');
+  assert.ok(annotated.includes(
+    "final reasoning\n\nWorked for 13m 57s\n\n</details>\n\n> ## Why I wasn't catching them"
+  ));
+  assert.doesNotMatch(annotated, /Having 8 thoughts — 99m 0s<\/summary>/,
+    'Nested tool/detail text must not be mistaken for the terminal reasoning recap.');
 });
 
 test('worked-duration annotation clears timing when a boundary has no rendered timestamp', () => {
@@ -288,7 +352,7 @@ test('worked-duration annotation ignores transcript-looking headings inside opaq
   const annotated = annotateWorkedDuration(markdown);
   assert.equal((annotated.match(/Worked for 0m 5s/g) ?? []).length, 1);
   assert.equal((annotated.match(/Having a thought — 0m 5s/g) ?? []).length, 1);
-  assert.equal((annotated.match(/Thought for a sec/g) ?? []).length, 0);
+  assert.equal((annotated.match(/Thought for less than a sec/g) ?? []).length, 0);
   assert.equal((annotated.match(/Duration error/g) ?? []).length, 0);
   assert.match(annotated,
     /## User \[2025-12-31 23:59:00\]:\n\n### ChatGPT Commentary \[2025-12-31 23:59:59\]:/);

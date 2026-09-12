@@ -156,12 +156,13 @@ UAP association, API pagination, recovery, or canonical normalization.
 ## Experimental rendered work-duration annotations
 
 When the **Timestamp** Markdown-heading control is enabled, DownloadConversation
-adds consumer-only elapsed-time information to a rendered reasoning group when
-that group is immediately followed by a structural `### ChatGPT Commentary`
-report. This experimental annotation is deliberately computed from the timestamp
-text already present in the rendered Markdown; it does not consult raw provider
-timestamps and does not change AIConversationCore or its pinned version. When
-Timestamp is disabled, no duration annotation is emitted.
+adds consumer-only elapsed-time information to rendered reasoning groups.
+Commentary-terminated groups are calculated from structural rendered heading
+timestamps. A final group with no Commentary may instead reuse an exact terminal
+duration recap already rendered as the group's last top-level reasoning line.
+This experimental annotation does not consult raw provider timestamps and does
+not change AIConversationCore or its pinned version. When Timestamp is disabled,
+no duration annotation is emitted.
 
 For each per-interval annotation, the preceding rendered `## User` prompt or
 `### ChatGPT Commentary` report is the start boundary and the terminating
@@ -184,13 +185,18 @@ last interval. For example, if one phase ends five seconds after the User prompt
 and a second phase ends another five seconds later, both interval lines may say
 `Worked for 0m 5s` while the summaries end in `— 0m 5s` and `— 0m 10s`.
 Commentary without an immediately preceding reasoning group receives no duration
-annotation, and a reasoning group without a terminating Commentary boundary
-receives no total because no rendered end timestamp is available.
+annotation. A final reasoning group without a terminating Commentary receives no
+total unless its last top-level rendered reasoning line is an exact duration recap
+such as `Worked for 13m 57s`; nested tool/detail content is ignored. A visible
+current User timestamp is still required. The real 2026-09-12 03:07 fixture
+verifies that its rendered `Worked for 13m 57s` recap equals the 837-second
+User-to-reasoning-end span in the paired JSONL, without making raw JSONL metadata
+a production timing source.
 
 For a signed whole-second difference `time_diff`, DownloadConversation renders:
 
 - `Duration error <time_diff>s` when `time_diff < -1`;
-- `Thought for a sec` when `-1 <= time_diff < 1`;
+- `Thought for less than a sec` when `-1 <= time_diff < 1`;
 - `Worked for Xm Ys` when `time_diff >= 1`, adding `Xh` only when hours are
   non-zero while retaining both minute and second fields.
 

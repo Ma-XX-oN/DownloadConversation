@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         ChatGPT Conversation Markdown Recorder
 // @namespace    https://chatgpt.com/
-// @version      0.6.166
+// @version      0.6.167
 // @description  Exports the current ChatGPT conversation directly from the Conversation API as Markdown or JSONL.
 // @match        https://chatgpt.com/*
 // @match        https://chat.openai.com/*
@@ -2489,8 +2489,47 @@
   function workDurationLabel(timeDiffSeconds) {
     const totalText = workDurationTotalText(timeDiffSeconds);
     if (timeDiffSeconds < -1) return totalText;
-    if (timeDiffSeconds < 1) return `Thought for ${totalText}`;
+    if (timeDiffSeconds < 1) return 'Thought for less than a sec';
     return `Worked for ${totalText}`;
+  }
+
+  /**
+   * Extracts a compact duration from a provider-rendered terminal reasoning recap.
+   *
+   * Only exact standalone duration recap shapes are accepted. This deliberately
+   * excludes arbitrary prose containing similar words.
+   *
+   * @param {string} line - One rendered top-level line inside a reasoning group.
+   * @returns {string|null} Compact summary duration text, or null when the line is not a duration recap.
+   */
+  function renderedReasoningRecapTotalText(line) {
+    const text = String(line ?? '').trim();
+    const worked = text.match(/^Worked for ((?:\d+h )?\d+m \d+s)$/);
+    if (worked) return worked[1];
+    if (text === 'Thought for less than a sec' || text === 'Thought for a sec') return 'a sec';
+    if (/^Duration error -?\d+s$/.test(text)) return text;
+    return null;
+  }
+
+  /**
+   * Applies a terminal rendered recap duration to a reasoning summary when no
+   * Commentary boundary consumed that group.
+   *
+   * A visible User timestamp is still required so Timestamp-off/missing-start
+   * cases never gain synthetic timing metadata from this fallback.
+   *
+   * @param {Array<string>} output - Mutable rendered Markdown lines.
+   * @param {Object|null} pendingReasoningGroup - Closed reasoning group awaiting its next structural boundary.
+   * @param {number|null} currentUserBoundarySeconds - Visible current User timestamp, in whole seconds.
+   * @returns {void} No value is returned.
+   */
+  function applyRenderedReasoningRecapTotal(output, pendingReasoningGroup, currentUserBoundarySeconds) {
+    if (currentUserBoundarySeconds == null || !pendingReasoningGroup?.renderedRecapTotalText) return;
+    const summaryIndex = pendingReasoningGroup.summaryIndex;
+    output[summaryIndex] = output[summaryIndex].replace(
+      '</summary>',
+      ` — ${pendingReasoningGroup.renderedRecapTotalText}</summary>`
+    );
   }
 
   /**
@@ -2500,10 +2539,12 @@
    * and Commentary reports are timing boundaries; the enclosing ChatGPT response heading is
    * deliberately ignored because its rendered timestamp can represent older in-progress activity.
    * A qualifying reasoning group receives the interval label immediately before its outer
-   * `</details>`. Its `Having ... thought(s)` summary instead measures from the current User
-   * timestamp through the terminating Commentary, so later groups report cumulative response time.
-   * A boundary without a rendered timestamp clears timing state so no earlier timestamp is reused.
-   * Commentary without an immediately preceding reasoning group receives no annotation.
+   * `</details>`. Its `Having ... thought(s)` summary measures from the current User timestamp
+   * through the terminating Commentary when one exists. If the final group has no Commentary,
+   * an exact provider-rendered terminal duration recap already inside that group can supply the
+   * summary total; nested tool/detail content is never treated as that recap. A boundary without
+   * a rendered timestamp clears timing state so no earlier timestamp is reused. Commentary without
+   * an immediately preceding reasoning group receives no annotation.
    *
    * @param {string} markdown - Core-rendered conversation Markdown to annotate.
    * @returns {string} Markdown with synthetic duration annotations, or the original Markdown when timestamps are disabled.
@@ -2537,7 +2578,10 @@
       }
       const fenceStart = line.match(/^ {0,3}(`{3,}|~{3,})/);
       if (fenceStart) {
-        if (detailsDepth === 0) pendingReasoningGroup = null;
+        if (detailsDepth === 0) {
+          applyRenderedReasoningRecapTotal(output, pendingReasoningGroup, currentUserBoundarySeconds);
+          pendingReasoningGroup = null;
+        }
         fence = { char: fenceStart[1][0], length: fenceStart[1].length };
         output.push(line);
         continue;
@@ -2547,7 +2591,8 @@
         if (detailsDepth === 0 && activeReasoningGroup) {
           pendingReasoningGroup = {
             summaryIndex: activeReasoningGroup.summaryIndex,
-            closeIndex: output.length
+            closeIndex: output.length,
+            renderedRecapTotalText: activeReasoningGroup.renderedRecapTotalText
           };
           activeReasoningGroup = null;
         }
@@ -2556,9 +2601,10 @@
       }
       if (/^ {0,3}<details(?:\s|>)/i.test(line)) {
         if (detailsDepth === 0) {
+          applyRenderedReasoningRecapTotal(output, pendingReasoningGroup, currentUserBoundarySeconds);
           pendingReasoningGroup = null;
           activeReasoningGroup = reasoningSummaryPattern.test(line)
-            ? { summaryIndex: output.length }
+            ? { summaryIndex: output.length, renderedRecapTotalText: null }
             : null;
         }
         detailsDepth += 1;
@@ -2566,6 +2612,9 @@
         continue;
       }
       if (detailsDepth > 0) {
+        if (detailsDepth === 1 && activeReasoningGroup && trimmed !== '') {
+          activeReasoningGroup.renderedRecapTotalText = renderedReasoningRecapTotalText(line);
+        }
         output.push(line);
         continue;
       }
@@ -2597,6 +2646,7 @@
           output.splice(closeIndex, 0, ...annotationLines);
         }
         if (match[1] === '## User') {
+          applyRenderedReasoningRecapTotal(output, pendingReasoningGroup, currentUserBoundarySeconds);
           currentUserBoundarySeconds = timestampSeconds;
         } else if (timestampSeconds == null) {
           currentUserBoundarySeconds = null;
@@ -2606,9 +2656,13 @@
         output.push(line);
         continue;
       }
-      if (pendingReasoningGroup && trimmed !== '') pendingReasoningGroup = null;
+      if (pendingReasoningGroup && trimmed !== '') {
+        applyRenderedReasoningRecapTotal(output, pendingReasoningGroup, currentUserBoundarySeconds);
+        pendingReasoningGroup = null;
+      }
       output.push(line);
     }
+    applyRenderedReasoningRecapTotal(output, pendingReasoningGroup, currentUserBoundarySeconds);
     return output.join('\n');
   }
   // END DownloadConversation worked-duration annotation
