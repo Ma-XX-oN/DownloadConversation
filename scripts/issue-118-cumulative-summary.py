@@ -89,8 +89,8 @@ USERSCRIPT.write_text(source, encoding='utf-8')
 tests = TESTS.read_text(encoding='utf-8')
 tests = replace_once(
   tests,
-  r'// @version      0\.6\.165',
-  r'// @version      0\.6\.166',
+  r'0\.6\.165',
+  r'0\.6\.166',
   'test version assertion')
 tests = replace_once(
   tests,
