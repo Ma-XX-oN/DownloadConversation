@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         ChatGPT Conversation Markdown Recorder
 // @namespace    https://chatgpt.com/
-// @version      0.6.163
+// @version      0.6.164
 // @description  Exports the current ChatGPT conversation directly from the Conversation API as Markdown or JSONL.
 // @match        https://chatgpt.com/*
 // @match        https://chat.openai.com/*
@@ -2432,6 +2432,93 @@
       `${pad(date.getHours())}:${pad(date.getMinutes())}:${pad(date.getSeconds())}`;
   }
 
+
+  // BEGIN DownloadConversation worked-duration annotation
+  /**
+   * Parses one already-rendered local transcript timestamp into whole epoch seconds.
+   *
+   * The source representation is the Core-rendered `YYYY-MM-DD HH:MM:SS` heading
+   * timestamp. No raw provider timestamp is consulted by this feature.
+   *
+   * @param {string} timestamp - The rendered local transcript timestamp to parse.
+   * @returns {number|null} Whole epoch seconds for the rendered local timestamp, or null when invalid.
+   */
+  function renderedTranscriptTimestampSeconds(timestamp) {
+    const match = String(timestamp ?? '').match(
+      /^(\d{4})-(\d{2})-(\d{2}) (\d{2}):(\d{2}):(\d{2})$/
+    );
+    if (!match) return null;
+    const year = Number(match[1]);
+    const month = Number(match[2]);
+    const day = Number(match[3]);
+    const hour = Number(match[4]);
+    const minute = Number(match[5]);
+    const second = Number(match[6]);
+    const date = new Date(year, month - 1, day, hour, minute, second, 0);
+    if (!Number.isFinite(date.getTime())) return null;
+    if (date.getFullYear() !== year || date.getMonth() !== month - 1 ||
+        date.getDate() !== day || date.getHours() !== hour ||
+        date.getMinutes() !== minute || date.getSeconds() !== second) {
+      return null;
+    }
+    return Math.trunc(date.getTime() / 1000);
+  }
+
+  /**
+   * Formats the elapsed whole-second difference between two rendered transcript boundaries.
+   *
+   * @param {number} timeDiffSeconds - Signed whole-second difference between rendered boundary timestamps.
+   * @returns {string} The synthetic Thought, Worked, or Duration error annotation text.
+   */
+  function workDurationLabel(timeDiffSeconds) {
+    if (timeDiffSeconds < -1) return `Duration error ${timeDiffSeconds}s`;
+    if (timeDiffSeconds < 1) return 'Thought for less than a sec';
+    const hours = Math.floor(timeDiffSeconds / 3600);
+    const minutes = Math.floor((timeDiffSeconds % 3600) / 60);
+    const seconds = timeDiffSeconds % 60;
+    const hourText = hours > 0 ? `${hours}h ` : '';
+    return `Worked for ${hourText}${minutes}m ${seconds}s`;
+  }
+
+  /**
+   * Adds DownloadConversation-only duration annotations before rendered ChatGPT Commentary reports.
+   *
+   * The input and timing source are already-rendered Markdown heading timestamps. User prompts
+   * and Commentary reports are timing boundaries; the enclosing ChatGPT response heading is
+   * deliberately ignored because its rendered timestamp can represent older in-progress activity.
+   * A boundary without a rendered timestamp clears timing state so no earlier timestamp is reused.
+   *
+   * @param {string} markdown - Core-rendered conversation Markdown to annotate.
+   * @returns {string} Markdown with synthetic duration annotations, or the original Markdown when timestamps are disabled.
+   */
+  function annotateRenderedWorkDurations(markdown) {
+    if (!showTimestamps) return markdown;
+    const boundaryPattern = /^(## User|### ChatGPT Commentary)(?: \[(\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2})\]:)?(?:\s|$)/;
+    const lines = String(markdown ?? '').split('\n');
+    const output = [];
+    let previousBoundarySeconds = null;
+    for (const line of lines) {
+      const match = line.match(boundaryPattern);
+      if (!match) {
+        output.push(line);
+        continue;
+      }
+      const timestampSeconds = match[2]
+        ? renderedTranscriptTimestampSeconds(match[2])
+        : null;
+      if (match[1] === '### ChatGPT Commentary' &&
+          timestampSeconds != null && previousBoundarySeconds != null) {
+        const timeDiffSeconds = timestampSeconds - previousBoundarySeconds;
+        if (output.at(-1) !== '') output.push('');
+        output.push(workDurationLabel(timeDiffSeconds), '');
+      }
+      previousBoundarySeconds = timestampSeconds;
+      output.push(line);
+    }
+    return output.join('\n');
+  }
+  // END DownloadConversation worked-duration annotation
+
   /**
    * Builds shared-core heading metadata for one ChatGPT source record.
    *
@@ -3740,12 +3827,12 @@
         /**
          * Handles markdown.
          */
-        const markdown = renderConversationMarkdown(spine, progress => {
+        const markdown = annotateRenderedWorkDurations(renderConversationMarkdown(spine, progress => {
           progressState.stage = 'rendering';
           progressState.record_number = progress.record_number;
           progressState.record_count = progress.record_count;
           refreshStatus();
-        }, recoveredImageMap);
+        }, recoveredImageMap));
         const filename = `${sanitizeFileName(conversationTitle())}.md`;
         logDiagnostic('debug', 'conversation-export-markdown-ready', {
           filename,

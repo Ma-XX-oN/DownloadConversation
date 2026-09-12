@@ -153,3 +153,28 @@ DownloadConversation exposes three independent persistent Markdown-heading contr
 These are presentation-only controls.  They do not change chronology, grouping,
 UAP association, API pagination, recovery, or canonical normalization.
 
+## Experimental rendered work-duration annotations
+
+When the **Timestamp** Markdown-heading control is enabled, DownloadConversation
+adds a consumer-only elapsed-time annotation before each rendered
+`### ChatGPT Commentary` report. This experimental annotation is deliberately
+computed from the timestamp text already present in the rendered Markdown; it
+does not consult raw provider timestamps and does not change AIConversationCore
+or its pinned version. When Timestamp is disabled, no duration annotation is
+emitted.
+
+The preceding rendered `## User` prompt or `### ChatGPT Commentary` report is
+the timing boundary. The enclosing `## ChatGPT` response heading is ignored for
+timing because real ChatGPT data can make that heading inherit an older
+in-progress activity timestamp. A boundary without a rendered timestamp clears
+the timing state rather than reusing an earlier boundary.
+
+For a signed whole-second difference `time_diff`, DownloadConversation renders:
+
+- `Duration error <time_diff>s` when `time_diff < -1`;
+- `Thought for less than a sec` when `-1 <= time_diff < 1`;
+- `Worked for Xm Ys` when `time_diff >= 1`, adding `Xh` only when hours are
+  non-zero while retaining both minute and second fields.
+
+Negative source anomalies are surfaced rather than silently clamped or repaired.
+
