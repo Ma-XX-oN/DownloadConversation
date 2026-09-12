@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         ChatGPT Conversation Markdown Recorder
 // @namespace    https://chatgpt.com/
-// @version      0.6.165
+// @version      0.6.166
 // @description  Exports the current ChatGPT conversation directly from the Conversation API as Markdown or JSONL.
 // @match        https://chatgpt.com/*
 // @match        https://chat.openai.com/*
@@ -2500,9 +2500,10 @@
    * and Commentary reports are timing boundaries; the enclosing ChatGPT response heading is
    * deliberately ignored because its rendered timestamp can represent older in-progress activity.
    * A qualifying reasoning group receives the interval label immediately before its outer
-   * `</details>` and receives the same total duration at the end of its `Having ... thought(s)`
-   * summary. A boundary without a rendered timestamp clears timing state so no earlier timestamp
-   * is reused. Commentary without an immediately preceding reasoning group receives no annotation.
+   * `</details>`. Its `Having ... thought(s)` summary instead measures from the current User
+   * timestamp through the terminating Commentary, so later groups report cumulative response time.
+   * A boundary without a rendered timestamp clears timing state so no earlier timestamp is reused.
+   * Commentary without an immediately preceding reasoning group receives no annotation.
    *
    * @param {string} markdown - Core-rendered conversation Markdown to annotate.
    * @returns {string} Markdown with synthetic duration annotations, or the original Markdown when timestamps are disabled.
@@ -2514,6 +2515,8 @@
     const lines = String(markdown ?? '').split('\n');
     const output = [];
     let previousBoundarySeconds = null;
+    // Current User timestamp anchors cumulative reasoning totals for this response.
+    let currentUserBoundarySeconds = null;
     // Structural disclosure depth keeps transcript-looking content inside disclosures opaque.
     let detailsDepth = 0;
     // Active fenced block delimiter; headings and disclosure text inside fences remain opaque.
@@ -2575,18 +2578,28 @@
             timestampSeconds != null && previousBoundarySeconds != null &&
             pendingReasoningGroup) {
           const timeDiffSeconds = timestampSeconds - previousBoundarySeconds;
-          const totalText = workDurationTotalText(timeDiffSeconds);
+          const totalTimeDiffSeconds = currentUserBoundarySeconds == null
+            ? null
+            : timestampSeconds - currentUserBoundarySeconds;
           const summaryIndex = pendingReasoningGroup.summaryIndex;
           const closeIndex = pendingReasoningGroup.closeIndex;
-          output[summaryIndex] = output[summaryIndex].replace(
-            '</summary>',
-            ` — ${totalText}</summary>`
-          );
+          if (totalTimeDiffSeconds != null) {
+            const totalText = workDurationTotalText(totalTimeDiffSeconds);
+            output[summaryIndex] = output[summaryIndex].replace(
+              '</summary>',
+              ` — ${totalText}</summary>`
+            );
+          }
           const annotationLines = [];
           if (closeIndex > 0 && output[closeIndex - 1] !== '') annotationLines.push('');
           annotationLines.push(workDurationLabel(timeDiffSeconds));
           if (output[closeIndex] !== '') annotationLines.push('');
           output.splice(closeIndex, 0, ...annotationLines);
+        }
+        if (match[1] === '## User') {
+          currentUserBoundarySeconds = timestampSeconds;
+        } else if (timestampSeconds == null) {
+          currentUserBoundarySeconds = null;
         }
         previousBoundarySeconds = timestampSeconds;
         pendingReasoningGroup = null;

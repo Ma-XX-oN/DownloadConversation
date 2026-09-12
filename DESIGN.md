@@ -163,22 +163,29 @@ text already present in the rendered Markdown; it does not consult raw provider
 timestamps and does not change AIConversationCore or its pinned version. When
 Timestamp is disabled, no duration annotation is emitted.
 
-The preceding rendered `## User` prompt or `### ChatGPT Commentary` report is
-the timing boundary. Only structural headings are eligible: transcript-looking
-text inside fenced blocks or rendered `<details>` content remains opaque. The
-enclosing `## ChatGPT` response heading is ignored for timing because real
-ChatGPT data can make that heading inherit an older in-progress activity
-timestamp. A boundary without a rendered timestamp clears the timing state
-rather than reusing an earlier boundary.
+For each per-interval annotation, the preceding rendered `## User` prompt or
+`### ChatGPT Commentary` report is the start boundary and the terminating
+Commentary is the end boundary. The reasoning-group summary uses a separate
+cumulative origin: the current rendered `## User` timestamp through that same
+terminating Commentary. Therefore later reasoning/commentary phases can retain a
+short boundary-to-boundary `Worked for ...` line while their `Having ...
+thought(s)` summary reports the full elapsed time since the User prompt. Only
+structural headings are eligible: transcript-looking text inside fenced blocks or
+rendered `<details>` content remains opaque. The enclosing `## ChatGPT` response
+heading is ignored for timing because real ChatGPT data can make that heading
+inherit an older in-progress activity timestamp. A boundary without a rendered
+timestamp clears timing state rather than reusing an earlier boundary.
 
 For a qualifying outer `<details><summary>Having ... thought(s)</summary>` group,
 the interval annotation is inserted immediately before that group's closing
 `</details>`, so timing information never sits outside the reasoning disclosure.
-The same whole interval is appended to the summary, for example
-`Having 9 thoughts — 1m 45s`. Commentary without an immediately preceding
-reasoning group receives no duration annotation, and a reasoning group without a
-terminating Commentary boundary receives no total because no rendered end
-timestamp is available.
+The summary receives the cumulative User-to-output total instead of repeating the
+last interval. For example, if one phase ends five seconds after the User prompt
+and a second phase ends another five seconds later, both interval lines may say
+`Worked for 0m 5s` while the summaries end in `— 0m 5s` and `— 0m 10s`.
+Commentary without an immediately preceding reasoning group receives no duration
+annotation, and a reasoning group without a terminating Commentary boundary
+receives no total because no rendered end timestamp is available.
 
 For a signed whole-second difference `time_diff`, DownloadConversation renders:
 
@@ -187,6 +194,6 @@ For a signed whole-second difference `time_diff`, DownloadConversation renders:
 - `Worked for Xm Ys` when `time_diff >= 1`, adding `Xh` only when hours are
   non-zero while retaining both minute and second fields.
 
-The summary uses the matching compact total (`Duration error ...`, `less than a
-sec`, or `Xh Ym Zs`). Negative source anomalies are surfaced rather than silently
-clamped or repaired.
+The summary uses the matching compact total (`Duration error ...`, `a sec`, or
+`Xh Ym Zs`). Negative source anomalies are surfaced rather than silently clamped
+or repaired.
