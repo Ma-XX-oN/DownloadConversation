@@ -2497,7 +2497,38 @@
     const lines = String(markdown ?? '').split('\n');
     const output = [];
     let previousBoundarySeconds = null;
+    let detailsDepth = 0;
+    let fence = null;
     for (const line of lines) {
+      const trimmed = line.trim();
+      if (fence) {
+        output.push(line);
+        if (trimmed.length >= fence.length &&
+            [...trimmed].every(char => char === fence.char)) {
+          fence = null;
+        }
+        continue;
+      }
+      const fenceStart = line.match(/^ {0,3}(`{3,}|~{3,})/);
+      if (fenceStart) {
+        fence = { char: fenceStart[1][0], length: fenceStart[1].length };
+        output.push(line);
+        continue;
+      }
+      if (/^ {0,3}<\/details\s*>/i.test(line) && detailsDepth > 0) {
+        detailsDepth -= 1;
+        output.push(line);
+        continue;
+      }
+      if (/^ {0,3}<details(?:\s|>)/i.test(line)) {
+        detailsDepth += 1;
+        output.push(line);
+        continue;
+      }
+      if (detailsDepth > 0) {
+        output.push(line);
+        continue;
+      }
       const match = line.match(boundaryPattern);
       if (!match) {
         output.push(line);

@@ -164,8 +164,10 @@ or its pinned version. When Timestamp is disabled, no duration annotation is
 emitted.
 
 The preceding rendered `## User` prompt or `### ChatGPT Commentary` report is
-the timing boundary. The enclosing `## ChatGPT` response heading is ignored for
-timing because real ChatGPT data can make that heading inherit an older
+the timing boundary. Only structural headings are eligible: transcript-looking
+text inside fenced blocks or rendered `<details>` content remains opaque. The
+enclosing `## ChatGPT` response heading is ignored for timing because real
+ChatGPT data can make that heading inherit an older
 in-progress activity timestamp. A boundary without a rendered timestamp clears
 the timing state rather than reusing an earlier boundary.
 

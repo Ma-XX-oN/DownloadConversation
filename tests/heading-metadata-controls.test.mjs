@@ -149,3 +149,60 @@ test('final ChatGPT response headings are not external-report timing boundaries'
   ].join('\n');
   assert.doesNotMatch(annotateWorkedDuration(markdown), /Worked for|Thought for|Duration error/);
 });
+
+
+test('worked-duration annotation ignores transcript-looking headings inside opaque rendered content', () => {
+  const markdown = [
+    '## User [2026-01-15 00:00:00]:',
+    '',
+    '> prompt',
+    '',
+    '## ChatGPT [2026-01-15 00:00:01]:',
+    '',
+    '<details><summary>Having a thought</summary>',
+    '',
+    '```text',
+    '## User [2025-12-31 23:59:00]:',
+    '',
+    '### ChatGPT Commentary [2025-12-31 23:59:59]:',
+    '```',
+    '',
+    '<details><summary>tool output</summary>',
+    '',
+    '### ChatGPT Commentary [2025-12-31 23:59:58]:',
+    '',
+    '</details>',
+    '',
+    '</details>',
+    '',
+    '### ChatGPT Commentary [2026-01-15 00:00:05]:',
+    '',
+    '> real report'
+  ].join('\n');
+  const annotated = annotateWorkedDuration(markdown);
+  assert.equal((annotated.match(/Worked for 0m 5s/g) ?? []).length, 1);
+  assert.equal((annotated.match(/Thought for less than a sec/g) ?? []).length, 0);
+  assert.equal((annotated.match(/Duration error/g) ?? []).length, 0);
+  assert.match(annotated,
+    /## User \[2025-12-31 23:59:00\]:\n\n### ChatGPT Commentary \[2025-12-31 23:59:59\]:/);
+});
+
+test('worked-duration annotation ignores transcript-looking headings in top-level fenced content', () => {
+  const markdown = [
+    '## User [2026-01-15 00:00:00]:',
+    '',
+    '> prompt',
+    '',
+    '````text',
+    '### ChatGPT Commentary [2025-12-31 23:59:59]:',
+    '```',
+    '````',
+    '',
+    '### ChatGPT Commentary [2026-01-15 00:00:03]:',
+    '',
+    '> real report'
+  ].join('\n');
+  const annotated = annotateWorkedDuration(markdown);
+  assert.equal((annotated.match(/Worked for 0m 3s/g) ?? []).length, 1);
+  assert.equal((annotated.match(/Duration error/g) ?? []).length, 0);
+});
