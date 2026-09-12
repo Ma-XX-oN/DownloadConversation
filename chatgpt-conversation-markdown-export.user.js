@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         ChatGPT Conversation Markdown Recorder
 // @namespace    https://chatgpt.com/
-// @version      0.6.164
+// @version      0.6.165
 // @description  Exports the current ChatGPT conversation directly from the Conversation API as Markdown or JSONL.
 // @match        https://chatgpt.com/*
 // @match        https://chat.openai.com/*
@@ -2465,28 +2465,44 @@
   }
 
   /**
+   * Formats the elapsed whole-second duration for a reasoning-group summary.
+   *
+   * @param {number} timeDiffSeconds - Signed whole-second difference between rendered boundary timestamps.
+   * @returns {string} Compact elapsed text appended to the outer reasoning-group summary.
+   */
+  function workDurationTotalText(timeDiffSeconds) {
+    if (timeDiffSeconds < -1) return `Duration error ${timeDiffSeconds}s`;
+    if (timeDiffSeconds < 1) return 'a sec';
+    const hours = Math.floor(timeDiffSeconds / 3600);
+    const minutes = Math.floor((timeDiffSeconds % 3600) / 60);
+    const seconds = timeDiffSeconds % 60;
+    const hourText = hours > 0 ? `${hours}h ` : '';
+    return `${hourText}${minutes}m ${seconds}s`;
+  }
+
+  /**
    * Formats the elapsed whole-second difference between two rendered transcript boundaries.
    *
    * @param {number} timeDiffSeconds - Signed whole-second difference between rendered boundary timestamps.
    * @returns {string} The synthetic Thought, Worked, or Duration error annotation text.
    */
   function workDurationLabel(timeDiffSeconds) {
-    if (timeDiffSeconds < -1) return `Duration error ${timeDiffSeconds}s`;
-    if (timeDiffSeconds < 1) return 'Thought for less than a sec';
-    const hours = Math.floor(timeDiffSeconds / 3600);
-    const minutes = Math.floor((timeDiffSeconds % 3600) / 60);
-    const seconds = timeDiffSeconds % 60;
-    const hourText = hours > 0 ? `${hours}h ` : '';
-    return `Worked for ${hourText}${minutes}m ${seconds}s`;
+    const totalText = workDurationTotalText(timeDiffSeconds);
+    if (timeDiffSeconds < -1) return totalText;
+    if (timeDiffSeconds < 1) return `Thought for ${totalText}`;
+    return `Worked for ${totalText}`;
   }
 
   /**
-   * Adds DownloadConversation-only duration annotations before rendered ChatGPT Commentary reports.
+   * Adds DownloadConversation-only duration annotations inside rendered reasoning groups.
    *
    * The input and timing source are already-rendered Markdown heading timestamps. User prompts
    * and Commentary reports are timing boundaries; the enclosing ChatGPT response heading is
    * deliberately ignored because its rendered timestamp can represent older in-progress activity.
-   * A boundary without a rendered timestamp clears timing state so no earlier timestamp is reused.
+   * A qualifying reasoning group receives the interval label immediately before its outer
+   * `</details>` and receives the same total duration at the end of its `Having ... thought(s)`
+   * summary. A boundary without a rendered timestamp clears timing state so no earlier timestamp
+   * is reused. Commentary without an immediately preceding reasoning group receives no annotation.
    *
    * @param {string} markdown - Core-rendered conversation Markdown to annotate.
    * @returns {string} Markdown with synthetic duration annotations, or the original Markdown when timestamps are disabled.
@@ -2494,11 +2510,18 @@
   function annotateRenderedWorkDurations(markdown) {
     if (!showTimestamps) return markdown;
     const boundaryPattern = /^(## User|### ChatGPT Commentary)(?: \[(\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2})\]:)?(?:\s|$)/;
+    const reasoningSummaryPattern = /^ {0,3}<details><summary>Having (?:a thought|\d+ thoughts)<\/summary>(?:\s*<!--.*-->)?\s*$/;
     const lines = String(markdown ?? '').split('\n');
     const output = [];
     let previousBoundarySeconds = null;
+    // Structural disclosure depth keeps transcript-looking content inside disclosures opaque.
     let detailsDepth = 0;
+    // Active fenced block delimiter; headings and disclosure text inside fences remain opaque.
     let fence = null;
+    // Top-level reasoning group currently being copied into output.
+    let activeReasoningGroup = null;
+    // Most recently completed top-level reasoning group, eligible for the next Commentary boundary.
+    let pendingReasoningGroup = null;
     for (const line of lines) {
       const trimmed = line.trim();
       if (fence) {
@@ -2511,16 +2534,30 @@
       }
       const fenceStart = line.match(/^ {0,3}(`{3,}|~{3,})/);
       if (fenceStart) {
+        if (detailsDepth === 0) pendingReasoningGroup = null;
         fence = { char: fenceStart[1][0], length: fenceStart[1].length };
         output.push(line);
         continue;
       }
-      if (/^ {0,3}<\/details\s*>/i.test(line) && detailsDepth > 0) {
+      if (/^ {0,3}<\/details\s*>(?:\s*<!--.*-->)?\s*$/i.test(line) && detailsDepth > 0) {
         detailsDepth -= 1;
+        if (detailsDepth === 0 && activeReasoningGroup) {
+          pendingReasoningGroup = {
+            summaryIndex: activeReasoningGroup.summaryIndex,
+            closeIndex: output.length
+          };
+          activeReasoningGroup = null;
+        }
         output.push(line);
         continue;
       }
       if (/^ {0,3}<details(?:\s|>)/i.test(line)) {
+        if (detailsDepth === 0) {
+          pendingReasoningGroup = null;
+          activeReasoningGroup = reasoningSummaryPattern.test(line)
+            ? { summaryIndex: output.length }
+            : null;
+        }
         detailsDepth += 1;
         output.push(line);
         continue;
@@ -2530,20 +2567,33 @@
         continue;
       }
       const match = line.match(boundaryPattern);
-      if (!match) {
+      if (match) {
+        const timestampSeconds = match[2]
+          ? renderedTranscriptTimestampSeconds(match[2])
+          : null;
+        if (match[1] === '### ChatGPT Commentary' &&
+            timestampSeconds != null && previousBoundarySeconds != null &&
+            pendingReasoningGroup) {
+          const timeDiffSeconds = timestampSeconds - previousBoundarySeconds;
+          const totalText = workDurationTotalText(timeDiffSeconds);
+          const summaryIndex = pendingReasoningGroup.summaryIndex;
+          const closeIndex = pendingReasoningGroup.closeIndex;
+          output[summaryIndex] = output[summaryIndex].replace(
+            '</summary>',
+            ` — ${totalText}</summary>`
+          );
+          const annotationLines = [];
+          if (closeIndex > 0 && output[closeIndex - 1] !== '') annotationLines.push('');
+          annotationLines.push(workDurationLabel(timeDiffSeconds));
+          if (output[closeIndex] !== '') annotationLines.push('');
+          output.splice(closeIndex, 0, ...annotationLines);
+        }
+        previousBoundarySeconds = timestampSeconds;
+        pendingReasoningGroup = null;
         output.push(line);
         continue;
       }
-      const timestampSeconds = match[2]
-        ? renderedTranscriptTimestampSeconds(match[2])
-        : null;
-      if (match[1] === '### ChatGPT Commentary' &&
-          timestampSeconds != null && previousBoundarySeconds != null) {
-        const timeDiffSeconds = timestampSeconds - previousBoundarySeconds;
-        if (output.at(-1) !== '') output.push('');
-        output.push(workDurationLabel(timeDiffSeconds), '');
-      }
-      previousBoundarySeconds = timestampSeconds;
+      if (pendingReasoningGroup && trimmed !== '') pendingReasoningGroup = null;
       output.push(line);
     }
     return output.join('\n');

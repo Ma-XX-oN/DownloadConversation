@@ -156,27 +156,37 @@ UAP association, API pagination, recovery, or canonical normalization.
 ## Experimental rendered work-duration annotations
 
 When the **Timestamp** Markdown-heading control is enabled, DownloadConversation
-adds a consumer-only elapsed-time annotation before each rendered
-`### ChatGPT Commentary` report. This experimental annotation is deliberately
-computed from the timestamp text already present in the rendered Markdown; it
-does not consult raw provider timestamps and does not change AIConversationCore
-or its pinned version. When Timestamp is disabled, no duration annotation is
-emitted.
+adds consumer-only elapsed-time information to a rendered reasoning group when
+that group is immediately followed by a structural `### ChatGPT Commentary`
+report. This experimental annotation is deliberately computed from the timestamp
+text already present in the rendered Markdown; it does not consult raw provider
+timestamps and does not change AIConversationCore or its pinned version. When
+Timestamp is disabled, no duration annotation is emitted.
 
 The preceding rendered `## User` prompt or `### ChatGPT Commentary` report is
 the timing boundary. Only structural headings are eligible: transcript-looking
 text inside fenced blocks or rendered `<details>` content remains opaque. The
 enclosing `## ChatGPT` response heading is ignored for timing because real
-ChatGPT data can make that heading inherit an older
-in-progress activity timestamp. A boundary without a rendered timestamp clears
-the timing state rather than reusing an earlier boundary.
+ChatGPT data can make that heading inherit an older in-progress activity
+timestamp. A boundary without a rendered timestamp clears the timing state
+rather than reusing an earlier boundary.
+
+For a qualifying outer `<details><summary>Having ... thought(s)</summary>` group,
+the interval annotation is inserted immediately before that group's closing
+`</details>`, so timing information never sits outside the reasoning disclosure.
+The same whole interval is appended to the summary, for example
+`Having 9 thoughts — 1m 45s`. Commentary without an immediately preceding
+reasoning group receives no duration annotation, and a reasoning group without a
+terminating Commentary boundary receives no total because no rendered end
+timestamp is available.
 
 For a signed whole-second difference `time_diff`, DownloadConversation renders:
 
 - `Duration error <time_diff>s` when `time_diff < -1`;
-- `Thought for less than a sec` when `-1 <= time_diff < 1`;
+- `Thought for a sec` when `-1 <= time_diff < 1`;
 - `Worked for Xm Ys` when `time_diff >= 1`, adding `Xh` only when hours are
   non-zero while retaining both minute and second fields.
 
-Negative source anomalies are surfaced rather than silently clamped or repaired.
-
+The summary uses the matching compact total (`Duration error ...`, `less than a
+sec`, or `Xh Ym Zs`). Negative source anomalies are surfaced rather than silently
+clamped or repaired.
