@@ -4,8 +4,6 @@ ROOT = Path('.')
 USERSCRIPT = ROOT / 'chatgpt-conversation-markdown-export.user.js'
 DESIGN = ROOT / 'DESIGN.md'
 HEADING_TEST = ROOT / 'tests' / 'heading-metadata-controls.test.mjs'
-DURATION_TEST = ROOT / 'tests' / 'work-duration-markers.test.mjs'
-CI = ROOT / '.github' / 'workflows' / 'ci.yml'
 
 CORE_PIN = '3233cba838bbf2d2cea5a2a6f1900ed6014dcfb0'
 
@@ -134,66 +132,47 @@ heading_test = HEADING_TEST.read_text(encoding='utf-8')
 if heading_test.count(r'0\.6\.163') != 1:
   raise SystemExit('heading metadata version assertion marker not found')
 heading_test = heading_test.replace(r'0\.6\.163', r'0\.6\.164', 1)
-HEADING_TEST.write_text(heading_test, encoding='utf-8')
+if "import vm from 'node:vm';" not in heading_test:
+  heading_test = heading_test.replace("import test from 'node:test';\n", "import test from 'node:test';\nimport vm from 'node:vm';\n", 1)
 
-duration_test = r'''import assert from 'node:assert/strict';
-import { readFile } from 'node:fs/promises';
-import test from 'node:test';
-import vm from 'node:vm';
+worked_tests_marker = "test('worked-duration labels preserve the specified signed thresholds and complete time fields'"
+if worked_tests_marker in heading_test:
+  raise SystemExit('worked-duration regression block already exists')
+worked_tests = r'''
 
-const userscript = await readFile(
-  new URL('../chatgpt-conversation-markdown-export.user.js', import.meta.url),
-  'utf8'
+const workedDurationBegin = '  // BEGIN DownloadConversation worked-duration annotation';
+const workedDurationEnd = '  // END DownloadConversation worked-duration annotation';
+const workedDurationStart = userscript.indexOf(workedDurationBegin);
+const workedDurationFinish = userscript.indexOf(workedDurationEnd, workedDurationStart);
+assert.ok(workedDurationStart >= 0 && workedDurationFinish > workedDurationStart,
+  'Production worked-duration helper block is missing.');
+const workedDurationSource = userscript.slice(
+  workedDurationStart + workedDurationBegin.length,
+  workedDurationFinish
 );
-
-assert.match(userscript, /\/\/ @version      0\.6\.164/);
-assert.match(
-  userscript,
-  /AIConversationCore\/3233cba838bbf2d2cea5a2a6f1900ed6014dcfb0\/dist\/aiconversationcore\.chatgpt\.browser\.js/
-);
-
-const begin = '  // BEGIN DownloadConversation worked-duration annotation';
-const end = '  // END DownloadConversation worked-duration annotation';
-const start = userscript.indexOf(begin);
-const finish = userscript.indexOf(end, start);
-assert.ok(start >= 0 && finish > start, 'Production worked-duration helper block is missing.');
-const helperSource = userscript.slice(start + begin.length, finish);
-const context = { showTimestamps: false };
+const workedDurationContext = { showTimestamps: false };
 vm.runInNewContext(
-  `${helperSource}\nthis.__workedDuration = { renderedTranscriptTimestampSeconds, workDurationLabel, annotateRenderedWorkDurations };`,
-  context
+  `${workedDurationSource}\nthis.__workedDuration = { renderedTranscriptTimestampSeconds, workDurationLabel, annotateRenderedWorkDurations };`,
+  workedDurationContext
 );
-const helpers = context.__workedDuration;
+const workedDuration = workedDurationContext.__workedDuration;
 
-function annotate(markdown, showTimestamps = true) {
-  context.showTimestamps = showTimestamps;
-  return helpers.annotateRenderedWorkDurations(markdown);
+function annotateWorkedDuration(markdown, showTimestamps = true) {
+  workedDurationContext.showTimestamps = showTimestamps;
+  return workedDuration.annotateRenderedWorkDurations(markdown);
 }
 
-test('duration labels preserve the specified signed thresholds and complete time fields', () => {
-  assert.equal(helpers.workDurationLabel(-2), 'Duration error -2s');
-  assert.equal(helpers.workDurationLabel(-1), 'Thought for less than a sec');
-  assert.equal(helpers.workDurationLabel(0), 'Thought for less than a sec');
-  assert.equal(helpers.workDurationLabel(1), 'Worked for 0m 1s');
-  assert.equal(helpers.workDurationLabel(1598), 'Worked for 26m 38s');
-  assert.equal(helpers.workDurationLabel(5198), 'Worked for 1h 26m 38s');
-  assert.equal(helpers.workDurationLabel(7205), 'Worked for 2h 0m 5s');
+test('worked-duration labels preserve the specified signed thresholds and complete time fields', () => {
+  assert.equal(workedDuration.workDurationLabel(-2), 'Duration error -2s');
+  assert.equal(workedDuration.workDurationLabel(-1), 'Thought for less than a sec');
+  assert.equal(workedDuration.workDurationLabel(0), 'Thought for less than a sec');
+  assert.equal(workedDuration.workDurationLabel(1), 'Worked for 0m 1s');
+  assert.equal(workedDuration.workDurationLabel(1598), 'Worked for 26m 38s');
+  assert.equal(workedDuration.workDurationLabel(5198), 'Worked for 1h 26m 38s');
+  assert.equal(workedDuration.workDurationLabel(7205), 'Worked for 2h 0m 5s');
 });
 
-test('timestamp display off leaves rendered Markdown byte-identical', () => {
-  const markdown = [
-    '## User [2026-01-15 00:00:00]:',
-    '',
-    '> prompt',
-    '',
-    '### ChatGPT Commentary [2026-01-15 00:00:05]:',
-    '',
-    '> report'
-  ].join('\n');
-  assert.equal(annotate(markdown, false), markdown);
-});
-
-test('User and Commentary headings are boundaries while the enclosing ChatGPT heading is ignored', () => {
+test('worked-duration annotation is disabled with Timestamp and ignores the enclosing ChatGPT timestamp', () => {
   const markdown = [
     '## User [2026-09-11 20:29:42]:',
     '',
@@ -211,13 +190,15 @@ test('User and Commentary headings are boundaries while the enclosing ChatGPT he
     '',
     '> report'
   ].join('\n');
-  const result = annotate(markdown);
-  assert.match(result, /Thought for less than a sec\n\n### ChatGPT Commentary \[2026-09-11 20:29:42\]:/);
-  assert.doesNotMatch(result, /Duration error -59s/);
+  assert.equal(annotateWorkedDuration(markdown, false), markdown);
+  const annotated = annotateWorkedDuration(markdown, true);
+  assert.match(annotated,
+    /Thought for less than a sec\n\n### ChatGPT Commentary \[2026-09-11 20:29:42\]:/);
+  assert.doesNotMatch(annotated, /Duration error -59s/);
 });
 
-test('negative rendered boundary differences expose a duration error instead of clamping', () => {
-  const markdown = [
+test('worked-duration annotation exposes negative errors and uses Commentary as the next boundary', () => {
+  const negative = [
     '## User [2026-01-15 00:00:02]:',
     '',
     '> prompt',
@@ -226,11 +207,9 @@ test('negative rendered boundary differences expose a duration error instead of 
     '',
     '> report'
   ].join('\n');
-  assert.match(annotate(markdown), /Duration error -2s\n\n### ChatGPT Commentary/);
-});
+  assert.match(annotateWorkedDuration(negative), /Duration error -2s\n\n### ChatGPT Commentary/);
 
-test('successive Commentary reports measure from the previous Commentary report', () => {
-  const markdown = [
+  const successive = [
     '## User [2026-01-15 00:00:00]:',
     '',
     '> prompt',
@@ -243,11 +222,11 @@ test('successive Commentary reports measure from the previous Commentary report'
     '',
     '> second'
   ].join('\n');
-  const result = annotate(markdown);
-  assert.equal((result.match(/Worked for 0m 5s/g) ?? []).length, 2);
+  const successiveAnnotated = annotateWorkedDuration(successive);
+  assert.equal((successiveAnnotated.match(/Worked for 0m 5s/g) ?? []).length, 2);
 });
 
-test('a boundary without a rendered timestamp prevents reuse of an older timestamp', () => {
+test('worked-duration annotation clears timing when a boundary has no rendered timestamp', () => {
   const markdown = [
     '## User [2026-01-15 00:00:00]:',
     '',
@@ -265,11 +244,11 @@ test('a boundary without a rendered timestamp prevents reuse of an older timesta
     '',
     '> second report'
   ].join('\n');
-  const result = annotate(markdown);
-  assert.equal((result.match(/Worked for 0m 5s/g) ?? []).length, 1);
+  const annotated = annotateWorkedDuration(markdown);
+  assert.equal((annotated.match(/Worked for 0m 5s/g) ?? []).length, 1);
 });
 
-test('final ChatGPT responses are not treated as external-report timing boundaries', () => {
+test('final ChatGPT response headings are not external-report timing boundaries', () => {
   const markdown = [
     '## User [2026-01-15 00:00:00]:',
     '',
@@ -279,22 +258,11 @@ test('final ChatGPT responses are not treated as external-report timing boundari
     '',
     '> final answer'
   ].join('\n');
-  const result = annotate(markdown);
-  assert.doesNotMatch(result, /Worked for|Thought for|Duration error/);
+  assert.doesNotMatch(annotateWorkedDuration(markdown), /Worked for|Thought for|Duration error/);
 });
 '''
-DURATION_TEST.write_text(duration_test, encoding='utf-8')
-
-ci = CI.read_text(encoding='utf-8')
-ci_marker = '      - name: Built-in test list UI regression\n'
-if ci_marker not in ci:
-  raise SystemExit('CI insertion marker not found')
-ci_step = (
-  '      - name: Worked-duration annotation regression\n'
-  '        run: node --test tests/work-duration-markers.test.mjs\n'
-)
-ci = ci.replace(ci_marker, ci_step + ci_marker, 1)
-CI.write_text(ci, encoding='utf-8')
+heading_test = heading_test.rstrip() + worked_tests + '\n'
+HEADING_TEST.write_text(heading_test, encoding='utf-8')
 
 design = DESIGN.read_text(encoding='utf-8')
 section_title = '## Experimental rendered work-duration annotations'
