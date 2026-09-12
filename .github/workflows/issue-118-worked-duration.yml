@@ -24,6 +24,14 @@ jobs:
           python-version: '3.13'
       - name: Apply issue 118 implementation
         run: python scripts/issue-118-worked-duration.py
+      - name: Normalize generated test EOF
+        shell: bash
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+          path = Path('tests/heading-metadata-controls.test.mjs')
+          path.write_text(path.read_text(encoding='utf-8').rstrip() + '\n', encoding='utf-8')
+          PY
       - name: Verify pinned AIConversationCore is unchanged
         run: |
           grep -F '// @require      https://raw.githubusercontent.com/Ma-XX-oN/AIConversationCore/3233cba838bbf2d2cea5a2a6f1900ed6014dcfb0/dist/aiconversationcore.chatgpt.browser.js' chatgpt-conversation-markdown-export.user.js
