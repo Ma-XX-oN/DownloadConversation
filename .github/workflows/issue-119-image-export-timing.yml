@@ -27,7 +27,18 @@ jobs:
         run: python -m py_compile scripts/issue-119-image-export-timing.py
 
       - name: Apply issue 119 instrumentation
-        run: python scripts/issue-119-image-export-timing.py
+        run: |
+          python scripts/issue-119-image-export-timing.py
+          python - <<'PY'
+          from pathlib import Path
+          path = Path('chatgpt-conversation-markdown-export.user.js')
+          text = path.read_text(encoding='utf-8')
+          old = 'http_status: timing.http_status ?? Number(error?.httpStatus) || null,'
+          new = 'http_status: (timing.http_status ?? Number(error?.httpStatus)) || null,'
+          if text.count(old) != 1:
+            raise SystemExit(f'Generated syntax correction expected one match, found {text.count(old)}')
+          path.write_text(text.replace(old, new, 1), encoding='utf-8')
+          PY
 
       - name: Verify intended product files only
         run: |
