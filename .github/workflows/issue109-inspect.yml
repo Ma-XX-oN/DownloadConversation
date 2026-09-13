@@ -1,0 +1,41 @@
+name: Inspect issue 109 integration
+
+on:
+  push:
+    branches:
+      - issue-109-heading-metadata-contract
+    paths:
+      - '.github/workflows/issue109-inspect.yml'
+
+jobs:
+  inspect:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Inspect production heading paths
+        shell: bash
+        run: |
+          set -euo pipefail
+          file=chatgpt-conversation-markdown-export.user.js
+          for pattern in \
+            'function transcriptTimestamp' \
+            'function canonicalHeadingMetadata' \
+            'function canonicalRecordBlock' \
+            'function canonicalAssistantSegmentBlock' \
+            'function transcriptHeading' \
+            'function canonicalEventsBySourceRecord' \
+            'function renderConversationMarkdown' \
+            'recordNumberById.set'; do
+            line="$(grep -n -F "$pattern" "$file" | head -n1 | cut -d: -f1 || true)"
+            echo "===== $pattern @ ${line:-missing} ====="
+            if [[ -n "$line" ]]; then
+              start=$(( line > 8 ? line - 8 : 1 ))
+              end=$(( line + 90 ))
+              sed -n "${start},${end}p" "$file"
+            fi
+          done
+      - name: Inspect turn-id test references
+        shell: bash
+        run: |
+          set -euo pipefail
+          grep -R -n -E 'turn_id=|showTurnIds|heading_metadata|canonicalHeadingMetadata|transcriptTimestamp|0\.6\.172|3233cba838bbf2d2cea5a2a6f1900ed6014dcfb0|070e7436ca68d4897f99cf86e92f9ee97b87ee02' tests .github/workflows/ci.yml DESIGN.md chatgpt-conversation-markdown-export.user.js || true
