@@ -235,5 +235,5 @@ test('DownloadConversation does not duplicate sediment-to-download URL construct
 });
 
 test('userscript version advances for sediment resolver completion', () => {
-  assert.match(userscript, /\/\/ @version      0\.6\.171/);
+  assert.match(userscript, /\/\/ @version      0\.6\.172/);
 });

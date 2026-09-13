@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         ChatGPT Conversation Markdown Recorder
 // @namespace    https://chatgpt.com/
-// @version      0.6.171
+// @version      0.6.172
 // @description  Exports the current ChatGPT conversation directly from the Conversation API as Markdown or JSONL.
 // @match        https://chatgpt.com/*
 // @match        https://chat.openai.com/*
@@ -2445,35 +2445,6 @@
       const enrichedEvent = canonicalEnrichRecoveredImages(
         event, recoveredImageMap.get(sourceRecordId) ?? []);
       bySourceRecord.set(sourceRecordId, enrichedEvent);
-      if (diagnosticEnabled('debug')) {
-        const diagnosticBlocks = Array.isArray(enrichedEvent?.blocks)
-          ? enrichedEvent.blocks.filter(block =>
-            block?.type === 'tool_call' || block?.type === 'tool_result')
-          : [];
-        if (diagnosticBlocks.length) {
-          logDiagnostic('debug', 'canonical-tool-normalization', {
-            source_record_id: sourceRecordId,
-            source_index: sourceIndex,
-            source_role: original?.author?.role ?? null,
-            source_recipient: original?.recipient ?? null,
-            source_channel: original?.channel ?? null,
-            source_content_type: original?.content?.content_type ?? null,
-            source_language: original?.content?.language ?? null,
-            event_kind: enrichedEvent?.kind ?? null,
-            event_role: enrichedEvent?.role ?? null,
-            event_visibility: enrichedEvent?.visibility ?? null,
-            blocks: diagnosticBlocks.map(block => ({
-              type: block?.type ?? null,
-              name: block?.name ?? null,
-              input_format: block?.input_format ?? null,
-              language: block?.language ?? null,
-              source_language: block?.source_language ?? null,
-              input_prefix: boundedDiagnosticText(block?.input ?? '', 240),
-              source_input_prefix: boundedDiagnosticText(block?.source_input ?? '', 240)
-            }))
-          });
-        }
-      }
     }
     return bySourceRecord;
   }
@@ -4915,6 +4886,26 @@ Image elapsed: ${formatDuration(imageElapsed)} — Completed: ${imageCompleted}/
   }
 
   /**
+   * Redacts transient signed URL tokens from diagnostic payloads without mutating callers.
+   *
+   * @param {Object} value - The diagnostic value to sanitize.
+   * @returns {Object} The sanitized diagnostic value.
+   */
+  function redactDiagnosticSignedTokens(value) {
+    if (typeof value === 'string') {
+      return value.replace(/([?&](?:sig|signature)=)[^&#\s]*/gi, '$1[redacted]');
+    }
+    if (Array.isArray(value)) return value.map(redactDiagnosticSignedTokens);
+    if (value && typeof value === 'object' &&
+        (Object.getPrototypeOf(value) === Object.prototype || Object.getPrototypeOf(value) === null)) {
+      return Object.fromEntries(
+        Object.entries(value).map(([key, item]) => [key, redactDiagnosticSignedTokens(item)])
+      );
+    }
+    return value;
+  }
+
+  /**
    * Logs diagnostic.
    *
    * @param {Object} level - The diagnostics severity level.
@@ -4924,11 +4915,12 @@ Image elapsed: ${formatDuration(imageElapsed)} — Completed: ${imageCompleted}/
    */
   function logDiagnostic(level, message, data = null) {
     if (!diagnosticEnabled(level)) return;
+    const safeData = redactDiagnosticSignedTokens(data);
     const entry = {
       timestamp: new Date().toISOString(),
       level,
       message,
-      data
+      data: safeData
     };
     diagnosticLog.push(entry);
     if (diagnosticLog.length > MAX_DIAGNOSTIC_LOG_ITEMS) {
@@ -4938,7 +4930,7 @@ Image elapsed: ${formatDuration(imageElapsed)} — Completed: ${imageCompleted}/
     refreshDiagnosticLog();
 
     const args = [`[ChatGPT Recorder ${level}] ${message}`];
-    if (data !== null) args.push(data);
+    if (safeData !== null) args.push(safeData);
     (level === 'errors' ? console.error : level === 'warnings' ? console.warn : console.log)(...args);
   }
 

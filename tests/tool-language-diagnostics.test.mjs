@@ -4,15 +4,23 @@ import test from 'node:test';
 
 const userscript = await readFile(new URL('../chatgpt-conversation-markdown-export.user.js', import.meta.url), 'utf8');
 
-test('tool language diagnostics expose canonical normalization and production routing at debug level', () => {
-  assert.match(userscript, /logDiagnostic\('debug', 'canonical-tool-normalization'/);
-  assert.match(userscript, /input_format: block\?\.input_format \?\? null/);
-  assert.match(userscript, /language: block\?\.language \?\? null/);
-  assert.match(userscript, /source_language: block\?\.source_language \?\? null/);
-  assert.match(userscript, /source_input_prefix: boundedDiagnosticText/);
+test('tool routing diagnostics retain production segment decisions without per-record normalization dumps', () => {
+  assert.doesNotMatch(userscript, /canonical-tool-normalization/,
+    'Closed #103 instrumentation must not emit one normalization payload per tool record.');
+  assert.doesNotMatch(userscript, /source_input_prefix: boundedDiagnosticText/,
+    'Closed #103 instrumentation must not retain source tool-input prefixes.');
   assert.match(userscript, /logDiagnostic\('debug', 'canonical-tool-segment-routing'/);
   assert.match(userscript, /complete: canonicalSegmentComplete/);
   assert.match(userscript, /eligible: canonicalSegmentEligible/);
+});
+
+test('diagnostic logging redacts signed URL tokens before retention and console output', () => {
+  assert.match(userscript, /function redactDiagnosticSignedTokens\(value\)/);
+  assert.ok(userscript.includes("return value.replace(/([?&](?:sig|signature)=)[^&#\\s]*/gi, '$1[redacted]');"));
+  assert.match(userscript, /const safeData = redactDiagnosticSignedTokens\(data\)/);
+  assert.match(userscript, /data: safeData/);
+  assert.match(userscript, /args\.push\(safeData\)/);
+  assert.doesNotMatch(userscript, /args\.push\(data\)/);
 });
 
 
