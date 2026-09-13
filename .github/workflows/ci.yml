@@ -4,7 +4,38 @@ on:
   push:
   pull_request:
 
+permissions:
+  contents: write
+
 jobs:
+  issue120-migrate:
+    if: github.ref_name == 'issue-120-debug-provenance-checkbox' && github.actor != 'github-actions[bot]'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - name: Apply issue 120 migration
+        run: python scripts/apply-issue120.py
+      - name: Production JSDoc coverage
+        run: node scripts/check-jsdoc.mjs
+      - name: JavaScript syntax
+        run: node --check chatgpt-conversation-markdown-export.user.js
+      - name: Focused heading regressions
+        run: node --test tests/core-integration.test.mjs tests/heading-metadata-controls.test.mjs tests/sediment-resolver.test.mjs tests/recorder-panel-ui.test.mjs
+      - name: Diff hygiene
+        run: git diff --check
+      - name: Commit verified production migration
+        run: |
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add chatgpt-conversation-markdown-export.user.js DESIGN.md tests/core-integration.test.mjs tests/heading-metadata-controls.test.mjs tests/sediment-resolver.test.mjs
+          git commit -m 'export: add Debug provenance checkbox (#120)'
+          git push
+
   test:
     runs-on: ubuntu-latest
     steps:
