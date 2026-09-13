@@ -186,3 +186,13 @@ debounced to at most one persistence write per second, and a collapsed diagnosti
 panel does not rebuild hidden log-row DOM on every event. A page-hide event flushes
 the pending persisted tail. For live investigation, copy the diagnostic log before
 reloading the page so the full in-memory history is preserved.
+
+## Issue #119 live-evidence performance correction
+
+A real Debug export established that image recovery itself was not the observed stall: the supplied run completed image recovery in 24 ms, while repeated diagnostic scans over large rendered Markdown consumed tens of seconds after image recovery.  The instrumentation is therefore retained, but the diagnostic work is constrained so observability does not dominate export time.
+
+- Canonical rendered segments are no longer hashed or regex-inventoried merely to populate per-segment/per-block Debug events.  Those events retain structural IDs, route information, and lengths without rescanning the full rendered segment.
+- The `conversation-markdown-block-appended` Debug event is guarded before its argument object is built, so disabled Debug logging cannot evaluate expensive or high-volume diagnostic arguments.
+- `conversation-markdown-assembled` no longer performs a full-document hash or turn-ID regex inventory.  The final export-tail Debug boundary remains the single deliberate full-Markdown fingerprint/inventory point used for correlation.
+- Conversation API pagination requests 20 records per page instead of 100.  This does not change record ordering or completeness; it creates more fetch boundaries so the existing progress UI can report progress more frequently during long history retrieval.
+- No image timeout, concurrency, retry, or fallback policy is changed by this correction.

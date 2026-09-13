@@ -26,7 +26,7 @@
   /** Default diagnostic threshold when the user has not stored a preference. */
   const DEFAULT_DIAGNOSTICS = 'warnings';
   /** Conversation API page size requested while walking backward through history. */
-  const PAGE_TURNS = 100;
+  const PAGE_TURNS = 20;
   /** Safety cap that prevents malformed pagination from running without bound. */
   const MAX_PAGES = 10000;
   /** Local-storage key for the keep-screen-on capture preference. */
@@ -2611,9 +2611,7 @@
         source_record_ids: records.map(record => record?.id ?? null),
         final_source_record_id: messageRecord?.id ?? null,
         event_kinds: events.map(event => event?.kind ?? null),
-        rendered_length: rendered.length,
-        rendered_hash: diagnosticTextHash(rendered),
-        rendered_turn_ids: diagnosticMarkdownTurnInventory(rendered)
+        rendered_length: rendered.length
       });
     }
     return rendered;
@@ -2842,15 +2840,15 @@
             });
             const renderedSegment = canonicalAssistantSegmentBlock(segmentRecords, segmentEvents, recordNumberById);
             output.push(renderedSegment);
-            logDiagnostic('debug', 'conversation-markdown-block-appended', {
-              route: 'canonical-assistant-segment',
-              output_index: output.length - 1,
-              source_record_ids: segmentRecords.map(item => item?.id ?? null),
-              final_source_record_id: record?.id ?? null,
-              block_length: renderedSegment.length,
-              block_hash: diagnosticTextHash(renderedSegment),
-              block_turn_ids: diagnosticMarkdownTurnInventory(renderedSegment)
-            });
+            if (diagnosticEnabled('debug')) {
+              logDiagnostic('debug', 'conversation-markdown-block-appended', {
+                route: 'canonical-assistant-segment',
+                output_index: output.length - 1,
+                source_record_ids: segmentRecords.map(item => item?.id ?? null),
+                final_source_record_id: record?.id ?? null,
+                block_length: renderedSegment.length
+              });
+            }
             pendingThoughts = [];
             continue;
           }
@@ -2903,8 +2901,6 @@
         source_record_count: records.length,
         output_block_count: output.length,
         markdown_length: markdown.length,
-        markdown_hash: diagnosticTextHash(markdown),
-        markdown_turn_ids: diagnosticMarkdownTurnInventory(markdown, 32),
         source_tail: records.slice(-32).map((record, offset) => ({
           source_index: records.length - Math.min(32, records.length) + offset,
           source_record_id: record?.id ?? null,

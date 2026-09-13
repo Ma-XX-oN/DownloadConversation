@@ -75,3 +75,35 @@ test('issue 119 keeps high-volume diagnostics cheap while the log UI is collapse
   assert.match(userscript, /diagnosticLog\.slice\(-MAX_PERSISTED_DIAGNOSTIC_LOG_ITEMS\)/);
   assert.match(userscript, /if \(output && diagnosticLogExpanded\) \{/);
 });
+
+
+test('issue 119 live evidence removes redundant Markdown scans and uses 20-record pages', () => {
+  assert.match(userscript, /const PAGE_TURNS = 20;/,
+    'Conversation API pagination must request 20 records per page for more frequent fetch feedback.');
+  assert.doesNotMatch(userscript, /rendered_hash: diagnosticTextHash\(rendered\)/,
+    'Canonical segment diagnostics must not rescan the rendered segment for a duplicate hash.');
+  assert.doesNotMatch(userscript, /rendered_turn_ids: diagnosticMarkdownTurnInventory\(rendered\)/,
+    'Canonical segment diagnostics must not rescan the rendered segment for duplicate turn IDs.');
+  assert.doesNotMatch(userscript, /block_hash: diagnosticTextHash\(renderedSegment\)/,
+    'Block-appended diagnostics must not hash the same rendered segment again.');
+  assert.doesNotMatch(userscript, /block_turn_ids: diagnosticMarkdownTurnInventory\(renderedSegment\)/,
+    'Block-appended diagnostics must not inventory the same rendered segment again.');
+
+  const appendedIndex = userscript.indexOf("logDiagnostic('debug', 'conversation-markdown-block-appended'");
+  const appendedGuard = userscript.lastIndexOf("if (diagnosticEnabled('debug'))", appendedIndex);
+  assert.ok(appendedGuard >= 0 && appendedIndex - appendedGuard < 200,
+    'Block-appended debug arguments must be guarded before they are evaluated.');
+
+  const assembledIndex = userscript.indexOf("logDiagnostic('debug', 'conversation-markdown-assembled'");
+  const assembledEnd = userscript.indexOf('});', assembledIndex);
+  const assembledBlock = userscript.slice(assembledIndex, assembledEnd + 3);
+  assert.doesNotMatch(assembledBlock, /diagnosticTextHash\(markdown\)/,
+    'Markdown assembly must not hash the complete document before export-tail diagnostics.');
+  assert.doesNotMatch(assembledBlock, /diagnosticMarkdownTurnInventory\(markdown/,
+    'Markdown assembly must not inventory the complete document before export-tail diagnostics.');
+
+  assert.equal((userscript.match(/diagnosticTextHash\(markdown\)/g) ?? []).length, 1,
+    'The complete Markdown document must be fingerprinted at only one deliberate debug boundary.');
+  assert.equal((userscript.match(/diagnosticMarkdownTurnInventory\(markdown, 32\)/g) ?? []).length, 1,
+    'The complete Markdown turn-ID inventory must be scanned at only one deliberate debug boundary.');
+});
