@@ -6,7 +6,7 @@ import vm from 'node:vm';
 const userscript = await readFile(new URL('../chatgpt-conversation-markdown-export.user.js', import.meta.url), 'utf8');
 const requireMatch = userscript.match(/^\/\/ @require\s+(https:\/\/raw\.githubusercontent\.com\/Ma-XX-oN\/AIConversationCore\/([0-9a-f]{40})\/dist\/aiconversationcore\.chatgpt\.browser\.js)$/m);
 assert.ok(requireMatch, 'Production userscript must pin the AIConversationCore browser bundle to an exact commit.');
-assert.equal(requireMatch[2], 'b7961cb8dab11611a5af8f4304ae783295998cf2');
+assert.equal(requireMatch[2], 'd6d76b54db3d48baf3f5e3a76099be1732d32785');
 
 const response = await fetch(requireMatch[1]);
 assert.equal(response.status, 200, `Could not load pinned AIConversationCore bundle: HTTP ${response.status}`);
@@ -103,14 +103,14 @@ test('canonical heading controls are Core-owned, independent, ordered, and JSONL
   context.showTimestamps = false;
 
   context.showTurnIds = true;
-  assert.match(render(), /^## User turn_id=metadata-user$/m);
-  assert.doesNotMatch(render(), /<!-- turn_id=/);
+  assert.match(render(), /^## User metadata-user$/m);
+  assert.doesNotMatch(render(), /turn_id=/);
 
   context.showTimestamps = true;
   context.showRecordNumbers = true;
   const combined = render();
   assert.match(combined,
-    /^## User \[[0-9]{4}-[0-9]{2}-[0-9]{2} [0-9]{2}:[0-9]{2}:[0-9]{2}\]: 2: turn_id=metadata-user$/m);
+    /^## User \[[0-9]{4}-[0-9]{2}-[0-9]{2} [0-9]{2}:[0-9]{2}:[0-9]{2}\]: 2: metadata-user$/m);
   context.showTimestamps = false;
   context.showRecordNumbers = false;
   context.showTurnIds = false;

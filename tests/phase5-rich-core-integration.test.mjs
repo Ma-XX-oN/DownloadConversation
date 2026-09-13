@@ -6,7 +6,7 @@ import vm from 'node:vm';
 const userscript = await readFile(new URL('../chatgpt-conversation-markdown-export.user.js', import.meta.url), 'utf8');
 const requireMatch = userscript.match(/^\/\/ @require\s+(https:\/\/raw\.githubusercontent\.com\/Ma-XX-oN\/AIConversationCore\/([0-9a-f]{40})\/dist\/aiconversationcore\.chatgpt\.browser\.js)$/m);
 assert.ok(requireMatch, 'Production userscript must pin the AIConversationCore browser bundle to an exact commit.');
-assert.equal(requireMatch[2], 'b7961cb8dab11611a5af8f4304ae783295998cf2');
+assert.equal(requireMatch[2], 'd6d76b54db3d48baf3f5e3a76099be1732d32785');
 
 const response = await fetch(requireMatch[1]);
 assert.equal(response.status, 200, `Could not load pinned AIConversationCore bundle: HTTP ${response.status}`);
@@ -99,8 +99,8 @@ test('rich web citation renders through AIConversationCore while preserving sour
   context.showTurnIds = true;
   const rendered = phase5.canonicalRecordBlock(record, event);
   context.showTurnIds = false;
-  assert.match(rendered, /^## ChatGPT turn_id=assistant-citation$/m);
-  assert.doesNotMatch(rendered, /<!-- turn_id=/);
+  assert.match(rendered, /^## ChatGPT assistant-citation$/m);
+  assert.doesNotMatch(rendered, /turn_id=/);
   assert.match(rendered, /\*\*\(cite:/);
   assert.match(rendered, /Example<\/a>/);
   assert.equal(rendered.includes(marker), false);

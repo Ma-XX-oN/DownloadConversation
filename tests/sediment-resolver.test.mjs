@@ -28,7 +28,7 @@ function productionFunctionSource(name) {
 
 const requireMatch = userscript.match(/^\/\/ @require\s+(https:\/\/raw\.githubusercontent\.com\/Ma-XX-oN\/AIConversationCore\/([0-9a-f]{40})\/dist\/aiconversationcore\.chatgpt\.browser\.js)$/m);
 assert.ok(requireMatch, 'Production userscript must pin the AIConversationCore browser bundle to an exact commit.');
-assert.equal(requireMatch[2], 'b7961cb8dab11611a5af8f4304ae783295998cf2');
+assert.equal(requireMatch[2], 'd6d76b54db3d48baf3f5e3a76099be1732d32785');
 
 const response = await fetch(requireMatch[1]);
 assert.equal(response.status, 200, `Could not load pinned AIConversationCore bundle: HTTP ${response.status}`);
@@ -235,5 +235,5 @@ test('DownloadConversation does not duplicate sediment-to-download URL construct
 });
 
 test('userscript version advances for sediment resolver completion', () => {
-  assert.match(userscript, /\/\/ @version      0\.6\.173/);
+  assert.match(userscript, /\/\/ @version      0\.6\.174/);
 });

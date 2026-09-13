@@ -52,9 +52,9 @@ Provider-record interpretation and shared transcript rendering move incrementall
 
 The Tampermonkey userscript consumes the deterministic classic-script browser bundle generated from the core's ESM source. Production must pin that bundle to an exact `AIConversationCore` commit rather than a moving branch, and must not copy core source manually into the userscript.
 
-Canonical identity is additional identity. Normalization must preserve the original JSONL provenance needed by later projections, including source record index/number, raw timestamp fields, provider/source record or turn identity, and all contributing records when several source records form one canonical turn. Existing DownloadConversation `turn_id` heading comments continue to refer to provider/source identity; they are not silently replaced by canonical derived turn IDs.
+Canonical identity is additional identity. Normalization must preserve the original JSONL provenance needed by later projections, including source record index/number, raw timestamp fields, provider/source record or turn identity, and all contributing records when several source records form one canonical turn. Visible Turn IDs continue to refer to provider/source identity; they are not silently replaced by canonical derived turn IDs. AIConversationCore owns their heading serialization.
 
-The initial production migration covers ordinary visible text records and plain Assistant segments composed of public `thoughts` records followed by an otherwise plain visible Assistant text record. These migrated Assistant segments are rendered by `AIConversationCore` as one canonical ChatGPT section while DownloadConversation preserves the final provider/source Assistant record ID in its existing `turn_id` heading comment. Provider-specific rich handling such as citations, images, inline ChatGPT tokens, `sandbox:` resources, hidden records, and other host-enriched cases remains on the established DownloadConversation renderer until each behaviour is migrated with its own regression evidence.
+The initial production migration covers ordinary visible text records and plain Assistant segments composed of public `thoughts` records followed by an otherwise plain visible Assistant text record. These migrated Assistant segments are rendered by `AIConversationCore` as one canonical ChatGPT section while Core preserves the final provider/source Assistant record ID as the optional visible Turn ID. Provider-specific rich handling such as citations, images, inline ChatGPT tokens, `sandbox:` resources, hidden records, and other host-enriched cases remains on the established DownloadConversation renderer until each behaviour is migrated with its own regression evidence.
 
 Moving rendering into the shared core does not authorize chronology, UAP grouping, User/Assistant association, or ordering changes. Those change only in response to separately established production evidence and separately tracked work.
 
@@ -135,8 +135,9 @@ DownloadConversation exposes three independent persistent Markdown-heading contr
 - **Record #**: Core derives the one-based JSONL record number from canonical
   source provenance. DownloadConversation prepends conversation metadata as JSONL
   record 1, so the first visible ChatGPT source message is record 2. Default: off.
-- **Turn ID**: Core derives the ChatGPT native source/message ID and renders it as
-  visible `turn_id=...` heading metadata. Default: off.
+- **Turn ID**: Core derives the ChatGPT native source/message ID and renders the
+  bare native ID value as visible heading metadata, without a `turn_id=` prefix.
+  Default: off.
 
 The visible order is speaker, timestamp, record number, then Turn ID. Ordinary
 Markdown does not encode Turn ID as an HTML comment. DownloadConversation supplies
