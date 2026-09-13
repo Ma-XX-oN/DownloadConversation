@@ -37,28 +37,8 @@ function mismatch(label, actual, expected) {
   );
 }
 
-function decorateSequential(markdown, needle, ids) {
-  let index = 0;
-  const rendered = markdown.replaceAll(needle, () => {
-    assert.ok(index < ids.length, `More ${needle.trim()} headings than source IDs.`);
-    const id = ids[index];
-    index += 1;
-    return `${needle.trimEnd()} <!-- turn_id=${id} -->\n`;
-  });
-  assert.equal(index, ids.length, `Expected ${ids.length} ${needle.trim()} headings, found ${index}.`);
-  return rendered;
-}
-
 function projectedDownloadConversationGolden(canonical) {
-  const userIds = records
-    .filter(record => record?.author?.role === 'user')
-    .map(record => record.id);
-  const finalIds = records
-    .filter(record => record?.author?.role === 'assistant' && record?.end_turn === true)
-    .map(record => record.id);
-  let rendered = decorateSequential(canonical, '## User\n', userIds);
-  rendered = decorateSequential(rendered, '## ChatGPT\n', finalIds);
-  // DownloadConversation serializes exactly one final newline after trim-ended blocks.
+  let rendered = canonical;
   if (rendered.endsWith('\n\n')) rendered = rendered.slice(0, -1);
   return rendered;
 }
@@ -97,7 +77,8 @@ async function downloadConversationMarkdown() {
   Object.assign(context, {
     showTimestamps: false,
     showRecordNumbers: false,
-    showTurnIds: true,
+    showTurnIds: false,
+    showDebugProvenance: false,
     assert(condition, message) {
       if (!condition) throw new Error(message);
     },

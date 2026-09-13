@@ -1,11 +1,11 @@
 // ==UserScript==
 // @name         ChatGPT Conversation Markdown Recorder
 // @namespace    https://chatgpt.com/
-// @version      0.6.163
+// @version      0.6.177
 // @description  Exports the current ChatGPT conversation directly from the Conversation API as Markdown or JSONL.
 // @match        https://chatgpt.com/*
 // @match        https://chat.openai.com/*
-// @require      https://raw.githubusercontent.com/Ma-XX-oN/AIConversationCore/3233cba838bbf2d2cea5a2a6f1900ed6014dcfb0/dist/aiconversationcore.chatgpt.browser.js
+// @require      https://raw.githubusercontent.com/Ma-XX-oN/AIConversationCore/d6d76b54db3d48baf3f5e3a76099be1732d32785/dist/aiconversationcore.chatgpt.browser.js
 // @run-at       document-start
 // ==/UserScript==
 
@@ -14,7 +14,6 @@
 
   /** Installed userscript version reported in diagnostics and runtime metadata. */
   const VERSION = (typeof GM_info !== 'undefined' && GM_info?.script?.version) || 'unknown';
-  console.log(`[DownloadConversation] version ${VERSION}`);
   /** DOM id of the recorder panel so UI lookups share one stable selector. */
   const PANEL_ID = 'tm-conversation-recorder';
   /** DOM id of the floating launcher button that opens the recorder panel. */
@@ -37,10 +36,18 @@
   const SHOW_RECORD_NUMBERS_STORAGE_KEY = 'tm-conversation-recorder-show-record-numbers';
   /** Local-storage key for Markdown source/provider turn-ID visibility. */
   const SHOW_TURN_IDS_STORAGE_KEY = 'tm-conversation-recorder-show-turn-ids';
+  /** Local-storage key for Markdown Core debug-provenance visibility. */
+  const SHOW_DEBUG_PROVENANCE_STORAGE_KEY = 'tm-conversation-recorder-show-debug-provenance';
+  /** Local-storage key for continued console mirroring after the status panel first appears. */
+  const CONSOLE_DIAGNOSTICS_STORAGE_KEY = 'tm-conversation-recorder-console-diagnostics';
   /** Session-storage key for the retained recorder diagnostic log. */
   const DIAGNOSTIC_LOG_STORAGE_KEY = 'tm-conversation-recorder-diagnostic-log';
   /** Maximum number of diagnostic entries retained in memory and session storage. */
-  const MAX_DIAGNOSTIC_LOG_ITEMS = 500;
+  const MAX_DIAGNOSTIC_LOG_ITEMS = 10000;
+  /** Maximum retained diagnostic entries persisted across a page reload. */
+  const MAX_PERSISTED_DIAGNOSTIC_LOG_ITEMS = 5000;
+  /** Debounce used to keep high-volume debug diagnostics from serializing the full log on every event. */
+  const DIAGNOSTIC_PERSIST_DELAY_MS = 1000;
 
   /** Unwrapped page-realm fetch implementation captured before installing interception. */
   let originalPageFetch = null;
@@ -50,6 +57,10 @@
   let captureInstalled = false;
   /** Currently selected diagnostic threshold, restored from local storage at startup. */
   let diagnosticsLevel = localStorage.getItem('tm-conversation-recorder-diagnostics') || DEFAULT_DIAGNOSTICS;
+  /** Saved opt-in for console output after startup; independent of panel diagnostic verbosity. */
+  let consoleDiagnostics = localStorage.getItem(CONSOLE_DIAGNOSTICS_STORAGE_KEY) === 'true';
+  /** One-way startup boundary: hiding or reopening the panel does not restore automatic console output. */
+  let generalStatusShown = false;
   /** Whether active exports should request a screen wake lock. */
   let screenOnWhenCapturing = localStorage.getItem(SCREEN_ON_STORAGE_KEY) !== 'false';
   /** Whether Markdown headings should include local-time source timestamps. */
@@ -57,7 +68,9 @@
   /** Whether Markdown headings should include one-based JSONL record numbers. */
   let showRecordNumbers = localStorage.getItem(SHOW_RECORD_NUMBERS_STORAGE_KEY) === 'true';
   /** Whether Markdown headings should include source/provider turn IDs. */
-  let showTurnIds = localStorage.getItem(SHOW_TURN_IDS_STORAGE_KEY) !== 'false';
+  let showTurnIds = localStorage.getItem(SHOW_TURN_IDS_STORAGE_KEY) === 'true';
+  /** Whether Markdown headings should include Core-derived source debug provenance. */
+  let showDebugProvenance = localStorage.getItem(SHOW_DEBUG_PROVENANCE_STORAGE_KEY) === 'true';
   /** Active screen wake-lock handle, or null when no lock is held. */
   let wakeLockSentinel = null;
   /** Serializes export work so overlapping extraction runs cannot start. */
@@ -80,6 +93,8 @@
   let activeClickDiagnostic = null;
   /** In-memory diagnostic history mirrored to session storage for the panel. */
   let diagnosticLog = [];
+  /** Pending debounced diagnostic-log persistence timer, or null when no write is scheduled. */
+  let diagnosticPersistTimer = null;
   /** Whether the recorder panel currently shows the expanded diagnostic history. */
   let diagnosticLogExpanded = false;
   /** Element to refocus after the active recorder modal closes. */
@@ -88,6 +103,8 @@
     const storedDiagnosticLog = JSON.parse(sessionStorage.getItem(DIAGNOSTIC_LOG_STORAGE_KEY) || '[]');
     if (Array.isArray(storedDiagnosticLog)) diagnosticLog = storedDiagnosticLog.slice(-MAX_DIAGNOSTIC_LOG_ITEMS);
   } catch {}
+
+  logConsoleDiagnostic('debug', `[DownloadConversation] version ${VERSION}`);
 
   /**
    * Handles assert.
@@ -549,37 +566,6 @@
     return `${value.slice(0, maxChars)}… [truncated ${value.length - maxChars} chars]`;
   }
 
-  /**
-   * Computes a deterministic FNV-1a fingerprint for diagnostic correlation without logging transcript content.
-   *
-   * @param {string} text - The rendered text whose diagnostic fingerprint is required.
-   * @returns {string} Eight-character lowercase hexadecimal FNV-1a fingerprint.
-   */
-  function diagnosticTextHash(text) {
-    const value = String(text ?? '');
-    let hash = 0x811c9dc5;
-    for (let index = 0; index < value.length; index += 1) {
-      hash ^= value.charCodeAt(index);
-      hash = Math.imul(hash, 0x01000193);
-    }
-    return (hash >>> 0).toString(16).padStart(8, '0');
-  }
-
-  /**
-   * Summarizes source turn IDs present in rendered Markdown so pipeline stages can be compared without logging message bodies.
-   *
-   * @param {string} markdown - The rendered Markdown whose turn IDs are summarized.
-   * @param {number} tailCount - Maximum number of trailing turn IDs to retain.
-   * @returns {Object} Count and trailing source turn IDs found in the rendered Markdown.
-   */
-  function diagnosticMarkdownTurnInventory(markdown, tailCount = 12) {
-    const ids = [...String(markdown ?? '').matchAll(/<!-- turn_id=([^\s>]+) -->/g)]
-      .map(match => match[1]);
-    return {
-      count: ids.length,
-      tail: ids.slice(-Math.max(0, tailCount))
-    };
-  }
 
   /**
    * Handles diagnostic request path.
@@ -706,7 +692,17 @@
         throw new Error(`Conversation pagination exceeded the ${MAX_PAGES}-page safety limit.`);
       }
       const previousPageInfo = pages.length ? pages[pages.length - 1].page_info : null;
-      const data = await fetchPage(cursor, pages.length + 1, previousPageInfo);
+      const pageNumber = pages.length + 1;
+      const pageStartedAt = performance.now();
+      onProgress?.({
+        stage: 'fetching',
+        phase: 'request-start',
+        page_count: pages.length,
+        raw_record_count: rawRecordCount,
+        page_number: pageNumber,
+        page_started_at: pageStartedAt
+      });
+      const data = await fetchPage(cursor, pageNumber, previousPageInfo);
       if (!conversationSchemaOk(data)) {
         throw new Error('Conversation API page did not contain messages[] and page_info.');
       }
@@ -718,8 +714,11 @@
       rawRecordCount += data.messages.length;
       onProgress?.({
         stage: 'fetching',
+        phase: 'request-complete',
         page_count: pages.length,
-        raw_record_count: rawRecordCount
+        raw_record_count: rawRecordCount,
+        page_number: pageNumber,
+        page_started_at: 0
       });
 
       if (data.page_info.has_previous_page !== true) break;
@@ -1949,36 +1948,151 @@
   }
 
   /**
-   * Handles fallback resolve image pointer Markdown.
+   * Returns canonical conversation-image resources for one source record keyed by provider part index.
+   *
+   * Provider/source -> canonical transformation is delegated to the pinned AIConversationCore adapter; DownloadConversation does not reconstruct provider pointer mappings itself.
+   *
+   * @param {Object} record - The provider/source record containing image parts.
+   * @returns {Map<number, Object>} Canonical conversation-image resources keyed by original source part index.
+   */
+  function canonicalImageResourcesByRecordAndPart(records) {
+    assert(Array.isArray(records), 'Canonical image-resource lookup requires the ordered source record set.');
+    const events = canonicalCore().adaptChatGPTRecords(records);
+    const byRecord = new Map();
+    for (const event of events) {
+      const recordId = event?.source_record_id;
+      if (typeof recordId !== 'string' || !recordId) continue;
+      const resources = Array.isArray(event?.resources) ? event.resources : [];
+      let byPart = byRecord.get(recordId);
+      for (const resource of resources) {
+        if (resource?.type !== 'image' || resource?.resource_kind !== 'conversation_image') continue;
+        const partIndex = resource?.source?.part_index;
+        if (!Number.isInteger(partIndex)) continue;
+        if (!byPart) {
+          byPart = new Map();
+          byRecord.set(recordId, byPart);
+        }
+        assert(!byPart.has(partIndex), `Duplicate canonical image resource for ${recordId}:${partIndex}.`);
+        byPart.set(partIndex, resource);
+      }
+    }
+    return byRecord;
+  }
+
+  /**
+   * Fetches image bytes through a canonical Core-supplied authenticated transport URL.
+   *
+   * The first request resolves provider identity to transient access data. The returned signed URL is used only for the immediate image fetch and is never persisted in diagnostics or canonical state.
+   *
+   * @param {string} resolverUrl - Deterministic authenticated transport URL supplied by AIConversationCore.
+   * @param {Object|null} timing - Mutable timing/result object populated without retaining signed URLs or image payload data.
+   * @returns {Promise<string>} A promise resolving to the fetched image as a data URL.
+   */
+  async function fetchCanonicalResolvedImageDataUrl(resolverUrl, timing = null) {
+    const startedAt = performance.now();
+    try {
+      if (timing) {
+        timing.stage = 'resolver';
+        timing.source_scheme = 'core-resolver';
+        timing.resolver_status = null;
+        timing.resolver_ms = null;
+      }
+      const resolverResponse = await apiFetch(resolverUrl);
+      const resolverAt = performance.now();
+      if (timing) {
+        timing.resolver_status = resolverResponse.status;
+        timing.resolver_ms = Math.round(resolverAt - startedAt);
+      }
+      if (!resolverResponse.ok) {
+        const error = new Error(`Conversational image resolver returned HTTP ${resolverResponse.status}.`);
+        error.httpStatus = resolverResponse.status;
+        if (timing) timing.outcome = 'resolver-http-error';
+        throw error;
+      }
+      const resolverPayload = await resolverResponse.json();
+      const resolvedSource = typeof resolverPayload?.download_url === 'string'
+        ? resolverPayload.download_url.trim()
+        : '';
+      if (!resolvedSource) {
+        if (timing) timing.outcome = 'resolver-response-error';
+        throw new Error('Conversational image resolver response did not contain download_url.');
+      }
+      const dataUrl = await fetchImageDataUrl(resolvedSource, timing);
+      if (timing) {
+        timing.resolver_status = resolverResponse.status;
+        timing.resolver_ms = Math.round(resolverAt - startedAt);
+        timing.total_ms = Math.round(performance.now() - startedAt);
+      }
+      return dataUrl;
+    } catch (error) {
+      if (timing) {
+        timing.total_ms = Math.round(performance.now() - startedAt);
+        if (!timing.outcome) timing.outcome = `${timing.stage || 'resolver'}-error`;
+      }
+      throw error;
+    }
+  }
+
+  /**
+   * Resolves one provider image pointer into Markdown while optionally recording timing metrics.
+   *
+   * AIConversationCore owns provider-pointer interpretation. DownloadConversation consumes canonical `data_url` or `download_url` fields and performs only the credential-bound browser retrieval step.
    *
    * @param {Object} part - The provider content part to process.
+   * @param {Object|null} resource - Canonical conversation-image resource for this source part.
    * @param {string} recordId - The provider/source record identifier.
-   * @param {number} imageOrdinal - The zero-based image ordinal within the source record.
-   * @returns {Promise<string>} A promise that resolves to the string result produced by `cgResolveImagePointerMarkdown`.
+   * @param {number} imageOrdinal - The one-based image ordinal within the source record.
+   * @param {Object|null} timing - Mutable timing/result object populated without retaining image payload data.
+   * @returns {Promise<string>} A promise that resolves to image Markdown or the established unavailable-image fallback.
    */
-  async function cgResolveImagePointerMarkdown(part, recordId, imageOrdinal) {
-    const source = cgImagePointerSource(part);
-    if (!source) return '[image missing]';
-    if (source.startsWith('data:image/')) return `![image-${recordId}-${imageOrdinal}](${source})`;
-    let parsed = null;
-    try { parsed = new URL(source, location.href); } catch {}
-    if (!parsed || !['http:', 'https:'].includes(parsed.protocol)) return cgImageUnavailableMarkdown(source);
+  async function cgResolveImagePointerMarkdown(part, resource, recordId, imageOrdinal, timing = null) {
+    const startedAt = performance.now();
+    const source = typeof resource?.source_pointer === 'string' && resource.source_pointer.trim()
+      ? resource.source_pointer.trim()
+      : cgImagePointerSource(part);
+    if (!source) {
+      if (timing) {
+        timing.stage = 'complete';
+        timing.outcome = 'missing-pointer';
+        timing.source_scheme = null;
+        timing.total_ms = Math.round(performance.now() - startedAt);
+      }
+      return '[image missing]';
+    }
     try {
-      const response = await fetch(source, { method: 'GET', credentials: 'include' });
-      if (!response.ok) return cgImageFailureMarkdown(source, response.status);
-      const blob = await response.blob();
-      /**
-       * Handles data url.
-       */
-      const dataUrl = await new Promise((resolve, reject) => {
-        const reader = new FileReader();
-        reader.onload = () => resolve(String(reader.result || ''));
-        reader.onerror = () => reject(reader.error || new Error('Could not read conversational image blob.'));
-        reader.readAsDataURL(blob);
-      });
+      let dataUrl = '';
+      if (typeof resource?.data_url === 'string' && resource.data_url.startsWith('data:image/')) {
+        dataUrl = resource.data_url;
+        if (timing) {
+          timing.stage = 'complete';
+          timing.outcome = 'data-url';
+          timing.source_scheme = 'canonical-data-url';
+          timing.fetch_ms = 0;
+          timing.body_ms = 0;
+          timing.encode_ms = 0;
+          timing.data_url_chars = dataUrl.length;
+          timing.total_ms = Math.round(performance.now() - startedAt);
+        }
+      } else if (typeof resource?.download_url === 'string' && resource.download_url.trim()) {
+        dataUrl = await fetchCanonicalResolvedImageDataUrl(resource.download_url.trim(), timing);
+      } else {
+        let parsed = null;
+        try { parsed = new URL(source, location.href); } catch {}
+        if (!parsed || !['http:', 'https:'].includes(parsed.protocol)) {
+          if (timing) {
+            timing.stage = 'complete';
+            timing.outcome = 'unresolved-pointer';
+            timing.source_scheme = parsed?.protocol ?? null;
+            timing.total_ms = Math.round(performance.now() - startedAt);
+          }
+          return cgImageUnavailableMarkdown(source);
+        }
+        dataUrl = await fetchImageDataUrl(source, timing);
+      }
       return dataUrl ? `![image-${recordId}-${imageOrdinal}](${dataUrl})` : cgImageUnavailableMarkdown(source);
-    } catch {
-      return cgImageUnavailableMarkdown(source);
+    } catch (error) {
+      const status = Number(error?.httpStatus);
+      return cgImageFailureMarkdown(source, Number.isFinite(status) ? status : null);
     }
   }
 
@@ -2311,11 +2425,11 @@
      */
     const hasMetadata = records.some(record => record?.record_type === 'chatgpt_conversation_metadata');
     const adapterRecords = conversationId && !hasMetadata
-      ? [...records, {
+      ? [{
           record_type: 'chatgpt_conversation_metadata',
           schema_version: 1,
           conversation_id: conversationId
-        }]
+        }, ...records]
       : records;
     const events = canonicalCore().adaptChatGPTRecords(adapterRecords);
     assert(Array.isArray(events), 'AIConversationCore ChatGPT adapter did not return canonical events.');
@@ -2325,7 +2439,7 @@
       const sourceIndex = event?.source_index;
       const sourceRecordId = event?.source_record_id;
       if (!Number.isInteger(sourceIndex) || typeof sourceRecordId !== 'string' || !sourceRecordId) continue;
-      const original = records[sourceIndex];
+      const original = adapterRecords[sourceIndex];
       if (!original) continue;
       assert(original?.id === sourceRecordId,
         `AIConversationCore source record mismatch at JSONL index ${sourceIndex}.`);
@@ -2342,35 +2456,6 @@
       const enrichedEvent = canonicalEnrichRecoveredImages(
         event, recoveredImageMap.get(sourceRecordId) ?? []);
       bySourceRecord.set(sourceRecordId, enrichedEvent);
-      if (diagnosticEnabled('debug')) {
-        const diagnosticBlocks = Array.isArray(enrichedEvent?.blocks)
-          ? enrichedEvent.blocks.filter(block =>
-            block?.type === 'tool_call' || block?.type === 'tool_result')
-          : [];
-        if (diagnosticBlocks.length) {
-          logDiagnostic('debug', 'canonical-tool-normalization', {
-            source_record_id: sourceRecordId,
-            source_index: sourceIndex,
-            source_role: original?.author?.role ?? null,
-            source_recipient: original?.recipient ?? null,
-            source_channel: original?.channel ?? null,
-            source_content_type: original?.content?.content_type ?? null,
-            source_language: original?.content?.language ?? null,
-            event_kind: enrichedEvent?.kind ?? null,
-            event_role: enrichedEvent?.role ?? null,
-            event_visibility: enrichedEvent?.visibility ?? null,
-            blocks: diagnosticBlocks.map(block => ({
-              type: block?.type ?? null,
-              name: block?.name ?? null,
-              input_format: block?.input_format ?? null,
-              language: block?.language ?? null,
-              source_language: block?.source_language ?? null,
-              input_prefix: boundedDiagnosticText(block?.input ?? '', 240),
-              source_input_prefix: boundedDiagnosticText(block?.source_input ?? '', 240)
-            }))
-          });
-        }
-      }
     }
     return bySourceRecord;
   }
@@ -2411,78 +2496,39 @@
   }
 
   /**
-   * Formats one ChatGPT source timestamp like AI-transcript.py's default -d output.
+   * Returns the current AIConversationCore heading-presentation policy.
    *
-   * @param {Object} record - The provider/source record to inspect.
-   * @returns {string|null} Local-time YYYY-MM-DD HH:MM:SS, or null when unavailable.
+   * DownloadConversation selects visibility only. Timestamp values, JSONL record
+   * numbers, and source turn IDs are derived by Core from canonical provenance.
+   *
+   * @returns {Object} AIConversationCore Markdown projection options.
    */
-  function transcriptTimestamp(record) {
-    const raw = record?.create_time ?? record?.update_time;
-    if (raw == null) return null;
-    const date = new Date(Number(raw) * 1000);
-    if (!Number.isFinite(date.getTime())) return null;
-    /**
-     * Zero-pads one date/time component to two digits.
-     *
-     * @param {number} value - Numeric date/time component to pad.
-     * @returns {string} Two-character decimal representation.
-     */
-    const pad = value => String(value).padStart(2, '0');
-    return `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())} ` +
-      `${pad(date.getHours())}:${pad(date.getMinutes())}:${pad(date.getSeconds())}`;
+  function canonicalHeadingOptions() {
+    return {
+      heading: {
+        timestamp: showTimestamps,
+        recordNumber: showRecordNumbers,
+        turnId: showTurnIds,
+        debugProvenance: showDebugProvenance
+      }
+    };
   }
 
   /**
-   * Builds shared-core heading metadata for one ChatGPT source record.
+   * Renders one eligible canonical message event through AIConversationCore.
    *
-   * @param {Object} record - The provider/source record to inspect.
-   * @param {number|null} recordNumber - The one-based paired JSONL record number.
-   * @returns {Object} Consumer heading metadata understood by AIConversationCore.
-   */
-  function canonicalHeadingMetadata(record, recordNumber = null) {
-    const metadata = {};
-    if (showTimestamps) {
-      const timestamp = transcriptTimestamp(record);
-      if (timestamp) metadata.timestamp = timestamp;
-    }
-    if (showRecordNumbers && Number.isInteger(recordNumber)) metadata.record_number = recordNumber;
-    return metadata;
-  }
-
-  /**
-   * Renders one eligible canonical message event while preserving DownloadConversation source-turn identity in the transcript heading.
-   *
-   * Canonical -> output transformation: AIConversationCore supplies the plain canonical heading/body; DownloadConversation replaces only that heading with its existing source-record `turn_id` comment and preserves the rendered body.
+   * Source/canonical -> output transformation: DownloadConversation supplies only
+   * heading visibility policy. Core derives timestamp, JSONL record number, and
+   * provider/source turn identity from canonical source provenance.
    *
    * @param {Object} record - The provider/source record to process.
-   * @param {Event|Object} event - The event or event-like object being handled.
-   * @param {number|null} recordNumber - The one-based paired JSONL record number.
-   * @returns {string} The string produced by `canonicalRecordBlock`.
+   * @param {Event|Object} event - The canonical event associated with the source record.
+   * @returns {string} Canonical Markdown for the source record.
    */
-  function canonicalRecordBlock(record, event, recordNumber = null) {
+  function canonicalRecordBlock(record, event) {
     assert(canonicalMessageRecordEligible(record, event),
       `AIConversationCore message record ${record?.id ?? 'unknown'} is not eligible for canonical rendering.`);
-    // Provider/source ID projected onto renderer-generated headings for this record.
-    const sourceId = showTurnIds && typeof record?.id === 'string' ? record.id : '';
-    const headingMetadata = canonicalHeadingMetadata(record, recordNumber);
-    const hasHeadingMetadata = Object.keys(headingMetadata).length > 0;
-    // Canonical event clone carrying DownloadConversation presentation metadata.
-    const projectedEvent = (sourceId || hasHeadingMetadata)
-      ? {
-          ...event,
-          projection: {
-            ...(event?.projection ?? {}),
-            ...(hasHeadingMetadata ? {
-              heading_metadata: {
-                ...(event?.projection?.heading_metadata ?? {}),
-                ...headingMetadata
-              }
-            } : {}),
-            ...(sourceId ? { heading_suffix: ` <!-- turn_id=${sourceId} -->` } : {})
-          }
-        }
-      : event;
-    return canonicalCore().renderCanonicalMarkdown([projectedEvent]).trimEnd();
+    return canonicalCore().renderCanonicalMarkdown([event], canonicalHeadingOptions()).trimEnd();
   }
 
   /**
@@ -2539,69 +2585,31 @@
   }
 
   /**
-   * Renders one eligible canonical Assistant activity segment while preserving DownloadConversation source-turn identity in the transcript heading.
+   * Renders one eligible canonical Assistant activity segment through AIConversationCore.
    *
-   * Canonical -> output transformation: AIConversationCore renders the ordered segment; DownloadConversation substitutes only its established source-record heading/comment for the plain canonical heading. Tool payloads and rendered body remain opaque.
+   * Source/canonical -> output transformation: DownloadConversation preserves the
+   * ordered canonical segment and supplies only heading visibility policy. Core owns
+   * all semantic heading values for the response and Commentary descendants.
    *
    * @param {Array<Object>} records - The ordered provider/source records to process.
    * @param {Array<Object>} events - The canonical events associated with the source records.
-   * @param {Map<unknown, unknown>} recordNumberById - Paired JSONL record numbers keyed by source ID.
-   * @returns {string} The string produced by `canonicalAssistantSegmentBlock`.
+   * @returns {string} Canonical Markdown for the Assistant segment.
    */
-  function canonicalAssistantSegmentBlock(records, events, recordNumberById = new Map()) {
+  function canonicalAssistantSegmentBlock(records, events) {
     assert(canonicalAssistantSegmentEligible(records, events),
       'AIConversationCore Assistant segment contains an unsupported record.');
-    /**
-     * Handles message record.
-     */
+    /** Final ordinary Assistant message retained only for compact diagnostics. */
     const messageRecord = [...records].reverse().find((record, indexFromEnd) => {
       const index = records.length - 1 - indexFromEnd;
       return canonicalMessageRecordEligible(record, events[index]);
     }) ?? null;
-    /**
-     * Handles heading record.
-     */
-    const headingRecord = messageRecord ?? records.find(record => record?.author?.role === 'assistant') ?? records[0];
-    // Source ID retained on the one enclosing ChatGPT response heading.
-    const headingSourceId = showTurnIds && typeof headingRecord?.id === 'string' ? headingRecord.id : '';
-    // Canonical event sequence decorated only with source heading identities.
-    const projectedEvents = events.map((event, index) => {
-      const commentarySourceId = showTurnIds && event?.kind === 'commentary' && typeof records[index]?.id === 'string'
-        ? records[index].id
-        : '';
-      const sourceId = commentarySourceId || (index === 0 ? headingSourceId : '');
-      const responseHeadingSuffix = index === 0 && headingSourceId
-        ? ` <!-- turn_id=${headingSourceId} -->`
-        : '';
-      const headingMetadata = canonicalHeadingMetadata(
-        records[index], recordNumberById.get(records[index]?.id) ?? null
-      );
-      const hasHeadingMetadata = Object.keys(headingMetadata).length > 0;
-      if (!sourceId && !responseHeadingSuffix && !hasHeadingMetadata) return event;
-      return {
-        ...event,
-        projection: {
-          ...(event?.projection ?? {}),
-          ...(hasHeadingMetadata ? {
-            heading_metadata: {
-              ...(event?.projection?.heading_metadata ?? {}),
-              ...headingMetadata
-            }
-          } : {}),
-          ...(sourceId ? { heading_suffix: ` <!-- turn_id=${sourceId} -->` } : {}),
-          ...(responseHeadingSuffix ? { response_heading_suffix: responseHeadingSuffix } : {})
-        }
-      };
-    });
-    const rendered = canonicalCore().renderCanonicalMarkdown(projectedEvents).trimEnd();
+    const rendered = canonicalCore().renderCanonicalMarkdown(events, canonicalHeadingOptions()).trimEnd();
     if (diagnosticEnabled('debug')) {
       logDiagnostic('debug', 'canonical-assistant-segment-rendered', {
         source_record_ids: records.map(record => record?.id ?? null),
         final_source_record_id: messageRecord?.id ?? null,
         event_kinds: events.map(event => event?.kind ?? null),
-        rendered_length: rendered.length,
-        rendered_hash: diagnosticTextHash(rendered),
-        rendered_turn_ids: diagnosticMarkdownTurnInventory(rendered)
+        rendered_length: rendered.length
       });
     }
     return rendered;
@@ -2634,12 +2642,11 @@
    * Handles canonical plain record block.
    *
    * @param {Object} record - The provider/source record to process.
-   * @param {Event|Object} event - The event or event-like object being handled.
-   * @param {number|null} recordNumber - The one-based paired JSONL record number.
-   * @returns {boolean} `true` when `canonicalPlainRecordBlock` succeeds or its predicate is satisfied; otherwise `false`.
+   * @param {Event|Object} event - The canonical event associated with the source record.
+   * @returns {string} Canonical Markdown for the plain record.
    */
-  function canonicalPlainRecordBlock(record, event, recordNumber = null) {
-    return canonicalRecordBlock(record, event, recordNumber);
+  function canonicalPlainRecordBlock(record, event) {
+    return canonicalRecordBlock(record, event);
   }
 
   /**
@@ -2677,27 +2684,31 @@
   // END AIConversationCore Phase 5 integration
 
   /**
-   * Builds the DownloadConversation transcript heading from the actual provider/source record.
+   * Returns the Core-rendered heading for a fallback-rendered source record.
    *
-   * Source -> output transformation: the source record ID is emitted as the `turn_id` comment; it is intentionally not replaced by AIConversationCore derived turn identity.
+   * The fallback body remains host-rendered, but heading metadata is serialized by
+   * AIConversationCore from the same canonical event and visibility policy used by
+   * canonical bodies. If no canonical event exists, the established plain speaker
+   * heading is preserved without inventing metadata.
    *
-   * @param {Object} record - The provider/source record to process.
-   * @param {number|null} recordNumber - The one-based paired JSONL record number.
-   * @returns {string} The string produced by `transcriptHeading`.
+   * @param {Object} record - The provider/source record whose speaker heading is required.
+   * @param {Event|Object|null} event - The canonical event supplying source provenance, when available.
+   * @returns {string} Core-rendered transcript heading or the existing plain speaker heading.
    */
-  function transcriptHeading(record, recordNumber = null) {
-    const id = typeof record?.id === 'string' ? record.id : '';
-    const headingMetadata = canonicalHeadingMetadata(record, recordNumber);
-    const fields = [];
-    if (headingMetadata.timestamp != null) fields.push(`[${headingMetadata.timestamp}]:`);
-    if (headingMetadata.record_number != null) fields.push(`${headingMetadata.record_number}:`);
-    const metadata = fields.length ? ` ${fields.join(' ')}` : '';
-    const turnId = showTurnIds && id ? ` <!-- turn_id=${id} -->` : '';
-    if (record?.author?.role === 'user') return `## User${metadata}${turnId}`;
-    if (record?.author?.role === 'assistant' && record?.channel === 'commentary') {
-      return `## ChatGPT Commentary${metadata}${turnId}`;
+  function transcriptHeading(record, event = null) {
+    if (event) {
+      const rendered = canonicalCore().renderCanonicalMarkdown([event], canonicalHeadingOptions()).trimEnd();
+      const lines = rendered.split('\n');
+      if (record?.author?.role === 'assistant' && record?.channel === 'commentary') {
+        const commentary = lines.find(line => /^### ChatGPT Commentary(?: |$)/.test(line));
+        if (commentary) return commentary.replace(/^### /, '## ');
+      }
+      const topLevel = lines.find(line => /^## (?:User|ChatGPT)(?: |$)/.test(line));
+      if (topLevel) return topLevel;
     }
-    if (record?.author?.role === 'assistant') return `## ChatGPT${metadata}${turnId}`;
+    if (record?.author?.role === 'user') return '## User';
+    if (record?.author?.role === 'assistant' && record?.channel === 'commentary') return '## ChatGPT Commentary';
+    if (record?.author?.role === 'assistant') return '## ChatGPT';
     return '';
   }
 
@@ -2715,10 +2726,6 @@
      * Handles records.
      */
     const records = spine.records.map(item => item.message).filter(Boolean);
-    const recordNumberById = new Map();
-    spine.records.forEach((item, index) => {
-      if (typeof item?.message?.id === 'string') recordNumberById.set(item.message.id, index + 2);
-    });
     const output = [];
     // Fallback citation lookup keyed by ChatGPT retrieval turn/file coordinates.
     const fileRefIndex = cgBuildFileReferenceIndex(records);
@@ -2737,7 +2744,7 @@
     const flushAssistantBlock = (body = '', record = null) => {
       if (!body && !pendingThoughts.length) return;
       const headingRecord = record ?? pendingThoughts[0];
-      const parts = [transcriptHeading(headingRecord, recordNumberById.get(headingRecord?.id) ?? null)];
+      const parts = [transcriptHeading(headingRecord, canonicalEventBySourceRecord.get(headingRecord?.id) ?? null)];
       const thoughts = cgRenderThoughtBlock(pendingThoughts, fileRefIndex);
       if (thoughts) parts.push(thoughts);
       if (body) parts.push(quoteMarkdown(body));
@@ -2757,7 +2764,7 @@
         .filter(Boolean);
       if (events.length === pendingThoughts.length &&
           canonicalAssistantSegmentEligible(pendingThoughts, events)) {
-        output.push(canonicalAssistantSegmentBlock(pendingThoughts, events, recordNumberById));
+        output.push(canonicalAssistantSegmentBlock(pendingThoughts, events));
         pendingThoughts = [];
         return;
       }
@@ -2777,7 +2784,7 @@
       if (canonicalEvent && canonicalMessageRecordEligible(record, canonicalEvent)) {
         if (record?.author?.role === 'user') {
           flushPendingAssistant();
-          output.push(canonicalRecordBlock(record, canonicalEvent, recordNumberById.get(record.id) ?? null));
+          output.push(canonicalRecordBlock(record, canonicalEvent));
           continue;
         }
         if (record?.author?.role === 'assistant' && canonicalEvent?.kind === 'commentary') {
@@ -2828,23 +2835,23 @@
               event_kinds: segmentEvents.map(event => event?.kind ?? null),
               output_index_before_append: output.length
             });
-            const renderedSegment = canonicalAssistantSegmentBlock(segmentRecords, segmentEvents, recordNumberById);
+            const renderedSegment = canonicalAssistantSegmentBlock(segmentRecords, segmentEvents);
             output.push(renderedSegment);
-            logDiagnostic('debug', 'conversation-markdown-block-appended', {
-              route: 'canonical-assistant-segment',
-              output_index: output.length - 1,
-              source_record_ids: segmentRecords.map(item => item?.id ?? null),
-              final_source_record_id: record?.id ?? null,
-              block_length: renderedSegment.length,
-              block_hash: diagnosticTextHash(renderedSegment),
-              block_turn_ids: diagnosticMarkdownTurnInventory(renderedSegment)
-            });
+            if (diagnosticEnabled('debug')) {
+              logDiagnostic('debug', 'conversation-markdown-block-appended', {
+                route: 'canonical-assistant-segment',
+                output_index: output.length - 1,
+                source_record_ids: segmentRecords.map(item => item?.id ?? null),
+                final_source_record_id: record?.id ?? null,
+                block_length: renderedSegment.length
+              });
+            }
             pendingThoughts = [];
             continue;
           }
         }
         if (record?.author?.role === 'assistant' && pendingThoughts.length === 0) {
-          output.push(canonicalRecordBlock(record, canonicalEvent, recordNumberById.get(record.id) ?? null));
+          output.push(canonicalRecordBlock(record, canonicalEvent));
           continue;
         }
       }
@@ -2857,7 +2864,7 @@
       const userText = cgVisibleUserText(record, fileRefIndex, recoveredImages);
       if (userText) {
         flushPendingAssistant();
-        output.push(`${transcriptHeading(record, recordNumberById.get(record.id) ?? null)}\n\n${quoteMarkdown(userText)}`);
+        output.push(`${transcriptHeading(record, canonicalEvent)}\n\n${quoteMarkdown(userText)}`);
         continue;
       }
       const assistantText = cgVisibleAssistantMarkdown(record, fileRefIndex, recoveredImages);
@@ -2891,8 +2898,6 @@
         source_record_count: records.length,
         output_block_count: output.length,
         markdown_length: markdown.length,
-        markdown_hash: diagnosticTextHash(markdown),
-        markdown_turn_ids: diagnosticMarkdownTurnInventory(markdown, 32),
         source_tail: records.slice(-32).map((record, offset) => ({
           source_index: records.length - Math.min(32, records.length) + offset,
           source_record_id: record?.id ?? null,
@@ -2950,7 +2955,24 @@
     const stage = progressState.stage;
 
     if (stage === 'fetching') {
-      return `${prefix}: fetched ${progressState.page_count} API page(s), ${progressState.raw_record_count} raw record(s)…\nElapsed: ${formatDuration(elapsed)}`;
+      const pageNumber = Number(progressState.fetch_page_number) || (Number(progressState.page_count) || 0) + 1;
+      const pageElapsed = progressState.fetch_page_started_at > 0
+        ? Math.max(0, now - progressState.fetch_page_started_at)
+        : 0;
+      return `${prefix}: fetching API page ${pageNumber}…\
+Completed: ${progressState.page_count} page(s), ${progressState.raw_record_count} raw record(s)\
+Page elapsed: ${formatDuration(pageElapsed)} — Total elapsed: ${formatDuration(elapsed)}`;
+    }
+    if (stage === 'recovering-images') {
+      const imageCount = Number(progressState.image_count) || 0;
+      const imageNumber = Number(progressState.image_number) || 0;
+      const imageCompleted = Number(progressState.image_completed) || 0;
+      const imageElapsed = progressState.image_started_at > 0
+        ? Math.max(0, now - progressState.image_started_at)
+        : 0;
+      const path = progressState.image_path ? ` (${progressState.image_path})` : '';
+      return `${prefix}: recovering image ${imageNumber}/${imageCount}${path}…\
+Image elapsed: ${formatDuration(imageElapsed)} — Completed: ${imageCompleted}/${imageCount} — Total elapsed: ${formatDuration(elapsed)}`;
     }
     if (stage === 'rendering') {
       let eta = 'calculating…';
@@ -3579,35 +3601,108 @@
   }
 
   /**
-   * Handles image element data URL.
+   * Fetches one conversational image source and converts its bytes to a data URL.
    *
-   * @param {Object} image - The image element to inspect.
-   * @returns {Promise<string|Object>} A promise resolving to the value produced by `imageElementDataUrl`.
+   * @param {string} source - Browser-resolvable image source URL or existing data URL.
+   * @param {Object|null} timing - Mutable timing/result object populated without storing image payload data.
+   * @returns {Promise<string>} A promise resolving to the image data URL.
    */
-  async function imageElementDataUrl(image) {
-    const src = image.currentSrc || image.getAttribute('src') || '';
+  async function fetchImageDataUrl(source, timing = null) {
+    const startedAt = performance.now();
+    const src = String(source ?? '');
     assert(src, 'Conversational image has no source URL.');
-    if (src.startsWith('data:')) return src;
-    const response = await fetch(src, { credentials: 'include' });
-    if (!response.ok) {
-      const error = new Error(`Conversational image request returned HTTP ${response.status}.`);
-      error.httpStatus = response.status;
+    if (timing) {
+      timing.stage = 'source';
+      timing.outcome = null;
+      timing.source_scheme = null;
+      timing.http_status = null;
+      timing.fetch_ms = null;
+      timing.body_ms = null;
+      timing.encode_ms = null;
+      timing.blob_bytes = null;
+      timing.data_url_chars = null;
+      timing.total_ms = null;
+      try { timing.source_scheme = new URL(src, location.href).protocol; } catch {}
+    }
+    if (src.startsWith('data:')) {
+      if (timing) {
+        timing.stage = 'complete';
+        timing.outcome = 'data-url';
+        timing.fetch_ms = 0;
+        timing.body_ms = 0;
+        timing.encode_ms = 0;
+        timing.data_url_chars = src.length;
+        timing.total_ms = Math.round(performance.now() - startedAt);
+      }
+      return src;
+    }
+    try {
+      if (timing) timing.stage = 'fetch';
+      const response = await fetch(src, { credentials: 'include' });
+      const headersAt = performance.now();
+      if (timing) {
+        timing.fetch_ms = Math.round(headersAt - startedAt);
+        timing.http_status = response.status;
+      }
+      if (!response.ok) {
+        const error = new Error(`Conversational image request returned HTTP ${response.status}.`);
+        error.httpStatus = response.status;
+        if (timing) timing.outcome = 'http-error';
+        throw error;
+      }
+      if (timing) timing.stage = 'body';
+      const blob = await response.blob();
+      const bodyAt = performance.now();
+      if (timing) {
+        timing.body_ms = Math.round(bodyAt - headersAt);
+        timing.blob_bytes = blob.size;
+        timing.stage = 'encode';
+      }
+      const dataUrl = await new Promise((resolve, reject) => {
+        const reader = new FileReader();
+        reader.onload = () => resolve(String(reader.result || ''));
+        reader.onerror = () => reject(reader.error || new Error('Could not read conversational image blob.'));
+        reader.readAsDataURL(blob);
+      });
+      const finishedAt = performance.now();
+      if (timing) {
+        timing.encode_ms = Math.round(finishedAt - bodyAt);
+        timing.data_url_chars = dataUrl.length;
+        timing.total_ms = Math.round(finishedAt - startedAt);
+        timing.outcome = 'success';
+        timing.stage = 'complete';
+      }
+      return dataUrl;
+    } catch (error) {
+      if (timing) {
+        timing.total_ms = Math.round(performance.now() - startedAt);
+        if (!timing.outcome) timing.outcome = `${timing.stage || 'unknown'}-error`;
+      }
       throw error;
     }
-    const blob = await response.blob();
-    return await new Promise((resolve, reject) => {
-      const reader = new FileReader();
-      reader.onload = () => resolve(String(reader.result || ''));
-      reader.onerror = () => reject(reader.error || new Error('Could not read conversational image blob.'));
-      reader.readAsDataURL(blob);
-    });
   }
 
   /**
-   * Recovers user images.
+   * Converts a mounted conversation image element to a data URL while optionally recording timing metrics.
+   *
+   * @param {HTMLImageElement} image - Mounted conversation image element whose current source is recovered.
+   * @param {Object|null} timing - Mutable timing/result object populated by `fetchImageDataUrl`.
+   * @returns {Promise<string>} A promise resolving to the image data URL.
+   */
+  async function imageElementDataUrl(image, timing = null) {
+    const src = image.currentSrc || image.getAttribute('src') || '';
+    return fetchImageDataUrl(src, timing);
+  }
+
+  /**
+   * Recovers user images while exposing compact per-image and whole-phase timing diagnostics.
+   *
+   * Existing recovery order and fallback behavior are preserved: images are still
+   * recovered serially, mounted DOM candidates are preferred, and provider pointers
+   * are used only where the established path already used them.
    *
    * @param {Object} spine - The ordered Conversation API source-record spine.
-   * @returns {Promise<Map<unknown, unknown>>} A promise resolving to the value produced by `recoverUserImages`.
+   * @returns {Promise<Map<unknown, unknown>>} A promise resolving to recovered image Markdown keyed by source message id.
    */
   async function recoverUserImages(spine) {
     // Recovered image Markdown is keyed by source message id for later canonical enrichment.
@@ -3615,43 +3710,205 @@
     const scrollRoot = conversationScrollRoot();
     // Preserve the caller scroll position so image recovery can restore the page exactly.
     const originalScrollTop = scrollRoot.scrollTop;
-    /**
-     * Handles records.
-     */
+    /** Exact ordered Conversation API message set used as the single Core adaptation input. */
+    const sourceRecords = (spine?.records ?? []).map(item => item?.message).filter(Boolean);
+    /** Canonical Core image resources keyed by source record identity and original part index. */
+    const canonicalResourcesByRecord = canonicalImageResourcesByRecordAndPart(sourceRecords);
+    /** Ordered source records that contain one or more user image pointers. */
     const records = (spine?.records ?? []).filter(record => userImagePointerCount(record?.message) > 0);
+    /** Total unique image pointers expected across the source records. */
     const totalImages = records.reduce((total, item) => total + userImagePointerCount(item?.message), 0);
+    /** Highest unique image ordinal completed during this recovery phase. */
     let recoveredImages = 0;
-    setStatus(`Recovering conversational images… ${recoveredImages}/${totalImages}`);
+    /** Number of mounted-image recovery operations that threw an error. */
+    let failedImages = 0;
+    /** Number of pointer resolutions that completed with an unavailable/missing outcome. */
+    let unavailableImages = 0;
+    /** Sum of downloaded Blob byte sizes observed by timed image operations. */
+    let totalBlobBytes = 0;
+    /** Sum of resulting data-URL character lengths observed by timed image operations. */
+    let totalDataUrlChars = 0;
+    /** Zero-based count of unique image pointers preceding the current source record. */
+    let imageBase = 0;
+    /** Monotonic start time for the complete image-recovery phase. */
+    const recoveryStartedAt = performance.now();
+    /** Whether the whole recovery phase reached the normal loop completion point. */
+    let recoveryCompleted = false;
+
+    if (progressState) {
+      progressState.stage = 'recovering-images';
+      progressState.image_number = 0;
+      progressState.image_count = totalImages;
+      progressState.image_completed = 0;
+      progressState.image_path = null;
+      progressState.image_started_at = 0;
+    }
+    logDiagnostic('debug', 'conversation-image-recovery-start', {
+      script_version: VERSION,
+      source_message_count: records.length,
+      total_images: totalImages,
+      diagnostic_log_capacity: MAX_DIAGNOSTIC_LOG_ITEMS
+    });
+    refreshStatus();
+
+    /**
+     * Runs one existing image-recovery operation while recording compact timing/progress state.
+     *
+     * @param {Function} loader - Async image loader that accepts one mutable timing object.
+     * @param {Object} context - Stable source/image correlation fields for the operation.
+     * @returns {Promise<string>} A promise resolving to the existing image recovery result.
+     */
+    const recoverOne = async (loader, context) => {
+      /** Mutable timing fields populated by the underlying image loader. */
+      const timing = {};
+      /** Monotonic start time for this one image recovery operation. */
+      const startedAt = performance.now();
+      if (progressState) {
+        progressState.stage = 'recovering-images';
+        progressState.image_number = context.image_number;
+        progressState.image_count = totalImages;
+        progressState.image_path = context.path;
+        progressState.image_started_at = startedAt;
+        progressState.image_message_id = context.message_id;
+        progressState.image_ordinal = context.image_ordinal;
+      }
+      refreshStatus();
+      logDiagnostic('debug', 'conversation-image-recovery-item-start', {
+        script_version: VERSION,
+        image_number: context.image_number,
+        total_images: totalImages,
+        message_id: context.message_id,
+        image_ordinal: context.image_ordinal,
+        path: context.path
+      });
+      try {
+        const value = await loader(timing);
+        const outcome = timing.outcome ?? 'success';
+        if (!['success', 'data-url'].includes(outcome)) unavailableImages += 1;
+        logDiagnostic('debug', 'conversation-image-recovery-item-complete', {
+          script_version: VERSION,
+          image_number: context.image_number,
+          total_images: totalImages,
+          message_id: context.message_id,
+          image_ordinal: context.image_ordinal,
+          path: context.path,
+          outcome,
+          source_scheme: timing.source_scheme ?? null,
+          resolver_status: timing.resolver_status ?? null,
+          resolver_ms: timing.resolver_ms ?? null,
+          http_status: timing.http_status ?? null,
+          fetch_ms: timing.fetch_ms ?? null,
+          body_ms: timing.body_ms ?? null,
+          encode_ms: timing.encode_ms ?? null,
+          blob_bytes: timing.blob_bytes ?? null,
+          data_url_chars: timing.data_url_chars ?? null,
+          elapsed_ms: timing.total_ms ?? Math.round(performance.now() - startedAt)
+        });
+        return value;
+      } catch (error) {
+        failedImages += 1;
+        logDiagnostic('debug', 'conversation-image-recovery-item-failure', {
+          script_version: VERSION,
+          image_number: context.image_number,
+          total_images: totalImages,
+          message_id: context.message_id,
+          image_ordinal: context.image_ordinal,
+          path: context.path,
+          outcome: timing.outcome ?? 'error',
+          last_stage: timing.stage ?? null,
+          source_scheme: timing.source_scheme ?? null,
+          resolver_status: timing.resolver_status ?? null,
+          resolver_ms: timing.resolver_ms ?? null,
+          http_status: (timing.http_status ?? Number(error?.httpStatus)) || null,
+          fetch_ms: timing.fetch_ms ?? null,
+          body_ms: timing.body_ms ?? null,
+          encode_ms: timing.encode_ms ?? null,
+          blob_bytes: timing.blob_bytes ?? null,
+          data_url_chars: timing.data_url_chars ?? null,
+          elapsed_ms: timing.total_ms ?? Math.round(performance.now() - startedAt),
+          message: error instanceof Error ? error.message : String(error)
+        });
+        throw error;
+      } finally {
+        if (Number.isFinite(timing.blob_bytes)) totalBlobBytes += timing.blob_bytes;
+        if (Number.isFinite(timing.data_url_chars)) totalDataUrlChars += timing.data_url_chars;
+        recoveredImages = Math.max(recoveredImages, context.image_number);
+        if (progressState) {
+          progressState.image_completed = recoveredImages;
+          progressState.image_started_at = 0;
+        }
+        refreshStatus();
+      }
+    };
+
     try {
       for (const item of records) {
         const record = item.message;
-        /**
-         * Handles expected parts.
-         */
+        /** Provider image-pointer parts expected for this source record. */
         const expectedParts = record.content.parts.filter(part =>
           part && typeof part === 'object' && part.content_type === 'image_asset_pointer'
         );
+        /** Number of expected image pointers in this source record. */
         const expected = expectedParts.length;
-        /**
-         * Handles image s.
-         */
+        /** Existing fallback Markdown for each expected image pointer. */
         const images = expectedParts.map(part => cgImagePointerFallback(part));
-        try {
-          const section = mountedTurnSection(record.id, 'user');
-          if (!(section instanceof HTMLElement)) {
-            logDiagnostic('debug', 'conversation-image-dom-recovery-skipped', {
+        /** Canonical Core image resources keyed by their original provider part index. */
+        const canonicalResources = canonicalResourcesByRecord.get(record.id) ?? new Map();
+        /** Original provider part index for each image ordinal in this source record. */
+        const imagePartIndexes = record.content.parts
+          .map((part, partIndex) => ({ part, partIndex }))
+          .filter(item => item.part && typeof item.part === 'object' && item.part.content_type === 'image_asset_pointer')
+          .map(item => item.partIndex);
+        /** Global image-number offset for this source record. */
+        const recordImageBase = imageBase;
+        const section = mountedTurnSection(record.id, 'user');
+        const candidates = section instanceof HTMLElement ? mountedUserConversationImages(section) : [];
+        if (section instanceof HTMLElement) logInternalImagePointerEvidence(record, section, candidates);
+        for (let index = 0; index < expected; index += 1) {
+          const partIndex = imagePartIndexes[index];
+          const resource = canonicalResources.get(partIndex) ?? null;
+          const sourcePointer = cgImagePointerSource(expectedParts[index]);
+          const isSediment = internalImagePointerProtocol(sourcePointer) === 'sediment';
+          const hasCanonicalTransport = typeof resource?.download_url === 'string' && resource.download_url.trim();
+          const hasCanonicalData = typeof resource?.data_url === 'string' && resource.data_url.startsWith('data:image/');
+          if (isSediment && !hasCanonicalTransport && !hasCanonicalData) {
+            logDiagnostic('errors', 'conversation-image-core-resource-missing', {
+              script_version: VERSION,
               message_id: record.id,
-              reason: 'turn-not-mounted',
-              expected_image_count: expected
+              image_ordinal: index + 1,
+              part_index: partIndex,
+              resource_present: Boolean(resource),
+              source_scheme: 'sediment:'
             });
-            throw new Error(`Turn ${record.id} is not mounted; DOM image recovery skipped to avoid scrolling.`);
+            throw new Error(
+              `AIConversationCore did not provide a download_url or data_url for sediment image ${record.id}:${index + 1}.`
+            );
           }
-          const candidates = mountedUserConversationImages(section);
-          logInternalImagePointerEvidence(record, section, candidates);
-          for (let index = 0; index < Math.min(expected, candidates.length); index += 1) {
+          if (hasCanonicalTransport || hasCanonicalData) {
+            images[index] = await recoverOne(
+              timing => cgResolveImagePointerMarkdown(expectedParts[index], resource, record.id, index + 1, timing),
+              {
+                image_number: recordImageBase + index + 1,
+                message_id: record.id,
+                image_ordinal: index + 1,
+                path: hasCanonicalData ? 'core-data' : 'core-download'
+              }
+            );
+            continue;
+          }
+          if (candidates[index] instanceof HTMLImageElement) {
             try {
-              const dataUrl = await imageElementDataUrl(candidates[index]);
+              const dataUrl = await recoverOne(
+                timing => imageElementDataUrl(candidates[index], timing),
+                {
+                  image_number: recordImageBase + index + 1,
+                  message_id: record.id,
+                  image_ordinal: index + 1,
+                  path: 'dom'
+                }
+              );
               if (dataUrl) images[index] = `![image-${record.id}-${index + 1}](${dataUrl})`;
+              continue;
             } catch (error) {
               const status = Number(error?.httpStatus);
               const source = candidates[index]?.currentSrc || candidates[index]?.getAttribute('src') ||
@@ -3664,43 +3921,62 @@
                 fallback: images[index],
                 message: error instanceof Error ? error.message : String(error)
               });
+              continue;
             }
           }
-          for (let index = candidates.length; index < expected; index += 1) {
-            images[index] = await cgResolveImagePointerMarkdown(expectedParts[index], record.id, index + 1);
-          }
-        } catch (error) {
-          logDiagnostic('warnings', 'conversation-image-turn-recovery-failure', {
-            message_id: record.id,
-            expected_image_count: expected,
-            message: error instanceof Error ? error.message : String(error)
-          });
-          for (let index = 0; index < expected; index += 1) {
-            images[index] = await cgResolveImagePointerMarkdown(expectedParts[index], record.id, index + 1);
-          }
+          images[index] = await recoverOne(
+            timing => cgResolveImagePointerMarkdown(expectedParts[index], resource, record.id, index + 1, timing),
+            {
+              image_number: recordImageBase + index + 1,
+              message_id: record.id,
+              image_ordinal: index + 1,
+              path: 'pointer'
+            }
+          );
         }
         recovered.set(record.id, images);
-        recoveredImages += expected;
-        setStatus(`Recovering conversational images… ${recoveredImages}/${totalImages}`);
+        imageBase += expected;
+        recoveredImages = Math.max(recoveredImages, imageBase);
+        if (progressState) progressState.image_completed = recoveredImages;
+        refreshStatus();
       }
+      recoveryCompleted = true;
     } finally {
       scrollRoot.scrollTop = originalScrollTop;
+      logDiagnostic('debug', 'conversation-image-recovery-complete', {
+        script_version: VERSION,
+        outcome: recoveryCompleted ? 'complete' : 'aborted',
+        source_message_count: records.length,
+        total_images: totalImages,
+        completed_images: recoveredImages,
+        failed_images: failedImages,
+        unavailable_images: unavailableImages,
+        blob_bytes: totalBlobBytes,
+        data_url_chars: totalDataUrlChars,
+        elapsed_ms: Math.round(performance.now() - recoveryStartedAt)
+      });
     }
     return recovered;
   }
 
   /**
-   * Runs one requested Conversation API export from acquisition through optional image recovery, rendering/serialization, download, status, and failure diagnostics.
+   * Acquires one Conversation API snapshot and generates every selected export from that same spine.
    *
-   * @param {Object} kind - The export kind to execute.
-   * @returns {void} No value is returned.
+   * @param {Array<'jsonl'|'md'>} kinds - Selected output formats; JSONL is generated before Markdown when both are selected.
+   * @returns {Promise<void>} Resolves after selected exports finish or their failure is reported and export state is released.
    */
-  async function runExport(kind) {
+  async function runExport(kinds) {
     if (exportInProgress || testInProgress || jumpInProgress) return;
+    assert(Array.isArray(kinds) && kinds.length > 0, 'At least one export format must be selected.');
+    /** Deduplicated output formats executed from one authoritative Conversation API snapshot. */
+    const requestedKinds = [...new Set(kinds)];
+    assert(requestedKinds.every(kind => kind === 'jsonl' || kind === 'md'), 'Unsupported export format selected.');
+    /** Format currently being serialized, used by shared status and failure reporting. */
+    let activeKind = requestedKinds[0];
     const conversationId = currentConversationId();
     assert(conversationId, 'Current page is not a ChatGPT conversation.');
     exportInProgress = true;
-    exportKind = kind;
+    exportKind = activeKind;
     progressState = {
       started_at: performance.now(),
       stage: 'fetching',
@@ -3721,25 +3997,42 @@
         progressState.stage = 'fetching';
         progressState.page_count = progress.page_count;
         progressState.raw_record_count = progress.raw_record_count;
+        progressState.fetch_page_number = progress.page_number;
+        progressState.fetch_page_started_at = progress.page_started_at;
         refreshStatus();
       });
       const spine = conversationSpineFromPages(fetched.pages);
-      if (kind === 'jsonl') {
+      if (requestedKinds.includes('jsonl')) {
+        activeKind = 'jsonl';
+        exportKind = activeKind;
         const filename = `${sanitizeFileName(conversationTitle())}.jsonl`;
         downloadBlob(
           new Blob([apiRecordsJsonl(spine)], { type: 'application/x-ndjson;charset=utf-8' }),
           filename
         );
         setStatus(`Extracted ${spine.records.length} API records from ${fetched.pages.length} API page(s) to ${filename}.`);
-      } else {
+      }
+      if (requestedKinds.includes('md')) {
+        activeKind = 'md';
+        exportKind = activeKind;
         progressState.stage = 'recovering-images';
         const recoveredImageMap = await recoverUserImages(spine);
         progressState.stage = 'rendering';
         progressState.render_started_at = performance.now();
+        progressState.record_number = 0;
         progressState.record_count = spine.records.length;
+        refreshStatus();
+        // Yield once so the completed image state is painted before synchronous rendering begins.
+        await new Promise(resolve => setTimeout(resolve, 0));
         /**
          * Handles markdown.
          */
+        /** Monotonic start time for synchronous Markdown rendering/final assembly. */
+        const renderStartedAt = performance.now();
+        logDiagnostic('debug', 'conversation-export-phase-start', {
+          phase: 'markdown-render',
+          source_record_count: spine.records.length
+        });
         const markdown = renderConversationMarkdown(spine, progress => {
           progressState.stage = 'rendering';
           progressState.record_number = progress.record_number;
@@ -3747,41 +4040,68 @@
           refreshStatus();
         }, recoveredImageMap);
         const filename = `${sanitizeFileName(conversationTitle())}.md`;
-        logDiagnostic('debug', 'conversation-export-markdown-ready', {
-          filename,
-          source_record_count: spine.records.length,
-          source_tail: spine.records.slice(-32).map(item => ({
+        logDiagnostic('debug', 'conversation-export-phase-complete', {
+          phase: 'markdown-render',
+          elapsed_ms: Math.round(performance.now() - renderStartedAt),
+          markdown_length: markdown.length
+        });
+        if (diagnosticEnabled('debug')) {
+          const sourceTail = spine.records.slice(-32).map(item => ({
             source_record_id: item?.message_id ?? item?.message?.id ?? null,
             source_role: item?.role ?? item?.message?.author?.role ?? null,
             source_channel: item?.channel ?? item?.message?.channel ?? null,
             source_content_type: item?.content_type ?? item?.message?.content?.content_type ?? null
-          })),
-          markdown_length: markdown.length,
-          markdown_hash: diagnosticTextHash(markdown),
-          markdown_turn_ids: diagnosticMarkdownTurnInventory(markdown, 32)
+          }));
+          logDiagnostic('debug', 'conversation-export-markdown-ready', {
+            filename,
+            source_record_count: spine.records.length,
+            source_tail: sourceTail,
+            markdown_length: markdown.length
+          });
+        }
+        const blobStartedAt = performance.now();
+        logDiagnostic('debug', 'conversation-export-phase-start', {
+          phase: 'blob-create',
+          markdown_length: markdown.length
         });
         const markdownBlob = new Blob([markdown], { type: 'text/markdown;charset=utf-8' });
-        logDiagnostic('debug', 'conversation-export-blob-created', {
-          filename,
-          markdown_length: markdown.length,
-          markdown_hash: diagnosticTextHash(markdown),
-          blob_size: markdownBlob.size,
-          blob_type: markdownBlob.type
+        logDiagnostic('debug', 'conversation-export-phase-complete', {
+          phase: 'blob-create',
+          elapsed_ms: Math.round(performance.now() - blobStartedAt),
+          blob_size: markdownBlob.size
+        });
+        if (diagnosticEnabled('debug')) {
+          logDiagnostic('debug', 'conversation-export-blob-created', {
+            filename,
+            markdown_length: markdown.length,
+            blob_size: markdownBlob.size,
+            blob_type: markdownBlob.type
+          });
+        }
+        const downloadStartedAt = performance.now();
+        logDiagnostic('debug', 'conversation-export-phase-start', {
+          phase: 'download-trigger',
+          blob_size: markdownBlob.size
         });
         downloadBlob(markdownBlob, filename);
+        logDiagnostic('debug', 'conversation-export-phase-complete', {
+          phase: 'download-trigger',
+          elapsed_ms: Math.round(performance.now() - downloadStartedAt),
+          blob_size: markdownBlob.size
+        });
         setStatus(`Extracted ${spine.records.length} API records from ${fetched.pages.length} API page(s) to ${filename}.`);
       }
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
       logDiagnostic('errors', 'conversation-export-failure', {
-        kind,
+        kind: activeKind,
         stage: progressState?.stage ?? null,
         record_number: progressState?.record_number ?? null,
         record_count: progressState?.record_count ?? null,
         message
       });
       setStatus(
-        `${kind === 'md' ? 'Markdown' : 'JSONL'} extraction failed: ${message}`
+        `${activeKind === 'md' ? 'Markdown' : 'JSONL'} extraction failed: ${message}`
       );
     } finally {
       progressState = null;
@@ -3939,12 +4259,12 @@
     assert(markdown.indexOf(recoveredToken) < markdown.indexOf(missingToken) &&
       markdown.indexOf(missingToken) < markdown.indexOf('First User'),
       'recovered/missing image tokens did not remain in source order.');
-    const u1 = markdown.indexOf('<!-- turn_id=u1 -->');
-    const a1 = markdown.indexOf('<!-- turn_id=a1 -->');
-    const u2 = markdown.indexOf('<!-- turn_id=u2 -->');
-    const a2 = markdown.indexOf('<!-- turn_id=a2 -->');
+    const u1 = markdown.indexOf('First User');
+    const a1 = markdown.indexOf('First Assistant');
+    const u2 = markdown.indexOf('Second User');
+    const a2 = markdown.indexOf('Second Assistant');
     assert(u1 >= 0 && a1 >= 0 && u2 >= 0 && a2 >= 0,
-      'chronological rendering test did not emit all expected headings.');
+      'chronological rendering test did not emit all expected source content.');
     assert(u1 < a1 && a1 < u2 && u2 < a2,
       'Conversation API Markdown rendering did not preserve chronological record order.');
 }
@@ -4390,14 +4710,34 @@
   }
 
   /**
-   * Handles persist diagnostic log.
+   * Persists the bounded tail of the diagnostic log to session storage.
+   *
+   * The larger in-memory capacity is retained for same-page live captures, while the
+   * persisted tail is separately bounded to avoid making every browser session write
+   * proportional to the full instrumentation history.
    *
    * @returns {void} No value is returned.
    */
   function persistDiagnosticLog() {
     try {
-      sessionStorage.setItem(DIAGNOSTIC_LOG_STORAGE_KEY, JSON.stringify(diagnosticLog));
+      sessionStorage.setItem(
+        DIAGNOSTIC_LOG_STORAGE_KEY,
+        JSON.stringify(diagnosticLog.slice(-MAX_PERSISTED_DIAGNOSTIC_LOG_ITEMS))
+      );
     } catch {}
+  }
+
+  /**
+   * Schedules a bounded diagnostic-log persistence write.
+   *
+   * @returns {void} No value is returned.
+   */
+  function schedulePersistDiagnosticLog() {
+    if (diagnosticPersistTimer !== null) return;
+    diagnosticPersistTimer = setTimeout(() => {
+      diagnosticPersistTimer = null;
+      persistDiagnosticLog();
+    }, DIAGNOSTIC_PERSIST_DELAY_MS);
   }
 
   /**
@@ -4434,6 +4774,9 @@
   /**
    * Refreshes diagnostic log.
    *
+   * Collapsed logs update only their count and controls. Thousands of hidden row
+   * elements are not rebuilt on every diagnostic event during an instrumented export.
+   *
    * @returns {void} No value is returned.
    */
   function refreshDiagnosticLog() {
@@ -4443,16 +4786,16 @@
     const output = panel.querySelector('[data-role="log-output"]');
     const toggle = panel.querySelector('[data-role="toggle-log"]');
     if (count) count.textContent = `Log: ${diagnosticLog.length} item${diagnosticLog.length === 1 ? '' : 's'}`;
-    if (output) {
+    if (output && diagnosticLogExpanded) {
       output.replaceChildren(...diagnosticLog.map(entry => {
         const row = document.createElement('div');
         row.className = 'tm-log-row';
         row.textContent = diagnosticLogLine(entry);
         return row;
       }));
-      output.hidden = !diagnosticLogExpanded;
       output.scrollTop = output.scrollHeight;
     }
+    if (output) output.hidden = !diagnosticLogExpanded;
     if (toggle instanceof HTMLButtonElement) {
       toggle.textContent = diagnosticLogExpanded ? '−' : '+';
       toggle.setAttribute('aria-expanded', String(diagnosticLogExpanded));
@@ -4489,7 +4832,44 @@
   }
 
   /**
-   * Logs diagnostic.
+   * Redacts transient signed URL tokens from diagnostic payloads without mutating callers.
+   *
+   * @param {Object} value - The diagnostic value to sanitize.
+   * @returns {Object} The sanitized diagnostic value.
+   */
+  function redactDiagnosticSignedTokens(value) {
+    if (typeof value === 'string') {
+      return value.replace(/([?&](?:sig|signature)=)[^&#\s]*/gi, '$1[redacted]');
+    }
+    if (Array.isArray(value)) return value.map(redactDiagnosticSignedTokens);
+    if (value && typeof value === 'object' &&
+        (Object.getPrototypeOf(value) === Object.prototype || Object.getPrototypeOf(value) === null)) {
+      return Object.fromEntries(
+        Object.entries(value).map(([key, item]) => [key, redactDiagnosticSignedTokens(item)])
+      );
+    }
+    return value;
+  }
+
+  /**
+   * Writes recorder diagnostics to DevTools during startup or when continued console output is enabled.
+   *
+   * This gate is independent of the panel's severity filter and covers direct lifecycle messages too.
+   *
+   * @param {'errors'|'warnings'|'debug'|'verbose'} level - Severity selecting the DevTools console method.
+   * @param {string} message - Console message, including its recorder prefix.
+   * @param {Object|null} data - Diagnostic payload redacted before console output.
+   * @returns {void} No value is returned.
+   */
+  function logConsoleDiagnostic(level, message, data = null) {
+    if (generalStatusShown && !consoleDiagnostics) return;
+    const args = [redactDiagnosticSignedTokens(message)];
+    if (data !== null) args.push(redactDiagnosticSignedTokens(data));
+    (level === 'errors' ? console.error : level === 'warnings' ? console.warn : console.log)(...args);
+  }
+
+  /**
+   * Mirrors diagnostics through the console gate, then retains entries accepted by the panel filter.
    *
    * @param {Object} level - The diagnostics severity level.
    * @param {string} message - The assertion failure message.
@@ -4497,23 +4877,21 @@
    * @returns {void} No value is returned.
    */
   function logDiagnostic(level, message, data = null) {
+    logConsoleDiagnostic(level, `[ChatGPT Recorder ${level}] ${message}`, data);
     if (!diagnosticEnabled(level)) return;
+    const safeData = redactDiagnosticSignedTokens(data);
     const entry = {
       timestamp: new Date().toISOString(),
       level,
       message,
-      data
+      data: safeData
     };
     diagnosticLog.push(entry);
     if (diagnosticLog.length > MAX_DIAGNOSTIC_LOG_ITEMS) {
       diagnosticLog.splice(0, diagnosticLog.length - MAX_DIAGNOSTIC_LOG_ITEMS);
     }
-    persistDiagnosticLog();
+    schedulePersistDiagnosticLog();
     refreshDiagnosticLog();
-
-    const args = [`[ChatGPT Recorder ${level}] ${message}`];
-    if (data !== null) args.push(data);
-    (level === 'errors' ? console.error : level === 'warnings' ? console.warn : console.log)(...args);
   }
 
   /**
@@ -4585,6 +4963,7 @@
     const timestamps = panel.querySelector('[data-role="show-timestamps"]');
     const recordNumbers = panel.querySelector('[data-role="show-record-numbers"]');
     const turnIds = panel.querySelector('[data-role="show-turn-ids"]');
+    const debugProvenance = panel.querySelector('[data-role="show-debug-provenance"]');
     const test = panel.querySelector('[data-role="test"]');
     const jump = panel.querySelector('[data-role="jump"]');
     const formatsSelected = Boolean(jsonl?.checked || md?.checked);
@@ -4598,6 +4977,7 @@
     if (timestamps) timestamps.disabled = metadataDisabled;
     if (recordNumbers) recordNumbers.disabled = metadataDisabled;
     if (turnIds) turnIds.disabled = metadataDisabled;
+    if (debugProvenance) debugProvenance.disabled = metadataDisabled;
     if (test) {
       test.disabled = exportInProgress || testInProgress || jumpInProgress;
       test.textContent = testInProgress ? 'Testing…' : 'Test';
@@ -4687,7 +5067,7 @@
     let timer = null;
     const relevantMutations = [];
     const recentMutations = [];
-    console.log(`[DownloadConversation v${VERSION}] launcher appended`, previous);
+    logConsoleDiagnostic('debug', `[DownloadConversation v${VERSION}] launcher appended`, previous);
 
     /**
      * Emits one complete, copyable JSON diagnostic when the launcher disconnects.
@@ -4713,7 +5093,7 @@
         relevant_mutations: relevantMutations,
         recent_mutations: recentMutations
       };
-      console.warn(
+      logConsoleDiagnostic('warnings',
         `[DownloadConversation v${VERSION}] launcher disconnected JSON\n${JSON.stringify(payload, null, 2)}`
       );
     };
@@ -4746,7 +5126,7 @@
         return;
       }
 
-      console.warn(`[DownloadConversation v${VERSION}] launcher lifecycle changed`, {
+      logConsoleDiagnostic('warnings', `[DownloadConversation v${VERSION}] launcher lifecycle changed`, {
         previous,
         current
       });
@@ -4775,7 +5155,7 @@
           current.opacity !== previous.opacity ||
           current.width !== previous.width ||
           current.height !== previous.height) {
-        console.warn(`[DownloadConversation v${VERSION}] launcher lifecycle poll changed`, {
+        logConsoleDiagnostic('warnings', `[DownloadConversation v${VERSION}] launcher lifecycle poll changed`, {
           previous,
           current
         });
@@ -4784,7 +5164,7 @@
       if (performance.now() - startedAt >= 15000) {
         clearInterval(timer);
         observer.disconnect();
-        console.log(`[DownloadConversation v${VERSION}] launcher lifecycle watch ended`, current);
+        logConsoleDiagnostic('debug', `[DownloadConversation v${VERSION}] launcher lifecycle watch ended`, current);
       }
     }, 100);
   }
@@ -4883,7 +5263,7 @@
       details,
       topology: launcherTopologyContext()
     };
-    console.log(
+    logConsoleDiagnostic('debug',
       `[DownloadConversation v${VERSION}] launcher topology JSON\n${JSON.stringify(payload, null, 2)}`
     );
   }
@@ -5039,7 +5419,7 @@
         : null,
       topology: launcherTopologyContext()
     };
-    console.warn(
+    logConsoleDiagnostic('warnings',
       `[DownloadConversation v${VERSION}] launcher removal operation JSON\n${JSON.stringify(payload, null, 2)}`
     );
   }
@@ -5146,7 +5526,7 @@
   function makeLauncher() {
     const existing = document.getElementById(LAUNCHER_ID);
     if (existing || !document.body) {
-      console.log(`[DownloadConversation v${VERSION}] makeLauncher skipped`, {
+      logConsoleDiagnostic('debug', `[DownloadConversation v${VERSION}] makeLauncher skipped`, {
         existing: launcherNodeSummary(existing),
         has_body: Boolean(document.body)
       });
@@ -5167,6 +5547,10 @@
       const panel = document.getElementById(PANEL_ID);
       if (panel) panel.style.display = 'block';
       updateUi();
+      if (panel && !generalStatusShown) {
+        logDiagnostic('debug', 'general-status-shown', { script_version: VERSION, console_enabled: consoleDiagnostics });
+        generalStatusShown = true;
+      }
     };
     launcher.addEventListener('click', openRecorderPopup);
     launcher.addEventListener('mouseenter', openRecorderPopup);
@@ -5182,6 +5566,7 @@
    */
   function makePanel() {
     if (document.getElementById(PANEL_ID) || !document.body) return;
+    logDiagnostic('debug', 'recorder-panel-create-start', { script_version: VERSION });
     injectStyles();
     const panel = document.createElement('div');
     panel.id = PANEL_ID;
@@ -5192,11 +5577,11 @@
       <div class="tm-log-head"><span class="tm-label" data-role="log-count">Log: 0 items</span><button class="tm-icon-button" data-role="copy-log" type="button" aria-label="Copy diagnostic log" title="Copy log"></button><button class="tm-icon-button" data-role="toggle-log" type="button" aria-label="Show diagnostic log" aria-expanded="false" title="Show log">+</button></div>
       <div class="tm-log-output" data-role="log-output" hidden></div>
       <div class="tm-status" data-role="status"></div>
-      <div class="tm-row"><span class="tm-label">Diagnostics</span><select data-role="diagnostics"><option value="errors">Errors</option><option value="warnings">Warnings</option><option value="debug">Debug</option><option value="verbose">Verbose</option></select><button data-role="test" type="button">Test</button></div>
+      <div class="tm-row"><span class="tm-label">Diagnostics</span><select data-role="diagnostics"><option value="errors">Errors</option><option value="warnings">Warnings</option><option value="debug">Debug</option><option value="verbose">Verbose</option></select><label><input data-role="console-diagnostics" type="checkbox"> console</label><button data-role="test" type="button">Test</button></div>
       <div class="tm-row"><span class="tm-label">Screen on when extracting</span><button class="tm-switch" data-role="screen-on" type="button" role="switch" aria-checked="false" aria-label="Keep screen on while extracting"><span class="tm-switch-thumb"></span></button></div>
       <div class="tm-row"><button data-role="jump" type="button">Jump</button></div>
       <div class="tm-row tm-extract-formats"><button data-role="extract" type="button">Extract</button><label><input data-role="format-jsonl" type="checkbox"> JSONL</label><label><input data-role="format-md" type="checkbox" checked> MD</label></div>
-      <div class="tm-row tm-md-metadata"><span class="tm-label">MD headings</span><label><input data-role="show-timestamps" type="checkbox"> Timestamp</label><label><input data-role="show-record-numbers" type="checkbox"> Record #</label><label><input data-role="show-turn-ids" type="checkbox"> Turn ID</label></div>
+      <div class="tm-row tm-md-metadata"><span class="tm-label">MD headings</span><label><input data-role="show-timestamps" type="checkbox"> Timestamp</label><label><input data-role="show-record-numbers" type="checkbox"> Record #</label><label><input data-role="show-turn-ids" type="checkbox"> Turn ID</label><label><input data-role="show-debug-provenance" type="checkbox"> provenance</label></div>
     `;
     panel.querySelector('.tm-close').addEventListener('click', () => {
       panel.style.display = 'none';
@@ -5210,6 +5595,13 @@
       localStorage.setItem('tm-conversation-recorder-diagnostics', diagnosticsLevel);
       logDiagnostic('debug', 'diagnostics-level-changed', { diagnostics_level: diagnosticsLevel });
       refreshDiagnosticLog();
+    });
+    const consoleOutput = panel.querySelector('[data-role="console-diagnostics"]');
+    consoleOutput.checked = consoleDiagnostics;
+    consoleOutput.addEventListener('change', () => {
+      consoleDiagnostics = consoleOutput.checked;
+      localStorage.setItem(CONSOLE_DIAGNOSTICS_STORAGE_KEY, String(consoleDiagnostics));
+      logDiagnostic('debug', 'console-diagnostics-changed', { enabled: consoleDiagnostics });
     });
     const copyLogButton = panel.querySelector('[data-role="copy-log"]');
     if (copyLogButton) copyLogButton.innerHTML = copyIconMarkup();
@@ -5236,6 +5628,7 @@
     const timestamps = panel.querySelector('[data-role="show-timestamps"]');
     const recordNumbers = panel.querySelector('[data-role="show-record-numbers"]');
     const turnIds = panel.querySelector('[data-role="show-turn-ids"]');
+    const debugProvenance = panel.querySelector('[data-role="show-debug-provenance"]');
     if (timestamps) {
       timestamps.checked = showTimestamps;
       timestamps.addEventListener('change', () => {
@@ -5260,6 +5653,14 @@
         updateUi();
       });
     }
+    if (debugProvenance) {
+      debugProvenance.checked = showDebugProvenance;
+      debugProvenance.addEventListener('change', () => {
+        showDebugProvenance = debugProvenance.checked;
+        localStorage.setItem(SHOW_DEBUG_PROVENANCE_STORAGE_KEY, String(showDebugProvenance));
+        updateUi();
+      });
+    }
     /**
      * Handles run selected exports.
      *
@@ -5268,8 +5669,11 @@
     const runSelectedExports = async () => {
       const jsonl = panel.querySelector('[data-role="format-jsonl"]');
       const md = panel.querySelector('[data-role="format-md"]');
-      if (jsonl?.checked) await runExport('jsonl');
-      if (md?.checked) await runExport('md');
+      /** Selected output formats generated from the same acquired Conversation API snapshot. */
+      const kinds = [];
+      if (jsonl?.checked) kinds.push('jsonl');
+      if (md?.checked) kinds.push('md');
+      if (kinds.length) await runExport(kinds);
     };
     panel.querySelector('[data-role="extract"]').addEventListener('click', () => void runSelectedExports());
     panel.querySelector('[data-role="format-jsonl"]').addEventListener('change', updateUi);
@@ -5282,18 +5686,19 @@
     document.body.append(panel);
     updateUi();
     refreshDiagnosticLog();
+    logDiagnostic('debug', 'recorder-panel-created', { script_version: VERSION });
   }
 
   /**
    * Mounts the launcher only after the host has loaded and direct BODY reconciliation is quiet.
    *
-   * Lightweight lifecycle logging stays enabled permanently.  Expensive topology and DOM-method
+   * Lifecycle console output follows the startup/saved-option gate.  Expensive topology and DOM-method
    * instrumentation remains available behind `DEEP_LAUNCHER_DIAGNOSTICS` for future regressions.
    *
    * @returns {void} No value is returned.
    */
   function bootstrapUi() {
-    console.log(`[DownloadConversation v${VERSION}] bootstrap`, {
+    logConsoleDiagnostic('debug', `[DownloadConversation v${VERSION}] bootstrap`, {
       ready_state: document.readyState,
       has_body: Boolean(document.body)
     });
@@ -5323,7 +5728,7 @@
         launcherMountCount += 1;
         launcherRemovalReported = false;
         const children = [...document.body.childNodes];
-        console.log(`[DownloadConversation v${VERSION}] launcher mounted`, {
+        logConsoleDiagnostic('debug', `[DownloadConversation v${VERSION}] launcher mounted`, {
           reason,
           ready_state: document.readyState,
           quiet_ms: quietMs,
@@ -5345,7 +5750,7 @@
         if (!records.some(record => record.type === 'childList' && record.target === body)) return;
         if (launcherMountCount > 0 && !document.getElementById(LAUNCHER_ID) && !launcherRemovalReported) {
           launcherRemovalReported = true;
-          console.warn(`[DownloadConversation v${VERSION}] launcher disconnected; waiting for BODY quiet`, {
+          logConsoleDiagnostic('warnings', `[DownloadConversation v${VERSION}] launcher disconnected; waiting for BODY quiet`, {
             ready_state: document.readyState,
             body_child_count: body.childNodes.length,
             quiet_ms: quietMs
@@ -5362,7 +5767,7 @@
       new MutationObserver((_, observer) => {
         if (!document.body) return;
         observer.disconnect();
-        console.log(`[DownloadConversation v${VERSION}] BODY appeared`, {
+        logConsoleDiagnostic('debug', `[DownloadConversation v${VERSION}] BODY appeared`, {
           ready_state: document.readyState
         });
         observeBody(document.body);
@@ -5372,7 +5777,7 @@
     if (!loadReady) {
       window.addEventListener('load', () => {
         loadReady = true;
-        console.log(`[DownloadConversation v${VERSION}] load complete; waiting for BODY quiet`, {
+        logConsoleDiagnostic('debug', `[DownloadConversation v${VERSION}] load complete; waiting for BODY quiet`, {
           quiet_ms: quietMs
         });
         scheduleLauncherMount();
@@ -5386,7 +5791,14 @@
   });
 
   document.addEventListener('click', captureConversationClickDiagnostic, true);
-  window.addEventListener('pagehide', () => finishConversationClickDiagnostic(activeClickDiagnostic, 'pagehide'));
+  window.addEventListener('pagehide', () => {
+    finishConversationClickDiagnostic(activeClickDiagnostic, 'pagehide');
+    if (diagnosticPersistTimer !== null) {
+      clearTimeout(diagnosticPersistTimer);
+      diagnosticPersistTimer = null;
+    }
+    persistDiagnosticLog();
+  });
   if (DEEP_LAUNCHER_DIAGNOSTICS) {
     installLauncherRemovalDiagnostics();
     installLauncherTopologyDiagnostics();

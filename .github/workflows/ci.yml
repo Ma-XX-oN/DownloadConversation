@@ -16,8 +16,12 @@ jobs:
         run: node scripts/check-jsdoc.mjs
       - name: JavaScript syntax
         run: node --check chatgpt-conversation-markdown-export.user.js
+      - name: Single-snapshot export regression
+        run: node --test tests/export-single-snapshot.test.mjs
+      - name: Console lifecycle and provenance controls
+        run: node --test tests/console-diagnostics.test.mjs
       - name: Canonical final-render regressions
-        run: node --test tests/core-integration.test.mjs tests/phase5-rich-core-integration.test.mjs tests/fallback-adaptive-fence.test.mjs tests/tool-language-diagnostics.test.mjs
+        run: node --test tests/core-integration.test.mjs tests/phase5-rich-core-integration.test.mjs tests/fallback-adaptive-fence.test.mjs tests/tool-language-diagnostics.test.mjs tests/sediment-resolver.test.mjs
       - name: Built-in test list UI regression
         run: node --test tests/test-list-ui.test.mjs
       - name: Recorder panel UI regression
@@ -32,13 +36,13 @@ jobs:
         uses: actions/checkout@v4
         with:
           repository: Ma-XX-oN/AIConversationCore
-          ref: 3233cba838bbf2d2cea5a2a6f1900ed6014dcfb0
+          ref: d6d76b54db3d48baf3f5e3a76099be1732d32785
           path: .phase7-core
       - name: Check out pinned AI-General-Memory
         uses: actions/checkout@v4
         with:
           repository: Ma-XX-oN/AI-General-Memory
-          ref: 070e7436ca68d4897f99cf86e92f9ee97b87ee02
+          ref: 7d9373af3ce3521957718d135ea97a9cc242a364
           path: .phase7-aigm
       - uses: actions/setup-node@v4
         with:
@@ -46,6 +50,9 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: '3.13'
+      - name: Install AIConversationCore dependencies
+        working-directory: .phase7-core
+        run: npm ci
       - name: Install AI-transcript presentation dependencies
         run: python -m pip install colorama regex
       - name: Mixed rich final-render parity

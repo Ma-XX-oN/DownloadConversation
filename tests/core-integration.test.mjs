@@ -6,7 +6,7 @@ import vm from 'node:vm';
 const userscript = await readFile(new URL('../chatgpt-conversation-markdown-export.user.js', import.meta.url), 'utf8');
 const requireMatch = userscript.match(/^\/\/ @require\s+(https:\/\/raw\.githubusercontent\.com\/Ma-XX-oN\/AIConversationCore\/([0-9a-f]{40})\/dist\/aiconversationcore\.chatgpt\.browser\.js)$/m);
 assert.ok(requireMatch, 'Production userscript must pin the AIConversationCore browser bundle to an exact commit.');
-assert.equal(requireMatch[2], '3233cba838bbf2d2cea5a2a6f1900ed6014dcfb0');
+assert.equal(requireMatch[2], 'd6d76b54db3d48baf3f5e3a76099be1732d32785');
 
 const response = await fetch(requireMatch[1]);
 assert.equal(response.status, 200, `Could not load pinned AIConversationCore bundle: HTTP ${response.status}`);
@@ -27,12 +27,16 @@ const helperSource = userscript.slice(start + begin.length, finish);
 Object.assign(context, {
   showTimestamps: false,
   showRecordNumbers: false,
-  showTurnIds: true,
+  showTurnIds: false,
+  showDebugProvenance: false,
   assert(condition, message) {
     if (!condition) throw new Error(message);
   },
   cgIsHidden(record) {
     return Boolean(record?.metadata?.is_visually_hidden_from_conversation);
+  },
+  currentConversationId() {
+    return 'heading-contract-conversation';
   },
   diagnosticEnabled() {
     return false;
@@ -42,16 +46,7 @@ Object.assign(context, {
     const text = String(value ?? '');
     return text.length <= maxChars ? text : `${text.slice(0, maxChars)}…`;
   },
-  CG_INLINE_TOKEN_START: '\ue200',
-  transcriptHeading(record) {
-    const id = typeof record?.id === 'string' ? record.id : '';
-    if (record?.author?.role === 'user') return `## User${id ? ` <!-- turn_id=${id} -->` : ''}`;
-    if (record?.author?.role === 'assistant' && record?.channel === 'commentary') {
-      return `## ChatGPT Commentary${id ? ` <!-- turn_id=${id} -->` : ''}`;
-    }
-    if (record?.author?.role === 'assistant') return `## ChatGPT${id ? ` <!-- turn_id=${id} -->` : ''}`;
-    return '';
-  }
+  CG_INLINE_TOKEN_START: '\ue200'
 });
 vm.runInNewContext(`${helperSource}\nthis.__phase5 = { canonicalEventsBySourceRecord, canonicalPlainRecordEligible, canonicalPlainRecordBlock, canonicalPlainAssistantSegmentEligible, canonicalPlainAssistantSegmentBlock };`, context);
 const phase5 = context.__phase5;
@@ -82,21 +77,54 @@ function textRecord(id, role, text, extra = {}) {
 }
 
 function productionPlainBlock(record) {
-  const text = record.content.parts.join('');
-  return `${context.transcriptHeading(record)}\n\n${context.__productionQuoteMarkdown(text)}`;
+  const event = phase5.canonicalEventsBySourceRecord([record]).get(record.id);
+  return context.AIConversationCore.renderCanonicalMarkdown([event], {
+    heading: {
+      timestamp: context.showTimestamps,
+      recordNumber: context.showRecordNumbers,
+      turnId: context.showTurnIds,
+      debugProvenance: context.showDebugProvenance
+    }
+  }).trimEnd();
 }
 
-test('canonical heading metadata uses the shared core and paired JSONL numbering', () => {
+test('canonical heading controls are Core-owned, independent, ordered, and JSONL-offset', () => {
   const record = textRecord('metadata-user', 'user', 'Hello', { create_time: 1767225600 });
   const event = phase5.canonicalEventsBySourceRecord([record]).get(record.id);
+  assert.equal(event.source.record_index, 1, 'Conversation metadata must occupy JSONL record 1.');
+
+  const render = () => phase5.canonicalPlainRecordBlock(record, event);
+  assert.match(render(), /^## User$/m);
+
   context.showRecordNumbers = true;
-  const numbered = phase5.canonicalPlainRecordBlock(record, event, 2);
-  assert.match(numbered, /^## User 2: <!-- turn_id=metadata-user -->/);
+  assert.match(render(), /^## User 2:$/m);
+  context.showRecordNumbers = false;
+
   context.showTimestamps = true;
-  const dated = phase5.canonicalPlainRecordBlock(record, event, 2);
-  assert.match(dated, /^## User \[\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}\]: 2: <!-- turn_id=metadata-user -->/);
+  assert.match(render(), /^## User \[[0-9]{4}-[0-9]{2}-[0-9]{2} [0-9]{2}:[0-9]{2}:[0-9]{2}\]:$/m);
+  context.showTimestamps = false;
+
+  context.showTurnIds = true;
+  assert.match(render(), /^## User metadata-user$/m);
+  assert.doesNotMatch(render(), /turn_id=/);
+  context.showTurnIds = false;
+
+  context.showDebugProvenance = true;
+  assert.match(render(), /^## User <!-- record_id=metadata-user record_index=1 -->$/m);
+  context.showDebugProvenance = false;
+  assert.doesNotMatch(render(), /record_id=metadata-user/);
+
+  context.showTurnIds = true;
+  context.showDebugProvenance = true;
+  context.showTimestamps = true;
+  context.showRecordNumbers = true;
+  const combined = render();
+  assert.match(combined,
+    /^## User \[[0-9]{4}-[0-9]{2}-[0-9]{2} [0-9]{2}:[0-9]{2}:[0-9]{2}\]: 2: metadata-user <!-- record_id=metadata-user record_index=1 -->$/m);
   context.showTimestamps = false;
   context.showRecordNumbers = false;
+  context.showTurnIds = false;
+  context.showDebugProvenance = false;
 });
 
 test('canonical plain production slice preserves source heading identity and JSONL provenance', () => {
@@ -112,8 +140,8 @@ test('canonical plain production slice preserves source heading identity and JSO
   const records = [user, assistant];
   const events = phase5.canonicalEventsBySourceRecord(records);
   const userEvent = events.get(user.id);
-  assert.equal(userEvent.source.record_index, 0);
-  assert.equal(userEvent.source.record_index + 1, 1);
+  assert.equal(userEvent.source.record_index, 1);
+  assert.equal(userEvent.source.record_index + 1, 2);
   assert.equal(Object.hasOwn(userEvent.source, 'record_number'), false);
   assert.equal(userEvent.source.record_id, user.id);
   assert.equal(userEvent.source.turn_id, user.id);
@@ -160,8 +188,8 @@ test('migrated canonical plain renderer is byte-identical to production legacy q
   const commentary = textRecord('markdown-commentary', 'assistant', markdown, { channel: 'commentary' });
   const commentaryEvent = phase5.canonicalEventsBySourceRecord([commentary]).get(commentary.id);
   const commentaryRendered = phase5.canonicalPlainRecordBlock(commentary, commentaryEvent);
-  assert.match(commentaryRendered, /^## ChatGPT <!-- turn_id=markdown-commentary -->/);
-  assert.match(commentaryRendered, /^### ChatGPT Commentary <!-- turn_id=markdown-commentary -->$/m);
+  assert.match(commentaryRendered, /^## ChatGPT$/m);
+  assert.match(commentaryRendered, /^### ChatGPT Commentary$/m);
   assert.ok(commentaryRendered.endsWith(context.__productionQuoteMarkdown(markdown)));
 });
 
@@ -214,7 +242,7 @@ test('plain Assistant thought segments use the canonical renderer', () => {
   const events = records.map(record => eventsByRecord.get(record.id));
   assert.equal(phase5.canonicalPlainAssistantSegmentEligible(records), true);
   const rendered = phase5.canonicalPlainAssistantSegmentBlock(records, events);
-  assert.match(rendered, /^## ChatGPT <!-- turn_id=assistant-final -->/);
+  assert.match(rendered, /^## ChatGPT$/m);
   assert.match(rendered, /<summary>Having a thought<\/summary>/);
   assert.match(rendered, /Inspecting the request\./);
   assert.match(rendered, /> Done\./);
@@ -222,7 +250,7 @@ test('plain Assistant thought segments use the canonical renderer', () => {
 
 
 test('production export catch records exact extraction failure diagnostics', () => {
-  const start = userscript.indexOf('  async function runExport(kind)');
+  const start = userscript.indexOf('  async function runExport(');
   const end = userscript.indexOf('\n  async function testApiPaginationLogic()', start);
   assert.ok(start >= 0 && end > start, 'runExport production function is missing.');
   const production = userscript.slice(start, end);

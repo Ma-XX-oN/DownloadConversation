@@ -26,13 +26,6 @@ function mismatch(label, actual, expected) {
 
 function projectedDownloadConversationGolden(canonical) {
   let rendered = canonical;
-  rendered = rendered.replace('## User\n', '## User <!-- turn_id=adv-user -->\n');
-  rendered = rendered.replace('## ChatGPT\n', '## ChatGPT <!-- turn_id=adv-final -->\n');
-  rendered = rendered.replace(
-    '### ChatGPT Commentary\n',
-    '### ChatGPT Commentary <!-- turn_id=adv-commentary -->\n'
-  );
-  // DownloadConversation serializes exactly one EOF newline after trim-ended canonical blocks.
   if (rendered.endsWith('\n\n')) rendered = rendered.slice(0, -1);
   return rendered;
 }
@@ -69,7 +62,8 @@ async function downloadConversationMarkdown() {
   Object.assign(context, {
     showTimestamps: false,
     showRecordNumbers: false,
-    showTurnIds: true,
+    showTurnIds: false,
+    showDebugProvenance: false,
     assert(condition, message) {
       if (!condition) throw new Error(message);
     },

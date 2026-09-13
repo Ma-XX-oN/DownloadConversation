@@ -52,9 +52,9 @@ Provider-record interpretation and shared transcript rendering move incrementall
 
 The Tampermonkey userscript consumes the deterministic classic-script browser bundle generated from the core's ESM source. Production must pin that bundle to an exact `AIConversationCore` commit rather than a moving branch, and must not copy core source manually into the userscript.
 
-Canonical identity is additional identity. Normalization must preserve the original JSONL provenance needed by later projections, including source record index/number, raw timestamp fields, provider/source record or turn identity, and all contributing records when several source records form one canonical turn. Existing DownloadConversation `turn_id` heading comments continue to refer to provider/source identity; they are not silently replaced by canonical derived turn IDs.
+Canonical identity is additional identity. Normalization must preserve the original JSONL provenance needed by later projections, including source record index/number, raw timestamp fields, provider/source record or turn identity, and all contributing records when several source records form one canonical turn. Visible Turn IDs continue to refer to provider/source identity; they are not silently replaced by canonical derived turn IDs. AIConversationCore owns their heading serialization.
 
-The initial production migration covers ordinary visible text records and plain Assistant segments composed of public `thoughts` records followed by an otherwise plain visible Assistant text record. These migrated Assistant segments are rendered by `AIConversationCore` as one canonical ChatGPT section while DownloadConversation preserves the final provider/source Assistant record ID in its existing `turn_id` heading comment. Provider-specific rich handling such as citations, images, inline ChatGPT tokens, `sandbox:` resources, hidden records, and other host-enriched cases remains on the established DownloadConversation renderer until each behaviour is migrated with its own regression evidence.
+The initial production migration covers ordinary visible text records and plain Assistant segments composed of public `thoughts` records followed by an otherwise plain visible Assistant text record. These migrated Assistant segments are rendered by `AIConversationCore` as one canonical ChatGPT section while Core preserves the final provider/source Assistant record ID as the optional visible Turn ID. Provider-specific rich handling such as citations, images, inline ChatGPT tokens, `sandbox:` resources, hidden records, and other host-enriched cases remains on the established DownloadConversation renderer until each behaviour is migrated with its own regression evidence.
 
 Moving rendering into the shared core does not authorize chronology, UAP grouping, User/Assistant association, or ordering changes. Those change only in response to separately established production evidence and separately tracked work.
 
@@ -128,28 +128,171 @@ Until those later phases are complete, the DOM recorder remains part of the prod
 
 ## Optional Markdown heading metadata
 
-The recorder exposes independent **Timestamp** and **Record #** controls for
-Markdown exports.  Both are presentation-only.  Timestamp formatting matches
-`AI-transcript.py -d` (`YYYY-MM-DD HH:MM:SS` in local time), while record
-numbers are the one-based JSONL line numbers from the paired export.  Because
-DownloadConversation prepends a conversation-metadata record, the first
-Conversation API message is JSONL record 2.  Existing source `turn_id` comments
-remain unchanged.  Canonical records pass this metadata through
-AIConversationCore; the legacy fallback path preserves the same visible format.
+DownloadConversation exposes four independent persistent Markdown-heading controls:
 
-## Optional Markdown heading metadata
+- **Timestamp**: Core derives the source create/update timestamp and renders local
+  `YYYY-MM-DD HH:MM:SS` presentation. Default: off.
+- **Record #**: Core derives the one-based JSONL record number from canonical
+  source provenance. DownloadConversation prepends conversation metadata as JSONL
+  record 1, so the first visible ChatGPT source message is record 2. Default: off.
+- **Turn ID**: Core derives the ChatGPT native source/message ID and renders the
+  bare native ID value as visible heading metadata, without a `turn_id=` prefix.
+  Default: off.
+- **provenance**: Core derives source debug provenance and appends the canonical
+  `record_id=... record_index=...` HTML comment to the heading. One checkbox controls
+  the provenance channel as a unit; DownloadConversation does not construct either
+  field. Default: off.
 
-DownloadConversation exposes three independent persistent Markdown-heading controls:
+The visible order is speaker, timestamp, record number, then Turn ID; when provenance
+is enabled, the Core-owned provenance comment follows that heading metadata. Ordinary
+Markdown does not encode Turn ID as an HTML comment. DownloadConversation supplies
+only these presentation visibility switches to AIConversationCore; it does not
+format timestamps, compute record numbers, inject semantic turn IDs, or construct
+debug provenance itself. The provenance export checkbox is independent of the recorder
+diagnostic-log level (`errors` / `warnings` / `debug` / `verbose`). Canonical and
+host fallback bodies therefore use the same Core-owned heading serialization. These
+controls do not change chronology, grouping, UAP association, API pagination,
+recovery, or canonical normalization.
 
-- **Timestamp**: source create/update time rendered in local `YYYY-MM-DD HH:MM:SS`
-  form.  Default: off.
-- **Record #**: the one-based JSONL record number.  Because JSONL record 1 is
-  conversation metadata, the first visible source message is record 2.  Default:
-  off.
-- **Turn ID**: the ChatGPT source message ID rendered using the established
-  `<!-- turn_id=... -->` heading comment.  Default: on so existing Markdown output
-  remains unchanged unless the user disables it.
+## Single-snapshot multi-format export
 
-These are presentation-only controls.  They do not change chronology, grouping,
-UAP association, API pagination, recovery, or canonical normalization.
+One Extract operation acquires the Conversation API exactly once, regardless of
+whether JSONL, Markdown, or both formats are selected. The existing pagination,
+deduplication, and oldest-to-newest ordering logic produces one authoritative
+in-memory conversation spine. Every selected serializer then consumes that same
+spine; selecting both formats does not trigger a second API acquisition.
 
+JSONL serialization and Markdown rendering remain independent after acquisition,
+including Markdown image recovery and Core rendering. Sharing the source snapshot
+ensures both files from one Extract click describe the same Conversation API state
+even if the live conversation changes while output generation is still running.
+
+## Startup and saved console diagnostics
+
+Recorder diagnostics mirror to DevTools automatically from document startup until
+the general status panel is first shown. Creating that panel while it is hidden
+does not end startup logging. Once shown, console output depends only on the
+persistent checkbox labelled **console** on the panel; its default is unchecked.
+Closing, hiding, reopening, or recreating the panel does not restart automatic
+startup output. Reloading the page starts a new startup interval, even when the
+saved checkbox is off.
+
+The console gate covers both ordinary recorder diagnostics and existing direct
+launcher/lifecycle messages. Console mirroring occurs before the panel diagnostic
+severity filter, so it remains available at every selected panel verbosity during
+startup or while console is checked. Signed-token redaction still occurs before
+console output. Panel retention, persistence and filtering keep their existing
+behaviour. The checkbox does not enable invasive launcher instrumentation.
+
+The MD headings checkbox is labelled **provenance** to distinguish it from
+diagnostic verbosity **Debug**. Its existing storage key and AIConversationCore
+`debugProvenance` option are preserved, including the saved selection. This label
+change does not alter exported provenance or any other rendering semantics.
+
+## Image recovery and export performance diagnostics
+
+Image-heavy Markdown exports keep the established serial recovery order and
+fallback semantics, but expose enough timing evidence to locate otherwise silent
+waits. With diagnostics set to **Debug**, each image recovery logs a compact start
+record before its awaited operation and a completion/failure record containing
+fetch/header, response-body, data-URL encoding, byte/character, and total elapsed
+measurements. The log deliberately omits image URLs, Base64 payloads, and other
+image data. The whole image phase also records aggregate counts, sizes, and
+elapsed time.
+
+The live status display advances per image rather than only after an entire
+source message finishes. While an image is pending it shows the current global
+image ordinal, recovery path (`dom` or `pointer`), current-image elapsed time,
+completed count, and whole-export elapsed time. This is observability only: no
+parallel fetching, timeout, retry policy, or new fallback path is introduced by
+this instrumentation.
+
+After image recovery, Debug diagnostics bracket synchronous Markdown rendering,
+full-Markdown diagnostic calculation, Blob construction, and the browser download
+trigger. Expensive full-Markdown fingerprints/inventories are evaluated only when
+Debug diagnostics are actually enabled, and the export-tail fingerprint is reused
+instead of recalculated for the Blob boundary.
+
+Issue #119 raises the same-page diagnostic history from 500 to 10,000 entries so
+an image-heavy live run is unlikely to evict its early timing evidence. The
+session-storage mirror retains the newest 5,000 entries. High-volume logging is
+debounced to at most one persistence write per second, and a collapsed diagnostic
+panel does not rebuild hidden log-row DOM on every event. A page-hide event flushes
+the pending persisted tail. For live investigation, copy the diagnostic log before
+reloading the page so the full in-memory history is preserved.
+
+## Issue #119 live-evidence performance correction
+
+A real Debug export established that image recovery itself was not the observed stall: the supplied run completed image recovery in 24 ms, while repeated diagnostic scans over large rendered Markdown consumed tens of seconds after image recovery.  The instrumentation is therefore retained, but the diagnostic work is constrained so observability does not dominate export time.
+
+- Canonical rendered segments are no longer hashed or regex-inventoried merely to populate per-segment/per-block Debug events.  Those events retain structural IDs, route information, and lengths without rescanning the full rendered segment.
+- The `conversation-markdown-block-appended` Debug event is guarded before its argument object is built, so disabled Debug logging cannot evaluate expensive or high-volume diagnostic arguments.
+- `conversation-markdown-assembled` no longer performs a full-document hash or turn-ID regex inventory.  The final export-tail Debug boundary remains the single deliberate full-Markdown fingerprint/inventory point used for correlation.
+- Conversation API pagination requests 20 records per page instead of 100.  This does not change record ordering or completeness; it creates more fetch boundaries so the existing progress UI can report progress more frequently during long history retrieval.
+- No image timeout, concurrency, retry, or fallback policy is changed by this correction.
+
+## Issue #119 superseding live evidence: page size and UI heartbeat
+
+The later 0.6.168 live run supersedes the earlier decision to request 20 turns per
+Conversation API page.  On the same conversation, a single `num_turns=100`
+request fetched all 4392 source records in 15.133 seconds, while four
+`num_turns=20` cursor-chained requests required 41.016 seconds in total.  The
+pagination API exposes the next backward cursor only in the preceding response,
+so those requests are structurally sequential; they are not parallelized without
+separate evidence for an independent range API.
+
+Production therefore returns to `PAGE_TURNS = 100`.  User feedback no longer
+depends on small pages: progress marks a page as in-flight before awaiting it and
+the existing one-second status timer displays the current API page, completed
+page/record counts, current-page elapsed time, and whole-export elapsed time.
+
+The same run showed why the UI could remain visibly stuck on an old image count.
+All seven image-pointer operations completed in 24 ms, but the one remaining
+full-document Debug hash/turn-ID inventory then blocked the main thread for
+17.768 seconds while scanning roughly 24.2 million Markdown characters.  That
+whole-document scan and its hash/inventory helpers are removed.  The
+`conversation-export-markdown-ready` boundary retains compact source-tail and
+length metadata without rescanning the document, and the Blob boundary no longer
+reports a Markdown hash.
+
+After image recovery the export also yields one browser task before synchronous
+Markdown rendering.  This does not change image recovery behavior; it gives the
+completed image state and rendering transition a chance to paint so a prior
+`5/7` display cannot remain on screen while later CPU work is running.
+
+No image concurrency, timeout, retry, or fallback policy is introduced by this
+correction.
+
+## Issue #77 canonical sediment image resolution
+
+Conversation image recovery is API-first. For a ChatGPT `image_asset_pointer`,
+DownloadConversation adapts the source record through the pinned AIConversationCore
+and consumes the canonical `conversation_image` resource for the original provider
+part position. It does not independently translate `sediment://` provider pointers.
+
+For an evidenced `sediment://file_*` pointer, AIConversationCore preserves the
+original `source_pointer` and supplies the deterministic authenticated
+`download_url` under `/backend-api/files/download/<file_id>`. DownloadConversation
+owns the browser-authenticated retrieval step: it requests that Core-supplied URL,
+reads the returned transient `download_url`, fetches the image bytes, converts them
+to a data URL, and enriches the existing recovered-image map at the original source
+position. The transient signed URL is neither canonical identity nor diagnostic
+output.
+
+A Core-supplied `data_url` is used directly. DOM image recovery remains only for
+image forms for which Core supplies neither canonical image data nor a deterministic
+transport URL; `sediment://file_*` recovery does not depend on mounting or scrolling
+a historical turn. HTTP 404/410 during resolver/content retrieval is rendered as
+missing; other retrieval failures remain unavailable while preserving the original
+source pointer.
+
+DownloadConversation passes the exact ordered Conversation API message set to
+AIConversationCore once for image recovery, then indexes the returned resources by
+source record identity and original source part index. The Core-supplied
+`download_url` is authoritative for `sediment://file_*` image recovery. DownloadConversation does not reinterpret the raw sediment pointer and
+does not fall through to DOM recovery when that Core contract is missing; the
+missing canonical transport is an invariant failure reported explicitly. The first
+transport request uses the same captured authenticated page/API request context as
+Conversation API retrieval. Image-recovery Debug diagnostics include the loaded
+userscript version so a stale document runtime can be distinguished from the
+installed Tampermonkey version.
