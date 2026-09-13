@@ -47,6 +47,14 @@ jobs:
           if text.count(old) != 1:
             raise SystemExit(f'Generated regression-scope correction expected one match, found {text.count(old)}')
           tests.write_text(text.replace(old, new, 1), encoding='utf-8')
+
+          recorder = Path('tests/recorder-panel-ui.test.mjs')
+          text = recorder.read_text(encoding='utf-8')
+          old = '''  assert.match(userscript, /recoveredImages \\+= expected;/,\n    'Image recovery progress must advance by the number of images processed in each source message.');\n'''
+          new = '''  assert.match(userscript, /recoveredImages = Math\\.max\\(recoveredImages, context\\.image_number\\);/,\n    'Image recovery progress must advance as each individual image operation completes.');\n'''
+          if text.count(old) != 1:
+            raise SystemExit(f'Per-image progress regression correction expected one match, found {text.count(old)}')
+          recorder.write_text(text.replace(old, new, 1), encoding='utf-8')
           PY
 
       - name: Verify intended product files only
@@ -58,6 +66,7 @@ jobs:
             'DESIGN.md',
             'chatgpt-conversation-markdown-export.user.js',
             'tests/heading-metadata-controls.test.mjs',
+            'tests/recorder-panel-ui.test.mjs',
             'tests/tool-language-diagnostics.test.mjs',
           }
           if changed != expected:
@@ -91,7 +100,7 @@ jobs:
         run: |
           git config user.name github-actions[bot]
           git config user.email 41898282+github-actions[bot]@users.noreply.github.com
-          git add DESIGN.md chatgpt-conversation-markdown-export.user.js tests/heading-metadata-controls.test.mjs tests/tool-language-diagnostics.test.mjs
+          git add DESIGN.md chatgpt-conversation-markdown-export.user.js tests/heading-metadata-controls.test.mjs tests/recorder-panel-ui.test.mjs tests/tool-language-diagnostics.test.mjs
           git diff --check --cached
           git commit -m 'perf: instrument image export timing (#119)'
           git push origin HEAD:issue-119-image-export-timing
