@@ -1,0 +1,155 @@
+diff --git a/chatgpt-conversation-markdown-export.user.js b/chatgpt-conversation-markdown-export.user.js
+--- a/chatgpt-conversation-markdown-export.user.js
++++ b/chatgpt-conversation-markdown-export.user.js
+@@ -1,7 +1,7 @@
+ // ==UserScript==
+ // @name         ChatGPT Conversation Markdown Recorder
+ // @namespace    https://chatgpt.com/
+-// @version      0.6.171
++// @version      0.6.172
+ // @description  Exports the current ChatGPT conversation directly from the Conversation API as Markdown or JSONL.
+ // @match        https://chatgpt.com/*
+ // @match        https://chat.openai.com/*
+@@ -23,35 +23,6 @@
+       const enrichedEvent = canonicalEnrichRecoveredImages(
+         event, recoveredImageMap.get(sourceRecordId) ?? []);
+       bySourceRecord.set(sourceRecordId, enrichedEvent);
+-      if (diagnosticEnabled('debug')) {
+-        const diagnosticBlocks = Array.isArray(enrichedEvent?.blocks)
+-          ? enrichedEvent.blocks.filter(block =>
+-            block?.type === 'tool_call' || block?.type === 'tool_result')
+-          : [];
+-        if (diagnosticBlocks.length) {
+-          logDiagnostic('debug', 'canonical-tool-normalization', {
+-            source_record_id: sourceRecordId,
+-            source_index: sourceIndex,
+-            source_role: original?.author?.role ?? null,
+-            source_recipient: original?.recipient ?? null,
+-            source_channel: original?.channel ?? null,
+-            source_content_type: original?.content?.content_type ?? null,
+-            source_language: original?.content?.language ?? null,
+-            event_kind: enrichedEvent?.kind ?? null,
+-            event_role: enrichedEvent?.role ?? null,
+-            event_visibility: enrichedEvent?.visibility ?? null,
+-            blocks: diagnosticBlocks.map(block => ({
+-              type: block?.type ?? null,
+-              name: block?.name ?? null,
+-              input_format: block?.input_format ?? null,
+-              language: block?.language ?? null,
+-              source_language: block?.source_language ?? null,
+-              input_prefix: boundedDiagnosticText(block?.input ?? '', 240),
+-              source_input_prefix: boundedDiagnosticText(block?.source_input ?? '', 240)
+-            }))
+-          });
+-        }
+-      }
+     }
+     return bySourceRecord;
+   }
+@@ -75,6 +46,26 @@
+   }
+ 
+   /**
++   * Redacts transient signed URL tokens from diagnostic payloads without mutating callers.
++   *
++   * @param {Object} value - The diagnostic value to sanitize.
++   * @returns {Object} The sanitized diagnostic value.
++   */
++  function redactDiagnosticSignedTokens(value) {
++    if (typeof value === 'string') {
++      return value.replace(/([?&](?:sig|signature)=)[^&#\s]*/gi, '$1[redacted]');
++    }
++    if (Array.isArray(value)) return value.map(redactDiagnosticSignedTokens);
++    if (value && typeof value === 'object' &&
++        (Object.getPrototypeOf(value) === Object.prototype || Object.getPrototypeOf(value) === null)) {
++      return Object.fromEntries(
++        Object.entries(value).map(([key, item]) => [key, redactDiagnosticSignedTokens(item)])
++      );
++    }
++    return value;
++  }
++
++  /**
+    * Logs diagnostic.
+    *
+    * @param {Object} level - The diagnostics severity level.
+@@ -84,11 +75,12 @@
+    */
+   function logDiagnostic(level, message, data = null) {
+     if (!diagnosticEnabled(level)) return;
++    const safeData = redactDiagnosticSignedTokens(data);
+     const entry = {
+       timestamp: new Date().toISOString(),
+       level,
+       message,
+-      data
++      data: safeData
+     };
+     diagnosticLog.push(entry);
+     if (diagnosticLog.length > MAX_DIAGNOSTIC_LOG_ITEMS) {
+@@ -98,7 +90,7 @@
+     refreshDiagnosticLog();
+ 
+     const args = [`[ChatGPT Recorder ${level}] ${message}`];
+-    if (data !== null) args.push(data);
++    if (safeData !== null) args.push(safeData);
+     (level === 'errors' ? console.error : level === 'warnings' ? console.warn : console.log)(...args);
+   }
+ 
+diff --git a/tests/heading-metadata-controls.test.mjs b/tests/heading-metadata-controls.test.mjs
+--- a/tests/heading-metadata-controls.test.mjs
++++ b/tests/heading-metadata-controls.test.mjs
+@@ -5,7 +5,7 @@
+ const userscript = await readFile(new URL('../chatgpt-conversation-markdown-export.user.js', import.meta.url), 'utf8');
+ 
+ test('heading metadata controls retain historical defaults and JSONL numbering', () => {
+-  assert.match(userscript, /\/\/ @version      0\.6\.171/);
++  assert.match(userscript, /\/\/ @version      0\.6\.172/);
+   assert.match(userscript, /const SHOW_TIMESTAMPS_STORAGE_KEY/);
+   assert.match(userscript, /const SHOW_RECORD_NUMBERS_STORAGE_KEY/);
+   assert.match(userscript, /const SHOW_TURN_IDS_STORAGE_KEY/);
+diff --git a/tests/sediment-resolver.test.mjs b/tests/sediment-resolver.test.mjs
+--- a/tests/sediment-resolver.test.mjs
++++ b/tests/sediment-resolver.test.mjs
+@@ -9,5 +9,5 @@
+ });
+ 
+ test('userscript version advances for sediment resolver completion', () => {
+-  assert.match(userscript, /\/\/ @version      0\.6\.171/);
++  assert.match(userscript, /\/\/ @version      0\.6\.172/);
+ });
+diff --git a/tests/tool-language-diagnostics.test.mjs b/tests/tool-language-diagnostics.test.mjs
+--- a/tests/tool-language-diagnostics.test.mjs
++++ b/tests/tool-language-diagnostics.test.mjs
+@@ -4,17 +4,25 @@
+ 
+ const userscript = await readFile(new URL('../chatgpt-conversation-markdown-export.user.js', import.meta.url), 'utf8');
+ 
+-test('tool language diagnostics expose canonical normalization and production routing at debug level', () => {
+-  assert.match(userscript, /logDiagnostic\('debug', 'canonical-tool-normalization'/);
+-  assert.match(userscript, /input_format: block\?\.input_format \?\? null/);
+-  assert.match(userscript, /language: block\?\.language \?\? null/);
+-  assert.match(userscript, /source_language: block\?\.source_language \?\? null/);
+-  assert.match(userscript, /source_input_prefix: boundedDiagnosticText/);
++test('tool routing diagnostics retain production segment decisions without per-record normalization dumps', () => {
++  assert.doesNotMatch(userscript, /canonical-tool-normalization/,
++    'Closed #103 instrumentation must not emit one normalization payload per tool record.');
++  assert.doesNotMatch(userscript, /source_input_prefix: boundedDiagnosticText/,
++    'Closed #103 instrumentation must not retain source tool-input prefixes.');
+   assert.match(userscript, /logDiagnostic\('debug', 'canonical-tool-segment-routing'/);
+   assert.match(userscript, /complete: canonicalSegmentComplete/);
+   assert.match(userscript, /eligible: canonicalSegmentEligible/);
+ });
+ 
++test('diagnostic logging redacts signed URL tokens before retention and console output', () => {
++  assert.match(userscript, /function redactDiagnosticSignedTokens\(value\)/);
++  assert.ok(userscript.includes("return value.replace(/([?&](?:sig|signature)=)[^&#\\s]*/gi, '$1[redacted]');"));
++  assert.match(userscript, /const safeData = redactDiagnosticSignedTokens\(data\)/);
++  assert.match(userscript, /data: safeData/);
++  assert.match(userscript, /args\.push\(safeData\)/);
++  assert.doesNotMatch(userscript, /args\.push\(data\)/);
++});
++
+ 
+ test('issue 114 traces an accepted assistant segment through Markdown assembly and download boundaries', () => {
+   assert.match(userscript, /logDiagnostic\('debug', 'canonical-assistant-segment-rendered'/);
