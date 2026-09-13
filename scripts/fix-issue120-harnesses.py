@@ -11,8 +11,8 @@ FILES = (
 for name in FILES:
   path = Path(name)
   text = path.read_text(encoding='utf-8')
-  old = "    showTurnIds: false,\n    assert(condition, message) {\n"
-  new = "    showTurnIds: false,\n    showDebugProvenance: false,\n    assert(condition, message) {\n"
+  old = "  showTurnIds: false,\n  assert(condition, message) {\n"
+  new = "  showTurnIds: false,\n  showDebugProvenance: false,\n  assert(condition, message) {\n"
   count = text.count(old)
   if count != 1:
     raise RuntimeError(f'{name}: expected one harness context, found {count}')
