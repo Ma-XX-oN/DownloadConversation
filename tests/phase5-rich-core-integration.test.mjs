@@ -26,6 +26,7 @@ Object.assign(context, {
   showTimestamps: false,
   showRecordNumbers: false,
   showTurnIds: false,
+  showDebugProvenance: false,
   assert(condition, message) {
     if (!condition) throw new Error(message);
   },
