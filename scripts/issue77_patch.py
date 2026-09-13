@@ -1,0 +1,399 @@
+from pathlib import Path
+
+source_path = Path('chatgpt-conversation-markdown-export.user.js')
+source = source_path.read_text(encoding='utf-8')
+
+source = source.replace('// @version      0.6.169', '// @version      0.6.170', 1)
+if '// @version      0.6.170' not in source:
+  raise SystemExit('version replacement failed')
+
+old = r'''  /**
+   * Resolves one provider image pointer into Markdown while optionally recording timing metrics.
+   *
+   * @param {Object} part - The provider content part to process.
+   * @param {string} recordId - The provider/source record identifier.
+   * @param {number} imageOrdinal - The one-based image ordinal within the source record.
+   * @param {Object|null} timing - Mutable timing/result object populated without retaining image payload data.
+   * @returns {Promise<string>} A promise that resolves to image Markdown or the established unavailable-image fallback.
+   */
+  async function cgResolveImagePointerMarkdown(part, recordId, imageOrdinal, timing = null) {
+    const startedAt = performance.now();
+    const source = cgImagePointerSource(part);
+    if (!source) {
+      if (timing) {
+        timing.stage = 'complete';
+        timing.outcome = 'missing-pointer';
+        timing.source_scheme = null;
+        timing.total_ms = Math.round(performance.now() - startedAt);
+      }
+      return '[image missing]';
+    }
+    let parsed = null;
+    try { parsed = new URL(source, location.href); } catch {}
+    if (!source.startsWith('data:image/') && (!parsed || !['http:', 'https:'].includes(parsed.protocol))) {
+      if (timing) {
+        timing.stage = 'complete';
+        timing.outcome = 'unsupported-pointer';
+        timing.source_scheme = parsed?.protocol ?? null;
+        timing.total_ms = Math.round(performance.now() - startedAt);
+      }
+      return cgImageUnavailableMarkdown(source);
+    }
+    try {
+      const dataUrl = await fetchImageDataUrl(source, timing);
+      return dataUrl ? `![image-${recordId}-${imageOrdinal}](${dataUrl})` : cgImageUnavailableMarkdown(source);
+    } catch {
+      return cgImageUnavailableMarkdown(source);
+    }
+  }
+'''
+
+new = r'''  /**
+   * Returns canonical conversation-image resources for one source record keyed by provider part index.
+   *
+   * Provider/source -> canonical transformation is delegated to the pinned AIConversationCore adapter; DownloadConversation does not reconstruct provider pointer mappings itself.
+   *
+   * @param {Object} record - The provider/source record containing image parts.
+   * @returns {Map<number, Object>} Canonical conversation-image resources keyed by original source part index.
+   */
+  function canonicalImageResourcesByPart(record) {
+    const events = canonicalCore().adaptChatGPTRecords([record]);
+    const event = events.find(item => item?.source_record_id === record?.id) ?? null;
+    const resources = Array.isArray(event?.resources) ? event.resources : [];
+    const byPart = new Map();
+    for (const resource of resources) {
+      if (resource?.type !== 'image' || resource?.resource_kind !== 'conversation_image') continue;
+      const partIndex = resource?.source?.part_index;
+      if (Number.isInteger(partIndex)) byPart.set(partIndex, resource);
+    }
+    return byPart;
+  }
+
+  /**
+   * Fetches image bytes through a canonical Core-supplied authenticated transport URL.
+   *
+   * The first request resolves provider identity to transient access data. The returned signed URL is used only for the immediate image fetch and is never persisted in diagnostics or canonical state.
+   *
+   * @param {string} resolverUrl - Deterministic authenticated transport URL supplied by AIConversationCore.
+   * @param {Object|null} timing - Mutable timing/result object populated without retaining signed URLs or image payload data.
+   * @returns {Promise<string>} A promise resolving to the fetched image as a data URL.
+   */
+  async function fetchCanonicalResolvedImageDataUrl(resolverUrl, timing = null) {
+    const startedAt = performance.now();
+    try {
+      if (timing) {
+        timing.stage = 'resolver';
+        timing.source_scheme = 'core-resolver';
+        timing.resolver_status = null;
+        timing.resolver_ms = null;
+      }
+      const resolverResponse = await fetch(resolverUrl, { credentials: 'include' });
+      const resolverAt = performance.now();
+      if (timing) {
+        timing.resolver_status = resolverResponse.status;
+        timing.resolver_ms = Math.round(resolverAt - startedAt);
+      }
+      if (!resolverResponse.ok) {
+        const error = new Error(`Conversational image resolver returned HTTP ${resolverResponse.status}.`);
+        error.httpStatus = resolverResponse.status;
+        if (timing) timing.outcome = 'resolver-http-error';
+        throw error;
+      }
+      const resolverPayload = await resolverResponse.json();
+      const resolvedSource = typeof resolverPayload?.download_url === 'string'
+        ? resolverPayload.download_url.trim()
+        : '';
+      if (!resolvedSource) {
+        if (timing) timing.outcome = 'resolver-response-error';
+        throw new Error('Conversational image resolver response did not contain download_url.');
+      }
+      const dataUrl = await fetchImageDataUrl(resolvedSource, timing);
+      if (timing) {
+        timing.resolver_status = resolverResponse.status;
+        timing.resolver_ms = Math.round(resolverAt - startedAt);
+        timing.total_ms = Math.round(performance.now() - startedAt);
+      }
+      return dataUrl;
+    } catch (error) {
+      if (timing) {
+        timing.total_ms = Math.round(performance.now() - startedAt);
+        if (!timing.outcome) timing.outcome = `${timing.stage || 'resolver'}-error`;
+      }
+      throw error;
+    }
+  }
+
+  /**
+   * Resolves one provider image pointer into Markdown while optionally recording timing metrics.
+   *
+   * AIConversationCore owns provider-pointer interpretation. DownloadConversation consumes canonical `data_url` or `download_url` fields and performs only the credential-bound browser retrieval step.
+   *
+   * @param {Object} part - The provider content part to process.
+   * @param {Object|null} resource - Canonical conversation-image resource for this source part.
+   * @param {string} recordId - The provider/source record identifier.
+   * @param {number} imageOrdinal - The one-based image ordinal within the source record.
+   * @param {Object|null} timing - Mutable timing/result object populated without retaining image payload data.
+   * @returns {Promise<string>} A promise that resolves to image Markdown or the established unavailable-image fallback.
+   */
+  async function cgResolveImagePointerMarkdown(part, resource, recordId, imageOrdinal, timing = null) {
+    const startedAt = performance.now();
+    const source = typeof resource?.source_pointer === 'string' && resource.source_pointer.trim()
+      ? resource.source_pointer.trim()
+      : cgImagePointerSource(part);
+    if (!source) {
+      if (timing) {
+        timing.stage = 'complete';
+        timing.outcome = 'missing-pointer';
+        timing.source_scheme = null;
+        timing.total_ms = Math.round(performance.now() - startedAt);
+      }
+      return '[image missing]';
+    }
+    try {
+      let dataUrl = '';
+      if (typeof resource?.data_url === 'string' && resource.data_url.startsWith('data:image/')) {
+        dataUrl = resource.data_url;
+        if (timing) {
+          timing.stage = 'complete';
+          timing.outcome = 'data-url';
+          timing.source_scheme = 'canonical-data-url';
+          timing.fetch_ms = 0;
+          timing.body_ms = 0;
+          timing.encode_ms = 0;
+          timing.data_url_chars = dataUrl.length;
+          timing.total_ms = Math.round(performance.now() - startedAt);
+        }
+      } else if (typeof resource?.download_url === 'string' && resource.download_url.trim()) {
+        dataUrl = await fetchCanonicalResolvedImageDataUrl(resource.download_url.trim(), timing);
+      } else {
+        let parsed = null;
+        try { parsed = new URL(source, location.href); } catch {}
+        if (!parsed || !['http:', 'https:'].includes(parsed.protocol)) {
+          if (timing) {
+            timing.stage = 'complete';
+            timing.outcome = 'unresolved-pointer';
+            timing.source_scheme = parsed?.protocol ?? null;
+            timing.total_ms = Math.round(performance.now() - startedAt);
+          }
+          return cgImageUnavailableMarkdown(source);
+        }
+        dataUrl = await fetchImageDataUrl(source, timing);
+      }
+      return dataUrl ? `![image-${recordId}-${imageOrdinal}](${dataUrl})` : cgImageUnavailableMarkdown(source);
+    } catch (error) {
+      const status = Number(error?.httpStatus);
+      return cgImageFailureMarkdown(source, Number.isFinite(status) ? status : null);
+    }
+  }
+'''
+if old not in source:
+  raise SystemExit('cgResolveImagePointerMarkdown source block not found')
+source = source.replace(old, new, 1)
+
+old = r'''        /** Existing fallback Markdown for each expected image pointer. */
+        const images = expectedParts.map(part => cgImagePointerFallback(part));
+        /** Global image-number offset for this source record. */
+        const recordImageBase = imageBase;
+        try {
+          const section = mountedTurnSection(record.id, 'user');
+          if (!(section instanceof HTMLElement)) {
+            logDiagnostic('debug', 'conversation-image-dom-recovery-skipped', {
+              message_id: record.id,
+              reason: 'turn-not-mounted',
+              expected_image_count: expected
+            });
+            throw new Error(`Turn ${record.id} is not mounted; DOM image recovery skipped to avoid scrolling.`);
+          }
+          const candidates = mountedUserConversationImages(section);
+          logInternalImagePointerEvidence(record, section, candidates);
+          for (let index = 0; index < Math.min(expected, candidates.length); index += 1) {
+            try {
+              const dataUrl = await recoverOne(
+                timing => imageElementDataUrl(candidates[index], timing),
+                {
+                  image_number: recordImageBase + index + 1,
+                  message_id: record.id,
+                  image_ordinal: index + 1,
+                  path: 'dom'
+                }
+              );
+              if (dataUrl) images[index] = `![image-${record.id}-${index + 1}](${dataUrl})`;
+            } catch (error) {
+              const status = Number(error?.httpStatus);
+              const source = candidates[index]?.currentSrc || candidates[index]?.getAttribute('src') ||
+                cgImagePointerSource(expectedParts[index]);
+              images[index] = cgImageFailureMarkdown(source, status);
+              logDiagnostic('warnings', 'conversation-image-recovery-failure', {
+                message_id: record.id,
+                image_ordinal: index + 1,
+                http_status: Number.isFinite(status) ? status : null,
+                fallback: images[index],
+                message: error instanceof Error ? error.message : String(error)
+              });
+            }
+          }
+          for (let index = candidates.length; index < expected; index += 1) {
+            images[index] = await recoverOne(
+              timing => cgResolveImagePointerMarkdown(expectedParts[index], record.id, index + 1, timing),
+              {
+                image_number: recordImageBase + index + 1,
+                message_id: record.id,
+                image_ordinal: index + 1,
+                path: 'pointer'
+              }
+            );
+          }
+        } catch (error) {
+          logDiagnostic('warnings', 'conversation-image-turn-recovery-failure', {
+            message_id: record.id,
+            expected_image_count: expected,
+            message: error instanceof Error ? error.message : String(error)
+          });
+          for (let index = 0; index < expected; index += 1) {
+            images[index] = await recoverOne(
+              timing => cgResolveImagePointerMarkdown(expectedParts[index], record.id, index + 1, timing),
+              {
+                image_number: recordImageBase + index + 1,
+                message_id: record.id,
+                image_ordinal: index + 1,
+                path: 'pointer'
+              }
+            );
+          }
+        }
+'''
+
+new = r'''        /** Existing fallback Markdown for each expected image pointer. */
+        const images = expectedParts.map(part => cgImagePointerFallback(part));
+        /** Canonical Core image resources keyed by their original provider part index. */
+        const canonicalResources = canonicalImageResourcesByPart(record);
+        /** Original provider part index for each image ordinal in this source record. */
+        const imagePartIndexes = record.content.parts
+          .map((part, partIndex) => ({ part, partIndex }))
+          .filter(item => item.part && typeof item.part === 'object' && item.part.content_type === 'image_asset_pointer')
+          .map(item => item.partIndex);
+        /** Global image-number offset for this source record. */
+        const recordImageBase = imageBase;
+        const section = mountedTurnSection(record.id, 'user');
+        const candidates = section instanceof HTMLElement ? mountedUserConversationImages(section) : [];
+        if (section instanceof HTMLElement) logInternalImagePointerEvidence(record, section, candidates);
+        for (let index = 0; index < expected; index += 1) {
+          const partIndex = imagePartIndexes[index];
+          const resource = canonicalResources.get(partIndex) ?? null;
+          const hasCanonicalTransport = typeof resource?.download_url === 'string' && resource.download_url.trim();
+          const hasCanonicalData = typeof resource?.data_url === 'string' && resource.data_url.startsWith('data:image/');
+          if (hasCanonicalTransport || hasCanonicalData) {
+            images[index] = await recoverOne(
+              timing => cgResolveImagePointerMarkdown(expectedParts[index], resource, record.id, index + 1, timing),
+              {
+                image_number: recordImageBase + index + 1,
+                message_id: record.id,
+                image_ordinal: index + 1,
+                path: hasCanonicalData ? 'core-data' : 'core-resolver'
+              }
+            );
+            continue;
+          }
+          if (candidates[index] instanceof HTMLImageElement) {
+            try {
+              const dataUrl = await recoverOne(
+                timing => imageElementDataUrl(candidates[index], timing),
+                {
+                  image_number: recordImageBase + index + 1,
+                  message_id: record.id,
+                  image_ordinal: index + 1,
+                  path: 'dom'
+                }
+              );
+              if (dataUrl) images[index] = `![image-${record.id}-${index + 1}](${dataUrl})`;
+              continue;
+            } catch (error) {
+              const status = Number(error?.httpStatus);
+              const source = candidates[index]?.currentSrc || candidates[index]?.getAttribute('src') ||
+                cgImagePointerSource(expectedParts[index]);
+              images[index] = cgImageFailureMarkdown(source, status);
+              logDiagnostic('warnings', 'conversation-image-recovery-failure', {
+                message_id: record.id,
+                image_ordinal: index + 1,
+                http_status: Number.isFinite(status) ? status : null,
+                fallback: images[index],
+                message: error instanceof Error ? error.message : String(error)
+              });
+              continue;
+            }
+          }
+          images[index] = await recoverOne(
+            timing => cgResolveImagePointerMarkdown(expectedParts[index], resource, record.id, index + 1, timing),
+            {
+              image_number: recordImageBase + index + 1,
+              message_id: record.id,
+              image_ordinal: index + 1,
+              path: 'pointer'
+            }
+          );
+        }
+'''
+if old not in source:
+  raise SystemExit('recoverUserImages block not found')
+source = source.replace(old, new, 1)
+
+old = r'''          source_scheme: timing.source_scheme ?? null,
+          http_status: timing.http_status ?? null,
+          fetch_ms: timing.fetch_ms ?? null,
+'''
+new = r'''          source_scheme: timing.source_scheme ?? null,
+          resolver_status: timing.resolver_status ?? null,
+          resolver_ms: timing.resolver_ms ?? null,
+          http_status: timing.http_status ?? null,
+          fetch_ms: timing.fetch_ms ?? null,
+'''
+if source.count(old) < 2:
+  raise SystemExit('timing diagnostic fields not found twice')
+source = source.replace(old, new, 2)
+source_path.write_text(source, encoding='utf-8')
+
+design_path = Path('DESIGN.md')
+design = design_path.read_text(encoding='utf-8')
+addition = r'''
+
+## Issue #77 canonical sediment image resolution
+
+Conversation image recovery is API-first. For a ChatGPT `image_asset_pointer`,
+DownloadConversation adapts the source record through the pinned AIConversationCore
+and consumes the canonical `conversation_image` resource for the original provider
+part position. It does not independently translate `sediment://` provider pointers.
+
+For an evidenced `sediment://file_*` pointer, AIConversationCore preserves the
+original `source_pointer` and supplies the deterministic authenticated
+`download_url` under `/backend-api/files/download/<file_id>`. DownloadConversation
+owns the browser-authenticated retrieval step: it requests that Core-supplied URL,
+reads the returned transient `download_url`, fetches the image bytes, converts them
+to a data URL, and enriches the existing recovered-image map at the original source
+position. The transient signed URL is neither canonical identity nor diagnostic
+output.
+
+A Core-supplied `data_url` is used directly. DOM image recovery remains only for
+image forms for which Core supplies neither canonical image data nor a deterministic
+transport URL; `sediment://file_*` recovery does not depend on mounting or scrolling
+a historical turn. HTTP 404/410 during resolver/content retrieval is rendered as
+missing; other retrieval failures remain unavailable while preserving the original
+source pointer.
+'''
+if '## Issue #77 canonical sediment image resolution' in design:
+  raise SystemExit('design section already exists')
+design_path.write_text(design.rstrip() + addition + '\n', encoding='utf-8')
+
+heading_path = Path('tests/heading-metadata-controls.test.mjs')
+heading = heading_path.read_text(encoding='utf-8')
+heading = heading.replace(r'/\/\/ @version      0\.6\.169/', r'/\/\/ @version      0\.6\.170/', 1)
+if '0\\.6\\.170' not in heading:
+  raise SystemExit('version regression update failed')
+heading_path.write_text(heading, encoding='utf-8')
+
+ci_path = Path('.github/workflows/ci.yml')
+ci = ci_path.read_text(encoding='utf-8')
+old_ci = "run: node --test tests/core-integration.test.mjs tests/phase5-rich-core-integration.test.mjs tests/fallback-adaptive-fence.test.mjs tests/tool-language-diagnostics.test.mjs"
+new_ci = "run: node --test tests/core-integration.test.mjs tests/phase5-rich-core-integration.test.mjs tests/fallback-adaptive-fence.test.mjs tests/tool-language-diagnostics.test.mjs tests/sediment-resolver.test.mjs"
+if old_ci not in ci:
+  raise SystemExit('CI canonical regression command not found')
+ci_path.write_text(ci.replace(old_ci, new_ci, 1), encoding='utf-8')
