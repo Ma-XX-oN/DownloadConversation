@@ -43,6 +43,24 @@ jobs:
           set -euo pipefail
           sed -i 's/re.subn(pattern, replacement, text, count=1, flags=flags)/re.subn(pattern, lambda _match: replacement, text, count=1, flags=flags)/' scripts/issue109-core-heading-contract.py
           python scripts/issue109-core-heading-contract.py
+          python - <<'PY'
+          from pathlib import Path
+          path = Path('tests/phase5-rich-core-integration.test.mjs')
+          text = path.read_text(encoding='utf-8')
+          replacements = {
+            r'assert.match(production, /canonicalAssistantSegmentBlock\(segmentRecords, segmentEvents, recordNumberById\)/);':
+              r'assert.match(production, /canonicalAssistantSegmentBlock\(segmentRecords, segmentEvents\)/);',
+            r'assert.match(production, /canonicalAssistantSegmentBlock\(pendingThoughts, events, recordNumberById\)/);':
+              r'assert.match(production, /canonicalAssistantSegmentBlock\(pendingThoughts, events\)/);',
+            r'assert.match(production, /canonicalRecordBlock\(record, canonicalEvent, recordNumberById\.get\(record\.id\) \?\? null\)/);':
+              r'assert.match(production, /canonicalRecordBlock\(record, canonicalEvent\)/);',
+          }
+          for old, new in replacements.items():
+            if old not in text:
+              raise SystemExit(f'missing stale routing assertion: {old}')
+            text = text.replace(old, new, 1)
+          path.write_text(text, encoding='utf-8')
+          PY
       - name: Production JSDoc coverage
         run: node scripts/check-jsdoc.mjs
       - name: JavaScript syntax
