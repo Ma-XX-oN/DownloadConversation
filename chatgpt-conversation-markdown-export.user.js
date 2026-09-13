@@ -1,11 +1,11 @@
 // ==UserScript==
 // @name         ChatGPT Conversation Markdown Recorder
 // @namespace    https://chatgpt.com/
-// @version      0.6.172
+// @version      0.6.173
 // @description  Exports the current ChatGPT conversation directly from the Conversation API as Markdown or JSONL.
 // @match        https://chatgpt.com/*
 // @match        https://chat.openai.com/*
-// @require      https://raw.githubusercontent.com/Ma-XX-oN/AIConversationCore/3233cba838bbf2d2cea5a2a6f1900ed6014dcfb0/dist/aiconversationcore.chatgpt.browser.js
+// @require      https://raw.githubusercontent.com/Ma-XX-oN/AIConversationCore/b7961cb8dab11611a5af8f4304ae783295998cf2/dist/aiconversationcore.chatgpt.browser.js
 // @run-at       document-start
 // ==/UserScript==
 
@@ -61,7 +61,7 @@
   /** Whether Markdown headings should include one-based JSONL record numbers. */
   let showRecordNumbers = localStorage.getItem(SHOW_RECORD_NUMBERS_STORAGE_KEY) === 'true';
   /** Whether Markdown headings should include source/provider turn IDs. */
-  let showTurnIds = localStorage.getItem(SHOW_TURN_IDS_STORAGE_KEY) !== 'false';
+  let showTurnIds = localStorage.getItem(SHOW_TURN_IDS_STORAGE_KEY) === 'true';
   /** Active screen wake-lock handle, or null when no lock is held. */
   let wakeLockSentinel = null;
   /** Serializes export work so overlapping extraction runs cannot start. */
@@ -2414,11 +2414,11 @@
      */
     const hasMetadata = records.some(record => record?.record_type === 'chatgpt_conversation_metadata');
     const adapterRecords = conversationId && !hasMetadata
-      ? [...records, {
+      ? [{
           record_type: 'chatgpt_conversation_metadata',
           schema_version: 1,
           conversation_id: conversationId
-        }]
+        }, ...records]
       : records;
     const events = canonicalCore().adaptChatGPTRecords(adapterRecords);
     assert(Array.isArray(events), 'AIConversationCore ChatGPT adapter did not return canonical events.');
@@ -2428,7 +2428,7 @@
       const sourceIndex = event?.source_index;
       const sourceRecordId = event?.source_record_id;
       if (!Number.isInteger(sourceIndex) || typeof sourceRecordId !== 'string' || !sourceRecordId) continue;
-      const original = records[sourceIndex];
+      const original = adapterRecords[sourceIndex];
       if (!original) continue;
       assert(original?.id === sourceRecordId,
         `AIConversationCore source record mismatch at JSONL index ${sourceIndex}.`);
@@ -2485,78 +2485,38 @@
   }
 
   /**
-   * Formats one ChatGPT source timestamp like AI-transcript.py's default -d output.
+   * Returns the current AIConversationCore heading-presentation policy.
    *
-   * @param {Object} record - The provider/source record to inspect.
-   * @returns {string|null} Local-time YYYY-MM-DD HH:MM:SS, or null when unavailable.
+   * DownloadConversation selects visibility only. Timestamp values, JSONL record
+   * numbers, and source turn IDs are derived by Core from canonical provenance.
+   *
+   * @returns {Object} AIConversationCore Markdown projection options.
    */
-  function transcriptTimestamp(record) {
-    const raw = record?.create_time ?? record?.update_time;
-    if (raw == null) return null;
-    const date = new Date(Number(raw) * 1000);
-    if (!Number.isFinite(date.getTime())) return null;
-    /**
-     * Zero-pads one date/time component to two digits.
-     *
-     * @param {number} value - Numeric date/time component to pad.
-     * @returns {string} Two-character decimal representation.
-     */
-    const pad = value => String(value).padStart(2, '0');
-    return `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())} ` +
-      `${pad(date.getHours())}:${pad(date.getMinutes())}:${pad(date.getSeconds())}`;
+  function canonicalHeadingOptions() {
+    return {
+      heading: {
+        timestamp: showTimestamps,
+        recordNumber: showRecordNumbers,
+        turnId: showTurnIds
+      }
+    };
   }
 
   /**
-   * Builds shared-core heading metadata for one ChatGPT source record.
+   * Renders one eligible canonical message event through AIConversationCore.
    *
-   * @param {Object} record - The provider/source record to inspect.
-   * @param {number|null} recordNumber - The one-based paired JSONL record number.
-   * @returns {Object} Consumer heading metadata understood by AIConversationCore.
-   */
-  function canonicalHeadingMetadata(record, recordNumber = null) {
-    const metadata = {};
-    if (showTimestamps) {
-      const timestamp = transcriptTimestamp(record);
-      if (timestamp) metadata.timestamp = timestamp;
-    }
-    if (showRecordNumbers && Number.isInteger(recordNumber)) metadata.record_number = recordNumber;
-    return metadata;
-  }
-
-  /**
-   * Renders one eligible canonical message event while preserving DownloadConversation source-turn identity in the transcript heading.
-   *
-   * Canonical -> output transformation: AIConversationCore supplies the plain canonical heading/body; DownloadConversation replaces only that heading with its existing source-record `turn_id` comment and preserves the rendered body.
+   * Source/canonical -> output transformation: DownloadConversation supplies only
+   * heading visibility policy. Core derives timestamp, JSONL record number, and
+   * provider/source turn identity from canonical source provenance.
    *
    * @param {Object} record - The provider/source record to process.
-   * @param {Event|Object} event - The event or event-like object being handled.
-   * @param {number|null} recordNumber - The one-based paired JSONL record number.
-   * @returns {string} The string produced by `canonicalRecordBlock`.
+   * @param {Event|Object} event - The canonical event associated with the source record.
+   * @returns {string} Canonical Markdown for the source record.
    */
-  function canonicalRecordBlock(record, event, recordNumber = null) {
+  function canonicalRecordBlock(record, event) {
     assert(canonicalMessageRecordEligible(record, event),
       `AIConversationCore message record ${record?.id ?? 'unknown'} is not eligible for canonical rendering.`);
-    // Provider/source ID projected onto renderer-generated headings for this record.
-    const sourceId = showTurnIds && typeof record?.id === 'string' ? record.id : '';
-    const headingMetadata = canonicalHeadingMetadata(record, recordNumber);
-    const hasHeadingMetadata = Object.keys(headingMetadata).length > 0;
-    // Canonical event clone carrying DownloadConversation presentation metadata.
-    const projectedEvent = (sourceId || hasHeadingMetadata)
-      ? {
-          ...event,
-          projection: {
-            ...(event?.projection ?? {}),
-            ...(hasHeadingMetadata ? {
-              heading_metadata: {
-                ...(event?.projection?.heading_metadata ?? {}),
-                ...headingMetadata
-              }
-            } : {}),
-            ...(sourceId ? { heading_suffix: ` <!-- turn_id=${sourceId} -->` } : {})
-          }
-        }
-      : event;
-    return canonicalCore().renderCanonicalMarkdown([projectedEvent]).trimEnd();
+    return canonicalCore().renderCanonicalMarkdown([event], canonicalHeadingOptions()).trimEnd();
   }
 
   /**
@@ -2613,61 +2573,25 @@
   }
 
   /**
-   * Renders one eligible canonical Assistant activity segment while preserving DownloadConversation source-turn identity in the transcript heading.
+   * Renders one eligible canonical Assistant activity segment through AIConversationCore.
    *
-   * Canonical -> output transformation: AIConversationCore renders the ordered segment; DownloadConversation substitutes only its established source-record heading/comment for the plain canonical heading. Tool payloads and rendered body remain opaque.
+   * Source/canonical -> output transformation: DownloadConversation preserves the
+   * ordered canonical segment and supplies only heading visibility policy. Core owns
+   * all semantic heading values for the response and Commentary descendants.
    *
    * @param {Array<Object>} records - The ordered provider/source records to process.
    * @param {Array<Object>} events - The canonical events associated with the source records.
-   * @param {Map<unknown, unknown>} recordNumberById - Paired JSONL record numbers keyed by source ID.
-   * @returns {string} The string produced by `canonicalAssistantSegmentBlock`.
+   * @returns {string} Canonical Markdown for the Assistant segment.
    */
-  function canonicalAssistantSegmentBlock(records, events, recordNumberById = new Map()) {
+  function canonicalAssistantSegmentBlock(records, events) {
     assert(canonicalAssistantSegmentEligible(records, events),
       'AIConversationCore Assistant segment contains an unsupported record.');
-    /**
-     * Handles message record.
-     */
+    /** Final ordinary Assistant message retained only for compact diagnostics. */
     const messageRecord = [...records].reverse().find((record, indexFromEnd) => {
       const index = records.length - 1 - indexFromEnd;
       return canonicalMessageRecordEligible(record, events[index]);
     }) ?? null;
-    /**
-     * Handles heading record.
-     */
-    const headingRecord = messageRecord ?? records.find(record => record?.author?.role === 'assistant') ?? records[0];
-    // Source ID retained on the one enclosing ChatGPT response heading.
-    const headingSourceId = showTurnIds && typeof headingRecord?.id === 'string' ? headingRecord.id : '';
-    // Canonical event sequence decorated only with source heading identities.
-    const projectedEvents = events.map((event, index) => {
-      const commentarySourceId = showTurnIds && event?.kind === 'commentary' && typeof records[index]?.id === 'string'
-        ? records[index].id
-        : '';
-      const sourceId = commentarySourceId || (index === 0 ? headingSourceId : '');
-      const responseHeadingSuffix = index === 0 && headingSourceId
-        ? ` <!-- turn_id=${headingSourceId} -->`
-        : '';
-      const headingMetadata = canonicalHeadingMetadata(
-        records[index], recordNumberById.get(records[index]?.id) ?? null
-      );
-      const hasHeadingMetadata = Object.keys(headingMetadata).length > 0;
-      if (!sourceId && !responseHeadingSuffix && !hasHeadingMetadata) return event;
-      return {
-        ...event,
-        projection: {
-          ...(event?.projection ?? {}),
-          ...(hasHeadingMetadata ? {
-            heading_metadata: {
-              ...(event?.projection?.heading_metadata ?? {}),
-              ...headingMetadata
-            }
-          } : {}),
-          ...(sourceId ? { heading_suffix: ` <!-- turn_id=${sourceId} -->` } : {}),
-          ...(responseHeadingSuffix ? { response_heading_suffix: responseHeadingSuffix } : {})
-        }
-      };
-    });
-    const rendered = canonicalCore().renderCanonicalMarkdown(projectedEvents).trimEnd();
+    const rendered = canonicalCore().renderCanonicalMarkdown(events, canonicalHeadingOptions()).trimEnd();
     if (diagnosticEnabled('debug')) {
       logDiagnostic('debug', 'canonical-assistant-segment-rendered', {
         source_record_ids: records.map(record => record?.id ?? null),
@@ -2706,12 +2630,11 @@
    * Handles canonical plain record block.
    *
    * @param {Object} record - The provider/source record to process.
-   * @param {Event|Object} event - The event or event-like object being handled.
-   * @param {number|null} recordNumber - The one-based paired JSONL record number.
-   * @returns {boolean} `true` when `canonicalPlainRecordBlock` succeeds or its predicate is satisfied; otherwise `false`.
+   * @param {Event|Object} event - The canonical event associated with the source record.
+   * @returns {string} Canonical Markdown for the plain record.
    */
-  function canonicalPlainRecordBlock(record, event, recordNumber = null) {
-    return canonicalRecordBlock(record, event, recordNumber);
+  function canonicalPlainRecordBlock(record, event) {
+    return canonicalRecordBlock(record, event);
   }
 
   /**
@@ -2749,27 +2672,31 @@
   // END AIConversationCore Phase 5 integration
 
   /**
-   * Builds the DownloadConversation transcript heading from the actual provider/source record.
+   * Returns the Core-rendered heading for a fallback-rendered source record.
    *
-   * Source -> output transformation: the source record ID is emitted as the `turn_id` comment; it is intentionally not replaced by AIConversationCore derived turn identity.
+   * The fallback body remains host-rendered, but heading metadata is serialized by
+   * AIConversationCore from the same canonical event and visibility policy used by
+   * canonical bodies. If no canonical event exists, the established plain speaker
+   * heading is preserved without inventing metadata.
    *
-   * @param {Object} record - The provider/source record to process.
-   * @param {number|null} recordNumber - The one-based paired JSONL record number.
-   * @returns {string} The string produced by `transcriptHeading`.
+   * @param {Object} record - The provider/source record whose speaker heading is required.
+   * @param {Event|Object|null} event - The canonical event supplying source provenance, when available.
+   * @returns {string} Core-rendered transcript heading or the existing plain speaker heading.
    */
-  function transcriptHeading(record, recordNumber = null) {
-    const id = typeof record?.id === 'string' ? record.id : '';
-    const headingMetadata = canonicalHeadingMetadata(record, recordNumber);
-    const fields = [];
-    if (headingMetadata.timestamp != null) fields.push(`[${headingMetadata.timestamp}]:`);
-    if (headingMetadata.record_number != null) fields.push(`${headingMetadata.record_number}:`);
-    const metadata = fields.length ? ` ${fields.join(' ')}` : '';
-    const turnId = showTurnIds && id ? ` <!-- turn_id=${id} -->` : '';
-    if (record?.author?.role === 'user') return `## User${metadata}${turnId}`;
-    if (record?.author?.role === 'assistant' && record?.channel === 'commentary') {
-      return `## ChatGPT Commentary${metadata}${turnId}`;
+  function transcriptHeading(record, event = null) {
+    if (event) {
+      const rendered = canonicalCore().renderCanonicalMarkdown([event], canonicalHeadingOptions()).trimEnd();
+      const lines = rendered.split('\n');
+      if (record?.author?.role === 'assistant' && record?.channel === 'commentary') {
+        const commentary = lines.find(line => /^### ChatGPT Commentary(?: |$)/.test(line));
+        if (commentary) return commentary.replace(/^### /, '## ');
+      }
+      const topLevel = lines.find(line => /^## (?:User|ChatGPT)(?: |$)/.test(line));
+      if (topLevel) return topLevel;
     }
-    if (record?.author?.role === 'assistant') return `## ChatGPT${metadata}${turnId}`;
+    if (record?.author?.role === 'user') return '## User';
+    if (record?.author?.role === 'assistant' && record?.channel === 'commentary') return '## ChatGPT Commentary';
+    if (record?.author?.role === 'assistant') return '## ChatGPT';
     return '';
   }
 
@@ -2787,10 +2714,6 @@
      * Handles records.
      */
     const records = spine.records.map(item => item.message).filter(Boolean);
-    const recordNumberById = new Map();
-    spine.records.forEach((item, index) => {
-      if (typeof item?.message?.id === 'string') recordNumberById.set(item.message.id, index + 2);
-    });
     const output = [];
     // Fallback citation lookup keyed by ChatGPT retrieval turn/file coordinates.
     const fileRefIndex = cgBuildFileReferenceIndex(records);
@@ -2809,7 +2732,7 @@
     const flushAssistantBlock = (body = '', record = null) => {
       if (!body && !pendingThoughts.length) return;
       const headingRecord = record ?? pendingThoughts[0];
-      const parts = [transcriptHeading(headingRecord, recordNumberById.get(headingRecord?.id) ?? null)];
+      const parts = [transcriptHeading(headingRecord, canonicalEventBySourceRecord.get(headingRecord?.id) ?? null)];
       const thoughts = cgRenderThoughtBlock(pendingThoughts, fileRefIndex);
       if (thoughts) parts.push(thoughts);
       if (body) parts.push(quoteMarkdown(body));
@@ -2829,7 +2752,7 @@
         .filter(Boolean);
       if (events.length === pendingThoughts.length &&
           canonicalAssistantSegmentEligible(pendingThoughts, events)) {
-        output.push(canonicalAssistantSegmentBlock(pendingThoughts, events, recordNumberById));
+        output.push(canonicalAssistantSegmentBlock(pendingThoughts, events));
         pendingThoughts = [];
         return;
       }
@@ -2849,7 +2772,7 @@
       if (canonicalEvent && canonicalMessageRecordEligible(record, canonicalEvent)) {
         if (record?.author?.role === 'user') {
           flushPendingAssistant();
-          output.push(canonicalRecordBlock(record, canonicalEvent, recordNumberById.get(record.id) ?? null));
+          output.push(canonicalRecordBlock(record, canonicalEvent));
           continue;
         }
         if (record?.author?.role === 'assistant' && canonicalEvent?.kind === 'commentary') {
@@ -2900,7 +2823,7 @@
               event_kinds: segmentEvents.map(event => event?.kind ?? null),
               output_index_before_append: output.length
             });
-            const renderedSegment = canonicalAssistantSegmentBlock(segmentRecords, segmentEvents, recordNumberById);
+            const renderedSegment = canonicalAssistantSegmentBlock(segmentRecords, segmentEvents);
             output.push(renderedSegment);
             if (diagnosticEnabled('debug')) {
               logDiagnostic('debug', 'conversation-markdown-block-appended', {
@@ -2916,7 +2839,7 @@
           }
         }
         if (record?.author?.role === 'assistant' && pendingThoughts.length === 0) {
-          output.push(canonicalRecordBlock(record, canonicalEvent, recordNumberById.get(record.id) ?? null));
+          output.push(canonicalRecordBlock(record, canonicalEvent));
           continue;
         }
       }
@@ -2929,7 +2852,7 @@
       const userText = cgVisibleUserText(record, fileRefIndex, recoveredImages);
       if (userText) {
         flushPendingAssistant();
-        output.push(`${transcriptHeading(record, recordNumberById.get(record.id) ?? null)}\n\n${quoteMarkdown(userText)}`);
+        output.push(`${transcriptHeading(record, canonicalEvent)}\n\n${quoteMarkdown(userText)}`);
         continue;
       }
       const assistantText = cgVisibleAssistantMarkdown(record, fileRefIndex, recoveredImages);
@@ -4313,12 +4236,12 @@ Image elapsed: ${formatDuration(imageElapsed)} — Completed: ${imageCompleted}/
     assert(markdown.indexOf(recoveredToken) < markdown.indexOf(missingToken) &&
       markdown.indexOf(missingToken) < markdown.indexOf('First User'),
       'recovered/missing image tokens did not remain in source order.');
-    const u1 = markdown.indexOf('<!-- turn_id=u1 -->');
-    const a1 = markdown.indexOf('<!-- turn_id=a1 -->');
-    const u2 = markdown.indexOf('<!-- turn_id=u2 -->');
-    const a2 = markdown.indexOf('<!-- turn_id=a2 -->');
+    const u1 = markdown.indexOf('First User');
+    const a1 = markdown.indexOf('First Assistant');
+    const u2 = markdown.indexOf('Second User');
+    const a2 = markdown.indexOf('Second Assistant');
     assert(u1 >= 0 && a1 >= 0 && u2 >= 0 && a2 >= 0,
-      'chronological rendering test did not emit all expected headings.');
+      'chronological rendering test did not emit all expected source content.');
     assert(u1 < a1 && a1 < u2 && u2 < a2,
       'Conversation API Markdown rendering did not preserve chronological record order.');
 }

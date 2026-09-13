@@ -6,7 +6,7 @@ import vm from 'node:vm';
 const userscript = await readFile(new URL('../chatgpt-conversation-markdown-export.user.js', import.meta.url), 'utf8');
 const requireMatch = userscript.match(/^\/\/ @require\s+(https:\/\/raw\.githubusercontent\.com\/Ma-XX-oN\/AIConversationCore\/([0-9a-f]{40})\/dist\/aiconversationcore\.chatgpt\.browser\.js)$/m);
 assert.ok(requireMatch, 'Production userscript must pin the AIConversationCore browser bundle to an exact commit.');
-assert.equal(requireMatch[2], '3233cba838bbf2d2cea5a2a6f1900ed6014dcfb0');
+assert.equal(requireMatch[2], 'b7961cb8dab11611a5af8f4304ae783295998cf2');
 
 const response = await fetch(requireMatch[1]);
 assert.equal(response.status, 200, `Could not load pinned AIConversationCore bundle: HTTP ${response.status}`);
@@ -25,7 +25,7 @@ const helperSource = userscript.slice(start + begin.length, finish);
 Object.assign(context, {
   showTimestamps: false,
   showRecordNumbers: false,
-  showTurnIds: true,
+  showTurnIds: false,
   assert(condition, message) {
     if (!condition) throw new Error(message);
   },
@@ -43,16 +43,7 @@ Object.assign(context, {
     const text = String(value ?? '');
     return text.length <= maxChars ? text : `${text.slice(0, maxChars)}…`;
   },
-  CG_INLINE_TOKEN_START: '\ue200',
-  transcriptHeading(record) {
-    const id = typeof record?.id === 'string' ? record.id : '';
-    if (record?.author?.role === 'user') return `## User${id ? ` <!-- turn_id=${id} -->` : ''}`;
-    if (record?.author?.role === 'assistant' && record?.channel === 'commentary') {
-      return `## ChatGPT Commentary${id ? ` <!-- turn_id=${id} -->` : ''}`;
-    }
-    if (record?.author?.role === 'assistant') return `## ChatGPT${id ? ` <!-- turn_id=${id} -->` : ''}`;
-    return '';
-  }
+  CG_INLINE_TOKEN_START: '\ue200'
 });
 
 vm.runInNewContext(`${helperSource}\nthis.__phase5rich = { canonicalEventsBySourceRecord, canonicalMessageRecordEligible, canonicalRecordBlock, canonicalThoughtRecordEligible, canonicalAssistantSegmentEligible, canonicalAssistantSegmentBlock };`, context);
@@ -82,9 +73,9 @@ test('production render loop routes rich messages and thought/tool segments thro
   assert.match(production, /canonicalMessageRecordEligible\(record, canonicalEvent\)/);
   assert.match(production, /canonicalThoughtRecordEligible\(record, canonicalEvent\)/);
   assert.match(production, /canonicalAssistantSegmentEligible\(segmentRecords, segmentEvents\)/);
-  assert.match(production, /canonicalAssistantSegmentBlock\(segmentRecords, segmentEvents, recordNumberById\)/);
-  assert.match(production, /canonicalAssistantSegmentBlock\(pendingThoughts, events, recordNumberById\)/);
-  assert.match(production, /canonicalRecordBlock\(record, canonicalEvent, recordNumberById\.get\(record\.id\) \?\? null\)/);
+  assert.match(production, /canonicalAssistantSegmentBlock\(segmentRecords, segmentEvents\)/);
+  assert.match(production, /canonicalAssistantSegmentBlock\(pendingThoughts, events\)/);
+  assert.match(production, /canonicalRecordBlock\(record, canonicalEvent\)/);
 });
 
 test('rich web citation renders through AIConversationCore while preserving source turn_id', () => {
@@ -105,8 +96,11 @@ test('rich web citation renders through AIConversationCore while preserving sour
   });
   const event = phase5.canonicalEventsBySourceRecord([record]).get(record.id);
   assert.equal(phase5.canonicalMessageRecordEligible(record, event), true);
+  context.showTurnIds = true;
   const rendered = phase5.canonicalRecordBlock(record, event);
-  assert.match(rendered, /^## ChatGPT <!-- turn_id=assistant-citation -->/);
+  context.showTurnIds = false;
+  assert.match(rendered, /^## ChatGPT turn_id=assistant-citation$/m);
+  assert.doesNotMatch(rendered, /<!-- turn_id=/);
   assert.match(rendered, /\*\*\(cite:/);
   assert.match(rendered, /Example<\/a>/);
   assert.equal(rendered.includes(marker), false);
@@ -193,7 +187,7 @@ test('recovered image bytes enrich canonical image resources and preserve image-
   const imageAt = rendered.indexOf('![image](data:image/png;base64,AAAA)');
   const textAt = rendered.indexOf('After image');
   assert.ok(imageAt >= 0 && textAt > imageAt, 'Recovered image must stay before adjacent source text.');
-  assert.match(rendered, /^## User <!-- turn_id=user-image -->/);
+  assert.match(rendered, /^## User$/m);
 });
 
 test('unavailable and missing recovered-image states remain distinct in canonical resources', () => {
@@ -249,7 +243,7 @@ test('Thoughts, tool call/result, and final Assistant message render as one cano
   assert.equal(phase5.canonicalThoughtRecordEligible(result, events[2]), true);
   assert.equal(phase5.canonicalAssistantSegmentEligible(records, events), true);
   const rendered = phase5.canonicalAssistantSegmentBlock(records, events);
-  assert.match(rendered, /^## ChatGPT <!-- turn_id=assistant-final-rich -->/);
+  assert.match(rendered, /^## ChatGPT$/m);
   assert.match(rendered, /<summary>Having a thought<\/summary>/);
   assert.match(rendered, /Inspecting\./);
   assert.match(rendered, /container\.exec code/);
@@ -299,8 +293,8 @@ test('commentary plus tool activity uses canonical adaptive containment', () => 
   assert.equal(phase5.canonicalMessageRecordEligible(commentary, events[2]), true, 'commentary eligibility');
   assert.equal(phase5.canonicalAssistantSegmentEligible(records, events), true, 'whole segment eligibility');
   const rendered = phase5.canonicalAssistantSegmentBlock(records, events);
-  assert.match(rendered, /^## ChatGPT <!-- turn_id=commentary-message -->/);
-  assert.match(rendered, /^### ChatGPT Commentary <!-- turn_id=commentary-message -->$/m);
+  assert.match(rendered, /^## ChatGPT$/m);
+  assert.match(rendered, /^### ChatGPT Commentary$/m);
   assert.equal((rendered.match(/^## ChatGPT(?: |$)/gm) ?? []).length, 1,
     'Commentary + tool activity must remain inside exactly one ChatGPT response section.');
   assert.match(rendered, /\n`````\n\[L1\] literal tool payload/);
@@ -420,8 +414,8 @@ test('tool-role text/code results keep complete Assistant segments canonical', (
       `${contentType} complete Assistant/tool segment must stay canonical`);
 
     const rendered = phase5.canonicalAssistantSegmentBlock(records, events);
-    assert.match(rendered, new RegExp(`^## ChatGPT <!-- turn_id=commentary-${contentType} -->`));
-    assert.match(rendered, new RegExp(`^### ChatGPT Commentary <!-- turn_id=commentary-${contentType} -->$`, 'm'));
+    assert.match(rendered, /^## ChatGPT$/m);
+    assert.match(rendered, /^### ChatGPT Commentary$/m);
     assert.match(rendered, /<summary>example_tool output<\/summary>/);
     assert.ok(rendered.includes(expectedOutput), `${contentType} output must be rendered`);
     assert.match(rendered, /> After tool\./);
@@ -451,7 +445,7 @@ test('literal ChatGPT heading inside tool output stays opaque', () => {
 
   assert.equal(phase5.canonicalAssistantSegmentEligible(records, events), true);
   const rendered = phase5.canonicalAssistantSegmentBlock(records, events);
-  assert.match(rendered, /^## ChatGPT <!-- turn_id=opaque-heading-final -->/);
+  assert.match(rendered, /^## ChatGPT$/m);
   assert.match(rendered, /retrieved transcript snippet/);
   assert.match(rendered, /## ChatGPT\n\nThis is literal tool payload\./);
   assert.match(rendered, /> Done\./);
@@ -468,8 +462,8 @@ test('commentary plus final message is accepted as one canonical ChatGPT respons
   const events = records.map(record => byRecord.get(record.id));
   assert.equal(phase5.canonicalAssistantSegmentEligible(records, events), true);
   const rendered = phase5.canonicalAssistantSegmentBlock(records, events);
-  assert.match(rendered, /^## ChatGPT <!-- turn_id=split-final -->/);
-  assert.match(rendered, /^### ChatGPT Commentary <!-- turn_id=split-commentary -->$/m);
+  assert.match(rendered, /^## ChatGPT$/m);
+  assert.match(rendered, /^### ChatGPT Commentary$/m);
   assert.equal((rendered.match(/^## ChatGPT(?: |$)/gm) ?? []).length, 1);
   assert.match(rendered, /> Interim\./);
   assert.match(rendered, /> Final\./);

@@ -128,32 +128,23 @@ Until those later phases are complete, the DOM recorder remains part of the prod
 
 ## Optional Markdown heading metadata
 
-The recorder exposes independent **Timestamp** and **Record #** controls for
-Markdown exports.  Both are presentation-only.  Timestamp formatting matches
-`AI-transcript.py -d` (`YYYY-MM-DD HH:MM:SS` in local time), while record
-numbers are the one-based JSONL line numbers from the paired export.  Because
-DownloadConversation prepends a conversation-metadata record, the first
-Conversation API message is JSONL record 2.  Existing source `turn_id` comments
-remain unchanged.  Canonical records pass this metadata through
-AIConversationCore; the legacy fallback path preserves the same visible format.
-
-## Optional Markdown heading metadata
-
 DownloadConversation exposes three independent persistent Markdown-heading controls:
 
-- **Timestamp**: source create/update time rendered in local `YYYY-MM-DD HH:MM:SS`
-  form.  Default: off.
-- **Record #**: the one-based JSONL record number.  Because JSONL record 1 is
-  conversation metadata, the first visible source message is record 2.  Default:
-  off.
-- **Turn ID**: the ChatGPT source message ID rendered using the established
-  `<!-- turn_id=... -->` heading comment.  Default: on so existing Markdown output
-  remains unchanged unless the user disables it.
+- **Timestamp**: Core derives the source create/update timestamp and renders local
+  `YYYY-MM-DD HH:MM:SS` presentation. Default: off.
+- **Record #**: Core derives the one-based JSONL record number from canonical
+  source provenance. DownloadConversation prepends conversation metadata as JSONL
+  record 1, so the first visible ChatGPT source message is record 2. Default: off.
+- **Turn ID**: Core derives the ChatGPT native source/message ID and renders it as
+  visible `turn_id=...` heading metadata. Default: off.
 
-These are presentation-only controls.  They do not change chronology, grouping,
-UAP association, API pagination, recovery, or canonical normalization.
-
-
+The visible order is speaker, timestamp, record number, then Turn ID. Ordinary
+Markdown does not encode Turn ID as an HTML comment. DownloadConversation supplies
+only these presentation visibility switches to AIConversationCore; it does not
+format timestamps, compute record numbers, or inject semantic turn IDs itself.
+Canonical and host fallback bodies therefore use the same Core-owned heading
+serialization. These controls do not change chronology, grouping, UAP association,
+API pagination, recovery, or canonical normalization.
 
 ## Image recovery and export performance diagnostics
 
