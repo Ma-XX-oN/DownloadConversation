@@ -36,6 +36,19 @@ replace_once(
 
 phase5 = Path('tests/phase5-rich-core-integration.test.mjs')
 replace_once(phase5, CORE_OLD, CORE_NEW, 'phase5 Core pin')
+replace_once(
+  phase5,
+  "assert.match(rendered, /^## ChatGPT turn_id=assistant-citation$/m);",
+  "assert.match(rendered, /^## ChatGPT assistant-citation$/m);",
+  'rich bare Turn ID expectation')
+replace_once(
+  phase5,
+  "assert.doesNotMatch(rendered, /<!-- turn_id=/);",
+  "assert.doesNotMatch(rendered, /turn_id=/);",
+  'rich obsolete Turn ID prefix rejection')
+
+sediment = Path('tests/sediment-resolver.test.mjs')
+replace_once(sediment, CORE_OLD, CORE_NEW, 'sediment Core pin')
 
 heading_test = Path('tests/heading-metadata-controls.test.mjs')
 replace_once(heading_test, '0\\.6\\.173', '0\\.6\\.174', 'userscript version expectation')
