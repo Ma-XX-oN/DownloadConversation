@@ -28,6 +28,7 @@ Object.assign(context, {
   showTimestamps: false,
   showRecordNumbers: false,
   showTurnIds: false,
+  showDebugProvenance: false,
   assert(condition, message) {
     if (!condition) throw new Error(message);
   },
@@ -81,7 +82,8 @@ function productionPlainBlock(record) {
     heading: {
       timestamp: context.showTimestamps,
       recordNumber: context.showRecordNumbers,
-      turnId: context.showTurnIds
+      turnId: context.showTurnIds,
+      debugProvenance: context.showDebugProvenance
     }
   }).trimEnd();
 }
@@ -105,15 +107,24 @@ test('canonical heading controls are Core-owned, independent, ordered, and JSONL
   context.showTurnIds = true;
   assert.match(render(), /^## User metadata-user$/m);
   assert.doesNotMatch(render(), /turn_id=/);
+  context.showTurnIds = false;
 
+  context.showDebugProvenance = true;
+  assert.match(render(), /^## User <!-- record_id=metadata-user record_index=1 -->$/m);
+  context.showDebugProvenance = false;
+  assert.doesNotMatch(render(), /record_id=metadata-user/);
+
+  context.showTurnIds = true;
+  context.showDebugProvenance = true;
   context.showTimestamps = true;
   context.showRecordNumbers = true;
   const combined = render();
   assert.match(combined,
-    /^## User \[[0-9]{4}-[0-9]{2}-[0-9]{2} [0-9]{2}:[0-9]{2}:[0-9]{2}\]: 2: metadata-user$/m);
+    /^## User \[[0-9]{4}-[0-9]{2}-[0-9]{2} [0-9]{2}:[0-9]{2}:[0-9]{2}\]: 2: metadata-user <!-- record_id=metadata-user record_index=1 -->$/m);
   context.showTimestamps = false;
   context.showRecordNumbers = false;
   context.showTurnIds = false;
+  context.showDebugProvenance = false;
 });
 
 test('canonical plain production slice preserves source heading identity and JSONL provenance', () => {

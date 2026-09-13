@@ -128,7 +128,7 @@ Until those later phases are complete, the DOM recorder remains part of the prod
 
 ## Optional Markdown heading metadata
 
-DownloadConversation exposes three independent persistent Markdown-heading controls:
+DownloadConversation exposes four independent persistent Markdown-heading controls:
 
 - **Timestamp**: Core derives the source create/update timestamp and renders local
   `YYYY-MM-DD HH:MM:SS` presentation. Default: off.
@@ -138,14 +138,21 @@ DownloadConversation exposes three independent persistent Markdown-heading contr
 - **Turn ID**: Core derives the ChatGPT native source/message ID and renders the
   bare native ID value as visible heading metadata, without a `turn_id=` prefix.
   Default: off.
+- **Debug**: Core derives source debug provenance and appends the canonical
+  `record_id=... record_index=...` HTML comment to the heading. One checkbox controls
+  the provenance channel as a unit; DownloadConversation does not construct either
+  field. Default: off.
 
-The visible order is speaker, timestamp, record number, then Turn ID. Ordinary
+The visible order is speaker, timestamp, record number, then Turn ID; when Debug
+is enabled, the Core-owned provenance comment follows that heading metadata. Ordinary
 Markdown does not encode Turn ID as an HTML comment. DownloadConversation supplies
 only these presentation visibility switches to AIConversationCore; it does not
-format timestamps, compute record numbers, or inject semantic turn IDs itself.
-Canonical and host fallback bodies therefore use the same Core-owned heading
-serialization. These controls do not change chronology, grouping, UAP association,
-API pagination, recovery, or canonical normalization.
+format timestamps, compute record numbers, inject semantic turn IDs, or construct
+debug provenance itself. The Debug export checkbox is independent of the recorder
+diagnostic-log level (`errors` / `warnings` / `debug` / `verbose`). Canonical and
+host fallback bodies therefore use the same Core-owned heading serialization. These
+controls do not change chronology, grouping, UAP association, API pagination,
+recovery, or canonical normalization.
 
 ## Image recovery and export performance diagnostics
 

@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         ChatGPT Conversation Markdown Recorder
 // @namespace    https://chatgpt.com/
-// @version      0.6.174
+// @version      0.6.175
 // @description  Exports the current ChatGPT conversation directly from the Conversation API as Markdown or JSONL.
 // @match        https://chatgpt.com/*
 // @match        https://chat.openai.com/*
@@ -37,6 +37,8 @@
   const SHOW_RECORD_NUMBERS_STORAGE_KEY = 'tm-conversation-recorder-show-record-numbers';
   /** Local-storage key for Markdown source/provider turn-ID visibility. */
   const SHOW_TURN_IDS_STORAGE_KEY = 'tm-conversation-recorder-show-turn-ids';
+  /** Local-storage key for Markdown Core debug-provenance visibility. */
+  const SHOW_DEBUG_PROVENANCE_STORAGE_KEY = 'tm-conversation-recorder-show-debug-provenance';
   /** Session-storage key for the retained recorder diagnostic log. */
   const DIAGNOSTIC_LOG_STORAGE_KEY = 'tm-conversation-recorder-diagnostic-log';
   /** Maximum number of diagnostic entries retained in memory and session storage. */
@@ -62,6 +64,8 @@
   let showRecordNumbers = localStorage.getItem(SHOW_RECORD_NUMBERS_STORAGE_KEY) === 'true';
   /** Whether Markdown headings should include source/provider turn IDs. */
   let showTurnIds = localStorage.getItem(SHOW_TURN_IDS_STORAGE_KEY) === 'true';
+  /** Whether Markdown headings should include Core-derived source debug provenance. */
+  let showDebugProvenance = localStorage.getItem(SHOW_DEBUG_PROVENANCE_STORAGE_KEY) === 'true';
   /** Active screen wake-lock handle, or null when no lock is held. */
   let wakeLockSentinel = null;
   /** Serializes export work so overlapping extraction runs cannot start. */
@@ -2497,7 +2501,8 @@
       heading: {
         timestamp: showTimestamps,
         recordNumber: showRecordNumbers,
-        turnId: showTurnIds
+        turnId: showTurnIds,
+        debugProvenance: showDebugProvenance
       }
     };
   }
@@ -4926,6 +4931,7 @@ Image elapsed: ${formatDuration(imageElapsed)} — Completed: ${imageCompleted}/
     const timestamps = panel.querySelector('[data-role="show-timestamps"]');
     const recordNumbers = panel.querySelector('[data-role="show-record-numbers"]');
     const turnIds = panel.querySelector('[data-role="show-turn-ids"]');
+    const debugProvenance = panel.querySelector('[data-role="show-debug-provenance"]');
     const test = panel.querySelector('[data-role="test"]');
     const jump = panel.querySelector('[data-role="jump"]');
     const formatsSelected = Boolean(jsonl?.checked || md?.checked);
@@ -4939,6 +4945,7 @@ Image elapsed: ${formatDuration(imageElapsed)} — Completed: ${imageCompleted}/
     if (timestamps) timestamps.disabled = metadataDisabled;
     if (recordNumbers) recordNumbers.disabled = metadataDisabled;
     if (turnIds) turnIds.disabled = metadataDisabled;
+    if (debugProvenance) debugProvenance.disabled = metadataDisabled;
     if (test) {
       test.disabled = exportInProgress || testInProgress || jumpInProgress;
       test.textContent = testInProgress ? 'Testing…' : 'Test';
@@ -5537,7 +5544,7 @@ Image elapsed: ${formatDuration(imageElapsed)} — Completed: ${imageCompleted}/
       <div class="tm-row"><span class="tm-label">Screen on when extracting</span><button class="tm-switch" data-role="screen-on" type="button" role="switch" aria-checked="false" aria-label="Keep screen on while extracting"><span class="tm-switch-thumb"></span></button></div>
       <div class="tm-row"><button data-role="jump" type="button">Jump</button></div>
       <div class="tm-row tm-extract-formats"><button data-role="extract" type="button">Extract</button><label><input data-role="format-jsonl" type="checkbox"> JSONL</label><label><input data-role="format-md" type="checkbox" checked> MD</label></div>
-      <div class="tm-row tm-md-metadata"><span class="tm-label">MD headings</span><label><input data-role="show-timestamps" type="checkbox"> Timestamp</label><label><input data-role="show-record-numbers" type="checkbox"> Record #</label><label><input data-role="show-turn-ids" type="checkbox"> Turn ID</label></div>
+      <div class="tm-row tm-md-metadata"><span class="tm-label">MD headings</span><label><input data-role="show-timestamps" type="checkbox"> Timestamp</label><label><input data-role="show-record-numbers" type="checkbox"> Record #</label><label><input data-role="show-turn-ids" type="checkbox"> Turn ID</label><label><input data-role="show-debug-provenance" type="checkbox"> Debug</label></div>
     `;
     panel.querySelector('.tm-close').addEventListener('click', () => {
       panel.style.display = 'none';
@@ -5577,6 +5584,7 @@ Image elapsed: ${formatDuration(imageElapsed)} — Completed: ${imageCompleted}/
     const timestamps = panel.querySelector('[data-role="show-timestamps"]');
     const recordNumbers = panel.querySelector('[data-role="show-record-numbers"]');
     const turnIds = panel.querySelector('[data-role="show-turn-ids"]');
+    const debugProvenance = panel.querySelector('[data-role="show-debug-provenance"]');
     if (timestamps) {
       timestamps.checked = showTimestamps;
       timestamps.addEventListener('change', () => {
@@ -5598,6 +5606,14 @@ Image elapsed: ${formatDuration(imageElapsed)} — Completed: ${imageCompleted}/
       turnIds.addEventListener('change', () => {
         showTurnIds = turnIds.checked;
         localStorage.setItem(SHOW_TURN_IDS_STORAGE_KEY, String(showTurnIds));
+        updateUi();
+      });
+    }
+    if (debugProvenance) {
+      debugProvenance.checked = showDebugProvenance;
+      debugProvenance.addEventListener('change', () => {
+        showDebugProvenance = debugProvenance.checked;
+        localStorage.setItem(SHOW_DEBUG_PROVENANCE_STORAGE_KEY, String(showDebugProvenance));
         updateUi();
       });
     }
