@@ -49,6 +49,7 @@ replace_once(
 
 sediment = Path('tests/sediment-resolver.test.mjs')
 replace_once(sediment, CORE_OLD, CORE_NEW, 'sediment Core pin')
+replace_once(sediment, '0\\.6\\.173', '0\\.6\\.174', 'sediment userscript version expectation')
 
 heading_test = Path('tests/heading-metadata-controls.test.mjs')
 replace_once(heading_test, '0\\.6\\.173', '0\\.6\\.174', 'userscript version expectation')
