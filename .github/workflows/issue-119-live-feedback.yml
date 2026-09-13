@@ -41,7 +41,13 @@ jobs:
         run: python scripts/issue-119-live-feedback.py --check
 
       - name: Apply live-evidence correction
-        run: python scripts/issue-119-live-feedback.py
+        run: |
+          python scripts/issue-119-live-feedback.py
+          python - <<'PY'
+          from pathlib import Path
+          path = Path('DESIGN.md')
+          path.write_text(path.read_text(encoding='utf-8').rstrip() + '\n', encoding='utf-8')
+          PY
 
       - name: Diff preflight
         run: |
