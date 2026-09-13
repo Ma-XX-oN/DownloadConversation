@@ -4,27 +4,7 @@ on:
   push:
   pull_request:
 
-permissions:
-  contents: write
-
 jobs:
-  issue120-harness-correction:
-    if: github.ref_name == 'issue-120-debug-provenance-checkbox' && github.actor != 'github-actions[bot]'
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-        with:
-          fetch-depth: 0
-      - name: Apply issue 120 harness correction
-        run: python scripts/fix-issue120-harnesses.py
-      - name: Commit harness correction
-        run: |
-          git config user.name 'github-actions[bot]'
-          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
-          git add tests/phase5-rich-core-integration.test.mjs tests/phase7-cross-consumer-parity.mjs tests/phase7-cross-consumer-markdown-shape.mjs tests/phase7-cross-consumer-adversarial.mjs
-          git commit -m 'test: default Debug provenance off in isolated harnesses (#120)'
-          git push
-
   test:
     runs-on: ubuntu-latest
     steps:
