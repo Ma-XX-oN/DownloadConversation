@@ -34,6 +34,31 @@ jobs:
           PY
       - name: Apply issue 102 migration
         run: python scripts/issue102-migrate.py
+      - name: Use stable production boundary in issue 102 regression
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+
+          path = Path('tests/export-single-snapshot.test.mjs')
+          text = path.read_text(encoding='utf-8')
+          start = text.index('function productionFunctionSource(name) {')
+          end = text.index('\n\nfunction exportHarness()', start)
+          replacement = '''function runExportSource() {
+            const start = userscript.indexOf('  async function runExport(kinds) {');
+            const end = userscript.indexOf(
+              '\\n  /**\\n   * Tests API pagination logic.',
+              start
+            );
+            assert.ok(start >= 0 && end > start, 'Production runExport function is missing.');
+            return userscript.slice(start, end).trimStart();
+          }'''
+          text = text[:start] + replacement + text[end:]
+          old = "${productionFunctionSource('runExport')}\\nthis.__runExport = runExport;"
+          new = "${runExportSource()}\\nthis.__runExport = runExport;"
+          if text.count(old) != 1:
+            raise RuntimeError(f'runExport harness invocation: expected one match, found {text.count(old)}')
+          path.write_text(text.replace(old, new, 1), encoding='utf-8')
+          PY
       - name: JavaScript syntax
         run: node --check chatgpt-conversation-markdown-export.user.js
       - name: Production JSDoc coverage
