@@ -143,7 +143,7 @@ test('distinct store deduplicates repeated states and bounds mutation storms', a
     store.push(`state-${index}`, { index });
   }
   assert.equal(store.items.length, 5);
-  assert.deepEqual(store.items.map(item => item.index), [995, 996, 997, 998, 999]);
+  assert.deepEqual(Array.from(store.items, item => item.index), [995, 996, 997, 998, 999]);
 });
 
 test('distinct final-turn state history preserves intermediate then final state order', async () => {
@@ -154,7 +154,7 @@ test('distinct final-turn state history preserves intermediate then final state 
   assert.equal(store.push(api.hashText(JSON.stringify(intermediate)), intermediate), true);
   assert.equal(store.push(api.hashText(JSON.stringify(final)), final), true);
   assert.equal(store.push(api.hashText(JSON.stringify(final)), final), false);
-  assert.deepEqual(store.items.map(item => item.text), ['partial', 'complete']);
+  assert.deepEqual(Array.from(store.items, item => item.text), ['partial', 'complete']);
 });
 
 test('logger never injects or rewrites transcript content', async () => {
