@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         ChatGPT Conversation Markdown Recorder
 // @namespace    https://chatgpt.com/
-// @version      0.6.175
+// @version      0.6.176
 // @description  Exports the current ChatGPT conversation directly from the Conversation API as Markdown or JSONL.
 // @match        https://chatgpt.com/*
 // @match        https://chat.openai.com/*
@@ -3953,17 +3953,23 @@ Image elapsed: ${formatDuration(imageElapsed)} — Completed: ${imageCompleted}/
   }
 
   /**
-   * Runs one requested Conversation API export from acquisition through optional image recovery, rendering/serialization, download, status, and failure diagnostics.
+   * Acquires one Conversation API snapshot and generates every selected export from that same spine.
    *
-   * @param {Object} kind - The export kind to execute.
-   * @returns {void} No value is returned.
+   * @param {Array<'jsonl'|'md'>} kinds - Selected output formats; JSONL is generated before Markdown when both are selected.
+   * @returns {Promise<void>} Resolves after selected exports finish or their failure is reported and export state is released.
    */
-  async function runExport(kind) {
+  async function runExport(kinds) {
     if (exportInProgress || testInProgress || jumpInProgress) return;
+    assert(Array.isArray(kinds) && kinds.length > 0, 'At least one export format must be selected.');
+    /** Deduplicated output formats executed from one authoritative Conversation API snapshot. */
+    const requestedKinds = [...new Set(kinds)];
+    assert(requestedKinds.every(kind => kind === 'jsonl' || kind === 'md'), 'Unsupported export format selected.');
+    /** Format currently being serialized, used by shared status and failure reporting. */
+    let activeKind = requestedKinds[0];
     const conversationId = currentConversationId();
     assert(conversationId, 'Current page is not a ChatGPT conversation.');
     exportInProgress = true;
-    exportKind = kind;
+    exportKind = activeKind;
     progressState = {
       started_at: performance.now(),
       stage: 'fetching',
@@ -3989,14 +3995,19 @@ Image elapsed: ${formatDuration(imageElapsed)} — Completed: ${imageCompleted}/
         refreshStatus();
       });
       const spine = conversationSpineFromPages(fetched.pages);
-      if (kind === 'jsonl') {
+      if (requestedKinds.includes('jsonl')) {
+        activeKind = 'jsonl';
+        exportKind = activeKind;
         const filename = `${sanitizeFileName(conversationTitle())}.jsonl`;
         downloadBlob(
           new Blob([apiRecordsJsonl(spine)], { type: 'application/x-ndjson;charset=utf-8' }),
           filename
         );
         setStatus(`Extracted ${spine.records.length} API records from ${fetched.pages.length} API page(s) to ${filename}.`);
-      } else {
+      }
+      if (requestedKinds.includes('md')) {
+        activeKind = 'md';
+        exportKind = activeKind;
         progressState.stage = 'recovering-images';
         const recoveredImageMap = await recoverUserImages(spine);
         progressState.stage = 'rendering';
@@ -4076,14 +4087,14 @@ Image elapsed: ${formatDuration(imageElapsed)} — Completed: ${imageCompleted}/
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
       logDiagnostic('errors', 'conversation-export-failure', {
-        kind,
+        kind: activeKind,
         stage: progressState?.stage ?? null,
         record_number: progressState?.record_number ?? null,
         record_count: progressState?.record_count ?? null,
         message
       });
       setStatus(
-        `${kind === 'md' ? 'Markdown' : 'JSONL'} extraction failed: ${message}`
+        `${activeKind === 'md' ? 'Markdown' : 'JSONL'} extraction failed: ${message}`
       );
     } finally {
       progressState = null;
@@ -5625,8 +5636,11 @@ Image elapsed: ${formatDuration(imageElapsed)} — Completed: ${imageCompleted}/
     const runSelectedExports = async () => {
       const jsonl = panel.querySelector('[data-role="format-jsonl"]');
       const md = panel.querySelector('[data-role="format-md"]');
-      if (jsonl?.checked) await runExport('jsonl');
-      if (md?.checked) await runExport('md');
+      /** Selected output formats generated from the same acquired Conversation API snapshot. */
+      const kinds = [];
+      if (jsonl?.checked) kinds.push('jsonl');
+      if (md?.checked) kinds.push('md');
+      if (kinds.length) await runExport(kinds);
     };
     panel.querySelector('[data-role="extract"]').addEventListener('click', () => void runSelectedExports());
     panel.querySelector('[data-role="format-jsonl"]').addEventListener('change', updateUi);

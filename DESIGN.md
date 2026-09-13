@@ -154,6 +154,19 @@ host fallback bodies therefore use the same Core-owned heading serialization. Th
 controls do not change chronology, grouping, UAP association, API pagination,
 recovery, or canonical normalization.
 
+## Single-snapshot multi-format export
+
+One Extract operation acquires the Conversation API exactly once, regardless of
+whether JSONL, Markdown, or both formats are selected. The existing pagination,
+deduplication, and oldest-to-newest ordering logic produces one authoritative
+in-memory conversation spine. Every selected serializer then consumes that same
+spine; selecting both formats does not trigger a second API acquisition.
+
+JSONL serialization and Markdown rendering remain independent after acquisition,
+including Markdown image recovery and Core rendering. Sharing the source snapshot
+ensures both files from one Extract click describe the same Conversation API state
+even if the live conversation changes while output generation is still running.
+
 ## Image recovery and export performance diagnostics
 
 Image-heavy Markdown exports keep the established serial recovery order and

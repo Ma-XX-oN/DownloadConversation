@@ -250,7 +250,7 @@ test('plain Assistant thought segments use the canonical renderer', () => {
 
 
 test('production export catch records exact extraction failure diagnostics', () => {
-  const start = userscript.indexOf('  async function runExport(kind)');
+  const start = userscript.indexOf('  async function runExport(');
   const end = userscript.indexOf('\n  async function testApiPaginationLogic()', start);
   assert.ok(start >= 0 && end > start, 'runExport production function is missing.');
   const production = userscript.slice(start, end);

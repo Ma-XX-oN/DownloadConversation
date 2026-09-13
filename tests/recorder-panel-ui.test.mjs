@@ -45,8 +45,9 @@ test('recorder panel restores dialog/log/switch/extract UI contracts', () => {
   assert.match(userscript, /showTurnIds = localStorage\.getItem\(SHOW_TURN_IDS_STORAGE_KEY\) === 'true'/);
   assert.doesNotMatch(userscript, /data-role="extract-jsonl"/);
   assert.doesNotMatch(userscript, /data-role="extract-md"/);
-  assert.match(userscript, /if \(jsonl\?\.checked\) await runExport\('jsonl'\)/);
-  assert.match(userscript, /if \(md\?\.checked\) await runExport\('md'\)/);
+  assert.match(userscript, /if \(jsonl\?\.checked\) kinds\.push\('jsonl'\)/);
+  assert.match(userscript, /if \(md\?\.checked\) kinds\.push\('md'\)/);
+  assert.match(userscript, /if \(kinds\.length\) await runExport\(kinds\)/);
   assert.match(userscript, /const totalImages = records\.reduce\(\(total, item\) => total \+ userImagePointerCount\(item\?\.message\), 0\);/,
     'Image recovery must calculate the total image count before recovery begins.');
   assert.match(userscript, /recovering image \${imageNumber}\/\${imageCount}/,

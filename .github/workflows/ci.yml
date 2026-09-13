@@ -16,6 +16,8 @@ jobs:
         run: node scripts/check-jsdoc.mjs
       - name: JavaScript syntax
         run: node --check chatgpt-conversation-markdown-export.user.js
+      - name: Single-snapshot export regression
+        run: node --test tests/export-single-snapshot.test.mjs
       - name: Canonical final-render regressions
         run: node --test tests/core-integration.test.mjs tests/phase5-rich-core-integration.test.mjs tests/fallback-adaptive-fence.test.mjs tests/tool-language-diagnostics.test.mjs tests/sediment-resolver.test.mjs
       - name: Built-in test list UI regression
