@@ -28,9 +28,14 @@ jobs:
 
       - name: Restore accidentally overwritten production files without rewriting history
         run: |
-          git checkout 16066ed7e893433c049956d7d4e6d1d63529304f -- README.md chatgpt-conversation-markdown-export.user.js
+          git checkout 16066ed7e893433c049956d7d4e6d1d63529304f -- chatgpt-conversation-markdown-export.user.js
+          rm README.md
           git diff --check
-          diff -u <(git show 16066ed7e893433c049956d7d4e6d1d63529304f:README.md) README.md
+          test ! -e README.md
+          if git cat-file -e 16066ed7e893433c049956d7d4e6d1d63529304f:README.md 2>/dev/null; then
+            echo 'Unexpected README.md exists in the clean pre-accident tree.' >&2
+            exit 1
+          fi
 
       - name: Patch dry run
         run: python scripts/issue-119-live-feedback.py --check
@@ -56,7 +61,7 @@ jobs:
           if changed != expected:
             raise SystemExit(f'Unexpected changed files: {sorted(changed)}')
           PY
-          diff -u <(git show 16066ed7e893433c049956d7d4e6d1d63529304f:README.md) README.md
+          test ! -e README.md
 
       - name: Verify version, page size, and Core pin
         run: |
@@ -86,7 +91,7 @@ jobs:
         run: |
           git config user.name github-actions[bot]
           git config user.email 41898282+github-actions[bot]@users.noreply.github.com
-          git add README.md DESIGN.md chatgpt-conversation-markdown-export.user.js tests/heading-metadata-controls.test.mjs tests/recorder-panel-ui.test.mjs tests/tool-language-diagnostics.test.mjs
+          git add -A README.md DESIGN.md chatgpt-conversation-markdown-export.user.js tests/heading-metadata-controls.test.mjs tests/recorder-panel-ui.test.mjs tests/tool-language-diagnostics.test.mjs
           git diff --check --cached
           git commit -m 'perf: use measured export feedback path (#119)'
           git push origin HEAD:issue-119-image-export-timing
