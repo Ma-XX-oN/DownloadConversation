@@ -90,8 +90,11 @@ jobs:
       - name: Existing image and final-render regressions
         run: node --test tests/core-integration.test.mjs tests/phase5-rich-core-integration.test.mjs tests/fallback-adaptive-fence.test.mjs
 
-      - name: Existing UI regressions
-        run: node --test tests/test-list-ui.test.mjs tests/recorder-panel-ui.test.mjs
+      - name: Existing test-list UI regression
+        run: node --test tests/test-list-ui.test.mjs
+
+      - name: Existing recorder-panel UI regression
+        run: node --test tests/recorder-panel-ui.test.mjs
 
       - name: Diff preflight
         run: git diff --check
