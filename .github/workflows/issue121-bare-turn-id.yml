@@ -31,9 +31,30 @@ jobs:
       - name: JavaScript syntax
         shell: bash
         run: node --check chatgpt-conversation-markdown-export.user.js
-      - name: DownloadConversation regressions
+      - name: Core integration regression
         shell: bash
-        run: node --test tests/core-integration.test.mjs tests/phase5-rich-core-integration.test.mjs tests/fallback-adaptive-fence.test.mjs tests/tool-language-diagnostics.test.mjs tests/sediment-resolver.test.mjs tests/test-list-ui.test.mjs tests/recorder-panel-ui.test.mjs tests/heading-metadata-controls.test.mjs
+        run: node --test tests/core-integration.test.mjs
+      - name: Phase 5 rich Core integration regression
+        shell: bash
+        run: node --test tests/phase5-rich-core-integration.test.mjs
+      - name: Fallback adaptive fence regression
+        shell: bash
+        run: node --test tests/fallback-adaptive-fence.test.mjs
+      - name: Tool language diagnostics regression
+        shell: bash
+        run: node --test tests/tool-language-diagnostics.test.mjs
+      - name: Sediment resolver regression
+        shell: bash
+        run: node --test tests/sediment-resolver.test.mjs
+      - name: Test list UI regression
+        shell: bash
+        run: node --test tests/test-list-ui.test.mjs
+      - name: Recorder panel UI regression
+        shell: bash
+        run: node --test tests/recorder-panel-ui.test.mjs
+      - name: Heading metadata controls regression
+        shell: bash
+        run: node --test tests/heading-metadata-controls.test.mjs
       - name: Diff hygiene
         shell: bash
         run: git diff --check
