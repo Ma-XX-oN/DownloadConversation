@@ -45,12 +45,13 @@ class TestFileReader {
   }
 }
 
-function resolverContext(fetchImpl) {
+function resolverContext(apiFetchImpl, fetchImpl = apiFetchImpl) {
   return {
     URL,
     Blob,
     FileReader: TestFileReader,
     performance,
+    apiFetch: apiFetchImpl,
     fetch: fetchImpl,
     location: { href: 'https://chatgpt.com/c/test' },
     assert(condition, message) {
@@ -93,13 +94,22 @@ test('pinned Core supplies sediment source identity and deterministic transport 
   assert.equal(image.source.part_index, 1);
 });
 
-test('production canonical image lookup consumes Core resources by original part index', () => {
+test('production canonical image lookup adapts the exact ordered record set once and keys by source identity plus part index', () => {
+  let adaptedRecords = null;
   const context = {
     canonicalCore() {
-      return coreContext.AIConversationCore;
+      return {
+        adaptChatGPTRecords(records) {
+          adaptedRecords = records;
+          return coreContext.AIConversationCore.adaptChatGPTRecords(records);
+        }
+      };
+    },
+    assert(condition, message) {
+      if (!condition) throw new Error(message);
     }
   };
-  vm.runInNewContext(`${productionFunctionSource('canonicalImageResourcesByPart')}\nthis.__lookup = canonicalImageResourcesByPart;`, context);
+  vm.runInNewContext(`${productionFunctionSource('canonicalImageResourcesByRecordAndPart')}\nthis.__lookup = canonicalImageResourcesByRecordAndPart;`, context);
   const record = {
     id: 'user-image',
     author: { role: 'user' },
@@ -113,16 +123,26 @@ test('production canonical image lookup consumes Core resources by original part
     },
     metadata: {}
   };
-  const byPart = context.__lookup(record);
+  const earlierRecord = {
+    id: 'context-record',
+    author: { role: 'assistant' },
+    content: { content_type: 'text', parts: ['Context'] },
+    metadata: {}
+  };
+  const orderedRecords = [earlierRecord, record];
+  const byRecord = context.__lookup(orderedRecords);
+  assert.equal(adaptedRecords, orderedRecords);
+  const byPart = byRecord.get('user-image');
   assert.equal(byPart.get(1).source_pointer, 'sediment://file_fixture-image');
   assert.equal(byPart.get(1).download_url, 'https://chatgpt.com/backend-api/files/download/file_fixture-image');
 });
 
 test('production resolver follows Core transport to transient image URL and returns image data', async () => {
-  const requests = [];
-  const context = resolverContext(async url => {
-    requests.push(String(url));
-    if (requests.length === 1) {
+  const transportRequests = [];
+  const contentRequests = [];
+  const context = resolverContext(
+    async url => {
+      transportRequests.push(String(url));
       return {
         ok: true,
         status: 200,
@@ -130,22 +150,27 @@ test('production resolver follows Core transport to transient image URL and retu
           return { download_url: 'https://chatgpt.com/backend-api/estuary/content?id=file_fixture-image&sig=secret' };
         }
       };
+    },
+    async url => {
+      contentRequests.push(String(url));
+      return {
+        ok: true,
+        status: 200,
+        async blob() {
+          return new Blob([Uint8Array.from([1, 2, 3])], { type: 'image/png' });
+        }
+      };
     }
-    return {
-      ok: true,
-      status: 200,
-      async blob() {
-        return new Blob([Uint8Array.from([1, 2, 3])], { type: 'image/png' });
-      }
-    };
-  });
+  );
   const resolver = installResolverFunctions(context);
   const timing = {};
   const dataUrl = await resolver.fetchCanonicalResolvedImageDataUrl(
     'https://chatgpt.com/backend-api/files/download/file_fixture-image', timing
   );
-  assert.deepEqual(requests, [
-    'https://chatgpt.com/backend-api/files/download/file_fixture-image',
+  assert.deepEqual(transportRequests, [
+    'https://chatgpt.com/backend-api/files/download/file_fixture-image'
+  ]);
+  assert.deepEqual(contentRequests, [
     'https://chatgpt.com/backend-api/estuary/content?id=file_fixture-image&sig=secret'
   ]);
   assert.equal(dataUrl, 'data:image/png;base64,AQID');
@@ -181,8 +206,22 @@ test('Core transport/data recovery is selected before optional mounted-DOM fallb
   const domAt = recovery.indexOf('if (candidates[index] instanceof HTMLImageElement)', coreBranchAt);
   assert.ok(transportAt >= 0 && coreBranchAt > transportAt && domAt > coreBranchAt,
     'Core transport/data recovery must be selected before optional mounted-DOM fallback.');
-  assert.match(recovery, /path: hasCanonicalData \? 'core-data' : 'core-resolver'/);
+  assert.match(recovery, /path: hasCanonicalData \? 'core-data' : 'core-download'/);
   assert.match(recovery, /const imagePartIndexes = record\.content\.parts/);
+  assert.match(recovery, /const sourceRecords = \(spine\?\.records \?\? \[\]\)\.map\(item => item\?\.message\)\.filter\(Boolean\)/);
+  assert.match(recovery, /canonicalImageResourcesByRecordAndPart\(sourceRecords\)/);
+  assert.match(recovery, /canonicalResourcesByRecord\.get\(record\.id\) \?\? new Map\(\)/);
+  const sedimentGuardAt = recovery.indexOf("const isSediment = internalImagePointerProtocol(sourcePointer) === 'sediment'");
+  const missingResourceAt = recovery.indexOf("conversation-image-core-resource-missing", sedimentGuardAt);
+  assert.ok(sedimentGuardAt >= 0 && missingResourceAt > sedimentGuardAt && missingResourceAt < domAt,
+    'Sediment recovery must fail explicitly on a missing Core transport before any DOM/raw-pointer fallback.');
+  assert.match(recovery, /script_version: VERSION/);
+});
+
+test('Core download transport uses the captured authenticated API request context', () => {
+  const source = productionFunctionSource('fetchCanonicalResolvedImageDataUrl');
+  assert.match(source, /await apiFetch\(resolverUrl\)/);
+  assert.doesNotMatch(source, /fetch\(resolverUrl/);
 });
 
 test('DownloadConversation does not duplicate sediment-to-download URL construction', () => {
@@ -196,5 +235,5 @@ test('DownloadConversation does not duplicate sediment-to-download URL construct
 });
 
 test('userscript version advances for sediment resolver completion', () => {
-  assert.match(userscript, /\/\/ @version      0\.6\.170/);
+  assert.match(userscript, /\/\/ @version      0\.6\.171/);
 });

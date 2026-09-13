@@ -251,3 +251,14 @@ transport URL; `sediment://file_*` recovery does not depend on mounting or scrol
 a historical turn. HTTP 404/410 during resolver/content retrieval is rendered as
 missing; other retrieval failures remain unavailable while preserving the original
 source pointer.
+
+DownloadConversation passes the exact ordered Conversation API message set to
+AIConversationCore once for image recovery, then indexes the returned resources by
+source record identity and original source part index. The Core-supplied
+`download_url` is authoritative for `sediment://file_*` image recovery. DownloadConversation does not reinterpret the raw sediment pointer and
+does not fall through to DOM recovery when that Core contract is missing; the
+missing canonical transport is an invariant failure reported explicitly. The first
+transport request uses the same captured authenticated page/API request context as
+Conversation API retrieval. Image-recovery Debug diagnostics include the loaded
+userscript version so a stale document runtime can be distinguished from the
+installed Tampermonkey version.

@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         ChatGPT Conversation Markdown Recorder
 // @namespace    https://chatgpt.com/
-// @version      0.6.170
+// @version      0.6.171
 // @description  Exports the current ChatGPT conversation directly from the Conversation API as Markdown or JSONL.
 // @match        https://chatgpt.com/*
 // @match        https://chat.openai.com/*
@@ -1944,17 +1944,28 @@
    * @param {Object} record - The provider/source record containing image parts.
    * @returns {Map<number, Object>} Canonical conversation-image resources keyed by original source part index.
    */
-  function canonicalImageResourcesByPart(record) {
-    const events = canonicalCore().adaptChatGPTRecords([record]);
-    const event = events.find(item => item?.source_record_id === record?.id) ?? null;
-    const resources = Array.isArray(event?.resources) ? event.resources : [];
-    const byPart = new Map();
-    for (const resource of resources) {
-      if (resource?.type !== 'image' || resource?.resource_kind !== 'conversation_image') continue;
-      const partIndex = resource?.source?.part_index;
-      if (Number.isInteger(partIndex)) byPart.set(partIndex, resource);
+  function canonicalImageResourcesByRecordAndPart(records) {
+    assert(Array.isArray(records), 'Canonical image-resource lookup requires the ordered source record set.');
+    const events = canonicalCore().adaptChatGPTRecords(records);
+    const byRecord = new Map();
+    for (const event of events) {
+      const recordId = event?.source_record_id;
+      if (typeof recordId !== 'string' || !recordId) continue;
+      const resources = Array.isArray(event?.resources) ? event.resources : [];
+      let byPart = byRecord.get(recordId);
+      for (const resource of resources) {
+        if (resource?.type !== 'image' || resource?.resource_kind !== 'conversation_image') continue;
+        const partIndex = resource?.source?.part_index;
+        if (!Number.isInteger(partIndex)) continue;
+        if (!byPart) {
+          byPart = new Map();
+          byRecord.set(recordId, byPart);
+        }
+        assert(!byPart.has(partIndex), `Duplicate canonical image resource for ${recordId}:${partIndex}.`);
+        byPart.set(partIndex, resource);
+      }
     }
-    return byPart;
+    return byRecord;
   }
 
   /**
@@ -1975,7 +1986,7 @@
         timing.resolver_status = null;
         timing.resolver_ms = null;
       }
-      const resolverResponse = await fetch(resolverUrl, { credentials: 'include' });
+      const resolverResponse = await apiFetch(resolverUrl);
       const resolverAt = performance.now();
       if (timing) {
         timing.resolver_status = resolverResponse.status;
@@ -3793,6 +3804,10 @@ Image elapsed: ${formatDuration(imageElapsed)} — Completed: ${imageCompleted}/
     const scrollRoot = conversationScrollRoot();
     // Preserve the caller scroll position so image recovery can restore the page exactly.
     const originalScrollTop = scrollRoot.scrollTop;
+    /** Exact ordered Conversation API message set used as the single Core adaptation input. */
+    const sourceRecords = (spine?.records ?? []).map(item => item?.message).filter(Boolean);
+    /** Canonical Core image resources keyed by source record identity and original part index. */
+    const canonicalResourcesByRecord = canonicalImageResourcesByRecordAndPart(sourceRecords);
     /** Ordered source records that contain one or more user image pointers. */
     const records = (spine?.records ?? []).filter(record => userImagePointerCount(record?.message) > 0);
     /** Total unique image pointers expected across the source records. */
@@ -3823,6 +3838,7 @@ Image elapsed: ${formatDuration(imageElapsed)} — Completed: ${imageCompleted}/
       progressState.image_started_at = 0;
     }
     logDiagnostic('debug', 'conversation-image-recovery-start', {
+      script_version: VERSION,
       source_message_count: records.length,
       total_images: totalImages,
       diagnostic_log_capacity: MAX_DIAGNOSTIC_LOG_ITEMS
@@ -3852,6 +3868,7 @@ Image elapsed: ${formatDuration(imageElapsed)} — Completed: ${imageCompleted}/
       }
       refreshStatus();
       logDiagnostic('debug', 'conversation-image-recovery-item-start', {
+        script_version: VERSION,
         image_number: context.image_number,
         total_images: totalImages,
         message_id: context.message_id,
@@ -3863,6 +3880,7 @@ Image elapsed: ${formatDuration(imageElapsed)} — Completed: ${imageCompleted}/
         const outcome = timing.outcome ?? 'success';
         if (!['success', 'data-url'].includes(outcome)) unavailableImages += 1;
         logDiagnostic('debug', 'conversation-image-recovery-item-complete', {
+          script_version: VERSION,
           image_number: context.image_number,
           total_images: totalImages,
           message_id: context.message_id,
@@ -3884,6 +3902,7 @@ Image elapsed: ${formatDuration(imageElapsed)} — Completed: ${imageCompleted}/
       } catch (error) {
         failedImages += 1;
         logDiagnostic('debug', 'conversation-image-recovery-item-failure', {
+          script_version: VERSION,
           image_number: context.image_number,
           total_images: totalImages,
           message_id: context.message_id,
@@ -3928,7 +3947,7 @@ Image elapsed: ${formatDuration(imageElapsed)} — Completed: ${imageCompleted}/
         /** Existing fallback Markdown for each expected image pointer. */
         const images = expectedParts.map(part => cgImagePointerFallback(part));
         /** Canonical Core image resources keyed by their original provider part index. */
-        const canonicalResources = canonicalImageResourcesByPart(record);
+        const canonicalResources = canonicalResourcesByRecord.get(record.id) ?? new Map();
         /** Original provider part index for each image ordinal in this source record. */
         const imagePartIndexes = record.content.parts
           .map((part, partIndex) => ({ part, partIndex }))
@@ -3942,8 +3961,23 @@ Image elapsed: ${formatDuration(imageElapsed)} — Completed: ${imageCompleted}/
         for (let index = 0; index < expected; index += 1) {
           const partIndex = imagePartIndexes[index];
           const resource = canonicalResources.get(partIndex) ?? null;
+          const sourcePointer = cgImagePointerSource(expectedParts[index]);
+          const isSediment = internalImagePointerProtocol(sourcePointer) === 'sediment';
           const hasCanonicalTransport = typeof resource?.download_url === 'string' && resource.download_url.trim();
           const hasCanonicalData = typeof resource?.data_url === 'string' && resource.data_url.startsWith('data:image/');
+          if (isSediment && !hasCanonicalTransport && !hasCanonicalData) {
+            logDiagnostic('errors', 'conversation-image-core-resource-missing', {
+              script_version: VERSION,
+              message_id: record.id,
+              image_ordinal: index + 1,
+              part_index: partIndex,
+              resource_present: Boolean(resource),
+              source_scheme: 'sediment:'
+            });
+            throw new Error(
+              `AIConversationCore did not provide a download_url or data_url for sediment image ${record.id}:${index + 1}.`
+            );
+          }
           if (hasCanonicalTransport || hasCanonicalData) {
             images[index] = await recoverOne(
               timing => cgResolveImagePointerMarkdown(expectedParts[index], resource, record.id, index + 1, timing),
@@ -3951,7 +3985,7 @@ Image elapsed: ${formatDuration(imageElapsed)} — Completed: ${imageCompleted}/
                 image_number: recordImageBase + index + 1,
                 message_id: record.id,
                 image_ordinal: index + 1,
-                path: hasCanonicalData ? 'core-data' : 'core-resolver'
+                path: hasCanonicalData ? 'core-data' : 'core-download'
               }
             );
             continue;
@@ -4004,6 +4038,7 @@ Image elapsed: ${formatDuration(imageElapsed)} — Completed: ${imageCompleted}/
     } finally {
       scrollRoot.scrollTop = originalScrollTop;
       logDiagnostic('debug', 'conversation-image-recovery-complete', {
+        script_version: VERSION,
         outcome: recoveryCompleted ? 'complete' : 'aborted',
         source_message_count: records.length,
         total_images: totalImages,
