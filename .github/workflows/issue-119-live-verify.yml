@@ -6,13 +6,16 @@ on:
       - issue-119-image-export-timing
 
 permissions:
-  contents: read
+  contents: write
 
 jobs:
   verify:
+    if: github.actor != 'github-actions[bot]'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
       - uses: actions/setup-node@v4
         with:
           node-version: 22
@@ -26,8 +29,22 @@ jobs:
       - name: Diff preflight
         run: |
           git diff --check
-          git diff > issue-119-live-fix.diff
-          git diff --name-only
+          git diff -- DESIGN.md chatgpt-conversation-markdown-export.user.js tests/tool-language-diagnostics.test.mjs
+          python - <<'PY'
+          import subprocess
+          changed = set(subprocess.check_output(['git', 'diff', '--name-only'], text=True).splitlines())
+          expected = {
+            'DESIGN.md',
+            'chatgpt-conversation-markdown-export.user.js',
+            'tests/tool-language-diagnostics.test.mjs',
+          }
+          if changed != expected:
+            raise SystemExit(f'Unexpected changed files: {sorted(changed)}')
+          PY
+      - name: Verify page size and Core pin
+        run: |
+          grep -F 'const PAGE_TURNS = 20;' chatgpt-conversation-markdown-export.user.js
+          grep -F '@require      https://raw.githubusercontent.com/Ma-XX-oN/AIConversationCore/3233cba838bbf2d2cea5a2a6f1900ed6014dcfb0/dist/aiconversationcore.chatgpt.browser.js' chatgpt-conversation-markdown-export.user.js
       - name: Production JSDoc coverage
         run: node scripts/check-jsdoc.mjs
       - name: JavaScript syntax
@@ -36,11 +53,11 @@ jobs:
         run: node --test tests/tool-language-diagnostics.test.mjs tests/recorder-panel-ui.test.mjs
       - name: Full JavaScript suite
         run: node --test tests/*.test.mjs
-      - name: Package patched files
+      - name: Commit verified correction
         run: |
-          mkdir issue-119-patched
-          cp DESIGN.md chatgpt-conversation-markdown-export.user.js tests/tool-language-diagnostics.test.mjs issue-119-live-fix.diff issue-119-patched/
-      - uses: actions/upload-artifact@v4
-        with:
-          name: issue-119-patched
-          path: issue-119-patched
+          git config user.name github-actions[bot]
+          git config user.email 41898282+github-actions[bot]@users.noreply.github.com
+          git add DESIGN.md chatgpt-conversation-markdown-export.user.js tests/tool-language-diagnostics.test.mjs
+          git diff --check --cached
+          git commit -m 'perf: remove redundant Markdown diagnostic scans (#119)'
+          git push origin HEAD:issue-119-image-export-timing
