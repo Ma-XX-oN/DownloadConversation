@@ -1,9 +1,7 @@
 name: Issue 77 Core-download correction
 
 on:
-  push:
-    branches:
-      - issue-77-sediment-resolver
+  workflow_dispatch:
 
 permissions:
   contents: write
