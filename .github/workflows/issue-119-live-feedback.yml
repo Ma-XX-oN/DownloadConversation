@@ -41,50 +41,7 @@ jobs:
         run: python scripts/issue-119-live-feedback.py --check
 
       - name: Apply live-evidence correction
-        run: |
-          python scripts/issue-119-live-feedback.py
-          python - <<'PY'
-          from pathlib import Path
-
-          design = Path('DESIGN.md')
-          design.write_text(design.read_text(encoding='utf-8').rstrip() + '\n', encoding='utf-8')
-
-          path = Path('tests/tool-language-diagnostics.test.mjs')
-          text = path.read_text(encoding='utf-8')
-          old = """test('issue 119 gates expensive export-tail fingerprints behind debug diagnostics and reuses the result', () => {
-  const readyIndex = userscript.indexOf(\"logDiagnostic('debug', 'conversation-export-markdown-ready'\");
-  const blobIndex = userscript.indexOf(\"logDiagnostic('debug', 'conversation-export-blob-created'\");
-  assert.ok(readyIndex > 0 && blobIndex > readyIndex);
-  const diagnosticStart = userscript.lastIndexOf('const diagnosticStartedAt = performance.now();', readyIndex);
-  const diagnosticEnd = userscript.indexOf('const blobStartedAt = performance.now();', readyIndex);
-  assert.ok(diagnosticStart > 0 && diagnosticEnd > diagnosticStart,
-    'Markdown-ready diagnostics must have a bounded debug-only phase.');
-  const diagnosticBlock = userscript.slice(diagnosticStart, diagnosticEnd);
-  assert.match(diagnosticBlock, /markdownHash = diagnosticTextHash\\(markdown\\)/);
-  assert.match(diagnosticBlock, /markdown_hash: markdownHash/);
-  assert.equal((diagnosticBlock.match(/diagnosticTextHash\\(markdown\\)/g) ?? []).length, 1,
-    'The export-tail diagnostic phase should calculate its full Markdown fingerprint only once.');
-});
-"""
-          new = """test('issue 119 keeps Markdown-ready diagnostics compact after removing full-document scans', () => {
-  const readyIndex = userscript.indexOf(\"logDiagnostic('debug', 'conversation-export-markdown-ready'\");
-  const blobIndex = userscript.indexOf(\"logDiagnostic('debug', 'conversation-export-blob-created'\");
-  assert.ok(readyIndex > 0 && blobIndex > readyIndex);
-  const readyGuard = userscript.lastIndexOf(\"if (diagnosticEnabled('debug'))\", readyIndex);
-  assert.ok(readyGuard > 0 && readyIndex - readyGuard < 1000,
-    'Markdown-ready diagnostics must still be guarded before their compact arguments are built.');
-  const readyEnd = userscript.indexOf('});', readyIndex);
-  const readyBlock = userscript.slice(readyIndex, readyEnd + 3);
-  assert.match(readyBlock, /markdown_length: markdown.length/);
-  assert.match(readyBlock, /source_tail: sourceTail/);
-  assert.doesNotMatch(readyBlock, /markdown_hash|markdown_turn_ids|diagnosticTextHash|diagnosticMarkdownTurnInventory/,
-    'Markdown-ready diagnostics must not rescan the complete rendered document.');
-});
-"""
-          if text.count(old) != 1:
-            raise SystemExit(f'stale fingerprint regression: expected one match, found {text.count(old)}')
-          path.write_text(text.replace(old, new, 1), encoding='utf-8')
-          PY
+        run: python scripts/issue-119-live-feedback.py
 
       - name: Diff preflight
         run: |
