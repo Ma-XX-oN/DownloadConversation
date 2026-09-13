@@ -5,7 +5,7 @@ import test from 'node:test';
 const userscript = await readFile(new URL('../chatgpt-conversation-markdown-export.user.js', import.meta.url), 'utf8');
 
 test('heading metadata controls retain historical defaults and JSONL numbering', () => {
-  assert.match(userscript, /\/\/ @version      0\.6\.169/);
+  assert.match(userscript, /\/\/ @version      0\.6\.170/);
   assert.match(userscript, /showTimestamps = localStorage\.getItem\(SHOW_TIMESTAMPS_STORAGE_KEY\) === 'true'/);
   assert.match(userscript, /showRecordNumbers = localStorage\.getItem\(SHOW_RECORD_NUMBERS_STORAGE_KEY\) === 'true'/);
   assert.match(userscript, /showTurnIds = localStorage\.getItem\(SHOW_TURN_IDS_STORAGE_KEY\) !== 'false'/);

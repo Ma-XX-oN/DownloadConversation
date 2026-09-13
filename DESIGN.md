@@ -228,3 +228,26 @@ completed image state and rendering transition a chance to paint so a prior
 
 No image concurrency, timeout, retry, or fallback policy is introduced by this
 correction.
+
+## Issue #77 canonical sediment image resolution
+
+Conversation image recovery is API-first. For a ChatGPT `image_asset_pointer`,
+DownloadConversation adapts the source record through the pinned AIConversationCore
+and consumes the canonical `conversation_image` resource for the original provider
+part position. It does not independently translate `sediment://` provider pointers.
+
+For an evidenced `sediment://file_*` pointer, AIConversationCore preserves the
+original `source_pointer` and supplies the deterministic authenticated
+`download_url` under `/backend-api/files/download/<file_id>`. DownloadConversation
+owns the browser-authenticated retrieval step: it requests that Core-supplied URL,
+reads the returned transient `download_url`, fetches the image bytes, converts them
+to a data URL, and enriches the existing recovered-image map at the original source
+position. The transient signed URL is neither canonical identity nor diagnostic
+output.
+
+A Core-supplied `data_url` is used directly. DOM image recovery remains only for
+image forms for which Core supplies neither canonical image data nor a deterministic
+transport URL; `sediment://file_*` recovery does not depend on mounting or scrolling
+a historical turn. HTTP 404/410 during resolver/content retrieval is rendered as
+missing; other retrieval failures remain unavailable while preserving the original
+source pointer.
