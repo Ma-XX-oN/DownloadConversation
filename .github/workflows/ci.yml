@@ -16,6 +16,10 @@ jobs:
         run: node scripts/check-jsdoc.mjs
       - name: JavaScript syntax
         run: node --check chatgpt-conversation-markdown-export.user.js
+      - name: Passive final-turn logger syntax
+        run: node --check chatgpt-final-turn-state-logger.user.js
+      - name: Passive final-turn logger regressions
+        run: node --test tests/final-turn-state-logger.test.mjs
       - name: Single-snapshot export regression
         run: node --test tests/export-single-snapshot.test.mjs
       - name: Console lifecycle and provenance controls
