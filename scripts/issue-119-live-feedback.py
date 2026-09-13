@@ -112,6 +112,38 @@ def patch_diag_test(text):
     "",
     'obsolete diagnostics phase assertion'
   )
+  stale = """test('issue 119 gates expensive export-tail fingerprints behind debug diagnostics and reuses the result', () => {
+  const readyIndex = userscript.indexOf("logDiagnostic('debug', 'conversation-export-markdown-ready'");
+  const blobIndex = userscript.indexOf("logDiagnostic('debug', 'conversation-export-blob-created'");
+  assert.ok(readyIndex > 0 && blobIndex > readyIndex);
+  const diagnosticStart = userscript.lastIndexOf('const diagnosticStartedAt = performance.now();', readyIndex);
+  const diagnosticEnd = userscript.indexOf('const blobStartedAt = performance.now();', readyIndex);
+  assert.ok(diagnosticStart > 0 && diagnosticEnd > diagnosticStart,
+    'Markdown-ready diagnostics must have a bounded debug-only phase.');
+  const diagnosticBlock = userscript.slice(diagnosticStart, diagnosticEnd);
+  assert.match(diagnosticBlock, /markdownHash = diagnosticTextHash\\(markdown\\)/);
+  assert.match(diagnosticBlock, /markdown_hash: markdownHash/);
+  assert.equal((diagnosticBlock.match(/diagnosticTextHash\\(markdown\\)/g) ?? []).length, 1,
+    'The export-tail diagnostic phase should calculate its full Markdown fingerprint only once.');
+});
+"""
+  compact = """test('issue 119 keeps Markdown-ready diagnostics compact after removing full-document scans', () => {
+  const readyIndex = userscript.indexOf("logDiagnostic('debug', 'conversation-export-markdown-ready'");
+  const blobIndex = userscript.indexOf("logDiagnostic('debug', 'conversation-export-blob-created'");
+  assert.ok(readyIndex > 0 && blobIndex > readyIndex);
+  const readyGuard = userscript.lastIndexOf("if (diagnosticEnabled('debug'))", readyIndex);
+  assert.ok(readyGuard > 0 && readyIndex - readyGuard < 1000,
+    'Markdown-ready diagnostics must still be guarded before their compact arguments are built.');
+  const readyEnd = userscript.indexOf('});', readyIndex);
+  const readyBlock = userscript.slice(readyIndex, readyEnd + 3);
+  assert.match(readyBlock, /markdown_length: markdown.length/);
+  assert.match(readyBlock, /source_tail: sourceTail/);
+  assert.doesNotMatch(readyBlock, /markdown_hash|markdown_turn_ids|diagnosticTextHash|diagnosticMarkdownTurnInventory/,
+    'Markdown-ready diagnostics must not rescan the complete rendered document.');
+});
+"""
+  text = replace_once(text, stale, compact, 'stale fingerprint regression')
+
   start = text.index("test('issue 119 live evidence removes redundant Markdown scans and uses 20-record pages'")
   if start < 0:
     raise SystemExit('issue 119 live-evidence test: start not found')
@@ -184,7 +216,7 @@ correction.
 """
   if '## Issue #119 superseding live evidence: page size and UI heartbeat' in text:
     raise SystemExit('design addition already present')
-  return text.rstrip() + addition + '\n'
+  return text.rstrip() + addition.rstrip() + '\n'
 
 
 def patched_files():
