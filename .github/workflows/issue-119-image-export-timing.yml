@@ -50,11 +50,23 @@ jobs:
 
           recorder = Path('tests/recorder-panel-ui.test.mjs')
           text = recorder.read_text(encoding='utf-8')
-          old = '''  assert.match(userscript, /recoveredImages \\+= expected;/,\n    'Image recovery progress must advance by the number of images processed in each source message.');\n'''
-          new = '''  assert.match(userscript, /recoveredImages = Math\\.max\\(recoveredImages, context\\.image_number\\);/,\n    'Image recovery progress must advance as each individual image operation completes.');\n'''
-          if text.count(old) != 1:
-            raise SystemExit(f'Per-image progress regression correction expected one match, found {text.count(old)}')
-          recorder.write_text(text.replace(old, new, 1), encoding='utf-8')
+          replacements = [
+            (
+              '''  assert.match(userscript, /Recovering conversational images… \\${recoveredImages}\\/\\${totalImages}/,\n    'Image recovery status must display recovered/total image counts.');\n''',
+              '''  assert.match(userscript, /recovering image \\${imageNumber}\\/\\${imageCount}/,\n    'Image recovery status must display the current image ordinal and total.');\n  assert.match(userscript, /Image elapsed: \\${formatDuration\\(imageElapsed\\)}/,\n    'Image recovery status must expose elapsed time for the currently awaited image.');\n''',
+              'per-image status regression correction'
+            ),
+            (
+              '''  assert.match(userscript, /recoveredImages \\+= expected;/,\n    'Image recovery progress must advance by the number of images processed in each source message.');\n''',
+              '''  assert.match(userscript, /recoveredImages = Math\\.max\\(recoveredImages, context\\.image_number\\);/,\n    'Image recovery progress must advance as each individual image operation completes.');\n''',
+              'per-image progress regression correction'
+            ),
+          ]
+          for old, new, description in replacements:
+            if text.count(old) != 1:
+              raise SystemExit(f'{description} expected one match, found {text.count(old)}')
+            text = text.replace(old, new, 1)
+          recorder.write_text(text, encoding='utf-8')
           PY
 
       - name: Verify intended product files only
