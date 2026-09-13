@@ -1,0 +1,46 @@
+name: Issue 119 live verify
+
+on:
+  push:
+    branches:
+      - issue-119-image-export-timing
+
+permissions:
+  contents: read
+
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.13'
+      - name: Verify helper syntax
+        run: python -m py_compile scripts/issue-119-live-fix.py
+      - name: Apply patch in workspace
+        run: python scripts/issue-119-live-fix.py
+      - name: Diff preflight
+        run: |
+          git diff --check
+          git diff > issue-119-live-fix.diff
+          git diff --name-only
+      - name: Production JSDoc coverage
+        run: node scripts/check-jsdoc.mjs
+      - name: JavaScript syntax
+        run: node --check chatgpt-conversation-markdown-export.user.js
+      - name: Focused issue 119 regressions
+        run: node --test tests/tool-language-diagnostics.test.mjs tests/recorder-panel-ui.test.mjs
+      - name: Full JavaScript suite
+        run: node --test tests/*.test.mjs
+      - name: Package patched files
+        run: |
+          mkdir issue-119-patched
+          cp DESIGN.md chatgpt-conversation-markdown-export.user.js tests/tool-language-diagnostics.test.mjs issue-119-live-fix.diff issue-119-patched/
+      - uses: actions/upload-artifact@v4
+        with:
+          name: issue-119-patched
+          path: issue-119-patched
