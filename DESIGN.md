@@ -138,17 +138,17 @@ DownloadConversation exposes four independent persistent Markdown-heading contro
 - **Turn ID**: Core derives the ChatGPT native source/message ID and renders the
   bare native ID value as visible heading metadata, without a `turn_id=` prefix.
   Default: off.
-- **Debug**: Core derives source debug provenance and appends the canonical
+- **provenance**: Core derives source debug provenance and appends the canonical
   `record_id=... record_index=...` HTML comment to the heading. One checkbox controls
   the provenance channel as a unit; DownloadConversation does not construct either
   field. Default: off.
 
-The visible order is speaker, timestamp, record number, then Turn ID; when Debug
+The visible order is speaker, timestamp, record number, then Turn ID; when provenance
 is enabled, the Core-owned provenance comment follows that heading metadata. Ordinary
 Markdown does not encode Turn ID as an HTML comment. DownloadConversation supplies
 only these presentation visibility switches to AIConversationCore; it does not
 format timestamps, compute record numbers, inject semantic turn IDs, or construct
-debug provenance itself. The Debug export checkbox is independent of the recorder
+debug provenance itself. The provenance export checkbox is independent of the recorder
 diagnostic-log level (`errors` / `warnings` / `debug` / `verbose`). Canonical and
 host fallback bodies therefore use the same Core-owned heading serialization. These
 controls do not change chronology, grouping, UAP association, API pagination,
@@ -166,6 +166,28 @@ JSONL serialization and Markdown rendering remain independent after acquisition,
 including Markdown image recovery and Core rendering. Sharing the source snapshot
 ensures both files from one Extract click describe the same Conversation API state
 even if the live conversation changes while output generation is still running.
+
+## Startup and saved console diagnostics
+
+Recorder diagnostics mirror to DevTools automatically from document startup until
+the general status panel is first shown. Creating that panel while it is hidden
+does not end startup logging. Once shown, console output depends only on the
+persistent checkbox labelled **console** on the panel; its default is unchecked.
+Closing, hiding, reopening, or recreating the panel does not restart automatic
+startup output. Reloading the page starts a new startup interval, even when the
+saved checkbox is off.
+
+The console gate covers both ordinary recorder diagnostics and existing direct
+launcher/lifecycle messages. Console mirroring occurs before the panel diagnostic
+severity filter, so it remains available at every selected panel verbosity during
+startup or while console is checked. Signed-token redaction still occurs before
+console output. Panel retention, persistence and filtering keep their existing
+behaviour. The checkbox does not enable invasive launcher instrumentation.
+
+The MD headings checkbox is labelled **provenance** to distinguish it from
+diagnostic verbosity **Debug**. Its existing storage key and AIConversationCore
+`debugProvenance` option are preserved, including the saved selection. This label
+change does not alter exported provenance or any other rendering semantics.
 
 ## Image recovery and export performance diagnostics
 

@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         ChatGPT Conversation Markdown Recorder
 // @namespace    https://chatgpt.com/
-// @version      0.6.176
+// @version      0.6.177
 // @description  Exports the current ChatGPT conversation directly from the Conversation API as Markdown or JSONL.
 // @match        https://chatgpt.com/*
 // @match        https://chat.openai.com/*
@@ -14,7 +14,6 @@
 
   /** Installed userscript version reported in diagnostics and runtime metadata. */
   const VERSION = (typeof GM_info !== 'undefined' && GM_info?.script?.version) || 'unknown';
-  console.log(`[DownloadConversation] version ${VERSION}`);
   /** DOM id of the recorder panel so UI lookups share one stable selector. */
   const PANEL_ID = 'tm-conversation-recorder';
   /** DOM id of the floating launcher button that opens the recorder panel. */
@@ -39,6 +38,8 @@
   const SHOW_TURN_IDS_STORAGE_KEY = 'tm-conversation-recorder-show-turn-ids';
   /** Local-storage key for Markdown Core debug-provenance visibility. */
   const SHOW_DEBUG_PROVENANCE_STORAGE_KEY = 'tm-conversation-recorder-show-debug-provenance';
+  /** Local-storage key for continued console mirroring after the status panel first appears. */
+  const CONSOLE_DIAGNOSTICS_STORAGE_KEY = 'tm-conversation-recorder-console-diagnostics';
   /** Session-storage key for the retained recorder diagnostic log. */
   const DIAGNOSTIC_LOG_STORAGE_KEY = 'tm-conversation-recorder-diagnostic-log';
   /** Maximum number of diagnostic entries retained in memory and session storage. */
@@ -56,6 +57,10 @@
   let captureInstalled = false;
   /** Currently selected diagnostic threshold, restored from local storage at startup. */
   let diagnosticsLevel = localStorage.getItem('tm-conversation-recorder-diagnostics') || DEFAULT_DIAGNOSTICS;
+  /** Saved opt-in for console output after startup; independent of panel diagnostic verbosity. */
+  let consoleDiagnostics = localStorage.getItem(CONSOLE_DIAGNOSTICS_STORAGE_KEY) === 'true';
+  /** One-way startup boundary: hiding or reopening the panel does not restore automatic console output. */
+  let generalStatusShown = false;
   /** Whether active exports should request a screen wake lock. */
   let screenOnWhenCapturing = localStorage.getItem(SCREEN_ON_STORAGE_KEY) !== 'false';
   /** Whether Markdown headings should include local-time source timestamps. */
@@ -98,6 +103,8 @@
     const storedDiagnosticLog = JSON.parse(sessionStorage.getItem(DIAGNOSTIC_LOG_STORAGE_KEY) || '[]');
     if (Array.isArray(storedDiagnosticLog)) diagnosticLog = storedDiagnosticLog.slice(-MAX_DIAGNOSTIC_LOG_ITEMS);
   } catch {}
+
+  logConsoleDiagnostic('debug', `[DownloadConversation] version ${VERSION}`);
 
   /**
    * Handles assert.
@@ -4845,7 +4852,24 @@ Image elapsed: ${formatDuration(imageElapsed)} — Completed: ${imageCompleted}/
   }
 
   /**
-   * Logs diagnostic.
+   * Writes recorder diagnostics to DevTools during startup or when continued console output is enabled.
+   *
+   * This gate is independent of the panel's severity filter and covers direct lifecycle messages too.
+   *
+   * @param {'errors'|'warnings'|'debug'|'verbose'} level - Severity selecting the DevTools console method.
+   * @param {string} message - Console message, including its recorder prefix.
+   * @param {Object|null} data - Diagnostic payload redacted before console output.
+   * @returns {void} No value is returned.
+   */
+  function logConsoleDiagnostic(level, message, data = null) {
+    if (generalStatusShown && !consoleDiagnostics) return;
+    const args = [redactDiagnosticSignedTokens(message)];
+    if (data !== null) args.push(redactDiagnosticSignedTokens(data));
+    (level === 'errors' ? console.error : level === 'warnings' ? console.warn : console.log)(...args);
+  }
+
+  /**
+   * Mirrors diagnostics through the console gate, then retains entries accepted by the panel filter.
    *
    * @param {Object} level - The diagnostics severity level.
    * @param {string} message - The assertion failure message.
@@ -4853,6 +4877,7 @@ Image elapsed: ${formatDuration(imageElapsed)} — Completed: ${imageCompleted}/
    * @returns {void} No value is returned.
    */
   function logDiagnostic(level, message, data = null) {
+    logConsoleDiagnostic(level, `[ChatGPT Recorder ${level}] ${message}`, data);
     if (!diagnosticEnabled(level)) return;
     const safeData = redactDiagnosticSignedTokens(data);
     const entry = {
@@ -4867,10 +4892,6 @@ Image elapsed: ${formatDuration(imageElapsed)} — Completed: ${imageCompleted}/
     }
     schedulePersistDiagnosticLog();
     refreshDiagnosticLog();
-
-    const args = [`[ChatGPT Recorder ${level}] ${message}`];
-    if (safeData !== null) args.push(safeData);
-    (level === 'errors' ? console.error : level === 'warnings' ? console.warn : console.log)(...args);
   }
 
   /**
@@ -5046,7 +5067,7 @@ Image elapsed: ${formatDuration(imageElapsed)} — Completed: ${imageCompleted}/
     let timer = null;
     const relevantMutations = [];
     const recentMutations = [];
-    console.log(`[DownloadConversation v${VERSION}] launcher appended`, previous);
+    logConsoleDiagnostic('debug', `[DownloadConversation v${VERSION}] launcher appended`, previous);
 
     /**
      * Emits one complete, copyable JSON diagnostic when the launcher disconnects.
@@ -5072,7 +5093,7 @@ Image elapsed: ${formatDuration(imageElapsed)} — Completed: ${imageCompleted}/
         relevant_mutations: relevantMutations,
         recent_mutations: recentMutations
       };
-      console.warn(
+      logConsoleDiagnostic('warnings',
         `[DownloadConversation v${VERSION}] launcher disconnected JSON\n${JSON.stringify(payload, null, 2)}`
       );
     };
@@ -5105,7 +5126,7 @@ Image elapsed: ${formatDuration(imageElapsed)} — Completed: ${imageCompleted}/
         return;
       }
 
-      console.warn(`[DownloadConversation v${VERSION}] launcher lifecycle changed`, {
+      logConsoleDiagnostic('warnings', `[DownloadConversation v${VERSION}] launcher lifecycle changed`, {
         previous,
         current
       });
@@ -5134,7 +5155,7 @@ Image elapsed: ${formatDuration(imageElapsed)} — Completed: ${imageCompleted}/
           current.opacity !== previous.opacity ||
           current.width !== previous.width ||
           current.height !== previous.height) {
-        console.warn(`[DownloadConversation v${VERSION}] launcher lifecycle poll changed`, {
+        logConsoleDiagnostic('warnings', `[DownloadConversation v${VERSION}] launcher lifecycle poll changed`, {
           previous,
           current
         });
@@ -5143,7 +5164,7 @@ Image elapsed: ${formatDuration(imageElapsed)} — Completed: ${imageCompleted}/
       if (performance.now() - startedAt >= 15000) {
         clearInterval(timer);
         observer.disconnect();
-        console.log(`[DownloadConversation v${VERSION}] launcher lifecycle watch ended`, current);
+        logConsoleDiagnostic('debug', `[DownloadConversation v${VERSION}] launcher lifecycle watch ended`, current);
       }
     }, 100);
   }
@@ -5242,7 +5263,7 @@ Image elapsed: ${formatDuration(imageElapsed)} — Completed: ${imageCompleted}/
       details,
       topology: launcherTopologyContext()
     };
-    console.log(
+    logConsoleDiagnostic('debug',
       `[DownloadConversation v${VERSION}] launcher topology JSON\n${JSON.stringify(payload, null, 2)}`
     );
   }
@@ -5398,7 +5419,7 @@ Image elapsed: ${formatDuration(imageElapsed)} — Completed: ${imageCompleted}/
         : null,
       topology: launcherTopologyContext()
     };
-    console.warn(
+    logConsoleDiagnostic('warnings',
       `[DownloadConversation v${VERSION}] launcher removal operation JSON\n${JSON.stringify(payload, null, 2)}`
     );
   }
@@ -5505,7 +5526,7 @@ Image elapsed: ${formatDuration(imageElapsed)} — Completed: ${imageCompleted}/
   function makeLauncher() {
     const existing = document.getElementById(LAUNCHER_ID);
     if (existing || !document.body) {
-      console.log(`[DownloadConversation v${VERSION}] makeLauncher skipped`, {
+      logConsoleDiagnostic('debug', `[DownloadConversation v${VERSION}] makeLauncher skipped`, {
         existing: launcherNodeSummary(existing),
         has_body: Boolean(document.body)
       });
@@ -5526,6 +5547,10 @@ Image elapsed: ${formatDuration(imageElapsed)} — Completed: ${imageCompleted}/
       const panel = document.getElementById(PANEL_ID);
       if (panel) panel.style.display = 'block';
       updateUi();
+      if (panel && !generalStatusShown) {
+        logDiagnostic('debug', 'general-status-shown', { script_version: VERSION, console_enabled: consoleDiagnostics });
+        generalStatusShown = true;
+      }
     };
     launcher.addEventListener('click', openRecorderPopup);
     launcher.addEventListener('mouseenter', openRecorderPopup);
@@ -5541,6 +5566,7 @@ Image elapsed: ${formatDuration(imageElapsed)} — Completed: ${imageCompleted}/
    */
   function makePanel() {
     if (document.getElementById(PANEL_ID) || !document.body) return;
+    logDiagnostic('debug', 'recorder-panel-create-start', { script_version: VERSION });
     injectStyles();
     const panel = document.createElement('div');
     panel.id = PANEL_ID;
@@ -5551,11 +5577,11 @@ Image elapsed: ${formatDuration(imageElapsed)} — Completed: ${imageCompleted}/
       <div class="tm-log-head"><span class="tm-label" data-role="log-count">Log: 0 items</span><button class="tm-icon-button" data-role="copy-log" type="button" aria-label="Copy diagnostic log" title="Copy log"></button><button class="tm-icon-button" data-role="toggle-log" type="button" aria-label="Show diagnostic log" aria-expanded="false" title="Show log">+</button></div>
       <div class="tm-log-output" data-role="log-output" hidden></div>
       <div class="tm-status" data-role="status"></div>
-      <div class="tm-row"><span class="tm-label">Diagnostics</span><select data-role="diagnostics"><option value="errors">Errors</option><option value="warnings">Warnings</option><option value="debug">Debug</option><option value="verbose">Verbose</option></select><button data-role="test" type="button">Test</button></div>
+      <div class="tm-row"><span class="tm-label">Diagnostics</span><select data-role="diagnostics"><option value="errors">Errors</option><option value="warnings">Warnings</option><option value="debug">Debug</option><option value="verbose">Verbose</option></select><label><input data-role="console-diagnostics" type="checkbox"> console</label><button data-role="test" type="button">Test</button></div>
       <div class="tm-row"><span class="tm-label">Screen on when extracting</span><button class="tm-switch" data-role="screen-on" type="button" role="switch" aria-checked="false" aria-label="Keep screen on while extracting"><span class="tm-switch-thumb"></span></button></div>
       <div class="tm-row"><button data-role="jump" type="button">Jump</button></div>
       <div class="tm-row tm-extract-formats"><button data-role="extract" type="button">Extract</button><label><input data-role="format-jsonl" type="checkbox"> JSONL</label><label><input data-role="format-md" type="checkbox" checked> MD</label></div>
-      <div class="tm-row tm-md-metadata"><span class="tm-label">MD headings</span><label><input data-role="show-timestamps" type="checkbox"> Timestamp</label><label><input data-role="show-record-numbers" type="checkbox"> Record #</label><label><input data-role="show-turn-ids" type="checkbox"> Turn ID</label><label><input data-role="show-debug-provenance" type="checkbox"> Debug</label></div>
+      <div class="tm-row tm-md-metadata"><span class="tm-label">MD headings</span><label><input data-role="show-timestamps" type="checkbox"> Timestamp</label><label><input data-role="show-record-numbers" type="checkbox"> Record #</label><label><input data-role="show-turn-ids" type="checkbox"> Turn ID</label><label><input data-role="show-debug-provenance" type="checkbox"> provenance</label></div>
     `;
     panel.querySelector('.tm-close').addEventListener('click', () => {
       panel.style.display = 'none';
@@ -5569,6 +5595,13 @@ Image elapsed: ${formatDuration(imageElapsed)} — Completed: ${imageCompleted}/
       localStorage.setItem('tm-conversation-recorder-diagnostics', diagnosticsLevel);
       logDiagnostic('debug', 'diagnostics-level-changed', { diagnostics_level: diagnosticsLevel });
       refreshDiagnosticLog();
+    });
+    const consoleOutput = panel.querySelector('[data-role="console-diagnostics"]');
+    consoleOutput.checked = consoleDiagnostics;
+    consoleOutput.addEventListener('change', () => {
+      consoleDiagnostics = consoleOutput.checked;
+      localStorage.setItem(CONSOLE_DIAGNOSTICS_STORAGE_KEY, String(consoleDiagnostics));
+      logDiagnostic('debug', 'console-diagnostics-changed', { enabled: consoleDiagnostics });
     });
     const copyLogButton = panel.querySelector('[data-role="copy-log"]');
     if (copyLogButton) copyLogButton.innerHTML = copyIconMarkup();
@@ -5653,18 +5686,19 @@ Image elapsed: ${formatDuration(imageElapsed)} — Completed: ${imageCompleted}/
     document.body.append(panel);
     updateUi();
     refreshDiagnosticLog();
+    logDiagnostic('debug', 'recorder-panel-created', { script_version: VERSION });
   }
 
   /**
    * Mounts the launcher only after the host has loaded and direct BODY reconciliation is quiet.
    *
-   * Lightweight lifecycle logging stays enabled permanently.  Expensive topology and DOM-method
+   * Lifecycle console output follows the startup/saved-option gate.  Expensive topology and DOM-method
    * instrumentation remains available behind `DEEP_LAUNCHER_DIAGNOSTICS` for future regressions.
    *
    * @returns {void} No value is returned.
    */
   function bootstrapUi() {
-    console.log(`[DownloadConversation v${VERSION}] bootstrap`, {
+    logConsoleDiagnostic('debug', `[DownloadConversation v${VERSION}] bootstrap`, {
       ready_state: document.readyState,
       has_body: Boolean(document.body)
     });
@@ -5694,7 +5728,7 @@ Image elapsed: ${formatDuration(imageElapsed)} — Completed: ${imageCompleted}/
         launcherMountCount += 1;
         launcherRemovalReported = false;
         const children = [...document.body.childNodes];
-        console.log(`[DownloadConversation v${VERSION}] launcher mounted`, {
+        logConsoleDiagnostic('debug', `[DownloadConversation v${VERSION}] launcher mounted`, {
           reason,
           ready_state: document.readyState,
           quiet_ms: quietMs,
@@ -5716,7 +5750,7 @@ Image elapsed: ${formatDuration(imageElapsed)} — Completed: ${imageCompleted}/
         if (!records.some(record => record.type === 'childList' && record.target === body)) return;
         if (launcherMountCount > 0 && !document.getElementById(LAUNCHER_ID) && !launcherRemovalReported) {
           launcherRemovalReported = true;
-          console.warn(`[DownloadConversation v${VERSION}] launcher disconnected; waiting for BODY quiet`, {
+          logConsoleDiagnostic('warnings', `[DownloadConversation v${VERSION}] launcher disconnected; waiting for BODY quiet`, {
             ready_state: document.readyState,
             body_child_count: body.childNodes.length,
             quiet_ms: quietMs
@@ -5733,7 +5767,7 @@ Image elapsed: ${formatDuration(imageElapsed)} — Completed: ${imageCompleted}/
       new MutationObserver((_, observer) => {
         if (!document.body) return;
         observer.disconnect();
-        console.log(`[DownloadConversation v${VERSION}] BODY appeared`, {
+        logConsoleDiagnostic('debug', `[DownloadConversation v${VERSION}] BODY appeared`, {
           ready_state: document.readyState
         });
         observeBody(document.body);
@@ -5743,7 +5777,7 @@ Image elapsed: ${formatDuration(imageElapsed)} — Completed: ${imageCompleted}/
     if (!loadReady) {
       window.addEventListener('load', () => {
         loadReady = true;
-        console.log(`[DownloadConversation v${VERSION}] load complete; waiting for BODY quiet`, {
+        logConsoleDiagnostic('debug', `[DownloadConversation v${VERSION}] load complete; waiting for BODY quiet`, {
           quiet_ms: quietMs
         });
         scheduleLauncherMount();

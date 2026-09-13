@@ -5,7 +5,7 @@ import test from 'node:test';
 const userscript = await readFile(new URL('../chatgpt-conversation-markdown-export.user.js', import.meta.url), 'utf8');
 
 test('heading metadata controls default off and Core owns semantic values', () => {
-  assert.match(userscript, /\/\/ @version      0\.6\.176/);
+  assert.match(userscript, /\/\/ @version      0\.6\.177/);
   assert.match(userscript, /showTimestamps = localStorage\.getItem\(SHOW_TIMESTAMPS_STORAGE_KEY\) === 'true'/);
   assert.match(userscript, /showRecordNumbers = localStorage\.getItem\(SHOW_RECORD_NUMBERS_STORAGE_KEY\) === 'true'/);
   assert.match(userscript, /showTurnIds = localStorage\.getItem\(SHOW_TURN_IDS_STORAGE_KEY\) === 'true'/);
@@ -29,7 +29,7 @@ test('four independent Markdown heading controls remain persistent UI state', ()
   assert.match(userscript, /data-role="show-timestamps" type="checkbox"> Timestamp/);
   assert.match(userscript, /data-role="show-record-numbers" type="checkbox"> Record #/);
   assert.match(userscript, /data-role="show-turn-ids" type="checkbox"> Turn ID/);
-  assert.match(userscript, /data-role="show-debug-provenance" type="checkbox"> Debug/);
+  assert.match(userscript, /data-role="show-debug-provenance" type="checkbox"> provenance/);
   assert.match(userscript, /localStorage\.setItem\(SHOW_TURN_IDS_STORAGE_KEY, String\(showTurnIds\)\)/);
   assert.match(userscript, /localStorage\.setItem\(SHOW_DEBUG_PROVENANCE_STORAGE_KEY, String\(showDebugProvenance\)\)/);
   assert.match(userscript, /if \(turnIds\) turnIds\.disabled = metadataDisabled/);

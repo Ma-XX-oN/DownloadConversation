@@ -234,6 +234,6 @@ test('DownloadConversation does not duplicate sediment-to-download URL construct
     'Transient signed resolver URLs must not be emitted directly to diagnostics.');
 });
 
-test('userscript version advances for issue 102 single-snapshot export', () => {
-  assert.match(userscript, /\/\/ @version      0\.6\.176/);
+test('userscript version advances for issue 110 console controls', () => {
+  assert.match(userscript, /\/\/ @version      0\.6\.177/);
 });

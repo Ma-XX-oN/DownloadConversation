@@ -19,7 +19,7 @@ test('diagnostic logging redacts signed URL tokens before retention and console 
   assert.ok(userscript.includes("return value.replace(/([?&](?:sig|signature)=)[^&#\\s]*/gi, '$1[redacted]');"));
   assert.match(userscript, /const safeData = redactDiagnosticSignedTokens\(data\)/);
   assert.match(userscript, /data: safeData/);
-  assert.match(userscript, /args\.push\(safeData\)/);
+  assert.match(userscript, /args\.push\(redactDiagnosticSignedTokens\(data\)\)/);
   assert.doesNotMatch(userscript, /args\.push\(data\)/);
 });
 
