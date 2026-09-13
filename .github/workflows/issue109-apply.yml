@@ -29,6 +29,9 @@ jobs:
           repository: Ma-XX-oN/AIConversationCore
           ref: b7961cb8dab11611a5af8f4304ae783295998cf2
           path: .issue109-core
+      - name: Install AIConversationCore dependencies
+        working-directory: .issue109-core
+        run: npm ci
       - name: Check out completed AI-General-Memory dependency
         uses: actions/checkout@v4
         with:
