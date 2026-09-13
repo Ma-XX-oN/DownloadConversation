@@ -55,6 +55,12 @@ test('recorder panel restores dialog/log/switch/extract UI contracts', () => {
     'Image recovery status must expose elapsed time for the currently awaited image.');
   assert.match(userscript, /recoveredImages = Math\.max\(recoveredImages, context\.image_number\);/,
     'Image recovery progress must advance as each individual image operation completes.');
+  assert.match(userscript, /fetching API page \${pageNumber}/,
+    'Conversation fetching status must identify the currently awaited API page.');
+  assert.match(userscript, /Page elapsed: \${formatDuration\(pageElapsed\)}/,
+    'Conversation fetching status must keep a live elapsed heartbeat while a page request is pending.');
+  assert.match(userscript, /await new Promise\(resolve => setTimeout\(resolve, 0\)\);/,
+    'Image completion must yield once so the next phase can paint before synchronous rendering.');
   assert.doesNotMatch(userscript, /function keepLauncherMounted\(/,
     'Diagnostic build must not restore a launcher that the host removed.');
   assert.match(userscript, /function installLauncherRemovalDiagnostics\(\)/,

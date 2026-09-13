@@ -26,8 +26,6 @@ test('issue 114 traces an accepted assistant segment through Markdown assembly a
   assert.match(userscript, /logDiagnostic\('debug', 'conversation-download-triggered'/);
   assert.match(userscript, /rejection_reason: canonicalSegmentEligible/);
   assert.match(userscript, /reason: 'no-canonical-or-fallback-renderer-produced-output'/);
-  assert.match(userscript, /function diagnosticTextHash\(text\)/);
-  assert.match(userscript, /function diagnosticMarkdownTurnInventory\(markdown, tailCount = 12\)/);
 });
 
 
@@ -47,26 +45,25 @@ test('issue 119 times image recovery and post-image export phases without loggin
   assert.match(userscript, /data_url_chars: timing\.data_url_chars/);
   assert.match(userscript, /recovering image \$\{imageNumber\}\/\$\{imageCount\}/);
   assert.match(userscript, /phase: 'markdown-render'/);
-  assert.match(userscript, /phase: 'markdown-diagnostics'/);
   assert.match(userscript, /phase: 'blob-create'/);
   assert.match(userscript, /phase: 'download-trigger'/);
   assert.doesNotMatch(userscript, /conversation-image-recovery-item-(?:start|complete|failure)[\s\S]{0,500}(?:data_url|source):/,
     'Image timing diagnostics must not include image payload/source fields.');
 });
 
-test('issue 119 gates expensive export-tail fingerprints behind debug diagnostics and reuses the result', () => {
+test('issue 119 keeps Markdown-ready diagnostics compact after removing full-document scans', () => {
   const readyIndex = userscript.indexOf("logDiagnostic('debug', 'conversation-export-markdown-ready'");
   const blobIndex = userscript.indexOf("logDiagnostic('debug', 'conversation-export-blob-created'");
   assert.ok(readyIndex > 0 && blobIndex > readyIndex);
-  const diagnosticStart = userscript.lastIndexOf('const diagnosticStartedAt = performance.now();', readyIndex);
-  const diagnosticEnd = userscript.indexOf('const blobStartedAt = performance.now();', readyIndex);
-  assert.ok(diagnosticStart > 0 && diagnosticEnd > diagnosticStart,
-    'Markdown-ready diagnostics must have a bounded debug-only phase.');
-  const diagnosticBlock = userscript.slice(diagnosticStart, diagnosticEnd);
-  assert.match(diagnosticBlock, /markdownHash = diagnosticTextHash\(markdown\)/);
-  assert.match(diagnosticBlock, /markdown_hash: markdownHash/);
-  assert.equal((diagnosticBlock.match(/diagnosticTextHash\(markdown\)/g) ?? []).length, 1,
-    'The export-tail diagnostic phase should calculate its full Markdown fingerprint only once.');
+  const readyGuard = userscript.lastIndexOf("if (diagnosticEnabled('debug'))", readyIndex);
+  assert.ok(readyGuard > 0 && readyIndex - readyGuard < 1000,
+    'Markdown-ready diagnostics must still be guarded before their compact arguments are built.');
+  const readyEnd = userscript.indexOf('});', readyIndex);
+  const readyBlock = userscript.slice(readyIndex, readyEnd + 3);
+  assert.match(readyBlock, /markdown_length: markdown.length/);
+  assert.match(readyBlock, /source_tail: sourceTail/);
+  assert.doesNotMatch(readyBlock, /markdown_hash|markdown_turn_ids|diagnosticTextHash|diagnosticMarkdownTurnInventory/,
+    'Markdown-ready diagnostics must not rescan the complete rendered document.');
 });
 
 test('issue 119 keeps high-volume diagnostics cheap while the log UI is collapsed', () => {
@@ -77,33 +74,28 @@ test('issue 119 keeps high-volume diagnostics cheap while the log UI is collapse
 });
 
 
-test('issue 119 live evidence removes redundant Markdown scans and uses 20-record pages', () => {
-  assert.match(userscript, /const PAGE_TURNS = 20;/,
-    'Conversation API pagination must request 20 records per page for more frequent fetch feedback.');
+
+test('issue 119 live evidence restores 100-turn pages, keeps fetch heartbeat, and removes full-document debug scans', () => {
+  assert.match(userscript, /const PAGE_TURNS = 100;/,
+    'Measured same-conversation evidence requires the faster 100-turn request size.');
+  assert.match(userscript, /phase: 'request-start'/,
+    'Pagination must publish an in-flight request boundary before awaiting the page.');
+  assert.match(userscript, /page_started_at: pageStartedAt/,
+    'Pagination must expose the active page start time for the one-second UI heartbeat.');
+  assert.doesNotMatch(userscript, /function diagnosticTextHash\(/,
+    'The 24 MB Markdown export must not retain a whole-document diagnostic hash pass.');
+  assert.doesNotMatch(userscript, /function diagnosticMarkdownTurnInventory\(/,
+    'The 24 MB Markdown export must not retain a whole-document regex inventory pass.');
+  assert.doesNotMatch(userscript, /diagnosticTextHash\(markdown\)/,
+    'The complete Markdown document must not be fingerprinted during export.');
+  assert.doesNotMatch(userscript, /diagnosticMarkdownTurnInventory\(markdown/,
+    'The complete Markdown document must not be regex-inventoried during export.');
+  assert.doesNotMatch(userscript, /phase: 'markdown-diagnostics'/,
+    'The removed full-document scan must not leave a misleading diagnostics phase.');
+  assert.doesNotMatch(userscript, /markdown_hash:/,
+    'Downstream diagnostics must not claim a removed full-document hash.');
   assert.doesNotMatch(userscript, /rendered_hash: diagnosticTextHash\(rendered\)/,
     'Canonical segment diagnostics must not rescan the rendered segment for a duplicate hash.');
-  assert.doesNotMatch(userscript, /rendered_turn_ids: diagnosticMarkdownTurnInventory\(rendered\)/,
-    'Canonical segment diagnostics must not rescan the rendered segment for duplicate turn IDs.');
   assert.doesNotMatch(userscript, /block_hash: diagnosticTextHash\(renderedSegment\)/,
     'Block-appended diagnostics must not hash the same rendered segment again.');
-  assert.doesNotMatch(userscript, /block_turn_ids: diagnosticMarkdownTurnInventory\(renderedSegment\)/,
-    'Block-appended diagnostics must not inventory the same rendered segment again.');
-
-  const appendedIndex = userscript.indexOf("logDiagnostic('debug', 'conversation-markdown-block-appended'");
-  const appendedGuard = userscript.lastIndexOf("if (diagnosticEnabled('debug'))", appendedIndex);
-  assert.ok(appendedGuard >= 0 && appendedIndex - appendedGuard < 200,
-    'Block-appended debug arguments must be guarded before they are evaluated.');
-
-  const assembledIndex = userscript.indexOf("logDiagnostic('debug', 'conversation-markdown-assembled'");
-  const assembledEnd = userscript.indexOf('});', assembledIndex);
-  const assembledBlock = userscript.slice(assembledIndex, assembledEnd + 3);
-  assert.doesNotMatch(assembledBlock, /diagnosticTextHash\(markdown\)/,
-    'Markdown assembly must not hash the complete document before export-tail diagnostics.');
-  assert.doesNotMatch(assembledBlock, /diagnosticMarkdownTurnInventory\(markdown/,
-    'Markdown assembly must not inventory the complete document before export-tail diagnostics.');
-
-  assert.equal((userscript.match(/diagnosticTextHash\(markdown\)/g) ?? []).length, 1,
-    'The complete Markdown document must be fingerprinted at only one deliberate debug boundary.');
-  assert.equal((userscript.match(/diagnosticMarkdownTurnInventory\(markdown, 32\)/g) ?? []).length, 1,
-    'The complete Markdown turn-ID inventory must be scanned at only one deliberate debug boundary.');
 });

@@ -196,3 +196,35 @@ A real Debug export established that image recovery itself was not the observed 
 - `conversation-markdown-assembled` no longer performs a full-document hash or turn-ID regex inventory.  The final export-tail Debug boundary remains the single deliberate full-Markdown fingerprint/inventory point used for correlation.
 - Conversation API pagination requests 20 records per page instead of 100.  This does not change record ordering or completeness; it creates more fetch boundaries so the existing progress UI can report progress more frequently during long history retrieval.
 - No image timeout, concurrency, retry, or fallback policy is changed by this correction.
+
+## Issue #119 superseding live evidence: page size and UI heartbeat
+
+The later 0.6.168 live run supersedes the earlier decision to request 20 turns per
+Conversation API page.  On the same conversation, a single `num_turns=100`
+request fetched all 4392 source records in 15.133 seconds, while four
+`num_turns=20` cursor-chained requests required 41.016 seconds in total.  The
+pagination API exposes the next backward cursor only in the preceding response,
+so those requests are structurally sequential; they are not parallelized without
+separate evidence for an independent range API.
+
+Production therefore returns to `PAGE_TURNS = 100`.  User feedback no longer
+depends on small pages: progress marks a page as in-flight before awaiting it and
+the existing one-second status timer displays the current API page, completed
+page/record counts, current-page elapsed time, and whole-export elapsed time.
+
+The same run showed why the UI could remain visibly stuck on an old image count.
+All seven image-pointer operations completed in 24 ms, but the one remaining
+full-document Debug hash/turn-ID inventory then blocked the main thread for
+17.768 seconds while scanning roughly 24.2 million Markdown characters.  That
+whole-document scan and its hash/inventory helpers are removed.  The
+`conversation-export-markdown-ready` boundary retains compact source-tail and
+length metadata without rescanning the document, and the Blob boundary no longer
+reports a Markdown hash.
+
+After image recovery the export also yields one browser task before synchronous
+Markdown rendering.  This does not change image recovery behavior; it gives the
+completed image state and rendering transition a chance to paint so a prior
+`5/7` display cannot remain on screen while later CPU work is running.
+
+No image concurrency, timeout, retry, or fallback policy is introduced by this
+correction.
