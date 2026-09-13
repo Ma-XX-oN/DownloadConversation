@@ -1,0 +1,82 @@
+name: Apply and verify issue 109 heading contract
+
+on:
+  push:
+    branches:
+      - issue-109-heading-metadata-contract
+    paths:
+      - '.github/workflows/issue109-apply.yml'
+
+permissions:
+  contents: write
+
+jobs:
+  apply:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.13'
+      - name: Check out completed Core dependency
+        uses: actions/checkout@v4
+        with:
+          repository: Ma-XX-oN/AIConversationCore
+          ref: b7961cb8dab11611a5af8f4304ae783295998cf2
+          path: .issue109-core
+      - name: Check out completed AI-General-Memory dependency
+        uses: actions/checkout@v4
+        with:
+          repository: Ma-XX-oN/AI-General-Memory
+          ref: 8c642e5f0bb83a596587985db3dae7c0b61b6f36
+          path: .issue109-aigm
+      - name: Install cross-consumer dependencies
+        run: python -m pip install colorama regex
+      - name: Apply production and regression migration
+        run: python scripts/issue109-core-heading-contract.py
+      - name: Production JSDoc coverage
+        run: node scripts/check-jsdoc.mjs
+      - name: JavaScript syntax
+        run: node --check chatgpt-conversation-markdown-export.user.js
+      - name: Focused heading and canonical regressions
+        run: |
+          node --test tests/heading-metadata-controls.test.mjs tests/core-integration.test.mjs tests/phase5-rich-core-integration.test.mjs tests/recorder-panel-ui.test.mjs tests/sediment-resolver.test.mjs
+      - name: Remaining normal CI regressions
+        run: |
+          node --test tests/fallback-adaptive-fence.test.mjs tests/tool-language-diagnostics.test.mjs tests/test-list-ui.test.mjs
+      - name: Cross-consumer final-render parity
+        env:
+          PHASE7_CORE_ROOT: ${{ github.workspace }}/.issue109-core
+          PHASE7_AIGM_ROOT: ${{ github.workspace }}/.issue109-aigm
+        run: |
+          node tests/phase7-cross-consumer-parity.mjs
+          node tests/phase7-cross-consumer-markdown-shape.mjs
+          node tests/phase7-cross-consumer-adversarial.mjs
+      - name: Issue 109 invariant audit
+        shell: bash
+        run: |
+          set -euo pipefail
+          grep -q '// @version      0.6.173' chatgpt-conversation-markdown-export.user.js
+          grep -q 'b7961cb8dab11611a5af8f4304ae783295998cf2' chatgpt-conversation-markdown-export.user.js
+          ! grep -q '3233cba838bbf2d2cea5a2a6f1900ed6014dcfb0' chatgpt-conversation-markdown-export.user.js
+          ! grep -q 'function transcriptTimestamp' chatgpt-conversation-markdown-export.user.js
+          ! grep -q 'function canonicalHeadingMetadata' chatgpt-conversation-markdown-export.user.js
+          ! grep -q '<!-- turn_id=' chatgpt-conversation-markdown-export.user.js
+          grep -q "showTurnIds = localStorage.getItem(SHOW_TURN_IDS_STORAGE_KEY) === 'true'" chatgpt-conversation-markdown-export.user.js
+          ! grep -R -q '3233cba838bbf2d2cea5a2a6f1900ed6014dcfb0' tests .github/workflows/ci.yml
+          grep -q '8c642e5f0bb83a596587985db3dae7c0b61b6f36' .github/workflows/ci.yml
+      - name: Diff hygiene
+        run: git diff --check
+      - name: Commit verified production change
+        run: |
+          set -euo pipefail
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add chatgpt-conversation-markdown-export.user.js DESIGN.md tests .github/workflows/ci.yml
+          git commit -m 'export: use Core-owned heading metadata (#109)'
+          git push
