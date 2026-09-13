@@ -79,8 +79,7 @@ replace_once(
     canonicalCore() {
       return coreContext.AIConversationCore;
     }
-  };
-  vm.runInNewContext(`${productionFunctionSource('canonicalImageResourcesByPart')}\nthis.__lookup = canonicalImageResourcesByPart;`, context);""",
+  };""",
   """  let adaptedRecords = null;
   const context = {
     canonicalCore() {
@@ -94,8 +93,12 @@ replace_once(
     assert(condition, message) {
       if (!condition) throw new Error(message);
     }
-  };
-  vm.runInNewContext(`${productionFunctionSource('canonicalImageResourcesByRecordAndPart')}\nthis.__lookup = canonicalImageResourcesByRecordAndPart;`, context);"""
+  };"""
+)
+replace_once(
+  test_path,
+  r"  vm.runInNewContext(`${productionFunctionSource('canonicalImageResourcesByPart')}\nthis.__lookup = canonicalImageResourcesByPart;`, context);",
+  r"  vm.runInNewContext(`${productionFunctionSource('canonicalImageResourcesByRecordAndPart')}\nthis.__lookup = canonicalImageResourcesByRecordAndPart;`, context);"
 )
 replace_once(
   test_path,
