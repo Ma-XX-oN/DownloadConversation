@@ -105,9 +105,9 @@ diff --git a/tests/heading-metadata-controls.test.mjs b/tests/heading-metadata-c
  test('heading metadata controls retain historical defaults and JSONL numbering', () => {
 -  assert.match(userscript, /\/\/ @version      0\.6\.171/);
 +  assert.match(userscript, /\/\/ @version      0\.6\.172/);
-   assert.match(userscript, /const SHOW_TIMESTAMPS_STORAGE_KEY/);
-   assert.match(userscript, /const SHOW_RECORD_NUMBERS_STORAGE_KEY/);
-   assert.match(userscript, /const SHOW_TURN_IDS_STORAGE_KEY/);
+   assert.match(userscript, /showTimestamps = localStorage\.getItem\(SHOW_TIMESTAMPS_STORAGE_KEY\) === 'true'/);
+   assert.match(userscript, /showRecordNumbers = localStorage\.getItem\(SHOW_RECORD_NUMBERS_STORAGE_KEY\) === 'true'/);
+   assert.match(userscript, /showTurnIds = localStorage\.getItem\(SHOW_TURN_IDS_STORAGE_KEY\) !== 'false'/);
 diff --git a/tests/sediment-resolver.test.mjs b/tests/sediment-resolver.test.mjs
 --- a/tests/sediment-resolver.test.mjs
 +++ b/tests/sediment-resolver.test.mjs
