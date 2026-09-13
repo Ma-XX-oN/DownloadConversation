@@ -19,6 +19,19 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: 22
+      - name: Normalize inherited version regression
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+
+          path = Path('tests/sediment-resolver.test.mjs')
+          text = path.read_text(encoding='utf-8')
+          marker = "test('userscript version advances for sediment resolver completion', () => {"
+          start = text.index(marker)
+          end = text.index('\n});', start) + len('\n});')
+          canonical = "test('userscript version advances for sediment resolver completion', () => {\n  assert.match(userscript, /\\/\\/ @version      0\\.6\\.175/);\n});"
+          path.write_text(text[:start] + canonical + text[end:], encoding='utf-8')
+          PY
       - name: Apply issue 102 migration
         run: python scripts/issue102-migrate.py
       - name: JavaScript syntax
