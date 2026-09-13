@@ -1,0 +1,54 @@
+name: Issue 77 Core-download correction Windows
+
+on:
+  push:
+    branches:
+      - issue-77-sediment-resolver
+
+permissions:
+  contents: write
+
+jobs:
+  repair-windows:
+    if: github.actor != 'github-actions[bot]'
+    runs-on: windows-latest
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.13'
+      - name: Verify patch helper syntax
+        run: python -m py_compile scripts/issue77-core-download-fix.py
+      - name: Apply correction
+        run: python scripts/issue77-core-download-fix.py
+      - name: Whitespace validation
+        run: git diff --check
+      - name: Production JSDoc coverage
+        run: node scripts/check-jsdoc.mjs
+      - name: JavaScript syntax
+        run: node --check chatgpt-conversation-markdown-export.user.js
+      - name: Focused sediment resolver regressions
+        run: node --test tests/sediment-resolver.test.mjs
+      - name: Impacted regressions
+        run: node --test tests/core-integration.test.mjs tests/phase5-rich-core-integration.test.mjs tests/fallback-adaptive-fence.test.mjs tests/tool-language-diagnostics.test.mjs tests/sediment-resolver.test.mjs tests/test-list-ui.test.mjs tests/recorder-panel-ui.test.mjs tests/heading-metadata-controls.test.mjs
+      - name: Verify intended diff
+        run: |
+          set -euo pipefail
+          changed="$(git diff --name-only | sort)"
+          expected="$(printf '%s\n' DESIGN.md chatgpt-conversation-markdown-export.user.js tests/sediment-resolver.test.mjs | sort)"
+          test "$changed" = "$expected"
+          git diff --stat
+      - name: Commit verified correction
+        run: |
+          set -euo pipefail
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add DESIGN.md chatgpt-conversation-markdown-export.user.js tests/sediment-resolver.test.mjs
+          git commit -m 'fix: use Core download URL with authenticated transport (#77)'
+          git push
