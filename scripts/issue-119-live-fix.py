@@ -95,4 +95,4 @@ A real Debug export established that image recovery itself was not the observed 
 '''
 if '## Issue #119 live-evidence performance correction' in design_text:
   raise SystemExit('Design correction section already exists unexpectedly.')
-DESIGN.write_text(design_text.rstrip() + section + '\n', encoding='utf-8')
+DESIGN.write_text(design_text.rstrip() + section.rstrip() + '\n', encoding='utf-8')
