@@ -49,10 +49,12 @@ test('recorder panel restores dialog/log/switch/extract UI contracts', () => {
   assert.match(userscript, /if \(md\?\.checked\) await runExport\('md'\)/);
   assert.match(userscript, /const totalImages = records\.reduce\(\(total, item\) => total \+ userImagePointerCount\(item\?\.message\), 0\);/,
     'Image recovery must calculate the total image count before recovery begins.');
-  assert.match(userscript, /Recovering conversational images… \${recoveredImages}\/\${totalImages}/,
-    'Image recovery status must display recovered/total image counts.');
-  assert.match(userscript, /recoveredImages \+= expected;/,
-    'Image recovery progress must advance by the number of images processed in each source message.');
+  assert.match(userscript, /recovering image \${imageNumber}\/\${imageCount}/,
+    'Image recovery status must display the current image ordinal and total.');
+  assert.match(userscript, /Image elapsed: \${formatDuration\(imageElapsed\)}/,
+    'Image recovery status must expose elapsed time for the currently awaited image.');
+  assert.match(userscript, /recoveredImages = Math\.max\(recoveredImages, context\.image_number\);/,
+    'Image recovery progress must advance as each individual image operation completes.');
   assert.doesNotMatch(userscript, /function keepLauncherMounted\(/,
     'Diagnostic build must not restore a launcher that the host removed.');
   assert.match(userscript, /function installLauncherRemovalDiagnostics\(\)/,

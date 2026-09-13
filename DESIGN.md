@@ -153,3 +153,36 @@ DownloadConversation exposes three independent persistent Markdown-heading contr
 These are presentation-only controls.  They do not change chronology, grouping,
 UAP association, API pagination, recovery, or canonical normalization.
 
+
+
+## Image recovery and export performance diagnostics
+
+Image-heavy Markdown exports keep the established serial recovery order and
+fallback semantics, but expose enough timing evidence to locate otherwise silent
+waits. With diagnostics set to **Debug**, each image recovery logs a compact start
+record before its awaited operation and a completion/failure record containing
+fetch/header, response-body, data-URL encoding, byte/character, and total elapsed
+measurements. The log deliberately omits image URLs, Base64 payloads, and other
+image data. The whole image phase also records aggregate counts, sizes, and
+elapsed time.
+
+The live status display advances per image rather than only after an entire
+source message finishes. While an image is pending it shows the current global
+image ordinal, recovery path (`dom` or `pointer`), current-image elapsed time,
+completed count, and whole-export elapsed time. This is observability only: no
+parallel fetching, timeout, retry policy, or new fallback path is introduced by
+this instrumentation.
+
+After image recovery, Debug diagnostics bracket synchronous Markdown rendering,
+full-Markdown diagnostic calculation, Blob construction, and the browser download
+trigger. Expensive full-Markdown fingerprints/inventories are evaluated only when
+Debug diagnostics are actually enabled, and the export-tail fingerprint is reused
+instead of recalculated for the Blob boundary.
+
+Issue #119 raises the same-page diagnostic history from 500 to 10,000 entries so
+an image-heavy live run is unlikely to evict its early timing evidence. The
+session-storage mirror retains the newest 5,000 entries. High-volume logging is
+debounced to at most one persistence write per second, and a collapsed diagnostic
+panel does not rebuild hidden log-row DOM on every event. A page-hide event flushes
+the pending persisted tail. For live investigation, copy the diagnostic log before
+reloading the page so the full in-memory history is preserved.

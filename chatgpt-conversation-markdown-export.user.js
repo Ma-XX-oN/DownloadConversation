@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         ChatGPT Conversation Markdown Recorder
 // @namespace    https://chatgpt.com/
-// @version      0.6.163
+// @version      0.6.164
 // @description  Exports the current ChatGPT conversation directly from the Conversation API as Markdown or JSONL.
 // @match        https://chatgpt.com/*
 // @match        https://chat.openai.com/*
@@ -40,7 +40,11 @@
   /** Session-storage key for the retained recorder diagnostic log. */
   const DIAGNOSTIC_LOG_STORAGE_KEY = 'tm-conversation-recorder-diagnostic-log';
   /** Maximum number of diagnostic entries retained in memory and session storage. */
-  const MAX_DIAGNOSTIC_LOG_ITEMS = 500;
+  const MAX_DIAGNOSTIC_LOG_ITEMS = 10000;
+  /** Maximum retained diagnostic entries persisted across a page reload. */
+  const MAX_PERSISTED_DIAGNOSTIC_LOG_ITEMS = 5000;
+  /** Debounce used to keep high-volume debug diagnostics from serializing the full log on every event. */
+  const DIAGNOSTIC_PERSIST_DELAY_MS = 1000;
 
   /** Unwrapped page-realm fetch implementation captured before installing interception. */
   let originalPageFetch = null;
@@ -80,6 +84,8 @@
   let activeClickDiagnostic = null;
   /** In-memory diagnostic history mirrored to session storage for the panel. */
   let diagnosticLog = [];
+  /** Pending debounced diagnostic-log persistence timer, or null when no write is scheduled. */
+  let diagnosticPersistTimer = null;
   /** Whether the recorder panel currently shows the expanded diagnostic history. */
   let diagnosticLogExpanded = false;
   /** Element to refocus after the active recorder modal closes. */
@@ -1949,33 +1955,39 @@
   }
 
   /**
-   * Handles fallback resolve image pointer Markdown.
+   * Resolves one provider image pointer into Markdown while optionally recording timing metrics.
    *
    * @param {Object} part - The provider content part to process.
    * @param {string} recordId - The provider/source record identifier.
-   * @param {number} imageOrdinal - The zero-based image ordinal within the source record.
-   * @returns {Promise<string>} A promise that resolves to the string result produced by `cgResolveImagePointerMarkdown`.
+   * @param {number} imageOrdinal - The one-based image ordinal within the source record.
+   * @param {Object|null} timing - Mutable timing/result object populated without retaining image payload data.
+   * @returns {Promise<string>} A promise that resolves to image Markdown or the established unavailable-image fallback.
    */
-  async function cgResolveImagePointerMarkdown(part, recordId, imageOrdinal) {
+  async function cgResolveImagePointerMarkdown(part, recordId, imageOrdinal, timing = null) {
+    const startedAt = performance.now();
     const source = cgImagePointerSource(part);
-    if (!source) return '[image missing]';
-    if (source.startsWith('data:image/')) return `![image-${recordId}-${imageOrdinal}](${source})`;
+    if (!source) {
+      if (timing) {
+        timing.stage = 'complete';
+        timing.outcome = 'missing-pointer';
+        timing.source_scheme = null;
+        timing.total_ms = Math.round(performance.now() - startedAt);
+      }
+      return '[image missing]';
+    }
     let parsed = null;
     try { parsed = new URL(source, location.href); } catch {}
-    if (!parsed || !['http:', 'https:'].includes(parsed.protocol)) return cgImageUnavailableMarkdown(source);
+    if (!source.startsWith('data:image/') && (!parsed || !['http:', 'https:'].includes(parsed.protocol))) {
+      if (timing) {
+        timing.stage = 'complete';
+        timing.outcome = 'unsupported-pointer';
+        timing.source_scheme = parsed?.protocol ?? null;
+        timing.total_ms = Math.round(performance.now() - startedAt);
+      }
+      return cgImageUnavailableMarkdown(source);
+    }
     try {
-      const response = await fetch(source, { method: 'GET', credentials: 'include' });
-      if (!response.ok) return cgImageFailureMarkdown(source, response.status);
-      const blob = await response.blob();
-      /**
-       * Handles data url.
-       */
-      const dataUrl = await new Promise((resolve, reject) => {
-        const reader = new FileReader();
-        reader.onload = () => resolve(String(reader.result || ''));
-        reader.onerror = () => reject(reader.error || new Error('Could not read conversational image blob.'));
-        reader.readAsDataURL(blob);
-      });
+      const dataUrl = await fetchImageDataUrl(source, timing);
       return dataUrl ? `![image-${recordId}-${imageOrdinal}](${dataUrl})` : cgImageUnavailableMarkdown(source);
     } catch {
       return cgImageUnavailableMarkdown(source);
@@ -2952,6 +2964,17 @@
     if (stage === 'fetching') {
       return `${prefix}: fetched ${progressState.page_count} API page(s), ${progressState.raw_record_count} raw record(s)…\nElapsed: ${formatDuration(elapsed)}`;
     }
+    if (stage === 'recovering-images') {
+      const imageCount = Number(progressState.image_count) || 0;
+      const imageNumber = Number(progressState.image_number) || 0;
+      const imageCompleted = Number(progressState.image_completed) || 0;
+      const imageElapsed = progressState.image_started_at > 0
+        ? Math.max(0, now - progressState.image_started_at)
+        : 0;
+      const path = progressState.image_path ? ` (${progressState.image_path})` : '';
+      return `${prefix}: recovering image ${imageNumber}/${imageCount}${path}…\
+Image elapsed: ${formatDuration(imageElapsed)} — Completed: ${imageCompleted}/${imageCount} — Total elapsed: ${formatDuration(elapsed)}`;
+    }
     if (stage === 'rendering') {
       let eta = 'calculating…';
       if (progressState.record_number > 0 && progressState.record_count > progressState.record_number) {
@@ -3579,35 +3602,108 @@
   }
 
   /**
-   * Handles image element data URL.
+   * Fetches one conversational image source and converts its bytes to a data URL.
    *
-   * @param {Object} image - The image element to inspect.
-   * @returns {Promise<string|Object>} A promise resolving to the value produced by `imageElementDataUrl`.
+   * @param {string} source - Browser-resolvable image source URL or existing data URL.
+   * @param {Object|null} timing - Mutable timing/result object populated without storing image payload data.
+   * @returns {Promise<string>} A promise resolving to the image data URL.
    */
-  async function imageElementDataUrl(image) {
-    const src = image.currentSrc || image.getAttribute('src') || '';
+  async function fetchImageDataUrl(source, timing = null) {
+    const startedAt = performance.now();
+    const src = String(source ?? '');
     assert(src, 'Conversational image has no source URL.');
-    if (src.startsWith('data:')) return src;
-    const response = await fetch(src, { credentials: 'include' });
-    if (!response.ok) {
-      const error = new Error(`Conversational image request returned HTTP ${response.status}.`);
-      error.httpStatus = response.status;
+    if (timing) {
+      timing.stage = 'source';
+      timing.outcome = null;
+      timing.source_scheme = null;
+      timing.http_status = null;
+      timing.fetch_ms = null;
+      timing.body_ms = null;
+      timing.encode_ms = null;
+      timing.blob_bytes = null;
+      timing.data_url_chars = null;
+      timing.total_ms = null;
+      try { timing.source_scheme = new URL(src, location.href).protocol; } catch {}
+    }
+    if (src.startsWith('data:')) {
+      if (timing) {
+        timing.stage = 'complete';
+        timing.outcome = 'data-url';
+        timing.fetch_ms = 0;
+        timing.body_ms = 0;
+        timing.encode_ms = 0;
+        timing.data_url_chars = src.length;
+        timing.total_ms = Math.round(performance.now() - startedAt);
+      }
+      return src;
+    }
+    try {
+      if (timing) timing.stage = 'fetch';
+      const response = await fetch(src, { credentials: 'include' });
+      const headersAt = performance.now();
+      if (timing) {
+        timing.fetch_ms = Math.round(headersAt - startedAt);
+        timing.http_status = response.status;
+      }
+      if (!response.ok) {
+        const error = new Error(`Conversational image request returned HTTP ${response.status}.`);
+        error.httpStatus = response.status;
+        if (timing) timing.outcome = 'http-error';
+        throw error;
+      }
+      if (timing) timing.stage = 'body';
+      const blob = await response.blob();
+      const bodyAt = performance.now();
+      if (timing) {
+        timing.body_ms = Math.round(bodyAt - headersAt);
+        timing.blob_bytes = blob.size;
+        timing.stage = 'encode';
+      }
+      const dataUrl = await new Promise((resolve, reject) => {
+        const reader = new FileReader();
+        reader.onload = () => resolve(String(reader.result || ''));
+        reader.onerror = () => reject(reader.error || new Error('Could not read conversational image blob.'));
+        reader.readAsDataURL(blob);
+      });
+      const finishedAt = performance.now();
+      if (timing) {
+        timing.encode_ms = Math.round(finishedAt - bodyAt);
+        timing.data_url_chars = dataUrl.length;
+        timing.total_ms = Math.round(finishedAt - startedAt);
+        timing.outcome = 'success';
+        timing.stage = 'complete';
+      }
+      return dataUrl;
+    } catch (error) {
+      if (timing) {
+        timing.total_ms = Math.round(performance.now() - startedAt);
+        if (!timing.outcome) timing.outcome = `${timing.stage || 'unknown'}-error`;
+      }
       throw error;
     }
-    const blob = await response.blob();
-    return await new Promise((resolve, reject) => {
-      const reader = new FileReader();
-      reader.onload = () => resolve(String(reader.result || ''));
-      reader.onerror = () => reject(reader.error || new Error('Could not read conversational image blob.'));
-      reader.readAsDataURL(blob);
-    });
   }
 
   /**
-   * Recovers user images.
+   * Converts a mounted conversation image element to a data URL while optionally recording timing metrics.
+   *
+   * @param {HTMLImageElement} image - Mounted conversation image element whose current source is recovered.
+   * @param {Object|null} timing - Mutable timing/result object populated by `fetchImageDataUrl`.
+   * @returns {Promise<string>} A promise resolving to the image data URL.
+   */
+  async function imageElementDataUrl(image, timing = null) {
+    const src = image.currentSrc || image.getAttribute('src') || '';
+    return fetchImageDataUrl(src, timing);
+  }
+
+  /**
+   * Recovers user images while exposing compact per-image and whole-phase timing diagnostics.
+   *
+   * Existing recovery order and fallback behavior are preserved: images are still
+   * recovered serially, mounted DOM candidates are preferred, and provider pointers
+   * are used only where the established path already used them.
    *
    * @param {Object} spine - The ordered Conversation API source-record spine.
-   * @returns {Promise<Map<unknown, unknown>>} A promise resolving to the value produced by `recoverUserImages`.
+   * @returns {Promise<Map<unknown, unknown>>} A promise resolving to recovered image Markdown keyed by source message id.
    */
   async function recoverUserImages(spine) {
     // Recovered image Markdown is keyed by source message id for later canonical enrichment.
@@ -3615,27 +3711,138 @@
     const scrollRoot = conversationScrollRoot();
     // Preserve the caller scroll position so image recovery can restore the page exactly.
     const originalScrollTop = scrollRoot.scrollTop;
-    /**
-     * Handles records.
-     */
+    /** Ordered source records that contain one or more user image pointers. */
     const records = (spine?.records ?? []).filter(record => userImagePointerCount(record?.message) > 0);
+    /** Total unique image pointers expected across the source records. */
     const totalImages = records.reduce((total, item) => total + userImagePointerCount(item?.message), 0);
+    /** Highest unique image ordinal completed during this recovery phase. */
     let recoveredImages = 0;
-    setStatus(`Recovering conversational images… ${recoveredImages}/${totalImages}`);
+    /** Number of mounted-image recovery operations that threw an error. */
+    let failedImages = 0;
+    /** Number of pointer resolutions that completed with an unavailable/missing outcome. */
+    let unavailableImages = 0;
+    /** Sum of downloaded Blob byte sizes observed by timed image operations. */
+    let totalBlobBytes = 0;
+    /** Sum of resulting data-URL character lengths observed by timed image operations. */
+    let totalDataUrlChars = 0;
+    /** Zero-based count of unique image pointers preceding the current source record. */
+    let imageBase = 0;
+    /** Monotonic start time for the complete image-recovery phase. */
+    const recoveryStartedAt = performance.now();
+    /** Whether the whole recovery phase reached the normal loop completion point. */
+    let recoveryCompleted = false;
+
+    if (progressState) {
+      progressState.stage = 'recovering-images';
+      progressState.image_number = 0;
+      progressState.image_count = totalImages;
+      progressState.image_completed = 0;
+      progressState.image_path = null;
+      progressState.image_started_at = 0;
+    }
+    logDiagnostic('debug', 'conversation-image-recovery-start', {
+      source_message_count: records.length,
+      total_images: totalImages,
+      diagnostic_log_capacity: MAX_DIAGNOSTIC_LOG_ITEMS
+    });
+    refreshStatus();
+
+    /**
+     * Runs one existing image-recovery operation while recording compact timing/progress state.
+     *
+     * @param {Function} loader - Async image loader that accepts one mutable timing object.
+     * @param {Object} context - Stable source/image correlation fields for the operation.
+     * @returns {Promise<string>} A promise resolving to the existing image recovery result.
+     */
+    const recoverOne = async (loader, context) => {
+      /** Mutable timing fields populated by the underlying image loader. */
+      const timing = {};
+      /** Monotonic start time for this one image recovery operation. */
+      const startedAt = performance.now();
+      if (progressState) {
+        progressState.stage = 'recovering-images';
+        progressState.image_number = context.image_number;
+        progressState.image_count = totalImages;
+        progressState.image_path = context.path;
+        progressState.image_started_at = startedAt;
+        progressState.image_message_id = context.message_id;
+        progressState.image_ordinal = context.image_ordinal;
+      }
+      refreshStatus();
+      logDiagnostic('debug', 'conversation-image-recovery-item-start', {
+        image_number: context.image_number,
+        total_images: totalImages,
+        message_id: context.message_id,
+        image_ordinal: context.image_ordinal,
+        path: context.path
+      });
+      try {
+        const value = await loader(timing);
+        const outcome = timing.outcome ?? 'success';
+        if (!['success', 'data-url'].includes(outcome)) unavailableImages += 1;
+        logDiagnostic('debug', 'conversation-image-recovery-item-complete', {
+          image_number: context.image_number,
+          total_images: totalImages,
+          message_id: context.message_id,
+          image_ordinal: context.image_ordinal,
+          path: context.path,
+          outcome,
+          source_scheme: timing.source_scheme ?? null,
+          http_status: timing.http_status ?? null,
+          fetch_ms: timing.fetch_ms ?? null,
+          body_ms: timing.body_ms ?? null,
+          encode_ms: timing.encode_ms ?? null,
+          blob_bytes: timing.blob_bytes ?? null,
+          data_url_chars: timing.data_url_chars ?? null,
+          elapsed_ms: timing.total_ms ?? Math.round(performance.now() - startedAt)
+        });
+        return value;
+      } catch (error) {
+        failedImages += 1;
+        logDiagnostic('debug', 'conversation-image-recovery-item-failure', {
+          image_number: context.image_number,
+          total_images: totalImages,
+          message_id: context.message_id,
+          image_ordinal: context.image_ordinal,
+          path: context.path,
+          outcome: timing.outcome ?? 'error',
+          last_stage: timing.stage ?? null,
+          source_scheme: timing.source_scheme ?? null,
+          http_status: (timing.http_status ?? Number(error?.httpStatus)) || null,
+          fetch_ms: timing.fetch_ms ?? null,
+          body_ms: timing.body_ms ?? null,
+          encode_ms: timing.encode_ms ?? null,
+          blob_bytes: timing.blob_bytes ?? null,
+          data_url_chars: timing.data_url_chars ?? null,
+          elapsed_ms: timing.total_ms ?? Math.round(performance.now() - startedAt),
+          message: error instanceof Error ? error.message : String(error)
+        });
+        throw error;
+      } finally {
+        if (Number.isFinite(timing.blob_bytes)) totalBlobBytes += timing.blob_bytes;
+        if (Number.isFinite(timing.data_url_chars)) totalDataUrlChars += timing.data_url_chars;
+        recoveredImages = Math.max(recoveredImages, context.image_number);
+        if (progressState) {
+          progressState.image_completed = recoveredImages;
+          progressState.image_started_at = 0;
+        }
+        refreshStatus();
+      }
+    };
+
     try {
       for (const item of records) {
         const record = item.message;
-        /**
-         * Handles expected parts.
-         */
+        /** Provider image-pointer parts expected for this source record. */
         const expectedParts = record.content.parts.filter(part =>
           part && typeof part === 'object' && part.content_type === 'image_asset_pointer'
         );
+        /** Number of expected image pointers in this source record. */
         const expected = expectedParts.length;
-        /**
-         * Handles image s.
-         */
+        /** Existing fallback Markdown for each expected image pointer. */
         const images = expectedParts.map(part => cgImagePointerFallback(part));
+        /** Global image-number offset for this source record. */
+        const recordImageBase = imageBase;
         try {
           const section = mountedTurnSection(record.id, 'user');
           if (!(section instanceof HTMLElement)) {
@@ -3650,7 +3857,15 @@
           logInternalImagePointerEvidence(record, section, candidates);
           for (let index = 0; index < Math.min(expected, candidates.length); index += 1) {
             try {
-              const dataUrl = await imageElementDataUrl(candidates[index]);
+              const dataUrl = await recoverOne(
+                timing => imageElementDataUrl(candidates[index], timing),
+                {
+                  image_number: recordImageBase + index + 1,
+                  message_id: record.id,
+                  image_ordinal: index + 1,
+                  path: 'dom'
+                }
+              );
               if (dataUrl) images[index] = `![image-${record.id}-${index + 1}](${dataUrl})`;
             } catch (error) {
               const status = Number(error?.httpStatus);
@@ -3667,7 +3882,15 @@
             }
           }
           for (let index = candidates.length; index < expected; index += 1) {
-            images[index] = await cgResolveImagePointerMarkdown(expectedParts[index], record.id, index + 1);
+            images[index] = await recoverOne(
+              timing => cgResolveImagePointerMarkdown(expectedParts[index], record.id, index + 1, timing),
+              {
+                image_number: recordImageBase + index + 1,
+                message_id: record.id,
+                image_ordinal: index + 1,
+                path: 'pointer'
+              }
+            );
           }
         } catch (error) {
           logDiagnostic('warnings', 'conversation-image-turn-recovery-failure', {
@@ -3676,15 +3899,37 @@
             message: error instanceof Error ? error.message : String(error)
           });
           for (let index = 0; index < expected; index += 1) {
-            images[index] = await cgResolveImagePointerMarkdown(expectedParts[index], record.id, index + 1);
+            images[index] = await recoverOne(
+              timing => cgResolveImagePointerMarkdown(expectedParts[index], record.id, index + 1, timing),
+              {
+                image_number: recordImageBase + index + 1,
+                message_id: record.id,
+                image_ordinal: index + 1,
+                path: 'pointer'
+              }
+            );
           }
         }
         recovered.set(record.id, images);
-        recoveredImages += expected;
-        setStatus(`Recovering conversational images… ${recoveredImages}/${totalImages}`);
+        imageBase += expected;
+        recoveredImages = Math.max(recoveredImages, imageBase);
+        if (progressState) progressState.image_completed = recoveredImages;
+        refreshStatus();
       }
+      recoveryCompleted = true;
     } finally {
       scrollRoot.scrollTop = originalScrollTop;
+      logDiagnostic('debug', 'conversation-image-recovery-complete', {
+        outcome: recoveryCompleted ? 'complete' : 'aborted',
+        source_message_count: records.length,
+        total_images: totalImages,
+        completed_images: recoveredImages,
+        failed_images: failedImages,
+        unavailable_images: unavailableImages,
+        blob_bytes: totalBlobBytes,
+        data_url_chars: totalDataUrlChars,
+        elapsed_ms: Math.round(performance.now() - recoveryStartedAt)
+      });
     }
     return recovered;
   }
@@ -3740,6 +3985,12 @@
         /**
          * Handles markdown.
          */
+        /** Monotonic start time for synchronous Markdown rendering/final assembly. */
+        const renderStartedAt = performance.now();
+        logDiagnostic('debug', 'conversation-export-phase-start', {
+          phase: 'markdown-render',
+          source_record_count: spine.records.length
+        });
         const markdown = renderConversationMarkdown(spine, progress => {
           progressState.stage = 'rendering';
           progressState.record_number = progress.record_number;
@@ -3747,28 +3998,72 @@
           refreshStatus();
         }, recoveredImageMap);
         const filename = `${sanitizeFileName(conversationTitle())}.md`;
-        logDiagnostic('debug', 'conversation-export-markdown-ready', {
-          filename,
-          source_record_count: spine.records.length,
-          source_tail: spine.records.slice(-32).map(item => ({
+        logDiagnostic('debug', 'conversation-export-phase-complete', {
+          phase: 'markdown-render',
+          elapsed_ms: Math.round(performance.now() - renderStartedAt),
+          markdown_length: markdown.length
+        });
+        /** Markdown fingerprint reused by downstream debug boundaries when debug logging is enabled. */
+        let markdownHash = null;
+        if (diagnosticEnabled('debug')) {
+          const diagnosticStartedAt = performance.now();
+          logDiagnostic('debug', 'conversation-export-phase-start', {
+            phase: 'markdown-diagnostics',
+            markdown_length: markdown.length
+          });
+          markdownHash = diagnosticTextHash(markdown);
+          const markdownTurnIds = diagnosticMarkdownTurnInventory(markdown, 32);
+          const sourceTail = spine.records.slice(-32).map(item => ({
             source_record_id: item?.message_id ?? item?.message?.id ?? null,
             source_role: item?.role ?? item?.message?.author?.role ?? null,
             source_channel: item?.channel ?? item?.message?.channel ?? null,
             source_content_type: item?.content_type ?? item?.message?.content?.content_type ?? null
-          })),
-          markdown_length: markdown.length,
-          markdown_hash: diagnosticTextHash(markdown),
-          markdown_turn_ids: diagnosticMarkdownTurnInventory(markdown, 32)
+          }));
+          logDiagnostic('debug', 'conversation-export-markdown-ready', {
+            filename,
+            source_record_count: spine.records.length,
+            source_tail: sourceTail,
+            markdown_length: markdown.length,
+            markdown_hash: markdownHash,
+            markdown_turn_ids: markdownTurnIds
+          });
+          logDiagnostic('debug', 'conversation-export-phase-complete', {
+            phase: 'markdown-diagnostics',
+            elapsed_ms: Math.round(performance.now() - diagnosticStartedAt),
+            markdown_length: markdown.length
+          });
+        }
+        const blobStartedAt = performance.now();
+        logDiagnostic('debug', 'conversation-export-phase-start', {
+          phase: 'blob-create',
+          markdown_length: markdown.length
         });
         const markdownBlob = new Blob([markdown], { type: 'text/markdown;charset=utf-8' });
-        logDiagnostic('debug', 'conversation-export-blob-created', {
-          filename,
-          markdown_length: markdown.length,
-          markdown_hash: diagnosticTextHash(markdown),
-          blob_size: markdownBlob.size,
-          blob_type: markdownBlob.type
+        logDiagnostic('debug', 'conversation-export-phase-complete', {
+          phase: 'blob-create',
+          elapsed_ms: Math.round(performance.now() - blobStartedAt),
+          blob_size: markdownBlob.size
+        });
+        if (diagnosticEnabled('debug')) {
+          logDiagnostic('debug', 'conversation-export-blob-created', {
+            filename,
+            markdown_length: markdown.length,
+            markdown_hash: markdownHash,
+            blob_size: markdownBlob.size,
+            blob_type: markdownBlob.type
+          });
+        }
+        const downloadStartedAt = performance.now();
+        logDiagnostic('debug', 'conversation-export-phase-start', {
+          phase: 'download-trigger',
+          blob_size: markdownBlob.size
         });
         downloadBlob(markdownBlob, filename);
+        logDiagnostic('debug', 'conversation-export-phase-complete', {
+          phase: 'download-trigger',
+          elapsed_ms: Math.round(performance.now() - downloadStartedAt),
+          blob_size: markdownBlob.size
+        });
         setStatus(`Extracted ${spine.records.length} API records from ${fetched.pages.length} API page(s) to ${filename}.`);
       }
     } catch (error) {
@@ -4390,14 +4685,34 @@
   }
 
   /**
-   * Handles persist diagnostic log.
+   * Persists the bounded tail of the diagnostic log to session storage.
+   *
+   * The larger in-memory capacity is retained for same-page live captures, while the
+   * persisted tail is separately bounded to avoid making every browser session write
+   * proportional to the full instrumentation history.
    *
    * @returns {void} No value is returned.
    */
   function persistDiagnosticLog() {
     try {
-      sessionStorage.setItem(DIAGNOSTIC_LOG_STORAGE_KEY, JSON.stringify(diagnosticLog));
+      sessionStorage.setItem(
+        DIAGNOSTIC_LOG_STORAGE_KEY,
+        JSON.stringify(diagnosticLog.slice(-MAX_PERSISTED_DIAGNOSTIC_LOG_ITEMS))
+      );
     } catch {}
+  }
+
+  /**
+   * Schedules a bounded diagnostic-log persistence write.
+   *
+   * @returns {void} No value is returned.
+   */
+  function schedulePersistDiagnosticLog() {
+    if (diagnosticPersistTimer !== null) return;
+    diagnosticPersistTimer = setTimeout(() => {
+      diagnosticPersistTimer = null;
+      persistDiagnosticLog();
+    }, DIAGNOSTIC_PERSIST_DELAY_MS);
   }
 
   /**
@@ -4434,6 +4749,9 @@
   /**
    * Refreshes diagnostic log.
    *
+   * Collapsed logs update only their count and controls. Thousands of hidden row
+   * elements are not rebuilt on every diagnostic event during an instrumented export.
+   *
    * @returns {void} No value is returned.
    */
   function refreshDiagnosticLog() {
@@ -4443,16 +4761,16 @@
     const output = panel.querySelector('[data-role="log-output"]');
     const toggle = panel.querySelector('[data-role="toggle-log"]');
     if (count) count.textContent = `Log: ${diagnosticLog.length} item${diagnosticLog.length === 1 ? '' : 's'}`;
-    if (output) {
+    if (output && diagnosticLogExpanded) {
       output.replaceChildren(...diagnosticLog.map(entry => {
         const row = document.createElement('div');
         row.className = 'tm-log-row';
         row.textContent = diagnosticLogLine(entry);
         return row;
       }));
-      output.hidden = !diagnosticLogExpanded;
       output.scrollTop = output.scrollHeight;
     }
+    if (output) output.hidden = !diagnosticLogExpanded;
     if (toggle instanceof HTMLButtonElement) {
       toggle.textContent = diagnosticLogExpanded ? '−' : '+';
       toggle.setAttribute('aria-expanded', String(diagnosticLogExpanded));
@@ -4508,7 +4826,7 @@
     if (diagnosticLog.length > MAX_DIAGNOSTIC_LOG_ITEMS) {
       diagnosticLog.splice(0, diagnosticLog.length - MAX_DIAGNOSTIC_LOG_ITEMS);
     }
-    persistDiagnosticLog();
+    schedulePersistDiagnosticLog();
     refreshDiagnosticLog();
 
     const args = [`[ChatGPT Recorder ${level}] ${message}`];
@@ -5386,7 +5704,14 @@
   });
 
   document.addEventListener('click', captureConversationClickDiagnostic, true);
-  window.addEventListener('pagehide', () => finishConversationClickDiagnostic(activeClickDiagnostic, 'pagehide'));
+  window.addEventListener('pagehide', () => {
+    finishConversationClickDiagnostic(activeClickDiagnostic, 'pagehide');
+    if (diagnosticPersistTimer !== null) {
+      clearTimeout(diagnosticPersistTimer);
+      diagnosticPersistTimer = null;
+    }
+    persistDiagnosticLog();
+  });
   if (DEEP_LAUNCHER_DIAGNOSTICS) {
     installLauncherRemovalDiagnostics();
     installLauncherTopologyDiagnostics();
