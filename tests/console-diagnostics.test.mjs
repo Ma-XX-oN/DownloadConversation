@@ -37,7 +37,9 @@ function consoleCalls({ shown, enabled, level = 'debug', message = 'message', da
     }
   };
   vm.createContext(context);
-  vm.runInContext(`${redactorSource}\n${consoleSource}\nthis.emit = logConsoleDiagnostic;`, context);
+  vm.runInContext(`${redactorSource}
+${consoleSource}
+this.emit = logConsoleDiagnostic;`, context);
   context.emit(level, message, data);
   return calls;
 }
