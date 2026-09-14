@@ -22,8 +22,10 @@ jobs:
           node-version: 22
       - name: Apply Issue 123 production patch
         run: python scripts/issue123_apply.py
+      - name: Apply Issue 123 review corrections
+        run: python scripts/issue123_adjust.py
       - name: Remove temporary patch scaffolding
-        run: rm scripts/issue123_apply.py .github/workflows/issue123-apply.yml
+        run: rm scripts/issue123_apply.py scripts/issue123_adjust.py .github/workflows/issue123-apply.yml
       - name: Verify documentation coverage
         run: node scripts/check-jsdoc.mjs
       - name: Verify JavaScript syntax
