@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         ChatGPT Conversation Markdown Recorder
 // @namespace    https://chatgpt.com/
-// @version      0.6.177
+// @version      0.6.178
 // @description  Exports the current ChatGPT conversation directly from the Conversation API as Markdown or JSONL.
 // @match        https://chatgpt.com/*
 // @match        https://chat.openai.com/*
@@ -3206,83 +3206,144 @@ Image elapsed: ${formatDuration(imageElapsed)} — Completed: ${imageCompleted}/
   }
 
   /**
-   * Handles populate jump TOC index.
+   * Captures the mounted-window and TOC identity state used to establish Jump traversal convergence.
    *
-   * @param {number} uapIndex - The zero-based uap index.
-   * @param {number} timeoutMs - The timeout duration in milliseconds.
-   * @returns {Promise<null>} A promise resolving to the value produced by `populateJumpTocIndex`.
+   * @param {HTMLElement} scrollRoot - The conversation scrolling element being traversed.
+   * @returns {string} A stable signature of the currently materialized conversation window.
    */
-  async function populateJumpTocIndex(uapIndex, timeoutMs = 60000) {
-    let toc = jumpTocIndexControl(uapIndex);
-    if (toc instanceof HTMLElement) return toc;
+  function jumpMaterializationSignature(scrollRoot) {
+    const mountedIds = [...document.querySelectorAll('section[data-turn-id]')]
+      .map(section => section.getAttribute('data-turn-id') || section.querySelector('[data-message-id]')?.getAttribute('data-message-id'))
+      .filter(Boolean);
+    const tocIndexes = [...document.querySelectorAll('button[data-toc-item-index]')]
+      .map(button => button.getAttribute('data-toc-item-index'))
+      .filter(value => value != null);
+    return JSON.stringify({
+      scroll_top: Math.round(scrollRoot.scrollTop),
+      scroll_height: Math.round(scrollRoot.scrollHeight),
+      client_height: Math.round(scrollRoot.clientHeight),
+      mounted_count: mountedIds.length,
+      mounted_first: mountedIds[0] ?? null,
+      mounted_last: mountedIds.at(-1) ?? null,
+      toc_count: tocIndexes.length,
+      toc_first: tocIndexes[0] ?? null,
+      toc_last: tocIndexes.at(-1) ?? null
+    });
+  }
+
+  /**
+   * Observes whether the requested Jump target or its host TOC control is currently materialized.
+   *
+   * @param {Object} target - Resolved Jump target containing UAP index, role, and stable message ID.
+   * @returns {Object} The currently materialized target section and TOC control.
+   */
+  function jumpMaterializationObservation(target) {
+    return {
+      section: mountedTurnSection(target.message_id, target.role),
+      toc: jumpTocIndexControl(target.uap_index)
+    };
+  }
+
+  /**
+   * Traverses virtualized conversation windows until the requested Jump target, its TOC control, or proven convergence is observed.
+   *
+   * @param {Object} target - Resolved Jump target containing UAP index, role, and stable message ID.
+   * @param {number} timeoutMs - Maximum traversal duration in milliseconds.
+   * @returns {Promise<Object>} The materialized target/TOC observation, or an empty observation after convergence or timeout.
+   */
+  async function materializeJumpTarget(target, timeoutMs = 60000) {
+    let observation = jumpMaterializationObservation(target);
+    if (observation.section instanceof HTMLElement || observation.toc instanceof HTMLElement) return observation;
 
     const scrollRoot = conversationScrollRoot();
-    // Preserve the caller scroll position so image recovery can restore the page exactly.
+    // Preserve the original position only for an unsuccessful traversal; successful Jump navigation owns the final viewport.
     const originalScrollTop = scrollRoot.scrollTop;
     const deadline = performance.now() + timeoutMs;
     let steps = 0;
-    let stagnantSteps = 0;
+    let stableBoundaryObservations = 0;
+    let previousBoundarySignature = null;
     logDiagnostic('debug', 'conversation-jump-toc-autopopulate-start', {
-      uap_index: uapIndex,
+      uap_index: target.uap_index,
+      message_id: target.message_id,
       original_scroll_top: originalScrollTop,
       scroll_height: scrollRoot.scrollHeight,
       client_height: scrollRoot.clientHeight
     });
 
     scrollRoot.scrollTo({ top: 0, behavior: 'auto' });
-    await new Promise(resolve => setTimeout(resolve, 100));
 
     while (performance.now() < deadline) {
-      toc = jumpTocIndexControl(uapIndex);
-      if (toc instanceof HTMLElement) {
+      await new Promise(resolve => setTimeout(resolve, 100));
+      observation = jumpMaterializationObservation(target);
+      if (observation.section instanceof HTMLElement || observation.toc instanceof HTMLElement) {
         logDiagnostic('debug', 'conversation-jump-toc-autopopulate-complete', {
-          uap_index: uapIndex,
+          uap_index: target.uap_index,
+          message_id: target.message_id,
           found: true,
+          materialized: observation.section instanceof HTMLElement ? 'target' : 'toc',
           steps,
           scroll_top: scrollRoot.scrollTop
         });
-        return toc;
+        return observation;
       }
 
       const maxScrollTop = Math.max(0, scrollRoot.scrollHeight - scrollRoot.clientHeight);
-      if (scrollRoot.scrollTop >= maxScrollTop - 2) break;
-      const before = scrollRoot.scrollTop;
+      const atCurrentBoundary = scrollRoot.scrollTop >= maxScrollTop - 2;
+      if (atCurrentBoundary) {
+        const signature = jumpMaterializationSignature(scrollRoot);
+        stableBoundaryObservations = signature === previousBoundarySignature
+          ? stableBoundaryObservations + 1
+          : 1;
+        previousBoundarySignature = signature;
+        if (stableBoundaryObservations >= 5) break;
+      } else {
+        stableBoundaryObservations = 0;
+        previousBoundarySignature = null;
+      }
+
       scrollRoot.scrollBy({
         top: Math.max(100, Math.floor(scrollRoot.clientHeight * 0.5)),
         behavior: 'auto'
       });
-      await new Promise(resolve => setTimeout(resolve, 100));
       steps += 1;
-      if (Math.abs(scrollRoot.scrollTop - before) < 1) stagnantSteps += 1;
-      else stagnantSteps = 0;
       if (steps % 20 === 0) {
+        observation = jumpMaterializationObservation(target);
         logDiagnostic('debug', 'conversation-jump-toc-autopopulate-progress', {
-          uap_index: uapIndex,
+          uap_index: target.uap_index,
+          message_id: target.message_id,
           steps,
           scroll_top: scrollRoot.scrollTop,
           scroll_height: scrollRoot.scrollHeight,
-          target_available: jumpTocIndexControl(uapIndex) instanceof HTMLElement
+          target_mounted: observation.section instanceof HTMLElement,
+          target_available: observation.toc instanceof HTMLElement,
+          stable_boundary_observations: stableBoundaryObservations
         });
       }
-      if (stagnantSteps >= 5) break;
     }
 
-    toc = jumpTocIndexControl(uapIndex);
-    if (!(toc instanceof HTMLElement)) scrollRoot.scrollTo({ top: originalScrollTop, behavior: 'auto' });
+    observation = jumpMaterializationObservation(target);
+    if (!(observation.section instanceof HTMLElement) && !(observation.toc instanceof HTMLElement)) {
+      scrollRoot.scrollTo({ top: originalScrollTop, behavior: 'auto' });
+    }
     logDiagnostic('debug', 'conversation-jump-toc-autopopulate-complete', {
-      uap_index: uapIndex,
-      found: toc instanceof HTMLElement,
+      uap_index: target.uap_index,
+      message_id: target.message_id,
+      found: observation.section instanceof HTMLElement || observation.toc instanceof HTMLElement,
+      materialized: observation.section instanceof HTMLElement
+        ? 'target'
+        : observation.toc instanceof HTMLElement ? 'toc' : null,
+      converged: stableBoundaryObservations >= 5,
       steps,
       scroll_top: scrollRoot.scrollTop
     });
-    return toc instanceof HTMLElement ? toc : null;
+    return observation;
   }
 
   /**
-   * Handles conversation jump to resolved target.
+   * Navigates to a resolved Jump target, materializing virtualized history only when required.
    *
-   * @param {EventTarget|null} target - The target element or resolved jump target.
-   * @returns {Promise<Object|boolean|string|number|null>} A promise that resolves to the Object|boolean|string|number|null result produced by `jumpToResolvedTarget`.
+   * @param {Object} target - Resolved Jump target containing UAP index, role, message ID, and API spine.
+   * @returns {Promise<HTMLElement>} The mounted target turn section.
    */
   async function jumpToResolvedTarget(target) {
     let section = mountedTurnSection(target.message_id, target.role);
@@ -3303,64 +3364,68 @@ Image elapsed: ${formatDuration(imageElapsed)} — Completed: ${imageCompleted}/
         available: toc instanceof HTMLElement
       });
       if (!(toc instanceof HTMLElement)) {
-        toc = await populateJumpTocIndex(target.uap_index);
+        const materialized = await materializeJumpTarget(target);
+        section = materialized.section;
+        toc = materialized.toc;
         logDiagnostic('debug', 'conversation-jump-materialization-step', {
           message_id: target.message_id,
           role: target.role,
           uap_index: target.uap_index,
           step: 'toc-index-control-after-autopopulate',
-          available: toc instanceof HTMLElement
+          available: toc instanceof HTMLElement,
+          target_mounted: section instanceof HTMLElement
         });
       }
-      assert(toc instanceof HTMLElement,
-        `Turn ${target.message_id} is not mounted and the conversation did not expose a UAP index control for ${target.uap_index} after automatic index population.`);
-      logDiagnostic('debug', 'conversation-jump-materialization-step', {
-        message_id: target.message_id,
-        role: target.role,
-        uap_index: target.uap_index,
-        step: 'toc-index-control-click'
-      });
-      toc.click();
-      if (target.role === 'assistant') {
-        const userMessageId = jumpUserRecords(target.spine)[target.uap_index]?.message_id;
-        if (userMessageId) {
-          const userSection = await waitForJumpTarget({
-            uap_index: target.uap_index,
-            role: 'user',
-            message_id: userMessageId
-          }, 6000);
-          logDiagnostic('debug', 'conversation-jump-materialization-step', {
-            message_id: target.message_id,
-            role: target.role,
-            uap_index: target.uap_index,
-            step: 'assistant-user-anchor-wait',
-            user_message_id: userMessageId,
-            mounted: userSection instanceof HTMLElement
-          });
-          userSection?.scrollIntoView({ block: 'center', behavior: 'auto' });
+
+      if (!(section instanceof HTMLElement)) {
+        assert(toc instanceof HTMLElement,
+          `Turn ${target.message_id} is not mounted and the conversation did not expose the target or UAP index control for ${target.uap_index} after converged automatic materialization.`);
+        logDiagnostic('debug', 'conversation-jump-materialization-step', {
+          message_id: target.message_id,
+          role: target.role,
+          uap_index: target.uap_index,
+          step: 'toc-index-control-click'
+        });
+        toc.click();
+        if (target.role === 'assistant') {
+          const userMessageId = jumpUserRecords(target.spine)[target.uap_index]?.message_id;
+          if (userMessageId) {
+            const userSection = await waitForJumpTarget({
+              uap_index: target.uap_index,
+              role: 'user',
+              message_id: userMessageId
+            }, 6000);
+            logDiagnostic('debug', 'conversation-jump-materialization-step', {
+              message_id: target.message_id,
+              role: target.role,
+              uap_index: target.uap_index,
+              step: 'assistant-user-anchor-wait',
+              user_message_id: userMessageId,
+              mounted: userSection instanceof HTMLElement
+            });
+            userSection?.scrollIntoView({ block: 'center', behavior: 'auto' });
+          }
         }
+        section = await waitForJumpTarget(target);
+        logDiagnostic('debug', 'conversation-jump-materialization-step', {
+          message_id: target.message_id,
+          role: target.role,
+          uap_index: target.uap_index,
+          step: 'target-wait-after-toc-click',
+          mounted: section instanceof HTMLElement
+        });
       }
-      section = await waitForJumpTarget(target);
-      logDiagnostic('debug', 'conversation-jump-materialization-step', {
-        message_id: target.message_id,
-        role: target.role,
-        uap_index: target.uap_index,
-        step: 'target-wait-complete',
-        mounted: section instanceof HTMLElement
-      });
     }
-    assert(section instanceof HTMLElement, `${target.role === 'assistant' ? 'Assistant' : 'User'} turn ${target.message_id} did not materialize.`);
+    assert(section instanceof HTMLElement, `Unable to materialize ${target.role} turn ${target.message_id}.`);
     section.scrollIntoView({ block: 'center', behavior: 'smooth' });
-    logDiagnostic('debug', 'conversation-jump-materialization-complete', {
+    logDiagnostic('debug', 'conversation-jump-materialization-step', {
       message_id: target.message_id,
       role: target.role,
       uap_index: target.uap_index,
-      turn_id: section.getAttribute('data-turn-id') || null,
-      data_turn: section.getAttribute('data-turn') || null
+      step: 'final-scroll-into-view'
     });
     return section;
   }
-
   /**
    * Handles run jump.
    *

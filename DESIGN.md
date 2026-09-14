@@ -84,6 +84,14 @@ Backward discovery establishes the oldest reachable boundary. Forward recovery m
 
 **Why:** a virtualized UI can jump or remount content in ways that make visual arrival at an endpoint look complete even when intermediate turns were never visited.
 
+### Jump materialization follows stable identity and convergence
+
+Jump resolves User/Assistant IDs and numeric UAP indices from the Conversation API first.  When the resolved stable message ID is not currently mounted, virtualized DOM traversal treats either the requested message itself or ChatGPT's UAP index control as a materialization success.  The index control is a navigation mechanism, not a required correctness condition.
+
+Automatic traversal starts at the oldest current boundary, checks the requested stable message ID after every settle, and advances in overlapping half-viewport steps.  Reaching one current `scrollHeight` endpoint is not completion: the endpoint must remain structurally stable across repeated observations of scroll geometry, mounted turn identities, and exposed UAP index controls.  A later virtualized extent resets convergence and traversal continues.
+
+**Why:** ChatGPT can replace or extend its virtualized scroll extent asynchronously.  Stable API identity is authoritative, while one transient DOM extent cannot prove that historical navigation has converged.
+
 ### Progress reports what is actually known
 
 Progress and missing counts must not imply knowledge the recorder does not have.
