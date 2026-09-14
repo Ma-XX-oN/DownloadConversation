@@ -161,3 +161,39 @@ test('JSONL comparison separates serialization loss or mutation from acquisition
   assert.equal(changedResult.changed_count, 1);
   assert.equal(changedResult.warning, true);
 });
+
+test('normal forward mounted discovery advances the high-water tail without prompt submission', () => {
+  const api = harness();
+  api.resetLiveTailTrackingState('conversation-1');
+  api.applyMountedLiveTailMarkers([marker(0), marker(1)], true, 'initial-bottom');
+  assert.equal(api.markers().at(-1).message_id, 'm1');
+  api.applyMountedLiveTailMarkers([marker(1), marker(2)], true, 'forward-scroll');
+  assert.equal(api.markers().at(-1).message_id, 'm2');
+  assert.equal(api.promptPending(), false);
+});
+
+test('prompt submission advances the new User then Assistant and clears prompt authorization', () => {
+  const api = harness();
+  api.resetLiveTailTrackingState('conversation-1');
+  api.applyMountedLiveTailMarkers([marker(0), marker(1)], true, 'initial-bottom');
+  api.markLiveTailHistoricalNavigation('scroll-up');
+  api.markLiveTailPromptSubmission();
+  assert.equal(api.historical(), false);
+  assert.equal(api.promptPending(), true);
+  api.applyMountedLiveTailMarkers([marker(1), marker(2)], false, 'submitted-user');
+  assert.equal(api.markers().at(-1).message_id, 'm2');
+  assert.equal(api.markers().at(-1).role, 'user');
+  assert.equal(api.promptPending(), true);
+  api.applyMountedLiveTailMarkers([marker(2), marker(3)], false, 'assistant-finished');
+  assert.equal(api.markers().at(-1).message_id, 'm3');
+  assert.equal(api.markers().at(-1).role, 'assistant');
+  assert.equal(api.promptPending(), false);
+});
+
+test('DownloadConversation Jump explicitly enters historical-navigation mode', () => {
+  assert.match(
+    userscript,
+    /markLiveTailHistoricalNavigation\('downloadconversation-jump'\)/,
+    'DownloadConversation Jump must prevent historical materialization from advancing the live tail.'
+  );
+});
