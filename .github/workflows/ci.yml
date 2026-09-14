@@ -18,6 +18,8 @@ jobs:
         run: node --check chatgpt-conversation-markdown-export.user.js
       - name: Single-snapshot export regression
         run: node --test tests/export-single-snapshot.test.mjs
+      - name: Live tail consistency regression
+        run: node --test tests/tail-consistency.test.mjs
       - name: Console lifecycle and provenance controls
         run: node --test tests/console-diagnostics.test.mjs
       - name: Canonical final-render regressions
