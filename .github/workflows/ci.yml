@@ -19,7 +19,9 @@ jobs:
         with:
           node-version: 22
       - name: Apply production patch
-        run: node scripts/apply-issue-123-stream-tail.mjs
+        run: |
+          node scripts/apply-issue-123-stream-tail.mjs
+          node scripts/apply-issue-123-stream-tail-corrections.mjs
       - name: Verify production syntax
         run: node --check chatgpt-conversation-markdown-export.user.js
       - name: Verify production JSDoc coverage
