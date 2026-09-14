@@ -197,3 +197,40 @@ test('DownloadConversation Jump explicitly enters historical-navigation mode', (
     'DownloadConversation Jump must prevent historical materialization from advancing the live tail.'
   );
 });
+
+test('DOM-only live markers are unverifiable rather than missing API records', () => {
+  const api = harness();
+  const first = marker(0);
+  const domOnly = marker(1, { message_id: null, dom_turn_id: 'dom-only-middle' });
+  const newest = marker(2);
+  const snapshot = spine([
+    sourceMessage(first.message_id, first.role, first.comparison_text),
+    sourceMessage(newest.message_id, newest.role, newest.comparison_text)
+  ]);
+  const result = api.compareLiveTailMarkersToSpine([first, domOnly, newest], snapshot);
+  assert.equal(result.matched_count, 2);
+  assert.equal(result.verifiable_count, 2);
+  assert.equal(result.unverifiable_count, 1);
+  assert.equal(result.missing_count, 0);
+  assert.equal(result.missing_suffix_count, 0);
+  assert.equal(result.newest_verifiable, true);
+  assert.equal(result.newest_consistent, true);
+  assert.equal(result.warning, false);
+});
+
+test('a DOM-only newest marker warns as unverifiable without claiming a missing suffix', () => {
+  const api = harness();
+  const prior = marker(0);
+  const newest = marker(1, { message_id: null, dom_turn_id: 'dom-only-newest' });
+  const result = api.compareLiveTailMarkersToSpine(
+    [prior, newest],
+    spine([sourceMessage(prior.message_id, prior.role, prior.comparison_text)])
+  );
+  assert.equal(result.verifiable_count, 1);
+  assert.equal(result.unverifiable_count, 1);
+  assert.equal(result.missing_count, 0);
+  assert.equal(result.missing_suffix_count, 0);
+  assert.equal(result.newest_verifiable, false);
+  assert.equal(result.newest_consistent, false);
+  assert.equal(result.warning, true);
+});
