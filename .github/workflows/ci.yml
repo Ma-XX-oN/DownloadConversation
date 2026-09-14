@@ -9,7 +9,7 @@ permissions:
 
 jobs:
   apply-stream-tail:
-    if: ${{ github.ref == 'refs/heads/issue-123-tail-consistency' && startsWith(github.event.head_commit.message, 'chore: stage issue 123 stream tail implementation') }}
+    if: "${{ github.ref == 'refs/heads/issue-123-tail-consistency' && startsWith(github.event.head_commit.message, 'chore: stage issue 123 stream tail implementation') }}"
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
