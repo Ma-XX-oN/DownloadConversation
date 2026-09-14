@@ -316,3 +316,13 @@ transport request uses the same captured authenticated page/API request context 
 Conversation API retrieval. Image-recovery Debug diagnostics include the loaded
 userscript version so a stale document runtime can be distinguished from the
 installed Tampermonkey version.
+
+## Live/API/JSONL tail consistency
+
+DownloadConversation retains a bounded monotonic history of the ten newest User/Assistant turns that the stock ChatGPT UI has legitimately exposed through forward conversation progression. The retained high-water history distinguishes the nested `data-message-id` API-correlation identity, mounted `section[data-turn-id]` identity, and section `data-testid` virtual-window identity rather than assuming those values are interchangeable.
+
+Historical navigation is not forward evidence. Scrolling upward, using ChatGPT's prompt index, invoking DownloadConversation Jump, or virtualized remounting must not advance the retained newest turn. After historical navigation, ordinary DOM discovery becomes eligible to advance the high-water mark only after the previous high-water turn is re-encountered at the current bottom boundary. An explicit new User prompt independently authorizes the following User/Assistant progression.
+
+At the start of Extract, the current ten-marker history is frozen for that operation. The existing single-snapshot invariant remains unchanged: DownloadConversation acquires the Conversation API once and all selected formats consume that same authoritative spine. The frozen live markers are compared with that spine, and generated JSONL is then compared with the exact source records from the same spine. Missing newest suffixes, same-ID materially shorter API content, identity/role disagreement, or JSONL loss/mutation are reported as consistency warnings with bounded identity/count evidence.
+
+These checks are observational. A mismatch does not reload ChatGPT, merge DOM content into the export, issue a second acquisition, or select a fallback source. Source-selection changes require separate evidence and approval. The consistency classifications are intended both to expose stale API snapshots and to help localize final-response loss such as issue #116 to live UI → API acquisition versus API → serialization.

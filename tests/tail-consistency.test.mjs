@@ -35,7 +35,7 @@ function harness() {
     HTMLElement: class {},
     HTMLFormElement: class {}
   };
-  vm.runInNewContext(`${sourceBlock()}\nthis.__tail={resetLiveTailTrackingState,recordLiveTailMarker,markLiveTailHistoricalNavigation,markLiveTailPromptSubmission,compareLiveTailMarkersToSpine,compareLiveTailMarkersToJsonl,markers:()=>liveTailMarkers.map(x=>({...x})),historical:()=>liveTailHistoricalNavigation,promptPending:()=>liveTailPromptAdvancePending};`, context);
+  vm.runInNewContext(`${sourceBlock()}\nthis.__tail={resetLiveTailTrackingState,recordLiveTailMarker,applyMountedLiveTailMarkers,markLiveTailHistoricalNavigation,markLiveTailPromptSubmission,compareLiveTailMarkersToSpine,compareLiveTailMarkersToJsonl,markers:()=>liveTailMarkers.map(x=>({...x})),historical:()=>liveTailHistoricalNavigation,promptPending:()=>liveTailPromptAdvancePending};`, context);
   return context.__tail;
 }
 
@@ -75,7 +75,7 @@ test('tail history is monotonic, navigation-safe, and bounded to ten markers', (
   const api = harness();
   api.resetLiveTailTrackingState('conversation-1');
   for (let i = 0; i < 12; i += 1) assert.equal(api.recordLiveTailMarker(marker(i), true), true);
-  assert.deepEqual(api.markers().map(x => x.message_id), Array.from({ length: 10 }, (_, i) => `m${i + 2}`));
+  assert.deepEqual(Array.from(api.markers(), x => x.message_id), Array.from({ length: 10 }, (_, i) => `m${i + 2}`));
   api.markLiveTailHistoricalNavigation('scroll-up');
   assert.equal(api.historical(), true);
   assert.equal(api.recordLiveTailMarker(marker(12), false), false);
@@ -86,6 +86,37 @@ test('tail history is monotonic, navigation-safe, and bounded to ten markers', (
   api.markLiveTailPromptSubmission();
   assert.equal(api.historical(), false);
   assert.equal(api.promptPending(), true);
+});
+
+
+test('mounted bottom observation seeds the newest ten and historical navigation resumes only after high-water re-encounter', () => {
+  const api = harness();
+  api.resetLiveTailTrackingState('conversation-1');
+  api.applyMountedLiveTailMarkers(Array.from({ length: 12 }, (_, i) => marker(i)), true, 'initial-bottom');
+  assert.deepEqual(Array.from(api.markers(), x => x.message_id), Array.from({ length: 10 }, (_, i) => `m${i + 2}`));
+  api.markLiveTailHistoricalNavigation('prompt-index');
+  api.applyMountedLiveTailMarkers([marker(4), marker(5), marker(6)], true, 'historical-remount');
+  assert.equal(api.markers().at(-1).message_id, 'm11');
+  assert.equal(api.historical(), true);
+  api.applyMountedLiveTailMarkers([marker(10), marker(11), marker(12), marker(13)], false, 'scroll-down-reencounter');
+  assert.equal(api.historical(), false);
+  assert.deepEqual(Array.from(api.markers(), x => x.message_id).slice(-3), ['m11', 'm12', 'm13']);
+});
+
+test('DOM turn id is diagnostic only and cannot substitute for a missing API message id', () => {
+  const api = harness();
+  const live = marker(1, { message_id: 'not-in-api', dom_turn_id: 'm1' });
+  const result = api.compareLiveTailMarkersToSpine([live], spine([sourceMessage('m1', 'assistant', live.comparison_text)]));
+  assert.equal(result.matched_count, 0);
+  assert.equal(result.missing_count, 1);
+  assert.equal(result.warning, true);
+});
+
+test('absence of retained live markers is an explicit freshness warning', () => {
+  const api = harness();
+  const result = api.compareLiveTailMarkersToSpine([], spine([sourceMessage('m1', 'assistant', 'complete') ]));
+  assert.equal(result.marker_count, 0);
+  assert.equal(result.warning, true);
 });
 
 test('API comparison quantifies missing newest suffix and ignores trailing internal records', () => {

@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         ChatGPT Conversation Markdown Recorder
 // @namespace    https://chatgpt.com/
-// @version      1.0.0
+// @version      1.0.1-issue.123.1
 // @description  Exports the current ChatGPT conversation directly from the Conversation API as Markdown or JSONL.
 // @match        https://chatgpt.com/*
 // @match        https://chat.openai.com/*
@@ -50,6 +50,10 @@
   const MAX_PERSISTED_DIAGNOSTIC_LOG_ITEMS = 5000;
   /** Debounce used to keep high-volume debug diagnostics from serializing the full log on every event. */
   const DIAGNOSTIC_PERSIST_DELAY_MS = 1000;
+  /** Maximum number of legitimate forward tail markers retained for export consistency checks. */
+  const LIVE_TAIL_MARKER_LIMIT = 10;
+  /** Maximum normalized visible characters retained per live tail marker for bounded comparison. */
+  const LIVE_TAIL_TEXT_LIMIT = 8192;
 
   /** Unwrapped page-realm fetch implementation captured before installing interception. */
   let originalPageFetch = null;
@@ -101,6 +105,28 @@
   let diagnosticLogExpanded = false;
   /** Element to refocus after the active recorder modal closes. */
   let lastModalOpener = null;
+  /** Conversation id whose live high-water tail is currently retained. */
+  let liveTailConversationId = null;
+  /** Newest legitimate forward-progression markers retained as a bounded high-water history. */
+  let liveTailMarkers = [];
+  /** Whether current materialization is historical navigation and therefore cannot advance the high-water tail. */
+  let liveTailHistoricalNavigation = false;
+  /** Whether an explicit prompt submission currently authorizes User then Assistant tail advancement. */
+  let liveTailPromptAdvancePending = false;
+  /** Guards live-tail DOM/event tracking so observers are installed only once. */
+  let liveTailTrackingInstalled = false;
+  /** Coalesces high-volume DOM mutations into one live-tail scan per task. */
+  let liveTailScanScheduled = false;
+  /** Last observed conversation-scroll position used only to detect upward historical navigation. */
+  let liveTailLastScrollTop = null;
+  /** Thread element currently carrying mounted virtual-window conversation turns. */
+  let liveTailObservedThread = null;
+  /** Mutation observer scoped to the current conversation thread. */
+  let liveTailThreadObserver = null;
+  /** Lightweight root observer used only to detect host replacement of the conversation thread. */
+  let liveTailRootObserver = null;
+  /** Scroll root currently supplying direction evidence for live-tail tracking. */
+  let liveTailObservedScrollRoot = null;
   try {
     const storedDiagnosticLog = JSON.parse(sessionStorage.getItem(DIAGNOSTIC_LOG_STORAGE_KEY) || '[]');
     if (Array.isArray(storedDiagnosticLog)) diagnosticLog = storedDiagnosticLog.slice(-MAX_DIAGNOSTIC_LOG_ITEMS);
@@ -3177,6 +3203,563 @@ Image elapsed: ${formatDuration(imageElapsed)} — Completed: ${imageCompleted}/
     return document.scrollingElement instanceof HTMLElement ? document.scrollingElement : document.documentElement;
   }
 
+  // BEGIN Issue #123 live-tail consistency
+  /**
+   * Normalizes visible text for bounded live/API tail comparison without changing export content.
+   *
+   * @param {Object} value - Text-like value to normalize.
+   * @returns {string} Whitespace-normalized comparison text.
+   */
+  function normalizeLiveTailText(value) {
+    return String(value ?? '').replace(/\s+/g, ' ').trim();
+  }
+
+  /**
+   * Produces a compact deterministic fingerprint for diagnostics-only live-tail evidence.
+   *
+   * @param {string} text - Normalized text to fingerprint.
+   * @returns {string} Eight-character hexadecimal FNV-1a fingerprint.
+   */
+  function liveTailFingerprint(text) {
+    let hash = 2166136261;
+    for (let index = 0; index < text.length; index += 1) {
+      hash ^= text.charCodeAt(index);
+      hash = Math.imul(hash, 16777619);
+    }
+    return (hash >>> 0).toString(16).padStart(8, '0');
+  }
+
+  /**
+   * Resets live-tail state when entering a different conversation or starting a fresh tracking lifetime.
+   *
+   * @param {string|null} conversationId - Conversation identity associated with the new tracking state.
+   * @returns {void} No value is returned.
+   */
+  function resetLiveTailTrackingState(conversationId = null) {
+    liveTailConversationId = conversationId;
+    liveTailMarkers = [];
+    liveTailHistoricalNavigation = false;
+    liveTailPromptAdvancePending = false;
+    liveTailLastScrollTop = null;
+  }
+
+  /**
+   * Tests whether two live-tail markers describe the same mounted/source message identity.
+   *
+   * @param {Object|null} left - First marker.
+   * @param {Object|null} right - Second marker.
+   * @returns {boolean} True when a stable message or DOM turn identity matches.
+   */
+  function liveTailMarkerIdentityMatches(left, right) {
+    if (!left || !right) return false;
+    if (left.message_id && right.message_id && left.message_id === right.message_id) return true;
+    return Boolean(left.dom_turn_id && right.dom_turn_id && left.dom_turn_id === right.dom_turn_id);
+  }
+
+  /**
+   * Captures one mounted User/Assistant section as independent DOM/source identity evidence.
+   *
+   * @param {Element} section - Mounted `section[data-turn-id]` element.
+   * @returns {Object|null} Bounded live-tail marker, or null for unsupported sections.
+   */
+  function liveTailSectionMarker(section) {
+    if (!(section instanceof Element)) return null;
+    const role = section.getAttribute('data-turn');
+    if (role !== 'user' && role !== 'assistant') return null;
+    const messageNodes = [...section.querySelectorAll('[data-message-id]')];
+    const message = messageNodes.at(-1) ?? null;
+    const domTurnId = section.getAttribute('data-turn-id') || null;
+    const messageId = message?.getAttribute('data-message-id') || null;
+    if (!domTurnId && !messageId) return null;
+    const normalized = normalizeLiveTailText((message ?? section).textContent || '');
+    /** Bounded visible text retained for comparison/fingerprinting; full normalized length remains diagnostic metadata. */
+    const comparisonText = normalized.slice(0, LIVE_TAIL_TEXT_LIMIT);
+    return {
+      role,
+      message_id: messageId,
+      dom_turn_id: domTurnId,
+      container_id: section.getAttribute('data-testid') || null,
+      comparison_text: comparisonText,
+      content_length: normalized.length,
+      content_fingerprint: liveTailFingerprint(comparisonText),
+      observed_at: Date.now()
+    };
+  }
+
+  /**
+   * Adds or refreshes one live high-water marker while preserving monotonic history.
+   *
+   * A remount/stream update of the current newest identity may refresh in place even when advancement is disabled. A different identity is appended only when the caller has established legitimate forward progression.
+   *
+   * @param {Object|null} marker - Candidate live-tail marker.
+   * @param {boolean} allowAdvance - Whether a new identity may advance the high-water history.
+   * @returns {boolean} True when retained marker state changed.
+   */
+  function recordLiveTailMarker(marker, allowAdvance) {
+    if (!marker || !['user', 'assistant'].includes(marker.role)) return false;
+    if (!marker.message_id && !marker.dom_turn_id) return false;
+    const newest = liveTailMarkers.at(-1) ?? null;
+    if (liveTailMarkerIdentityMatches(newest, marker)) {
+      liveTailMarkers[liveTailMarkers.length - 1] = { ...newest, ...marker };
+      return true;
+    }
+    if (liveTailMarkers.some(existing => liveTailMarkerIdentityMatches(existing, marker))) return false;
+    if (!allowAdvance) return false;
+    liveTailMarkers.push({ ...marker });
+    if (liveTailMarkers.length > LIVE_TAIL_MARKER_LIMIT) {
+      liveTailMarkers.splice(0, liveTailMarkers.length - LIVE_TAIL_MARKER_LIMIT);
+    }
+    return true;
+  }
+
+  /**
+   * Marks current virtual-window movement as historical navigation so mounted older turns cannot advance the tail.
+   *
+   * @param {string} reason - Diagnostic reason for entering historical-navigation mode.
+   * @returns {void} No value is returned.
+   */
+  function markLiveTailHistoricalNavigation(reason) {
+    liveTailHistoricalNavigation = true;
+    logDiagnostic('debug', 'conversation-live-tail-historical-navigation', {
+      reason,
+      marker_count: liveTailMarkers.length,
+      newest_message_id: liveTailMarkers.at(-1)?.message_id ?? null,
+      newest_dom_turn_id: liveTailMarkers.at(-1)?.dom_turn_id ?? null
+    });
+  }
+
+  /**
+   * Marks an explicit User prompt submission as legitimate forward conversation progression.
+   *
+   * @returns {void} No value is returned.
+   */
+  function markLiveTailPromptSubmission() {
+    liveTailHistoricalNavigation = false;
+    liveTailPromptAdvancePending = true;
+    logDiagnostic('debug', 'conversation-live-tail-prompt-submission', {
+      marker_count: liveTailMarkers.length,
+      newest_message_id: liveTailMarkers.at(-1)?.message_id ?? null
+    });
+  }
+
+  /**
+   * Reports whether the conversation scroll root is at its current physical bottom boundary.
+   *
+   * Physical-bottom evidence alone never overrides historical-navigation mode.
+   *
+   * @param {Element|Object} scrollRoot - Conversation scroll container.
+   * @returns {boolean} True when the current viewport is within the bottom tolerance.
+   */
+  function liveTailAtPhysicalBottom(scrollRoot) {
+    const scrollTop = Number(scrollRoot?.scrollTop) || 0;
+    const clientHeight = Number(scrollRoot?.clientHeight) || 0;
+    const scrollHeight = Number(scrollRoot?.scrollHeight) || 0;
+    const tolerance = Math.max(24, Math.floor(clientHeight * 0.04));
+    return scrollTop + clientHeight >= scrollHeight - tolerance;
+  }
+
+  /**
+   * Applies one ordered mounted-window observation to the monotonic live high-water history.
+   *
+   * Initial bottom observation seeds up to ten mounted markers. Historical navigation cannot advance until the prior high-water marker is re-encountered; once re-encountered, only later mounted markers may advance the history.
+   *
+   * @param {Array<Object>} mounted - Ordered mounted User/Assistant markers.
+   * @param {boolean} atBottom - Whether the observed scroll root is at its current physical bottom.
+   * @param {string} reason - Diagnostic reason for the observation.
+   * @returns {number} Number of retained marker entries added or refreshed.
+   */
+  function applyMountedLiveTailMarkers(mounted, atBottom, reason = 'scan') {
+    const candidates = Array.isArray(mounted) ? mounted.filter(Boolean) : [];
+    if (!candidates.length) return 0;
+    let changed = 0;
+    let advanced = 0;
+    const beforeNewest = liveTailMarkers.at(-1) ?? null;
+    if (!liveTailMarkers.length) {
+      if (!atBottom && !liveTailPromptAdvancePending) return 0;
+      for (const marker of candidates.slice(-LIVE_TAIL_MARKER_LIMIT)) {
+        if (recordLiveTailMarker(marker, true)) {
+          changed += 1;
+          advanced += 1;
+        }
+      }
+    } else if (liveTailHistoricalNavigation) {
+      const highWater = liveTailMarkers.at(-1);
+      const anchorIndex = candidates.findIndex(marker => liveTailMarkerIdentityMatches(marker, highWater));
+      if (anchorIndex < 0) return 0;
+      if (recordLiveTailMarker(candidates[anchorIndex], false)) changed += 1;
+      liveTailHistoricalNavigation = false;
+      logDiagnostic('debug', 'conversation-live-tail-high-water-reencountered', {
+        reason,
+        newest_message_id: highWater?.message_id ?? null,
+        newest_dom_turn_id: highWater?.dom_turn_id ?? null
+      });
+      for (let index = anchorIndex + 1; index < candidates.length; index += 1) {
+        if (recordLiveTailMarker(candidates[index], true)) {
+          changed += 1;
+          advanced += 1;
+        }
+      }
+    } else {
+      const highWater = liveTailMarkers.at(-1);
+      const anchorIndex = candidates.findIndex(marker => liveTailMarkerIdentityMatches(marker, highWater));
+      if (anchorIndex >= 0) {
+        if (recordLiveTailMarker(candidates[anchorIndex], false)) changed += 1;
+        for (let index = anchorIndex + 1; index < candidates.length; index += 1) {
+          if (recordLiveTailMarker(candidates[index], true)) {
+            changed += 1;
+            advanced += 1;
+          }
+        }
+      } else if ((atBottom || liveTailPromptAdvancePending) && candidates.length) {
+        if (recordLiveTailMarker(candidates.at(-1), true)) {
+          changed += 1;
+          advanced += 1;
+        }
+      }
+    }
+    const afterNewest = liveTailMarkers.at(-1) ?? null;
+    if (advanced > 0 && afterNewest?.role === 'assistant' && liveTailPromptAdvancePending) {
+      liveTailPromptAdvancePending = false;
+    }
+    if (advanced > 0 && !liveTailMarkerIdentityMatches(beforeNewest, afterNewest)) {
+      logDiagnostic('debug', 'conversation-live-tail-advanced', {
+        reason,
+        advanced_count: advanced,
+        marker_count: liveTailMarkers.length,
+        role: afterNewest?.role ?? null,
+        message_id: afterNewest?.message_id ?? null,
+        dom_turn_id: afterNewest?.dom_turn_id ?? null,
+        container_id: afterNewest?.container_id ?? null,
+        content_length: afterNewest?.content_length ?? null,
+        content_fingerprint: afterNewest?.content_fingerprint ?? null
+      });
+    }
+    return changed;
+  }
+
+  /**
+   * Scans the mounted virtual window and applies it to the retained monotonic high-water history.
+   *
+   * @param {string} reason - Diagnostic reason for the scan.
+   * @returns {void} No value is returned.
+   */
+  function scanLiveTailMarkers(reason = 'scan') {
+    const conversationId = currentConversationId();
+    if (!conversationId) return;
+    if (liveTailConversationId !== conversationId) resetLiveTailTrackingState(conversationId);
+    const mounted = [...document.querySelectorAll('section[data-turn-id]')]
+      .map(liveTailSectionMarker)
+      .filter(Boolean);
+    if (!mounted.length) return;
+    const scrollRoot = liveTailObservedScrollRoot || conversationScrollRoot();
+    applyMountedLiveTailMarkers(mounted, liveTailAtPhysicalBottom(scrollRoot), reason);
+  }
+
+  /**
+   * Coalesces a requested live-tail scan into one queued microtask.
+   *
+   * @param {string} reason - Diagnostic reason retained for the queued scan.
+   * @returns {void} No value is returned.
+   */
+  function scheduleLiveTailScan(reason) {
+    if (liveTailScanScheduled) return;
+    liveTailScanScheduled = true;
+    queueMicrotask(() => {
+      liveTailScanScheduled = false;
+      scanLiveTailMarkers(reason);
+    });
+  }
+
+  /**
+   * Handles conversation scrolling for high-water tracking without treating upward navigation as new content.
+   *
+   * @returns {void} No value is returned.
+   */
+  function handleLiveTailScroll() {
+    const scrollRoot = liveTailObservedScrollRoot || conversationScrollRoot();
+    const current = Number(scrollRoot?.scrollTop) || 0;
+    if (liveTailLastScrollTop !== null && current < liveTailLastScrollTop - 4) {
+      markLiveTailHistoricalNavigation('scroll-up');
+    }
+    liveTailLastScrollTop = current;
+    scheduleLiveTailScan('scroll');
+  }
+
+  /**
+   * Handles index-bar/send-button clicks for live-tail navigation/progression state.
+   *
+   * @param {Event|Object} event - Click event.
+   * @returns {void} No value is returned.
+   */
+  function handleLiveTailClick(event) {
+    const target = event.target instanceof Element ? event.target : null;
+    if (!target) return;
+    if (target.closest('button[data-toc-item-index]')) {
+      markLiveTailHistoricalNavigation('prompt-index');
+      return;
+    }
+    if (target.closest('button[data-testid="send-button"]')) markLiveTailPromptSubmission();
+  }
+
+  /**
+   * Handles prompt-form submission as explicit forward conversation progression.
+   *
+   * @param {Event|Object} event - Submit event.
+   * @returns {void} No value is returned.
+   */
+  function handleLiveTailSubmit(event) {
+    const form = event.target instanceof Element ? event.target : null;
+    if (form?.querySelector?.('#prompt-textarea')) markLiveTailPromptSubmission();
+  }
+
+  /**
+   * Handles Enter in the ChatGPT prompt editor when it represents a send rather than a newline.
+   *
+   * @param {KeyboardEvent|Object} event - Keyboard event.
+   * @returns {void} No value is returned.
+   */
+  function handleLiveTailPromptKeydown(event) {
+    const target = event.target instanceof Element ? event.target : null;
+    if (!target?.closest?.('#prompt-textarea')) return;
+    if (event.key === 'Enter' && !event.shiftKey && !event.isComposing) markLiveTailPromptSubmission();
+  }
+
+  /**
+   * Binds live-tail mutation and scroll observation to the current stock conversation thread.
+   *
+   * @returns {void} No value is returned.
+   */
+  function bindLiveTailThread() {
+    const thread = document.querySelector('#thread');
+    if (thread === liveTailObservedThread) return;
+    liveTailThreadObserver?.disconnect();
+    liveTailThreadObserver = null;
+    liveTailObservedScrollRoot?.removeEventListener?.('scroll', handleLiveTailScroll);
+    liveTailObservedThread = thread;
+    liveTailObservedScrollRoot = null;
+    liveTailLastScrollTop = null;
+    if (!(thread instanceof Element)) return;
+    liveTailObservedScrollRoot = conversationScrollRoot();
+    liveTailLastScrollTop = Number(liveTailObservedScrollRoot?.scrollTop) || 0;
+    liveTailObservedScrollRoot?.addEventListener?.('scroll', handleLiveTailScroll, { passive: true });
+    liveTailThreadObserver = new MutationObserver(() => scheduleLiveTailScan('thread-mutation'));
+    liveTailThreadObserver.observe(thread, { childList: true, subtree: true, characterData: true });
+    scheduleLiveTailScan('thread-bound');
+  }
+
+  /**
+   * Installs the passive bounded high-water tracker used only for export consistency evidence.
+   *
+   * @returns {void} No value is returned.
+   */
+  function installLiveTailTracking() {
+    if (liveTailTrackingInstalled) return;
+    liveTailTrackingInstalled = true;
+    document.addEventListener('click', handleLiveTailClick, true);
+    document.addEventListener('submit', handleLiveTailSubmit, true);
+    document.addEventListener('keydown', handleLiveTailPromptKeydown, true);
+    liveTailRootObserver = new MutationObserver(() => {
+      if (document.querySelector('#thread') !== liveTailObservedThread) bindLiveTailThread();
+    });
+    if (document.documentElement) {
+      liveTailRootObserver.observe(document.documentElement, { childList: true, subtree: true });
+    }
+    bindLiveTailThread();
+  }
+
+  /**
+   * Freezes the currently retained live high-water history for one export operation.
+   *
+   * @returns {Array<Object>} Independent marker copies ordered oldest to newest.
+   */
+  function snapshotLiveTailMarkers() {
+    return liveTailMarkers.map(marker => ({ ...marker }));
+  }
+
+  /**
+   * Extracts provider text suitable only for detecting a materially older/incomplete representation of the same message.
+   *
+   * @param {Object} message - Raw Conversation API message.
+   * @returns {string} Normalized visible comparison text, or an empty string when the record is not a visible User/final-Assistant candidate.
+   */
+  function liveTailVisibleApiText(message) {
+    if (!message || message?.metadata?.is_visually_hidden_from_conversation === true) return '';
+    const role = message?.author?.role;
+    if (role !== 'user' && role !== 'assistant') return '';
+    const type = message?.content?.content_type;
+    if (type !== 'text' && type !== 'multimodal_text') return '';
+    if (role === 'assistant' && message?.channel && message.channel !== 'final' && message?.end_turn !== true) return '';
+    const texts = [];
+    for (const part of Array.isArray(message?.content?.parts) ? message.content.parts : []) {
+      if (typeof part === 'string') texts.push(part);
+      else if (part && typeof part === 'object') {
+        for (const key of ['text', 'content']) {
+          if (typeof part[key] === 'string') texts.push(part[key]);
+        }
+      }
+    }
+    return normalizeLiveTailText(texts.join(' '));
+  }
+
+  /**
+   * Finds the API source record corresponding to one live marker by stable nested message identity only.
+   *
+   * DOM section turn ids and virtual-window ids are retained as independent diagnostics and are never assumed to be provider message ids.
+   *
+   * @param {Object} marker - Frozen live-tail marker.
+   * @param {Object} spine - Authoritative Conversation API spine.
+   * @returns {Object|null} Matching source record and match basis, or null when absent.
+   */
+  function liveTailFindRecordForMarker(marker, spine) {
+    const messageId = marker?.message_id;
+    if (!messageId) return null;
+    const record = (spine?.records ?? []).find(item => item?.message_id === messageId);
+    if (!record || !liveTailVisibleApiText(record.message)) return null;
+    return { record, basis: 'message_id' };
+  }
+
+  /**
+   * Compares frozen live high-water markers with the single authoritative Conversation API snapshot.
+   *
+   * @param {Array<Object>} markers - Frozen live-tail markers.
+   * @param {Object} spine - Authoritative Conversation API spine.
+   * @returns {Object} Safe diagnostic counts/identities; raw user text is never returned.
+   */
+  function compareLiveTailMarkersToSpine(markers, spine) {
+    const visibleRecords = (spine?.records ?? []).filter(item => Boolean(liveTailVisibleApiText(item?.message)));
+    const comparisons = [];
+    let stalePrefixCount = 0;
+    let roleMismatchCount = 0;
+    for (const marker of markers ?? []) {
+      const found = liveTailFindRecordForMarker(marker, spine);
+      if (!found) {
+        comparisons.push({ matched: false, message_id: marker?.message_id ?? null, dom_turn_id: marker?.dom_turn_id ?? null });
+        continue;
+      }
+      const apiText = liveTailVisibleApiText(found.record.message);
+      const liveText = normalizeLiveTailText(marker?.comparison_text ?? '');
+      const roleMismatch = Boolean(marker?.role && found.record.role && marker.role !== found.record.role);
+      if (roleMismatch) roleMismatchCount += 1;
+      const stalePrefix = found.basis === 'message_id' && apiText.length >= 20 &&
+        liveText.length >= apiText.length + 12 && liveText.startsWith(apiText);
+      if (stalePrefix) stalePrefixCount += 1;
+      comparisons.push({
+        matched: true,
+        message_id: marker?.message_id ?? null,
+        dom_turn_id: marker?.dom_turn_id ?? null,
+        matched_source_id: found.record.message_id,
+        match_basis: found.basis,
+        role_mismatch: roleMismatch,
+        stale_prefix: stalePrefix,
+        live_content_length: Number(marker?.content_length) || liveText.length,
+        api_content_length: apiText.length,
+        api_record_ordinal: found.record.ordinal
+      });
+    }
+    const matchedCount = comparisons.filter(item => item.matched).length;
+    let missingSuffixCount = 0;
+    for (let index = comparisons.length - 1; index >= 0 && !comparisons[index].matched; index -= 1) missingSuffixCount += 1;
+    const newestMarker = markers?.at?.(-1) ?? null;
+    const newestComparison = comparisons.at(-1) ?? null;
+    const newestApiVisibleId = visibleRecords.at(-1)?.message_id ?? null;
+    const newestConsistent = Boolean(newestMarker && newestComparison?.matched &&
+      newestComparison.matched_source_id === newestApiVisibleId &&
+      !newestComparison.role_mismatch && !newestComparison.stale_prefix);
+    const warning = comparisons.length === 0 ||
+      matchedCount !== comparisons.length || stalePrefixCount > 0 || roleMismatchCount > 0 || !newestConsistent;
+    return {
+      marker_count: comparisons.length,
+      matched_count: matchedCount,
+      missing_count: comparisons.length - matchedCount,
+      missing_suffix_count: missingSuffixCount,
+      stale_prefix_count: stalePrefixCount,
+      role_mismatch_count: roleMismatchCount,
+      newest_live_message_id: newestMarker?.message_id ?? null,
+      newest_live_dom_turn_id: newestMarker?.dom_turn_id ?? null,
+      newest_api_visible_id: newestApiVisibleId,
+      newest_consistent: newestConsistent,
+      warning,
+      comparisons
+    };
+  }
+
+  /**
+   * Compares the authoritative API source records against the generated JSONL to detect serialization loss/mutation.
+   *
+   * @param {Array<Object>} markers - Frozen live-tail markers.
+   * @param {Object} spine - Authoritative Conversation API spine.
+   * @param {string} jsonl - Generated JSONL text.
+   * @returns {Object} Safe serialization-consistency summary.
+   */
+  function compareLiveTailMarkersToJsonl(markers, spine, jsonl) {
+    const parsed = [];
+    for (const line of String(jsonl ?? '').split('\n')) {
+      if (!line.trim()) continue;
+      try {
+        const value = JSON.parse(line);
+        if (value?.record_type !== 'chatgpt_conversation_metadata') parsed.push(value);
+      } catch {
+        return { marker_count: markers?.length ?? 0, matched_count: 0, missing_from_jsonl_count: markers?.length ?? 0, changed_count: 0, newest_jsonl_visible_id: null, warning: true, parse_error: true };
+      }
+    }
+    const jsonlById = new Map(parsed.filter(item => typeof item?.id === 'string').map(item => [item.id, item]));
+    let matchedCount = 0;
+    let missingCount = 0;
+    let changedCount = 0;
+    for (const marker of markers ?? []) {
+      const found = liveTailFindRecordForMarker(marker, spine);
+      if (!found) continue;
+      const serialized = jsonlById.get(found.record.message_id);
+      if (!serialized) {
+        missingCount += 1;
+        continue;
+      }
+      matchedCount += 1;
+      if (JSON.stringify(serialized) !== JSON.stringify(found.record.message)) changedCount += 1;
+    }
+    const newestJsonlVisible = parsed.filter(message => Boolean(liveTailVisibleApiText(message))).at(-1)?.id ?? null;
+    const newestApiVisible = (spine?.records ?? []).filter(item => Boolean(liveTailVisibleApiText(item?.message))).at(-1)?.message_id ?? null;
+    const warning = missingCount > 0 || changedCount > 0 || newestJsonlVisible !== newestApiVisible;
+    return {
+      marker_count: markers?.length ?? 0,
+      matched_count: matchedCount,
+      missing_from_jsonl_count: missingCount,
+      changed_count: changedCount,
+      newest_jsonl_visible_id: newestJsonlVisible,
+      newest_api_visible_id: newestApiVisible,
+      warning,
+      parse_error: false
+    };
+  }
+
+  /**
+   * Formats a compact live/API consistency warning for the recorder status display.
+   *
+   * @param {Object} result - Live/API comparison result.
+   * @returns {string} Warning summary, or an empty string when consistent/unverified.
+   */
+  function liveApiTailWarningText(result) {
+    if (!result?.warning) return '';
+    if (result.marker_count === 0) return 'live/API freshness could not be verified because no live tail markers were retained';
+    return `live/API matched ${result.matched_count}/${result.marker_count}; missing ${result.missing_count}` +
+      `${result.missing_suffix_count ? ` (newest suffix ${result.missing_suffix_count})` : ''}` +
+      `${result.stale_prefix_count ? `; stale-content ${result.stale_prefix_count}` : ''}` +
+      `${result.role_mismatch_count ? `; role-mismatch ${result.role_mismatch_count}` : ''}`;
+  }
+
+  /**
+   * Formats a compact API/JSONL consistency warning for the recorder status display.
+   *
+   * @param {Object} result - API/JSONL comparison result.
+   * @returns {string} Warning summary, or an empty string when consistent.
+   */
+  function jsonlTailWarningText(result) {
+    if (!result?.warning) return '';
+    return `API/JSONL missing ${result.missing_from_jsonl_count}; changed ${result.changed_count}` +
+      `${result.parse_error ? '; JSONL parse error' : ''}`;
+  }
+  // END Issue #123 live-tail consistency
+
   /**
    * Waits for for jump target.
    *
@@ -3380,6 +3963,7 @@ Image elapsed: ${formatDuration(imageElapsed)} — Completed: ${imageCompleted}/
     }
     const conversationId = currentConversationId();
     assert(conversationId, 'Current page is not a ChatGPT conversation.');
+    markLiveTailHistoricalNavigation('downloadconversation-jump');
     logDiagnostic('debug', 'conversation-jump-request', {
       raw_requested_identifier: boundedDiagnosticText(requested, 500),
       identifier,
@@ -3978,6 +4562,11 @@ Image elapsed: ${formatDuration(imageElapsed)} — Completed: ${imageCompleted}/
     let activeKind = requestedKinds[0];
     const conversationId = currentConversationId();
     assert(conversationId, 'Current page is not a ChatGPT conversation.');
+    scanLiveTailMarkers('export-freeze');
+    /** Frozen high-water evidence for this export; later UI activity cannot change its oracle. */
+    const frozenLiveTailMarkers = snapshotLiveTailMarkers();
+    /** Tail-consistency warnings accumulated without changing the authoritative export source. */
+    const tailConsistencyWarnings = [];
     exportInProgress = true;
     exportKind = activeKind;
     progressState = {
@@ -4005,12 +4594,23 @@ Image elapsed: ${formatDuration(imageElapsed)} — Completed: ${imageCompleted}/
         refreshStatus();
       });
       const spine = conversationSpineFromPages(fetched.pages);
+      const liveApiTailComparison = compareLiveTailMarkersToSpine(frozenLiveTailMarkers, spine);
+      logDiagnostic(liveApiTailComparison.warning ? 'warnings' : 'debug',
+        'conversation-tail-live-api-consistency', liveApiTailComparison);
+      const liveApiWarning = liveApiTailWarningText(liveApiTailComparison);
+      if (liveApiWarning) tailConsistencyWarnings.push(liveApiWarning);
       if (requestedKinds.includes('jsonl')) {
         activeKind = 'jsonl';
         exportKind = activeKind;
         const filename = `${sanitizeFileName(conversationTitle())}.jsonl`;
+        const jsonl = apiRecordsJsonl(spine, conversationId);
+        const jsonlTailComparison = compareLiveTailMarkersToJsonl(frozenLiveTailMarkers, spine, jsonl);
+        logDiagnostic(jsonlTailComparison.warning ? 'warnings' : 'debug',
+          'conversation-tail-api-jsonl-consistency', jsonlTailComparison);
+        const jsonlWarning = jsonlTailWarningText(jsonlTailComparison);
+        if (jsonlWarning) tailConsistencyWarnings.push(jsonlWarning);
         downloadBlob(
-          new Blob([apiRecordsJsonl(spine)], { type: 'application/x-ndjson;charset=utf-8' }),
+          new Blob([jsonl], { type: 'application/x-ndjson;charset=utf-8' }),
           filename
         );
         setStatus(`Extracted ${spine.records.length} API records from ${fetched.pages.length} API page(s) to ${filename}.`);
@@ -4093,6 +4693,9 @@ Image elapsed: ${formatDuration(imageElapsed)} — Completed: ${imageCompleted}/
           blob_size: markdownBlob.size
         });
         setStatus(`Extracted ${spine.records.length} API records from ${fetched.pages.length} API page(s) to ${filename}.`);
+      }
+      if (tailConsistencyWarnings.length) {
+        setStatus(`⚠ Export completed with tail consistency warning: ${tailConsistencyWarnings.join(' | ')}`);
       }
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
@@ -5809,6 +6412,7 @@ Image elapsed: ${formatDuration(imageElapsed)} — Completed: ${imageCompleted}/
     installLauncherRemovalDiagnostics();
     installLauncherTopologyDiagnostics();
   }
+  installLiveTailTracking();
   installNetworkCapture();
   bootstrapUi();
 })();
