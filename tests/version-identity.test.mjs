@@ -19,11 +19,16 @@ function pinnedCoreUrl() {
   return match[1];
 }
 
-test('DownloadConversation keeps one caller-version authority in userscript metadata', () => {
+test('DownloadConversation keeps one caller-version authority in userscript metadata and shows it at the top of general status', () => {
   const metadataVersion = userscript.match(/^\/\/ @version\s+(\S+)$/m);
   assert.ok(metadataVersion, 'Userscript metadata version is missing.');
   assert.match(userscript, /const VERSION = \(typeof GM_info !== 'undefined' && GM_info\?\.script\?\.version\) \|\| 'unknown';/);
   assert.doesNotMatch(userscript, /const VERSION = ['"]\d/);
+  assert.match(
+    userscript,
+    /if \(title\) title\.textContent = `ChatGPT Recorder v\$\{VERSION\}`;/,
+    'General status title must show the authoritative caller version at the top.'
+  );
 });
 
 test('every configured DownloadConversation Core pin uses the verified versioned Core commit', () => {

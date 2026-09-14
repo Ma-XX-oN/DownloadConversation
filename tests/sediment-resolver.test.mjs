@@ -28,7 +28,7 @@ function productionFunctionSource(name) {
 
 const requireMatch = userscript.match(/^\/\/ @require\s+(https:\/\/raw\.githubusercontent\.com\/Ma-XX-oN\/AIConversationCore\/([0-9a-f]{40})\/dist\/aiconversationcore\.chatgpt\.browser\.js)$/m);
 assert.ok(requireMatch, 'Production userscript must pin the AIConversationCore browser bundle to an exact commit.');
-assert.equal(requireMatch[2], 'd6d76b54db3d48baf3f5e3a76099be1732d32785');
+assert.equal(requireMatch[2], 'cf34d9374f51ac525acfb90cfd6b247006a7bf6e');
 
 const response = await fetch(requireMatch[1]);
 assert.equal(response.status, 200, `Could not load pinned AIConversationCore bundle: HTTP ${response.status}`);
@@ -234,6 +234,6 @@ test('DownloadConversation does not duplicate sediment-to-download URL construct
     'Transient signed resolver URLs must not be emitted directly to diagnostics.');
 });
 
-test('userscript version advances for issue 110 console controls', () => {
-  assert.match(userscript, /\/\/ @version      0\.6\.177/);
+test('userscript version metadata follows the project semantic-version contract', () => {
+  assert.match(userscript, /^\/\/ @version\s+\d+\.\d+\.\d+(?:-issue\.\d+\.\d+)?$/m);
 });

@@ -1,11 +1,11 @@
 // ==UserScript==
 // @name         ChatGPT Conversation Markdown Recorder
 // @namespace    https://chatgpt.com/
-// @version      0.6.177
+// @version      1.0.0-issue.124.1
 // @description  Exports the current ChatGPT conversation directly from the Conversation API as Markdown or JSONL.
 // @match        https://chatgpt.com/*
 // @match        https://chat.openai.com/*
-// @require      https://raw.githubusercontent.com/Ma-XX-oN/AIConversationCore/d6d76b54db3d48baf3f5e3a76099be1732d32785/dist/aiconversationcore.chatgpt.browser.js
+// @require      https://raw.githubusercontent.com/Ma-XX-oN/AIConversationCore/cf34d9374f51ac525acfb90cfd6b247006a7bf6e/dist/aiconversationcore.chatgpt.browser.js
 // @run-at       document-start
 // ==/UserScript==
 
@@ -14,6 +14,8 @@
 
   /** Installed userscript version reported in diagnostics and runtime metadata. */
   const VERSION = (typeof GM_info !== 'undefined' && GM_info?.script?.version) || 'unknown';
+  /** Loaded AIConversationCore semantic version derived from the pinned dependency. */
+  const CORE_VERSION = canonicalCore().getVersion();
   /** DOM id of the recorder panel so UI lookups share one stable selector. */
   const PANEL_ID = 'tm-conversation-recorder';
   /** DOM id of the floating launcher button that opens the recorder panel. */
@@ -104,7 +106,7 @@
     if (Array.isArray(storedDiagnosticLog)) diagnosticLog = storedDiagnosticLog.slice(-MAX_DIAGNOSTIC_LOG_ITEMS);
   } catch {}
 
-  logConsoleDiagnostic('debug', `[DownloadConversation] version ${VERSION}`);
+  logConsoleDiagnostic('debug', `[DownloadConversation v${VERSION} | AIConversationCore v${CORE_VERSION}] version identity`);
 
   /**
    * Handles assert.
@@ -2357,6 +2359,7 @@
   function canonicalCore() {
     const core = globalThis.AIConversationCore;
     assert(core && typeof core === 'object', 'AIConversationCore browser bundle is not loaded.');
+    assert(typeof core.getVersion === 'function', 'AIConversationCore version API is unavailable.');
     assert(typeof core.adaptChatGPTRecords === 'function', 'AIConversationCore ChatGPT adapter is unavailable.');
     assert(typeof core.renderCanonicalMarkdown === 'function', 'AIConversationCore Markdown renderer is unavailable.');
     return core;
@@ -5686,7 +5689,10 @@ Image elapsed: ${formatDuration(imageElapsed)} — Completed: ${imageCompleted}/
     document.body.append(panel);
     updateUi();
     refreshDiagnosticLog();
-    logDiagnostic('debug', 'recorder-panel-created', { script_version: VERSION });
+    logDiagnostic('debug', 'recorder-panel-created', {
+      script_version: VERSION,
+      core_version: CORE_VERSION
+    });
   }
 
   /**
@@ -5698,7 +5704,7 @@ Image elapsed: ${formatDuration(imageElapsed)} — Completed: ${imageCompleted}/
    * @returns {void} No value is returned.
    */
   function bootstrapUi() {
-    logConsoleDiagnostic('debug', `[DownloadConversation v${VERSION}] bootstrap`, {
+    logConsoleDiagnostic('debug', `[DownloadConversation v${VERSION} | AIConversationCore v${CORE_VERSION}] bootstrap`, {
       ready_state: document.readyState,
       has_body: Boolean(document.body)
     });

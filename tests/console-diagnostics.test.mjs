@@ -37,9 +37,7 @@ function consoleCalls({ shown, enabled, level = 'debug', message = 'message', da
     }
   };
   vm.createContext(context);
-  vm.runInContext(`${redactorSource}
-${consoleSource}
-this.emit = logConsoleDiagnostic;`, context);
+  vm.runInContext(`${redactorSource}\n${consoleSource}\nthis.emit = logConsoleDiagnostic;`, context);
   context.emit(level, message, data);
   return calls;
 }
@@ -104,11 +102,11 @@ test('all direct recorder console calls use the shared lifecycle gate', () => {
   const withoutHelper = userscript.replace(helper, '');
   assert.doesNotMatch(withoutHelper, /console\.(?:log|warn|error)\s*\(/,
     'Direct recorder console calls must not bypass logConsoleDiagnostic.');
-  assert.match(userscript, /logConsoleDiagnostic\('debug', `\[DownloadConversation v\$\{VERSION\}\] bootstrap`/);
+  assert.match(userscript, /logConsoleDiagnostic\('debug', `\[DownloadConversation v\$\{VERSION\} \| AIConversationCore v\$\{CORE_VERSION\}\] bootstrap`/);
 });
 
 test('provenance is only a label change; Core preference and diagnostic Debug remain independent', () => {
-  assert.match(userscript, /\/\/ @version      0\.6\.177/);
+  assert.match(userscript, /^\/\/ @version\s+\d+\.\d+\.\d+(?:-issue\.\d+\.\d+)?$/m);
   assert.match(userscript, /data-role="show-debug-provenance" type="checkbox"> provenance/);
   assert.match(userscript, /showDebugProvenance = localStorage\.getItem\(SHOW_DEBUG_PROVENANCE_STORAGE_KEY\) === 'true'/);
   assert.match(userscript, /debugProvenance: showDebugProvenance/);
