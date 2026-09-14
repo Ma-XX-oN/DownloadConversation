@@ -22,6 +22,10 @@ function makeHarness({ onScroll = null, onSettle = null, tocForSelector = null }
       this.scrollCalls = [];
     }
 
+    click() {
+      if (this.name === 'toc') state.mounted = true;
+    }
+
     scrollIntoView(options) {
       this.scrollCalls.push(options);
     }
