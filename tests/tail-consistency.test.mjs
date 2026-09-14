@@ -4,6 +4,10 @@ import test from 'node:test';
 import vm from 'node:vm';
 
 const userscript = await readFile(new URL('../chatgpt-conversation-markdown-export.user.js', import.meta.url), 'utf8');
+const markerLimit = Number(userscript.match(/const LIVE_TAIL_MARKER_LIMIT = (\d+);/)?.[1]);
+const textLimit = Number(userscript.match(/const LIVE_TAIL_TEXT_LIMIT = (\d+);/)?.[1]);
+assert.equal(markerLimit, 10, 'Production live-tail marker limit must remain ten.');
+assert.equal(textLimit, 8192, 'Production live-tail text bound changed unexpectedly.');
 
 function sourceBlock() {
   const start = userscript.indexOf('  // BEGIN Issue #123 live-tail consistency');
@@ -20,6 +24,8 @@ function harness() {
     setTimeout,
     clearTimeout,
     queueMicrotask,
+    LIVE_TAIL_MARKER_LIMIT: markerLimit,
+    LIVE_TAIL_TEXT_LIMIT: textLimit,
     currentConversationId: () => 'conversation-1',
     conversationScrollRoot: () => ({ scrollTop: 1000, clientHeight: 800, scrollHeight: 1800 }),
     logDiagnostic() {},
