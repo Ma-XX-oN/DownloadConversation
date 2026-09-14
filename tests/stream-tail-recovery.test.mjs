@@ -53,7 +53,7 @@ function harness() {
       };
     }
   };
-  vm.runInNewContext(`${sourceBlock()}\nthis.__stream={isGenerationStreamUrl,createStreamTailCapture,streamTailCaptureRequest,consumeStreamTailSseChunk,streamTailCaptureSnapshot,streamTailPersistCapture,streamTailRestoreCapture,mergeStreamTailCaptureIntoSpine};`, context);
+  vm.runInNewContext(`${sourceBlock()}\nthis.__stream={isGenerationStreamUrl,createStreamTailCapture,streamTailCaptureRequest,consumeStreamTailSseChunk,streamTailCaptureSnapshot,streamTailPersistCapture,streamTailRestoreCapture,mergeStreamTailCaptureIntoSpine,captureGenerationWebSocketFrame,setActiveCapture:capture=>{streamTailCapture=capture;}};`, context);
   return { api: context.__stream, storage };
 }
 
@@ -162,6 +162,41 @@ test('repeated snapshots of one message id refresh in place instead of duplicati
   assert.equal(snapshot.stream_messages.length, 1);
   assert.equal(snapshot.stream_messages[0].content.parts[0], 'complete');
   assert.equal(snapshot.complete, true);
+});
+
+test('WebSocket handoff encoded_item completes the same captured turn without a second request', () => {
+  const { api } = harness();
+  const capture = api.createStreamTailCapture('c1');
+  api.streamTailCaptureRequest(capture, {
+    conversation_id: 'c1',
+    parent_message_id: 'a1',
+    messages: [message('u2', 'user', 'prompt')]
+  });
+  feed(api, capture, [{
+    type: 'stream_handoff',
+    conversation_id: 'c1',
+    options: [{ type: 'subscribe_ws_topic', topic_id: 'conversation-turn-x' }]
+  }, '[DONE]']);
+  api.setActiveCapture(capture);
+  const encoded = [
+    'event: delta_encoding\ndata: "v1"\n\n',
+    `data: ${JSON.stringify({ p: '', o: 'add', v: { conversation_id: 'c1', message: message('a2', 'assistant', '', { status: 'in_progress', end_turn: false }) } })}\n\n`,
+    `data: ${JSON.stringify({ p: '/message/content/parts/0', o: 'append', v: 'from websocket' })}\n\n`,
+    `data: ${JSON.stringify({ o: 'patch', v: [
+      { p: '/message/status', o: 'replace', v: 'finished_successfully' },
+      { p: '/message/end_turn', o: 'replace', v: true }
+    ] })}\n\n`,
+    'data: [DONE]\n\n'
+  ].join('');
+  api.captureGenerationWebSocketFrame(JSON.stringify([{
+    type: 'message',
+    topic_id: 'conversation-turn-x',
+    payload: { type: 'conversation-turn-stream', payload: { type: 'stream-item', encoded_item: encoded } }
+  }]));
+  const snapshot = api.streamTailCaptureSnapshot(capture);
+  assert.equal(snapshot.complete, true);
+  assert.equal(snapshot.handoff_done_received, true);
+  assert.equal(snapshot.stream_messages.at(-1).content.parts[0], 'from websocket');
 });
 
 test('stream handoff is retained as incomplete and is never treated as a complete direct SSE turn', () => {

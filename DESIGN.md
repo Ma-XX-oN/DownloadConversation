@@ -326,3 +326,30 @@ Historical navigation is not forward evidence. Scrolling upward, using ChatGPT's
 At the start of Extract, the current ten-marker history is frozen for that operation. The existing single-snapshot invariant remains unchanged: DownloadConversation acquires the Conversation API once and all selected formats consume that same authoritative spine. The frozen live markers are compared with that spine, and generated JSONL is then compared with the exact source records from the same spine. Missing newest suffixes, same-ID materially shorter API content, identity/role disagreement, or JSONL loss/mutation are reported as consistency warnings with bounded identity/count evidence.
 
 These checks are observational. A mismatch does not reload ChatGPT, merge DOM content into the export, issue a second acquisition, or select a fallback source. Source-selection changes require separate evidence and approval. The consistency classifications are intended both to expose stale API snapshots and to help localize final-response loss such as issue #116 to live UI → API acquisition versus API → serialization.
+
+## Issue #123 streamed-tail recovery
+
+The newest generated turn has a second first-class source in addition to the
+history pagination API: the stock page's own /backend-api/f/conversation
+transport. DownloadConversation observes that request and a cloned response at
+document-start without delaying or consuming the page's response. When the
+bootstrap SSE emits a stream_handoff, DownloadConversation also passively
+observes the page's existing WebSocket connection and consumes only the
+advertised conversation-turn topic's encoded_item SSE payloads; it does not
+open a second generation request or a second history acquisition.
+
+The submitted request messages, parent_message_id, and exact provider message
+objects reconstructed from the completed stream are retained for only the
+newest turn and mirrored to session storage so a same-tab hard reload does not
+discard a completed streamed response while history is still stale. The capture
+is bounded and an overflowed or incomplete capture is never merged.
+
+Reconciliation is identity- and suffix-constrained. History remains authoritative
+through the captured parent anchor. The records after that anchor must be an
+exact message-ID prefix of the captured turn. Matching same-ID tail records are
+replaced by the completed streamed copies, which repairs stale partial history
+records; only the remaining contiguous captured suffix is appended. Any gap,
+reordering, missing anchor, incomplete handoff, or conflicting identity rejects
+the streamed merge rather than inventing chronology. JSONL and Markdown then
+consume that same reconciled in-memory spine, preserving the single-snapshot
+multi-format export contract and the AIConversationCore rendering boundary.
