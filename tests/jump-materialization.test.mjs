@@ -137,4 +137,4 @@ test('Jump traversal does not treat the first current scroll extent as whole-con
   assert.equal(expanded, true, 'The harness must expose a later virtualized scroll extent.');
   assert.equal(harness.state.tocAvailable, true,
     'Jump must keep traversing until the later TOC materialization becomes available.');
-}
+});
