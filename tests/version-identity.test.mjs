@@ -35,8 +35,8 @@ test('every configured DownloadConversation Core pin uses the verified versioned
     ['sediment resolver', sedimentResolver]
   ];
   for (const [name, source] of pinnedConsumers) {
-    assert.doesNotMatch(source, new RegExp(OLD_CORE_COMMIT), `${name} still pins the pre-version-API Core commit.`);
-    assert.match(source, new RegExp(CORE_COMMIT), `${name} does not pin the verified Core 1.0.0 commit.`);
+    assert.equal(source.includes(OLD_CORE_COMMIT), false, `${name} still pins the pre-version-API Core commit.`);
+    assert.equal(source.includes(CORE_COMMIT), true, `${name} does not pin the verified Core 1.0.0 commit.`);
   }
 });
 
