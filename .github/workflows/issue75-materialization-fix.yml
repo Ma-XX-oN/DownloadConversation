@@ -23,6 +23,7 @@ jobs:
         shell: python
         run: |
           from pathlib import Path
+          from textwrap import dedent, indent
 
           source_path = Path('chatgpt-conversation-markdown-export.user.js')
           source = source_path.read_text(encoding='utf-8')
@@ -39,7 +40,8 @@ jobs:
           if replacement_start < 0 or replacement_end <= replacement_start:
             raise SystemExit('Could not isolate Jump materialization implementation.')
 
-          replacement = r'''  /**
+          replacement = indent(dedent(r'''\
+          /**
            * Captures the mounted-window and TOC identity state used to establish Jump traversal convergence.
            *
            * @param {HTMLElement} scrollRoot - The conversation scrolling element being traversed.
@@ -69,7 +71,7 @@ jobs:
            * Observes whether the requested Jump target or its host TOC control is currently materialized.
            *
            * @param {Object} target - Resolved Jump target containing UAP index, role, and stable message ID.
-           * @returns {{section: HTMLElement|null, toc: HTMLElement|null}} The currently materialized target mechanisms.
+           * @returns {Object} The currently materialized target section and TOC control.
            */
           function jumpMaterializationObservation(target) {
             return {
@@ -83,7 +85,7 @@ jobs:
            *
            * @param {Object} target - Resolved Jump target containing UAP index, role, and stable message ID.
            * @param {number} timeoutMs - Maximum traversal duration in milliseconds.
-           * @returns {Promise<{section: HTMLElement|null, toc: HTMLElement|null}>} The materialized target or TOC control, or empty result after convergence/timeout.
+           * @returns {Promise<Object>} The materialized target/TOC observation, or an empty observation after convergence or timeout.
            */
           async function materializeJumpTarget(target, timeoutMs = 60000) {
             let observation = jumpMaterializationObservation(target);
@@ -260,10 +262,9 @@ jobs:
             });
             return section;
           }
+          '''), '  ')
 
-          '''
-
-          source = source[:replacement_start] + replacement + source[replacement_end:]
+          source = source[:replacement_start] + replacement + '\n' + source[replacement_end:]
           if 'populateJumpTocIndex' in source:
             raise SystemExit('Obsolete populateJumpTocIndex implementation remains after replacement.')
           source_path.write_text(source, encoding='utf-8')
