@@ -1,0 +1,54 @@
+name: Issue 123 apply verified patch
+
+on:
+  push:
+    branches:
+      - issue-123-tail-consistency
+
+permissions:
+  contents: write
+
+jobs:
+  apply:
+    if: github.actor != 'github-actions[bot]'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: issue-123-tail-consistency
+          fetch-depth: 0
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - name: Apply Issue 123 production patch
+        run: python scripts/issue123_apply.py
+      - name: Remove temporary patch scaffolding
+        run: rm scripts/issue123_apply.py .github/workflows/issue123-apply.yml
+      - name: Verify documentation coverage
+        run: node scripts/check-jsdoc.mjs
+      - name: Verify JavaScript syntax
+        run: node --check chatgpt-conversation-markdown-export.user.js
+      - name: Verify tail and single-snapshot regressions
+        run: node --test tests/export-single-snapshot.test.mjs tests/tail-consistency.test.mjs
+      - name: Verify ordinary DownloadConversation regressions
+        run: >-
+          node --test
+          tests/console-diagnostics.test.mjs
+          tests/core-integration.test.mjs
+          tests/phase5-rich-core-integration.test.mjs
+          tests/fallback-adaptive-fence.test.mjs
+          tests/tool-language-diagnostics.test.mjs
+          tests/sediment-resolver.test.mjs
+          tests/test-list-ui.test.mjs
+          tests/recorder-panel-ui.test.mjs
+          tests/heading-metadata-controls.test.mjs
+      - name: Verify clean patch whitespace
+        run: git diff --check
+      - name: Commit verified Issue 123 implementation
+        run: |
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add -A
+          git diff --cached --check
+          git commit -m 'feat: detect stale export tails with consistency markers #123'
+          git push origin HEAD:issue-123-tail-consistency
