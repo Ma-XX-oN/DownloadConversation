@@ -20,6 +20,8 @@ jobs:
         run: node --test tests/export-single-snapshot.test.mjs
       - name: Console lifecycle and provenance controls
         run: node --test tests/console-diagnostics.test.mjs
+      - name: Jump materialization regression
+        run: node --test tests/jump-materialization.test.mjs
       - name: Canonical final-render regressions
         run: node --test tests/core-integration.test.mjs tests/phase5-rich-core-integration.test.mjs tests/fallback-adaptive-fence.test.mjs tests/tool-language-diagnostics.test.mjs tests/sediment-resolver.test.mjs
       - name: Built-in test list UI regression
