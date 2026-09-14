@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         ChatGPT Conversation Markdown Recorder
 // @namespace    https://chatgpt.com/
-// @version      1.0.1
+// @version      1.0.1-issue.123.3
 // @description  Exports the current ChatGPT conversation directly from the Conversation API as Markdown or JSONL.
 // @match        https://chatgpt.com/*
 // @match        https://chat.openai.com/*
@@ -3631,9 +3631,24 @@ Image elapsed: ${formatDuration(imageElapsed)} — Completed: ${imageCompleted}/
     let stalePrefixCount = 0;
     let roleMismatchCount = 0;
     for (const marker of markers ?? []) {
+      const verifiable = Boolean(marker?.message_id);
+      if (!verifiable) {
+        comparisons.push({
+          matched: false,
+          verifiable: false,
+          message_id: null,
+          dom_turn_id: marker?.dom_turn_id ?? null
+        });
+        continue;
+      }
       const found = liveTailFindRecordForMarker(marker, spine);
       if (!found) {
-        comparisons.push({ matched: false, message_id: marker?.message_id ?? null, dom_turn_id: marker?.dom_turn_id ?? null });
+        comparisons.push({
+          matched: false,
+          verifiable: true,
+          message_id: marker?.message_id ?? null,
+          dom_turn_id: marker?.dom_turn_id ?? null
+        });
         continue;
       }
       const apiText = liveTailVisibleApiText(found.record.message);
@@ -3645,6 +3660,7 @@ Image elapsed: ${formatDuration(imageElapsed)} — Completed: ${imageCompleted}/
       if (stalePrefix) stalePrefixCount += 1;
       comparisons.push({
         matched: true,
+        verifiable: true,
         message_id: marker?.message_id ?? null,
         dom_turn_id: marker?.dom_turn_id ?? null,
         matched_source_id: found.record.message_id,
@@ -3656,27 +3672,38 @@ Image elapsed: ${formatDuration(imageElapsed)} — Completed: ${imageCompleted}/
         api_record_ordinal: found.record.ordinal
       });
     }
+    const verifiableCount = comparisons.filter(item => item.verifiable).length;
+    const unverifiableCount = comparisons.length - verifiableCount;
     const matchedCount = comparisons.filter(item => item.matched).length;
+    const missingCount = comparisons.filter(item => item.verifiable && !item.matched).length;
     let missingSuffixCount = 0;
-    for (let index = comparisons.length - 1; index >= 0 && !comparisons[index].matched; index -= 1) missingSuffixCount += 1;
+    for (let index = comparisons.length - 1; index >= 0; index -= 1) {
+      const comparison = comparisons[index];
+      if (!comparison.verifiable || comparison.matched) break;
+      missingSuffixCount += 1;
+    }
     const newestMarker = markers?.at?.(-1) ?? null;
     const newestComparison = comparisons.at(-1) ?? null;
     const newestApiVisibleId = visibleRecords.at(-1)?.message_id ?? null;
-    const newestConsistent = Boolean(newestMarker && newestComparison?.matched &&
+    const newestVerifiable = Boolean(newestMarker?.message_id);
+    const newestConsistent = Boolean(newestVerifiable && newestComparison?.matched &&
       newestComparison.matched_source_id === newestApiVisibleId &&
       !newestComparison.role_mismatch && !newestComparison.stale_prefix);
     const warning = comparisons.length === 0 ||
-      matchedCount !== comparisons.length || stalePrefixCount > 0 || roleMismatchCount > 0 || !newestConsistent;
+      missingCount > 0 || stalePrefixCount > 0 || roleMismatchCount > 0 || !newestConsistent;
     return {
       marker_count: comparisons.length,
+      verifiable_count: verifiableCount,
+      unverifiable_count: unverifiableCount,
       matched_count: matchedCount,
-      missing_count: comparisons.length - matchedCount,
+      missing_count: missingCount,
       missing_suffix_count: missingSuffixCount,
       stale_prefix_count: stalePrefixCount,
       role_mismatch_count: roleMismatchCount,
       newest_live_message_id: newestMarker?.message_id ?? null,
       newest_live_dom_turn_id: newestMarker?.dom_turn_id ?? null,
       newest_api_visible_id: newestApiVisibleId,
+      newest_verifiable: newestVerifiable,
       newest_consistent: newestConsistent,
       warning,
       comparisons
@@ -3740,8 +3767,15 @@ Image elapsed: ${formatDuration(imageElapsed)} — Completed: ${imageCompleted}/
    */
   function liveApiTailWarningText(result) {
     if (!result?.warning) return '';
-    if (result.marker_count === 0) return 'live/API freshness could not be verified because no live tail markers were retained';
-    return `live/API matched ${result.matched_count}/${result.marker_count}; missing ${result.missing_count}` +
+    if (result.marker_count === 0) {
+      return 'live/API freshness could not be verified because no live tail markers were retained';
+    }
+    if (result.newest_verifiable === false) {
+      return 'live/API freshness could not be verified because the newest live marker has no API message identity' +
+        `${result.unverifiable_count > 1 ? `; unverifiable markers ${result.unverifiable_count}` : ''}`;
+    }
+    return `live/API matched ${result.matched_count}/${result.verifiable_count}; missing ${result.missing_count}` +
+      `${result.unverifiable_count ? `; unverifiable ${result.unverifiable_count}` : ''}` +
       `${result.missing_suffix_count ? ` (newest suffix ${result.missing_suffix_count})` : ''}` +
       `${result.stale_prefix_count ? `; stale-content ${result.stale_prefix_count}` : ''}` +
       `${result.role_mismatch_count ? `; role-mismatch ${result.role_mismatch_count}` : ''}`;
