@@ -167,6 +167,26 @@ including Markdown image recovery and Core rendering. Sharing the source snapsho
 ensures both files from one Extract click describe the same Conversation API state
 even if the live conversation changes while output generation is still running.
 
+## Version identity and dependency provenance
+
+DownloadConversation owns exactly one writable semantic version: the userscript
+`@version` metadata value. Runtime code reads that same value from
+`GM_info.script.version`; it does not maintain a second caller-version literal.
+The defined semantic-version baseline is `1.0.0`. Development builds use the
+issue-qualified `x.y.z-issue.<issue>.<iteration>` form; accepted releases use the
+plain `x.y.z` release version.
+
+The AIConversationCore browser dependency remains pinned to an exact commit. Its
+semantic version is derived from the actually loaded bundle through
+`AIConversationCore.getVersion()` and is never duplicated as a DownloadConversation
+production literal. The exact commit identifies dependency provenance/integrity;
+the Core semantic version identifies the Core release. Neither replaces the other.
+
+Startup/recorder diagnostics report both `script_version` and `core_version` so a
+log identifies the caller and the shared Core independently. Changing the Core pin
+is also a DownloadConversation change and therefore advances DownloadConversation's
+own version under the normal release process.
+
 ## Startup and saved console diagnostics
 
 Recorder diagnostics mirror to DevTools automatically from document startup until

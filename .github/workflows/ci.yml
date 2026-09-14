@@ -16,6 +16,8 @@ jobs:
         run: node scripts/check-jsdoc.mjs
       - name: JavaScript syntax
         run: node --check chatgpt-conversation-markdown-export.user.js
+      - name: Version identity regression
+        run: node --test tests/version-identity.test.mjs
       - name: Single-snapshot export regression
         run: node --test tests/export-single-snapshot.test.mjs
       - name: Live tail consistency regression
@@ -34,25 +36,31 @@ jobs:
     steps:
       - name: Check out DownloadConversation
         uses: actions/checkout@v4
-      - name: Check out pinned AIConversationCore
+      - name: Check out pinned DownloadConversation AIConversationCore
         uses: actions/checkout@v4
         with:
           repository: Ma-XX-oN/AIConversationCore
-          ref: d6d76b54db3d48baf3f5e3a76099be1732d32785
+          ref: cf34d9374f51ac525acfb90cfd6b247006a7bf6e
           path: .phase7-core
       - name: Check out pinned AI-General-Memory
         uses: actions/checkout@v4
         with:
           repository: Ma-XX-oN/AI-General-Memory
-          ref: 7d9373af3ce3521957718d135ea97a9cc242a364
+          ref: b2cc257cb586bd944ebca352e316780841217cc1
           path: .phase7-aigm
+      - name: Check out pinned AI-transcript AIConversationCore
+        uses: actions/checkout@v4
+        with:
+          repository: Ma-XX-oN/AIConversationCore
+          ref: 4b1bebe6fd7d82d8bbb15f4ad5c1a59cfd03132a
+          path: .phase7-aigm-core
       - uses: actions/setup-node@v4
         with:
           node-version: 22
       - uses: actions/setup-python@v5
         with:
           python-version: '3.13'
-      - name: Install AIConversationCore dependencies
+      - name: Install DownloadConversation AIConversationCore dependencies
         working-directory: .phase7-core
         run: npm ci
       - name: Install AI-transcript presentation dependencies
@@ -61,14 +69,17 @@ jobs:
         env:
           PHASE7_CORE_ROOT: ${{ github.workspace }}/.phase7-core
           PHASE7_AIGM_ROOT: ${{ github.workspace }}/.phase7-aigm
+          PHASE7_AIGM_CORE_ROOT: ${{ github.workspace }}/.phase7-aigm-core
         run: node tests/phase7-cross-consumer-parity.mjs
       - name: Markdown-shape and multi-exchange parity
         env:
           PHASE7_CORE_ROOT: ${{ github.workspace }}/.phase7-core
           PHASE7_AIGM_ROOT: ${{ github.workspace }}/.phase7-aigm
+          PHASE7_AIGM_CORE_ROOT: ${{ github.workspace }}/.phase7-aigm-core
         run: node tests/phase7-cross-consumer-markdown-shape.mjs
       - name: Adversarial containment and normalization parity
         env:
           PHASE7_CORE_ROOT: ${{ github.workspace }}/.phase7-core
           PHASE7_AIGM_ROOT: ${{ github.workspace }}/.phase7-aigm
+          PHASE7_AIGM_CORE_ROOT: ${{ github.workspace }}/.phase7-aigm-core
         run: node tests/phase7-cross-consumer-adversarial.mjs

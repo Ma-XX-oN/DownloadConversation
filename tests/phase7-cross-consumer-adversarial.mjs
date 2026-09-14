@@ -8,6 +8,7 @@ import vm from 'node:vm';
 const root = path.resolve(new URL('..', import.meta.url).pathname);
 const coreRoot = path.resolve(process.env.PHASE7_CORE_ROOT ?? path.join(root, '.phase7-core'));
 const aigmRoot = path.resolve(process.env.PHASE7_AIGM_ROOT ?? path.join(root, '.phase7-aigm'));
+const aigmCoreRoot = path.resolve(process.env.PHASE7_AIGM_CORE_ROOT ?? path.join(root, '.phase7-aigm-core'));
 const fixturePath = path.join(root, 'tests', 'fixtures', 'phase7-adversarial.jsonl');
 const fixtureText = await readFile(fixturePath, 'utf8');
 const records = fixtureText.trimEnd().split('\n').filter(Boolean).map(line => JSON.parse(line));
@@ -42,7 +43,7 @@ function aiTranscriptMarkdown() {
     [script, '--file', fixturePath, '--color', 'never'],
     {
       cwd: aigmRoot,
-      env: { ...process.env, AI_CONVERSATION_CORE: coreRoot },
+      env: { ...process.env, AI_CONVERSATION_CORE: aigmCoreRoot },
       encoding: 'utf8'
     }
   );

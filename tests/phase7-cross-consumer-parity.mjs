@@ -8,6 +8,7 @@ import vm from 'node:vm';
 const root = path.resolve(new URL('..', import.meta.url).pathname);
 const coreRoot = path.resolve(process.env.PHASE7_CORE_ROOT ?? path.join(root, '.phase7-core'));
 const aigmRoot = path.resolve(process.env.PHASE7_AIGM_ROOT ?? path.join(root, '.phase7-aigm'));
+const aigmCoreRoot = path.resolve(process.env.PHASE7_AIGM_CORE_ROOT ?? path.join(root, '.phase7-aigm-core'));
 const fixturePath = path.join(coreRoot, 'tests', 'fixtures', 'chatgpt', 'chatgpt-direct.jsonl');
 const goldenPath = path.join(coreRoot, 'tests', 'golden', 'chatgpt', 'chatgpt-direct.canonical.md');
 
@@ -45,7 +46,7 @@ function aiTranscriptMarkdown() {
     [script, '--file', fixturePath, '--color', 'never'],
     {
       cwd: aigmRoot,
-      env: { ...process.env, AI_CONVERSATION_CORE: coreRoot },
+      env: { ...process.env, AI_CONVERSATION_CORE: aigmCoreRoot },
       encoding: 'utf8'
     }
   );
