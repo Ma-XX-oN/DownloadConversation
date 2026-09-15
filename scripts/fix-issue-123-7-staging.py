@@ -15,4 +15,10 @@ if text.count(old_mime) != 1:
   raise SystemExit(f'expected one content-type matcher, found {text.count(old_mime)}')
 text = text.replace(old_mime, new_mime, 1)
 
+old_design_write = "DESIGN.write_text(design.rstrip() + section + '\\n', encoding='utf-8')\n"
+new_design_write = "DESIGN.write_text(design.rstrip() + section.rstrip() + '\\n', encoding='utf-8')\n"
+if text.count(old_design_write) != 1:
+  raise SystemExit(f'expected one DESIGN write, found {text.count(old_design_write)}')
+text = text.replace(old_design_write, new_design_write, 1)
+
 path.write_text(text, encoding='utf-8')
