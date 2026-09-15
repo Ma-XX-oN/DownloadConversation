@@ -356,3 +356,38 @@ reordering, missing anchor, incomplete handoff, or conflicting identity rejects
 the streamed merge rather than inventing chronology. JSONL and Markdown then
 consume that same reconciled in-memory spine, preserving the single-snapshot
 multi-format export contract and the AIConversationCore rendering boundary.
+
+
+## Issue #123 stock network hydration diagnostics
+
+Live evidence showed that a newest Assistant turn can disappear after a hard reload,
+remain absent from the flattened Conversation API snapshot, and then materialize in
+the stock ChatGPT UI later.  The supplying request could not be identified from the
+older diagnostics because page networking was observed only for narrow correlation
+purposes.  Issue #123 therefore adds passive stock-network observability without
+changing acquisition or rendering semantics.
+
+From `document-start`, the userscript observes page-realm `fetch` and XHR traffic.
+It leaves the page's original response object untouched and inspects only a cloned,
+bounded response stream where the content type/path is useful for identity tracing.
+Diagnostics retain method, sanitized URL, request cache mode when exposed, safe
+request header names/selected routing-cache values, HTTP status, elapsed time,
+explicitly whitelisted cache/correlation response headers, and bounded message-ID /
+status summaries.  Raw response bodies, authorization values, cookies, tokens and
+other secret header values are not retained.  Non-JSON text is represented only by
+bounded candidate UUIDs and structural message-term presence.
+
+The stock-network trace is evidence gathering only.  It does not add another export
+acquisition, alter the single-snapshot invariant, change API/DOM source precedence,
+or introduce a fallback.  Existing `/f/conversation` streamed-tail capture remains
+the production tail-recovery mechanism while these diagnostics identify which stock
+request hydrates delayed/reloaded turns.
+
+Click-correlation diagnostics also record `Event.isTrusted`, pointer type and button
+metadata.  A captured/synthetic click event must not be described as deliberate user
+input without trusted-event evidence.
+
+Finally, same-ID stale-prefix comparison is not inferred from User DOM text because
+ChatGPT may append Retry/error/control chrome inside the mounted User-turn section.
+Stable message identity still participates in presence/role checks; this change only
+removes an unreliable User-content freshness signal.
