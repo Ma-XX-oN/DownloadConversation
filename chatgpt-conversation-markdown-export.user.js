@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         ChatGPT Conversation Markdown Recorder
 // @namespace    https://chatgpt.com/
-// @version      1.1.0
+// @version      1.1.0-issue.96.1
 // @description  Exports the current ChatGPT conversation directly from the Conversation API as Markdown or JSONL.
 // @match        https://chatgpt.com/*
 // @match        https://chat.openai.com/*
@@ -7600,6 +7600,23 @@ Image elapsed: ${formatDuration(imageElapsed)} — Completed: ${imageCompleted}/
      * @returns {void} No value is returned.
      */
     const focusables = () => modalFocusableElements(dialog);
+    // Most recent focusable modal control; static-content clicks restore this keyboard anchor.
+    let lastModalFocusedControl = null;
+    dialog.addEventListener('focusin', event => {
+      const target = event.target instanceof HTMLElement ? event.target : null;
+      if (target && focusables().includes(target)) lastModalFocusedControl = target;
+    });
+    dialog.addEventListener('click', event => {
+      const target = event.target instanceof HTMLElement ? event.target : null;
+      if (!target) return;
+      const clickedControl = target.closest(
+        'button, input, select, textarea, a[href], label, summary, [tabindex]:not([tabindex="-1"]), [contenteditable="true"]'
+      );
+      if (clickedControl) return;
+      if (lastModalFocusedControl?.isConnected && dialog.contains(lastModalFocusedControl)) {
+        lastModalFocusedControl.focus({ preventScroll: true });
+      }
+    });
     /**
      * Handles close.
      *
