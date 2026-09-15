@@ -92,7 +92,7 @@ keyboard contract.
 
 Pre-1.0 development used a DOM-first recorder with historical scrolling, split-half recovery, staged rebuild files, Resume-specific lifecycle state, and later an incremental migration toward API-first extraction.  Those mechanisms explain many legacy issues and old diagnostics but are not the current production transcript architecture.
 
-The current 1.1.0 line completed the transition to one-shot Conversation API export with AIConversationCore canonical rendering.  Legacy recorder/UI issues that describe retired Resume, recovery, or DOM-transcript behaviour should be treated as historical/superseded unless a current issue explicitly reintroduces that requirement.  Issue #112 is the future home for API-based continuous recording/Resume.
+The current 1.2.0 line retains the one-shot Conversation API export with AIConversationCore canonical rendering.  Legacy recorder/UI issues that describe retired Resume, recovery, or DOM-transcript behaviour should be treated as historical/superseded unless a current issue explicitly reintroduces that requirement.  Issue #112 is the future home for API-based continuous recording/Resume.
 
 ## Optional Markdown heading metadata
 
