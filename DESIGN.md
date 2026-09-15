@@ -346,9 +346,12 @@ is bounded and an overflowed or incomplete capture is never merged.
 
 Reconciliation is identity- and suffix-constrained. History remains authoritative
 through the captured parent anchor. The records after that anchor must be an
-exact message-ID prefix of the captured turn. Matching same-ID tail records are
-replaced by the completed streamed copies, which repairs stale partial history
-records; only the remaining contiguous captured suffix is appended. Any gap,
+exact message-ID prefix of the captured turn. A request-body record fills only a
+missing submitted suffix record; if history already contains that request-only ID,
+the server history copy remains authoritative. Matching same-ID records actually
+observed in the completed response stream are replaced by the streamed copies,
+which repairs stale partial Assistant/tool history records; only the remaining
+contiguous captured suffix is appended. Any gap,
 reordering, missing anchor, incomplete handoff, or conflicting identity rejects
 the streamed merge rather than inventing chronology. JSONL and Markdown then
 consume that same reconciled in-memory spine, preserving the single-snapshot

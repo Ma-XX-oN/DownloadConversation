@@ -267,6 +267,65 @@ test('merge can recover both submitted User and Assistant when only the parent a
   assert.deepEqual(Array.from(result.spine.messages, item => item.id), ['a1', 'u2', 'a2']);
 });
 
+test('existing request-only User history stays authoritative while a missing streamed Assistant is appended', () => {
+  const { api } = harness();
+  const a1 = message('a1', 'assistant', 'old answer');
+  const requestUser = message('u2', 'user', 'new prompt');
+  const historyUser = message('u2', 'user', 'new prompt', {
+    create_time: 12345,
+    metadata: { server_enriched: true }
+  });
+  const a2 = message('a2', 'assistant', 'new answer');
+  const capture = api.createStreamTailCapture('c1');
+  api.streamTailCaptureRequest(capture, {
+    conversation_id: 'c1',
+    parent_message_id: 'a1',
+    messages: [requestUser]
+  });
+  feed(api, capture, [{ message: a2, conversation_id: 'c1' }, '[DONE]']);
+  const result = api.mergeStreamTailCaptureIntoSpine(
+    baseSpine([a1, historyUser]),
+    api.streamTailCaptureSnapshot(capture)
+  );
+  assert.equal(result.merged, true);
+  assert.equal(result.appended_count, 1);
+  assert.equal(result.replaced_count, 0);
+  assert.equal(result.spine.messages[1].create_time, 12345);
+  assert.equal(result.spine.messages[1].metadata.server_enriched, true);
+  assert.equal(result.spine.messages[2].id, 'a2');
+});
+
+test('same-ID records observed in the completed response stream replace stale history copies', () => {
+  const { api } = harness();
+  const a1 = message('a1', 'assistant', 'old answer');
+  const u2 = message('u2', 'user', 'new prompt', { create_time: 12345 });
+  const staleA2 = message('a2', 'assistant', 'partial', {
+    status: 'in_progress',
+    end_turn: false
+  });
+  const finalA2 = message('a2', 'assistant', 'complete', {
+    status: 'finished_successfully',
+    end_turn: true
+  });
+  const capture = api.createStreamTailCapture('c1');
+  api.streamTailCaptureRequest(capture, {
+    conversation_id: 'c1',
+    parent_message_id: 'a1',
+    messages: [message('u2', 'user', 'new prompt')]
+  });
+  feed(api, capture, [{ message: finalA2, conversation_id: 'c1' }, '[DONE]']);
+  const result = api.mergeStreamTailCaptureIntoSpine(
+    baseSpine([a1, u2, staleA2]),
+    api.streamTailCaptureSnapshot(capture)
+  );
+  assert.equal(result.merged, true);
+  assert.equal(result.appended_count, 0);
+  assert.equal(result.replaced_count, 1);
+  assert.equal(result.spine.messages[1].create_time, 12345);
+  assert.equal(result.spine.messages[2].content.parts[0], 'complete');
+  assert.equal(result.spine.messages[2].status, 'finished_successfully');
+});
+
 test('merge rejects incomplete streams, missing overlap, and non-suffix gaps', () => {
   const { api } = harness();
   const a1 = message('a1', 'assistant', 'old answer');

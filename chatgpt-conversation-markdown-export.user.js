@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         ChatGPT Conversation Markdown Recorder
 // @namespace    https://chatgpt.com/
-// @version      1.0.1-issue.123.4
+// @version      1.0.1-issue.123.5
 // @description  Exports the current ChatGPT conversation directly from the Conversation API as Markdown or JSONL.
 // @match        https://chatgpt.com/*
 // @match        https://chat.openai.com/*
@@ -895,12 +895,22 @@
       }
     }
     if (historyTail.length) anchorId = historyTail.at(-1)?.id ?? anchorId;
+    // Only records actually observed in the completed response stream can supersede same-ID history.
+    const streamedMessageIds = new Set(
+      (capture.stream_messages ?? [])
+        .map(message => typeof message?.id === 'string' ? message.id : '')
+        .filter(Boolean)
+    );
     const mergedMessages = history.slice(0, anchorIndex + 1);
     let replacedCount = 0;
     for (let index = 0; index < historyTail.length; index += 1) {
       const replacement = expected[index];
-      if (JSON.stringify(historyTail[index]) !== JSON.stringify(replacement)) replacedCount += 1;
-      mergedMessages.push(streamTailClone(replacement));
+      if (streamedMessageIds.has(replacement.id)) {
+        if (JSON.stringify(historyTail[index]) !== JSON.stringify(replacement)) replacedCount += 1;
+        mergedMessages.push(streamTailClone(replacement));
+      } else {
+        mergedMessages.push(streamTailClone(historyTail[index]));
+      }
     }
     const appended = expected.slice(historyTail.length);
     mergedMessages.push(...appended.map(streamTailClone));
