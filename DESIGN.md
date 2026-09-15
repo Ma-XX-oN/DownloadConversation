@@ -419,16 +419,30 @@ newest-Assistant placeholder, Thinking, Retry/error, timeout and hydrated state
 transitions are written to the same file so one rare failure provides both a time
 bound and the supplying network transaction.
 
-Every JSONL write reuses the stale-File-System-Access invariant established by the
-legacy Issue 44 recorder.  The file handle is reacquired from its parent directory,
-a fresh `File` supplies the current EOF, `createWritable({ keepExistingData: true })`
-opens only for that append, the writer seeks to the fresh EOF, writes and closes.
-If Chromium raises its evidenced `InvalidStateError`, the recorder reacquires the
-file and byte-verifies whether the intended append already committed before retrying;
-unexpected external modification is rejected rather than overwritten.  Writes are
-serialized, but no writable stream or cached append offset survives between records.
-This keeps the JSONL readable/sendable while recording and prevents a read by another
-program from turning a stale cached interface into duplicate or lost log bytes.
+Normal communication recording keeps one `FileSystemWritableFileStream` open rather
+than committing every JSONL record separately.  Opening the writer reacquires the real
+file, observes a fresh committed EOF, seeks there once, and subsequent records are
+serialized through the existing write chain.  A dirty writer is checkpointed by
+`close()` every 30 seconds, when the page becomes hidden or enters `pagehide`, and after
+a completed `/backend-api/f/conversation` response has been captured.  A clean writer
+is not checkpointed merely because a timer fired; after a checkpoint the next record
+lazily opens a new writer at the then-current committed EOF.
+
+Before normal recording starts, the recorder inspects Chromium sibling swap files named
+`<log>.crswap` and `<log>.<n>.crswap`.  Recovery treats the committed real JSONL as the
+authoritative baseline.  It ignores only an incomplete final JSONL line, byte-verifies
+that each recoverable candidate is compatible with the committed prefix, and chooses a
+longer candidate by complete recoverable length and then modification time.  Only the
+missing suffix is appended to the real file, using the existing Issue 44 one-shot
+stale-handle-safe append path.  Compatible recovered or stale swaps are removed; a
+divergent swap is retained and reported rather than concatenated or deleted.  Recovery
+and cleanup finish before the long-lived writer can open.
+
+The Issue 44 `InvalidStateError` verification remains the safe one-shot mechanism used
+for recovery appends: after an ambiguous failure the real file is reacquired and bytes
+are checked before any retry, and unexpected external modification is rejected rather
+than overwritten.  Checkpoint failures remain isolated from ChatGPT networking; an
+uncertain writer is not silently treated as a successful committed append.
 
 The communication recorder is passive observability.  Its failures are isolated from
 ChatGPT networking and reported through ordinary recorder diagnostics.  It does not

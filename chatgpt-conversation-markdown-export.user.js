@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         ChatGPT Conversation Markdown Recorder
 // @namespace    https://chatgpt.com/
-// @version      1.0.1-issue.123.10
+// @version      1.0.1-issue.123.11
 // @description  Exports the current ChatGPT conversation directly from the Conversation API as Markdown or JSONL.
 // @match        https://chatgpt.com/*
 // @match        https://chat.openai.com/*
@@ -744,6 +744,14 @@
 
 
   // BEGIN Issue #123 disk communication recorder
+  /** Interval between dirty communication-log checkpoints. */
+  const COMMUNICATION_LOG_CHECKPOINT_MS = 30 * 1000;
+  /** Long-lived writable stream used by normal communication-log appends. */
+  let communicationLogWritable = null;
+  /** Whether the current long-lived writable contains bytes not yet checkpointed. */
+  let communicationLogWriterDirty = false;
+  /** Periodic checkpoint timer installed once communication logging becomes active. */
+  let communicationLogCheckpointTimer = null;
   /**
    * Opens the IndexedDB database that retains the authorized directory handle.
    *
@@ -859,16 +867,21 @@
   function communicationLogInstallLifecycleObservers() {
     if (communicationLogLifecycleInstalled) return;
     communicationLogLifecycleInstalled = true;
+    communicationLogCheckpointTimer = setInterval(() => void communicationLogCheckpoint('periodic'), COMMUNICATION_LOG_CHECKPOINT_MS);
     window.addEventListener('pagehide', event => {
       void communicationLogRecord('communication_pagehide', {
         persisted: event.persisted === true,
         visibility_state: document.visibilityState
       });
+      void communicationLogCheckpoint('pagehide');
     });
     document.addEventListener('visibilitychange', () => {
       void communicationLogRecord('communication_visibility_change', {
         visibility_state: document.visibilityState
       });
+      if (document.visibilityState === 'hidden') {
+        void communicationLogCheckpoint('visibility-hidden');
+      }
     });
   }
 
@@ -889,6 +902,7 @@
     if (/^DownloadConversation_(?:ChatGPT|ChatGPT conversation)\.jsonl$/i.test(communicationLogFileName)) {
       communicationLogFileName = `DownloadConversation_${conversationName}.jsonl`;
     }
+    await communicationLogRecoverSwapFiles();
     communicationLogReady = true;
     communicationLogDisarmDirectoryGesture();
     document.getElementById('tm-communication-directory-required')?.remove();
@@ -1333,13 +1347,179 @@
   }
 
   /**
-   * Serializes one JSONL append while closing the writable stream after every record.
+   * Recovers complete compatible JSONL bytes from Chromium communication-log swap files.
+   *
+   * Recovery treats the committed real file as authoritative, ignores only an incomplete
+   * final JSONL line in each candidate, and never merges a divergent candidate.
+   *
+   * @returns {Promise<void>} Resolves after compatible recovery and swap cleanup complete.
+   */
+  async function communicationLogRecoverSwapFiles() {
+    if (!communicationLogDirectoryHandle || !communicationLogFileName) {
+      throw new Error('Communication log directory/file is not ready for swap recovery.');
+    }
+    const baselineSnapshot = await communicationLogRefreshedFileSnapshot();
+    const baseline = baselineSnapshot.file;
+    // Escape the literal log filename before recognizing Chromium sibling swap names.
+    const escapedLogName = communicationLogFileName.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+    const swapPattern = new RegExp(`^${escapedLogName}(?:\\.\\d+)?\\.crswap$`);
+    // Retain candidate file snapshots so selection and cleanup use one observed swap state.
+    const candidates = [];
+
+    for await (const [name, entry] of communicationLogDirectoryHandle.entries()) {
+      if (entry?.kind !== 'file' || !swapPattern.test(name)) continue;
+      try {
+        const file = await entry.getFile();
+        let completeLength = file.size;
+        if (file.size > 0) {
+          const finalByte = new Uint8Array(await file.slice(file.size - 1, file.size).arrayBuffer())[0];
+          if (finalByte !== 10) {
+            completeLength = 0;
+            for (let end = file.size; end > 0 && completeLength === 0;) {
+              const start = Math.max(0, end - COMMUNICATION_LOG_COMPARE_CHUNK_BYTES);
+              const bytes = new Uint8Array(await file.slice(start, end).arrayBuffer());
+              const newlineIndex = bytes.lastIndexOf(10);
+              if (newlineIndex >= 0) completeLength = start + newlineIndex + 1;
+              else end = start;
+            }
+          }
+        }
+        const prefixLength = Math.min(baseline.size, completeLength);
+        const compatible = prefixLength === 0 ||
+          await communicationLogBlobsEqual(baseline, file, 0, 0, prefixLength);
+        if (!compatible) {
+          logDiagnostic('warnings', 'communication-log-swap-incompatible', {
+            file_name: name,
+            committed_size: baseline.size,
+            recoverable_size: completeLength,
+            swap_size: file.size
+          });
+          continue;
+        }
+        candidates.push({
+          name,
+          file,
+          complete_length: completeLength,
+          last_modified: Number(file.lastModified) || 0
+        });
+      } catch (error) {
+        communicationLogReportFailure(`swap-inspect:${name}`, error);
+      }
+    }
+
+    const extensions = candidates
+      .filter(candidate => candidate.complete_length > baseline.size)
+      .sort((left, right) =>
+        right.complete_length - left.complete_length || right.last_modified - left.last_modified);
+    const selected = extensions[0] ?? null;
+    if (selected) {
+      const suffix = selected.file.slice(baseline.size, selected.complete_length);
+      await communicationLogAppendData(suffix);
+      logDiagnostic('debug', 'communication-log-swap-recovered', {
+        file_name: selected.name,
+        committed_size: baseline.size,
+        recovered_size: selected.complete_length,
+        appended_bytes: selected.complete_length - baseline.size
+      });
+    }
+
+    const recovered = (await communicationLogRefreshedFileSnapshot()).file;
+    for (const candidate of candidates) {
+      try {
+        const removable = candidate.complete_length <= recovered.size &&
+          (candidate.complete_length === 0 || await communicationLogBlobsEqual(
+            recovered,
+            candidate.file,
+            0,
+            0,
+            candidate.complete_length
+          ));
+        if (!removable) {
+          logDiagnostic('warnings', 'communication-log-swap-incompatible', {
+            file_name: candidate.name,
+            committed_size: recovered.size,
+            recoverable_size: candidate.complete_length,
+            reason: 'candidate diverges from recovered committed log'
+          });
+          continue;
+        }
+        await communicationLogDirectoryHandle.removeEntry(candidate.name);
+      } catch (error) {
+        communicationLogReportFailure(`swap-cleanup:${candidate.name}`, error);
+      }
+    }
+  }
+
+  /**
+   * Opens the normal long-lived communication writer at a freshly observed committed EOF.
+   *
+   * @returns {Promise<Object>} Active FileSystemWritableFileStream.
+   */
+  async function communicationLogOpenWriter() {
+    if (communicationLogWritable) return communicationLogWritable;
+    const refreshed = await communicationLogRefreshedFileSnapshot();
+    let writable = null;
+    try {
+      writable = await refreshed.handle.createWritable({ keepExistingData: true });
+      await writable.seek(refreshed.file.size);
+      communicationLogWritable = writable;
+      communicationLogWriterDirty = false;
+      return communicationLogWritable;
+    } catch (error) {
+      try { await writable?.abort(); } catch {}
+      throw error;
+    }
+  }
+
+  /**
+   * Commits pending long-lived writer bytes and leaves the next append to reopen lazily.
+   *
+   * @param {string} reason - Checkpoint trigger used for failure diagnostics.
+   * @returns {Promise<boolean>} True when dirty bytes were checkpointed.
+   */
+  function communicationLogCheckpoint(reason) {
+    const operation = communicationLogWriteChain.then(async () => {
+      if (!communicationLogWritable || !communicationLogWriterDirty) return false;
+      try {
+        await communicationLogWritable.close();
+        communicationLogWritable = null;
+        communicationLogWriterDirty = false;
+        return true;
+      } catch (error) {
+        communicationLogWritable = null;
+        if (!communicationLogIsStaleFileStateError(error)) {
+          communicationLogReady = false;
+          throw error;
+        }
+        try {
+          await communicationLogRecoverSwapFiles();
+          communicationLogWriterDirty = false;
+          return true;
+        } catch (recoveryError) {
+          communicationLogReady = false;
+          throw recoveryError;
+        }
+      }
+    });
+    communicationLogWriteChain = operation.catch(communicationError => {
+      communicationLogReportFailure(`checkpoint:${reason}`, communicationError);
+      return false;
+    });
+    return communicationLogWriteChain;
+  }
+
+  /**
+   * Serializes one JSONL append through the active long-lived communication writer.
    *
    * @param {string} line - Complete newline-terminated JSONL record.
-   * @returns {Promise<number>} Byte offset where the record committed.
+   * @returns {Promise<void>} Resolves after the bytes are accepted by the active writer.
    */
   function communicationLogAppendLine(line) {
-    const operation = communicationLogWriteChain.then(() => communicationLogAppendData(line));
+    const operation = communicationLogWriteChain.then(async () => {
+      await communicationLogOpenWriter();
+      await communicationLogWritable.write(line);
+      communicationLogWriterDirty = true;
+    });
     communicationLogWriteChain = operation.catch(communicationError => {
       communicationLogReportFailure('append', communicationError);
     });
@@ -1612,6 +1792,11 @@
       });
       try { await cloned.body.cancel(); } catch {}
     }
+    try {
+      if (new URL(responseUrl, location.href).pathname === '/backend-api/f/conversation') {
+        await communicationLogCheckpoint('generation-response-complete');
+      }
+    } catch {}
   }
 
   /**
