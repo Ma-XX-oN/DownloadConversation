@@ -46,8 +46,21 @@ jobs:
       - name: Commit verified Issue 133 implementation
         shell: bash
         run: |
-          git config user.name "github-actions[bot]"
-          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git add .github/workflows/ci.yml chatgpt-conversation-markdown-export.user.js
-          git commit -m "Fix #133 add communication log reset"
-          git push origin HEAD:issue-133-reset-communication-log
+          set -o pipefail
+          {
+            git config user.name "github-actions[bot]"
+            git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+            git status --short --branch
+            git add .github/workflows/ci.yml chatgpt-conversation-markdown-export.user.js
+            git status --short --branch
+            git commit -m "Fix #133 add communication log reset"
+            git push origin HEAD:issue-133-reset-communication-log
+          } 2>&1 | tee issue-133-commit.log
+
+      - name: Preserve Issue 133 commit diagnostics
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: issue-133-commit-diagnostics
+          path: issue-133-commit.log
+          if-no-files-found: warn
