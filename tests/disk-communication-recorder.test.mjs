@@ -279,3 +279,112 @@ test('disk logger failures are isolated from ChatGPT networking', () => {
   assert.match(userscript, /communication-log-write-failure/);
   assert.match(userscript, /\.catch\([^)]*communication/i);
 });
+
+
+// Issue #132 regression coverage.
+function issue132StreamBodyHarness() {
+  const context = {
+    COMMUNICATION_LOG_BODY_CHUNK_CHARS: 256 * 1024,
+    TextDecoder
+  };
+  vm.runInNewContext(
+    `${diskBlock()}
+this.__issue132Records = [];
+communicationLogRecord = async (type, data) => {
+  this.__issue132Records.push({ type, data });
+};
+this.__issue132StreamBody = communicationLogStreamBody;`,
+    context
+  );
+  return {
+    communicationLogStreamBody: context.__issue132StreamBody,
+    records: context.__issue132Records
+  };
+}
+
+function issue132Body(steps) {
+  let index = 0;
+  return {
+    getReader() {
+      return {
+        async read() {
+          const step = steps[index++];
+          if (step?.error) throw new Error(step.error);
+          if (step?.done) return { done: true };
+          return { done: false, value: step.value };
+        },
+        releaseLock() {}
+      };
+    }
+  };
+}
+
+test('aborted cloned response stream persists sub-chunk partial body and reports the abort', async () => {
+  const api = issue132StreamBodyHarness();
+  const text = 'event: delta\ndata: {"v":"partial streamed text"}\n\n';
+  const bytes = new TextEncoder().encode(text);
+  const summary = await api.communicationLogStreamBody(
+    issue132Body([
+      { value: bytes },
+      { error: 'BodyStreamBuffer was aborted' }
+    ]),
+    'communication_response_chunk',
+    { transport: 'fetch', network_sequence: 17 }
+  );
+
+  assert.equal(summary.body_incomplete, true);
+  assert.equal(summary.error_message, 'BodyStreamBuffer was aborted');
+  assert.equal(summary.byte_count, bytes.byteLength);
+  assert.equal(summary.chunk_count, 1);
+  assert.equal(api.records.length, 1);
+  assert.equal(api.records[0].type, 'communication_response_chunk');
+  assert.equal(api.records[0].data.chunk_ordinal, 1);
+  assert.equal(api.records[0].data.data, text);
+});
+
+test('aborted cloned response stream flushes final remainder after full persisted chunks', async () => {
+  const api = issue132StreamBodyHarness();
+  const text = 'x'.repeat((256 * 1024) + 4096);
+  const bytes = new TextEncoder().encode(text);
+  const summary = await api.communicationLogStreamBody(
+    issue132Body([
+      { value: bytes },
+      { error: 'BodyStreamBuffer was aborted' }
+    ]),
+    'communication_response_chunk',
+    { transport: 'fetch', network_sequence: 18 }
+  );
+
+  assert.equal(summary.body_incomplete, true);
+  assert.equal(summary.error_message, 'BodyStreamBuffer was aborted');
+  assert.equal(summary.byte_count, bytes.byteLength);
+  assert.equal(summary.chunk_count, 2);
+  assert.deepEqual(Array.from(api.records, record => record.data.chunk_ordinal), [1, 2]);
+  assert.equal(Array.from(api.records, record => record.data.data).join(''), text);
+});
+
+test('aborted cloned response stream before any bytes reports zero counts without fabricating a chunk', async () => {
+  const api = issue132StreamBodyHarness();
+  const summary = await api.communicationLogStreamBody(
+    issue132Body([{ error: 'BodyStreamBuffer was aborted' }]),
+    'communication_response_chunk',
+    { transport: 'fetch', network_sequence: 19 }
+  );
+
+  assert.equal(summary.body_incomplete, true);
+  assert.equal(summary.error_message, 'BodyStreamBuffer was aborted');
+  assert.equal(summary.byte_count, 0);
+  assert.equal(summary.chunk_count, 0);
+  assert.equal(api.records.length, 0);
+});
+
+test('fetch response reports incomplete body warning and leaves generation checkpoint reachable', () => {
+  const fetchResponse = functionBlock('communicationLogFetchResponse');
+  assert.match(fetchResponse, /summary\.body_incomplete/);
+  assert.match(fetchResponse, /communication-log-response-body-incomplete/);
+  assert.match(fetchResponse, /message:\s*summary\.error_message/);
+  const bodyEndIndex = fetchResponse.indexOf('communication_fetch_response_body_end');
+  const checkpointIndex = fetchResponse.indexOf("communicationLogCheckpoint('generation-response-complete')");
+  assert.ok(bodyEndIndex >= 0 && checkpointIndex > bodyEndIndex,
+    'Generation checkpoint must remain after incomplete-body recording/reporting.');
+});

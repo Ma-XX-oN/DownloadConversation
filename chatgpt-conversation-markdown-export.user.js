@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         ChatGPT Conversation Markdown Recorder
 // @namespace    https://chatgpt.com/
-// @version      1.2.0
+// @version      1.2.0-issue.132.1
 // @description  Exports the current ChatGPT conversation directly from the Conversation API as Markdown or JSONL.
 // @match        https://chatgpt.com/*
 // @match        https://chat.openai.com/*
@@ -1587,7 +1587,7 @@
    * @param {ReadableStream|null} body - Cloned Request/Response body stream.
    * @param {string} recordType - JSONL chunk record type.
    * @param {Object} context - Correlation metadata repeated on each chunk.
-   * @returns {Promise<Object>} Persisted byte/chunk counts.
+   * @returns {Promise<Object>} Persisted byte/chunk counts, plus incomplete-stream metadata when reading aborts.
    */
   async function communicationLogStreamBody(body, recordType, context) {
     if (!body) return { byte_count: 0, chunk_count: 0 };
@@ -1597,12 +1597,19 @@
     let safePending = '';
     let byteCount = 0;
     let chunkCount = 0;
+    // Terminal cloned-body read error; null means the reader reached clean EOF.
+    let streamErrorMessage = null;
     try {
       for (;;) {
-        const result = await reader.read();
+        let result = null;
+        try {
+          result = await reader.read();
+        } catch (error) {
+          streamErrorMessage = String(error?.message ?? error);
+          break;
+        }
         if (result.done) break;
-        if (!result.value?.byteLength) continue;
-        byteCount += result.value.byteLength;
+        byteCount += result.value?.byteLength ?? 0;
         safePending += communicationLogRedactStreamFeed(
           redactionState,
           decoder.decode(result.value, { stream: true }),
@@ -1638,7 +1645,12 @@
           data: safePending
         });
       }
-      return { byte_count: byteCount, chunk_count: chunkCount };
+      const summary = { byte_count: byteCount, chunk_count: chunkCount };
+      if (streamErrorMessage !== null) {
+        summary.body_incomplete = true;
+        summary.error_message = streamErrorMessage;
+      }
+      return summary;
     } finally {
       try { reader.releaseLock(); } catch {}
     }
@@ -1784,6 +1796,15 @@
         network_sequence: trace?.sequence ?? null,
         ...summary
       });
+      if (summary.body_incomplete) {
+        logDiagnostic('warnings', 'communication-log-response-body-incomplete', {
+          network_sequence: trace?.sequence ?? null,
+          response_url: stockNetworkSafeUrl(responseUrl),
+          byte_count: summary.byte_count,
+          chunk_count: summary.chunk_count,
+          message: summary.error_message
+        });
+      }
     } else if (cloned?.body) {
       await communicationLogRecord('communication_fetch_response_body_end', {
         network_sequence: trace?.sequence ?? null,
