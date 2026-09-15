@@ -10,7 +10,7 @@ if text.count(old_mount) != 1:
 text = text.replace(old_mount, new_mount, 1)
 
 old_mime = "    return /(?:^text\\/|json|event-stream|javascript|xml|x-www-form-urlencoded|x-component)/i.test(String(contentType ?? ''));\n"
-new_mime = "    return /(?:^text\\/|application\\/json|text\\/event-stream|javascript|xml|x-www-form-urlencoded|x-component)/i.test(String(contentType ?? ''));\n"
+new_mime = "    return String(contentType ?? '').toLowerCase().startsWith('text/') ||\n      /(?:application\\/json|event-stream|javascript|xml|x-www-form-urlencoded|x-component)/i.test(String(contentType ?? ''));\n"
 if text.count(old_mime) != 1:
   raise SystemExit(f'expected one content-type matcher, found {text.count(old_mime)}')
 text = text.replace(old_mime, new_mime, 1)
