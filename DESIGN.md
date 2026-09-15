@@ -391,3 +391,46 @@ Finally, same-ID stale-prefix comparison is not inferred from User DOM text beca
 ChatGPT may append Retry/error/control chrome inside the mounted User-turn section.
 Stable message identity still participates in presence/role checks; this change only
 removes an unreliable User-content freshness signal.
+
+## Issue #123 disk-backed communication recorder
+
+Rare delayed-tail failures can disappear or change across a hard reload, so bounded
+in-memory diagnostics are not sufficient evidence for the next occurrence.  The
+userscript therefore maintains a persistent, append-only communication trace in the
+user-authorized directory.  The per-conversation filename is
+`DownloadConversation_<conversation-name>.jsonl`, using the same filename sanitation
+as exported conversation files.
+
+The selected `FileSystemDirectoryHandle` is stored in IndexedDB.  A later reload
+reuses it automatically when read/write permission remains granted.  If no usable
+handle exists, the page presents a user-gesture **Choose Log Folder** control because
+Chromium does not permit the directory picker to be opened autonomously at
+document-start.  The most recently resolved conversation title is also retained by
+conversation ID so an already-authorized reload can begin logging before the visible
+heading rematerializes.
+
+Communication JSONL is intentionally disk-backed rather than accumulated as another
+large diagnostic array.  Stock page fetch/XHR and WebSocket traffic receives
+session/transaction/timing/cache metadata; same-origin textual/API/SSE request and
+response bodies are written in bounded chunks.  Binary or cross-origin bodies are
+metadata-only.  Authorization, Cookie/Set-Cookie, bearer/session/token/API-key and
+signed-secret values are redacted before persistence.  Session/reload metadata and
+newest-Assistant placeholder, Thinking, Retry/error, timeout and hydrated state
+transitions are written to the same file so one rare failure provides both a time
+bound and the supplying network transaction.
+
+Every JSONL write reuses the stale-File-System-Access invariant established by the
+legacy Issue 44 recorder.  The file handle is reacquired from its parent directory,
+a fresh `File` supplies the current EOF, `createWritable({ keepExistingData: true })`
+opens only for that append, the writer seeks to the fresh EOF, writes and closes.
+If Chromium raises its evidenced `InvalidStateError`, the recorder reacquires the
+file and byte-verifies whether the intended append already committed before retrying;
+unexpected external modification is rejected rather than overwritten.  Writes are
+serialized, but no writable stream or cached append offset survives between records.
+This keeps the JSONL readable/sendable while recording and prevents a read by another
+program from turning a stale cached interface into duplicate or lost log bytes.
+
+The communication recorder is passive observability.  Its failures are isolated from
+ChatGPT networking and reported through ordinary recorder diagnostics.  It does not
+add an export acquisition, change the #102 single-snapshot contract, change source
+precedence/recovery semantics, or cross the AIConversationCore rendering boundary.
