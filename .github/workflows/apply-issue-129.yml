@@ -1,0 +1,42 @@
+name: Apply Issue 129 Design Reconciliation
+
+on:
+  push:
+    branches:
+      - issue-129-design-reconcile
+    paths:
+      - .github/workflows/apply-issue-129.yml
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  apply:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: issue-129-design-reconcile
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.13'
+      - name: Reconcile DESIGN.md
+        run: python scripts/apply-issue-129-design.py
+      - name: Verify stale architecture claims are gone
+        run: |
+          ! grep -F "architecture is moving toward an API-first design" DESIGN.md
+          ! grep -F "The current roadmap is:" DESIGN.md
+          ! grep -F "Until those later phases are complete, the DOM recorder remains part of the production architecture." DESIGN.md
+          ! grep -F "The DOM implementation remains a real production fallback" DESIGN.md
+          grep -F "The production transcript path is API-only." DESIGN.md
+          grep -F "Continuous recording and Resume are deferred" DESIGN.md
+      - name: Diff check
+        run: git diff --check
+      - name: Commit documentation
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add DESIGN.md
+          git commit -m "docs: reconcile current exporter architecture (#129)"
+          git push origin HEAD:issue-129-design-reconcile
