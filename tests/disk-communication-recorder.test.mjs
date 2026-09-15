@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict';
 import { readFile } from 'node:fs/promises';
 import test from 'node:test';
+import vm from 'node:vm';
 
 const userscript = await readFile(
   new URL('../chatgpt-conversation-markdown-export.user.js', import.meta.url),
@@ -14,6 +15,15 @@ function diskBlock() {
   assert.ok(start >= 0 && end > start,
     'Issue #123 disk communication recorder production block is missing.');
   return userscript.slice(start, end + endMarker.length);
+}
+
+function redactionHarness() {
+  const context = {};
+  vm.runInNewContext(
+    `${diskBlock()}\nthis.__redaction = {communicationLogCreateRedactionState, communicationLogRedactStreamFeed};`,
+    context
+  );
+  return context.__redaction;
 }
 
 test('disk communication recorder production block exists', () => {
@@ -93,6 +103,35 @@ test('credentials and signed-secret values are excluded from disk records', () =
   assert.match(block, /set-cookie/i);
   assert.match(block, /redactDiagnosticSignedTokens|signature|access_token/i);
   assert.match(block, /\[redacted\]/i);
+});
+
+test('streaming redaction cannot leak secrets split across body chunk boundaries', () => {
+  const api = redactionHarness();
+  const cases = [
+    ['query token', ['https://chatgpt.com/x?access_tok', 'en=SUPER', 'SECRET&ok=1']],
+    ['signed URL', ['https://chatgpt.com/x?signa', 'ture=SIG', 'SECRET#frag']],
+    ['Bearer header-like text', ['Authorization: Bea', 'rer BEARER', 'SECRET\nnext']],
+    ['JSON field', ['{"refresh_tok', 'en":"JSON', 'SECRET","ok":true}']]
+  ];
+
+  for (const [name, chunks] of cases) {
+    const state = api.communicationLogCreateRedactionState();
+    let output = '';
+    for (const chunk of chunks) output += api.communicationLogRedactStreamFeed(state, chunk, false);
+    output += api.communicationLogRedactStreamFeed(state, '', true);
+    assert.doesNotMatch(output, /SUPERSECRET|SIGSECRET|BEARERSECRET|JSONSECRET/, name);
+    assert.match(output, /\[redacted\]/i, name);
+  }
+
+  const longState = api.communicationLogCreateRedactionState();
+  let longOutput = api.communicationLogRedactStreamFeed(longState, '?token=', false);
+  for (let index = 0; index < 20; index += 1) {
+    longOutput += api.communicationLogRedactStreamFeed(longState, 'A'.repeat(65536), false);
+  }
+  longOutput += api.communicationLogRedactStreamFeed(longState, '&ok=1', true);
+  assert.doesNotMatch(longOutput, /A{32}/,
+    'An arbitrarily long credential must stay suppressed until its delimiter arrives.');
+  assert.match(longOutput, /\?token=\[redacted\]&ok=1/);
 });
 
 test('binary bodies are metadata-only while API JSON text SSE payloads can be persisted', () => {
