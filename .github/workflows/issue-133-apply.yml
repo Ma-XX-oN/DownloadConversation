@@ -1,0 +1,42 @@
+name: Issue 133 apply
+
+on:
+  push:
+    branches:
+      - issue-133-reset-communication-log
+
+permissions:
+  contents: write
+
+jobs:
+  apply:
+    if: github.actor != 'github-actions[bot]'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: issue-133-reset-communication-log
+          fetch-depth: 0
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      - name: Prove regression and apply Issue 133 correction
+        run: python scripts/issue-133-apply.py
+
+      - name: Verify production diff scope
+        shell: bash
+        run: |
+          changed="$(git diff --name-only)"
+          printf '%s\n' "$changed"
+          test "$changed" = $'.github/workflows/ci.yml\nchatgpt-conversation-markdown-export.user.js'
+
+      - name: Commit verified Issue 133 implementation
+        shell: bash
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add .github/workflows/ci.yml chatgpt-conversation-markdown-export.user.js
+          git commit -m "Fix #133 add communication log reset"
+          git push origin HEAD:issue-133-reset-communication-log
