@@ -17,6 +17,17 @@ function diskBlock() {
   return userscript.slice(start, end + endMarker.length);
 }
 
+function functionBlock(name) {
+  const block = diskBlock();
+  const start = block.indexOf(`  function ${name}(`);
+  const asyncStart = block.indexOf(`  async function ${name}(`);
+  const actualStart = start >= 0 ? start : asyncStart;
+  assert.ok(actualStart >= 0, `${name} production function is missing.`);
+  const next = block.indexOf('\n  /**', actualStart + 3);
+  assert.ok(next > actualStart, `${name} production function boundary is missing.`);
+  return block.slice(actualStart, next);
+}
+
 function apiFetchBlock() {
   const start = userscript.indexOf('  async function apiFetch(url)');
   const endMarker = '  function conversationSchemaOk(data)';
@@ -77,25 +88,82 @@ test('picker is exposed through a deliberate page-realm user gesture', () => {
   assert.match(block, /pickerWindow\.showDirectoryPicker\(/);
 });
 
-test('append path reuses fresh-EOF stale-handle-safe semantics from the old recorder', () => {
+test('recovery retains the verified stale-handle one-shot append invariant', () => {
   const block = diskBlock();
   assert.match(block, /getFileHandle\([^\n]*create:\s*true/);
   assert.match(block, /await\s+[^;]+\.getFile\(\)/);
   assert.match(block, /createWritable\(\{\s*keepExistingData:\s*true\s*\}\)/);
-  assert.match(block, /\.seek\([^)]*\.size\)/,
-    'Append offset must come from a freshly read file size.');
   assert.match(block, /InvalidStateError/);
-  assert.match(block, /abort\(\)/);
-  assert.match(block, /close\(\)/);
   assert.match(block, /changed on disk|external modification/i,
     'Unexpected external byte changes must not be silently overwritten.');
 });
 
-test('disk appends are serialized and no writable stream is retained between records', () => {
+test('normal recording keeps one writable open instead of committing every JSONL record', () => {
   const block = diskBlock();
-  assert.match(block, /communicationLogWriteChain/);
-  assert.doesNotMatch(block, /communicationLogWritable\s*=/,
-    'Do not retain an open FileSystemWritableFileStream between JSONL appends.');
+  assert.match(block, /let communicationLogWritable = null/);
+  assert.match(block, /communicationLogOpenWriter/);
+  assert.match(block, /communicationLogWritable\.write\(/);
+  const appendLine = functionBlock('communicationLogAppendLine');
+  assert.doesNotMatch(appendLine, /\.close\(/,
+    'Per-record append must not close/commit the long-lived writable.');
+  assert.match(block, /communicationLogWriteChain/,
+    'Independent network observers must still serialize writer access.');
+});
+
+test('long-lived writer checkpoints every 30 seconds and reopens lazily', () => {
+  const block = diskBlock();
+  assert.match(block, /COMMUNICATION_LOG_CHECKPOINT_MS\s*=\s*30\s*\*\s*1000/);
+  assert.match(block, /setInterval\([^\n]*communicationLogCheckpoint/);
+  const checkpoint = functionBlock('communicationLogCheckpoint');
+  assert.match(checkpoint, /communicationLogWritable\.close\(\)/);
+  assert.match(checkpoint, /communicationLogWritable\s*=\s*null/);
+  assert.doesNotMatch(checkpoint, /createWritable\(/,
+    'Checkpoint should commit and leave reopening to the next append.');
+  assert.match(checkpoint, /communicationLogWriterDirty/,
+    'Clean writers should not churn swap files merely because the timer fired.');
+});
+
+test('page lifecycle and completed generation-stream response trigger checkpoints', () => {
+  const block = diskBlock();
+  assert.match(block, /visibilityState\s*===\s*['"]hidden['"][\s\S]{0,400}communicationLogCheckpoint/);
+  assert.match(block, /pagehide[\s\S]{0,400}communicationLogCheckpoint/);
+  const fetchResponse = functionBlock('communicationLogFetchResponse');
+  assert.match(fetchResponse, /\/backend-api\/f\/conversation/);
+  assert.match(fetchResponse, /communicationLogCheckpoint\(['"]generation-response-complete['"]\)/);
+});
+
+test('startup recovers compatible Chromium crswap candidates before normal recording', () => {
+  const block = diskBlock();
+  assert.match(block, /communicationLogRecoverSwapFiles/);
+  assert.match(block, /\.crswap/);
+  assert.match(block, /\.\d+\\\.crswap|\\d\+.*crswap/,
+    'Numbered Chromium swap variants must be recognized.');
+  assert.match(block, /for await\s*\([^)]*\.entries\(\)/,
+    'Recovery must enumerate sibling directory entries.');
+  assert.match(block, /lastModified/,
+    'Compatible candidates of equal recoverable length need deterministic newest selection.');
+  const activate = functionBlock('communicationLogActivateDirectory');
+  assert.match(activate, /await communicationLogRecoverSwapFiles\(/);
+});
+
+test('swap recovery trims only an incomplete final JSONL line and appends only the compatible suffix', () => {
+  const recover = functionBlock('communicationLogRecoverSwapFiles');
+  assert.match(recover, /lastIndexOf\(['"]\\n['"]\)|lastIndexOf\(.*10/,
+    'Recovery needs a last-complete-line boundary.');
+  assert.match(recover, /communicationLogBlobsEqual|communicationLogBlobPrefix/,
+    'Real committed bytes must be verified as a prefix of a recovery candidate.');
+  assert.match(recover, /slice\([^,]+\.size/,
+    'Recovery must append only bytes after the committed real-file size.');
+  assert.doesNotMatch(recover, /new Blob\(\[\s*[^\]]*real[^\]]*swap|\+\s*swap/i,
+    'Recovery must never blindly concatenate real and swap files.');
+});
+
+test('compatible recovered/stale swap files are removed but incompatible swaps are retained', () => {
+  const recover = functionBlock('communicationLogRecoverSwapFiles');
+  assert.match(recover, /removeEntry\(/);
+  assert.match(recover, /communication-log-swap-incompatible/);
+  assert.match(recover, /continue|return/,
+    'Incompatible swap path must leave the candidate untouched.');
 });
 
 test('fetch request and response bodies are captured through clones without consuming page objects', () => {
