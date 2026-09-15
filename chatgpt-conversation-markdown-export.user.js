@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         ChatGPT Conversation Markdown Recorder
 // @namespace    https://chatgpt.com/
-// @version      1.0.1-issue.123.8
+// @version      1.0.1-issue.123.9
 // @description  Exports the current ChatGPT conversation directly from the Conversation API as Markdown or JSONL.
 // @match        https://chatgpt.com/*
 // @match        https://chat.openai.com/*
@@ -949,7 +949,11 @@
             if (permission !== 'granted') handle = null;
           }
           if (!handle) {
-            handle = await window.showDirectoryPicker({ mode: 'readwrite' });
+            const pickerWindow = typeof unsafeWindow !== 'undefined' ? unsafeWindow : window;
+            if (typeof pickerWindow.showDirectoryPicker !== 'function') {
+              throw new Error('This browser does not expose showDirectoryPicker().');
+            }
+            handle = await pickerWindow.showDirectoryPicker({ mode: 'readwrite' });
             const permission = await communicationLogPermissionState(handle);
             if (permission !== 'granted' && typeof handle.requestPermission === 'function') {
               const requested = await handle.requestPermission({ mode: 'readwrite' });
@@ -1176,7 +1180,9 @@
     try {
       const parsed = new URL(String(url ?? ''), location.href);
       if (parsed.origin !== location.origin) return false;
-      if (communicationLogIsTextContentType(contentType)) return true;
+      const normalizedContentType = String(contentType ?? '').split(';', 1)[0].trim().toLowerCase();
+      if (communicationLogIsTextContentType(normalizedContentType)) return true;
+      if (normalizedContentType) return false;
       return parsed.pathname.startsWith('/backend-api/');
     } catch {
       return false;
@@ -1474,6 +1480,7 @@
     }
     const contentType = request?.headers?.get?.('content-type') ?? '';
     await communicationLogRecord('communication_fetch_request', {
+      origin: trace?.origin ?? 'stock-chatgpt',
       network_sequence: trace?.sequence ?? null,
       method: String(request?.method ?? trace?.method ?? 'GET').toUpperCase(),
       url: stockNetworkSafeUrl(request?.url ?? trace?.url ?? ''),
@@ -1522,6 +1529,7 @@
     const contentType = response?.headers?.get?.('content-type') ?? '';
     const responseUrl = response?.url ?? trace?.url ?? '';
     await communicationLogRecord('communication_fetch_response', {
+      origin: trace?.origin ?? 'stock-chatgpt',
       network_sequence: trace?.sequence ?? null,
       method: trace?.method ?? null,
       request_url: trace?.url ?? null,
@@ -2646,11 +2654,30 @@
     const pageWindow = typeof unsafeWindow !== 'undefined' ? unsafeWindow : window;
     // Prefer the pre-interception fetch implementation to avoid recursively capturing ourselves.
     const fetchFn = originalPageFetch || pageWindow.fetch;
-    return fetchFn.call(pageWindow, url, {
+    const requestInit = {
       method: 'GET',
       headers: { ...context.headers },
       credentials: 'include'
-    });
+    };
+    const trace = {
+      sequence: ++stockNetworkSequence,
+      started_at: performance.now(),
+      method: 'GET',
+      url: stockNetworkSafeUrl(url),
+      same_origin: true,
+      origin: 'downloadconversation'
+    };
+    let loggingRequest = null;
+    try {
+      const PageRequest = pageWindow.Request || Request;
+      loggingRequest = new PageRequest(url, requestInit);
+    } catch {}
+    void communicationLogFetchRequest(loggingRequest, trace)
+      .catch(communicationError => communicationLogReportFailure('direct-api-request', communicationError));
+    const response = await fetchFn.call(pageWindow, url, requestInit);
+    void communicationLogFetchResponse(response, trace)
+      .catch(communicationError => communicationLogReportFailure('direct-api-response', communicationError));
+    return response;
   }
 
   /**

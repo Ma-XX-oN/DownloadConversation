@@ -449,3 +449,23 @@ quoted sensitive JSON-style field is recognized, its value remains suppressed un
 its actual delimiter arrives, even when that value spans arbitrarily many input and
 output chunks.  Fetch/SSE streams and already-materialized XHR/WebSocket text use the
 same state machine; disk chunk size no longer defines the privacy boundary.
+
+## Issue #123 communication-recorder source-completeness correction
+
+The disk recorder must distinguish stock ChatGPT traffic from DownloadConversation's
+own authenticated Conversation API acquisition.  The latter intentionally uses the
+pre-interception page `fetch` implementation, so it is now traced explicitly with
+`origin: "downloadconversation"` while ordinary intercepted page fetches retain
+`origin: "stock-chatgpt"`.  Logging still consumes only cloned Request/Response data
+and does not alter the request used by the exporter.
+
+Body persistence is now content-type conservative.  Explicitly textual MIME types
+remain eligible for body capture; any explicit non-text MIME type is metadata-only,
+even beneath `/backend-api/`.  A missing content type may still be inspected for a
+same-origin backend API because current ChatGPT endpoints occasionally omit a useful
+MIME declaration.  This preserves diagnostic coverage without decoding known binary
+assets into the JSONL trace.
+
+Directory selection uses the page realm (`unsafeWindow` when available) from the
+existing user-gesture prompt, matching the realm used for the intercepted networking
+objects and avoiding a sandbox-only File System Access lookup.
