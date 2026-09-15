@@ -142,6 +142,21 @@ test('same-ID shorter API prefix is classified as stale/incomplete content evide
   assert.equal(result.warning, true);
 });
 
+test('same-ID User DOM chrome never masquerades as stale message content', () => {
+  const api = harness();
+  const live = marker(0, {
+    role: 'user',
+    comparison_text: 'Do the thing now Retry Something went wrong Please try again',
+    content_length: 57
+  });
+  const result = api.compareLiveTailMarkersToSpine(
+    [live],
+    spine([sourceMessage('m0', 'user', 'Do the thing now Retry')])
+  );
+  assert.equal(result.matched_count, 1);
+  assert.equal(result.stale_prefix_count, 0);
+});
+
 test('JSONL comparison separates serialization loss or mutation from acquisition', () => {
   const api = harness();
   const markers = [marker(0), marker(1), marker(2)];
