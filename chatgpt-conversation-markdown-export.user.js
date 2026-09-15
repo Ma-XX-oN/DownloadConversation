@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         ChatGPT Conversation Markdown Recorder
 // @namespace    https://chatgpt.com/
-// @version      1.2.0-issue.132.1
+// @version      1.2.0-issue.133.1
 // @description  Exports the current ChatGPT conversation directly from the Conversation API as Markdown or JSONL.
 // @match        https://chatgpt.com/*
 // @match        https://chat.openai.com/*
@@ -1506,6 +1506,49 @@
       return false;
     });
     return communicationLogWriteChain;
+  }
+
+  /**
+   * Truncates the active communication log to a verified zero-byte committed file.
+   *
+   * The reset is serialized with normal communication writes. The authorized
+   * directory and active filename remain unchanged, and the next record lazily
+   * reopens the normal long-lived writer at the new EOF.
+   *
+   * @returns {Promise<void>} Resolves after the empty file is committed and verified.
+   */
+  function communicationLogReset() {
+    const operation = communicationLogWriteChain.then(async () => {
+      if (communicationLogWritable) {
+        try {
+          await communicationLogWritable.close();
+        } finally {
+          communicationLogWritable = null;
+          communicationLogWriterDirty = false;
+        }
+      }
+
+      const refreshed = await communicationLogRefreshedFileSnapshot();
+      let writable = null;
+      try {
+        writable = await refreshed.handle.createWritable({ keepExistingData: true });
+        await writable.truncate(0);
+        await writable.close();
+        writable = null;
+        communicationLogWriterDirty = false;
+        const verified = await communicationLogRefreshedFileSnapshot();
+        if (verified.file.size !== 0) {
+          throw new Error(`Communication log reset verification failed: expected 0 bytes, found ${verified.file.size}.`);
+        }
+      } catch (error) {
+        try { await writable?.abort(); } catch {}
+        throw error;
+      }
+    });
+    communicationLogWriteChain = operation.catch(communicationError => {
+      communicationLogReportFailure('reset', communicationError);
+    });
+    return operation;
   }
 
   /**
@@ -8642,6 +8685,7 @@ Image elapsed: ${formatDuration(imageElapsed)} — Completed: ${imageCompleted}/
       <div class="tm-log-output" data-role="log-output" hidden></div>
       <div class="tm-status" data-role="status"></div>
       <div class="tm-row"><span class="tm-label">Diagnostics</span><select data-role="diagnostics"><option value="errors">Errors</option><option value="warnings">Warnings</option><option value="debug">Debug</option><option value="verbose">Verbose</option></select><label><input data-role="console-diagnostics" type="checkbox"> console</label><button data-role="test" type="button">Test</button></div>
+      <div class="tm-row"><span class="tm-label">Communication log</span><button data-role="reset-communication-log" type="button">Reset log</button></div>
       <div class="tm-row"><span class="tm-label">Screen on when extracting</span><button class="tm-switch" data-role="screen-on" type="button" role="switch" aria-checked="false" aria-label="Keep screen on while extracting"><span class="tm-switch-thumb"></span></button></div>
       <div class="tm-row"><button data-role="jump" type="button">Jump</button></div>
       <div class="tm-row tm-extract-formats"><button data-role="extract" type="button">Extract</button><label><input data-role="format-jsonl" type="checkbox"> JSONL</label><label><input data-role="format-md" type="checkbox" checked> MD</label></div>
@@ -8682,6 +8726,26 @@ Image elapsed: ${formatDuration(imageElapsed)} — Completed: ${imageCompleted}/
     });
     panel.querySelector('[data-role="test"]').addEventListener('click', event => openTestMatrix(event.currentTarget));
     panel.querySelector('[data-role="jump"]').addEventListener('click', () => void runJump());
+    const resetCommunicationLogButton = panel.querySelector('[data-role="reset-communication-log"]');
+    resetCommunicationLogButton?.addEventListener('click', () => {
+      if (resetCommunicationLogButton.disabled) return;
+      resetCommunicationLogButton.disabled = true;
+      resetCommunicationLogButton.textContent = 'Resetting…';
+      void communicationLogReset()
+        .then(() => {
+          logDiagnostic('debug', 'communication-log-reset-complete', {
+            file_name: communicationLogFileName
+          });
+          setStatus('Communication log reset to empty.');
+        })
+        .catch(error => {
+          setStatus(`⚠ Communication log reset failed: ${error?.message ?? String(error)}`);
+        })
+        .finally(() => {
+          resetCommunicationLogButton.disabled = false;
+          resetCommunicationLogButton.textContent = 'Reset log';
+        });
+    });
     panel.querySelector('[data-role="screen-on"]').addEventListener('click', () => {
       screenOnWhenCapturing = !screenOnWhenCapturing;
       localStorage.setItem(SCREEN_ON_STORAGE_KEY, String(screenOnWhenCapturing));
