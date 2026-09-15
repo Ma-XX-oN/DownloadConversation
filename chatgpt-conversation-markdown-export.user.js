@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         ChatGPT Conversation Markdown Recorder
 // @namespace    https://chatgpt.com/
-// @version      1.0.1-issue.123.7
+// @version      1.0.1-issue.123.8
 // @description  Exports the current ChatGPT conversation directly from the Conversation API as Markdown or JSONL.
 // @match        https://chatgpt.com/*
 // @match        https://chat.openai.com/*
@@ -72,8 +72,6 @@
   const COMMUNICATION_LOG_TITLE_STORAGE_PREFIX = 'tm-downloadconversation-communication-title:';
   /** Maximum decoded text retained before one communication body chunk is flushed to disk. */
   const COMMUNICATION_LOG_BODY_CHUNK_CHARS = 256 * 1024;
-  /** Lookahead retained across body chunks so credential redaction can span ordinary boundaries. */
-  const COMMUNICATION_LOG_REDACTION_CARRY_CHARS = 4096;
   /** Maximum wait for startup directory restoration before a cloned network body is abandoned. */
   const COMMUNICATION_LOG_READY_WAIT_MS = 2000;
   /** Bounded retry count for Chromium stale File System Access interface state. */
@@ -1016,16 +1014,142 @@
   }
 
   /**
-   * Redacts common credential forms from persisted textual request/response data.
+   * Finds the earliest sensitive-value prefix in uncommitted communication text.
+   *
+   * @param {string} text - Uncommitted text held by the streaming redactor.
+   * @returns {Object|null} Trigger descriptor, or null when no complete prefix is present.
+   */
+  function communicationLogFindSecretTrigger(text) {
+    const candidates = [];
+    const query = /[?&](?:sig|signature|access_token|refresh_token|token|key|secret|auth|authorization|session|jwt|api_key)=/i.exec(text);
+    if (query) candidates.push({ index: query.index, prefix: query[0], kind: 'query', terminator: null });
+    const bearer = /\bBearer\s+/i.exec(text);
+    if (bearer) candidates.push({ index: bearer.index, prefix: bearer[0], kind: 'bearer', terminator: null });
+    const quoted = /(?:\"|')?(?:access_token|refresh_token|authorization|cookie|session|jwt|api[_-]?key|secret)(?:\"|')?\s*:\s*(\"|')/i.exec(text);
+    if (quoted) candidates.push({ index: quoted.index, prefix: quoted[0], kind: 'quoted', terminator: quoted[1] });
+    if (!candidates.length) return null;
+    candidates.sort((left, right) => left.index - right.index || right.prefix.length - left.prefix.length);
+    return candidates[0];
+  }
+
+  /**
+   * Creates independent state for one request/response body redaction stream.
+   *
+   * @returns {Object} Mutable streaming-redaction state.
+   */
+  function communicationLogCreateRedactionState() {
+    return {
+      pending: '',
+      mode: null,
+      terminator: null,
+      escaped: false
+    };
+  }
+
+  /**
+   * Redacts sensitive values while preserving arbitrary input chunk boundaries.
+   *
+   * Possible secret prefixes are withheld until they can be classified. Once a secret
+   * prefix is recognized, every value character is suppressed until its protocol
+   * delimiter arrives; the secret therefore cannot leak merely because it is longer
+   * than an input or output chunk.
+   *
+   * @param {Object} state - State returned by `communicationLogCreateRedactionState`.
+   * @param {string} text - Next decoded textual body fragment.
+   * @param {boolean} flush - Whether no more source text will arrive.
+   * @returns {string} Safe text that can be committed immediately.
+   */
+  function communicationLogRedactStreamFeed(state, text, flush) {
+    state.pending += String(text ?? '');
+    let output = '';
+    for (;;) {
+      if (state.mode === 'quoted') {
+        let closeIndex = -1;
+        let escaped = state.escaped;
+        for (let index = 0; index < state.pending.length; index += 1) {
+          const character = state.pending[index];
+          if (escaped) {
+            escaped = false;
+            continue;
+          }
+          if (character === '\\') {
+            escaped = true;
+            continue;
+          }
+          if (character === state.terminator) {
+            closeIndex = index;
+            break;
+          }
+        }
+        if (closeIndex < 0) {
+          state.escaped = escaped;
+          state.pending = '';
+          if (flush) {
+            state.mode = null;
+            state.terminator = null;
+            state.escaped = false;
+          }
+          return output;
+        }
+        output += state.terminator;
+        state.pending = state.pending.slice(closeIndex + 1);
+        state.mode = null;
+        state.terminator = null;
+        state.escaped = false;
+        continue;
+      }
+
+      if (state.mode === 'query' || state.mode === 'bearer') {
+        const delimiter = state.mode === 'query'
+          ? /[&#\s\"'<>]/.exec(state.pending)
+          : /[^A-Za-z0-9._~+\/-=]/.exec(state.pending);
+        if (!delimiter) {
+          state.pending = '';
+          if (flush) state.mode = null;
+          return output;
+        }
+        output += delimiter[0];
+        state.pending = state.pending.slice(delimiter.index + delimiter[0].length);
+        state.mode = null;
+        continue;
+      }
+
+      const trigger = communicationLogFindSecretTrigger(state.pending);
+      if (trigger) {
+        output += state.pending.slice(0, trigger.index);
+        output += `${trigger.prefix}[redacted]`;
+        state.pending = state.pending.slice(trigger.index + trigger.prefix.length);
+        state.mode = trigger.kind;
+        state.terminator = trigger.terminator;
+        state.escaped = false;
+        continue;
+      }
+
+      if (flush) {
+        output += state.pending;
+        state.pending = '';
+        return output;
+      }
+
+      // Sensitive prefixes are short; retaining 128 trailing characters prevents a
+      // prefix split across source chunks from being committed before classification.
+      if (state.pending.length <= 128) return output;
+      const safeLength = state.pending.length - 128;
+      output += state.pending.slice(0, safeLength);
+      state.pending = state.pending.slice(safeLength);
+      return output;
+    }
+  }
+
+  /**
+   * Redacts common credential forms from one complete textual value.
    *
    * @param {string} value - Raw textual communication data.
    * @returns {string} Redacted text suitable for disk persistence.
    */
   function communicationLogRedactText(value) {
-    return String(redactDiagnosticSignedTokens(String(value ?? '')))
-      .replace(/\b(Bearer)\s+[A-Za-z0-9._~+\/-]+=*/gi, '$1 [redacted]')
-      .replace(/([?&](?:access_token|refresh_token|token|key|secret|auth|authorization|session|jwt|api_key)=)[^&#\s]*/gi, '$1[redacted]')
-      .replace(/((?:\"|')?(?:access_token|refresh_token|authorization|cookie|session|jwt|api[_-]?key|secret)(?:\"|')?\s*:\s*(?:\"|'))[^\"'\r\n]*/gi, '$1[redacted]');
+    const state = communicationLogCreateRedactionState();
+    return communicationLogRedactStreamFeed(state, String(value ?? ''), true);
   }
 
   /**
@@ -1230,7 +1354,8 @@
     if (!body) return { byte_count: 0, chunk_count: 0 };
     const reader = body.getReader();
     const decoder = new TextDecoder();
-    let pending = '';
+    const redactionState = communicationLogCreateRedactionState();
+    let safePending = '';
     let byteCount = 0;
     let chunkCount = 0;
     try {
@@ -1239,25 +1364,39 @@
         if (result.done) break;
         if (!result.value?.byteLength) continue;
         byteCount += result.value.byteLength;
-        pending += decoder.decode(result.value, { stream: true });
-        while (pending.length >= COMMUNICATION_LOG_BODY_CHUNK_CHARS + COMMUNICATION_LOG_REDACTION_CARRY_CHARS) {
-          const chunk = pending.slice(0, COMMUNICATION_LOG_BODY_CHUNK_CHARS);
-          pending = pending.slice(COMMUNICATION_LOG_BODY_CHUNK_CHARS);
+        safePending += communicationLogRedactStreamFeed(
+          redactionState,
+          decoder.decode(result.value, { stream: true }),
+          false
+        );
+        while (safePending.length >= COMMUNICATION_LOG_BODY_CHUNK_CHARS) {
+          const chunk = safePending.slice(0, COMMUNICATION_LOG_BODY_CHUNK_CHARS);
+          safePending = safePending.slice(COMMUNICATION_LOG_BODY_CHUNK_CHARS);
           chunkCount += 1;
           await communicationLogRecord(recordType, {
             ...context,
             chunk_ordinal: chunkCount,
-            data: communicationLogRedactText(chunk)
+            data: chunk
           });
         }
       }
-      pending += decoder.decode();
-      if (pending) {
+      safePending += communicationLogRedactStreamFeed(redactionState, decoder.decode(), true);
+      while (safePending.length >= COMMUNICATION_LOG_BODY_CHUNK_CHARS) {
+        const chunk = safePending.slice(0, COMMUNICATION_LOG_BODY_CHUNK_CHARS);
+        safePending = safePending.slice(COMMUNICATION_LOG_BODY_CHUNK_CHARS);
         chunkCount += 1;
         await communicationLogRecord(recordType, {
           ...context,
           chunk_ordinal: chunkCount,
-          data: communicationLogRedactText(pending)
+          data: chunk
+        });
+      }
+      if (safePending) {
+        chunkCount += 1;
+        await communicationLogRecord(recordType, {
+          ...context,
+          chunk_ordinal: chunkCount,
+          data: safePending
         });
       }
       return { byte_count: byteCount, chunk_count: chunkCount };
@@ -1276,13 +1415,43 @@
    */
   async function communicationLogTextBody(text, recordType, context) {
     const value = String(text ?? '');
+    const redactionState = communicationLogCreateRedactionState();
+    let safePending = '';
     let chunkCount = 0;
     for (let offset = 0; offset < value.length; offset += COMMUNICATION_LOG_BODY_CHUNK_CHARS) {
+      safePending += communicationLogRedactStreamFeed(
+        redactionState,
+        value.slice(offset, offset + COMMUNICATION_LOG_BODY_CHUNK_CHARS),
+        false
+      );
+      while (safePending.length >= COMMUNICATION_LOG_BODY_CHUNK_CHARS) {
+        const chunk = safePending.slice(0, COMMUNICATION_LOG_BODY_CHUNK_CHARS);
+        safePending = safePending.slice(COMMUNICATION_LOG_BODY_CHUNK_CHARS);
+        chunkCount += 1;
+        await communicationLogRecord(recordType, {
+          ...context,
+          chunk_ordinal: chunkCount,
+          data: chunk
+        });
+      }
+    }
+    safePending += communicationLogRedactStreamFeed(redactionState, '', true);
+    while (safePending.length >= COMMUNICATION_LOG_BODY_CHUNK_CHARS) {
+      const chunk = safePending.slice(0, COMMUNICATION_LOG_BODY_CHUNK_CHARS);
+      safePending = safePending.slice(COMMUNICATION_LOG_BODY_CHUNK_CHARS);
       chunkCount += 1;
       await communicationLogRecord(recordType, {
         ...context,
         chunk_ordinal: chunkCount,
-        data: communicationLogRedactText(value.slice(offset, offset + COMMUNICATION_LOG_BODY_CHUNK_CHARS))
+        data: chunk
+      });
+    }
+    if (safePending) {
+      chunkCount += 1;
+      await communicationLogRecord(recordType, {
+        ...context,
+        chunk_ordinal: chunkCount,
+        data: safePending
       });
     }
     return { character_count: value.length, chunk_count: chunkCount };

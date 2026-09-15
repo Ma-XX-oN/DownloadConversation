@@ -434,3 +434,18 @@ The communication recorder is passive observability.  Its failures are isolated 
 ChatGPT networking and reported through ordinary recorder diagnostics.  It does not
 add an export acquisition, change the #102 single-snapshot contract, change source
 precedence/recovery semantics, or cross the AIConversationCore rendering boundary.
+
+## Issue #123 stateful communication-body redaction correction
+
+The first disk-recorder implementation redacted each output chunk independently.  A
+credential whose prefix/value crossed that arbitrary boundary could therefore expose a
+partial value before the following chunk made the complete pattern visible.  The
+corrected recorder treats redaction as streaming protocol state rather than a property
+of storage chunking.
+
+Possible sensitive prefixes are retained briefly instead of being committed at a
+source-chunk boundary.  Once a query token, signed URL value, Bearer credential, or
+quoted sensitive JSON-style field is recognized, its value remains suppressed until
+its actual delimiter arrives, even when that value spans arbitrarily many input and
+output chunks.  Fetch/SSE streams and already-materialized XHR/WebSocket text use the
+same state machine; disk chunk size no longer defines the privacy boundary.
