@@ -1,0 +1,54 @@
+name: Issue 132 minimal diff correction
+
+on:
+  push:
+    branches:
+      - issue-132-preserve-partial-communication-body
+
+permissions:
+  contents: write
+
+jobs:
+  correct:
+    if: ${{ github.actor != 'github-actions[bot]' }}
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: issue-132-preserve-partial-communication-body
+          fetch-depth: 0
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - name: Restore pre-existing empty-read guard
+        shell: bash
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+          path = Path('chatgpt-conversation-markdown-export.user.js')
+          source = path.read_text(encoding='utf-8')
+          old = '        byteCount += result.value?.byteLength ?? 0;\n'
+          new = ('        if (!result.value?.byteLength) continue;\n'
+                 '        byteCount += result.value.byteLength;\n')
+          if source.count(old) != 1:
+            raise SystemExit('Expected exactly one Issue #132 optional byte-count line.')
+          path.write_text(source.replace(old, new, 1), encoding='utf-8')
+          PY
+      - name: Focused recorder regression
+        run: node --test tests/disk-communication-recorder.test.mjs
+      - name: Production JSDoc coverage
+        run: node scripts/check-jsdoc.mjs
+      - name: JavaScript syntax
+        run: node --check chatgpt-conversation-markdown-export.user.js
+      - name: Version identity regression
+        run: node --test tests/version-identity.test.mjs
+      - name: Diff whitespace check
+        run: git diff --check
+      - name: Commit minimal-diff correction
+        shell: bash
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add chatgpt-conversation-markdown-export.user.js
+          git commit -m "Keep #132 change scoped to abort handling"
+          git push origin HEAD:issue-132-preserve-partial-communication-body
