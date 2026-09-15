@@ -87,26 +87,30 @@ test('communication log reset waits for pending writes, closes active writer, th
       events.push('active-close');
     }
   }, true);
+
+  const snapshot = {
+    handle: null,
+    file: { size: 8192 }
+  };
   const resetWritable = {
     async truncate(size) {
       events.push(`truncate:${size}`);
     },
     async close() {
       events.push('reset-close');
+      snapshot.file.size = 0;
     },
     async abort() {
       events.push('reset-abort');
     }
   };
-  api.setSnapshot({
-    handle: {
-      async createWritable(options) {
-        events.push(`create:${options?.keepExistingData === true}`);
-        return resetWritable;
-      }
-    },
-    file: { size: 8192 }
-  });
+  snapshot.handle = {
+    async createWritable(options) {
+      events.push(`create:${options?.keepExistingData === true}`);
+      return resetWritable;
+    }
+  };
+  api.setSnapshot(snapshot);
 
   const resetPromise = api.reset();
   await Promise.resolve();
@@ -120,6 +124,7 @@ test('communication log reset waits for pending writes, closes active writer, th
     'truncate:0',
     'reset-close'
   ]);
+  assert.equal(snapshot.file.size, 0, 'Fresh post-close state must verify the committed file is empty.');
   assert.equal(api.state().writable, null);
   assert.equal(api.state().dirty, false);
 });
@@ -129,28 +134,33 @@ test('communication log reset truncates with no active writer and retains direct
   const directoryBefore = context.communicationLogDirectoryHandle;
   const fileNameBefore = context.communicationLogFileName;
   api.setWriter(null, false);
-  api.setSnapshot({
-    handle: {
-      async createWritable(options) {
-        events.push(`create:${options?.keepExistingData === true}`);
-        return {
-          async truncate(size) {
-            events.push(`truncate:${size}`);
-          },
-          async close() {
-            events.push('reset-close');
-          },
-          async abort() {
-            events.push('reset-abort');
-          }
-        };
-      }
-    },
+
+  const snapshot = {
+    handle: null,
     file: { size: 4096 }
-  });
+  };
+  snapshot.handle = {
+    async createWritable(options) {
+      events.push(`create:${options?.keepExistingData === true}`);
+      return {
+        async truncate(size) {
+          events.push(`truncate:${size}`);
+        },
+        async close() {
+          events.push('reset-close');
+          snapshot.file.size = 0;
+        },
+        async abort() {
+          events.push('reset-abort');
+        }
+      };
+    }
+  };
+  api.setSnapshot(snapshot);
 
   await api.reset();
   assert.deepEqual(events, ['create:true', 'truncate:0', 'reset-close']);
+  assert.equal(snapshot.file.size, 0);
   assert.equal(api.state().directory, directoryBefore);
   assert.equal(api.state().fileName, fileNameBefore);
 });
