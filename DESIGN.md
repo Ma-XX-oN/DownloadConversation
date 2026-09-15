@@ -173,8 +173,10 @@ DownloadConversation owns exactly one writable semantic version: the userscript
 `@version` metadata value. Runtime code reads that same value from
 `GM_info.script.version`; it does not maintain a second caller-version literal.
 The defined semantic-version baseline is `1.0.0`. Development builds use the
-issue-qualified `x.y.z-issue.<issue>.<iteration>` form; accepted releases use the
-plain `x.y.z` release version.
+issue-qualified `x.y.z-issue.<issue>.<iteration>` form.  When an accepted development
+line is promoted, the release increments the minor component `y` from the current
+release, resets `z` to zero, and drops the issue qualifier; accepted releases therefore
+use the plain `x.y.0` form for that promotion.
 
 The AIConversationCore browser dependency remains pinned to an exact commit. Its
 semantic version is derived from the actually loaded bundle through
