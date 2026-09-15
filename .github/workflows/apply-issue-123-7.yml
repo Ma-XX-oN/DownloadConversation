@@ -20,6 +20,8 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: 22
+      - name: Correct staged patch documentation
+        run: python scripts/fix-issue-123-7-staging.py
       - name: Apply production and design patch
         run: python scripts/apply-issue-123-7.py
       - name: Production JSDoc coverage
@@ -42,6 +44,7 @@ jobs:
         run: git diff --check
       - name: Remove staging machinery
         run: |
+          rm scripts/fix-issue-123-7-staging.py
           rm scripts/apply-issue-123-7.py
           rm .github/workflows/apply-issue-123-7.yml
           git diff --check
