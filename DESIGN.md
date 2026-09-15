@@ -173,8 +173,10 @@ DownloadConversation owns exactly one writable semantic version: the userscript
 `@version` metadata value. Runtime code reads that same value from
 `GM_info.script.version`; it does not maintain a second caller-version literal.
 The defined semantic-version baseline is `1.0.0`. Development builds use the
-issue-qualified `x.y.z-issue.<issue>.<iteration>` form; accepted releases use the
-plain `x.y.z` release version.
+issue-qualified `x.y.z-issue.<issue>.<iteration>` form.  When an accepted development
+line is promoted, the release increments the minor component `y` from the current
+release, resets `z` to zero, and drops the issue qualifier; accepted releases therefore
+use the plain `x.y.0` form for that promotion.
 
 The AIConversationCore browser dependency remains pinned to an exact commit. Its
 semantic version is derived from the actually loaded bundle through
@@ -316,3 +318,191 @@ transport request uses the same captured authenticated page/API request context 
 Conversation API retrieval. Image-recovery Debug diagnostics include the loaded
 userscript version so a stale document runtime can be distinguished from the
 installed Tampermonkey version.
+
+## Live/API/JSONL tail consistency
+
+DownloadConversation retains a bounded monotonic history of the ten newest User/Assistant turns that the stock ChatGPT UI has legitimately exposed through forward conversation progression. The retained high-water history distinguishes the nested `data-message-id` API-correlation identity, mounted `section[data-turn-id]` identity, and section `data-testid` virtual-window identity rather than assuming those values are interchangeable.
+
+Historical navigation is not forward evidence. Scrolling upward, using ChatGPT's prompt index, invoking DownloadConversation Jump, or virtualized remounting must not advance the retained newest turn. After historical navigation, ordinary DOM discovery becomes eligible to advance the high-water mark only after the previous high-water turn is re-encountered at the current bottom boundary. An explicit new User prompt independently authorizes the following User/Assistant progression.
+
+At the start of Extract, the current ten-marker history is frozen for that operation. The existing single-snapshot invariant remains unchanged: DownloadConversation acquires the Conversation API once and all selected formats consume that same authoritative spine. The frozen live markers are compared with that spine, and generated JSONL is then compared with the exact source records from the same spine. Missing newest suffixes, same-ID materially shorter API content, identity/role disagreement, or JSONL loss/mutation are reported as consistency warnings with bounded identity/count evidence.
+
+These checks are observational. A mismatch does not reload ChatGPT, merge DOM content into the export, issue a second acquisition, or select a fallback source. Source-selection changes require separate evidence and approval. The consistency classifications are intended both to expose stale API snapshots and to help localize final-response loss such as issue #116 to live UI → API acquisition versus API → serialization.
+
+## Issue #123 streamed-tail recovery
+
+The newest generated turn has a second first-class source in addition to the
+history pagination API: the stock page's own /backend-api/f/conversation
+transport. DownloadConversation observes that request and a cloned response at
+document-start without delaying or consuming the page's response. When the
+bootstrap SSE emits a stream_handoff, DownloadConversation also passively
+observes the page's existing WebSocket connection and consumes only the
+advertised conversation-turn topic's encoded_item SSE payloads; it does not
+open a second generation request or a second history acquisition.
+
+The submitted request messages, parent_message_id, and exact provider message
+objects reconstructed from the completed stream are retained for only the
+newest turn and mirrored to session storage so a same-tab hard reload does not
+discard a completed streamed response while history is still stale. The capture
+is bounded and an overflowed or incomplete capture is never merged.
+
+Reconciliation is identity- and suffix-constrained. History remains authoritative
+through the captured parent anchor. The records after that anchor must be an
+exact message-ID prefix of the captured turn. A request-body record fills only a
+missing submitted suffix record; if history already contains that request-only ID,
+the server history copy remains authoritative. Matching same-ID records actually
+observed in the completed response stream are replaced by the streamed copies,
+which repairs stale partial Assistant/tool history records; only the remaining
+contiguous captured suffix is appended. Any gap,
+reordering, missing anchor, incomplete handoff, or conflicting identity rejects
+the streamed merge rather than inventing chronology. JSONL and Markdown then
+consume that same reconciled in-memory spine, preserving the single-snapshot
+multi-format export contract and the AIConversationCore rendering boundary.
+
+
+## Issue #123 stock network hydration diagnostics
+
+Live evidence showed that a newest Assistant turn can disappear after a hard reload,
+remain absent from the flattened Conversation API snapshot, and then materialize in
+the stock ChatGPT UI later.  The supplying request could not be identified from the
+older diagnostics because page networking was observed only for narrow correlation
+purposes.  Issue #123 therefore adds passive stock-network observability without
+changing acquisition or rendering semantics.
+
+From `document-start`, the userscript observes page-realm `fetch` and XHR traffic.
+It leaves the page's original response object untouched and inspects only a cloned,
+bounded response stream where the content type/path is useful for identity tracing.
+Diagnostics retain method, sanitized URL, request cache mode when exposed, safe
+request header names/selected routing-cache values, HTTP status, elapsed time,
+explicitly whitelisted cache/correlation response headers, and bounded message-ID /
+status summaries.  Raw response bodies, authorization values, cookies, tokens and
+other secret header values are not retained.  Non-JSON text is represented only by
+bounded candidate UUIDs and structural message-term presence.
+
+The stock-network trace is evidence gathering only.  It does not add another export
+acquisition, alter the single-snapshot invariant, change API/DOM source precedence,
+or introduce a fallback.  Existing `/f/conversation` streamed-tail capture remains
+the production tail-recovery mechanism while these diagnostics identify which stock
+request hydrates delayed/reloaded turns.
+
+Click-correlation diagnostics also record `Event.isTrusted`, pointer type and button
+metadata.  A captured/synthetic click event must not be described as deliberate user
+input without trusted-event evidence.
+
+Finally, same-ID stale-prefix comparison is not inferred from User DOM text because
+ChatGPT may append Retry/error/control chrome inside the mounted User-turn section.
+Stable message identity still participates in presence/role checks; this change only
+removes an unreliable User-content freshness signal.
+
+## Issue #123 disk-backed communication recorder
+
+Rare delayed-tail failures can disappear or change across a hard reload, so bounded
+in-memory diagnostics are not sufficient evidence for the next occurrence.  The
+userscript therefore maintains a persistent, append-only communication trace in the
+user-authorized directory.  The per-conversation filename is
+`DownloadConversation_<conversation-name>.jsonl`, using the same filename sanitation
+as exported conversation files.
+
+The selected `FileSystemDirectoryHandle` is stored in IndexedDB.  A later reload
+reuses it automatically when read/write permission remains granted.  If no usable
+handle exists, the page presents a user-gesture **Choose Log Folder** control because
+Chromium does not permit the directory picker to be opened autonomously at
+document-start.  The most recently resolved conversation title is also retained by
+conversation ID so an already-authorized reload can begin logging before the visible
+heading rematerializes.
+
+Communication JSONL is intentionally disk-backed rather than accumulated as another
+large diagnostic array.  Stock page fetch/XHR and WebSocket traffic receives
+session/transaction/timing/cache metadata; same-origin textual/API/SSE request and
+response bodies are written in bounded chunks.  Binary or cross-origin bodies are
+metadata-only.  Authorization, Cookie/Set-Cookie, bearer/session/token/API-key and
+signed-secret values are redacted before persistence.  Session/reload metadata and
+newest-Assistant placeholder, Thinking, Retry/error, timeout and hydrated state
+transitions are written to the same file so one rare failure provides both a time
+bound and the supplying network transaction.
+
+Normal communication recording keeps one `FileSystemWritableFileStream` open rather
+than committing every JSONL record separately.  Opening the writer reacquires the real
+file, observes a fresh committed EOF, seeks there once, and subsequent records are
+serialized through the existing write chain.  A dirty writer is checkpointed by
+`close()` every 30 seconds, when the page becomes hidden or enters `pagehide`, and after
+a completed `/backend-api/f/conversation` response has been captured.  A clean writer
+is not checkpointed merely because a timer fired; after a checkpoint the next record
+lazily opens a new writer at the then-current committed EOF.
+
+Before normal recording starts, the recorder inspects Chromium sibling swap files named
+`<log>.crswap` and `<log>.<n>.crswap`.  Recovery treats the committed real JSONL as the
+authoritative baseline.  It ignores only an incomplete final JSONL line, byte-verifies
+that each recoverable candidate is compatible with the committed prefix, and chooses a
+longer candidate by complete recoverable length and then modification time.  Only the
+missing suffix is appended to the real file, using the existing Issue 44 one-shot
+stale-handle-safe append path.  Compatible recovered or stale swaps are removed; a
+divergent swap is retained and reported rather than concatenated or deleted.  Recovery
+and cleanup finish before the long-lived writer can open.
+
+The Issue 44 `InvalidStateError` verification remains the safe one-shot mechanism used
+for recovery appends: after an ambiguous failure the real file is reacquired and bytes
+are checked before any retry, and unexpected external modification is rejected rather
+than overwritten.  Checkpoint failures remain isolated from ChatGPT networking; an
+uncertain writer is not silently treated as a successful committed append.
+
+The communication recorder is passive observability.  Its failures are isolated from
+ChatGPT networking and reported through ordinary recorder diagnostics.  It does not
+add an export acquisition, change the #102 single-snapshot contract, change source
+precedence/recovery semantics, or cross the AIConversationCore rendering boundary.
+
+## Issue #123 stateful communication-body redaction correction
+
+The first disk-recorder implementation redacted each output chunk independently.  A
+credential whose prefix/value crossed that arbitrary boundary could therefore expose a
+partial value before the following chunk made the complete pattern visible.  The
+corrected recorder treats redaction as streaming protocol state rather than a property
+of storage chunking.
+
+Possible sensitive prefixes are retained briefly instead of being committed at a
+source-chunk boundary.  Once a query token, signed URL value, Bearer credential, or
+quoted sensitive JSON-style field is recognized, its value remains suppressed until
+its actual delimiter arrives, even when that value spans arbitrarily many input and
+output chunks.  Fetch/SSE streams and already-materialized XHR/WebSocket text use the
+same state machine; disk chunk size no longer defines the privacy boundary.
+
+## Issue #123 communication-recorder source-completeness correction
+
+The disk recorder must distinguish stock ChatGPT traffic from DownloadConversation's
+own authenticated Conversation API acquisition.  The latter intentionally uses the
+pre-interception page `fetch` implementation, so it is now traced explicitly with
+`origin: "downloadconversation"` while ordinary intercepted page fetches retain
+`origin: "stock-chatgpt"`.  Logging still consumes only cloned Request/Response data
+and does not alter the request used by the exporter.
+
+Body persistence is now content-type conservative.  Explicitly textual MIME types
+remain eligible for body capture; any explicit non-text MIME type is metadata-only,
+even beneath `/backend-api/`.  A missing content type may still be inspected for a
+same-origin backend API because current ChatGPT endpoints occasionally omit a useful
+MIME declaration.  This preserves diagnostic coverage without decoding known binary
+assets into the JSONL trace.
+
+Directory selection uses the page realm (`unsafeWindow` when available) from the
+existing user-gesture prompt, matching the realm used for the intercepted networking
+objects and avoiding a sandbox-only File System Access lookup.
+
+## Issue #123 direct native directory-chooser gesture
+
+The File System Access directory picker cannot be opened autonomously during a page
+reload because Chromium requires transient user activation.  When a persisted
+directory handle still has read/write permission the recorder therefore reuses it
+without showing any authorization UI.  Otherwise the userscript blocks page
+interaction and reserves the next trusted click or key press solely for directory
+authorization.
+
+That trusted event handler invokes the page-realm `showDirectoryPicker()` synchronously,
+before any awaited work can consume transient activation.  There is no intermediate
+"Choose Log Folder" button.  The same event is prevented and stopped so it cannot also
+activate an underlying ChatGPT control.  Cancelling the native chooser leaves the
+trusted-gesture capture armed for the next interaction; successful selection persists
+the directory handle, removes the blocker/listeners, and resumes the disk-backed
+communication recorder.
+
+This changes only the authorization UX for the diagnostic communication recorder.  It
+does not change the single-snapshot export contract, source precedence/recovery rules,
+or the AIConversationCore rendering boundary.

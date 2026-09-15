@@ -40,6 +40,28 @@ function exportHarness() {
     testInProgress: false,
     jumpInProgress: false,
     exportKind: null,
+    streamTailCapture: null,
+    scanLiveTailMarkers() {},
+    snapshotLiveTailMarkers() { return []; },
+    streamTailRestoreCapture() { return null; },
+    streamTailCaptureSnapshot(capture) { return capture; },
+    mergeStreamTailCaptureIntoSpine(received) {
+      return {
+        merged: false,
+        reason: 'no-capture',
+        spine: received,
+        appended_count: 0,
+        replaced_count: 0
+      };
+    },
+    compareLiveTailMarkersToSpine() {
+      return { marker_count: 0, matched_count: 0, missing_count: 0, missing_suffix_count: 0, stale_prefix_count: 0, role_mismatch_count: 0, warning: false };
+    },
+    compareLiveTailMarkersToJsonl() {
+      return { marker_count: 0, matched_count: 0, missing_from_jsonl_count: 0, changed_count: 0, warning: false };
+    },
+    liveApiTailWarningText() { return ''; },
+    jsonlTailWarningText() { return ''; },
     progressState: null,
     currentConversationId() {
       return 'conversation-1';

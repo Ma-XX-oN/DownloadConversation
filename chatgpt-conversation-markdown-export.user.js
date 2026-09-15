@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         ChatGPT Conversation Markdown Recorder
 // @namespace    https://chatgpt.com/
-// @version      1.0.0
+// @version      1.1.0
 // @description  Exports the current ChatGPT conversation directly from the Conversation API as Markdown or JSONL.
 // @match        https://chatgpt.com/*
 // @match        https://chat.openai.com/*
@@ -50,6 +50,34 @@
   const MAX_PERSISTED_DIAGNOSTIC_LOG_ITEMS = 5000;
   /** Debounce used to keep high-volume debug diagnostics from serializing the full log on every event. */
   const DIAGNOSTIC_PERSIST_DELAY_MS = 1000;
+  /** Maximum number of legitimate forward tail markers retained for export consistency checks. */
+  const LIVE_TAIL_MARKER_LIMIT = 10;
+  /** Maximum normalized visible characters retained per live tail marker for bounded comparison. */
+  const LIVE_TAIL_TEXT_LIMIT = 8192;
+  /** Session-storage key for the newest exact streamed conversation-turn capture. */
+  const STREAM_TAIL_STORAGE_KEY = 'tm-conversation-recorder-stream-tail';
+  /** Maximum source records retained from one live streamed conversation turn. */
+  const STREAM_TAIL_RECORD_LIMIT = 512;
+  /** Maximum message identities retained in one stock-network body summary. */
+  const STOCK_NETWORK_ID_LIMIT = 64;
+  /** Maximum response-body bytes inspected for stock-network identity diagnostics. */
+  const STOCK_NETWORK_JSON_BYTE_LIMIT = 1024 * 1024;
+  /** IndexedDB database retaining the user-authorized communication-log directory handle. */
+  const COMMUNICATION_LOG_DB_NAME = 'downloadconversation-communication-log';
+  /** IndexedDB object store containing File System Access handles. */
+  const COMMUNICATION_LOG_DB_STORE = 'handles';
+  /** Stable IndexedDB key for the communication-log directory handle. */
+  const COMMUNICATION_LOG_HANDLE_KEY = 'communication-directory';
+  /** Prefix used to retain the last known conversation title for immediate reload logging. */
+  const COMMUNICATION_LOG_TITLE_STORAGE_PREFIX = 'tm-downloadconversation-communication-title:';
+  /** Maximum decoded text retained before one communication body chunk is flushed to disk. */
+  const COMMUNICATION_LOG_BODY_CHUNK_CHARS = 256 * 1024;
+  /** Maximum wait for startup directory restoration before a cloned network body is abandoned. */
+  const COMMUNICATION_LOG_READY_WAIT_MS = 2000;
+  /** Bounded retry count for Chromium stale File System Access interface state. */
+  const COMMUNICATION_LOG_WRITE_RETRY_LIMIT = 3;
+  /** Byte comparison chunk size used to verify ambiguous append outcomes. */
+  const COMMUNICATION_LOG_COMPARE_CHUNK_BYTES = 256 * 1024;
 
   /** Unwrapped page-realm fetch implementation captured before installing interception. */
   let originalPageFetch = null;
@@ -101,6 +129,58 @@
   let diagnosticLogExpanded = false;
   /** Element to refocus after the active recorder modal closes. */
   let lastModalOpener = null;
+  /** Conversation id whose live high-water tail is currently retained. */
+  let liveTailConversationId = null;
+  /** Newest legitimate forward-progression markers retained as a bounded high-water history. */
+  let liveTailMarkers = [];
+  /** Whether current materialization is historical navigation and therefore cannot advance the high-water tail. */
+  let liveTailHistoricalNavigation = false;
+  /** Whether an explicit prompt submission currently authorizes User then Assistant tail advancement. */
+  let liveTailPromptAdvancePending = false;
+  /** Guards live-tail DOM/event tracking so observers are installed only once. */
+  let liveTailTrackingInstalled = false;
+  /** Coalesces high-volume DOM mutations into one live-tail scan per task. */
+  let liveTailScanScheduled = false;
+  /** Last observed conversation-scroll position used only to detect upward historical navigation. */
+  let liveTailLastScrollTop = null;
+  /** Thread element currently carrying mounted virtual-window conversation turns. */
+  let liveTailObservedThread = null;
+  /** Mutation observer scoped to the current conversation thread. */
+  let liveTailThreadObserver = null;
+  /** Lightweight root observer used only to detect host replacement of the conversation thread. */
+  let liveTailRootObserver = null;
+  /** Scroll root currently supplying direction evidence for live-tail tracking. */
+  let liveTailObservedScrollRoot = null;
+  /** Newest passive /f/conversation streamed-turn capture observed in this page lifetime. */
+  let streamTailCapture = null;
+  /** Monotonic sequence assigned to stock page fetch/XHR diagnostics in this page lifetime. */
+  let stockNetworkSequence = 0;
+  /** Persisted user-authorized directory used for the disk communication recorder. */
+  let communicationLogDirectoryHandle = null;
+  /** Whether the next trusted page gesture is reserved for native directory chooser launch. */
+  let communicationLogDirectoryGestureArmed = false;
+  /** Whether a native directory chooser promise is currently outstanding. */
+  let communicationLogDirectoryPickerOpening = false;
+  /** Active `DownloadConversation_<conversation>.jsonl` file name. */
+  let communicationLogFileName = null;
+  /** Serializes append operations so independent network observers cannot overlap file writes. */
+  let communicationLogWriteChain = Promise.resolve();
+  /** Whether the disk recorder has a writable directory and resolved conversation file name. */
+  let communicationLogReady = false;
+  /** Guards the required-directory prompt against duplicate page UI. */
+  let communicationLogPromptShown = false;
+  /** Monotonic sequence assigned to JSONL communication records within this page session. */
+  let communicationLogSequence = 0;
+  /** Startup restoration promise shared by early intercepted network clones. */
+  let communicationLogInitializationPromise = null;
+  /** Count of communication records intentionally skipped before disk logging became available. */
+  let communicationLogDroppedBeforeReady = 0;
+  /** Last newest-Assistant lifecycle signature written to disk, preventing mutation-scan duplicates. */
+  let communicationLogLastAssistantLifecycleKey = null;
+  /** Guards page/session lifecycle listeners against duplicate installation after reauthorization. */
+  let communicationLogLifecycleInstalled = false;
+  /** Unique identity correlating all communication records produced by this page lifetime. */
+  const communicationLogSessionId = crypto.randomUUID();
   try {
     const storedDiagnosticLog = JSON.parse(sessionStorage.getItem(DIAGNOSTIC_LOG_STORAGE_KEY) || '[]');
     if (Array.isArray(storedDiagnosticLog)) diagnosticLog = storedDiagnosticLog.slice(-MAX_DIAGNOSTIC_LOG_ITEMS);
@@ -258,6 +338,1648 @@
     return result;
   }
 
+  // BEGIN Issue #123 stock network diagnostics
+  /**
+   * Produces a bounded URL safe for stock-network diagnostics.
+   *
+   * Same-origin ChatGPT URLs retain routing query parameters while known secret
+   * values are redacted. Cross-origin URLs retain only origin and path.
+   *
+   * @param {string} value - Request or response URL to sanitize.
+   * @returns {string} Sanitized diagnostic URL.
+   */
+  function stockNetworkSafeUrl(value) {
+    try {
+      const parsed = new URL(String(value ?? ''), location.href);
+      if (parsed.origin !== location.origin) return `${parsed.origin}${parsed.pathname}`;
+      const relative = `${parsed.pathname}${parsed.search}`;
+      return boundedDiagnosticText(
+        redactDiagnosticSignedTokens(relative)
+          .replace(/([?&](?:access_token|token|key|secret|auth|session|jwt)=)[^&#\s]*/gi, '$1[redacted]'),
+        4000
+      );
+    } catch {
+      return boundedDiagnosticText(String(value ?? ''), 4000);
+    }
+  }
+
+  /**
+   * Extracts only explicitly safe cache/correlation response headers.
+   *
+   * @param {Object} headers - Headers-like object exposing get(name).
+   * @returns {Object} Safe response-header diagnostic projection.
+   */
+  function stockNetworkSafeResponseHeaders(headers) {
+    const result = {};
+    const allowed = [
+      ['date', 'date'],
+      ['age', 'age'],
+      ['cache-control', 'cache_control'],
+      ['etag', 'etag'],
+      ['last-modified', 'last_modified'],
+      ['expires', 'expires'],
+      ['pragma', 'pragma'],
+      ['vary', 'vary'],
+      ['cf-cache-status', 'cf_cache_status'],
+      ['x-cache', 'x_cache'],
+      ['x-cache-hits', 'x_cache_hits'],
+      ['x-served-by', 'x_served_by'],
+      ['x-timer', 'x_timer'],
+      ['server-timing', 'server_timing'],
+      ['x-request-id', 'x_request_id'],
+      ['x-openai-request-id', 'x_openai_request_id'],
+      ['cf-ray', 'cf_ray']
+    ];
+    for (const [headerName, outputName] of allowed) {
+      let value = null;
+      try { value = headers?.get?.(headerName) ?? null; } catch {}
+      if (value) result[outputName] = boundedDiagnosticText(value, 1000);
+    }
+    return result;
+  }
+
+  /**
+   * Extracts bounded message identity/status metadata from arbitrary JSON data.
+   *
+   * The traversal intentionally records no message content.
+   *
+   * @param {Object} payload - Parsed stock response JSON.
+   * @returns {Object} Bounded identity-only summary.
+   */
+  function stockNetworkJsonIdentitySummary(payload) {
+    const messageIds = [];
+    const tailMessages = [];
+    const seenMessageIds = new Set();
+    const visited = new WeakSet();
+    let visitedNodes = 0;
+
+    /**
+     * Retains one message-like object without retaining its content.
+     *
+     * @param {Object} candidate - Potential provider message object.
+     * @returns {void} No value is returned.
+     */
+    function retainMessage(candidate) {
+      if (!candidate || typeof candidate !== 'object') return;
+      const id = typeof candidate.id === 'string' ? candidate.id : null;
+      const role = typeof candidate?.author?.role === 'string'
+        ? candidate.author.role
+        : (typeof candidate.role === 'string' ? candidate.role : null);
+      if (!id || !role || seenMessageIds.has(id)) return;
+      seenMessageIds.add(id);
+      messageIds.push(id);
+      tailMessages.push({
+        id,
+        role,
+        status: typeof candidate.status === 'string' ? candidate.status : null,
+        end_turn: typeof candidate.end_turn === 'boolean' ? candidate.end_turn : null,
+        channel: typeof candidate.channel === 'string' ? candidate.channel : null
+      });
+      if (messageIds.length > STOCK_NETWORK_ID_LIMIT) messageIds.shift();
+      if (tailMessages.length > STOCK_NETWORK_ID_LIMIT) tailMessages.shift();
+    }
+
+    /**
+     * Walks bounded JSON structure looking only for message-like identity objects.
+     *
+     * @param {Object} value - Current JSON value.
+     * @param {number} depth - Current traversal depth.
+     * @returns {void} No value is returned.
+     */
+    function visit(value, depth) {
+      if (!value || typeof value !== 'object' || depth > 16 || visitedNodes >= 20000) return;
+      if (visited.has(value)) return;
+      visited.add(value);
+      visitedNodes += 1;
+      if (Array.isArray(value)) {
+        for (const item of value) visit(item, depth + 1);
+        return;
+      }
+      retainMessage(value);
+      if (value.message && typeof value.message === 'object') retainMessage(value.message);
+      for (const nested of Object.values(value)) visit(nested, depth + 1);
+    }
+
+    visit(payload, 0);
+    const currentNode = typeof payload?.current_node === 'string'
+      ? payload.current_node
+      : (typeof payload?.conversation?.current_node === 'string' ? payload.conversation.current_node : null);
+    const conversationId = typeof payload?.conversation_id === 'string'
+      ? payload.conversation_id
+      : (typeof payload?.id === 'string' && !seenMessageIds.has(payload.id) ? payload.id : null);
+    return {
+      current_node: currentNode,
+      conversation_id: conversationId,
+      message_ids: messageIds,
+      tail_messages: tailMessages,
+      visited_nodes: visitedNodes
+    };
+  }
+
+  /**
+   * Extracts bounded candidate UUID identities from non-JSON text responses.
+   *
+   * @param {string} text - Bounded response text.
+   * @returns {Object} Identity-only text summary.
+   */
+  function stockNetworkTextIdentitySummary(text) {
+    const candidateIds = [];
+    const seen = new Set();
+    const uuidPattern = /\b[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}\b/gi;
+    for (const match of String(text ?? '').matchAll(uuidPattern)) {
+      const id = match[0].toLowerCase();
+      if (seen.has(id)) continue;
+      seen.add(id);
+      candidateIds.push(id);
+      if (candidateIds.length > STOCK_NETWORK_ID_LIMIT) candidateIds.shift();
+    }
+    return {
+      candidate_uuid_ids: candidateIds,
+      message_terms_present: /(?:current_node|message_id|\"message\"|\"author\"|\"role\")/i.test(String(text ?? ''))
+    };
+  }
+
+  /**
+   * Projects request headers without retaining authentication or other secret values.
+   *
+   * @param {Object} headers - Headers-like request headers.
+   * @returns {Object} Safe request-header metadata.
+   */
+  function stockNetworkRequestHeaderSummary(headers) {
+    const raw = rawHeadersToObject(headers);
+    const headerNames = Object.keys(raw).slice(0, 100);
+    const selected = {};
+    for (const name of ['cache-control', 'pragma', 'if-none-match', 'if-modified-since', 'x-openai-target-path']) {
+      if (!raw[name]) continue;
+      selected[name.replace(/-/g, '_')] = boundedDiagnosticText(redactDiagnosticSignedTokens(raw[name]), 1000);
+    }
+    return { header_names: headerNames, selected };
+  }
+
+  /**
+   * Starts one stock page fetch diagnostic observation.
+   *
+   * @param {Request|null} request - Page Request when construction succeeded.
+   * @param {string} requestUrl - Effective request URL.
+   * @returns {Object} Correlation state for the response.
+   */
+  function stockNetworkTraceFetchStart(request, requestUrl) {
+    const sequence = ++stockNetworkSequence;
+    const startedAt = performance.now();
+    let sameOrigin = false;
+    try { sameOrigin = new URL(requestUrl, location.href).origin === location.origin; } catch {}
+    const trace = {
+      sequence,
+      started_at: startedAt,
+      method: String(request?.method ?? 'GET').toUpperCase(),
+      url: stockNetworkSafeUrl(requestUrl),
+      same_origin: sameOrigin
+    };
+    logDiagnostic('debug', 'stock-network-fetch-start', {
+      network_sequence: sequence,
+      method: trace.method,
+      url: trace.url,
+      cache_mode: request?.cache ?? null,
+      request_mode: request?.mode ?? null,
+      credentials: request?.credentials ?? null,
+      destination: request?.destination ?? null,
+      redirect: request?.redirect ?? null,
+      headers: stockNetworkRequestHeaderSummary(request?.headers)
+    });
+    return trace;
+  }
+
+  /**
+   * Reads at most the configured diagnostic byte limit from a cloned response.
+   *
+   * @param {Response} response - Cloned page response.
+   * @returns {Promise<Object>} Bounded text plus byte/truncation metadata.
+   */
+  async function stockNetworkReadBoundedText(response) {
+    if (!response?.body) return { text: '', byte_count: 0, truncated: false };
+    const reader = response.body.getReader();
+    const decoder = new TextDecoder();
+    let text = '';
+    let byteCount = 0;
+    let truncated = false;
+    try {
+      for (;;) {
+        const { done, value } = await reader.read();
+        if (done) break;
+        if (!value?.byteLength) continue;
+        const remaining = STOCK_NETWORK_JSON_BYTE_LIMIT - byteCount;
+        if (remaining <= 0) {
+          truncated = true;
+          try { await reader.cancel(); } catch {}
+          break;
+        }
+        const accepted = value.byteLength <= remaining ? value : value.slice(0, remaining);
+        text += decoder.decode(accepted, { stream: true });
+        byteCount += accepted.byteLength;
+        if (accepted.byteLength < value.byteLength) {
+          truncated = true;
+          try { await reader.cancel(); } catch {}
+          break;
+        }
+      }
+      text += decoder.decode();
+    } finally {
+      try { reader.releaseLock(); } catch {}
+    }
+    return { text, byte_count: byteCount, truncated };
+  }
+
+  /**
+   * Inspects one cloned stock fetch body without retaining its raw content.
+   *
+   * @param {Response} response - Cloned page response.
+   * @param {Object} trace - Request/response correlation state.
+   * @returns {Promise<void>} Resolves after bounded body inspection.
+   */
+  async function stockNetworkInspectFetchBody(response, trace) {
+    try {
+      const bounded = await stockNetworkReadBoundedText(response);
+      const contentType = response.headers?.get?.('content-type') ?? '';
+      let jsonIdentity = null;
+      let textIdentity = null;
+      if (/json/i.test(contentType) || /^[\s\r\n]*[\[{]/.test(bounded.text)) {
+        try { jsonIdentity = stockNetworkJsonIdentitySummary(JSON.parse(bounded.text)); } catch {}
+      }
+      if (!jsonIdentity) textIdentity = stockNetworkTextIdentitySummary(bounded.text);
+      logDiagnostic('debug', 'stock-network-fetch-body-summary', {
+        network_sequence: trace.sequence,
+        url: trace.url,
+        content_type: boundedDiagnosticText(contentType, 500),
+        byte_count: bounded.byte_count,
+        truncated: bounded.truncated,
+        json_identity: jsonIdentity,
+        text_identity: textIdentity
+      });
+    } catch (error) {
+      logDiagnostic('debug', 'stock-network-fetch-body-summary-failed', {
+        network_sequence: trace.sequence,
+        url: trace.url,
+        error: boundedDiagnosticText(error?.message ?? String(error), 1000)
+      });
+    }
+  }
+
+  /**
+   * Records stock fetch response metadata and starts bounded identity inspection.
+   *
+   * @param {Response} response - Original page response, left untouched for ChatGPT.
+   * @param {Object} trace - Request/response correlation state.
+   * @returns {void} No value is returned.
+   */
+  function stockNetworkTraceFetchResponse(response, trace) {
+    const contentType = response?.headers?.get?.('content-type') ?? '';
+    logDiagnostic('debug', 'stock-network-fetch-response', {
+      network_sequence: trace.sequence,
+      method: trace.method,
+      url: trace.url,
+      response_url: stockNetworkSafeUrl(response?.url ?? ''),
+      status: response?.status ?? null,
+      ok: response?.ok === true,
+      type: response?.type ?? null,
+      redirected: response?.redirected === true,
+      duration_ms: Math.round(performance.now() - trace.started_at),
+      content_type: boundedDiagnosticText(contentType, 500),
+      response_headers: stockNetworkSafeResponseHeaders(response?.headers)
+    });
+    const inspectable = trace.same_origin && (
+      /(?:json|text|event-stream|x-component|javascript)/i.test(contentType) ||
+      /\/backend-api\/(?:conversation|conversations|f\/conversation)(?:\/|\?|$)/.test(trace.url)
+    );
+    if (!inspectable) return;
+    let cloned = null;
+    try { cloned = response.clone(); } catch {}
+    if (cloned) void stockNetworkInspectFetchBody(cloned, trace);
+  }
+
+  /**
+   * Starts one stock page XHR diagnostic observation.
+   *
+   * @param {XMLHttpRequest} xhr - Page XHR instance.
+   * @param {Object} info - Captured XHR method/URL/header metadata.
+   * @returns {Object} Correlation state for loadend.
+   */
+  function stockNetworkTraceXhrStart(xhr, info) {
+    const sequence = ++stockNetworkSequence;
+    const trace = {
+      sequence,
+      started_at: performance.now(),
+      method: String(info?.method ?? 'GET').toUpperCase(),
+      url: stockNetworkSafeUrl(info?.url ?? '')
+    };
+    logDiagnostic('debug', 'stock-network-xhr-start', {
+      network_sequence: sequence,
+      method: trace.method,
+      url: trace.url,
+      response_type: xhr?.responseType || null,
+      headers: stockNetworkRequestHeaderSummary(info?.headers)
+    });
+    return trace;
+  }
+
+  /**
+   * Parses XHR raw response headers into a Headers-like safe lookup object.
+   *
+   * @param {XMLHttpRequest} xhr - Completed page XHR instance.
+   * @returns {Object} Headers-like object with get(name).
+   */
+  function stockNetworkXhrHeaderLookup(xhr) {
+    const values = {};
+    try {
+      for (const line of String(xhr?.getAllResponseHeaders?.() ?? '').split(/\r?\n/)) {
+        const split = line.indexOf(':');
+        if (split <= 0) continue;
+        values[line.slice(0, split).trim().toLowerCase()] = line.slice(split + 1).trim();
+      }
+    } catch {}
+    return { get: name => values[String(name).toLowerCase()] ?? null };
+  }
+
+  /**
+   * Records completed stock XHR response metadata and bounded identity information.
+   *
+   * @param {XMLHttpRequest} xhr - Completed page XHR instance.
+   * @param {Object} trace - Request/response correlation state.
+   * @returns {void} No value is returned.
+   */
+  function stockNetworkTraceXhrResponse(xhr, trace) {
+    const headerLookup = stockNetworkXhrHeaderLookup(xhr);
+    const contentType = headerLookup.get('content-type') ?? '';
+    let bodyIdentity = null;
+    try {
+      if (xhr.responseType === 'json' && xhr.response && typeof xhr.response === 'object') {
+        bodyIdentity = { json_identity: stockNetworkJsonIdentitySummary(xhr.response) };
+      } else if (!xhr.responseType || xhr.responseType === 'text') {
+        const rawText = String(xhr.responseText ?? '');
+        const boundedText = rawText.slice(0, STOCK_NETWORK_JSON_BYTE_LIMIT);
+        let jsonIdentity = null;
+        if (/json/i.test(contentType) || /^[\s\r\n]*[\[{]/.test(boundedText)) {
+          try { jsonIdentity = stockNetworkJsonIdentitySummary(JSON.parse(boundedText)); } catch {}
+        }
+        bodyIdentity = jsonIdentity
+          ? { json_identity: jsonIdentity, truncated: rawText.length > boundedText.length }
+          : {
+              text_identity: stockNetworkTextIdentitySummary(boundedText),
+              truncated: rawText.length > boundedText.length
+            };
+      }
+    } catch {}
+    logDiagnostic('debug', 'stock-network-xhr-response', {
+      network_sequence: trace.sequence,
+      method: trace.method,
+      url: trace.url,
+      response_url: stockNetworkSafeUrl(xhr?.responseURL ?? ''),
+      status: Number.isFinite(xhr?.status) ? xhr.status : null,
+      duration_ms: Math.round(performance.now() - trace.started_at),
+      content_type: boundedDiagnosticText(contentType, 500),
+      response_headers: stockNetworkSafeResponseHeaders(headerLookup),
+      body_identity: bodyIdentity
+    });
+  }
+  // END Issue #123 stock network diagnostics
+
+
+  // BEGIN Issue #123 disk communication recorder
+  /** Interval between dirty communication-log checkpoints. */
+  const COMMUNICATION_LOG_CHECKPOINT_MS = 30 * 1000;
+  /** Long-lived writable stream used by normal communication-log appends. */
+  let communicationLogWritable = null;
+  /** Whether the current long-lived writable contains bytes not yet checkpointed. */
+  let communicationLogWriterDirty = false;
+  /** Periodic checkpoint timer installed once communication logging becomes active. */
+  let communicationLogCheckpointTimer = null;
+  /**
+   * Opens the IndexedDB database that retains the authorized directory handle.
+   *
+   * @returns {Promise<IDBDatabase>} Open handle database.
+   */
+  function communicationLogOpenDb() {
+    return new Promise((resolve, reject) => {
+      const request = indexedDB.open(COMMUNICATION_LOG_DB_NAME, 1);
+      request.onupgradeneeded = () => {
+        const db = request.result;
+        if (!db.objectStoreNames.contains(COMMUNICATION_LOG_DB_STORE)) {
+          db.createObjectStore(COMMUNICATION_LOG_DB_STORE);
+        }
+      };
+      request.onsuccess = () => resolve(request.result);
+      request.onerror = () => reject(request.error ?? new Error('Could not open communication-log handle database.'));
+    });
+  }
+
+  /**
+   * Loads the previously selected communication-log directory handle.
+   *
+   * @returns {Promise<Object|null>} Persisted directory handle, or null when none exists.
+   */
+  async function communicationLogLoadDirectoryHandle() {
+    const db = await communicationLogOpenDb();
+    try {
+      return await new Promise((resolve, reject) => {
+        const request = db.transaction(COMMUNICATION_LOG_DB_STORE, 'readonly')
+          .objectStore(COMMUNICATION_LOG_DB_STORE)
+          .get(COMMUNICATION_LOG_HANDLE_KEY);
+        request.onsuccess = () => resolve(request.result ?? null);
+        request.onerror = () => reject(request.error ?? new Error('Could not load communication-log directory handle.'));
+      });
+    } finally {
+      db.close();
+    }
+  }
+
+  /**
+   * Persists one authorized communication-log directory handle for later reloads.
+   *
+   * @param {Object} handle - FileSystemDirectoryHandle selected by the user.
+   * @returns {Promise<void>} Resolves after IndexedDB stores the handle.
+   */
+  async function communicationLogStoreDirectoryHandle(handle) {
+    const db = await communicationLogOpenDb();
+    try {
+      await new Promise((resolve, reject) => {
+        const request = db.transaction(COMMUNICATION_LOG_DB_STORE, 'readwrite')
+          .objectStore(COMMUNICATION_LOG_DB_STORE)
+          .put(handle, 'communication-directory');
+        request.onsuccess = () => resolve();
+        request.onerror = () => reject(request.error ?? new Error('Could not store communication-log directory handle.'));
+      });
+    } finally {
+      db.close();
+    }
+  }
+
+  /**
+   * Reads current read/write permission for one File System Access directory handle.
+   *
+   * @param {Object|null} handle - Candidate FileSystemDirectoryHandle.
+   * @returns {Promise<string>} Browser permission state.
+   */
+  async function communicationLogPermissionState(handle) {
+    if (!handle || typeof handle.queryPermission !== 'function') return 'denied';
+    return handle.queryPermission({ mode: 'readwrite' });
+  }
+
+  /**
+   * Returns the current conversation title, preferring a previously retained title during early reload startup.
+   *
+   * @returns {string|null} Sanitized conversation name, or null before a usable title is known.
+   */
+  function communicationLogConversationName() {
+    const conversationId = currentConversationId();
+    const storageKey = `${COMMUNICATION_LOG_TITLE_STORAGE_PREFIX}${conversationId ?? 'unknown'}`;
+    const current = sanitizeFileName(conversationTitle());
+    const currentUsable = !/^(?:ChatGPT|ChatGPT conversation)$/i.test(current);
+    if (currentUsable) {
+      try { localStorage.setItem(storageKey, current); } catch {}
+      return current;
+    }
+    try {
+      const stored = localStorage.getItem(storageKey);
+      return stored ? sanitizeFileName(stored) : null;
+    } catch {
+      return null;
+    }
+  }
+
+  /**
+   * Waits briefly for the conversation title needed by the required disk-log filename.
+   *
+   * @returns {Promise<string|null>} Sanitized title when available, otherwise null.
+   */
+  async function communicationLogWaitForConversationName() {
+    for (let attempt = 0; attempt < 50; attempt += 1) {
+      const name = communicationLogConversationName();
+      if (name) return name;
+      await new Promise(resolve => setTimeout(resolve, 100));
+    }
+    return null;
+  }
+
+  /**
+   * Installs page/session lifecycle records after the disk recorder becomes writable.
+   *
+   * @returns {void} No value is returned.
+   */
+  function communicationLogInstallLifecycleObservers() {
+    if (communicationLogLifecycleInstalled) return;
+    communicationLogLifecycleInstalled = true;
+    communicationLogCheckpointTimer = setInterval(() => void communicationLogCheckpoint('periodic'), COMMUNICATION_LOG_CHECKPOINT_MS);
+    window.addEventListener('pagehide', event => {
+      void communicationLogRecord('communication_pagehide', {
+        persisted: event.persisted === true,
+        visibility_state: document.visibilityState
+      });
+      void communicationLogCheckpoint('pagehide');
+    });
+    document.addEventListener('visibilitychange', () => {
+      void communicationLogRecord('communication_visibility_change', {
+        visibility_state: document.visibilityState
+      });
+      if (document.visibilityState === 'hidden') {
+        void communicationLogCheckpoint('visibility-hidden');
+      }
+    });
+  }
+
+  /**
+   * Activates disk logging for one granted directory and the current conversation.
+   *
+   * @param {Object} handle - Granted FileSystemDirectoryHandle.
+   * @returns {Promise<boolean>} True when logging becomes ready.
+   */
+  async function communicationLogActivateDirectory(handle) {
+    const conversationName = await communicationLogWaitForConversationName();
+    if (!conversationName) {
+      communicationLogShowDirectoryPrompt('Conversation title is not available yet.');
+      return false;
+    }
+    communicationLogDirectoryHandle = handle;
+    communicationLogFileName = `DownloadConversation_${sanitizeFileName(conversationTitle())}.jsonl`;
+    if (/^DownloadConversation_(?:ChatGPT|ChatGPT conversation)\.jsonl$/i.test(communicationLogFileName)) {
+      communicationLogFileName = `DownloadConversation_${conversationName}.jsonl`;
+    }
+    await communicationLogRecoverSwapFiles();
+    communicationLogReady = true;
+    communicationLogDisarmDirectoryGesture();
+    document.getElementById('tm-communication-directory-required')?.remove();
+    communicationLogPromptShown = false;
+    communicationLogInstallLifecycleObservers();
+    const navigation = performance.getEntriesByType?.('navigation')?.[0] ?? null;
+    await communicationLogRecord('communication_session_start', {
+      script_version: VERSION,
+      core_version: CORE_VERSION,
+      conversation_id: currentConversationId(),
+      conversation_name: conversationName,
+      file_name: communicationLogFileName,
+      page_url: stockNetworkSafeUrl(location.href),
+      navigation_type: navigation?.type ?? null,
+      time_origin: performance.timeOrigin,
+      dropped_before_ready: communicationLogDroppedBeforeReady
+    });
+    communicationLogDroppedBeforeReady = 0;
+    return true;
+  }
+
+  /**
+   * Displays a user-gesture directory authorization prompt required by File System Access.
+   *
+   * @param {string} reason - Why directory authorization is required.
+   * @returns {void} No value is returned.
+   */
+  /**
+   * Removes the trusted-gesture listeners once directory authorization succeeds.
+   *
+   * @returns {void} No value is returned.
+   */
+  function communicationLogDisarmDirectoryGesture() {
+    if (!communicationLogDirectoryGestureArmed) return;
+    communicationLogDirectoryGestureArmed = false;
+    window.removeEventListener('click', communicationLogHandleDirectoryGesture, true);
+    window.removeEventListener('keydown', communicationLogHandleDirectoryGesture, true);
+  }
+
+  /**
+   * Uses the first trusted page interaction to launch the native directory chooser directly.
+   *
+   * The File System Access picker call must remain synchronous with this trusted event; no
+   * awaited work may occur before `showDirectoryPicker()` or Chromium will discard transient
+   * user activation.
+   *
+   * @param {Event} event - Trusted click or keydown reserved for directory authorization.
+   * @returns {void} No value is returned.
+   */
+  function communicationLogHandleDirectoryGesture(event) {
+    if (!communicationLogDirectoryGestureArmed || communicationLogDirectoryPickerOpening) return;
+    if (event.isTrusted !== true) return;
+
+    event.preventDefault();
+    event.stopImmediatePropagation();
+
+    const pickerWindow = typeof unsafeWindow !== 'undefined' ? unsafeWindow : window;
+    if (typeof pickerWindow.showDirectoryPicker !== 'function') {
+      communicationLogReportFailure(
+        'directory-authorization',
+        new Error('This browser does not expose showDirectoryPicker().')
+      );
+      return;
+    }
+
+    let pickerPromise;
+    try {
+      communicationLogDirectoryPickerOpening = true;
+      pickerPromise = pickerWindow.showDirectoryPicker({ mode: 'readwrite' });
+    } catch (error) {
+      communicationLogDirectoryPickerOpening = false;
+      communicationLogReportFailure('directory-authorization', error);
+      return;
+    }
+
+    Promise.resolve(pickerPromise)
+      .then(async handle => {
+        const permission = await communicationLogPermissionState(handle);
+        if (permission !== 'granted') {
+          throw new Error('The selected folder did not grant read/write permission.');
+        }
+        await communicationLogStoreDirectoryHandle(handle);
+        await communicationLogActivateDirectory(handle);
+      })
+      .catch(error => {
+        if (error?.name === 'AbortError') {
+          logDiagnostic('debug', 'communication-directory-picker-cancelled', {});
+        } else {
+          communicationLogReportFailure('directory-authorization', error);
+        }
+      })
+      .finally(() => {
+        communicationLogDirectoryPickerOpening = false;
+      });
+  }
+
+  /**
+   * Blocks page interaction until the next trusted click or key press can open the native chooser.
+   *
+   * @param {string} reason - Why directory authorization is required.
+   * @returns {void} No value is returned.
+   */
+  function communicationLogShowDirectoryPrompt(reason) {
+    logDiagnostic('warnings', 'communication-directory-required', { reason });
+    if (!communicationLogDirectoryGestureArmed) {
+      communicationLogDirectoryGestureArmed = true;
+      window.addEventListener('click', communicationLogHandleDirectoryGesture, { capture: true });
+      window.addEventListener('keydown', communicationLogHandleDirectoryGesture, { capture: true });
+    }
+    if (communicationLogPromptShown) return;
+    communicationLogPromptShown = true;
+
+    /**
+     * Mounts the blocking explanation after the document body exists.
+     *
+     * @returns {void} No value is returned.
+     */
+    const mount = () => {
+      if (!document.body) {
+        requestAnimationFrame(mount);
+        return;
+      }
+      if (document.getElementById('tm-communication-directory-required')) return;
+      const prompt = document.createElement('div');
+      prompt.id = 'tm-communication-directory-required';
+      prompt.tabIndex = -1;
+      prompt.style.cssText = 'position:fixed;inset:0;z-index:2147483647;display:grid;place-items:center;background:#000a;color:#fff;font:14px/1.5 system-ui,sans-serif;cursor:pointer';
+      const card = document.createElement('div');
+      card.style.cssText = 'max-width:520px;padding:18px;border:1px solid #888;border-radius:10px;background:#202123;box-shadow:0 6px 24px #000a';
+      card.textContent = `DownloadConversation needs a writable folder for the communication log. Click or press any key to open the native folder chooser. ${reason}`;
+      prompt.append(card);
+      document.body.append(prompt);
+      try { prompt.focus({ preventScroll: true }); } catch {}
+    };
+    mount();
+  }
+
+  /**
+   * Restores the persisted communication-log directory and starts disk logging when permission permits.
+   *
+   * @returns {Promise<boolean>} True when a saved writable directory was activated.
+   */
+  async function initializeCommunicationDiskRecorder() {
+    try {
+      const handle = await communicationLogLoadDirectoryHandle();
+      if (!handle) {
+        communicationLogShowDirectoryPrompt('No log folder has been authorized for this browser profile.');
+        return false;
+      }
+      const permission = await communicationLogPermissionState(handle);
+      if (permission !== 'granted') {
+        communicationLogShowDirectoryPrompt('The saved log folder is no longer authorized; choose it again.');
+        return false;
+      }
+      return communicationLogActivateDirectory(handle);
+    } catch (error) {
+      communicationLogReportFailure('startup', error);
+      communicationLogShowDirectoryPrompt('The saved log folder could not be restored.');
+      return false;
+    }
+  }
+
+  /**
+   * Redacts credential-bearing headers while retaining ordinary protocol/cache/routing metadata.
+   *
+   * @param {Object} headers - Headers-like or plain header collection.
+   * @returns {Object} Header map safe to persist to the communication log.
+   */
+  function communicationLogSafeHeaders(headers) {
+    const raw = rawHeadersToObject(headers);
+    const safe = {};
+    for (const [name, value] of Object.entries(raw).slice(0, 200)) {
+      if (/(?:^|[-_])(?:authorization|cookie|set-cookie|proxy-authorization|access-token|refresh-token|api-key|csrf|xsrf|session|jwt|secret)(?:$|[-_])/i.test(name)) {
+        safe[name] = '[redacted]';
+      } else {
+        safe[name] = boundedDiagnosticText(communicationLogRedactText(value), 4000);
+      }
+    }
+    return safe;
+  }
+
+  /**
+   * Finds the earliest sensitive-value prefix in uncommitted communication text.
+   *
+   * @param {string} text - Uncommitted text held by the streaming redactor.
+   * @returns {Object|null} Trigger descriptor, or null when no complete prefix is present.
+   */
+  function communicationLogFindSecretTrigger(text) {
+    const candidates = [];
+    const query = /[?&](?:sig|signature|access_token|refresh_token|token|key|secret|auth|authorization|session|jwt|api_key)=/i.exec(text);
+    if (query) candidates.push({ index: query.index, prefix: query[0], kind: 'query', terminator: null });
+    const bearer = /\bBearer\s+/i.exec(text);
+    if (bearer) candidates.push({ index: bearer.index, prefix: bearer[0], kind: 'bearer', terminator: null });
+    const quoted = /(?:\"|')?(?:access_token|refresh_token|authorization|cookie|session|jwt|api[_-]?key|secret)(?:\"|')?\s*:\s*(\"|')/i.exec(text);
+    if (quoted) candidates.push({ index: quoted.index, prefix: quoted[0], kind: 'quoted', terminator: quoted[1] });
+    if (!candidates.length) return null;
+    candidates.sort((left, right) => left.index - right.index || right.prefix.length - left.prefix.length);
+    return candidates[0];
+  }
+
+  /**
+   * Creates independent state for one request/response body redaction stream.
+   *
+   * @returns {Object} Mutable streaming-redaction state.
+   */
+  function communicationLogCreateRedactionState() {
+    return {
+      pending: '',
+      mode: null,
+      terminator: null,
+      escaped: false
+    };
+  }
+
+  /**
+   * Redacts sensitive values while preserving arbitrary input chunk boundaries.
+   *
+   * Possible secret prefixes are withheld until they can be classified. Once a secret
+   * prefix is recognized, every value character is suppressed until its protocol
+   * delimiter arrives; the secret therefore cannot leak merely because it is longer
+   * than an input or output chunk.
+   *
+   * @param {Object} state - State returned by `communicationLogCreateRedactionState`.
+   * @param {string} text - Next decoded textual body fragment.
+   * @param {boolean} flush - Whether no more source text will arrive.
+   * @returns {string} Safe text that can be committed immediately.
+   */
+  function communicationLogRedactStreamFeed(state, text, flush) {
+    state.pending += String(text ?? '');
+    let output = '';
+    for (;;) {
+      if (state.mode === 'quoted') {
+        let closeIndex = -1;
+        let escaped = state.escaped;
+        for (let index = 0; index < state.pending.length; index += 1) {
+          const character = state.pending[index];
+          if (escaped) {
+            escaped = false;
+            continue;
+          }
+          if (character === '\\') {
+            escaped = true;
+            continue;
+          }
+          if (character === state.terminator) {
+            closeIndex = index;
+            break;
+          }
+        }
+        if (closeIndex < 0) {
+          state.escaped = escaped;
+          state.pending = '';
+          if (flush) {
+            state.mode = null;
+            state.terminator = null;
+            state.escaped = false;
+          }
+          return output;
+        }
+        output += state.terminator;
+        state.pending = state.pending.slice(closeIndex + 1);
+        state.mode = null;
+        state.terminator = null;
+        state.escaped = false;
+        continue;
+      }
+
+      if (state.mode === 'query' || state.mode === 'bearer') {
+        const delimiter = state.mode === 'query'
+          ? /[&#\s\"'<>]/.exec(state.pending)
+          : /[^A-Za-z0-9._~+\/-=]/.exec(state.pending);
+        if (!delimiter) {
+          state.pending = '';
+          if (flush) state.mode = null;
+          return output;
+        }
+        output += delimiter[0];
+        state.pending = state.pending.slice(delimiter.index + delimiter[0].length);
+        state.mode = null;
+        continue;
+      }
+
+      const trigger = communicationLogFindSecretTrigger(state.pending);
+      if (trigger) {
+        output += state.pending.slice(0, trigger.index);
+        output += `${trigger.prefix}[redacted]`;
+        state.pending = state.pending.slice(trigger.index + trigger.prefix.length);
+        state.mode = trigger.kind;
+        state.terminator = trigger.terminator;
+        state.escaped = false;
+        continue;
+      }
+
+      if (flush) {
+        output += state.pending;
+        state.pending = '';
+        return output;
+      }
+
+      // Sensitive prefixes are short; retaining 128 trailing characters prevents a
+      // prefix split across source chunks from being committed before classification.
+      if (state.pending.length <= 128) return output;
+      const safeLength = state.pending.length - 128;
+      output += state.pending.slice(0, safeLength);
+      state.pending = state.pending.slice(safeLength);
+      return output;
+    }
+  }
+
+  /**
+   * Redacts common credential forms from one complete textual value.
+   *
+   * @param {string} value - Raw textual communication data.
+   * @returns {string} Redacted text suitable for disk persistence.
+   */
+  function communicationLogRedactText(value) {
+    const state = communicationLogCreateRedactionState();
+    return communicationLogRedactStreamFeed(state, String(value ?? ''), true);
+  }
+
+  /**
+   * Reports whether a content type represents textual communication worth persisting verbatim.
+   *
+   * @param {string} contentType - HTTP content type.
+   * @returns {boolean} True for text, JSON, SSE, JavaScript, XML, form, or component text.
+   */
+  function communicationLogIsTextContentType(contentType) {
+    return String(contentType ?? '').toLowerCase().startsWith('text/') ||
+      /(?:application\/json|event-stream|javascript|xml|x-www-form-urlencoded|x-component)/i.test(String(contentType ?? ''));
+  }
+
+  /**
+   * Reports whether the given URL/content type may persist a textual body.
+   *
+   * Cross-origin payloads remain metadata-only. Binary same-origin payloads also remain metadata-only.
+   *
+   * @param {string} url - Communication URL.
+   * @param {string} contentType - Declared content type.
+   * @returns {boolean} True when body text may be written to disk.
+   */
+  function communicationLogShouldCaptureBody(url, contentType) {
+    try {
+      const parsed = new URL(String(url ?? ''), location.href);
+      if (parsed.origin !== location.origin) return false;
+      const normalizedContentType = String(contentType ?? '').split(';', 1)[0].trim().toLowerCase();
+      if (communicationLogIsTextContentType(normalizedContentType)) return true;
+      if (normalizedContentType) return false;
+      return parsed.pathname.startsWith('/backend-api/');
+    } catch {
+      return false;
+    }
+  }
+
+  /**
+   * Compares bounded byte ranges without loading whole files into memory.
+   *
+   * @param {Blob} left - First file/blob.
+   * @param {Blob} right - Second file/blob.
+   * @param {number} leftOffset - First byte offset.
+   * @param {number} rightOffset - Second byte offset.
+   * @param {number} length - Number of bytes to compare.
+   * @returns {Promise<boolean>} True only when every compared byte matches.
+   */
+  async function communicationLogBlobsEqual(left, right, leftOffset, rightOffset, length) {
+    for (let offset = 0; offset < length; offset += COMMUNICATION_LOG_COMPARE_CHUNK_BYTES) {
+      const count = Math.min(COMMUNICATION_LOG_COMPARE_CHUNK_BYTES, length - offset);
+      const leftBytes = new Uint8Array(await left.slice(leftOffset + offset, leftOffset + offset + count).arrayBuffer());
+      const rightBytes = new Uint8Array(await right.slice(rightOffset + offset, rightOffset + offset + count).arrayBuffer());
+      if (leftBytes.length !== rightBytes.length) return false;
+      for (let index = 0; index < leftBytes.length; index += 1) {
+        if (leftBytes[index] !== rightBytes[index]) return false;
+      }
+    }
+    return true;
+  }
+
+  /**
+   * Reacquires the active log file from its parent directory and reads fresh on-disk state.
+   *
+   * @returns {Promise<Object>} Fresh file handle and File snapshot.
+   */
+  async function communicationLogRefreshedFileSnapshot() {
+    if (!communicationLogDirectoryHandle || !communicationLogFileName) {
+      throw new Error('Communication log directory/file is not ready.');
+    }
+    const handle = await communicationLogDirectoryHandle.getFileHandle(communicationLogFileName, { create: true });
+    const file = await handle.getFile();
+    return { handle, file };
+  }
+
+  /**
+   * Identifies Chromium's stale File System Access interface-state failure.
+   *
+   * @param {Object} error - Write failure.
+   * @returns {boolean} True only for the observed stale-state InvalidStateError class.
+   */
+  function communicationLogIsStaleFileStateError(error) {
+    return error?.name === 'InvalidStateError' || /state.*changed.*disk|cached.*interface object/i.test(String(error?.message ?? ''));
+  }
+
+  /**
+   * Appends bytes using fresh EOF state and verifies ambiguous stale-handle outcomes before retrying.
+   *
+   * This is the Issue-44 append invariant: reacquire from the directory, derive the append
+   * offset from the current file, open/seek/write/close, and never duplicate bytes when Chromium
+   * reports InvalidStateError after a write actually committed.
+   *
+   * @param {string|Blob} data - Bytes to append.
+   * @returns {Promise<number>} Byte offset at which the append committed.
+   */
+  async function communicationLogAppendData(data) {
+    const desired = data instanceof Blob ? data : new Blob([data]);
+    for (let attempt = 1; attempt <= COMMUNICATION_LOG_WRITE_RETRY_LIMIT; attempt += 1) {
+      const refreshed = await communicationLogRefreshedFileSnapshot();
+      const currentHandle = refreshed.handle;
+      const before = await currentHandle.getFile();
+      let writable = null;
+      try {
+        writable = await currentHandle.createWritable({ keepExistingData: true });
+        await writable.seek(before.size);
+        await writable.write(data);
+        await writable.close();
+        return before.size;
+      } catch (error) {
+        try { await writable?.abort(); } catch {}
+        if (!communicationLogIsStaleFileStateError(error) || attempt >= COMMUNICATION_LOG_WRITE_RETRY_LIMIT) throw error;
+        const afterSnapshot = await communicationLogRefreshedFileSnapshot();
+        const after = afterSnapshot.file;
+        if (after.size >= before.size + desired.size &&
+            await communicationLogBlobsEqual(after, desired, before.size, 0, desired.size)) {
+          return before.size;
+        }
+        const originalPrefixStillMatches = after.size >= before.size &&
+          await communicationLogBlobsEqual(after, before, 0, 0, before.size);
+        if (after.size !== before.size || !originalPrefixStillMatches) {
+          throw new Error(`'${communicationLogFileName}' changed on disk while the recorder was appending; the append was not retried.`);
+        }
+        await new Promise(resolve => setTimeout(resolve, 50 * attempt));
+      }
+    }
+    throw new Error(`Appending to '${communicationLogFileName}' exhausted the filesystem retry limit.`);
+  }
+
+  /**
+   * Recovers complete compatible JSONL bytes from Chromium communication-log swap files.
+   *
+   * Recovery treats the committed real file as authoritative, ignores only an incomplete
+   * final JSONL line in each candidate, and never merges a divergent candidate.
+   *
+   * @returns {Promise<void>} Resolves after compatible recovery and swap cleanup complete.
+   */
+  async function communicationLogRecoverSwapFiles() {
+    if (!communicationLogDirectoryHandle || !communicationLogFileName) {
+      throw new Error('Communication log directory/file is not ready for swap recovery.');
+    }
+    const baselineSnapshot = await communicationLogRefreshedFileSnapshot();
+    const baseline = baselineSnapshot.file;
+    // Escape the literal log filename before recognizing Chromium sibling swap names.
+    const escapedLogName = communicationLogFileName.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+    const swapPattern = new RegExp(`^${escapedLogName}(?:\\.\\d+)?\\.crswap$`);
+    // Retain candidate file snapshots so selection and cleanup use one observed swap state.
+    const candidates = [];
+
+    for await (const [name, entry] of communicationLogDirectoryHandle.entries()) {
+      if (entry?.kind !== 'file' || !swapPattern.test(name)) continue;
+      try {
+        const file = await entry.getFile();
+        let completeLength = file.size;
+        if (file.size > 0) {
+          const finalByte = new Uint8Array(await file.slice(file.size - 1, file.size).arrayBuffer())[0];
+          if (finalByte !== 10) {
+            completeLength = 0;
+            for (let end = file.size; end > 0 && completeLength === 0;) {
+              const start = Math.max(0, end - COMMUNICATION_LOG_COMPARE_CHUNK_BYTES);
+              const bytes = new Uint8Array(await file.slice(start, end).arrayBuffer());
+              const newlineIndex = bytes.lastIndexOf(10);
+              if (newlineIndex >= 0) completeLength = start + newlineIndex + 1;
+              else end = start;
+            }
+          }
+        }
+        const prefixLength = Math.min(baseline.size, completeLength);
+        const compatible = prefixLength === 0 ||
+          await communicationLogBlobsEqual(baseline, file, 0, 0, prefixLength);
+        if (!compatible) {
+          logDiagnostic('warnings', 'communication-log-swap-incompatible', {
+            file_name: name,
+            committed_size: baseline.size,
+            recoverable_size: completeLength,
+            swap_size: file.size
+          });
+          continue;
+        }
+        candidates.push({
+          name,
+          file,
+          complete_length: completeLength,
+          last_modified: Number(file.lastModified) || 0
+        });
+      } catch (error) {
+        communicationLogReportFailure(`swap-inspect:${name}`, error);
+      }
+    }
+
+    const extensions = candidates
+      .filter(candidate => candidate.complete_length > baseline.size)
+      .sort((left, right) =>
+        right.complete_length - left.complete_length || right.last_modified - left.last_modified);
+    const selected = extensions[0] ?? null;
+    if (selected) {
+      const suffix = selected.file.slice(baseline.size, selected.complete_length);
+      await communicationLogAppendData(suffix);
+      logDiagnostic('debug', 'communication-log-swap-recovered', {
+        file_name: selected.name,
+        committed_size: baseline.size,
+        recovered_size: selected.complete_length,
+        appended_bytes: selected.complete_length - baseline.size
+      });
+    }
+
+    const recovered = (await communicationLogRefreshedFileSnapshot()).file;
+    for (const candidate of candidates) {
+      try {
+        const removable = candidate.complete_length <= recovered.size &&
+          (candidate.complete_length === 0 || await communicationLogBlobsEqual(
+            recovered,
+            candidate.file,
+            0,
+            0,
+            candidate.complete_length
+          ));
+        if (!removable) {
+          logDiagnostic('warnings', 'communication-log-swap-incompatible', {
+            file_name: candidate.name,
+            committed_size: recovered.size,
+            recoverable_size: candidate.complete_length,
+            reason: 'candidate diverges from recovered committed log'
+          });
+          continue;
+        }
+        await communicationLogDirectoryHandle.removeEntry(candidate.name);
+      } catch (error) {
+        communicationLogReportFailure(`swap-cleanup:${candidate.name}`, error);
+      }
+    }
+  }
+
+  /**
+   * Opens the normal long-lived communication writer at a freshly observed committed EOF.
+   *
+   * @returns {Promise<Object>} Active FileSystemWritableFileStream.
+   */
+  async function communicationLogOpenWriter() {
+    if (communicationLogWritable) return communicationLogWritable;
+    const refreshed = await communicationLogRefreshedFileSnapshot();
+    let writable = null;
+    try {
+      writable = await refreshed.handle.createWritable({ keepExistingData: true });
+      await writable.seek(refreshed.file.size);
+      communicationLogWritable = writable;
+      communicationLogWriterDirty = false;
+      return communicationLogWritable;
+    } catch (error) {
+      try { await writable?.abort(); } catch {}
+      throw error;
+    }
+  }
+
+  /**
+   * Commits pending long-lived writer bytes and leaves the next append to reopen lazily.
+   *
+   * @param {string} reason - Checkpoint trigger used for failure diagnostics.
+   * @returns {Promise<boolean>} True when dirty bytes were checkpointed.
+   */
+  function communicationLogCheckpoint(reason) {
+    const operation = communicationLogWriteChain.then(async () => {
+      if (!communicationLogWritable || !communicationLogWriterDirty) return false;
+      try {
+        await communicationLogWritable.close();
+        communicationLogWritable = null;
+        communicationLogWriterDirty = false;
+        return true;
+      } catch (error) {
+        communicationLogWritable = null;
+        if (!communicationLogIsStaleFileStateError(error)) {
+          communicationLogReady = false;
+          throw error;
+        }
+        try {
+          await communicationLogRecoverSwapFiles();
+          communicationLogWriterDirty = false;
+          return true;
+        } catch (recoveryError) {
+          communicationLogReady = false;
+          throw recoveryError;
+        }
+      }
+    });
+    communicationLogWriteChain = operation.catch(communicationError => {
+      communicationLogReportFailure(`checkpoint:${reason}`, communicationError);
+      return false;
+    });
+    return communicationLogWriteChain;
+  }
+
+  /**
+   * Serializes one JSONL append through the active long-lived communication writer.
+   *
+   * @param {string} line - Complete newline-terminated JSONL record.
+   * @returns {Promise<void>} Resolves after the bytes are accepted by the active writer.
+   */
+  function communicationLogAppendLine(line) {
+    const operation = communicationLogWriteChain.then(async () => {
+      await communicationLogOpenWriter();
+      await communicationLogWritable.write(line);
+      communicationLogWriterDirty = true;
+    });
+    communicationLogWriteChain = operation.catch(communicationError => {
+      communicationLogReportFailure('append', communicationError);
+    });
+    return operation;
+  }
+
+  /**
+   * Reports disk-recorder failures through existing diagnostics without throwing into page networking.
+   *
+   * @param {string} stage - Recorder stage that failed.
+   * @param {Object} error - Failure value.
+   * @returns {void} No value is returned.
+   */
+  function communicationLogReportFailure(stage, error) {
+    logDiagnostic('warnings', 'communication-log-write-failure', {
+      stage,
+      file_name: communicationLogFileName,
+      message: boundedDiagnosticText(error?.message ?? String(error), 2000)
+    });
+  }
+
+  /**
+   * Writes one structured communication event to the active append-only JSONL file.
+   *
+   * @param {string} type - Stable record type.
+   * @param {Object} data - Event-specific JSON-compatible fields.
+   * @returns {Promise<boolean>} True when the record committed to disk.
+   */
+  async function communicationLogRecord(type, data = {}) {
+    if (!communicationLogReady) {
+      communicationLogDroppedBeforeReady += 1;
+      return false;
+    }
+    const record = {
+      timestamp: new Date().toISOString(),
+      monotonic_ms: Math.round(performance.now() * 1000) / 1000,
+      time_origin: performance.timeOrigin,
+      session_id: communicationLogSessionId,
+      sequence: ++communicationLogSequence,
+      type,
+      ...data
+    };
+    await communicationLogAppendLine(`${JSON.stringify(record)}\n`);
+    return true;
+  }
+
+  /**
+   * Waits briefly for asynchronous IndexedDB handle restoration used by document-start interception.
+   *
+   * @returns {Promise<boolean>} True when the disk recorder becomes ready within the bounded wait.
+   */
+  async function communicationLogAwaitReady() {
+    if (communicationLogReady) return true;
+    if (!communicationLogInitializationPromise) return false;
+    await Promise.race([
+      communicationLogInitializationPromise.catch(() => false),
+      new Promise(resolve => setTimeout(resolve, COMMUNICATION_LOG_READY_WAIT_MS))
+    ]);
+    return communicationLogReady;
+  }
+
+  /**
+   * Persists one textual body stream in bounded JSONL chunks without accumulating the whole body.
+   *
+   * @param {ReadableStream|null} body - Cloned Request/Response body stream.
+   * @param {string} recordType - JSONL chunk record type.
+   * @param {Object} context - Correlation metadata repeated on each chunk.
+   * @returns {Promise<Object>} Persisted byte/chunk counts.
+   */
+  async function communicationLogStreamBody(body, recordType, context) {
+    if (!body) return { byte_count: 0, chunk_count: 0 };
+    const reader = body.getReader();
+    const decoder = new TextDecoder();
+    const redactionState = communicationLogCreateRedactionState();
+    let safePending = '';
+    let byteCount = 0;
+    let chunkCount = 0;
+    try {
+      for (;;) {
+        const result = await reader.read();
+        if (result.done) break;
+        if (!result.value?.byteLength) continue;
+        byteCount += result.value.byteLength;
+        safePending += communicationLogRedactStreamFeed(
+          redactionState,
+          decoder.decode(result.value, { stream: true }),
+          false
+        );
+        while (safePending.length >= COMMUNICATION_LOG_BODY_CHUNK_CHARS) {
+          const chunk = safePending.slice(0, COMMUNICATION_LOG_BODY_CHUNK_CHARS);
+          safePending = safePending.slice(COMMUNICATION_LOG_BODY_CHUNK_CHARS);
+          chunkCount += 1;
+          await communicationLogRecord(recordType, {
+            ...context,
+            chunk_ordinal: chunkCount,
+            data: chunk
+          });
+        }
+      }
+      safePending += communicationLogRedactStreamFeed(redactionState, decoder.decode(), true);
+      while (safePending.length >= COMMUNICATION_LOG_BODY_CHUNK_CHARS) {
+        const chunk = safePending.slice(0, COMMUNICATION_LOG_BODY_CHUNK_CHARS);
+        safePending = safePending.slice(COMMUNICATION_LOG_BODY_CHUNK_CHARS);
+        chunkCount += 1;
+        await communicationLogRecord(recordType, {
+          ...context,
+          chunk_ordinal: chunkCount,
+          data: chunk
+        });
+      }
+      if (safePending) {
+        chunkCount += 1;
+        await communicationLogRecord(recordType, {
+          ...context,
+          chunk_ordinal: chunkCount,
+          data: safePending
+        });
+      }
+      return { byte_count: byteCount, chunk_count: chunkCount };
+    } finally {
+      try { reader.releaseLock(); } catch {}
+    }
+  }
+
+  /**
+   * Persists one already-materialized textual body in bounded chunks.
+   *
+   * @param {string} text - Raw body text already held by XHR/WebSocket/page code.
+   * @param {string} recordType - JSONL chunk record type.
+   * @param {Object} context - Correlation metadata repeated on each chunk.
+   * @returns {Promise<Object>} Persisted character/chunk counts.
+   */
+  async function communicationLogTextBody(text, recordType, context) {
+    const value = String(text ?? '');
+    const redactionState = communicationLogCreateRedactionState();
+    let safePending = '';
+    let chunkCount = 0;
+    for (let offset = 0; offset < value.length; offset += COMMUNICATION_LOG_BODY_CHUNK_CHARS) {
+      safePending += communicationLogRedactStreamFeed(
+        redactionState,
+        value.slice(offset, offset + COMMUNICATION_LOG_BODY_CHUNK_CHARS),
+        false
+      );
+      while (safePending.length >= COMMUNICATION_LOG_BODY_CHUNK_CHARS) {
+        const chunk = safePending.slice(0, COMMUNICATION_LOG_BODY_CHUNK_CHARS);
+        safePending = safePending.slice(COMMUNICATION_LOG_BODY_CHUNK_CHARS);
+        chunkCount += 1;
+        await communicationLogRecord(recordType, {
+          ...context,
+          chunk_ordinal: chunkCount,
+          data: chunk
+        });
+      }
+    }
+    safePending += communicationLogRedactStreamFeed(redactionState, '', true);
+    while (safePending.length >= COMMUNICATION_LOG_BODY_CHUNK_CHARS) {
+      const chunk = safePending.slice(0, COMMUNICATION_LOG_BODY_CHUNK_CHARS);
+      safePending = safePending.slice(COMMUNICATION_LOG_BODY_CHUNK_CHARS);
+      chunkCount += 1;
+      await communicationLogRecord(recordType, {
+        ...context,
+        chunk_ordinal: chunkCount,
+        data: chunk
+      });
+    }
+    if (safePending) {
+      chunkCount += 1;
+      await communicationLogRecord(recordType, {
+        ...context,
+        chunk_ordinal: chunkCount,
+        data: safePending
+      });
+    }
+    return { character_count: value.length, chunk_count: chunkCount };
+  }
+
+  /**
+   * Captures one stock fetch Request clone and its textual body without consuming the page Request.
+   *
+   * @param {Request|null} request - Page Request object.
+   * @param {Object} trace - Stock-network correlation state.
+   * @returns {Promise<void>} Resolves after request data is persisted or deliberately omitted.
+   */
+  async function communicationLogFetchRequest(request, trace) {
+    let cloned = null;
+    try { cloned = request?.clone?.() ?? null; } catch {}
+    if (!(await communicationLogAwaitReady())) {
+      communicationLogDroppedBeforeReady += 1;
+      try { await cloned?.body?.cancel?.(); } catch {}
+      return;
+    }
+    const contentType = request?.headers?.get?.('content-type') ?? '';
+    await communicationLogRecord('communication_fetch_request', {
+      origin: trace?.origin ?? 'stock-chatgpt',
+      network_sequence: trace?.sequence ?? null,
+      method: String(request?.method ?? trace?.method ?? 'GET').toUpperCase(),
+      url: stockNetworkSafeUrl(request?.url ?? trace?.url ?? ''),
+      cache_mode: request?.cache ?? null,
+      request_mode: request?.mode ?? null,
+      credentials_mode: request?.credentials ?? null,
+      destination: request?.destination ?? null,
+      redirect_mode: request?.redirect ?? null,
+      content_type: contentType,
+      headers: communicationLogSafeHeaders(request?.headers)
+    });
+    if (cloned?.body && communicationLogShouldCaptureBody(request?.url ?? trace?.url ?? '', contentType)) {
+      const summary = await communicationLogStreamBody(cloned.body, 'communication_request_chunk', {
+        transport: 'fetch',
+        network_sequence: trace?.sequence ?? null
+      });
+      await communicationLogRecord('communication_fetch_request_body_end', {
+        network_sequence: trace?.sequence ?? null,
+        ...summary
+      });
+    } else if (cloned?.body) {
+      await communicationLogRecord('communication_fetch_request_body_end', {
+        network_sequence: trace?.sequence ?? null,
+        binary_body_omitted: true,
+        body_omitted: 'binary'
+      });
+      try { await cloned.body.cancel(); } catch {}
+    }
+  }
+
+  /**
+   * Captures one stock fetch Response clone, including full textual API/SSE content in bounded chunks.
+   *
+   * @param {Response} response - Original page response; only a clone is read.
+   * @param {Object} trace - Stock-network correlation state.
+   * @returns {Promise<void>} Resolves after response data is persisted or deliberately omitted.
+   */
+  async function communicationLogFetchResponse(response, trace) {
+    let cloned = null;
+    try { cloned = response.clone(); } catch {}
+    if (!(await communicationLogAwaitReady())) {
+      communicationLogDroppedBeforeReady += 1;
+      try { await cloned?.body?.cancel?.(); } catch {}
+      return;
+    }
+    const contentType = response?.headers?.get?.('content-type') ?? '';
+    const responseUrl = response?.url ?? trace?.url ?? '';
+    await communicationLogRecord('communication_fetch_response', {
+      origin: trace?.origin ?? 'stock-chatgpt',
+      network_sequence: trace?.sequence ?? null,
+      method: trace?.method ?? null,
+      request_url: trace?.url ?? null,
+      response_url: stockNetworkSafeUrl(responseUrl),
+      status: response?.status ?? null,
+      ok: response?.ok === true,
+      redirected: response?.redirected === true,
+      response_type: response?.type ?? null,
+      duration_ms: trace?.started_at == null ? null : Math.round(performance.now() - trace.started_at),
+      content_type: contentType,
+      headers: communicationLogSafeHeaders(response?.headers)
+    });
+    if (cloned?.body && communicationLogShouldCaptureBody(responseUrl, contentType)) {
+      const summary = await communicationLogStreamBody(cloned.body, 'communication_response_chunk', {
+        transport: 'fetch',
+        network_sequence: trace?.sequence ?? null
+      });
+      await communicationLogRecord('communication_fetch_response_body_end', {
+        network_sequence: trace?.sequence ?? null,
+        ...summary
+      });
+    } else if (cloned?.body) {
+      await communicationLogRecord('communication_fetch_response_body_end', {
+        network_sequence: trace?.sequence ?? null,
+        binary_body_omitted: true,
+        body_omitted: 'binary'
+      });
+      try { await cloned.body.cancel(); } catch {}
+    }
+    try {
+      if (new URL(responseUrl, location.href).pathname === '/backend-api/f/conversation') {
+        await communicationLogCheckpoint('generation-response-complete');
+      }
+    } catch {}
+  }
+
+  /**
+   * Captures one XHR request and any directly available textual request body.
+   *
+   * @param {Object} info - Captured XHR method/URL/header metadata.
+   * @param {Object|null} body - XHR send() body.
+   * @param {Object} trace - Stock-network correlation state.
+   * @returns {Promise<void>} Resolves after request data is persisted.
+   */
+  async function communicationLogXhrRequest(info, body, trace) {
+    if (!(await communicationLogAwaitReady())) {
+      communicationLogDroppedBeforeReady += 1;
+      return;
+    }
+    const contentType = info?.headers?.['content-type'] ?? '';
+    await communicationLogRecord('communication_xhr_request', {
+      network_sequence: trace?.sequence ?? null,
+      method: String(info?.method ?? 'GET').toUpperCase(),
+      url: stockNetworkSafeUrl(info?.url ?? ''),
+      content_type: contentType,
+      headers: communicationLogSafeHeaders(info?.headers)
+    });
+    if (typeof body === 'string' || body instanceof URLSearchParams) {
+      await communicationLogTextBody(String(body), 'communication_request_chunk', {
+        transport: 'xmlhttprequest',
+        network_sequence: trace?.sequence ?? null
+      });
+    } else if (body != null) {
+      await communicationLogRecord('communication_xhr_request_body_end', {
+        network_sequence: trace?.sequence ?? null,
+        binary_body_omitted: true,
+        body_omitted: 'binary'
+      });
+    }
+  }
+
+  /**
+   * Captures one completed XHR response without changing its responseType or page-visible data.
+   *
+   * @param {XMLHttpRequest} xhr - Completed page XHR instance.
+   * @param {Object} trace - Stock-network correlation state.
+   * @returns {Promise<void>} Resolves after response data is persisted.
+   */
+  async function communicationLogXhrResponse(xhr, trace) {
+    if (!(await communicationLogAwaitReady())) {
+      communicationLogDroppedBeforeReady += 1;
+      return;
+    }
+    const responseHeaders = {};
+    try {
+      for (const line of String(xhr?.getAllResponseHeaders?.() ?? '').split(/\r?\n/)) {
+        const split = line.indexOf(':');
+        if (split <= 0) continue;
+        responseHeaders[line.slice(0, split).trim().toLowerCase()] = line.slice(split + 1).trim();
+      }
+    } catch {}
+    const contentType = responseHeaders['content-type'] ?? '';
+    const responseUrl = xhr?.responseURL ?? trace?.url ?? '';
+    await communicationLogRecord('communication_xhr_response', {
+      network_sequence: trace?.sequence ?? null,
+      method: trace?.method ?? null,
+      request_url: trace?.url ?? null,
+      response_url: stockNetworkSafeUrl(responseUrl),
+      status: Number.isFinite(xhr?.status) ? xhr.status : null,
+      response_type: xhr?.responseType || 'text',
+      duration_ms: trace?.started_at == null ? null : Math.round(performance.now() - trace.started_at),
+      content_type: contentType,
+      headers: communicationLogSafeHeaders(responseHeaders)
+    });
+    if (!communicationLogShouldCaptureBody(responseUrl, contentType)) {
+      await communicationLogRecord('communication_xhr_response_body_end', {
+        network_sequence: trace?.sequence ?? null,
+        binary_body_omitted: true,
+        body_omitted: 'binary'
+      });
+      return;
+    }
+    let text = null;
+    try {
+      if (!xhr.responseType || xhr.responseType === 'text') text = xhr.responseText;
+      else if (xhr.responseType === 'json') text = JSON.stringify(xhr.response);
+    } catch {}
+    if (typeof text === 'string') {
+      const summary = await communicationLogTextBody(text, 'communication_response_chunk', {
+        transport: 'xmlhttprequest',
+        network_sequence: trace?.sequence ?? null
+      });
+      await communicationLogRecord('communication_xhr_response_body_end', {
+        network_sequence: trace?.sequence ?? null,
+        ...summary
+      });
+    } else {
+      await communicationLogRecord('communication_xhr_response_body_end', {
+        network_sequence: trace?.sequence ?? null,
+        binary_body_omitted: true,
+        body_omitted: 'binary'
+      });
+    }
+  }
+
+  /**
+   * Persists one outgoing WebSocket frame while leaving socket.send behavior unchanged.
+   *
+   * @param {string} url - WebSocket URL.
+   * @param {Object} data - Frame data supplied to send().
+   * @returns {Promise<void>} Resolves after frame metadata/content is persisted.
+   */
+  async function communicationLogWebSocketSend(url, data) {
+    if (!(await communicationLogAwaitReady())) {
+      communicationLogDroppedBeforeReady += 1;
+      return;
+    }
+    await communicationLogRecord('communication_websocket_send', {
+      url: stockNetworkSafeUrl(url),
+      data_type: typeof data === 'string' ? 'text' : Object.prototype.toString.call(data)
+    });
+    if (typeof data === 'string') {
+      await communicationLogTextBody(data, 'communication_request_chunk', { transport: 'websocket' });
+    } else {
+      await communicationLogRecord('communication_websocket_send_body_end', {
+        binary_body_omitted: true,
+        body_omitted: 'binary'
+      });
+    }
+  }
+
+  /**
+   * Persists one incoming WebSocket frame while the existing streamed-tail consumer sees the original data.
+   *
+   * @param {string} url - WebSocket URL.
+   * @param {Object} data - Incoming MessageEvent data.
+   * @returns {Promise<void>} Resolves after frame metadata/content is persisted.
+   */
+  async function communicationLogWebSocketMessage(url, data) {
+    if (!(await communicationLogAwaitReady())) {
+      communicationLogDroppedBeforeReady += 1;
+      return;
+    }
+    await communicationLogRecord('communication_websocket_message', {
+      url: stockNetworkSafeUrl(url),
+      data_type: typeof data === 'string' ? 'text' : Object.prototype.toString.call(data)
+    });
+    if (typeof data === 'string') {
+      await communicationLogTextBody(data, 'communication_response_chunk', { transport: 'websocket' });
+    } else {
+      await communicationLogRecord('communication_websocket_message_body_end', {
+        binary_body_omitted: true,
+        body_omitted: 'binary'
+      });
+    }
+  }
+
+  /**
+   * Persists transitions of the newest visible Assistant placeholder/error/thinking/hydrated state.
+   *
+   * @param {Object|null} marker - Newest mounted Assistant live-tail marker.
+   * @param {string} reason - Live-tail scan reason.
+   * @returns {void} No value is returned.
+   */
+  function communicationLogAssistantLifecycle(marker, reason) {
+    if (!marker || marker.role !== 'assistant') return;
+    const text = String(marker.comparison_text ?? '').trim();
+    let state = marker.message_id ? 'hydrated' : 'placeholder';
+    if (/message delivery timed out|timed out\. please try again/i.test(text)) state = 'timeout';
+    else if (text.length <= 300 && /something went wrong|please try again|\bretry\b|connection interrupted/i.test(text)) state = 'retry';
+    else if (!marker.message_id && text.length <= 100 && /^thinking(?:…|\.\.\.|\s*)$/i.test(text)) state = 'thinking';
+    const lifecycleKey = [state, marker.message_id ?? '', marker.dom_turn_id ?? '', marker.content_fingerprint ?? ''].join('|');
+    if (lifecycleKey === communicationLogLastAssistantLifecycleKey) return;
+    communicationLogLastAssistantLifecycleKey = lifecycleKey;
+    void communicationLogRecord('communication_assistant_lifecycle', {
+      state,
+      reason,
+      conversation_id: currentConversationId(),
+      message_id: marker.message_id ?? null,
+      dom_turn_id: marker.dom_turn_id ?? null,
+      container_id: marker.container_id ?? null,
+      content_length: marker.content_length ?? null,
+      content_fingerprint: marker.content_fingerprint ?? null
+    }).catch(communicationError => communicationLogReportFailure('assistant-lifecycle', communicationError));
+  }
+  // END Issue #123 disk communication recorder
+
   /**
    * Handles remember API request context.
    *
@@ -394,6 +2116,9 @@
       click_sequence: observation.sequence,
       finish_reason: reason,
       observation_ms: Math.round(endedAt - observation.started_at),
+      is_trusted: observation.is_trusted,
+      pointer_type: observation.pointer_type,
+      button: observation.button,
       turn: observation.turn,
       clicked: observation.clicked,
       closest_anchor: observation.closest_anchor,
@@ -421,6 +2146,9 @@
       sequence: ++clickDiagnosticSequence,
       started_at: startedAt,
       deadline: startedAt + 2500,
+      is_trusted: event.isTrusted === true,
+      pointer_type: typeof event.pointerType === 'string' && event.pointerType ? event.pointerType : null,
+      button: Number.isInteger(event.button) ? event.button : null,
       turn,
       clicked: clickDiagnosticElementSnapshot(target),
       closest_anchor: clickDiagnosticElementSnapshot(target.closest('a[href]')),
@@ -432,6 +2160,9 @@
     activeClickDiagnostic = observation;
     logDiagnostic('debug', 'conversation-click-resolution-start', {
       click_sequence: observation.sequence,
+      is_trusted: observation.is_trusted,
+      pointer_type: observation.pointer_type,
+      button: observation.button,
       turn: observation.turn,
       clicked: observation.clicked,
       closest_anchor: observation.closest_anchor,
@@ -440,6 +2171,570 @@
     });
     setTimeout(() => finishConversationClickDiagnostic(observation, 'timer'), 2500);
   }
+
+  // BEGIN Issue #123 streamed-tail recovery
+  /**
+   * Tests whether a URL is the stock streaming conversation-generation endpoint.
+   *
+   * @param {string} url - Candidate request URL.
+   * @returns {boolean} True only for this origin's exact /backend-api/f/conversation path.
+   */
+  function isGenerationStreamUrl(url) {
+    try {
+      const parsed = new URL(url, `${location.origin}/`);
+      return parsed.origin === location.origin && parsed.pathname === '/backend-api/f/conversation';
+    } catch {
+      return false;
+    }
+  }
+
+  /**
+   * Creates mutable state for one passively observed streamed conversation turn.
+   *
+   * @param {string|null} conversationId - Conversation identity known at request time, when any.
+   * @returns {Object} Mutable capture state for the streamed turn.
+   */
+  function createStreamTailCapture(conversationId = null) {
+    return {
+      schema_version: 1,
+      conversation_id: typeof conversationId === 'string' && conversationId ? conversationId : null,
+      parent_message_id: null,
+      request_messages: [],
+      stream_messages: [],
+      message_index_by_id: new Map(),
+      current_envelope: null,
+      sse_buffer: '',
+      done_received: false,
+      handoff_done_received: false,
+      message_stream_complete: false,
+      handed_off: false,
+      handoff_topic_id: null,
+      overflow: false,
+      complete: false,
+      updated_at: Date.now()
+    };
+  }
+
+  /**
+   * Clones one provider record without retaining references into page-owned objects.
+   *
+   * @param {Object} value - JSON-compatible provider value.
+   * @returns {Object} Independent copy of the provider value.
+   */
+  function streamTailClone(value) {
+    return structuredClone(value);
+  }
+
+  /**
+   * Adds or refreshes one exact streamed provider message by stable message id.
+   *
+   * @param {Object} capture - Mutable streamed-turn capture.
+   * @param {Object} message - Provider message object received from the stream.
+   * @returns {boolean} True when the capture retained or refreshed the message.
+   */
+  function streamTailUpsertMessage(capture, message) {
+    const id = typeof message?.id === 'string' ? message.id : '';
+    if (!id || capture?.overflow) return false;
+    const existing = capture.message_index_by_id.get(id);
+    const copy = streamTailClone(message);
+    if (existing !== undefined) {
+      capture.stream_messages[existing] = copy;
+      capture.updated_at = Date.now();
+      return true;
+    }
+    if (capture.stream_messages.length >= STREAM_TAIL_RECORD_LIMIT) {
+      capture.overflow = true;
+      capture.complete = false;
+      return false;
+    }
+    capture.message_index_by_id.set(id, capture.stream_messages.length);
+    capture.stream_messages.push(copy);
+    capture.updated_at = Date.now();
+    return true;
+  }
+
+  /**
+   * Records the exact User request records and parent identity submitted to /f/conversation.
+   *
+   * @param {Object} capture - Mutable streamed-turn capture.
+   * @param {Object} requestBody - Parsed stock /f/conversation request body.
+   * @returns {void} No value is returned.
+   */
+  function streamTailCaptureRequest(capture, requestBody) {
+    if (!capture || !requestBody || typeof requestBody !== 'object') return;
+    if (typeof requestBody.conversation_id === 'string' && requestBody.conversation_id) {
+      capture.conversation_id = requestBody.conversation_id;
+    }
+    capture.parent_message_id = typeof requestBody.parent_message_id === 'string'
+      ? requestBody.parent_message_id
+      : null;
+    const messages = Array.isArray(requestBody.messages) ? requestBody.messages : [];
+    capture.request_messages = messages
+      .filter(message => typeof message?.id === 'string' && message.id)
+      .slice(-STREAM_TAIL_RECORD_LIMIT)
+      .map(streamTailClone);
+    capture.updated_at = Date.now();
+  }
+
+  /**
+   * Decodes one JSON Pointer path segment.
+   *
+   * @param {string} segment - Encoded JSON Pointer segment.
+   * @returns {string} Decoded property name.
+   */
+  function streamTailPointerSegment(segment) {
+    return segment.replace(/~1/g, '/').replace(/~0/g, '~');
+  }
+
+  /**
+   * Applies one v1 patch operation to the current streamed root envelope.
+   *
+   * @param {Object} capture - Mutable streamed-turn capture.
+   * @param {string} path - JSON Pointer path within the current root envelope.
+   * @param {string} operation - v1 patch operation.
+   * @param {Object} value - Patch value.
+   * @returns {void} No value is returned.
+   */
+  function streamTailApplyPathPatch(capture, path, operation, value) {
+    if (!capture?.current_envelope || typeof capture.current_envelope !== 'object') return;
+    const effectivePath = path || '/message/content/parts/0';
+    const segments = effectivePath.split('/').slice(1).map(streamTailPointerSegment);
+    if (!segments.length) return;
+    let target = capture.current_envelope;
+    for (let index = 0; index < segments.length - 1; index += 1) {
+      const key = segments[index];
+      if (!target || typeof target !== 'object' || !(key in target)) return;
+      target = target[key];
+    }
+    if (!target || typeof target !== 'object') return;
+    const key = segments.at(-1);
+    const op = String(operation || 'append');
+    if (op === 'append' || op === 'a') {
+      if (typeof target[key] === 'string' && typeof value === 'string') target[key] += value;
+      else if (Array.isArray(target[key])) target[key].push(streamTailClone(value));
+      else target[key] = streamTailClone(value);
+    } else if (op === 'replace' || op === 'r' || op === 'add') {
+      target[key] = streamTailClone(value);
+    } else {
+      return;
+    }
+    if (capture.current_envelope.message) {
+      streamTailUpsertMessage(capture, capture.current_envelope.message);
+    }
+  }
+
+  /**
+   * Applies one parsed v1 stream event to the captured provider state.
+   *
+   * @param {Object} capture - Mutable streamed-turn capture.
+   * @param {Object} event - Parsed SSE event object.
+   * @returns {void} No value is returned.
+   */
+  function streamTailApplyEvent(capture, event) {
+    if (!capture || !event || typeof event !== 'object' || Array.isArray(event)) return;
+    if (typeof event.conversation_id === 'string' && event.conversation_id) {
+      capture.conversation_id = event.conversation_id;
+    }
+    if (event.type === 'stream_handoff') {
+      const options = Array.isArray(event.options) ? event.options : [];
+      const option = options.find(item => item?.type === 'subscribe_ws_topic') ??
+        options.find(item => item?.type === 'resume_sse_endpoint');
+      capture.handed_off = true;
+      capture.handoff_topic_id = typeof option?.topic_id === 'string' ? option.topic_id : null;
+      capture.complete = false;
+      capture.updated_at = Date.now();
+      return;
+    }
+    if (event.type === 'message_stream_complete') {
+      capture.message_stream_complete = true;
+      if (!capture.overflow) capture.complete = true;
+      capture.updated_at = Date.now();
+      return;
+    }
+    if (event.message && typeof event.message === 'object') {
+      streamTailUpsertMessage(capture, event.message);
+      return;
+    }
+    if (!('v' in event)) return;
+    const rootPath = event.p === undefined || event.p === '';
+    if (Array.isArray(event.v) && rootPath) {
+      for (const patch of event.v) {
+        if (patch && typeof patch === 'object') streamTailApplyEvent(capture, patch);
+      }
+      return;
+    }
+    if (event.v && typeof event.v === 'object' && !Array.isArray(event.v) && rootPath) {
+      capture.current_envelope = streamTailClone(event.v);
+      if (typeof capture.current_envelope.conversation_id === 'string') {
+        capture.conversation_id = capture.current_envelope.conversation_id;
+      }
+      if (capture.current_envelope.message) {
+        streamTailUpsertMessage(capture, capture.current_envelope.message);
+      }
+      return;
+    }
+    streamTailApplyPathPatch(
+      capture,
+      typeof event.p === 'string' ? event.p : '',
+      typeof event.o === 'string' ? event.o : 'append',
+      event.v
+    );
+  }
+
+  /**
+   * Reports whether the capture contains a finished final Assistant record.
+   *
+   * @param {Object} capture - Mutable or frozen streamed-turn capture.
+   * @returns {boolean} True when a final Assistant record is complete.
+   */
+  function streamTailHasCompletedAssistant(capture) {
+    return (capture?.stream_messages ?? []).some(message =>
+      message?.author?.role === 'assistant' &&
+      (message?.channel === 'final' || message?.end_turn === true) &&
+      (message?.status === 'finished_successfully' || message?.end_turn === true)
+    );
+  }
+
+  /**
+   * Consumes one text chunk from either the bootstrap SSE or its WebSocket handoff leg.
+   *
+   * @param {Object} capture - Mutable streamed-turn capture.
+   * @param {string} chunk - Raw SSE bytes decoded as text.
+   * @param {boolean} finalChunk - Whether no more bytes remain in this leg.
+   * @param {boolean} fromHandoff - Whether the chunk came from the subscribed WebSocket topic.
+   * @returns {void} No value is returned.
+   */
+  function consumeStreamTailSseChunk(capture, chunk, finalChunk = false, fromHandoff = false) {
+    if (!capture) return;
+    capture.sse_buffer += String(chunk ?? '').replace(/\r\n/g, '\n');
+    const events = [];
+    for (;;) {
+      const boundary = capture.sse_buffer.indexOf('\n\n');
+      if (boundary < 0) break;
+      events.push(capture.sse_buffer.slice(0, boundary));
+      capture.sse_buffer = capture.sse_buffer.slice(boundary + 2);
+    }
+    if (finalChunk && capture.sse_buffer.trim()) {
+      events.push(capture.sse_buffer);
+      capture.sse_buffer = '';
+    }
+    for (const rawEvent of events) {
+      const data = rawEvent.split('\n')
+        .filter(line => line.startsWith('data:'))
+        .map(line => line.slice(5).trim())
+        .join('\n');
+      if (!data) continue;
+      if (data === '[DONE]') {
+        if (fromHandoff) capture.handoff_done_received = true;
+        else capture.done_received = true;
+        if (!capture.overflow &&
+            (fromHandoff || !capture.handed_off) &&
+            streamTailHasCompletedAssistant(capture)) {
+          capture.complete = true;
+        }
+        capture.updated_at = Date.now();
+        continue;
+      }
+      let parsed;
+      try { parsed = JSON.parse(data); } catch { continue; }
+      if (typeof parsed === 'string') continue;
+      streamTailApplyEvent(capture, parsed);
+    }
+    if (capture.complete) streamTailPersistCapture(capture);
+  }
+
+  /**
+   * Produces a serializable exact snapshot of one streamed-turn capture.
+   *
+   * @param {Object|null} capture - Mutable capture to freeze.
+   * @returns {Object|null} Serializable snapshot, or null when unavailable.
+   */
+  function streamTailCaptureSnapshot(capture) {
+    if (!capture) return null;
+    return {
+      schema_version: 1,
+      conversation_id: capture.conversation_id ?? null,
+      parent_message_id: capture.parent_message_id ?? null,
+      request_messages: (capture.request_messages ?? []).map(streamTailClone),
+      stream_messages: (capture.stream_messages ?? []).map(streamTailClone),
+      done_received: Boolean(capture.done_received),
+      handoff_done_received: Boolean(capture.handoff_done_received),
+      message_stream_complete: Boolean(capture.message_stream_complete),
+      handed_off: Boolean(capture.handed_off),
+      handoff_topic_id: capture.handoff_topic_id ?? null,
+      overflow: Boolean(capture.overflow),
+      complete: Boolean(capture.complete),
+      updated_at: Number(capture.updated_at) || Date.now()
+    };
+  }
+
+  /**
+   * Persists the exact bounded streamed-turn snapshot across a same-tab hard reload.
+   *
+   * @param {Object} capture - Capture to persist.
+   * @returns {boolean} True when session storage accepted the snapshot.
+   */
+  function streamTailPersistCapture(capture) {
+    try {
+      const snapshot = streamTailCaptureSnapshot(capture);
+      if (!snapshot) return false;
+      sessionStorage.setItem(STREAM_TAIL_STORAGE_KEY, JSON.stringify(snapshot));
+      return true;
+    } catch {
+      return false;
+    }
+  }
+
+  /**
+   * Restores the newest matching streamed-turn snapshot from same-tab session storage.
+   *
+   * @param {string} conversationId - Current conversation identity.
+   * @returns {Object|null} Restored mutable capture, or null when no matching snapshot exists.
+   */
+  function streamTailRestoreCapture(conversationId) {
+    try {
+      const parsed = JSON.parse(sessionStorage.getItem(STREAM_TAIL_STORAGE_KEY) || 'null');
+      if (!parsed || parsed.schema_version !== 1 || parsed.conversation_id !== conversationId) return null;
+      const capture = createStreamTailCapture(parsed.conversation_id);
+      capture.parent_message_id = parsed.parent_message_id ?? null;
+      capture.request_messages = Array.isArray(parsed.request_messages)
+        ? parsed.request_messages.map(streamTailClone)
+        : [];
+      capture.stream_messages = Array.isArray(parsed.stream_messages)
+        ? parsed.stream_messages.map(streamTailClone)
+        : [];
+      capture.message_index_by_id = new Map(
+        capture.stream_messages.map((message, index) => [message.id, index])
+      );
+      capture.done_received = Boolean(parsed.done_received);
+      capture.handoff_done_received = Boolean(parsed.handoff_done_received);
+      capture.message_stream_complete = Boolean(parsed.message_stream_complete);
+      capture.handed_off = Boolean(parsed.handed_off);
+      capture.handoff_topic_id = parsed.handoff_topic_id ?? null;
+      capture.overflow = Boolean(parsed.overflow);
+      capture.complete = Boolean(parsed.complete);
+      capture.updated_at = Number(parsed.updated_at) || Date.now();
+      return capture;
+    } catch {
+      return null;
+    }
+  }
+
+  /**
+   * Returns one de-duplicated provider-message sequence for the submitted and streamed turn.
+   *
+   * @param {Object} capture - Frozen streamed-turn snapshot.
+   * @returns {Array<Object>} Ordered exact provider messages for the turn.
+   */
+  function streamTailCapturedSequence(capture) {
+    const sequence = [];
+    const indexById = new Map();
+    for (const message of [
+      ...(capture?.request_messages ?? []),
+      ...(capture?.stream_messages ?? [])
+    ]) {
+      const id = typeof message?.id === 'string' ? message.id : '';
+      if (!id) continue;
+      const existing = indexById.get(id);
+      if (existing !== undefined) sequence[existing] = streamTailClone(message);
+      else {
+        indexById.set(id, sequence.length);
+        sequence.push(streamTailClone(message));
+      }
+    }
+    return sequence;
+  }
+
+  /**
+   * Reconciles one complete streamed turn only when history ends at an exact prefix of that turn.
+   *
+   * Existing history remains authoritative before the captured parent anchor. Matching captured
+   * tail records replace stale same-ID copies in place, and only the remaining contiguous captured
+   * suffix is appended. Any identity gap or non-suffix divergence is rejected.
+   *
+   * @param {Object} spine - History-API conversation spine.
+   * @param {Object|null} capture - Frozen complete streamed-turn snapshot.
+   * @returns {Object} Merge result containing the authoritative reconciled spine.
+   */
+  function mergeStreamTailCaptureIntoSpine(spine, capture) {
+    if (!capture) return { merged: false, reason: 'no-capture', spine, appended_count: 0, replaced_count: 0 };
+    if (!capture.complete || capture.overflow) {
+      return { merged: false, reason: capture.overflow ? 'capture-overflow' : 'capture-incomplete', spine, appended_count: 0, replaced_count: 0 };
+    }
+    const sequence = streamTailCapturedSequence(capture);
+    if (!sequence.length) return { merged: false, reason: 'capture-empty', spine, appended_count: 0, replaced_count: 0 };
+    const history = (spine?.records ?? []).map(record => record?.message).filter(Boolean);
+    const parentId = capture.parent_message_id;
+    const parentIndex = typeof parentId === 'string'
+      ? history.findIndex(message => message?.id === parentId)
+      : -1;
+    let sequenceStart = 0;
+    let anchorIndex = parentIndex;
+    let anchorId = parentIndex >= 0 ? parentId : null;
+    if (parentIndex < 0) {
+      const firstOverlap = sequence.findIndex(message =>
+        history.some(existing => existing?.id === message.id)
+      );
+      if (firstOverlap < 0) {
+        return { merged: false, reason: 'no-overlap-anchor', spine, appended_count: 0, replaced_count: 0 };
+      }
+      const overlapId = sequence[firstOverlap].id;
+      anchorIndex = history.findIndex(message => message?.id === overlapId);
+      anchorId = overlapId;
+      sequenceStart = firstOverlap + 1;
+    }
+    const historyTail = history.slice(anchorIndex + 1);
+    const expected = sequence.slice(sequenceStart);
+    if (historyTail.length > expected.length) {
+      return { merged: false, reason: 'non-suffix-gap', spine, appended_count: 0, replaced_count: 0 };
+    }
+    for (let index = 0; index < historyTail.length; index += 1) {
+      if (historyTail[index]?.id !== expected[index]?.id) {
+        return { merged: false, reason: 'non-suffix-gap', spine, appended_count: 0, replaced_count: 0 };
+      }
+    }
+    if (historyTail.length) anchorId = historyTail.at(-1)?.id ?? anchorId;
+    // Only records actually observed in the completed response stream can supersede same-ID history.
+    const streamedMessageIds = new Set(
+      (capture.stream_messages ?? [])
+        .map(message => typeof message?.id === 'string' ? message.id : '')
+        .filter(Boolean)
+    );
+    const mergedMessages = history.slice(0, anchorIndex + 1);
+    let replacedCount = 0;
+    for (let index = 0; index < historyTail.length; index += 1) {
+      const replacement = expected[index];
+      if (streamedMessageIds.has(replacement.id)) {
+        if (JSON.stringify(historyTail[index]) !== JSON.stringify(replacement)) replacedCount += 1;
+        mergedMessages.push(streamTailClone(replacement));
+      } else {
+        mergedMessages.push(streamTailClone(historyTail[index]));
+      }
+    }
+    const appended = expected.slice(historyTail.length);
+    mergedMessages.push(...appended.map(streamTailClone));
+    if (!replacedCount && !appended.length) {
+      return { merged: false, reason: 'up-to-date', spine, appended_count: 0, replaced_count: 0, anchor_message_id: anchorId };
+    }
+    const rebuilt = conversationSpineFromPages([
+      { messages: mergedMessages, page_info: { has_previous_page: false, has_next_page: false } }
+    ]);
+    rebuilt.pages = Array.isArray(spine?.pages) ? [...spine.pages] : rebuilt.pages;
+    return {
+      merged: true,
+      reason: 'streamed-tail-recovered',
+      spine: rebuilt,
+      appended_count: appended.length,
+      replaced_count: replacedCount,
+      anchor_message_id: anchorId
+    };
+  }
+
+  /**
+   * Parses the stock /f/conversation request clone into a new passive capture.
+   *
+   * @param {Request} request - Page-owned request cloned before transmission.
+   * @returns {Promise<Object|null>} Capture associated with this request, or null when unreadable.
+   */
+  async function captureGenerationStreamRequest(request) {
+    try {
+      const body = JSON.parse(await request.clone().text());
+      const conversationId = typeof body?.conversation_id === 'string'
+        ? body.conversation_id
+        : currentConversationId();
+      const capture = createStreamTailCapture(conversationId);
+      streamTailCaptureRequest(capture, body);
+      streamTailCapture = capture;
+      streamTailPersistCapture(capture);
+      return capture;
+    } catch (error) {
+      logDiagnostic('warnings', 'conversation-stream-tail-request-capture-failure', {
+        message: error instanceof Error ? error.message : String(error)
+      });
+      return null;
+    }
+  }
+
+  /**
+   * Reads a cloned /f/conversation response without consuming or delaying the stock page response.
+   *
+   * @param {Response} response - Cloned stock response.
+   * @param {Object} capture - Capture associated with the request.
+   * @returns {Promise<void>} Resolves after the cloned response stream ends.
+   */
+  async function captureGenerationStreamResponse(response, capture) {
+    if (!capture || !response?.body) return;
+    const reader = response.body.getReader();
+    const decoder = new TextDecoder();
+    try {
+      for (;;) {
+        const { value, done } = await reader.read();
+        if (done) break;
+        consumeStreamTailSseChunk(capture, decoder.decode(value, { stream: true }), false, false);
+      }
+      consumeStreamTailSseChunk(capture, decoder.decode(), true, false);
+      streamTailPersistCapture(capture);
+      logDiagnostic('debug', 'conversation-stream-tail-response-captured', {
+        conversation_id: capture.conversation_id,
+        stream_record_count: capture.stream_messages.length,
+        handed_off: capture.handed_off,
+        handoff_topic_id: capture.handoff_topic_id,
+        complete: capture.complete
+      });
+    } catch (error) {
+      capture.complete = false;
+      streamTailPersistCapture(capture);
+      logDiagnostic('warnings', 'conversation-stream-tail-response-capture-failure', {
+        conversation_id: capture.conversation_id,
+        message: error instanceof Error ? error.message : String(error)
+      });
+    } finally {
+      try { reader.releaseLock(); } catch {}
+    }
+  }
+
+  /**
+   * Extracts encoded SSE items from one matching ChatGPT WebSocket topic frame.
+   *
+   * @param {Object} capture - Active streamed-turn capture.
+   * @param {Object} message - Parsed WebSocket message/catchup frame.
+   * @returns {void} No value is returned.
+   */
+  function streamTailConsumeWebSocketMessage(capture, message) {
+    if (!capture?.handoff_topic_id || !message || typeof message !== 'object') return;
+    if (message.topic_id !== capture.handoff_topic_id) return;
+    const encoded = message?.payload?.payload?.encoded_item;
+    if (typeof encoded !== 'string' || !encoded) return;
+    consumeStreamTailSseChunk(capture, encoded, false, true);
+    if (capture.complete) streamTailPersistCapture(capture);
+  }
+
+  /**
+   * Passively observes one page WebSocket frame and consumes only the active handoff topic.
+   *
+   * @param {Object} data - WebSocket message data.
+   * @returns {void} No value is returned.
+   */
+  function captureGenerationWebSocketFrame(data) {
+    const capture = streamTailCapture;
+    if (!capture?.handed_off || !capture.handoff_topic_id) return;
+    if (typeof data !== 'string') return;
+    let parsed;
+    try { parsed = JSON.parse(data); } catch { return; }
+    const frames = Array.isArray(parsed) ? parsed : [parsed];
+    for (const frame of frames) {
+      if (!frame || typeof frame !== 'object') continue;
+      if (frame.type === 'message') {
+        streamTailConsumeWebSocketMessage(capture, frame);
+      } else if (frame.type === 'reply' && frame.reply?.topic_id === capture.handoff_topic_id) {
+        for (const catchup of Array.isArray(frame.reply.catchups) ? frame.reply.catchups : []) {
+          streamTailConsumeWebSocketMessage(capture, catchup);
+        }
+      }
+    }
+  }
+  // END Issue #123 streamed-tail recovery
+
 
   /**
    * Handles install network capture.
@@ -463,9 +2758,40 @@
           request = input instanceof PageRequest ? input : new PageRequest(input, init);
         } catch {}
         const requestUrl = request?.url ?? String(input);
+        const stockTrace = stockNetworkTraceFetchStart(request, requestUrl);
+        void communicationLogFetchRequest(request, stockTrace)
+          .catch(communicationError => communicationLogReportFailure('fetch-request', communicationError));
         rememberApiRequestContext(requestUrl, request?.headers, init.headers);
         recordClickDiagnosticNetworkRequest(requestUrl, 'fetch');
-        return originalFetch.apply(this, args);
+        const generationRequest = isGenerationStreamUrl(requestUrl) &&
+          String(request?.method ?? init.method ?? 'GET').toUpperCase() === 'POST';
+        const capturePromise = generationRequest && request
+          ? captureGenerationStreamRequest(request)
+          : null;
+        const responsePromise = originalFetch.apply(this, args);
+        return responsePromise.then(response => {
+          stockNetworkTraceFetchResponse(response, stockTrace);
+          void communicationLogFetchResponse(response, stockTrace)
+            .catch(communicationError => communicationLogReportFailure('fetch-response', communicationError));
+          if (capturePromise) {
+            void capturePromise.then(capture => {
+              if (!capture) return;
+              let cloned;
+              try { cloned = response.clone(); } catch { return; }
+              void captureGenerationStreamResponse(cloned, capture);
+            });
+          }
+          return response;
+        }, error => {
+          logDiagnostic('debug', 'stock-network-fetch-failed', {
+            network_sequence: stockTrace.sequence,
+            method: stockTrace.method,
+            url: stockTrace.url,
+            duration_ms: Math.round(performance.now() - stockTrace.started_at),
+            error: boundedDiagnosticText(error?.message ?? String(error), 1000)
+          });
+          throw error;
+        });
       };
     }
 
@@ -488,11 +2814,54 @@
         return originalSetRequestHeader.call(this, name, value);
       };
       XHR.prototype.send = function(body) {
-        const info = this.__tmApiRequest || { url: '', headers: {} };
+        const info = this.__tmApiRequest || { method: 'GET', url: '', headers: {} };
+        const stockTrace = stockNetworkTraceXhrStart(this, info);
+        void communicationLogXhrRequest(info, body, stockTrace)
+          .catch(communicationError => communicationLogReportFailure('xhr-request', communicationError));
+        this.addEventListener('loadend', () => {
+          stockNetworkTraceXhrResponse(this, stockTrace);
+          void communicationLogXhrResponse(this, stockTrace)
+            .catch(communicationError => communicationLogReportFailure('xhr-response', communicationError));
+        }, { once: true });
         rememberApiRequestContext(info.url, info.headers);
         recordClickDiagnosticNetworkRequest(info.url, 'xmlhttprequest');
         return originalSend.call(this, body);
       };
+    }
+
+    if (typeof pageWindow.WebSocket === 'function') {
+      const NativeWebSocket = pageWindow.WebSocket;
+      pageWindow.WebSocket = new Proxy(NativeWebSocket, {
+        construct(target, args) {
+          const socket = Reflect.construct(target, args, target);
+          const socketUrl = String(args[0] ?? '');
+          const nativeSend = socket.send;
+          socket.send = function(data) {
+            void communicationLogWebSocketSend(socketUrl, data)
+              .catch(communicationError => communicationLogReportFailure('websocket-send', communicationError));
+            return nativeSend.call(this, data);
+          };
+          socket.addEventListener('open', () => {
+            void communicationLogRecord('communication_websocket_open', { url: stockNetworkSafeUrl(socketUrl) });
+          });
+          socket.addEventListener('message', event => {
+            captureGenerationWebSocketFrame(event.data);
+            void communicationLogWebSocketMessage(socketUrl, event.data)
+              .catch(communicationError => communicationLogReportFailure('websocket-message', communicationError));
+          });
+          socket.addEventListener('close', event => {
+            void communicationLogRecord('communication_websocket_close', {
+              url: stockNetworkSafeUrl(socketUrl),
+              code: event.code,
+              was_clean: event.wasClean === true
+            });
+          });
+          socket.addEventListener('error', () => {
+            void communicationLogRecord('communication_websocket_error', { url: stockNetworkSafeUrl(socketUrl) });
+          });
+          return socket;
+        }
+      });
     }
 
     if (typeof pageWindow.open === 'function') {
@@ -523,11 +2892,30 @@
     const pageWindow = typeof unsafeWindow !== 'undefined' ? unsafeWindow : window;
     // Prefer the pre-interception fetch implementation to avoid recursively capturing ourselves.
     const fetchFn = originalPageFetch || pageWindow.fetch;
-    return fetchFn.call(pageWindow, url, {
+    const requestInit = {
       method: 'GET',
       headers: { ...context.headers },
       credentials: 'include'
-    });
+    };
+    const trace = {
+      sequence: ++stockNetworkSequence,
+      started_at: performance.now(),
+      method: 'GET',
+      url: stockNetworkSafeUrl(url),
+      same_origin: true,
+      origin: 'downloadconversation'
+    };
+    let loggingRequest = null;
+    try {
+      const PageRequest = pageWindow.Request || Request;
+      loggingRequest = new PageRequest(url, requestInit);
+    } catch {}
+    void communicationLogFetchRequest(loggingRequest, trace)
+      .catch(communicationError => communicationLogReportFailure('direct-api-request', communicationError));
+    const response = await fetchFn.call(pageWindow, url, requestInit);
+    void communicationLogFetchResponse(response, trace)
+      .catch(communicationError => communicationLogReportFailure('direct-api-response', communicationError));
+    return response;
   }
 
   /**
@@ -3177,6 +5565,603 @@ Image elapsed: ${formatDuration(imageElapsed)} — Completed: ${imageCompleted}/
     return document.scrollingElement instanceof HTMLElement ? document.scrollingElement : document.documentElement;
   }
 
+  // BEGIN Issue #123 live-tail consistency
+  /**
+   * Normalizes visible text for bounded live/API tail comparison without changing export content.
+   *
+   * @param {Object} value - Text-like value to normalize.
+   * @returns {string} Whitespace-normalized comparison text.
+   */
+  function normalizeLiveTailText(value) {
+    return String(value ?? '').replace(/\s+/g, ' ').trim();
+  }
+
+  /**
+   * Produces a compact deterministic fingerprint for diagnostics-only live-tail evidence.
+   *
+   * @param {string} text - Normalized text to fingerprint.
+   * @returns {string} Eight-character hexadecimal FNV-1a fingerprint.
+   */
+  function liveTailFingerprint(text) {
+    let hash = 2166136261;
+    for (let index = 0; index < text.length; index += 1) {
+      hash ^= text.charCodeAt(index);
+      hash = Math.imul(hash, 16777619);
+    }
+    return (hash >>> 0).toString(16).padStart(8, '0');
+  }
+
+  /**
+   * Resets live-tail state when entering a different conversation or starting a fresh tracking lifetime.
+   *
+   * @param {string|null} conversationId - Conversation identity associated with the new tracking state.
+   * @returns {void} No value is returned.
+   */
+  function resetLiveTailTrackingState(conversationId = null) {
+    liveTailConversationId = conversationId;
+    liveTailMarkers = [];
+    liveTailHistoricalNavigation = false;
+    liveTailPromptAdvancePending = false;
+    liveTailLastScrollTop = null;
+  }
+
+  /**
+   * Tests whether two live-tail markers describe the same mounted/source message identity.
+   *
+   * @param {Object|null} left - First marker.
+   * @param {Object|null} right - Second marker.
+   * @returns {boolean} True when a stable message or DOM turn identity matches.
+   */
+  function liveTailMarkerIdentityMatches(left, right) {
+    if (!left || !right) return false;
+    if (left.message_id && right.message_id && left.message_id === right.message_id) return true;
+    return Boolean(left.dom_turn_id && right.dom_turn_id && left.dom_turn_id === right.dom_turn_id);
+  }
+
+  /**
+   * Captures one mounted User/Assistant section as independent DOM/source identity evidence.
+   *
+   * @param {Element} section - Mounted `section[data-turn-id]` element.
+   * @returns {Object|null} Bounded live-tail marker, or null for unsupported sections.
+   */
+  function liveTailSectionMarker(section) {
+    if (!(section instanceof Element)) return null;
+    const role = section.getAttribute('data-turn');
+    if (role !== 'user' && role !== 'assistant') return null;
+    const messageNodes = [...section.querySelectorAll('[data-message-id]')];
+    const message = messageNodes.at(-1) ?? null;
+    const domTurnId = section.getAttribute('data-turn-id') || null;
+    const messageId = message?.getAttribute('data-message-id') || null;
+    if (!domTurnId && !messageId) return null;
+    const normalized = normalizeLiveTailText((message ?? section).textContent || '');
+    /** Bounded visible text retained for comparison/fingerprinting; full normalized length remains diagnostic metadata. */
+    const comparisonText = normalized.slice(0, LIVE_TAIL_TEXT_LIMIT);
+    return {
+      role,
+      message_id: messageId,
+      dom_turn_id: domTurnId,
+      container_id: section.getAttribute('data-testid') || null,
+      comparison_text: comparisonText,
+      content_length: normalized.length,
+      content_fingerprint: liveTailFingerprint(comparisonText),
+      observed_at: Date.now()
+    };
+  }
+
+  /**
+   * Adds or refreshes one live high-water marker while preserving monotonic history.
+   *
+   * A remount/stream update of the current newest identity may refresh in place even when advancement is disabled. A different identity is appended only when the caller has established legitimate forward progression.
+   *
+   * @param {Object|null} marker - Candidate live-tail marker.
+   * @param {boolean} allowAdvance - Whether a new identity may advance the high-water history.
+   * @returns {boolean} True when retained marker state changed.
+   */
+  function recordLiveTailMarker(marker, allowAdvance) {
+    if (!marker || !['user', 'assistant'].includes(marker.role)) return false;
+    if (!marker.message_id && !marker.dom_turn_id) return false;
+    const newest = liveTailMarkers.at(-1) ?? null;
+    if (liveTailMarkerIdentityMatches(newest, marker)) {
+      liveTailMarkers[liveTailMarkers.length - 1] = { ...newest, ...marker };
+      return true;
+    }
+    if (liveTailMarkers.some(existing => liveTailMarkerIdentityMatches(existing, marker))) return false;
+    if (!allowAdvance) return false;
+    liveTailMarkers.push({ ...marker });
+    if (liveTailMarkers.length > LIVE_TAIL_MARKER_LIMIT) {
+      liveTailMarkers.splice(0, liveTailMarkers.length - LIVE_TAIL_MARKER_LIMIT);
+    }
+    return true;
+  }
+
+  /**
+   * Marks current virtual-window movement as historical navigation so mounted older turns cannot advance the tail.
+   *
+   * @param {string} reason - Diagnostic reason for entering historical-navigation mode.
+   * @returns {void} No value is returned.
+   */
+  function markLiveTailHistoricalNavigation(reason) {
+    liveTailHistoricalNavigation = true;
+    logDiagnostic('debug', 'conversation-live-tail-historical-navigation', {
+      reason,
+      marker_count: liveTailMarkers.length,
+      newest_message_id: liveTailMarkers.at(-1)?.message_id ?? null,
+      newest_dom_turn_id: liveTailMarkers.at(-1)?.dom_turn_id ?? null
+    });
+  }
+
+  /**
+   * Marks an explicit User prompt submission as legitimate forward conversation progression.
+   *
+   * @returns {void} No value is returned.
+   */
+  function markLiveTailPromptSubmission() {
+    liveTailHistoricalNavigation = false;
+    liveTailPromptAdvancePending = true;
+    logDiagnostic('debug', 'conversation-live-tail-prompt-submission', {
+      marker_count: liveTailMarkers.length,
+      newest_message_id: liveTailMarkers.at(-1)?.message_id ?? null
+    });
+  }
+
+  /**
+   * Reports whether the conversation scroll root is at its current physical bottom boundary.
+   *
+   * Physical-bottom evidence alone never overrides historical-navigation mode.
+   *
+   * @param {Element|Object} scrollRoot - Conversation scroll container.
+   * @returns {boolean} True when the current viewport is within the bottom tolerance.
+   */
+  function liveTailAtPhysicalBottom(scrollRoot) {
+    const scrollTop = Number(scrollRoot?.scrollTop) || 0;
+    const clientHeight = Number(scrollRoot?.clientHeight) || 0;
+    const scrollHeight = Number(scrollRoot?.scrollHeight) || 0;
+    const tolerance = Math.max(24, Math.floor(clientHeight * 0.04));
+    return scrollTop + clientHeight >= scrollHeight - tolerance;
+  }
+
+  /**
+   * Applies one ordered mounted-window observation to the monotonic live high-water history.
+   *
+   * Initial bottom observation seeds up to ten mounted markers. Historical navigation cannot advance until the prior high-water marker is re-encountered; once re-encountered, only later mounted markers may advance the history.
+   *
+   * @param {Array<Object>} mounted - Ordered mounted User/Assistant markers.
+   * @param {boolean} atBottom - Whether the observed scroll root is at its current physical bottom.
+   * @param {string} reason - Diagnostic reason for the observation.
+   * @returns {number} Number of retained marker entries added or refreshed.
+   */
+  function applyMountedLiveTailMarkers(mounted, atBottom, reason = 'scan') {
+    const candidates = Array.isArray(mounted) ? mounted.filter(Boolean) : [];
+    if (!candidates.length) return 0;
+    let changed = 0;
+    let advanced = 0;
+    const beforeNewest = liveTailMarkers.at(-1) ?? null;
+    if (!liveTailMarkers.length) {
+      if (!atBottom && !liveTailPromptAdvancePending) return 0;
+      for (const marker of candidates.slice(-LIVE_TAIL_MARKER_LIMIT)) {
+        if (recordLiveTailMarker(marker, true)) {
+          changed += 1;
+          advanced += 1;
+        }
+      }
+    } else if (liveTailHistoricalNavigation) {
+      const highWater = liveTailMarkers.at(-1);
+      const anchorIndex = candidates.findIndex(marker => liveTailMarkerIdentityMatches(marker, highWater));
+      if (anchorIndex < 0) return 0;
+      if (recordLiveTailMarker(candidates[anchorIndex], false)) changed += 1;
+      liveTailHistoricalNavigation = false;
+      logDiagnostic('debug', 'conversation-live-tail-high-water-reencountered', {
+        reason,
+        newest_message_id: highWater?.message_id ?? null,
+        newest_dom_turn_id: highWater?.dom_turn_id ?? null
+      });
+      for (let index = anchorIndex + 1; index < candidates.length; index += 1) {
+        if (recordLiveTailMarker(candidates[index], true)) {
+          changed += 1;
+          advanced += 1;
+        }
+      }
+    } else {
+      const highWater = liveTailMarkers.at(-1);
+      const anchorIndex = candidates.findIndex(marker => liveTailMarkerIdentityMatches(marker, highWater));
+      if (anchorIndex >= 0) {
+        if (recordLiveTailMarker(candidates[anchorIndex], false)) changed += 1;
+        for (let index = anchorIndex + 1; index < candidates.length; index += 1) {
+          if (recordLiveTailMarker(candidates[index], true)) {
+            changed += 1;
+            advanced += 1;
+          }
+        }
+      } else if ((atBottom || liveTailPromptAdvancePending) && candidates.length) {
+        if (recordLiveTailMarker(candidates.at(-1), true)) {
+          changed += 1;
+          advanced += 1;
+        }
+      }
+    }
+    const afterNewest = liveTailMarkers.at(-1) ?? null;
+    if (advanced > 0 && afterNewest?.role === 'assistant' && liveTailPromptAdvancePending) {
+      liveTailPromptAdvancePending = false;
+    }
+    if (advanced > 0 && !liveTailMarkerIdentityMatches(beforeNewest, afterNewest)) {
+      logDiagnostic('debug', 'conversation-live-tail-advanced', {
+        reason,
+        advanced_count: advanced,
+        marker_count: liveTailMarkers.length,
+        role: afterNewest?.role ?? null,
+        message_id: afterNewest?.message_id ?? null,
+        dom_turn_id: afterNewest?.dom_turn_id ?? null,
+        container_id: afterNewest?.container_id ?? null,
+        content_length: afterNewest?.content_length ?? null,
+        content_fingerprint: afterNewest?.content_fingerprint ?? null
+      });
+    }
+    return changed;
+  }
+
+  /**
+   * Scans the mounted virtual window and applies it to the retained monotonic high-water history.
+   *
+   * @param {string} reason - Diagnostic reason for the scan.
+   * @returns {void} No value is returned.
+   */
+  function scanLiveTailMarkers(reason = 'scan') {
+    const conversationId = currentConversationId();
+    if (!conversationId) return;
+    if (liveTailConversationId !== conversationId) resetLiveTailTrackingState(conversationId);
+    const mounted = [...document.querySelectorAll('section[data-turn-id]')]
+      .map(liveTailSectionMarker)
+      .filter(Boolean);
+    if (!mounted.length) return;
+    const scrollRoot = liveTailObservedScrollRoot || conversationScrollRoot();
+    const atPhysicalBottom = liveTailAtPhysicalBottom(scrollRoot);
+    applyMountedLiveTailMarkers(mounted, atPhysicalBottom, reason);
+    if (atPhysicalBottom) {
+      const newestAssistant = [...mounted].reverse().find(marker => marker.role === 'assistant') ?? null;
+      communicationLogAssistantLifecycle(newestAssistant, reason);
+    }
+  }
+
+  /**
+   * Coalesces a requested live-tail scan into one queued microtask.
+   *
+   * @param {string} reason - Diagnostic reason retained for the queued scan.
+   * @returns {void} No value is returned.
+   */
+  function scheduleLiveTailScan(reason) {
+    if (liveTailScanScheduled) return;
+    liveTailScanScheduled = true;
+    queueMicrotask(() => {
+      liveTailScanScheduled = false;
+      scanLiveTailMarkers(reason);
+    });
+  }
+
+  /**
+   * Handles conversation scrolling for high-water tracking without treating upward navigation as new content.
+   *
+   * @returns {void} No value is returned.
+   */
+  function handleLiveTailScroll() {
+    const scrollRoot = liveTailObservedScrollRoot || conversationScrollRoot();
+    const current = Number(scrollRoot?.scrollTop) || 0;
+    if (liveTailLastScrollTop !== null && current < liveTailLastScrollTop - 4) {
+      markLiveTailHistoricalNavigation('scroll-up');
+    }
+    liveTailLastScrollTop = current;
+    scheduleLiveTailScan('scroll');
+  }
+
+  /**
+   * Handles index-bar/send-button clicks for live-tail navigation/progression state.
+   *
+   * @param {Event|Object} event - Click event.
+   * @returns {void} No value is returned.
+   */
+  function handleLiveTailClick(event) {
+    const target = event.target instanceof Element ? event.target : null;
+    if (!target) return;
+    if (target.closest('button[data-toc-item-index]')) {
+      markLiveTailHistoricalNavigation('prompt-index');
+      return;
+    }
+    if (target.closest('button[data-testid="send-button"]')) markLiveTailPromptSubmission();
+  }
+
+  /**
+   * Handles prompt-form submission as explicit forward conversation progression.
+   *
+   * @param {Event|Object} event - Submit event.
+   * @returns {void} No value is returned.
+   */
+  function handleLiveTailSubmit(event) {
+    const form = event.target instanceof Element ? event.target : null;
+    if (form?.querySelector?.('#prompt-textarea')) markLiveTailPromptSubmission();
+  }
+
+  /**
+   * Handles Enter in the ChatGPT prompt editor when it represents a send rather than a newline.
+   *
+   * @param {KeyboardEvent|Object} event - Keyboard event.
+   * @returns {void} No value is returned.
+   */
+  function handleLiveTailPromptKeydown(event) {
+    const target = event.target instanceof Element ? event.target : null;
+    if (!target?.closest?.('#prompt-textarea')) return;
+    if (event.key === 'Enter' && !event.shiftKey && !event.isComposing) markLiveTailPromptSubmission();
+  }
+
+  /**
+   * Binds live-tail mutation and scroll observation to the current stock conversation thread.
+   *
+   * @returns {void} No value is returned.
+   */
+  function bindLiveTailThread() {
+    const thread = document.querySelector('#thread');
+    if (thread === liveTailObservedThread) return;
+    liveTailThreadObserver?.disconnect();
+    liveTailThreadObserver = null;
+    liveTailObservedScrollRoot?.removeEventListener?.('scroll', handleLiveTailScroll);
+    liveTailObservedThread = thread;
+    liveTailObservedScrollRoot = null;
+    liveTailLastScrollTop = null;
+    if (!(thread instanceof Element)) return;
+    liveTailObservedScrollRoot = conversationScrollRoot();
+    liveTailLastScrollTop = Number(liveTailObservedScrollRoot?.scrollTop) || 0;
+    liveTailObservedScrollRoot?.addEventListener?.('scroll', handleLiveTailScroll, { passive: true });
+    liveTailThreadObserver = new MutationObserver(() => scheduleLiveTailScan('thread-mutation'));
+    liveTailThreadObserver.observe(thread, { childList: true, subtree: true, characterData: true });
+    scheduleLiveTailScan('thread-bound');
+  }
+
+  /**
+   * Installs the passive bounded high-water tracker used only for export consistency evidence.
+   *
+   * @returns {void} No value is returned.
+   */
+  function installLiveTailTracking() {
+    if (liveTailTrackingInstalled) return;
+    liveTailTrackingInstalled = true;
+    document.addEventListener('click', handleLiveTailClick, true);
+    document.addEventListener('submit', handleLiveTailSubmit, true);
+    document.addEventListener('keydown', handleLiveTailPromptKeydown, true);
+    liveTailRootObserver = new MutationObserver(() => {
+      if (document.querySelector('#thread') !== liveTailObservedThread) bindLiveTailThread();
+    });
+    if (document.documentElement) {
+      liveTailRootObserver.observe(document.documentElement, { childList: true, subtree: true });
+    }
+    bindLiveTailThread();
+  }
+
+  /**
+   * Freezes the currently retained live high-water history for one export operation.
+   *
+   * @returns {Array<Object>} Independent marker copies ordered oldest to newest.
+   */
+  function snapshotLiveTailMarkers() {
+    return liveTailMarkers.map(marker => ({ ...marker }));
+  }
+
+  /**
+   * Extracts provider text suitable only for detecting a materially older/incomplete representation of the same message.
+   *
+   * @param {Object} message - Raw Conversation API message.
+   * @returns {string} Normalized visible comparison text, or an empty string when the record is not a visible User/final-Assistant candidate.
+   */
+  function liveTailVisibleApiText(message) {
+    if (!message || message?.metadata?.is_visually_hidden_from_conversation === true) return '';
+    const role = message?.author?.role;
+    if (role !== 'user' && role !== 'assistant') return '';
+    const type = message?.content?.content_type;
+    if (type !== 'text' && type !== 'multimodal_text') return '';
+    if (role === 'assistant' && message?.channel && message.channel !== 'final' && message?.end_turn !== true) return '';
+    const texts = [];
+    for (const part of Array.isArray(message?.content?.parts) ? message.content.parts : []) {
+      if (typeof part === 'string') texts.push(part);
+      else if (part && typeof part === 'object') {
+        for (const key of ['text', 'content']) {
+          if (typeof part[key] === 'string') texts.push(part[key]);
+        }
+      }
+    }
+    return normalizeLiveTailText(texts.join(' '));
+  }
+
+  /**
+   * Finds the API source record corresponding to one live marker by stable nested message identity only.
+   *
+   * DOM section turn ids and virtual-window ids are retained as independent diagnostics and are never assumed to be provider message ids.
+   *
+   * @param {Object} marker - Frozen live-tail marker.
+   * @param {Object} spine - Authoritative Conversation API spine.
+   * @returns {Object|null} Matching source record and match basis, or null when absent.
+   */
+  function liveTailFindRecordForMarker(marker, spine) {
+    const messageId = marker?.message_id;
+    if (!messageId) return null;
+    const record = (spine?.records ?? []).find(item => item?.message_id === messageId);
+    if (!record || !liveTailVisibleApiText(record.message)) return null;
+    return { record, basis: 'message_id' };
+  }
+
+  /**
+   * Compares frozen live high-water markers with the single authoritative Conversation API snapshot.
+   *
+   * @param {Array<Object>} markers - Frozen live-tail markers.
+   * @param {Object} spine - Authoritative Conversation API spine.
+   * @returns {Object} Safe diagnostic counts/identities; raw user text is never returned.
+   */
+  function compareLiveTailMarkersToSpine(markers, spine) {
+    const visibleRecords = (spine?.records ?? []).filter(item => Boolean(liveTailVisibleApiText(item?.message)));
+    const comparisons = [];
+    let stalePrefixCount = 0;
+    let roleMismatchCount = 0;
+    for (const marker of markers ?? []) {
+      const verifiable = Boolean(marker?.message_id);
+      if (!verifiable) {
+        comparisons.push({
+          matched: false,
+          verifiable: false,
+          message_id: null,
+          dom_turn_id: marker?.dom_turn_id ?? null
+        });
+        continue;
+      }
+      const found = liveTailFindRecordForMarker(marker, spine);
+      if (!found) {
+        comparisons.push({
+          matched: false,
+          verifiable: true,
+          message_id: marker?.message_id ?? null,
+          dom_turn_id: marker?.dom_turn_id ?? null
+        });
+        continue;
+      }
+      const apiText = liveTailVisibleApiText(found.record.message);
+      const liveText = normalizeLiveTailText(marker?.comparison_text ?? '');
+      const roleMismatch = Boolean(marker?.role && found.record.role && marker.role !== found.record.role);
+      if (roleMismatch) roleMismatchCount += 1;
+      const stalePrefix = marker?.role !== 'user' && found.record.role !== 'user' &&
+        found.basis === 'message_id' && apiText.length >= 20 &&
+        liveText.length >= apiText.length + 12 && liveText.startsWith(apiText);
+      if (stalePrefix) stalePrefixCount += 1;
+      comparisons.push({
+        matched: true,
+        verifiable: true,
+        message_id: marker?.message_id ?? null,
+        dom_turn_id: marker?.dom_turn_id ?? null,
+        matched_source_id: found.record.message_id,
+        match_basis: found.basis,
+        role_mismatch: roleMismatch,
+        stale_prefix: stalePrefix,
+        live_content_length: Number(marker?.content_length) || liveText.length,
+        api_content_length: apiText.length,
+        api_record_ordinal: found.record.ordinal
+      });
+    }
+    const verifiableCount = comparisons.filter(item => item.verifiable).length;
+    const unverifiableCount = comparisons.length - verifiableCount;
+    const matchedCount = comparisons.filter(item => item.matched).length;
+    const missingCount = comparisons.filter(item => item.verifiable && !item.matched).length;
+    let missingSuffixCount = 0;
+    for (let index = comparisons.length - 1; index >= 0; index -= 1) {
+      const comparison = comparisons[index];
+      if (!comparison.verifiable || comparison.matched) break;
+      missingSuffixCount += 1;
+    }
+    const newestMarker = markers?.at?.(-1) ?? null;
+    const newestComparison = comparisons.at(-1) ?? null;
+    const newestApiVisibleId = visibleRecords.at(-1)?.message_id ?? null;
+    const newestVerifiable = Boolean(newestMarker?.message_id);
+    const newestConsistent = Boolean(newestVerifiable && newestComparison?.matched &&
+      newestComparison.matched_source_id === newestApiVisibleId &&
+      !newestComparison.role_mismatch && !newestComparison.stale_prefix);
+    const warning = comparisons.length === 0 ||
+      missingCount > 0 || stalePrefixCount > 0 || roleMismatchCount > 0 || !newestConsistent;
+    return {
+      marker_count: comparisons.length,
+      verifiable_count: verifiableCount,
+      unverifiable_count: unverifiableCount,
+      matched_count: matchedCount,
+      missing_count: missingCount,
+      missing_suffix_count: missingSuffixCount,
+      stale_prefix_count: stalePrefixCount,
+      role_mismatch_count: roleMismatchCount,
+      newest_live_message_id: newestMarker?.message_id ?? null,
+      newest_live_dom_turn_id: newestMarker?.dom_turn_id ?? null,
+      newest_api_visible_id: newestApiVisibleId,
+      newest_verifiable: newestVerifiable,
+      newest_consistent: newestConsistent,
+      warning,
+      comparisons
+    };
+  }
+
+  /**
+   * Compares the authoritative API source records against the generated JSONL to detect serialization loss/mutation.
+   *
+   * @param {Array<Object>} markers - Frozen live-tail markers.
+   * @param {Object} spine - Authoritative Conversation API spine.
+   * @param {string} jsonl - Generated JSONL text.
+   * @returns {Object} Safe serialization-consistency summary.
+   */
+  function compareLiveTailMarkersToJsonl(markers, spine, jsonl) {
+    const parsed = [];
+    for (const line of String(jsonl ?? '').split('\n')) {
+      if (!line.trim()) continue;
+      try {
+        const value = JSON.parse(line);
+        if (value?.record_type !== 'chatgpt_conversation_metadata') parsed.push(value);
+      } catch {
+        return { marker_count: markers?.length ?? 0, matched_count: 0, missing_from_jsonl_count: markers?.length ?? 0, changed_count: 0, newest_jsonl_visible_id: null, warning: true, parse_error: true };
+      }
+    }
+    const jsonlById = new Map(parsed.filter(item => typeof item?.id === 'string').map(item => [item.id, item]));
+    let matchedCount = 0;
+    let missingCount = 0;
+    let changedCount = 0;
+    for (const marker of markers ?? []) {
+      const found = liveTailFindRecordForMarker(marker, spine);
+      if (!found) continue;
+      const serialized = jsonlById.get(found.record.message_id);
+      if (!serialized) {
+        missingCount += 1;
+        continue;
+      }
+      matchedCount += 1;
+      if (JSON.stringify(serialized) !== JSON.stringify(found.record.message)) changedCount += 1;
+    }
+    const newestJsonlVisible = parsed.filter(message => Boolean(liveTailVisibleApiText(message))).at(-1)?.id ?? null;
+    const newestApiVisible = (spine?.records ?? []).filter(item => Boolean(liveTailVisibleApiText(item?.message))).at(-1)?.message_id ?? null;
+    const warning = missingCount > 0 || changedCount > 0 || newestJsonlVisible !== newestApiVisible;
+    return {
+      marker_count: markers?.length ?? 0,
+      matched_count: matchedCount,
+      missing_from_jsonl_count: missingCount,
+      changed_count: changedCount,
+      newest_jsonl_visible_id: newestJsonlVisible,
+      newest_api_visible_id: newestApiVisible,
+      warning,
+      parse_error: false
+    };
+  }
+
+  /**
+   * Formats a compact live/API consistency warning for the recorder status display.
+   *
+   * @param {Object} result - Live/API comparison result.
+   * @returns {string} Warning summary, or an empty string when consistent/unverified.
+   */
+  function liveApiTailWarningText(result) {
+    if (!result?.warning) return '';
+    if (result.marker_count === 0) {
+      return 'live/API freshness could not be verified because no live tail markers were retained';
+    }
+    if (result.newest_verifiable === false) {
+      return 'live/API freshness could not be verified because the newest live marker has no API message identity' +
+        `${result.unverifiable_count > 1 ? `; unverifiable markers ${result.unverifiable_count}` : ''}`;
+    }
+    return `live/API matched ${result.matched_count}/${result.verifiable_count}; missing ${result.missing_count}` +
+      `${result.unverifiable_count ? `; unverifiable ${result.unverifiable_count}` : ''}` +
+      `${result.missing_suffix_count ? ` (newest suffix ${result.missing_suffix_count})` : ''}` +
+      `${result.stale_prefix_count ? `; stale-content ${result.stale_prefix_count}` : ''}` +
+      `${result.role_mismatch_count ? `; role-mismatch ${result.role_mismatch_count}` : ''}`;
+  }
+
+  /**
+   * Formats a compact API/JSONL consistency warning for the recorder status display.
+   *
+   * @param {Object} result - API/JSONL comparison result.
+   * @returns {string} Warning summary, or an empty string when consistent.
+   */
+  function jsonlTailWarningText(result) {
+    if (!result?.warning) return '';
+    return `API/JSONL missing ${result.missing_from_jsonl_count}; changed ${result.changed_count}` +
+      `${result.parse_error ? '; JSONL parse error' : ''}`;
+  }
+  // END Issue #123 live-tail consistency
+
   /**
    * Waits for for jump target.
    *
@@ -3380,6 +6365,7 @@ Image elapsed: ${formatDuration(imageElapsed)} — Completed: ${imageCompleted}/
     }
     const conversationId = currentConversationId();
     assert(conversationId, 'Current page is not a ChatGPT conversation.');
+    markLiveTailHistoricalNavigation('downloadconversation-jump');
     logDiagnostic('debug', 'conversation-jump-request', {
       raw_requested_identifier: boundedDiagnosticText(requested, 500),
       identifier,
@@ -3978,6 +6964,11 @@ Image elapsed: ${formatDuration(imageElapsed)} — Completed: ${imageCompleted}/
     let activeKind = requestedKinds[0];
     const conversationId = currentConversationId();
     assert(conversationId, 'Current page is not a ChatGPT conversation.');
+    scanLiveTailMarkers('export-freeze');
+    /** Frozen high-water evidence for this export; later UI activity cannot change its oracle. */
+    const frozenLiveTailMarkers = snapshotLiveTailMarkers();
+    /** Tail-consistency warnings accumulated without changing the authoritative export source. */
+    const tailConsistencyWarnings = [];
     exportInProgress = true;
     exportKind = activeKind;
     progressState = {
@@ -4004,13 +6995,41 @@ Image elapsed: ${formatDuration(imageElapsed)} — Completed: ${imageCompleted}/
         progressState.fetch_page_started_at = progress.page_started_at;
         refreshStatus();
       });
-      const spine = conversationSpineFromPages(fetched.pages);
+      const historySpine = conversationSpineFromPages(fetched.pages);
+      const currentStreamCapture = streamTailCapture?.conversation_id === conversationId
+        ? streamTailCapture
+        : streamTailRestoreCapture(conversationId);
+      const streamMerge = mergeStreamTailCaptureIntoSpine(
+        historySpine, streamTailCaptureSnapshot(currentStreamCapture)
+      );
+      const spine = streamMerge.spine;
+      logDiagnostic(streamMerge.merged ? 'debug' : 'verbose',
+        'conversation-stream-tail-reconciliation', {
+          reason: streamMerge.reason,
+          merged: streamMerge.merged,
+          appended_count: streamMerge.appended_count,
+          replaced_count: streamMerge.replaced_count,
+          anchor_message_id: streamMerge.anchor_message_id ?? null,
+          history_record_count: historySpine.records.length,
+          reconciled_record_count: spine.records.length
+        });
+      const liveApiTailComparison = compareLiveTailMarkersToSpine(frozenLiveTailMarkers, spine);
+      logDiagnostic(liveApiTailComparison.warning ? 'warnings' : 'debug',
+        'conversation-tail-live-api-consistency', liveApiTailComparison);
+      const liveApiWarning = liveApiTailWarningText(liveApiTailComparison);
+      if (liveApiWarning) tailConsistencyWarnings.push(liveApiWarning);
       if (requestedKinds.includes('jsonl')) {
         activeKind = 'jsonl';
         exportKind = activeKind;
         const filename = `${sanitizeFileName(conversationTitle())}.jsonl`;
+        const jsonl = apiRecordsJsonl(spine, conversationId);
+        const jsonlTailComparison = compareLiveTailMarkersToJsonl(frozenLiveTailMarkers, spine, jsonl);
+        logDiagnostic(jsonlTailComparison.warning ? 'warnings' : 'debug',
+          'conversation-tail-api-jsonl-consistency', jsonlTailComparison);
+        const jsonlWarning = jsonlTailWarningText(jsonlTailComparison);
+        if (jsonlWarning) tailConsistencyWarnings.push(jsonlWarning);
         downloadBlob(
-          new Blob([apiRecordsJsonl(spine)], { type: 'application/x-ndjson;charset=utf-8' }),
+          new Blob([jsonl], { type: 'application/x-ndjson;charset=utf-8' }),
           filename
         );
         setStatus(`Extracted ${spine.records.length} API records from ${fetched.pages.length} API page(s) to ${filename}.`);
@@ -4093,6 +7112,9 @@ Image elapsed: ${formatDuration(imageElapsed)} — Completed: ${imageCompleted}/
           blob_size: markdownBlob.size
         });
         setStatus(`Extracted ${spine.records.length} API records from ${fetched.pages.length} API page(s) to ${filename}.`);
+      }
+      if (tailConsistencyWarnings.length) {
+        setStatus(`⚠ Export completed with tail consistency warning: ${tailConsistencyWarnings.join(' | ')}`);
       }
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
@@ -5809,6 +8831,8 @@ Image elapsed: ${formatDuration(imageElapsed)} — Completed: ${imageCompleted}/
     installLauncherRemovalDiagnostics();
     installLauncherTopologyDiagnostics();
   }
+  communicationLogInitializationPromise = initializeCommunicationDiskRecorder();
+  installLiveTailTracking();
   installNetworkCapture();
   bootstrapUi();
 })();
