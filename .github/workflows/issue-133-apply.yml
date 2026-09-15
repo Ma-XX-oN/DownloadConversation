@@ -41,7 +41,7 @@ jobs:
         run: |
           changed="$(git diff --name-only)"
           printf '%s\n' "$changed"
-          test "$changed" = $'.github/workflows/ci.yml\nchatgpt-conversation-markdown-export.user.js'
+          test "$changed" = $'chatgpt-conversation-markdown-export.user.js\ntests/disk-communication-recorder.test.mjs'
 
       - name: Commit verified Issue 133 implementation
         shell: bash
@@ -51,7 +51,7 @@ jobs:
             git config user.name "github-actions[bot]"
             git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
             git status --short --branch
-            git add .github/workflows/ci.yml chatgpt-conversation-markdown-export.user.js
+            git add chatgpt-conversation-markdown-export.user.js tests/disk-communication-recorder.test.mjs
             git status --short --branch
             git commit -m "Fix #133 add communication log reset"
             git push origin HEAD:issue-133-reset-communication-log
