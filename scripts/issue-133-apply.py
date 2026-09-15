@@ -1,9 +1,8 @@
 from pathlib import Path
 import subprocess
-import sys
 
 SOURCE = Path('chatgpt-conversation-markdown-export.user.js')
-CI = Path('.github/workflows/ci.yml')
+DISK_TEST = Path('tests/disk-communication-recorder.test.mjs')
 TEST = 'tests/communication-log-reset.test.mjs'
 
 
@@ -141,14 +140,15 @@ if 'communication-log-response-body-incomplete' not in source or 'summary.body_i
   fail('Issue #132 partial-body logging fix was lost while applying Issue #133.')
 SOURCE.write_text(source, encoding='utf-8')
 
-ci = CI.read_text(encoding='utf-8')
-old_ci = 'tests/disk-communication-recorder.test.mjs tests/directory-picker-gesture.test.mjs'
-new_ci = old_ci + ' tests/communication-log-reset.test.mjs'
-ci = replace_once(ci, old_ci, new_ci, 'CI reset-regression registration')
-CI.write_text(ci, encoding='utf-8')
+disk_test = DISK_TEST.read_text(encoding='utf-8')
+reset_import = "import './communication-log-reset.test.mjs';\n"
+if reset_import in disk_test:
+  fail('Issue #133 reset regression is already registered in the disk-recorder CI suite.')
+disk_test = reset_import + disk_test
+DISK_TEST.write_text(disk_test, encoding='utf-8')
 
 run(['node', '--test', TEST])
-run(['node', '--test', 'tests/disk-communication-recorder.test.mjs'])
+run(['node', '--test', str(DISK_TEST)])
 run(['node', '--test', 'tests/recorder-panel-ui.test.mjs'])
 run(['node', 'scripts/check-jsdoc.mjs'])
 run(['node', '--check', str(SOURCE)])
