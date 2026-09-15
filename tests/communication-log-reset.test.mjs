@@ -18,7 +18,6 @@ function diskBlock() {
 }
 
 function resetHarness() {
-  const events = [];
   const context = {
     Blob,
     TextDecoder,
@@ -29,14 +28,15 @@ function resetHarness() {
     },
     communicationLogDirectoryHandle: { id: 'directory-handle' },
     communicationLogFileName: 'DownloadConversation_test.jsonl',
-    communicationLogReady: true,
-    communicationLogReportFailure(stage, error) {
-      events.push(`failure:${stage}:${error?.message ?? error}`);
-    }
+    communicationLogReady: true
   };
 
   vm.runInNewContext(
     `${diskBlock()}
+this.__issue133Events = [];
+communicationLogReportFailure = (stage, error) => {
+  this.__issue133Events.push(\`failure:\${stage}:\${error?.message ?? error}\`);
+};
 this.__issue133 = {
   reset: communicationLogReset,
   setWriter(writer, dirty) {
@@ -61,7 +61,11 @@ this.__issue133 = {
     context
   );
 
-  return { api: context.__issue133, events, context };
+  return {
+    api: context.__issue133,
+    events: context.__issue133Events,
+    context
+  };
 }
 
 test('general status panel exposes a communication-log reset button wired to production reset', () => {
