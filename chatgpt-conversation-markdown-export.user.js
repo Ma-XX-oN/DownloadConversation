@@ -1609,7 +1609,8 @@
           break;
         }
         if (result.done) break;
-        byteCount += result.value?.byteLength ?? 0;
+        if (!result.value?.byteLength) continue;
+        byteCount += result.value.byteLength;
         safePending += communicationLogRedactStreamFeed(
           redactionState,
           decoder.decode(result.value, { stream: true }),
