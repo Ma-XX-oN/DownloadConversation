@@ -78,11 +78,21 @@ Browser file handles and filesystem operations can become stale or fail after by
 
 Regression tests should exercise the same production implementations and invariants they claim to verify.  A PASS means the documented semantic contract held, not merely that a helper returned successfully.
 
+## Shared modal keyboard focus
+
+Recorder modal dialogs keep keyboard focus anchored to the most recently focused
+modal control when the user clicks ordinary non-interactive content inside the
+dialog. Interactive controls retain normal browser focus/activation behaviour,
+and clicking the backdrop remains a separate dismissal action where the dialog
+already supports it. This keeps Tab/Shift+Tab, Enter/Space activation, and Escape
+handling available after incidental clicks without changing the established modal
+keyboard contract.
+
 ## Historical architecture note
 
 Pre-1.0 development used a DOM-first recorder with historical scrolling, split-half recovery, staged rebuild files, Resume-specific lifecycle state, and later an incremental migration toward API-first extraction.  Those mechanisms explain many legacy issues and old diagnostics but are not the current production transcript architecture.
 
-The current 1.1.0 line completed the transition to one-shot Conversation API export with AIConversationCore canonical rendering.  Legacy recorder/UI issues that describe retired Resume, recovery, or DOM-transcript behaviour should be treated as historical/superseded unless a current issue explicitly reintroduces that requirement.  Issue #112 is the future home for API-based continuous recording/Resume.
+The current 1.2.0 line retains the one-shot Conversation API export with AIConversationCore canonical rendering.  Legacy recorder/UI issues that describe retired Resume, recovery, or DOM-transcript behaviour should be treated as historical/superseded unless a current issue explicitly reintroduces that requirement.  Issue #112 is the future home for API-based continuous recording/Resume.
 
 ## Optional Markdown heading metadata
 
