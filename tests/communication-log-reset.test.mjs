@@ -18,6 +18,7 @@ function diskBlock() {
 }
 
 function resetHarness() {
+  const events = [];
   const context = {
     Blob,
     TextDecoder,
@@ -28,12 +29,13 @@ function resetHarness() {
     },
     communicationLogDirectoryHandle: { id: 'directory-handle' },
     communicationLogFileName: 'DownloadConversation_test.jsonl',
-    communicationLogReady: true
+    communicationLogReady: true,
+    communicationLogWriteChain: Promise.resolve(),
+    __issue133Events: events
   };
 
   vm.runInNewContext(
     `${diskBlock()}
-this.__issue133Events = [];
 communicationLogReportFailure = (stage, error) => {
   this.__issue133Events.push(\`failure:\${stage}:\${error?.message ?? error}\`);
 };
@@ -63,7 +65,7 @@ this.__issue133 = {
 
   return {
     api: context.__issue133,
-    events: context.__issue133Events,
+    events,
     context
   };
 }
