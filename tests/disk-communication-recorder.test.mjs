@@ -17,6 +17,14 @@ function diskBlock() {
   return userscript.slice(start, end + endMarker.length);
 }
 
+function apiFetchBlock() {
+  const start = userscript.indexOf('  async function apiFetch(url)');
+  const endMarker = '  function conversationSchemaOk(data)';
+  const end = userscript.indexOf(endMarker, start);
+  assert.ok(start >= 0 && end > start, 'apiFetch production block is missing.');
+  return userscript.slice(start, end);
+}
+
 function redactionHarness() {
   const context = {};
   vm.runInNewContext(
@@ -24,6 +32,21 @@ function redactionHarness() {
     context
   );
   return context.__redaction;
+}
+
+function bodyPolicyHarness() {
+  const context = {
+    URL,
+    location: {
+      origin: 'https://chatgpt.com',
+      href: 'https://chatgpt.com/c/conversation-1'
+    }
+  };
+  vm.runInNewContext(
+    `${diskBlock()}\nthis.__bodyPolicy = {communicationLogShouldCaptureBody};`,
+    context
+  );
+  return context.__bodyPolicy;
 }
 
 test('disk communication recorder production block exists', () => {
@@ -46,11 +69,12 @@ test('directory handle is persisted in IndexedDB and reused when permission rema
     'Missing/unusable persisted directory must have a picker path.');
 });
 
-test('picker is exposed through a deliberate user-gesture prompt instead of startup auto-picking', () => {
+test('picker is exposed through a deliberate page-realm user gesture', () => {
   const block = diskBlock();
   assert.match(block, /communication-directory-required/);
   assert.match(block, /addEventListener\(['"]click['"]/);
-  assert.match(block, /showDirectoryPicker\(/);
+  assert.match(block, /const pickerWindow = typeof unsafeWindow !== ['"]undefined['"] \? unsafeWindow : window;/);
+  assert.match(block, /pickerWindow\.showDirectoryPicker\(/);
 });
 
 test('append path reuses fresh-EOF stale-handle-safe semantics from the old recorder', () => {
@@ -80,6 +104,16 @@ test('fetch request and response bodies are captured through clones without cons
   assert.match(userscript, /request\.clone\(\)|input\.clone\(\)/);
   assert.match(userscript, /response\.clone\(\)/);
   assert.match(userscript, /return response;/);
+});
+
+test('DownloadConversation direct apiFetch traffic is included in the disk trace', () => {
+  const block = apiFetchBlock();
+  assert.match(block, /communicationLogFetchRequest\(/,
+    'Direct authenticated export requests bypass the page fetch wrapper and need explicit disk tracing.');
+  assert.match(block, /communicationLogFetchResponse\(/);
+  assert.match(block, /origin:\s*['"]downloadconversation['"]/);
+  assert.match(diskBlock(), /origin:\s*trace\?\.origin\s*\?\?\s*['"]stock-chatgpt['"]/,
+    'Disk records must distinguish stock ChatGPT traffic from DownloadConversation traffic.');
 });
 
 test('SSE bodies are streamed to JSONL incrementally rather than buffered wholesale', () => {
@@ -132,6 +166,31 @@ test('streaming redaction cannot leak secrets split across body chunk boundaries
   assert.doesNotMatch(longOutput, /A{32}/,
     'An arbitrarily long credential must stay suppressed until its delimiter arrives.');
   assert.match(longOutput, /\?token=\[redacted\]&ok=1/);
+});
+
+test('known binary backend responses are metadata-only, not decoded as API text', () => {
+  const api = bodyPolicyHarness();
+  assert.equal(api.communicationLogShouldCaptureBody(
+    'https://chatgpt.com/backend-api/files/download/file-1',
+    'application/octet-stream'
+  ), false);
+  assert.equal(api.communicationLogShouldCaptureBody(
+    'https://chatgpt.com/backend-api/files/download/file-1',
+    'image/png'
+  ), false);
+  assert.equal(api.communicationLogShouldCaptureBody(
+    'https://chatgpt.com/backend-api/conversation/conversation-1',
+    'application/json'
+  ), true);
+  assert.equal(api.communicationLogShouldCaptureBody(
+    'https://chatgpt.com/backend-api/f/conversation',
+    'text/event-stream'
+  ), true);
+  assert.equal(api.communicationLogShouldCaptureBody(
+    'https://chatgpt.com/backend-api/conversations/conversation-1',
+    ''
+  ), true,
+  'Unknown-content-type backend API responses may still be textual and should remain observable.');
 });
 
 test('binary bodies are metadata-only while API JSON text SSE payloads can be persisted', () => {
