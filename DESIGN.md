@@ -469,3 +469,24 @@ assets into the JSONL trace.
 Directory selection uses the page realm (`unsafeWindow` when available) from the
 existing user-gesture prompt, matching the realm used for the intercepted networking
 objects and avoiding a sandbox-only File System Access lookup.
+
+## Issue #123 direct native directory-chooser gesture
+
+The File System Access directory picker cannot be opened autonomously during a page
+reload because Chromium requires transient user activation.  When a persisted
+directory handle still has read/write permission the recorder therefore reuses it
+without showing any authorization UI.  Otherwise the userscript blocks page
+interaction and reserves the next trusted click or key press solely for directory
+authorization.
+
+That trusted event handler invokes the page-realm `showDirectoryPicker()` synchronously,
+before any awaited work can consume transient activation.  There is no intermediate
+"Choose Log Folder" button.  The same event is prevented and stopped so it cannot also
+activate an underlying ChatGPT control.  Cancelling the native chooser leaves the
+trusted-gesture capture armed for the next interaction; successful selection persists
+the directory handle, removes the blocker/listeners, and resumes the disk-backed
+communication recorder.
+
+This changes only the authorization UX for the diagnostic communication recorder.  It
+does not change the single-snapshot export contract, source precedence/recovery rules,
+or the AIConversationCore rendering boundary.

@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         ChatGPT Conversation Markdown Recorder
 // @namespace    https://chatgpt.com/
-// @version      1.0.1-issue.123.9
+// @version      1.0.1-issue.123.10
 // @description  Exports the current ChatGPT conversation directly from the Conversation API as Markdown or JSONL.
 // @match        https://chatgpt.com/*
 // @match        https://chat.openai.com/*
@@ -157,8 +157,10 @@
   let stockNetworkSequence = 0;
   /** Persisted user-authorized directory used for the disk communication recorder. */
   let communicationLogDirectoryHandle = null;
-  /** Previously persisted handle awaiting a user-gesture permission renewal. */
-  let communicationLogPendingDirectoryHandle = null;
+  /** Whether the next trusted page gesture is reserved for native directory chooser launch. */
+  let communicationLogDirectoryGestureArmed = false;
+  /** Whether a native directory chooser promise is currently outstanding. */
+  let communicationLogDirectoryPickerOpening = false;
   /** Active `DownloadConversation_<conversation>.jsonl` file name. */
   let communicationLogFileName = null;
   /** Serializes append operations so independent network observers cannot overlap file writes. */
@@ -883,12 +885,12 @@
       return false;
     }
     communicationLogDirectoryHandle = handle;
-    communicationLogPendingDirectoryHandle = null;
     communicationLogFileName = `DownloadConversation_${sanitizeFileName(conversationTitle())}.jsonl`;
     if (/^DownloadConversation_(?:ChatGPT|ChatGPT conversation)\.jsonl$/i.test(communicationLogFileName)) {
       communicationLogFileName = `DownloadConversation_${conversationName}.jsonl`;
     }
     communicationLogReady = true;
+    communicationLogDisarmDirectoryGesture();
     document.getElementById('tm-communication-directory-required')?.remove();
     communicationLogPromptShown = false;
     communicationLogInstallLifecycleObservers();
@@ -914,12 +916,93 @@
    * @param {string} reason - Why directory authorization is required.
    * @returns {void} No value is returned.
    */
+  /**
+   * Removes the trusted-gesture listeners once directory authorization succeeds.
+   *
+   * @returns {void} No value is returned.
+   */
+  function communicationLogDisarmDirectoryGesture() {
+    if (!communicationLogDirectoryGestureArmed) return;
+    communicationLogDirectoryGestureArmed = false;
+    window.removeEventListener('click', communicationLogHandleDirectoryGesture, true);
+    window.removeEventListener('keydown', communicationLogHandleDirectoryGesture, true);
+  }
+
+  /**
+   * Uses the first trusted page interaction to launch the native directory chooser directly.
+   *
+   * The File System Access picker call must remain synchronous with this trusted event; no
+   * awaited work may occur before `showDirectoryPicker()` or Chromium will discard transient
+   * user activation.
+   *
+   * @param {Event} event - Trusted click or keydown reserved for directory authorization.
+   * @returns {void} No value is returned.
+   */
+  function communicationLogHandleDirectoryGesture(event) {
+    if (!communicationLogDirectoryGestureArmed || communicationLogDirectoryPickerOpening) return;
+    if (event.isTrusted !== true) return;
+
+    event.preventDefault();
+    event.stopImmediatePropagation();
+
+    const pickerWindow = typeof unsafeWindow !== 'undefined' ? unsafeWindow : window;
+    if (typeof pickerWindow.showDirectoryPicker !== 'function') {
+      communicationLogReportFailure(
+        'directory-authorization',
+        new Error('This browser does not expose showDirectoryPicker().')
+      );
+      return;
+    }
+
+    let pickerPromise;
+    try {
+      communicationLogDirectoryPickerOpening = true;
+      pickerPromise = pickerWindow.showDirectoryPicker({ mode: 'readwrite' });
+    } catch (error) {
+      communicationLogDirectoryPickerOpening = false;
+      communicationLogReportFailure('directory-authorization', error);
+      return;
+    }
+
+    Promise.resolve(pickerPromise)
+      .then(async handle => {
+        const permission = await communicationLogPermissionState(handle);
+        if (permission !== 'granted') {
+          throw new Error('The selected folder did not grant read/write permission.');
+        }
+        await communicationLogStoreDirectoryHandle(handle);
+        await communicationLogActivateDirectory(handle);
+      })
+      .catch(error => {
+        if (error?.name === 'AbortError') {
+          logDiagnostic('debug', 'communication-directory-picker-cancelled', {});
+        } else {
+          communicationLogReportFailure('directory-authorization', error);
+        }
+      })
+      .finally(() => {
+        communicationLogDirectoryPickerOpening = false;
+      });
+  }
+
+  /**
+   * Blocks page interaction until the next trusted click or key press can open the native chooser.
+   *
+   * @param {string} reason - Why directory authorization is required.
+   * @returns {void} No value is returned.
+   */
   function communicationLogShowDirectoryPrompt(reason) {
     logDiagnostic('warnings', 'communication-directory-required', { reason });
+    if (!communicationLogDirectoryGestureArmed) {
+      communicationLogDirectoryGestureArmed = true;
+      window.addEventListener('click', communicationLogHandleDirectoryGesture, { capture: true });
+      window.addEventListener('keydown', communicationLogHandleDirectoryGesture, { capture: true });
+    }
     if (communicationLogPromptShown) return;
     communicationLogPromptShown = true;
+
     /**
-     * Mounts the required-directory prompt after the document body exists.
+     * Mounts the blocking explanation after the document body exists.
      *
      * @returns {void} No value is returned.
      */
@@ -931,43 +1014,14 @@
       if (document.getElementById('tm-communication-directory-required')) return;
       const prompt = document.createElement('div');
       prompt.id = 'tm-communication-directory-required';
-      prompt.style.cssText = 'position:fixed;top:16px;right:16px;z-index:2147483647;max-width:390px;padding:12px;border:1px solid #888;border-radius:8px;background:#202123;color:#fff;font:13px/1.4 system-ui,sans-serif;box-shadow:0 4px 18px #0008';
-      const text = document.createElement('div');
-      text.textContent = `DownloadConversation needs a writable folder for the communication log. ${reason}`;
-      const button = document.createElement('button');
-      button.type = 'button';
-      button.textContent = 'Choose Log Folder';
-      button.style.cssText = 'margin-top:8px;padding:6px 10px;cursor:pointer';
-      button.addEventListener('click', async () => {
-        try {
-          let handle = communicationLogPendingDirectoryHandle;
-          if (handle) {
-            let permission = await communicationLogPermissionState(handle);
-            if (permission !== 'granted' && typeof handle.requestPermission === 'function') {
-              permission = await handle.requestPermission({ mode: 'readwrite' });
-            }
-            if (permission !== 'granted') handle = null;
-          }
-          if (!handle) {
-            const pickerWindow = typeof unsafeWindow !== 'undefined' ? unsafeWindow : window;
-            if (typeof pickerWindow.showDirectoryPicker !== 'function') {
-              throw new Error('This browser does not expose showDirectoryPicker().');
-            }
-            handle = await pickerWindow.showDirectoryPicker({ mode: 'readwrite' });
-            const permission = await communicationLogPermissionState(handle);
-            if (permission !== 'granted' && typeof handle.requestPermission === 'function') {
-              const requested = await handle.requestPermission({ mode: 'readwrite' });
-              if (requested !== 'granted') throw new Error('Read/write permission was not granted.');
-            }
-          }
-          await communicationLogStoreDirectoryHandle(handle);
-          await communicationLogActivateDirectory(handle);
-        } catch (error) {
-          communicationLogReportFailure('directory-authorization', error);
-        }
-      });
-      prompt.append(text, button);
+      prompt.tabIndex = -1;
+      prompt.style.cssText = 'position:fixed;inset:0;z-index:2147483647;display:grid;place-items:center;background:#000a;color:#fff;font:14px/1.5 system-ui,sans-serif;cursor:pointer';
+      const card = document.createElement('div');
+      card.style.cssText = 'max-width:520px;padding:18px;border:1px solid #888;border-radius:10px;background:#202123;box-shadow:0 6px 24px #000a';
+      card.textContent = `DownloadConversation needs a writable folder for the communication log. Click or press any key to open the native folder chooser. ${reason}`;
+      prompt.append(card);
       document.body.append(prompt);
+      try { prompt.focus({ preventScroll: true }); } catch {}
     };
     mount();
   }
@@ -986,8 +1040,7 @@
       }
       const permission = await communicationLogPermissionState(handle);
       if (permission !== 'granted') {
-        communicationLogPendingDirectoryHandle = handle;
-        communicationLogShowDirectoryPrompt('The saved log folder needs read/write permission again.');
+        communicationLogShowDirectoryPrompt('The saved log folder is no longer authorized; choose it again.');
         return false;
       }
       return communicationLogActivateDirectory(handle);
