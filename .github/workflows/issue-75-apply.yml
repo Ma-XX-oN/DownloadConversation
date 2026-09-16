@@ -6,6 +6,7 @@ on:
       - issue-75-jump-materialization-convergence
     paths:
       - scripts/issue-75-jump-materialization.py
+      - tests/jump-materialization.test.mjs
       - .github/workflows/issue-75-apply.yml
 
 permissions:
