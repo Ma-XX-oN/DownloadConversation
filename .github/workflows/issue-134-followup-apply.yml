@@ -52,6 +52,8 @@ jobs:
             DESIGN.md
             tests/communication-log-file-controls.test.mjs
             tests/communication-log-layout-contract.test.mjs
+            tests/disk-communication-recorder.test.mjs
+            tests/communication-log-reset.test.mjs
           if-no-files-found: error
       - name: Issue 134 functional regression
         run: node --test tests/communication-log-file-controls.test.mjs
