@@ -37,8 +37,10 @@ jobs:
             issue134-apply-error.txt
             issue134-apply-status.txt
           if-no-files-found: error
-      - name: Focused Issue 134 regressions
-        run: node --test tests/communication-log-file-controls.test.mjs tests/communication-log-layout-contract.test.mjs
+      - name: Issue 134 functional regression
+        run: node --test tests/communication-log-file-controls.test.mjs
+      - name: Issue 134 layout contract regression
+        run: node --test tests/communication-log-layout-contract.test.mjs
       - name: Disk communication recorder regression
         run: node --test tests/disk-communication-recorder.test.mjs
       - name: Recorder panel UI regression
