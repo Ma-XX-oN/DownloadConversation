@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         ChatGPT Conversation Markdown Recorder
 // @namespace    https://chatgpt.com/
-// @version      1.2.0
+// @version      1.2.0-issue.116.1
 // @description  Exports the current ChatGPT conversation directly from the Conversation API as Markdown or JSONL.
 // @match        https://chatgpt.com/*
 // @match        https://chat.openai.com/*
@@ -2585,13 +2585,19 @@
     }
     const historyTail = history.slice(anchorIndex + 1);
     const expected = sequence.slice(sequenceStart);
-    if (historyTail.length > expected.length) {
-      return { merged: false, reason: 'non-suffix-gap', spine, appended_count: 0, replaced_count: 0 };
-    }
-    for (let index = 0; index < historyTail.length; index += 1) {
-      if (historyTail[index]?.id !== expected[index]?.id) {
+    const matchedExpected = [];
+    let expectedIndex = 0;
+    for (const historyMessage of historyTail) {
+      while (expectedIndex < expected.length &&
+          expected[expectedIndex]?.id !== historyMessage?.id &&
+          expected[expectedIndex]?.metadata?.is_visually_hidden_from_conversation === true) {
+        expectedIndex += 1;
+      }
+      if (expectedIndex >= expected.length || expected[expectedIndex]?.id !== historyMessage?.id) {
         return { merged: false, reason: 'non-suffix-gap', spine, appended_count: 0, replaced_count: 0 };
       }
+      matchedExpected.push(expected[expectedIndex]);
+      expectedIndex += 1;
     }
     if (historyTail.length) anchorId = historyTail.at(-1)?.id ?? anchorId;
     // Only records actually observed in the completed response stream can supersede same-ID history.
@@ -2603,7 +2609,7 @@
     const mergedMessages = history.slice(0, anchorIndex + 1);
     let replacedCount = 0;
     for (let index = 0; index < historyTail.length; index += 1) {
-      const replacement = expected[index];
+      const replacement = matchedExpected[index];
       if (streamedMessageIds.has(replacement.id)) {
         if (JSON.stringify(historyTail[index]) !== JSON.stringify(replacement)) replacedCount += 1;
         mergedMessages.push(streamTailClone(replacement));
@@ -2611,7 +2617,9 @@
         mergedMessages.push(streamTailClone(historyTail[index]));
       }
     }
-    const appended = expected.slice(historyTail.length);
+    const appended = expected
+      .slice(expectedIndex)
+      .filter(message => message?.metadata?.is_visually_hidden_from_conversation !== true);
     mergedMessages.push(...appended.map(streamTailClone));
     if (!replacedCount && !appended.length) {
       return { merged: false, reason: 'up-to-date', spine, appended_count: 0, replaced_count: 0, anchor_message_id: anchorId };
