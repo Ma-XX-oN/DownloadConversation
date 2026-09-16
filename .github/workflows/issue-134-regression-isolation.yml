@@ -8,25 +8,50 @@ on:
       - .github/workflows/issue-134-regression-isolation.yml
 
 jobs:
-  isolate:
+  disk:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
         with:
           node-version: 22
-      - name: Exact combined command
-        continue-on-error: true
-        run: node --test tests/tail-consistency.test.mjs tests/stream-tail-recovery.test.mjs tests/stock-network-diagnostics.test.mjs tests/disk-communication-recorder.test.mjs tests/directory-picker-gesture.test.mjs
-      - name: Exact combined command serialized
-        continue-on-error: true
-        run: node --test --test-concurrency=1 tests/tail-consistency.test.mjs tests/stream-tail-recovery.test.mjs tests/stock-network-diagnostics.test.mjs tests/disk-communication-recorder.test.mjs tests/directory-picker-gesture.test.mjs
-      - name: Tail plus stream
-        continue-on-error: true
-        run: node --test tests/tail-consistency.test.mjs tests/stream-tail-recovery.test.mjs
-      - name: Stock plus disk
-        continue-on-error: true
-        run: node --test tests/stock-network-diagnostics.test.mjs tests/disk-communication-recorder.test.mjs
-      - name: Disk plus directory
-        continue-on-error: true
-        run: node --test tests/disk-communication-recorder.test.mjs tests/directory-picker-gesture.test.mjs
+      - name: Apply issue 134 follow-up patch
+        run: python3 .github/issue134_followup_apply.py
+      - name: Disk recorder regression
+        run: node --test tests/disk-communication-recorder.test.mjs
+
+  panel:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - name: Apply issue 134 follow-up patch
+        run: python3 .github/issue134_followup_apply.py
+      - name: Panel regression
+        run: node --test tests/recorder-panel-ui.test.mjs
+
+  combined:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - name: Apply issue 134 follow-up patch
+        run: python3 .github/issue134_followup_apply.py
+      - name: Exact previously failing command
+        run: node --test tests/disk-communication-recorder.test.mjs tests/recorder-panel-ui.test.mjs
+
+  lifecycle:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - name: Apply issue 134 follow-up patch
+        run: python3 .github/issue134_followup_apply.py
+      - name: Lifecycle regression only
+        run: node --test --test-name-pattern="page lifecycle checkpoint durability" tests/disk-communication-recorder.test.mjs
