@@ -1,0 +1,35 @@
+name: Apply Issue 116 Fix
+
+on:
+  push:
+    branches:
+      - issue-116-final-turn-source-reconciliation
+
+permissions:
+  contents: write
+
+jobs:
+  apply:
+    if: github.actor != 'github-actions[bot]'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - name: Apply deterministic correction
+        run: node scripts/apply-issue-116-fix.mjs
+      - name: Validate focused correction
+        run: |
+          node --check chatgpt-conversation-markdown-export.user.js
+          node --test tests/stream-tail-recovery.test.mjs tests/final-turn-source-reconciliation.test.mjs
+          git diff --check
+      - name: Commit production correction
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add chatgpt-conversation-markdown-export.user.js
+          git commit -m "fix(#116): reconcile hidden stream-only tail records"
+          git push origin HEAD:issue-116-final-turn-source-reconciliation
