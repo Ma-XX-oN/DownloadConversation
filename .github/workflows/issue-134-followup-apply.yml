@@ -21,4 +21,23 @@ jobs:
         with:
           node-version: 22
       - name: Apply Issue 134 follow-up
-        run: python -c "import base64; exec(base64.b64decode('ZnJvbSBwYXRobGliIGltcG9ydCBQYXRoCgpzb3VyY2VfcGF0aCA9IFBhdGgoJ2NoYXRncHQtY29udmVyc2F0aW9uLW1hcmtkb3duLWV4cG9ydC51c2VyLmpzJykKc291cmNlID0gc291cmNlX3BhdGgucmVhZF90ZXh0KGVuY29kaW5nPSd1dGYtOCcpCgpkZWYgcmVwbGFjZV9vbmNlKHRleHQsIG9sZCwgbmV3LCBsYWJlbCk6CiAgY291bnQgPSB0ZXh0LmNvdW50KG9sZCkKICBpZiBjb3VudCAhPSAxOgogICAgcmFpc2UgU3lzdGVtRXhpdChmJ3tsYWJlbH06IGV4cGVjdGVkIGV4YWN0bHkgb25lIG1hdGNoLCBmb3VuZCB7Y291bnR9JykKICByZXR1cm4gdGV4dC5yZXBsYWNlKG9sZCwgbmV3LCAxKQoKc291cmNlID0gcmVwbGFjZV9vbmNlKAogIHNvdXJjZSwKICAnLy8gQHZlcnNpb24gICAgICAxLjIuMC1pc3N1ZS4xMzQuMScsCiAgJy8vIEB2ZXJzaW9uICAgICAgMS4yLjAtaXNzdWUuMTM0LjInLAogICd2ZXJzaW9uJykKCnNvdXJjZSA9IHJlcGxhY2Vfb25jZSgKICBzb3VyY2UsCiAgIiAgICAgICMke1BBTkVMX0lEfSAudG0tcm93e2Rpc3BsYXk6ZmxleDtnYXA6MTBweDthbGlnbi1pdGVtczpjZW50ZXI7ZmxleC13cmFwOndyYXA7bWFyZ2luLXRvcDoxMHB4fVxuIiwKICAiICAgICAgIyR7UEFORUxfSUR9IC50bS1yb3d7ZGlzcGxheTpmbGV4O2dhcDoxMHB4O2FsaWduLWl0ZW1zOmNlbnRlcjtmbGV4LXdyYXA6d3JhcDttYXJnaW4tdG9wOjEwcHh9XG4iCiAgIiAgICAgICMke1BBTkVMX0lEfSAudG0tY29tbXVuaWNhdGlvbi1sb2ctcm93IC50bS1sYWJlbHtmbGV4LWJhc2lzOjEwMCV9XG4iCiAgIiAgICAgICMke1BBTkVMX0lEfSAudG0tbG9nLW5hbWUtdmlld3BvcnR7ZmxleDoxIDEgMTYwcHg7bWluLXdpZHRoOjA7b3ZlcmZsb3c6aGlkZGVuO2JvcmRlcjoxcHggc29saWQgIzY2NjtnYm9yZGVyLXJhZGl1czo5cHg7YmFja2dyb3VuZDojMjkyOTI5O2NvbG9yOiNmZmY7Ym94LXNpemluZzpib3JkZXItYm94fVxuIgogICIgICAgICAjJHtQQU5FTF9JRH0gLnRtLWxvZy1uYW1lLXRleHR7ZGlzcGxheTpibG9jazt3aWR0aDptYXgtY29udGVudDttaW4td2lkdGg6MTAwJTtib3gtc2l6aW5nOmJvcmRlci1ib3g7cGFkZGluZzo5cHggMTJweDt3aGl0ZS1zcGFjZTpub3dyYXA7dHJhbnNmb3JtOnRyYW5zbGF0ZVgoMCk7dHJhbnNpdGlvbjp0cmFuc2Zvcm0gdmFyKC0tdG0tbG9nLW5hbWUtZHVyYXRpb24sMS41cykgbGluZWFyIC4zNXN9XG4iCiAgIiAgICAgICMke1BBTkVMX0lEfSAudG0tbG9nLW5hbWUtdmlld3BvcnQ6aG92ZXIgLnRtLWxvZy1uYW1lLXRleHR7dHJhbnNmb3JtOnRyYW5zbGF0ZVgoY2FsYygtMSAqIHZhcigtLXRtLWxvZy1uYW1lLW92ZXJmbG93LDBweCkpKX1cbiIsCiAgJ2ZpbGVuYW1lIHZpZXdwb3J0IENTUyc pCg==' ))"
+        run: python .github/issue134_followup_apply.py
+      - name: Focused Issue 134 regression
+        run: node --test tests/communication-log-file-controls.test.mjs
+      - name: Communication recorder regressions
+        run: node --test tests/disk-communication-recorder.test.mjs tests/recorder-panel-ui.test.mjs
+      - name: Production JSDoc coverage
+        run: node scripts/check-jsdoc.mjs
+      - name: JavaScript syntax
+        run: node --check chatgpt-conversation-markdown-export.user.js
+      - name: Version identity regression
+        run: node --test tests/version-identity.test.mjs
+      - name: Diff check
+        run: git diff --check
+      - name: Commit verified revision
+        run: |
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add chatgpt-conversation-markdown-export.user.js DESIGN.md
+          git commit -m 'fix: finish Issue 134 live feedback'
+          git push origin HEAD:issue-134-communication-log-file-controls
