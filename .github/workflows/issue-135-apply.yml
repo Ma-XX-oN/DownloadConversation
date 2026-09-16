@@ -23,6 +23,8 @@ jobs:
           python-version: '3.13'
       - name: Apply production patch
         run: python scripts/issue-135-agent-sounds.py
+      - name: Apply stream-tail harness integration
+        run: python scripts/issue-135-stream-tail-test-integration.py
       - name: Production JSDoc coverage
         run: node scripts/check-jsdoc.mjs
       - name: JavaScript syntax
@@ -41,8 +43,8 @@ jobs:
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git add chatgpt-conversation-markdown-export.user.js
+          git add chatgpt-conversation-markdown-export.user.js tests/stream-tail-recovery.test.mjs
           git diff --cached --check
-          git diff --cached --quiet && { echo "No production diff produced"; exit 1; }
+          git diff --cached --quiet && { echo "No production/test diff produced"; exit 1; }
           git commit -m "feat(#135): add optional agent terminal sounds"
           git push origin HEAD:issue-135-agent-completion-sounds
