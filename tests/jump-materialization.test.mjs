@@ -91,10 +91,10 @@ function makeHarness({ onScroll = null, onSettle = null, tocForSelector = null }
   return { context, state, scrollRoot, targetSection, tocElement };
 }
 
-test('Jump 0 succeeds when moving to the top directly mounts the requested message without a TOC control', async () => {
+test('Jump 0 succeeds when upward traversal directly mounts the requested message without a TOC control', async () => {
   const harness = makeHarness({
     onScroll({ kind, root, state }) {
-      if (kind === 'to' && root.scrollTop === 0) state.mounted = true;
+      if (kind === 'by' && root.scrollTop === 0) state.mounted = true;
     }
   });
 
@@ -111,22 +111,23 @@ test('Jump 0 succeeds when moving to the top directly mounts the requested messa
     'The directly materialized target should receive the final Jump scroll.');
 });
 
-test('Jump 0 re-pins the top after prepend pagination scroll anchoring moves the viewport', async () => {
-  let topScrolls = 0;
+test('Jump 0 waits for delayed prepend anchoring and then traverses upward through the loading zone again', async () => {
   let prepended = false;
+  let postPrependOlderScrolls = 0;
   const harness = makeHarness({
     onScroll({ kind, root, state }) {
-      if (kind !== 'to' || root.scrollTop !== 0) return;
-      topScrolls += 1;
-      if (topScrolls >= 2 && prepended) state.mounted = true;
+      if (!prepended || kind !== 'by') return;
+      postPrependOlderScrolls += 1;
+      if (root.scrollTop <= 150) state.mounted = true;
     },
     onSettle({ root, state }) {
-      if (prepended || topScrolls !== 1 || state.settleCount !== 1) return;
+      if (prepended || state.settleCount !== 80) return;
       root.scrollHeight += 4000;
       root.scrollTop += 4000;
       prepended = true;
     }
   });
+  harness.scrollRoot.scrollTop = 0;
 
   const target = {
     uap_index: 0,
@@ -137,8 +138,12 @@ test('Jump 0 re-pins the top after prepend pagination scroll anchoring moves the
 
   const section = await harness.context.jumpToResolvedTarget(target);
   assert.equal(section, harness.targetSection);
-  assert.ok(topScrolls >= 2,
-    'Historical materialization must return to scrollTop 0 after prepended content anchors the viewport forward.');
+  assert.equal(prepended, true,
+    'The regression must delay prepend materialization beyond the former 60 stable-top observations.');
+  assert.ok(harness.state.settleCount >= 80,
+    'Oldest traversal must wait at the top instead of declaring fixed-count stable convergence.');
+  assert.ok(postPrependOlderScrolls > 0,
+    'After prepend anchoring, oldest traversal must produce a fresh older-direction scroll sequence.');
 });
 
 test('Jump traversal does not treat the first current scroll extent as whole-conversation convergence', async () => {

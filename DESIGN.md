@@ -40,6 +40,23 @@ Current production does not scroll the virtualized conversation to reconstruct m
 
 A failure of the Conversation API/canonical path is therefore surfaced as a failure or consistency warning unless a separately approved, documented recovery mechanism applies.  Do not introduce a new source fallback without explicit approval.
 
+### Jump historical materialization
+
+Jump resolves requested User/Assistant identity from the Conversation API, but uses the
+stock virtualized DOM only to materialize that already-resolved target.  For the oldest
+boundary, stock ChatGPT historical loading is driven by repeated upward traversal into
+the near-top loading zone.  When an older page is prepended, scroll anchoring moves the
+viewport forward by the inserted extent; Jump waits for that observable geometry change
+and then traverses upward through the loading zone again.  It does not continuously pin
+`scrollTop` to zero while a page is materializing, because that suppresses the stock
+re-arm transition observed during manual loading.
+
+The oldest-boundary traversal uses a stall deadline rather than a fixed total-history
+deadline.  Observable scroll or virtualized-extent progress refreshes the deadline so a
+long conversation can load multiple stock history batches; absence of progress remains
+an explicit failure.  This navigation behavior does not make DOM chronology or text an
+export source.
+
 ### Single-snapshot outputs
 
 JSONL serialization and Markdown rendering are separate projections over the same acquired spine.  Selecting both formats cannot trigger a second conversation fetch.  A live conversation may continue changing while serialization is in progress; both outputs from one Extract click nevertheless describe the same captured source state.

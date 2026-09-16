@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         ChatGPT Conversation Markdown Recorder
 // @namespace    https://chatgpt.com/
-// @version      1.2.0-issue.75.3
+// @version      1.2.0-issue.75.4
 // @description  Exports the current ChatGPT conversation directly from the Conversation API as Markdown or JSONL.
 // @match        https://chatgpt.com/*
 // @match        https://chat.openai.com/*
@@ -7088,14 +7088,18 @@ Image elapsed: ${formatDuration(imageElapsed)} — Completed: ${imageCompleted}/
   /**
    * Progressively materializes a resolved Jump target or its optional stock TOC control.
    *
-   * UAP 0 is a special oldest-boundary traversal. ChatGPT prepends older material while
-   * preserving the visual anchor, which can move scrollTop forward even though Jump just
-   * reached the top. Re-pinning the top until the target/control appears prevents that
-   * anchoring from being misread as forward traversal toward the newest boundary.
+   * UAP 0 follows ChatGPT's observed stock historical-loading cycle.  Entering the near-top
+   * region provokes one older-page request; prepending that page preserves the visual anchor
+   * and moves scrollTop forward.  Jump then traverses upward through the near-top region again
+   * instead of pinning scrollTop at zero while the stock loader is still re-arming.
+   *
+   * The timeout is a stall timeout.  Any observed scroll/geometry progress refreshes it so a
+   * long conversation is not rejected merely because successful stock pagination needs many
+   * historical batches.
    *
    * @param {Object} target - Resolved Jump target containing UAP index, role, and message id.
-   * @param {number} timeoutMs - Maximum traversal time in milliseconds.
-   * @returns {Promise<HTMLElement|null>} The matching TOC control, or null when the target materializes directly or no control converges.
+   * @param {number} timeoutMs - Maximum time without materialization progress, in milliseconds.
+   * @returns {Promise<HTMLElement|null>} The matching TOC control, or null when the target materializes directly or traversal stalls.
    */
   async function populateJumpTocIndex(target, timeoutMs = 60000) {
     const uapIndex = target?.uap_index;
@@ -7108,11 +7112,50 @@ Image elapsed: ${formatDuration(imageElapsed)} — Completed: ${imageCompleted}/
 
     const scrollRoot = conversationScrollRoot();
     const originalScrollTop = scrollRoot.scrollTop;
-    const deadline = performance.now() + timeoutMs;
     const seeksOldestBoundary = uapIndex === 0;
-    const stableBoundaryObservationLimit = seeksOldestBoundary ? 60 : 20;
+    const stableBoundaryObservationLimit = 20;
+    let stallDeadline = performance.now() + timeoutMs;
     let stableBoundaryObservations = 0;
+    let oldestAnchorCycles = 0;
     let steps = 0;
+    let observedScrollTop = Number(scrollRoot.scrollTop) || 0;
+    let observedScrollHeight = Number(scrollRoot.scrollHeight) || 0;
+    let observedClientHeight = Number(scrollRoot.clientHeight) || 0;
+
+    /**
+     * Refreshes the stall deadline when the stock viewport or virtualized extent changed.
+     *
+     * @param {number} scrollTop - Current conversation scroll offset.
+     * @param {number} scrollHeight - Current conversation scroll extent.
+     * @param {number} clientHeight - Current conversation viewport height.
+     * @returns {boolean} True when observable materialization/traversal progress occurred.
+     */
+    const recordProgress = (scrollTop, scrollHeight, clientHeight) => {
+      const changed =
+        Math.abs(scrollTop - observedScrollTop) >= 1 ||
+        Math.abs(scrollHeight - observedScrollHeight) >= 1 ||
+        Math.abs(clientHeight - observedClientHeight) >= 1;
+      if (seeksOldestBoundary &&
+          scrollHeight > observedScrollHeight + 1 &&
+          scrollTop > observedScrollTop + 1) {
+        oldestAnchorCycles += 1;
+        logDiagnostic('debug', 'conversation-jump-oldest-prepend-anchor', {
+          message_id: target?.message_id ?? null,
+          uap_index: uapIndex,
+          anchor_cycle: oldestAnchorCycles,
+          scroll_top_delta: scrollTop - observedScrollTop,
+          scroll_height_delta: scrollHeight - observedScrollHeight,
+          scroll_top: scrollTop,
+          scroll_height: scrollHeight,
+          client_height: clientHeight
+        });
+      }
+      observedScrollTop = scrollTop;
+      observedScrollHeight = scrollHeight;
+      observedClientHeight = clientHeight;
+      if (changed) stallDeadline = performance.now() + timeoutMs;
+      return changed;
+    };
 
     /**
      * Logs and returns the current materialization outcome at one terminal observation.
@@ -7133,6 +7176,7 @@ Image elapsed: ${formatDuration(imageElapsed)} — Completed: ${imageCompleted}/
         found: toc instanceof HTMLElement,
         steps,
         stable_boundary_observations: stableBoundaryObservations,
+        oldest_anchor_cycles: oldestAnchorCycles,
         scroll_top: scrollRoot.scrollTop,
         scroll_height: scrollRoot.scrollHeight,
         client_height: scrollRoot.clientHeight
@@ -7148,18 +7192,22 @@ Image elapsed: ${formatDuration(imageElapsed)} — Completed: ${imageCompleted}/
       scroll_height: scrollRoot.scrollHeight,
       client_height: scrollRoot.clientHeight,
       boundary: seeksOldestBoundary ? 'top' : 'bottom',
-      stable_boundary_observation_limit: stableBoundaryObservationLimit
+      stall_timeout_ms: timeoutMs,
+      stable_boundary_observation_limit: seeksOldestBoundary ? null : stableBoundaryObservationLimit
     });
 
-    scrollRoot.scrollTo({ top: 0, behavior: 'auto' });
-    await new Promise(resolve => setTimeout(resolve, 100));
-    steps += 1;
-    section = target?.message_id ? mountedTurnSection(target.message_id, target.role) : null;
-    if (section instanceof HTMLElement) return complete('target-mounted-after-top');
-    toc = jumpTocIndexControl(uapIndex);
-    if (toc instanceof HTMLElement) return complete('toc-found-after-top');
+    if (!seeksOldestBoundary) {
+      scrollRoot.scrollTo({ top: 0, behavior: 'auto' });
+      await new Promise(resolve => setTimeout(resolve, 100));
+      steps += 1;
+      recordProgress(scrollRoot.scrollTop, scrollRoot.scrollHeight, scrollRoot.clientHeight);
+      section = target?.message_id ? mountedTurnSection(target.message_id, target.role) : null;
+      if (section instanceof HTMLElement) return complete('target-mounted-after-top');
+      toc = jumpTocIndexControl(uapIndex);
+      if (toc instanceof HTMLElement) return complete('toc-found-after-top');
+    }
 
-    while (performance.now() < deadline) {
+    while (performance.now() < stallDeadline) {
       section = target?.message_id ? mountedTurnSection(target.message_id, target.role) : null;
       if (section instanceof HTMLElement) return complete('target-mounted-before-step');
       toc = jumpTocIndexControl(uapIndex);
@@ -7168,13 +7216,19 @@ Image elapsed: ${formatDuration(imageElapsed)} — Completed: ${imageCompleted}/
       const beforeScrollTop = scrollRoot.scrollTop;
       const beforeScrollHeight = scrollRoot.scrollHeight;
       const beforeClientHeight = scrollRoot.clientHeight;
+      recordProgress(beforeScrollTop, beforeScrollHeight, beforeClientHeight);
       const beforeMaxScrollTop = Math.max(0, beforeScrollHeight - beforeClientHeight);
       const atBoundaryBefore = seeksOldestBoundary
         ? beforeScrollTop <= 2
         : beforeScrollTop >= beforeMaxScrollTop - 2;
 
       if (seeksOldestBoundary) {
-        scrollRoot.scrollTo({ top: 0, behavior: 'auto' });
+        if (!atBoundaryBefore) {
+          scrollRoot.scrollBy({
+            top: -Math.max(100, Math.floor(scrollRoot.clientHeight * 0.5)),
+            behavior: 'auto'
+          });
+        }
       } else if (!atBoundaryBefore) {
         scrollRoot.scrollBy({
           top: Math.max(100, Math.floor(scrollRoot.clientHeight * 0.5)),
@@ -7193,6 +7247,7 @@ Image elapsed: ${formatDuration(imageElapsed)} — Completed: ${imageCompleted}/
       const afterScrollTop = scrollRoot.scrollTop;
       const afterScrollHeight = scrollRoot.scrollHeight;
       const afterClientHeight = scrollRoot.clientHeight;
+      recordProgress(afterScrollTop, afterScrollHeight, afterClientHeight);
       const afterMaxScrollTop = Math.max(0, afterScrollHeight - afterClientHeight);
       const atBoundaryAfter = seeksOldestBoundary
         ? afterScrollTop <= 2
@@ -7202,8 +7257,11 @@ Image elapsed: ${formatDuration(imageElapsed)} — Completed: ${imageCompleted}/
         Math.abs(afterScrollHeight - beforeScrollHeight) < 1 &&
         Math.abs(afterClientHeight - beforeClientHeight) < 1;
 
-      if (atBoundaryAfter && stableObservation) stableBoundaryObservations += 1;
-      else stableBoundaryObservations = 0;
+      if (!seeksOldestBoundary && atBoundaryAfter && stableObservation) {
+        stableBoundaryObservations += 1;
+      } else {
+        stableBoundaryObservations = 0;
+      }
 
       if (steps % 20 === 0 || stableBoundaryObservations > 0) {
         logDiagnostic('debug', 'conversation-jump-toc-autopopulate-progress', {
@@ -7217,12 +7275,14 @@ Image elapsed: ${formatDuration(imageElapsed)} — Completed: ${imageCompleted}/
           client_height: afterClientHeight,
           at_boundary: atBoundaryAfter,
           stable_boundary_observations: stableBoundaryObservations,
+          oldest_anchor_cycles: oldestAnchorCycles,
           target_mounted: false,
           target_available: false
         });
       }
 
-      if (stableBoundaryObservations >= stableBoundaryObservationLimit) break;
+      if (!seeksOldestBoundary &&
+          stableBoundaryObservations >= stableBoundaryObservationLimit) break;
     }
 
     section = target?.message_id ? mountedTurnSection(target.message_id, target.role) : null;
@@ -7232,7 +7292,9 @@ Image elapsed: ${formatDuration(imageElapsed)} — Completed: ${imageCompleted}/
 
     scrollRoot.scrollTo({ top: originalScrollTop, behavior: 'auto' });
     return complete(
-      performance.now() >= deadline ? 'timeout-without-target-or-toc' : 'stable-boundary-convergence-without-target-or-toc'
+      performance.now() >= stallDeadline
+        ? 'stall-timeout-without-target-or-toc'
+        : 'stable-boundary-convergence-without-target-or-toc'
     );
   }
 
