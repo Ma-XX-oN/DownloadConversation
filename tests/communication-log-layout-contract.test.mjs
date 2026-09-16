@@ -51,8 +51,13 @@ test('Duplicate and Reset use their approved icon treatments', () => {
   assert.match(userscript,
     /duplicateIconMarkup[\s\S]*<rect[^>]+>[\s\S]*<rect[^>]+>[\s\S]*<rect[^>]+>/,
     'Duplicate icon must use the approved one-source-to-two-target branching metaphor.');
-  assert.match(userscript, /function resetIconMarkup\(\)/);
-  const resetData = userscript.match(/data:image\/png;base64,([A-Za-z0-9+/=]+)/);
+
+  const resetStart = userscript.indexOf('  function resetIconMarkup() {');
+  assert.ok(resetStart >= 0, 'Reset icon helper is missing.');
+  const resetEnd = userscript.indexOf('\n  /**', resetStart + 3);
+  assert.ok(resetEnd > resetStart, 'Reset icon helper boundary is missing.');
+  const resetSource = userscript.slice(resetStart, resetEnd);
+  const resetData = resetSource.match(/data:image\/png;base64,([A-Za-z0-9+/=]+)/);
   assert.ok(resetData, 'Reset must embed the AgentPanelSpeaker config-reset PNG.');
   assert.equal(
     createHash('sha256').update(Buffer.from(resetData[1], 'base64')).digest('hex'),
