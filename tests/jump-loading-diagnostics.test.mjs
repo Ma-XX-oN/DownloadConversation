@@ -60,6 +60,7 @@ function diagnosticsHarness() {
   });
   vm.runInContext(`
     ${productionFunctionSource('isStockHistoricalConversationPageUrl')}
+    ${productionFunctionSource('jumpLoadingTurnSnapshot')}
     ${productionFunctionSource('jumpLoadingDiagnosticSnapshot')}
     this.api = {
       isHistorical: isStockHistoricalConversationPageUrl,
@@ -110,7 +111,7 @@ test('diagnostics capture trusted user scroll direction/distance and stock histo
   const install = productionFunctionSource('installJumpLoadingDiagnostics');
   assert.match(install, /conversation-jump-loading-user-scroll/);
   assert.match(install, /event\.isTrusted\s*!==\s*true/);
-  assert.match(install, /direction:/);
+  assert.match(install, /\bdirection(?:,|:)/);
   assert.match(install, /distance_px:/);
   assert.match(install, /document\.addEventListener\('scroll'/);
   assert.match(install, /document\.addEventListener\('wheel'/);
