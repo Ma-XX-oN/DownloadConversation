@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import vm from 'node:vm';
-import { productionFunctionSource, userscript } from './helpers/userscript-source.mjs';
+import { productionFunctionSource } from './helpers/userscript-source.mjs';
 
 function diagnosticsHarness() {
   class FakeElement {
@@ -70,10 +70,6 @@ function diagnosticsHarness() {
   return context.api;
 }
 
-test('Issue 75 evidence revision has its own development version', () => {
-  assert.match(userscript, /^\/\/ @version\s+1\.2\.0-issue\.75\.3$/m);
-});
-
 test('stock historical-page URL classifier is exact and excludes DownloadConversation first-page/API routes', () => {
   const { isHistorical } = diagnosticsHarness();
   assert.equal(isHistorical('/backend-api/conversations/c1/messages?before=cursor-1&num_turns=100'), true);
@@ -137,9 +133,9 @@ test('stock network interception wires historical-loading diagnostics without in
     'DownloadConversation direct API pagination must not be mistaken for stock ChatGPT historical loading.');
 });
 
-test('evidence-only revision does not change Jump materialization code paths', () => {
+test('historical-loading evidence collection remains independent from Jump materialization', () => {
   for (const name of ['primeNumericJumpMaterialization', 'populateJumpTocIndex', 'jumpToResolvedTarget', 'runJump']) {
     assert.doesNotMatch(productionFunctionSource(name), /jumpLoadingHistoricalRequest|installJumpLoadingDiagnostics/,
-      `${name} must remain independent of the new evidence collector.`);
+      `${name} must remain independent of the evidence collector.`);
   }
 });
