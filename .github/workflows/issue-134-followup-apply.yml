@@ -21,7 +21,21 @@ jobs:
         with:
           node-version: 22
       - name: Apply Issue 134 follow-up
-        run: python .github/issue134_followup_apply.py
+        run: |
+          set +e
+          python .github/issue134_followup_apply.py 2>issue134-apply-error.txt
+          status=$?
+          echo "$status" > issue134-apply-status.txt
+          exit "$status"
+      - name: Preserve apply diagnostic
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: issue134-apply-diagnostic
+          path: |
+            issue134-apply-error.txt
+            issue134-apply-status.txt
+          if-no-files-found: error
       - name: Focused Issue 134 regressions
         run: node --test tests/communication-log-file-controls.test.mjs tests/communication-log-layout-contract.test.mjs
       - name: Disk communication recorder regression
