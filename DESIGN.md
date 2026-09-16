@@ -48,6 +48,12 @@ JSONL serialization and Markdown rendering are separate projections over the sam
 
 The communication recorder begins at document-start, observes stock page networking plus DownloadConversation's own API traffic, and writes its JSONL trace to the authorized directory.  It is designed to preserve evidence across reloads and rare failures.  It does not alter ChatGPT requests, does not become the source of normal exports, and does not change the Core rendering boundary.
 
+### Communication-log active-file lifecycle
+
+The general status panel exposes the exact active communication-log filename and serializes rename, duplicate, reset, append, and checkpoint operations through the same write chain. Duplicate creates an exact committed sibling snapshot while recording remains attached to the original file. Rename commits the writer before moving identity to the verified replacement file.
+
+Periodic and document-lifecycle checkpoints close dirty long-lived writers so committed bytes are available on disk. Hard document departure starts the same checkpoint path at `beforeunload` and again at `pagehide`; these browser lifecycle calls are best-effort because unload events do not guarantee awaiting arbitrary asynchronous work. Any full-document reload or navigation initiated by DownloadConversation must explicitly await that checkpoint before changing location. Same-document/SPA route changes are not treated as unload events.
+
 ### Continuous recording and Resume are deferred
 
 Durable continuous recording and Resume/rebuild are not current production behaviour.  Future API-based continuous recording is tracked by issue #112 and must reuse the same Conversation API/Core ownership model rather than reviving the retired DOM-first recorder architecture.

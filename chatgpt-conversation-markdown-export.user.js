@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         ChatGPT Conversation Markdown Recorder
 // @namespace    https://chatgpt.com/
-// @version      1.2.0-issue.134.1
+// @version      1.2.0-issue.134.2
 // @description  Exports the current ChatGPT conversation directly from the Conversation API as Markdown or JSONL.
 // @match        https://chatgpt.com/*
 // @match        https://chat.openai.com/*
@@ -860,6 +860,21 @@
   }
 
   /**
+   * Commits queued communication-log state at a hard document-departure boundary.
+   *
+   * Browser lifecycle events start this operation on a best-effort basis because
+   * the browser does not promise to await arbitrary asynchronous unload work.
+   * DownloadConversation-initiated full-document navigation must await this same
+   * function before changing location.
+   *
+   * @param {string} reason - Lifecycle boundary identifying why the document is departing.
+   * @returns {Promise<boolean>} True when dirty writer bytes were checkpointed.
+   */
+  function communicationLogCheckpointForDocumentDeparture(reason) {
+    return communicationLogCheckpoint(reason);
+  }
+
+  /**
    * Installs page/session lifecycle records after the disk recorder becomes writable.
    *
    * @returns {void} No value is returned.
@@ -868,12 +883,15 @@
     if (communicationLogLifecycleInstalled) return;
     communicationLogLifecycleInstalled = true;
     communicationLogCheckpointTimer = setInterval(() => void communicationLogCheckpoint('periodic'), COMMUNICATION_LOG_CHECKPOINT_MS);
+    window.addEventListener('beforeunload', () => {
+      void communicationLogCheckpointForDocumentDeparture('beforeunload');
+    });
     window.addEventListener('pagehide', event => {
       void communicationLogRecord('communication_pagehide', {
         persisted: event.persisted === true,
         visibility_state: document.visibilityState
       });
-      void communicationLogCheckpoint('pagehide');
+      void communicationLogCheckpointForDocumentDeparture('pagehide');
     });
     document.addEventListener('visibilitychange', () => {
       void communicationLogRecord('communication_visibility_change', {
@@ -5640,6 +5658,20 @@ Image elapsed: ${formatDuration(imageElapsed)} — Completed: ${imageCompleted}/
   }
 
   /**
+   * Measures the active communication-log filename and sets its hover-scroll distance.
+   *
+   * @returns {void} No value is returned.
+   */
+  function refreshCommunicationLogNameOverflow() {
+    const viewport = document.querySelector(`#${PANEL_ID} [data-role="communication-log-name-viewport"]`);
+    const text = document.querySelector(`#${PANEL_ID} [data-role="communication-log-name"]`);
+    if (!viewport || !text) return;
+    const overflow = Math.max(0, text.scrollWidth - viewport.clientWidth);
+    text.style.setProperty('--tm-log-name-overflow', `${overflow}px`);
+    text.style.setProperty('--tm-log-name-duration', overflow > 0 ? `${Math.max(1.5, overflow / 40)}s` : '0s');
+  }
+
+  /**
    * Refreshes status.
    *
    * @returns {void} No value is returned.
@@ -5647,13 +5679,22 @@ Image elapsed: ${formatDuration(imageElapsed)} — Completed: ${imageCompleted}/
   function refreshStatus() {
     const status = document.querySelector(`#${PANEL_ID} [data-role="status"]`);
     if (!status) return;
-    const communicationLogNameInput = document.querySelector(`#${PANEL_ID} [data-role="communication-log-name"]`);
+    const communicationLogNameViewport = document.querySelector(`#${PANEL_ID} [data-role="communication-log-name-viewport"]`);
+    const communicationLogNameText = document.querySelector(`#${PANEL_ID} [data-role="communication-log-name"]`);
     const renameCommunicationLogButton = document.querySelector(`#${PANEL_ID} [data-role="rename-communication-log"]`);
     const duplicateCommunicationLogButton = document.querySelector(`#${PANEL_ID} [data-role="duplicate-communication-log"]`);
     const communicationLogAvailable = Boolean(communicationLogReady && communicationLogFileName);
-    if (communicationLogNameInput) {
-      communicationLogNameInput.value = communicationLogAvailable ? communicationLogFileName : '';
-      communicationLogNameInput.placeholder = communicationLogAvailable ? '' : 'Not configured';
+    const communicationLogDisplayName = communicationLogAvailable ? communicationLogFileName : 'Not configured';
+    if (communicationLogNameText) communicationLogNameText.textContent = communicationLogDisplayName;
+    if (communicationLogNameViewport) {
+      communicationLogNameViewport.title = communicationLogDisplayName;
+      communicationLogNameViewport.setAttribute(
+        'aria-label',
+        communicationLogAvailable
+          ? `Current communication log filename: ${communicationLogFileName}`
+          : 'Current communication log filename: not configured'
+      );
+      requestAnimationFrame(refreshCommunicationLogNameOverflow);
     }
     if (renameCommunicationLogButton) renameCommunicationLogButton.disabled = !communicationLogAvailable;
     if (duplicateCommunicationLogButton) duplicateCommunicationLogButton.disabled = !communicationLogAvailable;
@@ -8221,6 +8262,11 @@ Image elapsed: ${formatDuration(imageElapsed)} — Completed: ${imageCompleted}/
       #${PANEL_ID} .tm-close{position:absolute;right:9px;top:7px;border:0;background:transparent;color:#fff;font-size:24px;cursor:pointer}
       #${PANEL_ID} .tm-status{white-space:pre-wrap;margin:10px 0 12px;min-height:24px}
       #${PANEL_ID} .tm-row{display:flex;gap:10px;align-items:center;flex-wrap:wrap;margin-top:10px}
+      #${PANEL_ID} .tm-communication-log-row{flex-wrap:nowrap}
+      #${PANEL_ID} .tm-log-name-viewport{flex:1 1 auto;min-width:0;overflow:hidden;border:1px solid #666;border-radius:9px;background:#292929;color:#fff;box-sizing:border-box}
+      #${PANEL_ID} .tm-log-name-text{display:block;width:max-content;min-width:100%;box-sizing:border-box;padding:9px 12px;white-space:nowrap;transform:translateX(0);transition:transform var(--tm-log-name-duration,1.5s) linear .35s}
+      #${PANEL_ID} .tm-log-name-viewport:hover .tm-log-name-text{transform:translateX(calc(-1 * var(--tm-log-name-overflow,0px)))}
+      #${PANEL_ID} .tm-communication-log-row button{flex:0 0 auto}
       #${PANEL_ID} select,#${PANEL_ID} button{border:1px solid #666;border-radius:9px;background:#292929;color:#fff;padding:9px 12px;font:inherit}
       #${PANEL_ID} select{flex:1;min-width:150px}
       #${PANEL_ID} button{cursor:pointer}
@@ -8888,7 +8934,9 @@ Image elapsed: ${formatDuration(imageElapsed)} — Completed: ${imageCompleted}/
       <div class="tm-log-output" data-role="log-output" hidden></div>
       <div class="tm-status" data-role="status"></div>
       <div class="tm-row"><span class="tm-label">Diagnostics</span><select data-role="diagnostics"><option value="errors">Errors</option><option value="warnings">Warnings</option><option value="debug">Debug</option><option value="verbose">Verbose</option></select><label><input data-role="console-diagnostics" type="checkbox"> console</label><button data-role="test" type="button">Test</button></div>
-      <div class="tm-row"><span class="tm-label">Communication log</span><input data-role="communication-log-name" type="text" readonly aria-label="Current communication log filename" title="Current communication log filename"><button data-role="rename-communication-log" type="button" aria-label="Rename communication log" title="Rename communication log">✎</button><button data-role="duplicate-communication-log" type="button">Duplicate</button><button data-role="reset-communication-log" type="button">Reset log</button></div>
+      <div class="tm-row"><span class="tm-label">Communication log</span></div>
+      <div class="tm-row tm-communication-log-row"><div class="tm-log-name-viewport" data-role="communication-log-name-viewport" role="textbox" aria-readonly="true" aria-label="Current communication log filename" title="Current communication log filename"><span class="tm-log-name-text" data-role="communication-log-name"></span></div><button data-role="rename-communication-log" type="button" aria-label="Rename communication log" title="Rename communication log">✎</button><button data-role="duplicate-communication-log" type="button">Duplicate</button></div>
+      <div class="tm-row"><button data-role="reset-communication-log" type="button">Reset log</button></div>
       <div class="tm-row"><span class="tm-label">Screen on when extracting</span><button class="tm-switch" data-role="screen-on" type="button" role="switch" aria-checked="false" aria-label="Keep screen on while extracting"><span class="tm-switch-thumb"></span></button></div>
       <div class="tm-row"><button data-role="jump" type="button">Jump</button></div>
       <div class="tm-row tm-extract-formats"><button data-role="extract" type="button">Extract</button><label><input data-role="format-jsonl" type="checkbox"> JSONL</label><label><input data-role="format-md" type="checkbox" checked> MD</label></div>
@@ -8929,9 +8977,10 @@ Image elapsed: ${formatDuration(imageElapsed)} — Completed: ${imageCompleted}/
     });
     panel.querySelector('[data-role="test"]').addEventListener('click', event => openTestMatrix(event.currentTarget));
     panel.querySelector('[data-role="jump"]').addEventListener('click', () => void runJump());
-    const communicationLogNameInput = panel.querySelector('[data-role="communication-log-name"]');
+    const communicationLogNameViewport = panel.querySelector('[data-role="communication-log-name-viewport"]');
     const renameCommunicationLogButton = panel.querySelector('[data-role="rename-communication-log"]');
     const duplicateCommunicationLogButton = panel.querySelector('[data-role="duplicate-communication-log"]');
+    communicationLogNameViewport?.addEventListener('pointerenter', refreshCommunicationLogNameOverflow);
     renameCommunicationLogButton?.addEventListener('click', () => {
       if (renameCommunicationLogButton.disabled || !communicationLogFileName) return;
       const requestedName = window.prompt('Rename communication log', communicationLogFileName);
