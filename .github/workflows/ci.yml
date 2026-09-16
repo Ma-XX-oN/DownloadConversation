@@ -23,7 +23,7 @@ jobs:
       - name: Live tail consistency regression
         run: node --test tests/tail-consistency.test.mjs tests/stream-tail-recovery.test.mjs tests/stock-network-diagnostics.test.mjs tests/disk-communication-recorder.test.mjs tests/directory-picker-gesture.test.mjs
       - name: Communication log file controls regression
-        run: node --test tests/communication-log-file-controls.test.mjs
+        run: node --test tests/communication-log-file-controls.test.mjs tests/communication-log-layout-contract.test.mjs
       - name: Console lifecycle and provenance controls
         run: node --test tests/console-diagnostics.test.mjs
       - name: Canonical final-render regressions
