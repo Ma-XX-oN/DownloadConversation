@@ -20,6 +20,8 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: 22
+      - name: Normalize patch literal quoting
+        run: python -c 'from pathlib import Path; p=Path(".github/issue134_followup_apply.py"); s=p.read_text(); p.write_text(s.replace(chr(92)*2+chr(34), chr(92)+chr(34)))'
       - name: Apply Issue 134 follow-up
         run: python .github/issue134_followup_apply.py
       - name: Focused Issue 134 regression
