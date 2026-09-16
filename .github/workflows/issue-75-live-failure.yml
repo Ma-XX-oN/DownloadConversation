@@ -26,6 +26,18 @@ jobs:
           python-version: '3.13'
       - name: Apply correction
         run: python scripts/issue-75-live-failure.py
+      - name: Complete Jump run harness
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+          path = Path('tests/jump-materialization.test.mjs')
+          text = path.read_text(encoding='utf-8')
+          needle = "      currentConversationId: () => 'conversation-id',\n"
+          replacement = needle + "      markLiveTailHistoricalNavigation() {},\n"
+          if text.count(needle) != 1:
+            raise SystemExit('runJump harness insertion point missing or ambiguous')
+          path.write_text(text.replace(needle, replacement, 1), encoding='utf-8')
+          PY
       - name: Production JSDoc coverage
         run: node scripts/check-jsdoc.mjs
       - name: JavaScript syntax
