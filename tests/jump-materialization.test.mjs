@@ -1,11 +1,7 @@
 import assert from 'node:assert/strict';
-import { readFile } from 'node:fs/promises';
 import test from 'node:test';
 import vm from 'node:vm';
-
-const userscript = await readFile(
-  new URL('../chatgpt-conversation-markdown-export.user.js', import.meta.url),
-  'utf8');
+import { userscript } from './helpers/userscript-source.mjs';
 
 function jumpProductionSource() {
   const start = userscript.indexOf('function jumpTocIndexControl(');
