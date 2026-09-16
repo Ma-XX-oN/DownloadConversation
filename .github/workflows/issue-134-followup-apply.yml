@@ -6,6 +6,7 @@ on:
       - issue-134-communication-log-file-controls
     paths:
       - .github/workflows/issue-134-followup-apply.yml
+      - .github/issue134_followup_apply.py
 
 permissions:
   contents: write
