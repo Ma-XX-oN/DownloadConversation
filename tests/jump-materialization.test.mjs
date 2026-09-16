@@ -209,36 +209,51 @@ test('Jump accepts the requested message itself after a later virtualized extent
     'The requested message itself must be sufficient; a TOC control is not required.');
 });
 
-test('numeric Jump inputs start navigation without waiting for a Conversation API snapshot', async () => {
+test('numeric Jump primes safe navigation before Conversation API resolution completes', async () => {
   for (const requested of ['0', '174', '-1', '-2']) {
-    let numericRequest = null;
-    let fetchCount = 0;
-    const diagnostics = [];
+    const order = [];
+    let resolveFetch = null;
+    const fetchPromise = new Promise(resolve => { resolveFetch = resolve; });
     const context = vm.createContext({
       exportInProgress: false,
       testInProgress: false,
       jumpInProgress: false,
       window: { prompt: () => requested },
       currentConversationId: () => 'conversation-id',
+      markLiveTailHistoricalNavigation() {},
+      assert: (condition, message) => {
+        if (!condition) throw new Error(message);
+      },
       updateUi() {},
       setStatus() {},
       boundedDiagnosticText: value => String(value),
       errorMessage: error => error instanceof Error ? error.message : String(error),
-      logDiagnostic: (level, event, details) => diagnostics.push({ level, event, details }),
-      jumpToNumericUap: async value => { numericRequest = value; },
+      logDiagnostic() {},
+      primeNumericJumpMaterialization: value => { order.push(`prime:${value}`); },
       fetchConversationPages: async () => {
-        fetchCount += 1;
-        throw new Error('Conversation API must not be required for numeric Jump.');
+        order.push('fetch-start');
+        return fetchPromise;
       },
       conversationSpineFromPages: () => ({ records: [] }),
-      resolveJumpIdentifier: () => { throw new Error('numeric resolver should not use API spine'); },
-      jumpToResolvedTarget: async () => { throw new Error('numeric resolver should use direct numeric navigation'); }
+      resolveJumpIdentifier: () => ({
+        uap_index: Number(requested) >= 0 ? Number(requested) : 3,
+        role: 'user',
+        message_id: 'target-message'
+      }),
+      jumpToResolvedTarget: async () => { order.push('resolved-jump'); }
     });
     vm.runInContext(productionFunctionSource('runJump'), context);
 
-    await context.runJump();
+    const operation = context.runJump();
+    await Promise.resolve();
 
-    assert.equal(numericRequest, Number(requested), `Numeric Jump ${requested} did not use direct numeric navigation.`);
-    assert.equal(fetchCount, 0, `Numeric Jump ${requested} waited for the Conversation API.`);
+    assert.equal(order[0], `prime:${Number(requested)}`,
+      `Numeric Jump ${requested} did not prime navigation before API resolution.`);
+    assert.equal(order[1], 'fetch-start',
+      `Numeric Jump ${requested} did not start API resolution after priming navigation.`);
+
+    resolveFetch({ pages: [] });
+    await operation;
+    assert.equal(order.at(-1), 'resolved-jump');
   }
 });

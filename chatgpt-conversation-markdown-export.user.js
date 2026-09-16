@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         ChatGPT Conversation Markdown Recorder
 // @namespace    https://chatgpt.com/
-// @version      1.2.0-issue.75.1
+// @version      1.2.0-issue.75.2
 // @description  Exports the current ChatGPT conversation directly from the Conversation API as Markdown or JSONL.
 // @match        https://chatgpt.com/*
 // @match        https://chat.openai.com/*
@@ -6765,11 +6765,63 @@ Image elapsed: ${formatDuration(imageElapsed)} — Completed: ${imageCompleted}/
   }
 
   /**
+   * Starts a directionally safe numeric Jump movement before API target resolution finishes.
+   *
+   * Zero always points toward the oldest boundary and negative indices always point toward
+   * the newest boundary. Positive indices move only when the currently mounted stock TOC
+   * range proves which direction contains the requested index.
+   *
+   * @param {number} requestedIndex - Signed numeric UAP index entered by the user.
+   * @returns {void} No value is returned.
+   */
+  function primeNumericJumpMaterialization(requestedIndex) {
+    if (!Number.isSafeInteger(requestedIndex)) return;
+    const scrollRoot = conversationScrollRoot();
+    let direction = null;
+
+    if (requestedIndex === 0) {
+      direction = 'older';
+    } else if (requestedIndex < 0) {
+      direction = 'newer';
+    } else {
+      const mountedIndices = [...document.querySelectorAll('button[data-toc-item-index]')]
+        .map(button => Number(button.getAttribute('data-toc-item-index')))
+        .filter(index => Number.isSafeInteger(index) && index >= 0);
+      if (mountedIndices.length > 0) {
+        const minimum = Math.min(...mountedIndices);
+        const maximum = Math.max(...mountedIndices);
+        if (requestedIndex < minimum) direction = 'older';
+        else if (requestedIndex > maximum) direction = 'newer';
+      }
+    }
+
+    if (direction === 'older') {
+      scrollRoot.scrollTo({ top: 0, behavior: 'auto' });
+    } else if (direction === 'newer') {
+      scrollRoot.scrollTo({
+        top: Math.max(0, scrollRoot.scrollHeight - scrollRoot.clientHeight),
+        behavior: 'auto'
+      });
+    } else {
+      return;
+    }
+
+    logDiagnostic('debug', 'conversation-jump-numeric-prime', {
+      requested_index: requestedIndex,
+      direction,
+      scroll_top: scrollRoot.scrollTop,
+      scroll_height: scrollRoot.scrollHeight,
+      client_height: scrollRoot.clientHeight
+    });
+  }
+
+  /**
    * Progressively materializes a resolved Jump target or its optional stock TOC control.
    *
-   * A current scroll boundary is not considered whole-conversation convergence until the
-   * viewport and virtualized extent remain unchanged across repeated settle observations.
-   * The requested message itself is checked before the TOC after every navigation settle.
+   * UAP 0 is a special oldest-boundary traversal. ChatGPT prepends older material while
+   * preserving the visual anchor, which can move scrollTop forward even though Jump just
+   * reached the top. Re-pinning the top until the target/control appears prevents that
+   * anchoring from being misread as forward traversal toward the newest boundary.
    *
    * @param {Object} target - Resolved Jump target containing UAP index, role, and message id.
    * @param {number} timeoutMs - Maximum traversal time in milliseconds.
@@ -6779,7 +6831,7 @@ Image elapsed: ${formatDuration(imageElapsed)} — Completed: ${imageCompleted}/
     const uapIndex = target?.uap_index;
     assert(Number.isInteger(uapIndex) && uapIndex >= 0, 'Jump target has no valid UAP index.');
 
-    let section = mountedTurnSection(target.message_id, target.role);
+    let section = target?.message_id ? mountedTurnSection(target.message_id, target.role) : null;
     if (section instanceof HTMLElement) return null;
     let toc = jumpTocIndexControl(uapIndex);
     if (toc instanceof HTMLElement) return toc;
@@ -6787,7 +6839,8 @@ Image elapsed: ${formatDuration(imageElapsed)} — Completed: ${imageCompleted}/
     const scrollRoot = conversationScrollRoot();
     const originalScrollTop = scrollRoot.scrollTop;
     const deadline = performance.now() + timeoutMs;
-    const stableBoundaryObservationLimit = 20;
+    const seeksOldestBoundary = uapIndex === 0;
+    const stableBoundaryObservationLimit = seeksOldestBoundary ? 60 : 20;
     let stableBoundaryObservations = 0;
     let steps = 0;
 
@@ -6798,13 +6851,14 @@ Image elapsed: ${formatDuration(imageElapsed)} — Completed: ${imageCompleted}/
      * @returns {HTMLElement|null} The available TOC control, or null when none is present.
      */
     const complete = reason => {
-      section = mountedTurnSection(target.message_id, target.role);
+      section = target?.message_id ? mountedTurnSection(target.message_id, target.role) : null;
       toc = jumpTocIndexControl(uapIndex);
       logDiagnostic('debug', 'conversation-jump-toc-autopopulate-complete', {
-        message_id: target.message_id,
-        role: target.role,
+        message_id: target?.message_id ?? null,
+        role: target?.role ?? null,
         uap_index: uapIndex,
         reason,
+        boundary: seeksOldestBoundary ? 'top' : 'bottom',
         target_mounted: section instanceof HTMLElement,
         found: toc instanceof HTMLElement,
         steps,
@@ -6817,25 +6871,26 @@ Image elapsed: ${formatDuration(imageElapsed)} — Completed: ${imageCompleted}/
     };
 
     logDiagnostic('debug', 'conversation-jump-toc-autopopulate-start', {
-      message_id: target.message_id,
-      role: target.role,
+      message_id: target?.message_id ?? null,
+      role: target?.role ?? null,
       uap_index: uapIndex,
       original_scroll_top: originalScrollTop,
       scroll_height: scrollRoot.scrollHeight,
       client_height: scrollRoot.clientHeight,
+      boundary: seeksOldestBoundary ? 'top' : 'bottom',
       stable_boundary_observation_limit: stableBoundaryObservationLimit
     });
 
     scrollRoot.scrollTo({ top: 0, behavior: 'auto' });
     await new Promise(resolve => setTimeout(resolve, 100));
     steps += 1;
-    section = mountedTurnSection(target.message_id, target.role);
+    section = target?.message_id ? mountedTurnSection(target.message_id, target.role) : null;
     if (section instanceof HTMLElement) return complete('target-mounted-after-top');
     toc = jumpTocIndexControl(uapIndex);
     if (toc instanceof HTMLElement) return complete('toc-found-after-top');
 
     while (performance.now() < deadline) {
-      section = mountedTurnSection(target.message_id, target.role);
+      section = target?.message_id ? mountedTurnSection(target.message_id, target.role) : null;
       if (section instanceof HTMLElement) return complete('target-mounted-before-step');
       toc = jumpTocIndexControl(uapIndex);
       if (toc instanceof HTMLElement) return complete('toc-found-before-step');
@@ -6844,9 +6899,13 @@ Image elapsed: ${formatDuration(imageElapsed)} — Completed: ${imageCompleted}/
       const beforeScrollHeight = scrollRoot.scrollHeight;
       const beforeClientHeight = scrollRoot.clientHeight;
       const beforeMaxScrollTop = Math.max(0, beforeScrollHeight - beforeClientHeight);
-      const atBoundaryBefore = beforeScrollTop >= beforeMaxScrollTop - 2;
+      const atBoundaryBefore = seeksOldestBoundary
+        ? beforeScrollTop <= 2
+        : beforeScrollTop >= beforeMaxScrollTop - 2;
 
-      if (!atBoundaryBefore) {
+      if (seeksOldestBoundary) {
+        scrollRoot.scrollTo({ top: 0, behavior: 'auto' });
+      } else if (!atBoundaryBefore) {
         scrollRoot.scrollBy({
           top: Math.max(100, Math.floor(scrollRoot.clientHeight * 0.5)),
           behavior: 'auto'
@@ -6856,7 +6915,7 @@ Image elapsed: ${formatDuration(imageElapsed)} — Completed: ${imageCompleted}/
       await new Promise(resolve => setTimeout(resolve, 100));
       steps += 1;
 
-      section = mountedTurnSection(target.message_id, target.role);
+      section = target?.message_id ? mountedTurnSection(target.message_id, target.role) : null;
       if (section instanceof HTMLElement) return complete('target-mounted-after-settle');
       toc = jumpTocIndexControl(uapIndex);
       if (toc instanceof HTMLElement) return complete('toc-found-after-settle');
@@ -6865,7 +6924,9 @@ Image elapsed: ${formatDuration(imageElapsed)} — Completed: ${imageCompleted}/
       const afterScrollHeight = scrollRoot.scrollHeight;
       const afterClientHeight = scrollRoot.clientHeight;
       const afterMaxScrollTop = Math.max(0, afterScrollHeight - afterClientHeight);
-      const atBoundaryAfter = afterScrollTop >= afterMaxScrollTop - 2;
+      const atBoundaryAfter = seeksOldestBoundary
+        ? afterScrollTop <= 2
+        : afterScrollTop >= afterMaxScrollTop - 2;
       const stableObservation =
         Math.abs(afterScrollTop - beforeScrollTop) < 1 &&
         Math.abs(afterScrollHeight - beforeScrollHeight) < 1 &&
@@ -6876,10 +6937,11 @@ Image elapsed: ${formatDuration(imageElapsed)} — Completed: ${imageCompleted}/
 
       if (steps % 20 === 0 || stableBoundaryObservations > 0) {
         logDiagnostic('debug', 'conversation-jump-toc-autopopulate-progress', {
-          message_id: target.message_id,
-          role: target.role,
+          message_id: target?.message_id ?? null,
+          role: target?.role ?? null,
           uap_index: uapIndex,
           steps,
+          boundary: seeksOldestBoundary ? 'top' : 'bottom',
           scroll_top: afterScrollTop,
           scroll_height: afterScrollHeight,
           client_height: afterClientHeight,
@@ -6893,7 +6955,7 @@ Image elapsed: ${formatDuration(imageElapsed)} — Completed: ${imageCompleted}/
       if (stableBoundaryObservations >= stableBoundaryObservationLimit) break;
     }
 
-    section = mountedTurnSection(target.message_id, target.role);
+    section = target?.message_id ? mountedTurnSection(target.message_id, target.role) : null;
     if (section instanceof HTMLElement) return complete('target-mounted-final-check');
     toc = jumpTocIndexControl(uapIndex);
     if (toc instanceof HTMLElement) return complete('toc-found-final-check');
@@ -7027,6 +7089,10 @@ Image elapsed: ${formatDuration(imageElapsed)} — Completed: ${imageCompleted}/
     updateUi();
     let resolvedTarget = null;
     try {
+      if (/^-?\d+$/.test(identifier)) {
+        const requestedIndex = Number(identifier);
+        if (Number.isSafeInteger(requestedIndex)) primeNumericJumpMaterialization(requestedIndex);
+      }
       setStatus('Resolving Jump target…');
       const fetched = await fetchConversationPages(conversationId);
       const spine = conversationSpineFromPages(fetched.pages);
