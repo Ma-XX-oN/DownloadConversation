@@ -20,14 +20,24 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: 22
-      - name: Normalize patch literal quoting
-        run: python -c 'from pathlib import Path; p=Path(".github/issue134_followup_apply.py"); s=p.read_text(); p.write_text(s.replace(chr(92)*2+chr(34), chr(92)+chr(34)))'
       - name: Apply Issue 134 follow-up
         run: python .github/issue134_followup_apply.py
-      - name: Focused Issue 134 regression
-        run: node --test tests/communication-log-file-controls.test.mjs
-      - name: Communication recorder regressions
-        run: node --test tests/disk-communication-recorder.test.mjs tests/recorder-panel-ui.test.mjs
+      - name: Focused Issue 134 regressions
+        run: node --test tests/communication-log-file-controls.test.mjs tests/communication-log-layout-contract.test.mjs
+      - name: Disk communication recorder regression
+        run: node --test tests/disk-communication-recorder.test.mjs
+      - name: Recorder panel UI regression
+        run: node --test tests/recorder-panel-ui.test.mjs
+      - name: Tail consistency regression
+        run: node --test tests/tail-consistency.test.mjs
+      - name: Stream tail recovery regression
+        run: node --test tests/stream-tail-recovery.test.mjs
+      - name: Stock network diagnostics regression
+        run: node --test tests/stock-network-diagnostics.test.mjs
+      - name: Directory picker gesture regression
+        run: node --test tests/directory-picker-gesture.test.mjs
+      - name: Directory picker JSDoc regression
+        run: node tests/directory-picker-gesture-jdoc.test.mjs
       - name: Production JSDoc coverage
         run: node scripts/check-jsdoc.mjs
       - name: JavaScript syntax
@@ -41,5 +51,5 @@ jobs:
           git config user.name 'github-actions[bot]'
           git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
           git add chatgpt-conversation-markdown-export.user.js DESIGN.md
-          git commit -m 'fix: finish Issue 134 live feedback'
+          git commit -m 'fix(#134): complete communication log controls follow-up'
           git push origin HEAD:issue-134-communication-log-file-controls
