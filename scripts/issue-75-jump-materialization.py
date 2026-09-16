@@ -38,6 +38,12 @@ new_populate = r'''  /**
     let stableBoundaryObservations = 0;
     let steps = 0;
 
+    /**
+     * Logs and returns the current materialization outcome at one terminal observation.
+     *
+     * @param {string} reason - Stable diagnostic reason for ending traversal.
+     * @returns {HTMLElement|null} The available TOC control, or null when none is present.
+     */
     const complete = reason => {
       section = mountedTurnSection(target.message_id, target.role);
       toc = jumpTocIndexControl(uapIndex);
