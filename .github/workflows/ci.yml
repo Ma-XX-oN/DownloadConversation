@@ -186,19 +186,11 @@ jobs:
           PHASE7_AIGM_ROOT: ${{ github.workspace }}/.phase7-aigm
           PHASE7_AIGM_CORE_ROOT: ${{ github.workspace }}/.phase7-aigm-core
         run: node tests/phase7-cross-consumer-adversarial.mjs
-      - name: Remove temporary carriers and obsolete patch script
+      - name: Prepare verified non-workflow commit
         run: |
-          rm -f .github/workflows/issue-134-followup.yml
+          rm -rf .phase7-*
           rm -f scripts/issue-134-dry-cleanup.py scripts/issue-134-dry-cleanup-wrapper.py scripts/format-launcher-v156.py
-          python - <<'PY'
-          from pathlib import Path
-          path = Path('.github/workflows/ci.yml')
-          text = path.read_text(encoding='utf-8')
-          marker = '\n  issue-134-dry-cleanup:\n'
-          if text.count(marker) != 1:
-            raise SystemExit(f'expected one temporary cleanup job, found {text.count(marker)}')
-          path.write_text(text.split(marker, 1)[0].rstrip() + '\n', encoding='utf-8')
-          PY
+          git checkout HEAD -- .github/workflows/ci.yml .github/workflows/issue-134-followup.yml
       - name: Commit verified cleanup
         run: |
           git config user.name "github-actions[bot]"
