@@ -93,3 +93,40 @@ jobs:
           PHASE7_AIGM_ROOT: ${{ github.workspace }}/.phase7-aigm
           PHASE7_AIGM_CORE_ROOT: ${{ github.workspace }}/.phase7-aigm-core
         run: node tests/phase7-cross-consumer-adversarial.mjs
+
+  issue-134-layout-fix:
+    if: github.ref == 'refs/heads/issue-134-communication-log-file-controls'
+    permissions:
+      contents: write
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.13'
+      - name: Apply layout correction
+        run: python scripts/issue-134-layout-fix.py
+      - name: Production JSDoc coverage on candidate
+        run: node scripts/check-jsdoc.mjs
+      - name: JavaScript syntax on candidate
+        run: node --check chatgpt-conversation-markdown-export.user.js
+      - name: Communication log controls on candidate
+        run: node --test tests/communication-log-file-controls.test.mjs tests/communication-log-layout-contract.test.mjs tests/dry-contract.test.mjs
+      - name: Disk recorder regression on candidate
+        run: node --test tests/disk-communication-recorder.test.mjs
+      - name: Recorder panel regression on candidate
+        run: node --test tests/recorder-panel-ui.test.mjs tests/modal-focus-retention.test.mjs tests/heading-metadata-controls.test.mjs
+      - name: Commit verified production correction
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add chatgpt-conversation-markdown-export.user.js
+          git diff --cached --check
+          git diff --cached --quiet && { echo "No production diff produced"; exit 1; }
+          git commit -m "fix(#134): keep log file actions on one row"
+          git push origin HEAD:issue-134-communication-log-file-controls
