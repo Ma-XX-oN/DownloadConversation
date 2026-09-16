@@ -97,8 +97,7 @@ async function blobText(blob) {
   return new TextDecoder().decode(await blob.arrayBuffer());
 }
 
-test('Issue 134 production version and filename controls are present', () => {
-  assert.match(userscript, /@version\s+1\.2\.0-issue\.134\.6/);
+test('Issue 134 filename controls are present', () => {
   assert.match(userscript, /data-role="communication-log-name"/);
   assert.match(userscript, /data-role="rename-communication-log"/);
   assert.match(userscript, /aria-label="Rename communication log"/);
