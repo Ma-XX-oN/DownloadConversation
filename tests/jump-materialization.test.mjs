@@ -25,6 +25,12 @@ function makeHarness({ onScroll = null, onSettle = null, tocForSelector = null }
     scrollIntoView(options) {
       this.scrollCalls.push(options);
     }
+
+    getAttribute(name) {
+      if (name === 'data-turn') return this.name === 'target' ? 'user' : null;
+      if (name === 'data-turn-id') return this.name === 'target' ? 'fake-turn-id' : null;
+      return null;
+    }
   }
 
   const targetSection = new FakeElement('target');
