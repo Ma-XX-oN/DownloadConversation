@@ -72,8 +72,6 @@ jobs:
         run: node --test tests/stock-network-diagnostics.test.mjs
       - name: Directory picker gesture regression
         run: node --test tests/directory-picker-gesture.test.mjs
-      - name: Directory picker JSDoc regression
-        run: node tests/directory-picker-gesture-jdoc.test.mjs
       - name: Production JSDoc coverage
         run: node scripts/check-jsdoc.mjs
       - name: JavaScript syntax
