@@ -1,0 +1,43 @@
+name: Issue 134 patch
+
+on:
+  push:
+    branches:
+      - issue-134-communication-log-file-controls
+    paths:
+      - scripts/apply-issue-134.py
+      - .github/workflows/issue-134-patch.yml
+
+permissions:
+  contents: write
+
+jobs:
+  patch:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.13'
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - name: Compile patch driver
+        run: python -m py_compile scripts/apply-issue-134.py
+      - name: Dry-run exact patch
+        run: python scripts/apply-issue-134.py --dry-run
+      - name: Apply exact patch
+        run: python scripts/apply-issue-134.py --apply
+      - name: JavaScript syntax
+        run: node --check chatgpt-conversation-markdown-export.user.js
+      - name: Issue 134 focused regression
+        run: node --test tests/communication-log-file-controls.test.mjs
+      - name: Diff check
+        run: git diff --check
+      - name: Commit production patch
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add chatgpt-conversation-markdown-export.user.js tests/communication-log-file-controls.test.mjs
+          git commit -m "feat: add communication log file controls (#134)"
+          git push
