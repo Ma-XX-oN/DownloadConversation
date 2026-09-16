@@ -28,14 +28,18 @@ jobs:
           status=$?
           echo "$status" > issue134-apply-status.txt
           exit "$status"
-      - name: Preserve apply diagnostic
+      - name: Preserve candidate and apply diagnostic
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: issue134-apply-diagnostic
+          name: issue134-followup-candidate
           path: |
             issue134-apply-error.txt
             issue134-apply-status.txt
+            chatgpt-conversation-markdown-export.user.js
+            DESIGN.md
+            tests/communication-log-file-controls.test.mjs
+            tests/communication-log-layout-contract.test.mjs
           if-no-files-found: error
       - name: Issue 134 functional regression
         run: node --test tests/communication-log-file-controls.test.mjs
