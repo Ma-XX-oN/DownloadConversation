@@ -93,3 +93,118 @@ jobs:
           PHASE7_AIGM_ROOT: ${{ github.workspace }}/.phase7-aigm
           PHASE7_AIGM_CORE_ROOT: ${{ github.workspace }}/.phase7-aigm-core
         run: node tests/phase7-cross-consumer-adversarial.mjs
+
+  issue-134-dry-cleanup:
+    if: github.ref == 'refs/heads/issue-134-communication-log-file-controls'
+    permissions:
+      contents: write
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.13'
+      - name: Apply DRY cleanup
+        run: python scripts/issue-134-dry-cleanup-wrapper.py
+      - name: Verify production block markers survived refactor
+        run: |
+          grep -F "// BEGIN Issue #123 stock network diagnostics" chatgpt-conversation-markdown-export.user.js
+          grep -F "// END Issue #123 stock network diagnostics" chatgpt-conversation-markdown-export.user.js
+          grep -F "// BEGIN Issue #123 disk communication recorder" chatgpt-conversation-markdown-export.user.js
+          grep -F "// END Issue #123 disk communication recorder" chatgpt-conversation-markdown-export.user.js
+      - name: Production JSDoc coverage on transformed tree
+        run: node scripts/check-jsdoc.mjs
+      - name: JavaScript syntax on transformed tree
+        run: node --check chatgpt-conversation-markdown-export.user.js
+      - name: Version identity regression on transformed tree
+        run: node --test tests/version-identity.test.mjs
+      - name: Single-snapshot export regression on transformed tree
+        run: node --test tests/export-single-snapshot.test.mjs
+      - name: Communication log and DRY regressions on transformed tree
+        run: node --test tests/communication-log-file-controls.test.mjs tests/communication-log-layout-contract.test.mjs tests/dry-contract.test.mjs
+      - name: Tail consistency regression on transformed tree
+        run: node --test tests/tail-consistency.test.mjs
+      - name: Stream tail recovery regression on transformed tree
+        run: node --test tests/stream-tail-recovery.test.mjs
+      - name: Stock network diagnostics regression on transformed tree
+        run: node --test tests/stock-network-diagnostics.test.mjs
+      - name: Disk communication recorder regression on transformed tree
+        run: node --test tests/disk-communication-recorder.test.mjs
+      - name: Directory picker gesture regression on transformed tree
+        run: node --test tests/directory-picker-gesture.test.mjs
+      - name: Console lifecycle and provenance controls on transformed tree
+        run: node --test tests/console-diagnostics.test.mjs
+      - name: Canonical final-render regressions on transformed tree
+        run: node --test tests/core-integration.test.mjs tests/phase5-rich-core-integration.test.mjs tests/fallback-adaptive-fence.test.mjs tests/tool-language-diagnostics.test.mjs tests/sediment-resolver.test.mjs
+      - name: Built-in test list UI regression on transformed tree
+        run: node --test tests/test-list-ui.test.mjs
+      - name: Recorder panel UI regression on transformed tree
+        run: node --test tests/recorder-panel-ui.test.mjs tests/modal-focus-retention.test.mjs tests/heading-metadata-controls.test.mjs
+      - name: Check out pinned DownloadConversation AIConversationCore for transformed parity
+        uses: actions/checkout@v4
+        with:
+          repository: Ma-XX-oN/AIConversationCore
+          ref: cf34d9374f51ac525acfb90cfd6b247006a7bf6e
+          path: .phase7-core
+      - name: Check out pinned AI-General-Memory for transformed parity
+        uses: actions/checkout@v4
+        with:
+          repository: Ma-XX-oN/AI-General-Memory
+          ref: b2cc257cb586bd944ebca352e316780841217cc1
+          path: .phase7-aigm
+      - name: Check out pinned AI-transcript AIConversationCore for transformed parity
+        uses: actions/checkout@v4
+        with:
+          repository: Ma-XX-oN/AIConversationCore
+          ref: 4b1bebe6fd7d82d8bbb15f4ad5c1a59cfd03132a
+          path: .phase7-aigm-core
+      - name: Install transformed parity dependencies
+        working-directory: .phase7-core
+        run: npm ci
+      - name: Install transformed AI-transcript presentation dependencies
+        run: python -m pip install colorama regex
+      - name: Mixed rich final-render parity on transformed tree
+        env:
+          PHASE7_CORE_ROOT: ${{ github.workspace }}/.phase7-core
+          PHASE7_AIGM_ROOT: ${{ github.workspace }}/.phase7-aigm
+          PHASE7_AIGM_CORE_ROOT: ${{ github.workspace }}/.phase7-aigm-core
+        run: node tests/phase7-cross-consumer-parity.mjs
+      - name: Markdown-shape and multi-exchange parity on transformed tree
+        env:
+          PHASE7_CORE_ROOT: ${{ github.workspace }}/.phase7-core
+          PHASE7_AIGM_ROOT: ${{ github.workspace }}/.phase7-aigm
+          PHASE7_AIGM_CORE_ROOT: ${{ github.workspace }}/.phase7-aigm-core
+        run: node tests/phase7-cross-consumer-markdown-shape.mjs
+      - name: Adversarial containment and normalization parity on transformed tree
+        env:
+          PHASE7_CORE_ROOT: ${{ github.workspace }}/.phase7-core
+          PHASE7_AIGM_ROOT: ${{ github.workspace }}/.phase7-aigm
+          PHASE7_AIGM_CORE_ROOT: ${{ github.workspace }}/.phase7-aigm-core
+        run: node tests/phase7-cross-consumer-adversarial.mjs
+      - name: Remove temporary carriers and obsolete patch script
+        run: |
+          rm -f .github/workflows/issue-134-followup.yml
+          rm -f scripts/issue-134-dry-cleanup.py scripts/issue-134-dry-cleanup-wrapper.py scripts/format-launcher-v156.py
+          python - <<'PY'
+          from pathlib import Path
+          path = Path('.github/workflows/ci.yml')
+          text = path.read_text(encoding='utf-8')
+          marker = '\n  issue-134-dry-cleanup:\n'
+          if text.count(marker) != 1:
+            raise SystemExit(f'expected one temporary cleanup job, found {text.count(marker)}')
+          path.write_text(text.split(marker, 1)[0].rstrip() + '\n', encoding='utf-8')
+          PY
+      - name: Commit verified cleanup
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add -A
+          git diff --cached --check
+          git diff --cached --quiet && { echo "No cleanup diff produced"; exit 1; }
+          git commit -m "refactor(#134): consolidate recorder and test helpers"
+          git push origin HEAD:issue-134-communication-log-file-controls
