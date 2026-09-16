@@ -13,6 +13,7 @@ function soundHarness(enabled = true) {
     const AGENT_SOUND_TERMINAL_KEY_LIMIT = 128;
     const agentSoundTerminalKeys = new Set();
     function playAgentSound(kind) { this.emitted.push(kind); }
+    function agentSoundHandleUserGesture() {}
     ${productionFunctionSource('agentSoundTerminalKey')}
     ${productionFunctionSource('agentSoundRememberTerminalKey')}
     ${productionFunctionSource('agentSoundClassifyTerminal')}
