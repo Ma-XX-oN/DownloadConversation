@@ -1,33 +1,8 @@
+import { diskBlock, diskFunctionSource, diskHarnessSource, userscript } from './helpers/userscript-source.mjs';
 import './communication-log-reset.test.mjs';
 import assert from 'node:assert/strict';
-import { readFile } from 'node:fs/promises';
 import test from 'node:test';
 import vm from 'node:vm';
-
-const userscript = await readFile(
-  new URL('../chatgpt-conversation-markdown-export.user.js', import.meta.url),
-  'utf8'
-);
-
-function diskBlock() {
-  const start = userscript.indexOf('  // BEGIN Issue #123 disk communication recorder');
-  const endMarker = '  // END Issue #123 disk communication recorder';
-  const end = userscript.indexOf(endMarker, start);
-  assert.ok(start >= 0 && end > start,
-    'Issue #123 disk communication recorder production block is missing.');
-  return userscript.slice(start, end + endMarker.length);
-}
-
-function functionBlock(name) {
-  const block = diskBlock();
-  const start = block.indexOf(`  function ${name}(`);
-  const asyncStart = block.indexOf(`  async function ${name}(`);
-  const actualStart = start >= 0 ? start : asyncStart;
-  assert.ok(actualStart >= 0, `${name} production function is missing.`);
-  const next = block.indexOf('\n  /**', actualStart + 3);
-  assert.ok(next > actualStart, `${name} production function boundary is missing.`);
-  return block.slice(actualStart, next);
-}
 
 function apiFetchBlock() {
   const start = userscript.indexOf('  async function apiFetch(url)');
@@ -40,7 +15,7 @@ function apiFetchBlock() {
 function redactionHarness() {
   const context = {};
   vm.runInNewContext(
-    `${diskBlock()}\nthis.__redaction = {communicationLogCreateRedactionState, communicationLogRedactStreamFeed};`,
+    `${diskHarnessSource()}\nthis.__redaction = {communicationLogCreateRedactionState, communicationLogRedactStreamFeed};`,
     context
   );
   return context.__redaction;
@@ -55,7 +30,7 @@ function bodyPolicyHarness() {
     }
   };
   vm.runInNewContext(
-    `${diskBlock()}\nthis.__bodyPolicy = {communicationLogShouldCaptureBody};`,
+    `${diskHarnessSource()}\nthis.__bodyPolicy = {communicationLogShouldCaptureBody};`,
     context
   );
   return context.__bodyPolicy;
@@ -104,7 +79,7 @@ test('normal recording keeps one writable open instead of committing every JSONL
   assert.match(block, /let communicationLogWritable = null/);
   assert.match(block, /communicationLogOpenWriter/);
   assert.match(block, /communicationLogWritable\.write\(/);
-  const appendLine = functionBlock('communicationLogAppendLine');
+  const appendLine = diskFunctionSource('communicationLogAppendLine');
   assert.doesNotMatch(appendLine, /\.close\(/,
     'Per-record append must not close/commit the long-lived writable.');
   assert.match(block, /communicationLogWriteChain/,
@@ -115,7 +90,7 @@ test('long-lived writer checkpoints every 30 seconds and reopens lazily', () => 
   const block = diskBlock();
   assert.match(block, /COMMUNICATION_LOG_CHECKPOINT_MS\s*=\s*30\s*\*\s*1000/);
   assert.match(block, /setInterval\([^\n]*communicationLogCheckpoint/);
-  const checkpoint = functionBlock('communicationLogCheckpoint');
+  const checkpoint = diskFunctionSource('communicationLogCheckpoint');
   assert.match(checkpoint, /communicationLogWritable\.close\(\)/);
   assert.match(checkpoint, /communicationLogWritable\s*=\s*null/);
   assert.doesNotMatch(checkpoint, /createWritable\(/,
@@ -128,7 +103,7 @@ test('page lifecycle and completed generation-stream response trigger checkpoint
   const block = diskBlock();
   assert.match(block, /visibilityState\s*===\s*['"]hidden['"][\s\S]{0,400}communicationLogCheckpoint/);
   assert.match(block, /pagehide[\s\S]{0,400}communicationLogCheckpoint/);
-  const fetchResponse = functionBlock('communicationLogFetchResponse');
+  const fetchResponse = diskFunctionSource('communicationLogFetchResponse');
   assert.match(fetchResponse, /\/backend-api\/f\/conversation/);
   assert.match(fetchResponse, /communicationLogCheckpoint\(['"]generation-response-complete['"]\)/);
 });
@@ -143,12 +118,12 @@ test('startup recovers compatible Chromium crswap candidates before normal recor
     'Recovery must enumerate sibling directory entries.');
   assert.match(block, /lastModified/,
     'Compatible candidates of equal recoverable length need deterministic newest selection.');
-  const activate = functionBlock('communicationLogActivateDirectory');
+  const activate = diskFunctionSource('communicationLogActivateDirectory');
   assert.match(activate, /await communicationLogRecoverSwapFiles\(/);
 });
 
 test('swap recovery trims only an incomplete final JSONL line and appends only the compatible suffix', () => {
-  const recover = functionBlock('communicationLogRecoverSwapFiles');
+  const recover = diskFunctionSource('communicationLogRecoverSwapFiles');
   assert.match(recover, /lastIndexOf\(['"]\\n['"]\)|lastIndexOf\(.*10/,
     'Recovery needs a last-complete-line boundary.');
   assert.match(recover, /communicationLogBlobsEqual|communicationLogBlobPrefix/,
@@ -160,7 +135,7 @@ test('swap recovery trims only an incomplete final JSONL line and appends only t
 });
 
 test('compatible recovered/stale swap files are removed but incompatible swaps are retained', () => {
-  const recover = functionBlock('communicationLogRecoverSwapFiles');
+  const recover = diskFunctionSource('communicationLogRecoverSwapFiles');
   assert.match(recover, /removeEntry\(/);
   assert.match(recover, /communication-log-swap-incompatible/);
   assert.match(recover, /continue|return/,
@@ -170,8 +145,8 @@ test('compatible recovered/stale swap files are removed but incompatible swaps a
 test('fetch request and response bodies are captured through clones without consuming page objects', () => {
   assert.match(userscript, /communicationLogFetchRequest\(/);
   assert.match(userscript, /communicationLogFetchResponse\(/);
-  assert.match(userscript, /request\.clone\(\)|input\.clone\(\)/);
-  assert.match(userscript, /response\.clone\(\)/);
+  assert.match(userscript, /cloneSafely\(request\)/);
+  assert.match(userscript, /cloneSafely\(response\)/);
   assert.match(userscript, /return response;/);
 });
 
@@ -289,7 +264,7 @@ function issue132StreamBodyHarness() {
     TextDecoder
   };
   vm.runInNewContext(
-    `${diskBlock()}
+    `${diskHarnessSource()}
 this.__issue132Records = [];
 communicationLogRecord = async (type, data) => {
   this.__issue132Records.push({ type, data });
@@ -380,7 +355,7 @@ test('aborted cloned response stream before any bytes reports zero counts withou
 });
 
 test('fetch response reports incomplete body warning and leaves generation checkpoint reachable', () => {
-  const fetchResponse = functionBlock('communicationLogFetchResponse');
+  const fetchResponse = diskFunctionSource('communicationLogFetchResponse');
   assert.match(fetchResponse, /summary\.body_incomplete/);
   assert.match(fetchResponse, /communication-log-response-body-incomplete/);
   assert.match(fetchResponse, /message:\s*summary\.error_message/);

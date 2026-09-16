@@ -1,12 +1,7 @@
+import { userscript } from './helpers/userscript-source.mjs';
 import assert from 'node:assert/strict';
-import { readFile } from 'node:fs/promises';
 import test from 'node:test';
 import vm from 'node:vm';
-
-const userscript = await readFile(
-  new URL('../chatgpt-conversation-markdown-export.user.js', import.meta.url),
-  'utf8'
-);
 
 function sourceBlock() {
   const start = userscript.indexOf('  // BEGIN Issue #123 stock network diagnostics');
@@ -131,7 +126,7 @@ test('fetch tracing observes every stock request without consuming the original 
     'Fetch interception must start one global stock-network trace.');
   assert.match(userscript, /stockNetworkTraceFetchResponse\(/,
     'Fetch interception must record the stock response.');
-  assert.match(userscript, /response\.clone\(\)/,
+  assert.match(userscript, /cloneSafely\(response\)/,
     'Response inspection must operate on a clone.');
   assert.match(userscript, /return response;/,
     'The page must receive its original Response object unchanged.');

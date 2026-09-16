@@ -1,11 +1,6 @@
+import { userscript } from './helpers/userscript-source.mjs';
 import assert from 'node:assert/strict';
-import { readFile } from 'node:fs/promises';
 import test from 'node:test';
-
-const userscript = await readFile(
-  new URL('../chatgpt-conversation-markdown-export.user.js', import.meta.url),
-  'utf8'
-);
 
 test('Test opens the interactive built-in test matrix instead of immediately running all tests', () => {
   assert.match(userscript, /function builtInTests\(\) \{/,

@@ -1,30 +1,7 @@
+import { productionFunctionSource, userscript } from './helpers/userscript-source.mjs';
 import assert from 'node:assert/strict';
-import { readFile } from 'node:fs/promises';
 import test from 'node:test';
 import vm from 'node:vm';
-
-const userscript = await readFile(new URL('../chatgpt-conversation-markdown-export.user.js', import.meta.url), 'utf8');
-
-function productionFunctionSource(name) {
-  const patterns = [`async function ${name}(`, `function ${name}(`];
-  let start = -1;
-  for (const pattern of patterns) {
-    start = userscript.indexOf(pattern);
-    if (start >= 0) break;
-  }
-  assert.ok(start >= 0, `Production function ${name} is missing.`);
-  const brace = userscript.indexOf('{', start);
-  assert.ok(brace > start, `Production function ${name} has no body.`);
-  let depth = 0;
-  for (let index = brace; index < userscript.length; index += 1) {
-    if (userscript[index] === '{') depth += 1;
-    else if (userscript[index] === '}') {
-      depth -= 1;
-      if (depth === 0) return userscript.slice(start, index + 1);
-    }
-  }
-  throw new Error(`Production function ${name} has an unterminated body.`);
-}
 
 const requireMatch = userscript.match(/^\/\/ @require\s+(https:\/\/raw\.githubusercontent\.com\/Ma-XX-oN\/AIConversationCore\/([0-9a-f]{40})\/dist\/aiconversationcore\.chatgpt\.browser\.js)$/m);
 assert.ok(requireMatch, 'Production userscript must pin the AIConversationCore browser bundle to an exact commit.');

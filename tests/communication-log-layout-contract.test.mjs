@@ -1,12 +1,7 @@
+import { userscript } from './helpers/userscript-source.mjs';
 import assert from 'node:assert/strict';
 import { createHash } from 'node:crypto';
-import { readFile } from 'node:fs/promises';
 import test from 'node:test';
-
-const userscript = await readFile(
-  new URL('../chatgpt-conversation-markdown-export.user.js', import.meta.url),
-  'utf8'
-);
 
 test('Issue 134 keeps filename controls on one non-wrapping row and Reset below it', () => {
   assert.match(userscript,
@@ -46,7 +41,9 @@ test('active filename is plain text rather than a button-like field', () => {
     'Long filenames must retain hover scrolling.');
 });
 
-test('Duplicate and Reset use their approved icon treatments', () => {
+test('Rename, Duplicate and Reset use their approved icon treatments', () => {
+  assert.match(userscript, /function renameIconMarkup\(\)/);
+  assert.match(userscript, /renameCommunicationLogButton\.innerHTML = renameIconMarkup\(\)/);
   assert.match(userscript, /function duplicateIconMarkup\(\)/);
   assert.match(userscript,
     /duplicateIconMarkup[\s\S]*<rect[^>]+>[\s\S]*<rect[^>]+>[\s\S]*<rect[^>]+>/,

@@ -1,20 +1,6 @@
+import { diskBlock, userscript } from './helpers/userscript-source.mjs';
 import assert from 'node:assert/strict';
-import { readFile } from 'node:fs/promises';
 import test from 'node:test';
-
-const userscript = await readFile(
-  new URL('../chatgpt-conversation-markdown-export.user.js', import.meta.url),
-  'utf8'
-);
-
-function diskBlock() {
-  const start = userscript.indexOf('  // BEGIN Issue #123 disk communication recorder');
-  const endMarker = '  // END Issue #123 disk communication recorder';
-  const end = userscript.indexOf(endMarker, start);
-  assert.ok(start >= 0 && end > start,
-    'Issue #123 disk communication recorder production block is missing.');
-  return userscript.slice(start, end + endMarker.length);
-}
 
 test('missing directory uses the first page click or key press to open the native chooser directly', () => {
   const block = diskBlock();

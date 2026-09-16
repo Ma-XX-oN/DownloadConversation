@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         ChatGPT Conversation Markdown Recorder
 // @namespace    https://chatgpt.com/
-// @version      1.2.0-issue.134.4
+// @version      1.2.0-issue.134.5
 // @description  Exports the current ChatGPT conversation directly from the Conversation API as Markdown or JSONL.
 // @match        https://chatgpt.com/*
 // @match        https://chat.openai.com/*
@@ -179,6 +179,8 @@
   let communicationLogLastAssistantLifecycleKey = null;
   /** Guards page/session lifecycle listeners against duplicate installation after reauthorization. */
   let communicationLogLifecycleInstalled = false;
+  /** Whether one communication-log file-management action is currently updating panel state. */
+  let communicationLogUiActionInProgress = false;
   /** Unique identity correlating all communication records produced by this page lifetime. */
   const communicationLogSessionId = crypto.randomUUID();
   try {
@@ -197,6 +199,62 @@
    */
   function assert(condition, message) {
     if (!condition) throw new Error(message);
+  }
+
+  /**
+   * Normalizes one thrown value to readable diagnostic text.
+   *
+   * @param {unknown} error - Thrown value to describe.
+   * @returns {string} Readable error text.
+   */
+  function errorMessage(error) {
+    if (error instanceof Error) return error.message;
+    if (error && typeof error === 'object' && typeof error.message === 'string') return error.message;
+    return String(error);
+  }
+
+  /**
+   * Clones one Request/Response-like object without allowing a clone failure to escape.
+   *
+   * @param {Object|null} value - Cloneable object, when available.
+   * @returns {Object|null} Independent clone, or null when cloning is unavailable or fails.
+   */
+  function cloneSafely(value) {
+    try {
+      return typeof value?.clone === 'function' ? value.clone() : null;
+    } catch {
+      return null;
+    }
+  }
+
+  /**
+   * Releases one stream-reader lock without allowing cleanup failure to replace the primary outcome.
+   *
+   * @param {Object|null} reader - Reader whose lock should be released.
+   * @returns {void} No value is returned.
+   */
+  function releaseReaderLockQuietly(reader) {
+    try { reader?.releaseLock?.(); } catch {}
+  }
+
+  /**
+   * Aborts one writable stream without allowing cleanup failure to replace the primary outcome.
+   *
+   * @param {Object|null} writable - Writable stream to abort when present.
+   * @returns {Promise<void>} Resolves after best-effort abort cleanup.
+   */
+  async function abortWritableQuietly(writable) {
+    try { await writable?.abort?.(); } catch {}
+  }
+
+  /**
+   * Cancels one readable body without allowing cleanup failure to replace the primary outcome.
+   *
+   * @param {Object|null} body - Readable stream body to cancel when present.
+   * @returns {Promise<void>} Resolves after best-effort cancellation.
+   */
+  async function cancelReadableBodyQuietly(body) {
+    try { await body?.cancel?.(); } catch {}
   }
 
   /**
@@ -500,6 +558,23 @@
   }
 
   /**
+   * Classifies one bounded stock-network text body into JSON identity or text identity evidence.
+   *
+   * @param {string} text - Bounded response text.
+   * @param {string} contentType - Response content type used as JSON evidence.
+   * @returns {Object} Exactly one JSON-identity or text-identity projection.
+   */
+  function stockNetworkBodyIdentity(text, contentType) {
+    const value = String(text ?? '');
+    if (/json/i.test(contentType) || /^[\s\r\n]*[\[{]/.test(value)) {
+      try {
+        return { json_identity: stockNetworkJsonIdentitySummary(JSON.parse(value)) };
+      } catch {}
+    }
+    return { text_identity: stockNetworkTextIdentitySummary(value) };
+  }
+
+  /**
    * Projects request headers without retaining authentication or other secret values.
    *
    * @param {Object} headers - Headers-like request headers.
@@ -584,7 +659,7 @@
       }
       text += decoder.decode();
     } finally {
-      try { reader.releaseLock(); } catch {}
+      releaseReaderLockQuietly(reader);
     }
     return { text, byte_count: byteCount, truncated };
   }
@@ -600,26 +675,21 @@
     try {
       const bounded = await stockNetworkReadBoundedText(response);
       const contentType = response.headers?.get?.('content-type') ?? '';
-      let jsonIdentity = null;
-      let textIdentity = null;
-      if (/json/i.test(contentType) || /^[\s\r\n]*[\[{]/.test(bounded.text)) {
-        try { jsonIdentity = stockNetworkJsonIdentitySummary(JSON.parse(bounded.text)); } catch {}
-      }
-      if (!jsonIdentity) textIdentity = stockNetworkTextIdentitySummary(bounded.text);
+      const identity = stockNetworkBodyIdentity(bounded.text, contentType);
       logDiagnostic('debug', 'stock-network-fetch-body-summary', {
         network_sequence: trace.sequence,
         url: trace.url,
         content_type: boundedDiagnosticText(contentType, 500),
         byte_count: bounded.byte_count,
         truncated: bounded.truncated,
-        json_identity: jsonIdentity,
-        text_identity: textIdentity
+        json_identity: identity.json_identity ?? null,
+        text_identity: identity.text_identity ?? null
       });
     } catch (error) {
       logDiagnostic('debug', 'stock-network-fetch-body-summary-failed', {
         network_sequence: trace.sequence,
         url: trace.url,
-        error: boundedDiagnosticText(error?.message ?? String(error), 1000)
+        error: boundedDiagnosticText(errorMessage(error), 1000)
       });
     }
   }
@@ -651,8 +721,7 @@
       /\/backend-api\/(?:conversation|conversations|f\/conversation)(?:\/|\?|$)/.test(trace.url)
     );
     if (!inspectable) return;
-    let cloned = null;
-    try { cloned = response.clone(); } catch {}
+    const cloned = cloneSafely(response);
     if (cloned) void stockNetworkInspectFetchBody(cloned, trace);
   }
 
@@ -716,16 +785,10 @@
       } else if (!xhr.responseType || xhr.responseType === 'text') {
         const rawText = String(xhr.responseText ?? '');
         const boundedText = rawText.slice(0, STOCK_NETWORK_JSON_BYTE_LIMIT);
-        let jsonIdentity = null;
-        if (/json/i.test(contentType) || /^[\s\r\n]*[\[{]/.test(boundedText)) {
-          try { jsonIdentity = stockNetworkJsonIdentitySummary(JSON.parse(boundedText)); } catch {}
-        }
-        bodyIdentity = jsonIdentity
-          ? { json_identity: jsonIdentity, truncated: rawText.length > boundedText.length }
-          : {
-              text_identity: stockNetworkTextIdentitySummary(boundedText),
-              truncated: rawText.length > boundedText.length
-            };
+        bodyIdentity = {
+          ...stockNetworkBodyIdentity(boundedText, contentType),
+          truncated: rawText.length > boundedText.length
+        };
       }
     } catch {}
     logDiagnostic('debug', 'stock-network-xhr-response', {
@@ -1345,7 +1408,7 @@
         await writable.close();
         return before.size;
       } catch (error) {
-        try { await writable?.abort(); } catch {}
+        await abortWritableQuietly(writable);
         if (!communicationLogIsStaleFileStateError(error) || attempt >= COMMUNICATION_LOG_WRITE_RETRY_LIMIT) throw error;
         const afterSnapshot = await communicationLogRefreshedFileSnapshot();
         const after = afterSnapshot.file;
@@ -1484,7 +1547,7 @@
       communicationLogWriterDirty = false;
       return communicationLogWritable;
     } catch (error) {
-      try { await writable?.abort(); } catch {}
+      await abortWritableQuietly(writable);
       throw error;
     }
   }
@@ -1496,7 +1559,7 @@
    * @returns {Promise<boolean>} True when dirty bytes were checkpointed.
    */
   function communicationLogCheckpoint(reason) {
-    const operation = communicationLogWriteChain.then(async () => {
+    const queued = communicationLogEnqueue(`checkpoint:${reason}`, async () => {
       if (!communicationLogWritable || !communicationLogWriterDirty) return false;
       try {
         await communicationLogWritable.close();
@@ -1518,12 +1581,8 @@
           throw recoveryError;
         }
       }
-    });
-    communicationLogWriteChain = operation.catch(communicationError => {
-      communicationLogReportFailure(`checkpoint:${reason}`, communicationError);
-      return false;
-    });
-    return communicationLogWriteChain;
+    }, false);
+    return queued.chain;
   }
 
   /**
@@ -1598,6 +1657,23 @@
   }
 
   /**
+   * Serializes one communication-log operation and recovers the shared write chain after failure.
+   *
+   * @param {string} stage - Diagnostic stage reported when the operation rejects.
+   * @param {Function} task - Deferred filesystem/recording operation executed behind prior work.
+   * @param {unknown} failureValue - Value used to recover the shared chain after failure.
+   * @returns {Object} Original operation promise plus the recovered shared-chain promise.
+   */
+  function communicationLogEnqueue(stage, task, failureValue = undefined) {
+    const operation = communicationLogWriteChain.then(task);
+    communicationLogWriteChain = operation.catch(communicationError => {
+      communicationLogReportFailure(stage, communicationError);
+      return failureValue;
+    });
+    return { operation, chain: communicationLogWriteChain };
+  }
+
+  /**
    * Copies one committed source snapshot to a new sibling and verifies exact bytes.
    *
    * @param {Blob} sourceFile - Committed source file snapshot.
@@ -1631,7 +1707,7 @@
         throw new Error(`Communication log copy verification failed: ${destinationName}`);
       }
     } catch (error) {
-      try { await writable?.abort(); } catch {}
+      await abortWritableQuietly(writable);
       if (destinationCreated) {
         try { await communicationLogDirectoryHandle.removeEntry(destinationName); } catch {}
       }
@@ -1650,7 +1726,7 @@
    * @returns {Promise<string>} The new active filename.
    */
   function communicationLogRename(newFileName) {
-    const operation = communicationLogWriteChain.then(async () => {
+    const queued = communicationLogEnqueue('rename', async () => {
       const validatedName = communicationLogValidateFileName(newFileName);
       if (!communicationLogReady || !communicationLogDirectoryHandle || !communicationLogFileName) {
         throw new Error('Communication log directory/file is not ready.');
@@ -1675,10 +1751,7 @@
       communicationLogFileName = validatedName;
       return validatedName;
     });
-    communicationLogWriteChain = operation.catch(communicationError => {
-      communicationLogReportFailure('rename', communicationError);
-    });
-    return operation;
+    return queued.operation;
   }
 
   /**
@@ -1690,7 +1763,7 @@
    * @returns {Promise<string>} The created duplicate filename.
    */
   function communicationLogDuplicate() {
-    const operation = communicationLogWriteChain.then(async () => {
+    const queued = communicationLogEnqueue('duplicate', async () => {
       if (!communicationLogReady || !communicationLogDirectoryHandle || !communicationLogFileName) {
         throw new Error('Communication log directory/file is not ready.');
       }
@@ -1713,10 +1786,7 @@
       await communicationLogCopySnapshot(sourceSnapshot.file, duplicateName);
       return duplicateName;
     });
-    communicationLogWriteChain = operation.catch(communicationError => {
-      communicationLogReportFailure('duplicate', communicationError);
-    });
-    return operation;
+    return queued.operation;
   }
 
   /**
@@ -1729,16 +1799,8 @@
    * @returns {Promise<void>} Resolves after the empty file is committed and verified.
    */
   function communicationLogReset() {
-    const operation = communicationLogWriteChain.then(async () => {
-      if (communicationLogWritable) {
-        try {
-          await communicationLogWritable.close();
-        } finally {
-          communicationLogWritable = null;
-          communicationLogWriterDirty = false;
-        }
-      }
-
+    const queued = communicationLogEnqueue('reset', async () => {
+      await communicationLogCloseActiveWriter();
       const refreshed = await communicationLogRefreshedFileSnapshot();
       let writable = null;
       try {
@@ -1752,14 +1814,11 @@
           throw new Error(`Communication log reset verification failed: expected 0 bytes, found ${verified.file.size}.`);
         }
       } catch (error) {
-        try { await writable?.abort(); } catch {}
+        await abortWritableQuietly(writable);
         throw error;
       }
     });
-    communicationLogWriteChain = operation.catch(communicationError => {
-      communicationLogReportFailure('reset', communicationError);
-    });
-    return operation;
+    return queued.operation;
   }
 
   /**
@@ -1769,15 +1828,12 @@
    * @returns {Promise<void>} Resolves after the bytes are accepted by the active writer.
    */
   function communicationLogAppendLine(line) {
-    const operation = communicationLogWriteChain.then(async () => {
+    const queued = communicationLogEnqueue('append', async () => {
       await communicationLogOpenWriter();
       await communicationLogWritable.write(line);
       communicationLogWriterDirty = true;
     });
-    communicationLogWriteChain = operation.catch(communicationError => {
-      communicationLogReportFailure('append', communicationError);
-    });
-    return operation;
+    return queued.operation;
   }
 
   /**
@@ -1791,7 +1847,7 @@
     logDiagnostic('warnings', 'communication-log-write-failure', {
       stage,
       file_name: communicationLogFileName,
-      message: boundedDiagnosticText(error?.message ?? String(error), 2000)
+      message: boundedDiagnosticText(errorMessage(error), 2000)
     });
   }
 
@@ -1836,6 +1892,19 @@
   }
 
   /**
+   * Waits for recorder readiness and records one intentional pre-ready drop when unavailable.
+   *
+   * @param {Object|null} body - Optional cloned body to cancel when the recorder remains unavailable.
+   * @returns {Promise<boolean>} True when recording may continue; otherwise false after drop cleanup.
+   */
+  async function communicationLogAwaitReadyOrDrop(body = null) {
+    if (await communicationLogAwaitReady()) return true;
+    communicationLogDroppedBeforeReady += 1;
+    await cancelReadableBodyQuietly(body);
+    return false;
+  }
+
+  /**
    * Persists one textual body stream in bounded JSONL chunks without accumulating the whole body.
    *
    * @param {ReadableStream|null} body - Cloned Request/Response body stream.
@@ -1859,7 +1928,7 @@
         try {
           result = await reader.read();
         } catch (error) {
-          streamErrorMessage = String(error?.message ?? error);
+          streamErrorMessage = errorMessage(error);
           break;
         }
         if (result.done) break;
@@ -1907,7 +1976,7 @@
       }
       return summary;
     } finally {
-      try { reader.releaseLock(); } catch {}
+      releaseReaderLockQuietly(reader);
     }
   }
 
@@ -1971,13 +2040,8 @@
    * @returns {Promise<void>} Resolves after request data is persisted or deliberately omitted.
    */
   async function communicationLogFetchRequest(request, trace) {
-    let cloned = null;
-    try { cloned = request?.clone?.() ?? null; } catch {}
-    if (!(await communicationLogAwaitReady())) {
-      communicationLogDroppedBeforeReady += 1;
-      try { await cloned?.body?.cancel?.(); } catch {}
-      return;
-    }
+    const cloned = cloneSafely(request);
+    if (!(await communicationLogAwaitReadyOrDrop(cloned?.body ?? null))) return;
     const contentType = request?.headers?.get?.('content-type') ?? '';
     await communicationLogRecord('communication_fetch_request', {
       origin: trace?.origin ?? 'stock-chatgpt',
@@ -2007,7 +2071,7 @@
         binary_body_omitted: true,
         body_omitted: 'binary'
       });
-      try { await cloned.body.cancel(); } catch {}
+      await cancelReadableBodyQuietly(cloned.body);
     }
   }
 
@@ -2019,13 +2083,8 @@
    * @returns {Promise<void>} Resolves after response data is persisted or deliberately omitted.
    */
   async function communicationLogFetchResponse(response, trace) {
-    let cloned = null;
-    try { cloned = response.clone(); } catch {}
-    if (!(await communicationLogAwaitReady())) {
-      communicationLogDroppedBeforeReady += 1;
-      try { await cloned?.body?.cancel?.(); } catch {}
-      return;
-    }
+    const cloned = cloneSafely(response);
+    if (!(await communicationLogAwaitReadyOrDrop(cloned?.body ?? null))) return;
     const contentType = response?.headers?.get?.('content-type') ?? '';
     const responseUrl = response?.url ?? trace?.url ?? '';
     await communicationLogRecord('communication_fetch_response', {
@@ -2066,7 +2125,7 @@
         binary_body_omitted: true,
         body_omitted: 'binary'
       });
-      try { await cloned.body.cancel(); } catch {}
+      await cancelReadableBodyQuietly(cloned.body);
     }
     try {
       if (new URL(responseUrl, location.href).pathname === '/backend-api/f/conversation') {
@@ -2084,10 +2143,7 @@
    * @returns {Promise<void>} Resolves after request data is persisted.
    */
   async function communicationLogXhrRequest(info, body, trace) {
-    if (!(await communicationLogAwaitReady())) {
-      communicationLogDroppedBeforeReady += 1;
-      return;
-    }
+    if (!(await communicationLogAwaitReadyOrDrop())) return;
     const contentType = info?.headers?.['content-type'] ?? '';
     await communicationLogRecord('communication_xhr_request', {
       network_sequence: trace?.sequence ?? null,
@@ -2118,10 +2174,7 @@
    * @returns {Promise<void>} Resolves after response data is persisted.
    */
   async function communicationLogXhrResponse(xhr, trace) {
-    if (!(await communicationLogAwaitReady())) {
-      communicationLogDroppedBeforeReady += 1;
-      return;
-    }
+    if (!(await communicationLogAwaitReadyOrDrop())) return;
     const responseHeaders = {};
     try {
       for (const line of String(xhr?.getAllResponseHeaders?.() ?? '').split(/\r?\n/)) {
@@ -2182,10 +2235,7 @@
    * @returns {Promise<void>} Resolves after frame metadata/content is persisted.
    */
   async function communicationLogWebSocketSend(url, data) {
-    if (!(await communicationLogAwaitReady())) {
-      communicationLogDroppedBeforeReady += 1;
-      return;
-    }
+    if (!(await communicationLogAwaitReadyOrDrop())) return;
     await communicationLogRecord('communication_websocket_send', {
       url: stockNetworkSafeUrl(url),
       data_type: typeof data === 'string' ? 'text' : Object.prototype.toString.call(data)
@@ -2208,10 +2258,7 @@
    * @returns {Promise<void>} Resolves after frame metadata/content is persisted.
    */
   async function communicationLogWebSocketMessage(url, data) {
-    if (!(await communicationLogAwaitReady())) {
-      communicationLogDroppedBeforeReady += 1;
-      return;
-    }
+    if (!(await communicationLogAwaitReadyOrDrop())) return;
     await communicationLogRecord('communication_websocket_message', {
       url: stockNetworkSafeUrl(url),
       data_type: typeof data === 'string' ? 'text' : Object.prototype.toString.call(data)
@@ -2925,7 +2972,7 @@
       return capture;
     } catch (error) {
       logDiagnostic('warnings', 'conversation-stream-tail-request-capture-failure', {
-        message: error instanceof Error ? error.message : String(error)
+        message: errorMessage(error)
       });
       return null;
     }
@@ -2962,10 +3009,10 @@
       streamTailPersistCapture(capture);
       logDiagnostic('warnings', 'conversation-stream-tail-response-capture-failure', {
         conversation_id: capture.conversation_id,
-        message: error instanceof Error ? error.message : String(error)
+        message: errorMessage(error)
       });
     } finally {
-      try { reader.releaseLock(); } catch {}
+      releaseReaderLockQuietly(reader);
     }
   }
 
@@ -3052,8 +3099,8 @@
           if (capturePromise) {
             void capturePromise.then(capture => {
               if (!capture) return;
-              let cloned;
-              try { cloned = response.clone(); } catch { return; }
+              const cloned = cloneSafely(response);
+              if (!cloned) return;
               void captureGenerationStreamResponse(cloned, capture);
             });
           }
@@ -3064,7 +3111,7 @@
             method: stockTrace.method,
             url: stockTrace.url,
             duration_ms: Math.round(performance.now() - stockTrace.started_at),
-            error: boundedDiagnosticText(error?.message ?? String(error), 1000)
+            error: boundedDiagnosticText(errorMessage(error), 1000)
           });
           throw error;
         });
@@ -3275,7 +3322,7 @@
       logDiagnostic('errors', 'conversation-api-page-network-failure', {
         ...requestDetails,
         elapsed_ms: Math.round(performance.now() - startedAt),
-        message: error instanceof Error ? error.message : String(error)
+        message: errorMessage(error)
       });
       throw error;
     }
@@ -3293,7 +3340,7 @@
       try {
         bodyPreview = boundedDiagnosticText(await response.clone().text());
       } catch (error) {
-        bodyPreview = `[response body unavailable: ${error instanceof Error ? error.message : String(error)}]`;
+        bodyPreview = `[response body unavailable: ${errorMessage(error)}]`;
       }
       logDiagnostic('errors', 'conversation-api-page-http-failure', {
         ...responseDetails,
@@ -3308,7 +3355,7 @@
     } catch (error) {
       logDiagnostic('errors', 'conversation-api-page-json-failure', {
         ...responseDetails,
-        message: error instanceof Error ? error.message : String(error)
+        message: errorMessage(error)
       });
       throw error;
     }
@@ -5658,17 +5705,59 @@ Image elapsed: ${formatDuration(imageElapsed)} — Completed: ${imageCompleted}/
   }
 
   /**
+   * Returns the communication-log controls from the static recorder panel DOM.
+   *
+   * @param {Element|null} panel - Recorder panel root, or null to look it up by stable id.
+   * @returns {Object} Current filename viewport/text and file-action button elements.
+   */
+  function communicationLogPanelControls(panel = document.getElementById(PANEL_ID)) {
+    const root = panel instanceof Element ? panel : null;
+    return {
+      communicationLogNameViewport: root?.querySelector('[data-role="communication-log-name-viewport"]') ?? null,
+      communicationLogNameText: root?.querySelector('[data-role="communication-log-name"]') ?? null,
+      renameCommunicationLogButton: root?.querySelector('[data-role="rename-communication-log"]') ?? null,
+      duplicateCommunicationLogButton: root?.querySelector('[data-role="duplicate-communication-log"]') ?? null,
+      resetCommunicationLogButton: root?.querySelector('[data-role="reset-communication-log"]') ?? null
+    };
+  }
+
+  /**
+   * Runs one communication-log panel action with shared busy, accessibility, and failure handling.
+   *
+   * @param {HTMLButtonElement|null} button - Action button that owns busy presentation.
+   * @param {Object} options - Labels, operation callback, success callback, and failure prefix.
+   * @returns {Promise<void>} Resolves after the action and shared UI state are complete.
+   */
+  async function runCommunicationLogPanelAction(button, options) {
+    if (!(button instanceof HTMLButtonElement) || button.disabled || communicationLogUiActionInProgress) return;
+    communicationLogUiActionInProgress = true;
+    button.setAttribute('aria-label', options.busyLabel);
+    button.title = options.busyTitle;
+    refreshStatus();
+    try {
+      const result = await options.operation();
+      if (typeof options.onSuccess === 'function') await options.onSuccess(result);
+    } catch (error) {
+      setStatus(`⚠ ${options.failurePrefix}: ${errorMessage(error)}`);
+    } finally {
+      communicationLogUiActionInProgress = false;
+      button.setAttribute('aria-label', options.idleLabel);
+      button.title = options.idleTitle ?? options.idleLabel;
+      refreshStatus();
+    }
+  }
+
+  /**
    * Measures the active communication-log filename and sets its hover-scroll distance.
    *
    * @returns {void} No value is returned.
    */
   function refreshCommunicationLogNameOverflow() {
-    const viewport = document.querySelector(`#${PANEL_ID} [data-role="communication-log-name-viewport"]`);
-    const text = document.querySelector(`#${PANEL_ID} [data-role="communication-log-name"]`);
-    if (!viewport || !text) return;
-    const overflow = Math.max(0, text.scrollWidth - viewport.clientWidth);
-    text.style.setProperty('--tm-log-name-overflow', `${overflow}px`);
-    text.style.setProperty('--tm-log-name-duration', overflow > 0 ? `${Math.max(1.5, overflow / 40)}s` : '0s');
+    const { communicationLogNameViewport, communicationLogNameText } = communicationLogPanelControls();
+    if (!communicationLogNameViewport || !communicationLogNameText) return;
+    const overflow = Math.max(0, communicationLogNameText.scrollWidth - communicationLogNameViewport.clientWidth);
+    communicationLogNameText.style.setProperty('--tm-log-name-overflow', `${overflow}px`);
+    communicationLogNameText.style.setProperty('--tm-log-name-duration', overflow > 0 ? `${Math.max(1.5, overflow / 40)}s` : '0s');
   }
 
   /**
@@ -5679,10 +5768,13 @@ Image elapsed: ${formatDuration(imageElapsed)} — Completed: ${imageCompleted}/
   function refreshStatus() {
     const status = document.querySelector(`#${PANEL_ID} [data-role="status"]`);
     if (!status) return;
-    const communicationLogNameViewport = document.querySelector(`#${PANEL_ID} [data-role="communication-log-name-viewport"]`);
-    const communicationLogNameText = document.querySelector(`#${PANEL_ID} [data-role="communication-log-name"]`);
-    const renameCommunicationLogButton = document.querySelector(`#${PANEL_ID} [data-role="rename-communication-log"]`);
-    const duplicateCommunicationLogButton = document.querySelector(`#${PANEL_ID} [data-role="duplicate-communication-log"]`);
+    const {
+      communicationLogNameViewport,
+      communicationLogNameText,
+      renameCommunicationLogButton,
+      duplicateCommunicationLogButton,
+      resetCommunicationLogButton
+    } = communicationLogPanelControls();
     const communicationLogAvailable = Boolean(communicationLogReady && communicationLogFileName);
     const communicationLogDisplayName = communicationLogAvailable ? communicationLogFileName : 'Not configured';
     if (communicationLogNameText) communicationLogNameText.textContent = communicationLogDisplayName;
@@ -5696,8 +5788,13 @@ Image elapsed: ${formatDuration(imageElapsed)} — Completed: ${imageCompleted}/
       );
       requestAnimationFrame(refreshCommunicationLogNameOverflow);
     }
-    if (renameCommunicationLogButton) renameCommunicationLogButton.disabled = !communicationLogAvailable;
-    if (duplicateCommunicationLogButton) duplicateCommunicationLogButton.disabled = !communicationLogAvailable;
+    if (renameCommunicationLogButton) {
+      renameCommunicationLogButton.disabled = !communicationLogAvailable || communicationLogUiActionInProgress;
+    }
+    if (duplicateCommunicationLogButton) {
+      duplicateCommunicationLogButton.disabled = !communicationLogAvailable || communicationLogUiActionInProgress;
+    }
+    if (resetCommunicationLogButton) resetCommunicationLogButton.disabled = communicationLogUiActionInProgress;
     if (progressState) {
       status.textContent = progressStatus(exportKind === 'md' ? 'Extract MD' : 'Extract JSONL');
     } else {
@@ -6715,7 +6812,7 @@ Image elapsed: ${formatDuration(imageElapsed)} — Completed: ${imageCompleted}/
       });
       setStatus(`Jumped to ${target.role === 'assistant' ? 'Assistant' : 'User'} turn ${target.message_id}.`);
     } catch (error) {
-      const message = error instanceof Error ? error.message : String(error);
+      const message = errorMessage(error);
       logDiagnostic('warnings', 'conversation-jump-failure', {
         raw_requested_identifier: boundedDiagnosticText(requested, 500),
         identifier,
@@ -7124,7 +7221,7 @@ Image elapsed: ${formatDuration(imageElapsed)} — Completed: ${imageCompleted}/
           blob_bytes: timing.blob_bytes ?? null,
           data_url_chars: timing.data_url_chars ?? null,
           elapsed_ms: timing.total_ms ?? Math.round(performance.now() - startedAt),
-          message: error instanceof Error ? error.message : String(error)
+          message: errorMessage(error)
         });
         throw error;
       } finally {
@@ -7217,7 +7314,7 @@ Image elapsed: ${formatDuration(imageElapsed)} — Completed: ${imageCompleted}/
                 image_ordinal: index + 1,
                 http_status: Number.isFinite(status) ? status : null,
                 fallback: images[index],
-                message: error instanceof Error ? error.message : String(error)
+                message: errorMessage(error)
               });
               continue;
             }
@@ -7426,7 +7523,7 @@ Image elapsed: ${formatDuration(imageElapsed)} — Completed: ${imageCompleted}/
         setStatus(`⚠ Export completed with tail consistency warning: ${tailConsistencyWarnings.join(' | ')}`);
       }
     } catch (error) {
-      const message = error instanceof Error ? error.message : String(error);
+      const message = errorMessage(error);
       logDiagnostic('errors', 'conversation-export-failure', {
         kind: activeKind,
         stage: progressState?.stage ?? null,
@@ -7489,7 +7586,7 @@ Image elapsed: ${formatDuration(imageElapsed)} — Completed: ${imageCompleted}/
         page_info: { has_next_page: cursor !== null, has_previous_page: true, start_cursor: 'loop' }
       }));
     } catch (error) {
-      repeatedCursorRejected = /repeated start_cursor/.test(String(error?.message ?? error));
+      repeatedCursorRejected = /repeated start_cursor/.test(errorMessage(error));
     }
     assert(repeatedCursorRejected, 'Pagination test did not reject a repeated cursor.');
   }
@@ -7515,7 +7612,7 @@ Image elapsed: ${formatDuration(imageElapsed)} — Completed: ${imageCompleted}/
     try {
       conversationSpineFromPages([{ messages: [{}], page_info: {} }]);
     } catch (error) {
-      missingIdRejected = /missing a stable id/.test(String(error?.message ?? error));
+      missingIdRejected = /missing a stable id/.test(errorMessage(error));
     }
     assert(missingIdRejected, 'Stable-ID test did not reject a message without an id.');
   }
@@ -7809,7 +7906,7 @@ Image elapsed: ${formatDuration(imageElapsed)} — Completed: ${imageCompleted}/
       testMatrixCurrentResults.set(name, { status: 'PASS', detail: '' });
       return `✅ ${name}`;
     } catch (error) {
-      const detail = error instanceof Error ? error.message : String(error);
+      const detail = errorMessage(error);
       testMatrixCurrentResults.set(name, { status: 'FAIL', detail });
       return `❌ ${name}: ${detail}`;
     } finally {
@@ -8123,6 +8220,15 @@ Image elapsed: ${formatDuration(imageElapsed)} — Completed: ${imageCompleted}/
   }
 
   /**
+   * Returns the shared pencil/edit action icon.
+   *
+   * @returns {string} Inline SVG markup for the Rename button.
+   */
+  function renameIconMarkup() {
+    return '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 20h4L19 9l-4-4L4 16v4z"></path><path d="m13.5 6.5 4 4"></path></svg>';
+  }
+
+  /**
    * Returns the approved branching Duplicate action icon.
    *
    * @returns {string} Inline SVG markup for the Duplicate button.
@@ -8285,10 +8391,11 @@ Image elapsed: ${formatDuration(imageElapsed)} — Completed: ${imageCompleted}/
       #${PANEL_ID} .tm-log-name-text{display:block;width:max-content;min-width:100%;box-sizing:border-box;padding:7px 0;white-space:nowrap;transform:translateX(0);transition:transform var(--tm-log-name-duration,1.5s) linear .35s}
       #${PANEL_ID} .tm-log-name-viewport:hover .tm-log-name-text{transform:translateX(calc(-1 * var(--tm-log-name-overflow,0px)))}
       #${PANEL_ID} .tm-communication-log-row button{flex:0 0 auto}
-      #${PANEL_ID} select,#${PANEL_ID} button{border:1px solid #666;border-radius:9px;background:#292929;color:#fff;padding:9px 12px;font:inherit}
+      #${PANEL_ID} select,#${PANEL_ID} button,#${TEST_MATRIX_ID} button{border:1px solid #666;background:#292929;color:#fff;font:inherit}
+      #${PANEL_ID} select,#${PANEL_ID} button{border-radius:9px;padding:9px 12px}
       #${PANEL_ID} select{flex:1;min-width:150px}
-      #${PANEL_ID} button{cursor:pointer}
-      #${PANEL_ID} button:disabled{opacity:.45;cursor:not-allowed}
+      #${PANEL_ID} button,#${TEST_MATRIX_ID} button{cursor:pointer}
+      #${PANEL_ID} button:disabled,#${TEST_MATRIX_ID} button:disabled{opacity:.45;cursor:not-allowed}
       #${PANEL_ID} .tm-label{color:#ddd}
       #${TEST_MATRIX_ID}{position:fixed;inset:0;z-index:2147483647;background:rgba(0,0,0,.58);display:grid;place-items:center;padding:24px;box-sizing:border-box}
       #${TEST_MATRIX_ID} .tm-test-dialog{width:min(920px,96vw);max-height:88vh;overflow:hidden;display:flex;flex-direction:column;border:1px solid #666;border-radius:12px;background:#202020;color:#f2f2f2;box-shadow:0 10px 40px rgba(0,0,0,.5);font:13px/1.35 system-ui,sans-serif}
@@ -8300,15 +8407,13 @@ Image elapsed: ${formatDuration(imageElapsed)} — Completed: ${imageCompleted}/
       #${TEST_MATRIX_ID} .tm-test-table th,#${TEST_MATRIX_ID} .tm-test-table td{padding:8px 10px;border-bottom:1px solid #444;text-align:left;vertical-align:top}
       #${TEST_MATRIX_ID} .tm-test-table th{position:sticky;top:0;background:#292929;z-index:1}
       #${TEST_MATRIX_ID} .tm-test-table td:nth-child(2),#${TEST_MATRIX_ID} .tm-test-table td:nth-child(3),#${TEST_MATRIX_ID} .tm-test-table td:nth-child(4){white-space:nowrap}
-      #${TEST_MATRIX_ID} button{border:1px solid #666;border-radius:8px;background:#292929;color:#fff;padding:7px 10px;font:inherit;cursor:pointer}
-      #${TEST_MATRIX_ID} button:disabled{opacity:.45;cursor:not-allowed}
+      #${TEST_MATRIX_ID} button{border-radius:8px;padding:7px 10px}
       #${TEST_MATRIX_ID} .tm-test-actions{justify-content:flex-end;border-top:1px solid #555}
       #${PANEL_ID} .tm-log-head{display:flex;align-items:center;gap:6px;margin-top:4px}
       #${PANEL_ID} .tm-log-head [data-role="log-count"]{margin-right:auto}
-      #${PANEL_ID} .tm-icon-button{width:30px;height:28px;padding:4px;display:grid;place-items:center}
+      #${PANEL_ID} .tm-icon-button{box-sizing:border-box;width:30px;height:28px;padding:4px;display:grid;place-items:center;transition:opacity .2s ease}
       #${PANEL_ID} .tm-icon-button svg{width:16px;height:16px;fill:none;stroke:currentColor;stroke-width:2;stroke-linecap:round;stroke-linejoin:round}
       #${PANEL_ID} .tm-icon-button img{width:16px;height:16px;display:block;object-fit:contain}
-      #${PANEL_ID} .tm-icon-button{transition:opacity .2s ease}
       #${PANEL_ID} .tm-copy-fade{opacity:0}
       #${PANEL_ID} .tm-log-output{margin:6px 0 10px;max-height:190px;overflow:auto;border:1px solid #555;border-radius:8px;background:#111;font:11px/1.35 ui-monospace,SFMono-Regular,Consolas,monospace;color:#ddd}
       #${PANEL_ID} .tm-log-row{padding:6px 8px;white-space:pre-wrap;overflow-wrap:anywhere}
@@ -8935,6 +9040,27 @@ Image elapsed: ${formatDuration(imageElapsed)} — Completed: ${imageCompleted}/
   }
 
   /**
+   * Binds one persistent checkbox to a state setter and the shared recorder UI refresh.
+   *
+   * @param {Element} panel - Recorder panel containing the checkbox.
+   * @param {string} role - Stable data-role value identifying the checkbox.
+   * @param {string} storageKey - Local-storage key retaining the preference.
+   * @param {boolean} initialValue - Current preference value applied at panel creation.
+   * @param {Function} applyValue - Callback that updates the corresponding in-memory state.
+   * @returns {void} No value is returned.
+   */
+  function bindStoredCheckbox(panel, role, storageKey, initialValue, applyValue) {
+    const checkbox = panel.querySelector(`[data-role="${role}"]`);
+    if (!(checkbox instanceof HTMLInputElement)) return;
+    checkbox.checked = initialValue;
+    checkbox.addEventListener('change', () => {
+      applyValue(checkbox.checked);
+      localStorage.setItem(storageKey, String(checkbox.checked));
+      updateUi();
+    });
+  }
+
+  /**
    * Handles make panel.
    *
    * @returns {void} No value is returned.
@@ -8954,7 +9080,7 @@ Image elapsed: ${formatDuration(imageElapsed)} — Completed: ${imageCompleted}/
       <div class="tm-status" data-role="status"></div>
       <div class="tm-row"><span class="tm-label">Diagnostics</span><select data-role="diagnostics"><option value="errors">Errors</option><option value="warnings">Warnings</option><option value="debug">Debug</option><option value="verbose">Verbose</option></select><label><input data-role="console-diagnostics" type="checkbox"> console</label><button data-role="test" type="button">Test</button></div>
       <div class="tm-row"><span class="tm-label">Communication log</span></div>
-      <div class="tm-row tm-communication-log-row"><div class="tm-log-name-viewport" data-role="communication-log-name-viewport" role="textbox" aria-readonly="true" aria-label="Current communication log filename" title="Current communication log filename"><span class="tm-log-name-text" data-role="communication-log-name"></span></div><button data-role="rename-communication-log" type="button" aria-label="Rename communication log" title="Rename communication log">✎</button><button class="tm-icon-button" data-role="duplicate-communication-log" type="button" aria-label="Duplicate communication log" title="Duplicate communication log"></button></div>
+      <div class="tm-row tm-communication-log-row"><div class="tm-log-name-viewport" data-role="communication-log-name-viewport" role="textbox" aria-readonly="true" aria-label="Current communication log filename" title="Current communication log filename"><span class="tm-log-name-text" data-role="communication-log-name"></span></div><button class="tm-icon-button" data-role="rename-communication-log" type="button" aria-label="Rename communication log" title="Rename communication log"></button><button class="tm-icon-button" data-role="duplicate-communication-log" type="button" aria-label="Duplicate communication log" title="Duplicate communication log"></button></div>
       <div class="tm-row"><button class="tm-icon-button" data-role="reset-communication-log" type="button" aria-label="Reset communication log" title="Reset communication log"></button></div>
       <div class="tm-row"><span class="tm-label">Screen on when extracting</span><button class="tm-switch" data-role="screen-on" type="button" role="switch" aria-checked="false" aria-label="Keep screen on while extracting"><span class="tm-switch-thumb"></span></button></div>
       <div class="tm-row"><button data-role="jump" type="button">Jump</button></div>
@@ -8990,75 +9116,61 @@ Image elapsed: ${formatDuration(imageElapsed)} — Completed: ${imageCompleted}/
     panel.querySelector('[data-role="copy-log"]').addEventListener('click', () => {
       void copyDiagnosticLog().catch(error => {
         logDiagnostic('errors', 'diagnostic-log-copy-failure', {
-          message: error instanceof Error ? error.message : String(error)
+          message: errorMessage(error)
         });
       });
     });
     panel.querySelector('[data-role="test"]').addEventListener('click', event => openTestMatrix(event.currentTarget));
     panel.querySelector('[data-role="jump"]').addEventListener('click', () => void runJump());
-    const communicationLogNameViewport = panel.querySelector('[data-role="communication-log-name-viewport"]');
-    const renameCommunicationLogButton = panel.querySelector('[data-role="rename-communication-log"]');
-    const duplicateCommunicationLogButton = panel.querySelector('[data-role="duplicate-communication-log"]');
+    const {
+      communicationLogNameViewport,
+      renameCommunicationLogButton,
+      duplicateCommunicationLogButton,
+      resetCommunicationLogButton
+    } = communicationLogPanelControls(panel);
+    if (renameCommunicationLogButton) renameCommunicationLogButton.innerHTML = renameIconMarkup();
     if (duplicateCommunicationLogButton) duplicateCommunicationLogButton.innerHTML = duplicateIconMarkup();
+    if (resetCommunicationLogButton) resetCommunicationLogButton.innerHTML = resetIconMarkup();
     communicationLogNameViewport?.addEventListener('pointerenter', refreshCommunicationLogNameOverflow);
     renameCommunicationLogButton?.addEventListener('click', () => {
-      if (renameCommunicationLogButton.disabled || !communicationLogFileName) return;
+      if (renameCommunicationLogButton.disabled || communicationLogUiActionInProgress || !communicationLogFileName) return;
       const requestedName = window.prompt('Rename communication log', communicationLogFileName);
       if (requestedName === null || requestedName === communicationLogFileName) return;
-      renameCommunicationLogButton.disabled = true;
-      duplicateCommunicationLogButton.disabled = true;
-      void communicationLogRename(requestedName)
-        .then(newFileName => {
-          setStatus(`Communication log renamed to ${newFileName}.`);
-        })
-        .catch(error => {
-          setStatus(`⚠ Communication log rename failed: ${error?.message ?? String(error)}`);
-        })
-        .finally(() => {
-          refreshStatus();
-        });
+      void runCommunicationLogPanelAction(renameCommunicationLogButton, {
+        idleLabel: 'Rename communication log',
+        busyLabel: 'Renaming communication log',
+        busyTitle: 'Renaming…',
+        operation: () => communicationLogRename(requestedName),
+        onSuccess: newFileName => setStatus(`Communication log renamed to ${newFileName}.`),
+        failurePrefix: 'Communication log rename failed'
+      });
     });
     duplicateCommunicationLogButton?.addEventListener('click', () => {
-      if (duplicateCommunicationLogButton.disabled || !communicationLogFileName) return;
-      duplicateCommunicationLogButton.disabled = true;
-      renameCommunicationLogButton.disabled = true;
-      duplicateCommunicationLogButton.setAttribute('aria-label', 'Duplicating communication log');
-      duplicateCommunicationLogButton.title = 'Duplicating…';
-      void communicationLogDuplicate()
-        .then(duplicateName => {
-          setStatus(`Communication log duplicated as ${duplicateName}.`);
-        })
-        .catch(error => {
-          setStatus(`⚠ Communication log duplicate failed: ${error?.message ?? String(error)}`);
-        })
-        .finally(() => {
-          duplicateCommunicationLogButton.setAttribute('aria-label', 'Duplicate communication log');
-          duplicateCommunicationLogButton.title = 'Duplicate communication log';
-          refreshStatus();
-        });
+      if (duplicateCommunicationLogButton.disabled || communicationLogUiActionInProgress || !communicationLogFileName) return;
+      void runCommunicationLogPanelAction(duplicateCommunicationLogButton, {
+        idleLabel: 'Duplicate communication log',
+        busyLabel: 'Duplicating communication log',
+        busyTitle: 'Duplicating…',
+        operation: communicationLogDuplicate,
+        onSuccess: duplicateName => setStatus(`Communication log duplicated as ${duplicateName}.`),
+        failurePrefix: 'Communication log duplicate failed'
+      });
     });
-    const resetCommunicationLogButton = panel.querySelector('[data-role="reset-communication-log"]');
-    if (resetCommunicationLogButton) resetCommunicationLogButton.innerHTML = resetIconMarkup();
     resetCommunicationLogButton?.addEventListener('click', () => {
-      if (resetCommunicationLogButton.disabled) return;
-      resetCommunicationLogButton.disabled = true;
-      resetCommunicationLogButton.setAttribute('aria-label', 'Resetting communication log');
-      resetCommunicationLogButton.title = 'Resetting…';
-      void communicationLogReset()
-        .then(() => {
+      if (resetCommunicationLogButton.disabled || communicationLogUiActionInProgress) return;
+      void runCommunicationLogPanelAction(resetCommunicationLogButton, {
+        idleLabel: 'Reset communication log',
+        busyLabel: 'Resetting communication log',
+        busyTitle: 'Resetting…',
+        operation: communicationLogReset,
+        onSuccess: () => {
           logDiagnostic('debug', 'communication-log-reset-complete', {
             file_name: communicationLogFileName
           });
           setStatus('Communication log reset to empty.');
-        })
-        .catch(error => {
-          setStatus(`⚠ Communication log reset failed: ${error?.message ?? String(error)}`);
-        })
-        .finally(() => {
-          resetCommunicationLogButton.disabled = false;
-          resetCommunicationLogButton.setAttribute('aria-label', 'Reset communication log');
-          resetCommunicationLogButton.title = 'Reset communication log';
-        });
+        },
+        failurePrefix: 'Communication log reset failed'
+      });
     });
     panel.querySelector('[data-role="screen-on"]').addEventListener('click', () => {
       screenOnWhenCapturing = !screenOnWhenCapturing;
@@ -9067,42 +9179,18 @@ Image elapsed: ${formatDuration(imageElapsed)} — Completed: ${imageCompleted}/
       else void releaseWakeLock();
       updateUi();
     });
-    const timestamps = panel.querySelector('[data-role="show-timestamps"]');
-    const recordNumbers = panel.querySelector('[data-role="show-record-numbers"]');
-    const turnIds = panel.querySelector('[data-role="show-turn-ids"]');
-    const debugProvenance = panel.querySelector('[data-role="show-debug-provenance"]');
-    if (timestamps) {
-      timestamps.checked = showTimestamps;
-      timestamps.addEventListener('change', () => {
-        showTimestamps = timestamps.checked;
-        localStorage.setItem(SHOW_TIMESTAMPS_STORAGE_KEY, String(showTimestamps));
-        updateUi();
-      });
-    }
-    if (recordNumbers) {
-      recordNumbers.checked = showRecordNumbers;
-      recordNumbers.addEventListener('change', () => {
-        showRecordNumbers = recordNumbers.checked;
-        localStorage.setItem(SHOW_RECORD_NUMBERS_STORAGE_KEY, String(showRecordNumbers));
-        updateUi();
-      });
-    }
-    if (turnIds) {
-      turnIds.checked = showTurnIds;
-      turnIds.addEventListener('change', () => {
-        showTurnIds = turnIds.checked;
-        localStorage.setItem(SHOW_TURN_IDS_STORAGE_KEY, String(showTurnIds));
-        updateUi();
-      });
-    }
-    if (debugProvenance) {
-      debugProvenance.checked = showDebugProvenance;
-      debugProvenance.addEventListener('change', () => {
-        showDebugProvenance = debugProvenance.checked;
-        localStorage.setItem(SHOW_DEBUG_PROVENANCE_STORAGE_KEY, String(showDebugProvenance));
-        updateUi();
-      });
-    }
+    bindStoredCheckbox(panel, 'show-timestamps', SHOW_TIMESTAMPS_STORAGE_KEY, showTimestamps, value => {
+      showTimestamps = value;
+    });
+    bindStoredCheckbox(panel, 'show-record-numbers', SHOW_RECORD_NUMBERS_STORAGE_KEY, showRecordNumbers, value => {
+      showRecordNumbers = value;
+    });
+    bindStoredCheckbox(panel, 'show-turn-ids', SHOW_TURN_IDS_STORAGE_KEY, showTurnIds, value => {
+      showTurnIds = value;
+    });
+    bindStoredCheckbox(panel, 'show-debug-provenance', SHOW_DEBUG_PROVENANCE_STORAGE_KEY, showDebugProvenance, value => {
+      showDebugProvenance = value;
+    });
     /**
      * Handles run selected exports.
      *

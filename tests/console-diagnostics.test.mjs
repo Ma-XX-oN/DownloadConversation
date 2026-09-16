@@ -1,26 +1,7 @@
+import { productionFunctionSource, userscript } from './helpers/userscript-source.mjs';
 import assert from 'node:assert/strict';
-import { readFile } from 'node:fs/promises';
 import test from 'node:test';
 import vm from 'node:vm';
-
-const userscript = await readFile(new URL('../chatgpt-conversation-markdown-export.user.js', import.meta.url), 'utf8');
-
-function productionFunctionSource(name) {
-  const start = userscript.indexOf(`  function ${name}(`);
-  assert.ok(start >= 0, `Production function ${name} is missing.`);
-  const functionStart = start + 2;
-  const brace = userscript.indexOf('{', functionStart);
-  assert.ok(brace > functionStart, `Production function ${name} has no body.`);
-  let depth = 0;
-  for (let index = brace; index < userscript.length; index += 1) {
-    if (userscript[index] === '{') depth += 1;
-    else if (userscript[index] === '}') {
-      depth -= 1;
-      if (depth === 0) return userscript.slice(functionStart, index + 1);
-    }
-  }
-  throw new Error(`Production function ${name} has an unterminated body.`);
-}
 
 const redactorSource = productionFunctionSource('redactDiagnosticSignedTokens');
 const consoleSource = productionFunctionSource('logConsoleDiagnostic');

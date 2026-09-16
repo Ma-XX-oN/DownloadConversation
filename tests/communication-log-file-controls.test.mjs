@@ -1,21 +1,7 @@
+import { diskBlock, diskFunctionSource, diskHarnessSource, userscript } from './helpers/userscript-source.mjs';
 import assert from 'node:assert/strict';
-import { readFile } from 'node:fs/promises';
 import test from 'node:test';
 import vm from 'node:vm';
-
-const userscript = await readFile(
-  new URL('../chatgpt-conversation-markdown-export.user.js', import.meta.url),
-  'utf8'
-);
-
-function diskBlock() {
-  const start = userscript.indexOf('  // BEGIN Issue #123 disk communication recorder');
-  const endMarker = '  // END Issue #123 disk communication recorder';
-  const end = userscript.indexOf(endMarker, start);
-  assert.ok(start >= 0 && end > start,
-    'Issue #123 disk communication recorder production block is missing.');
-  return userscript.slice(start, end + endMarker.length);
-}
 
 function notFound(name) {
   const error = new Error(`Not found: ${name}`);
@@ -100,7 +86,7 @@ function issue134Harness(initialFiles = {}) {
   };
 
   vm.runInNewContext(
-    `${diskBlock()}\ncommunicationLogDirectoryHandle = this.__issue134Directory;\ncommunicationLogFileName = 'DownloadConversation_test.jsonl';\ncommunicationLogReady = true;\ncommunicationLogWriteChain = Promise.resolve();\ncommunicationLogReportFailure = (stage, error) => {\n  this.__issue134Events.push(\`failure:\${stage}:\${error?.message ?? error}\`);\n};\nthis.__issue134 = {\n  rename: communicationLogRename,\n  duplicate: communicationLogDuplicate,\n  duplicateName: communicationLogDuplicateFileName,\n  departureCheckpoint: typeof communicationLogCheckpointForDocumentDeparture === 'function'\n    ? communicationLogCheckpointForDocumentDeparture\n    : null,\n  setWriter(writer, dirty) {\n    communicationLogWritable = writer;\n    communicationLogWriterDirty = dirty;\n  },\n  setWriteChain(chain) {\n    communicationLogWriteChain = chain;\n  },\n  state() {\n    return {\n      writable: communicationLogWritable,\n      dirty: communicationLogWriterDirty,\n      fileName: communicationLogFileName\n    };\n  }\n};`,
+    `${diskHarnessSource()}\ncommunicationLogDirectoryHandle = this.__issue134Directory;\ncommunicationLogFileName = 'DownloadConversation_test.jsonl';\ncommunicationLogReady = true;\ncommunicationLogWriteChain = Promise.resolve();\ncommunicationLogReportFailure = (stage, error) => {\n  this.__issue134Events.push(\`failure:\${stage}:\${error?.message ?? error}\`);\n};\nthis.__issue134 = {\n  rename: communicationLogRename,\n  duplicate: communicationLogDuplicate,\n  duplicateName: communicationLogDuplicateFileName,\n  departureCheckpoint: typeof communicationLogCheckpointForDocumentDeparture === 'function'\n    ? communicationLogCheckpointForDocumentDeparture\n    : null,\n  setWriter(writer, dirty) {\n    communicationLogWritable = writer;\n    communicationLogWriterDirty = dirty;\n  },\n  setWriteChain(chain) {\n    communicationLogWriteChain = chain;\n  },\n  state() {\n    return {\n      writable: communicationLogWritable,\n      dirty: communicationLogWriterDirty,\n      fileName: communicationLogFileName\n    };\n  }\n};`,
     context
   );
 
@@ -112,7 +98,7 @@ async function blobText(blob) {
 }
 
 test('Issue 134 production version and filename controls are present', () => {
-  assert.match(userscript, /@version\s+1\.2\.0-issue\.134\.4/);
+  assert.match(userscript, /@version\s+1\.2\.0-issue\.134\.5/);
   assert.match(userscript, /data-role="communication-log-name"/);
   assert.match(userscript, /data-role="rename-communication-log"/);
   assert.match(userscript, /aria-label="Rename communication log"/);
@@ -257,4 +243,25 @@ test('rename rejects invalid filenames rather than silently sanitizing them', as
   await assert.rejects(api.rename('../bad.jsonl'), /invalid communication log filename/i);
   assert.equal(files.size, 1);
   assert.equal(api.state().fileName, 'DownloadConversation_test.jsonl');
+});
+
+
+test('communication-log mutators share queue, writer-close, and panel action infrastructure', () => {
+  const block = diskBlock();
+  assert.match(block, /function communicationLogEnqueue\(/);
+  for (const name of [
+    'communicationLogCheckpoint',
+    'communicationLogRename',
+    'communicationLogDuplicate',
+    'communicationLogReset',
+    'communicationLogAppendLine'
+  ]) {
+    assert.match(diskFunctionSource(name), /communicationLogEnqueue\(/,
+      `${name} must use the shared communication-log queue helper.`);
+  }
+  assert.match(diskFunctionSource('communicationLogReset'), /communicationLogCloseActiveWriter\(\)/);
+  assert.doesNotMatch(diskFunctionSource('communicationLogReset'), /communicationLogWritable\.close\(\)/,
+    'Reset must not reimplement active-writer close state cleanup.');
+  assert.match(userscript, /function runCommunicationLogPanelAction\(/);
+  assert.match(userscript, /function communicationLogPanelControls\(/);
 });

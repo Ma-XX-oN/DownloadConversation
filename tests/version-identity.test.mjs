@@ -1,9 +1,9 @@
+import { userscript } from './helpers/userscript-source.mjs';
 import assert from 'node:assert/strict';
 import { readFile } from 'node:fs/promises';
 import test from 'node:test';
 import vm from 'node:vm';
 
-const userscript = await readFile(new URL('../chatgpt-conversation-markdown-export.user.js', import.meta.url), 'utf8');
 const ci = await readFile(new URL('../.github/workflows/ci.yml', import.meta.url), 'utf8');
 const coreIntegration = await readFile(new URL('./core-integration.test.mjs', import.meta.url), 'utf8');
 const phase5Integration = await readFile(new URL('./phase5-rich-core-integration.test.mjs', import.meta.url), 'utf8');
