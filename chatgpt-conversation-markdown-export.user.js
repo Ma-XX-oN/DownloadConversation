@@ -1511,7 +1511,7 @@
   /**
    * Validates an exact communication-log filename without silently rewriting it.
    *
-   * @param {string} fileName Candidate basename in the authorized directory.
+   * @param {string} fileName - Candidate basename in the authorized directory.
    * @returns {string} The unchanged validated basename.
    */
   function communicationLogValidateFileName(fileName) {
@@ -1530,8 +1530,8 @@
   /**
    * Builds the deterministic duplicate filename for one positive suffix number.
    *
-   * @param {string} fileName Original communication-log filename.
-   * @param {number} number Positive duplicate suffix number.
+   * @param {string} fileName - Original communication-log filename.
+   * @param {number} number - Positive duplicate suffix number.
    * @returns {string} Filename with `(N)` inserted immediately before the extension.
    */
   function communicationLogDuplicateFileName(fileName, number) {
@@ -1548,7 +1548,7 @@
   /**
    * Checks whether a sibling file currently exists in the authorized directory.
    *
-   * @param {string} fileName Exact sibling filename.
+   * @param {string} fileName - Exact sibling filename.
    * @returns {Promise<boolean>} True when the sibling exists.
    */
   async function communicationLogFileExists(fileName) {
@@ -1582,8 +1582,8 @@
   /**
    * Copies one committed source snapshot to a new sibling and verifies exact bytes.
    *
-   * @param {Blob} sourceFile Committed source file snapshot.
-   * @param {string} destinationName New sibling filename that must not exist.
+   * @param {Blob} sourceFile - Committed source file snapshot.
+   * @param {string} destinationName - New sibling filename that must not exist.
    * @returns {Promise<void>} Resolves after the destination is committed and verified.
    */
   async function communicationLogCopySnapshot(sourceFile, destinationName) {
@@ -1628,7 +1628,7 @@
    * is deleted only after the new sibling is byte-for-byte verified, and the active
    * filename is switched only after that delete succeeds.
    *
-   * @param {string} newFileName Exact new basename in the authorized directory.
+   * @param {string} newFileName - Exact new basename in the authorized directory.
    * @returns {Promise<string>} The new active filename.
    */
   function communicationLogRename(newFileName) {
