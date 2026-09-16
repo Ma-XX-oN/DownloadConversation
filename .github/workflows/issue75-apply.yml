@@ -1,0 +1,37 @@
+name: Issue 75 Apply
+
+on:
+  push:
+    branches:
+      - issue-75-jump-materialization-convergence
+
+permissions:
+  contents: write
+
+jobs:
+  apply:
+    if: github.event.head_commit.message == 'chore(#75): add .75.4 patch workflow'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - name: Apply issue 75 correction
+        run: python3 tools/issue75-apply.py
+      - name: Verify focused correction
+        run: |
+          node --check chatgpt-conversation-markdown-export.user.js
+          node scripts/check-jsdoc.mjs
+          node --test tests/jump-materialization.test.mjs
+          git diff --check
+          git diff --exit-code --quiet && { echo 'Patch produced no changes.' >&2; exit 1; } || true
+      - name: Commit correction
+        run: |
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add chatgpt-conversation-markdown-export.user.js tests/jump-materialization.test.mjs DESIGN.md
+          git commit -m 'fix(#75): follow stock historical pagination re-arm'
+          git push origin HEAD:issue-75-jump-materialization-convergence
