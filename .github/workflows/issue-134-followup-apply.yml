@@ -21,6 +21,18 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: 22
+      - name: Emit ordinary panel markup from the candidate helper
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+          path = Path('.github/issue134_followup_apply.py')
+          source = path.read_text(encoding='utf-8')
+          old = "new_markup = r'''"
+          new = "new_markup = '''"
+          if source.count(old) != 1:
+            raise SystemExit(f'expected one raw new_markup literal, found {source.count(old)}')
+          path.write_text(source.replace(old, new, 1), encoding='utf-8')
+          PY
       - name: Apply Issue 134 follow-up
         run: |
           set +e
