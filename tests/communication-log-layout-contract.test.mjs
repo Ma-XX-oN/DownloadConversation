@@ -3,29 +3,28 @@ import assert from 'node:assert/strict';
 import { createHash } from 'node:crypto';
 import test from 'node:test';
 
-test('Issue 134 keeps filename controls on one non-wrapping row and Reset below it', () => {
+test('Issue 134 keeps filename and all three file actions on one non-wrapping row', () => {
   assert.match(userscript,
     /#\$\{PANEL_ID\} \.tm-communication-log-row\{[^}]*flex-wrap:nowrap[^}]*\}/,
     'The active filename/control row must explicitly prohibit wrapping.');
 
   const rowStart = userscript.indexOf('class="tm-row tm-communication-log-row"');
   assert.ok(rowStart >= 0, 'The dedicated communication-log filename/control row is missing.');
-  const resetRowStart = userscript.indexOf(
-    '<div class="tm-row"><button class="tm-icon-button" data-role="reset-communication-log"',
-    rowStart
-  );
-  assert.ok(resetRowStart > rowStart,
-    'Reset must appear below the filename/control row.');
-  const row = userscript.slice(rowStart, resetRowStart);
+  const nextRowStart = userscript.indexOf('<div class="tm-row">', rowStart + 1);
+  assert.ok(nextRowStart > rowStart, 'The row following the communication-log controls is missing.');
+  const row = userscript.slice(rowStart, nextRowStart);
 
   assert.match(row, /data-role="communication-log-name-viewport"/);
-  assert.match(row, /data-role="rename-communication-log"/);
+  assert.match(row, /class="tm-icon-button" data-role="rename-communication-log"/);
   assert.match(row,
     /class="tm-icon-button" data-role="duplicate-communication-log"[^>]*aria-label="Duplicate communication log"/);
+  assert.match(row,
+    /class="tm-icon-button" data-role="reset-communication-log"[^>]*aria-label="Reset communication log"/,
+    'Reset must share the same row as the filename, Rename, and Duplicate controls.');
   assert.doesNotMatch(row, />Duplicate<\/button>/,
     'Duplicate must be an icon-only action, not a text button.');
-  assert.doesNotMatch(row, /data-role="reset-communication-log"/,
-    'Reset must remain a separate action below the filename controls.');
+  assert.doesNotMatch(row, />Reset log<\/button>/,
+    'Reset must be an icon-only action, not a text button.');
 });
 
 test('active filename is plain text rather than a button-like field', () => {
