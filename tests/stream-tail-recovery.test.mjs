@@ -27,6 +27,7 @@ function harness() {
       removeItem(key) { storage.delete(key); }
     },
     logDiagnostic() {},
+    agentSoundObserveTerminal() {},
     conversationSpineFromPages(pages) {
       const messages = [];
       const seen = new Set();
