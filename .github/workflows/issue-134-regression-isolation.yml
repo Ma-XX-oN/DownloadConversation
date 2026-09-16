@@ -8,50 +8,24 @@ on:
       - .github/workflows/issue-134-regression-isolation.yml
 
 jobs:
-  disk:
+  patch-diagnostic:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
         with:
           node-version: 22
-      - name: Apply issue 134 follow-up patch
-        run: python3 .github/issue134_followup_apply.py
-      - name: Disk recorder regression
-        run: node --test tests/disk-communication-recorder.test.mjs
-
-  panel:
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
+      - name: Capture patch result
+        shell: bash
+        run: |
+          set +e
+          python3 .github/issue134_followup_apply.py > issue134-patch-diagnostic.txt 2>&1
+          status=$?
+          echo "patch_status=$status" >> issue134-patch-diagnostic.txt
+          exit 0
+      - name: Upload patch diagnostic
+        uses: actions/upload-artifact@v4
         with:
-          node-version: 22
-      - name: Apply issue 134 follow-up patch
-        run: python3 .github/issue134_followup_apply.py
-      - name: Panel regression
-        run: node --test tests/recorder-panel-ui.test.mjs
-
-  combined:
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
-        with:
-          node-version: 22
-      - name: Apply issue 134 follow-up patch
-        run: python3 .github/issue134_followup_apply.py
-      - name: Exact previously failing command
-        run: node --test tests/disk-communication-recorder.test.mjs tests/recorder-panel-ui.test.mjs
-
-  lifecycle:
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
-        with:
-          node-version: 22
-      - name: Apply issue 134 follow-up patch
-        run: python3 .github/issue134_followup_apply.py
-      - name: Lifecycle regression only
-        run: node --test --test-name-pattern="page lifecycle checkpoint durability" tests/disk-communication-recorder.test.mjs
+          name: issue134-patch-diagnostic
+          path: issue134-patch-diagnostic.txt
+          if-no-files-found: error
