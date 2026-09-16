@@ -4,7 +4,10 @@ import vm from 'node:vm';
 import { productionFunctionSource, userscript } from './helpers/userscript-source.mjs';
 
 function soundHarness(enabled = true) {
-  const context = { emitted: [] };
+  const context = {
+    emitted: [],
+    document: { addEventListener() {} }
+  };
   vm.runInNewContext(`
     let agentSoundsEnabled = ${enabled ? 'true' : 'false'};
     const AGENT_SOUND_TERMINAL_KEY_LIMIT = 128;
