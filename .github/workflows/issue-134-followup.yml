@@ -24,7 +24,7 @@ jobs:
         with:
           python-version: '3.13'
       - name: Apply DRY cleanup
-        run: python scripts/issue-134-dry-cleanup.py
+        run: python scripts/issue-134-dry-cleanup-wrapper.py
       - name: Production JSDoc coverage
         run: node scripts/check-jsdoc.mjs
       - name: JavaScript syntax
@@ -44,7 +44,7 @@ jobs:
           tests/sediment-resolver.test.mjs
           tests/dry-contract.test.mjs
       - name: Remove temporary carriers and obsolete patch script
-        run: rm -f .github/workflows/issue-134-followup.yml scripts/issue-134-dry-cleanup.py scripts/format-launcher-v156.py
+        run: rm -f .github/workflows/issue-134-followup.yml scripts/issue-134-dry-cleanup.py scripts/issue-134-dry-cleanup-wrapper.py scripts/format-launcher-v156.py
       - name: Commit verified cleanup
         run: |
           git config user.name "github-actions[bot]"
