@@ -22,6 +22,8 @@ jobs:
         run: node --test tests/export-single-snapshot.test.mjs
       - name: Jump materialization regression
         run: node --test tests/jump-materialization.test.mjs
+      - name: Jump loading diagnostics regression
+        run: node --test tests/jump-loading-diagnostics.test.mjs
       - name: Agent completion sound regression
         run: node --test tests/agent-completion-sounds.test.mjs
       - name: Communication log file controls regression
