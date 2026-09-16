@@ -25,6 +25,12 @@ jobs:
           python-version: '3.13'
       - name: Apply DRY cleanup
         run: python scripts/issue-134-dry-cleanup-wrapper.py
+      - name: Verify production block markers survived refactor
+        run: |
+          grep -F "// BEGIN Issue #123 stock network diagnostics" chatgpt-conversation-markdown-export.user.js
+          grep -F "// END Issue #123 stock network diagnostics" chatgpt-conversation-markdown-export.user.js
+          grep -F "// BEGIN Issue #123 disk communication recorder" chatgpt-conversation-markdown-export.user.js
+          grep -F "// END Issue #123 disk communication recorder" chatgpt-conversation-markdown-export.user.js
       - name: Production JSDoc coverage
         run: node scripts/check-jsdoc.mjs
       - name: JavaScript syntax
