@@ -1,4 +1,5 @@
 from pathlib import Path
+import re
 
 source_path = Path('chatgpt-conversation-markdown-export.user.js')
 source = source_path.read_text(encoding='utf-8')
@@ -9,6 +10,13 @@ def replace_once(text, old, new, label):
   if count != 1:
     raise SystemExit(f'{label}: expected exactly one match, found {count}')
   return text.replace(old, new, 1)
+
+
+def sub_once(text, pattern, replacement, label):
+  updated, count = re.subn(pattern, lambda _match: replacement, text, count=1)
+  if count != 1:
+    raise SystemExit(f'{label}: expected exactly one match, found {count}')
+  return updated
 
 
 source = replace_once(
@@ -28,11 +36,19 @@ source = replace_once(
   '      #${PANEL_ID} .tm-communication-log-row button{flex:0 0 auto}\n',
   'filename viewport CSS')
 
-old_markup = r'''      <div class=\"tm-row\"><span class=\"tm-label\">Communication log</span><input data-role=\"communication-log-name\" type=\"text\" readonly aria-label=\"Current communication log filename\" title=\"Current communication log filename\"><button data-role=\"rename-communication-log\" type=\"button\" aria-label=\"Rename communication log\" title=\"Rename communication log\">✎</button><button data-role=\"duplicate-communication-log\" type=\"button\">Duplicate</button><button data-role=\"reset-communication-log\" type=\"button\">Reset log</button></div>'''
+markup_pattern = (
+  r'      <div class=\\?"tm-row\\?"><span class=\\?"tm-label\\?">Communication log</span>'
+  r'<input data-role=\\?"communication-log-name\\?" type=\\?"text\\?" readonly '
+  r'aria-label=\\?"Current communication log filename\\?" title=\\?"Current communication log filename\\?">'
+  r'<button data-role=\\?"rename-communication-log\\?" type=\\?"button\\?" '
+  r'aria-label=\\?"Rename communication log\\?" title=\\?"Rename communication log\\?">✎</button>'
+  r'<button data-role=\\?"duplicate-communication-log\\?" type=\\?"button\\?">Duplicate</button>'
+  r'<button data-role=\\?"reset-communication-log\\?" type=\\?"button\\?">Reset log</button></div>'
+)
 new_markup = r'''      <div class=\"tm-row\"><span class=\"tm-label\">Communication log</span></div>
       <div class=\"tm-row tm-communication-log-row\"><div class=\"tm-log-name-viewport\" data-role=\"communication-log-name-viewport\" role=\"textbox\" aria-readonly=\"true\" aria-label=\"Current communication log filename\" title=\"Current communication log filename\"><span class=\"tm-log-name-text\" data-role=\"communication-log-name\"></span></div><button data-role=\"rename-communication-log\" type=\"button\" aria-label=\"Rename communication log\" title=\"Rename communication log\">✎</button><button data-role=\"duplicate-communication-log\" type=\"button\">Duplicate</button></div>
       <div class=\"tm-row\"><button data-role=\"reset-communication-log\" type=\"button\">Reset log</button></div>'''
-source = replace_once(source, old_markup, new_markup, 'filename/control markup')
+source = sub_once(source, markup_pattern, new_markup, 'filename/control markup')
 
 status_marker = '''  /**
    * Refreshes status.
