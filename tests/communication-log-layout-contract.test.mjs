@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict';
+import { createHash } from 'node:crypto';
 import { readFile } from 'node:fs/promises';
 import test from 'node:test';
 
@@ -51,8 +52,13 @@ test('Duplicate and Reset use their approved icon treatments', () => {
     /duplicateIconMarkup[\s\S]*<rect[^>]+>[\s\S]*<rect[^>]+>[\s\S]*<rect[^>]+>/,
     'Duplicate icon must use the approved one-source-to-two-target branching metaphor.');
   assert.match(userscript, /function resetIconMarkup\(\)/);
-  assert.match(userscript, /data:image\/png;base64,iVBORw0KGgo/,
-    'Reset must embed the AgentPanelSpeaker config-reset PNG.');
+  const resetData = userscript.match(/data:image\/png;base64,([A-Za-z0-9+/=]+)/);
+  assert.ok(resetData, 'Reset must embed the AgentPanelSpeaker config-reset PNG.');
+  assert.equal(
+    createHash('sha256').update(Buffer.from(resetData[1], 'base64')).digest('hex'),
+    '4592bb94353fd5416a7b372e0e113b66b6e4deeab43338a50505fbfeac11716c',
+    'Reset icon bytes must exactly match AgentPanelSpeaker/Assets/UtilityIcons/Reset.png.'
+  );
   assert.match(userscript,
     /class="tm-icon-button" data-role="reset-communication-log"[^>]*aria-label="Reset communication log"/);
   assert.doesNotMatch(userscript, />Reset log<\/button>/,
