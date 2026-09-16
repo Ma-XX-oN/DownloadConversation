@@ -10,7 +10,6 @@ permissions:
 
 jobs:
   apply:
-    if: github.event.head_commit.message == 'chore(#75): add .75.4 patch workflow'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -19,16 +18,31 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: 22
+      - name: Check correction state
+        id: gate
+        shell: bash
+        run: |
+          if grep -q '1.2.0-issue.75.3' chatgpt-conversation-markdown-export.user.js; then
+            echo 'needed=true' >> "$GITHUB_OUTPUT"
+          else
+            echo 'needed=false' >> "$GITHUB_OUTPUT"
+          fi
       - name: Apply issue 75 correction
+        if: steps.gate.outputs.needed == 'true'
         run: python3 tools/issue75-apply.py
       - name: Verify focused correction
+        if: steps.gate.outputs.needed == 'true'
         run: |
           node --check chatgpt-conversation-markdown-export.user.js
           node scripts/check-jsdoc.mjs
           node --test tests/jump-materialization.test.mjs
           git diff --check
-          git diff --exit-code --quiet && { echo 'Patch produced no changes.' >&2; exit 1; } || true
+          if git diff --exit-code --quiet; then
+            echo 'Patch produced no changes.' >&2
+            exit 1
+          fi
       - name: Commit correction
+        if: steps.gate.outputs.needed == 'true'
         run: |
           git config user.name 'github-actions[bot]'
           git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
