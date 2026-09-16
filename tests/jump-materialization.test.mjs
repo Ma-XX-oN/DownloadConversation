@@ -11,7 +11,7 @@ function jumpProductionSource() {
   return userscript.slice(start, end);
 }
 
-function makeHarness({ onScroll = null, onSettle = null, tocForSelector = null } = {}) {
+function makeHarness({ onScroll = null, onSettle = null, tocForSelector = null, timeStepMs = 100 } = {}) {
   class FakeElement {
     constructor(name) {
       this.name = name;
@@ -35,7 +35,8 @@ function makeHarness({ onScroll = null, onSettle = null, tocForSelector = null }
     mounted: false,
     tocAvailable: false,
     diagnostics: [],
-    settleCount: 0
+    settleCount: 0,
+    now: 0
   };
   tocElement.click = () => {
     state.mounted = true;
@@ -76,10 +77,11 @@ function makeHarness({ onScroll = null, onSettle = null, tocForSelector = null }
     assert: (condition, message) => {
       if (!condition) throw new Error(message);
     },
-    performance,
+    performance: { now: () => state.now },
     Promise,
     setTimeout(callback) {
       state.settleCount += 1;
+      state.now += timeStepMs;
       onSettle?.({ root: scrollRoot, state });
       callback();
       return state.settleCount;
@@ -212,6 +214,26 @@ test('Jump accepts the requested message itself after a later virtualized extent
   assert.equal(expanded, true);
   assert.equal(harness.state.tocAvailable, false,
     'The requested message itself must be sufficient; a TOC control is not required.');
+});
+
+test('non-oldest Jump keeps its total traversal timeout while geometry changes', async () => {
+  const harness = makeHarness({
+    timeStepMs: 100,
+    onSettle({ root, state }) {
+      if (state.settleCount <= 20) root.scrollHeight += 200;
+    }
+  });
+  const target = {
+    uap_index: 10,
+    role: 'user',
+    message_id: 'never-mounted',
+    spine: { records: [] }
+  };
+
+  const toc = await harness.context.populateJumpTocIndex(target, 500);
+  assert.equal(toc, null);
+  assert.ok(harness.state.settleCount <= 6,
+    'Non-oldest geometry changes must not refresh the existing total traversal timeout.');
 });
 
 test('numeric Jump primes safe navigation before Conversation API resolution completes', async () => {

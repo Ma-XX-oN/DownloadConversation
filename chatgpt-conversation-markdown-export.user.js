@@ -7093,12 +7093,12 @@ Image elapsed: ${formatDuration(imageElapsed)} — Completed: ${imageCompleted}/
    * and moves scrollTop forward.  Jump then traverses upward through the near-top region again
    * instead of pinning scrollTop at zero while the stock loader is still re-arming.
    *
-   * The timeout is a stall timeout.  Any observed scroll/geometry progress refreshes it so a
-   * long conversation is not rejected merely because successful stock pagination needs many
-   * historical batches.
+   * For UAP 0, the timeout is a stall timeout.  Any observed scroll/geometry progress refreshes
+   * it so a long conversation is not rejected merely because successful stock pagination needs
+   * many historical batches.  Other targets retain the existing total traversal timeout.
    *
    * @param {Object} target - Resolved Jump target containing UAP index, role, and message id.
-   * @param {number} timeoutMs - Maximum time without materialization progress, in milliseconds.
+   * @param {number} timeoutMs - Total traversal timeout, or UAP 0 stall timeout, in milliseconds.
    * @returns {Promise<HTMLElement|null>} The matching TOC control, or null when the target materializes directly or traversal stalls.
    */
   async function populateJumpTocIndex(target, timeoutMs = 60000) {
@@ -7153,7 +7153,7 @@ Image elapsed: ${formatDuration(imageElapsed)} — Completed: ${imageCompleted}/
       observedScrollTop = scrollTop;
       observedScrollHeight = scrollHeight;
       observedClientHeight = clientHeight;
-      if (changed) stallDeadline = performance.now() + timeoutMs;
+      if (changed && seeksOldestBoundary) stallDeadline = performance.now() + timeoutMs;
       return changed;
     };
 
