@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         ChatGPT Conversation Markdown Recorder
 // @namespace    https://chatgpt.com/
-// @version      1.2.0-issue.133.1
+// @version      1.2.0-issue.134.1
 // @description  Exports the current ChatGPT conversation directly from the Conversation API as Markdown or JSONL.
 // @match        https://chatgpt.com/*
 // @match        https://chat.openai.com/*
@@ -1506,6 +1506,199 @@
       return false;
     });
     return communicationLogWriteChain;
+  }
+
+  /**
+   * Validates an exact communication-log filename without silently rewriting it.
+   *
+   * @param {string} fileName Candidate basename in the authorized directory.
+   * @returns {string} The unchanged validated basename.
+   */
+  function communicationLogValidateFileName(fileName) {
+    if (typeof fileName !== 'string'
+        || fileName.length === 0
+        || fileName.trim() !== fileName
+        || fileName === '.'
+        || fileName === '..'
+        || /[<>:"/\\|?*\u0000-\u001F]/.test(fileName)
+        || /[. ]$/.test(fileName)) {
+      throw new Error('Invalid communication log filename.');
+    }
+    return fileName;
+  }
+
+  /**
+   * Builds the deterministic duplicate filename for one positive suffix number.
+   *
+   * @param {string} fileName Original communication-log filename.
+   * @param {number} number Positive duplicate suffix number.
+   * @returns {string} Filename with `(N)` inserted immediately before the extension.
+   */
+  function communicationLogDuplicateFileName(fileName, number) {
+    if (!Number.isInteger(number) || number < 1) {
+      throw new Error('Communication log duplicate number must be a positive integer.');
+    }
+    const extensionIndex = fileName.lastIndexOf('.');
+    const hasExtension = extensionIndex > 0;
+    const stem = hasExtension ? fileName.slice(0, extensionIndex) : fileName;
+    const extension = hasExtension ? fileName.slice(extensionIndex) : '';
+    return `${stem}(${number})${extension}`;
+  }
+
+  /**
+   * Checks whether a sibling file currently exists in the authorized directory.
+   *
+   * @param {string} fileName Exact sibling filename.
+   * @returns {Promise<boolean>} True when the sibling exists.
+   */
+  async function communicationLogFileExists(fileName) {
+    if (!communicationLogDirectoryHandle) {
+      throw new Error('Communication log directory is not ready.');
+    }
+    try {
+      await communicationLogDirectoryHandle.getFileHandle(fileName, { create: false });
+      return true;
+    } catch (error) {
+      if (error?.name === 'NotFoundError') return false;
+      throw error;
+    }
+  }
+
+  /**
+   * Commits and releases the active long-lived writer before a file mutation.
+   *
+   * @returns {Promise<void>} Resolves after any active writer is closed.
+   */
+  async function communicationLogCloseActiveWriter() {
+    if (!communicationLogWritable) return;
+    try {
+      await communicationLogWritable.close();
+    } finally {
+      communicationLogWritable = null;
+      communicationLogWriterDirty = false;
+    }
+  }
+
+  /**
+   * Copies one committed source snapshot to a new sibling and verifies exact bytes.
+   *
+   * @param {Blob} sourceFile Committed source file snapshot.
+   * @param {string} destinationName New sibling filename that must not exist.
+   * @returns {Promise<void>} Resolves after the destination is committed and verified.
+   */
+  async function communicationLogCopySnapshot(sourceFile, destinationName) {
+    if (!communicationLogDirectoryHandle) {
+      throw new Error('Communication log directory is not ready.');
+    }
+    if (await communicationLogFileExists(destinationName)) {
+      throw new Error(`Communication log file already exists: ${destinationName}`);
+    }
+
+    let destinationCreated = false;
+    let writable = null;
+    try {
+      const destinationHandle = await communicationLogDirectoryHandle.getFileHandle(
+        destinationName,
+        { create: true }
+      );
+      destinationCreated = true;
+      writable = await destinationHandle.createWritable();
+      await writable.write(sourceFile);
+      await writable.close();
+      writable = null;
+
+      const copiedFile = await destinationHandle.getFile();
+      if (copiedFile.size !== sourceFile.size
+          || !(await communicationLogBlobsEqual(sourceFile, copiedFile))) {
+        throw new Error(`Communication log copy verification failed: ${destinationName}`);
+      }
+    } catch (error) {
+      try { await writable?.abort(); } catch {}
+      if (destinationCreated) {
+        try { await communicationLogDirectoryHandle.removeEntry(destinationName); } catch {}
+      }
+      throw error;
+    }
+  }
+
+  /**
+   * Renames the active communication log by verified copy-then-delete.
+   *
+   * The operation is serialized behind pending communication writes. The original
+   * is deleted only after the new sibling is byte-for-byte verified, and the active
+   * filename is switched only after that delete succeeds.
+   *
+   * @param {string} newFileName Exact new basename in the authorized directory.
+   * @returns {Promise<string>} The new active filename.
+   */
+  function communicationLogRename(newFileName) {
+    const operation = communicationLogWriteChain.then(async () => {
+      const validatedName = communicationLogValidateFileName(newFileName);
+      if (!communicationLogReady || !communicationLogDirectoryHandle || !communicationLogFileName) {
+        throw new Error('Communication log directory/file is not ready.');
+      }
+      if (validatedName === communicationLogFileName) return communicationLogFileName;
+      if (await communicationLogFileExists(validatedName)) {
+        throw new Error(`Communication log file already exists: ${validatedName}`);
+      }
+
+      await communicationLogCloseActiveWriter();
+      const sourceName = communicationLogFileName;
+      const sourceSnapshot = await communicationLogRefreshedFileSnapshot();
+      await communicationLogCopySnapshot(sourceSnapshot.file, validatedName);
+
+      try {
+        await communicationLogDirectoryHandle.removeEntry(sourceName);
+      } catch (error) {
+        try { await communicationLogDirectoryHandle.removeEntry(validatedName); } catch {}
+        throw error;
+      }
+
+      communicationLogFileName = validatedName;
+      return validatedName;
+    });
+    communicationLogWriteChain = operation.catch(communicationError => {
+      communicationLogReportFailure('rename', communicationError);
+    });
+    return operation;
+  }
+
+  /**
+   * Creates a committed point-in-time duplicate of the active communication log.
+   *
+   * The lowest unused positive `(N)` suffix is inserted immediately before the
+   * extension with no intervening space. The active filename never changes.
+   *
+   * @returns {Promise<string>} The created duplicate filename.
+   */
+  function communicationLogDuplicate() {
+    const operation = communicationLogWriteChain.then(async () => {
+      if (!communicationLogReady || !communicationLogDirectoryHandle || !communicationLogFileName) {
+        throw new Error('Communication log directory/file is not ready.');
+      }
+
+      await communicationLogCloseActiveWriter();
+      const sourceSnapshot = await communicationLogRefreshedFileSnapshot();
+      let duplicateNumber = 1;
+      let duplicateName = communicationLogDuplicateFileName(
+        communicationLogFileName,
+        duplicateNumber
+      );
+      while (await communicationLogFileExists(duplicateName)) {
+        duplicateNumber += 1;
+        duplicateName = communicationLogDuplicateFileName(
+          communicationLogFileName,
+          duplicateNumber
+        );
+      }
+
+      await communicationLogCopySnapshot(sourceSnapshot.file, duplicateName);
+      return duplicateName;
+    });
+    communicationLogWriteChain = operation.catch(communicationError => {
+      communicationLogReportFailure('duplicate', communicationError);
+    });
+    return operation;
   }
 
   /**
@@ -5454,6 +5647,16 @@ Image elapsed: ${formatDuration(imageElapsed)} — Completed: ${imageCompleted}/
   function refreshStatus() {
     const status = document.querySelector(`#${PANEL_ID} [data-role="status"]`);
     if (!status) return;
+    const communicationLogNameInput = document.querySelector(`#${PANEL_ID} [data-role="communication-log-name"]`);
+    const renameCommunicationLogButton = document.querySelector(`#${PANEL_ID} [data-role="rename-communication-log"]`);
+    const duplicateCommunicationLogButton = document.querySelector(`#${PANEL_ID} [data-role="duplicate-communication-log"]`);
+    const communicationLogAvailable = Boolean(communicationLogReady && communicationLogFileName);
+    if (communicationLogNameInput) {
+      communicationLogNameInput.value = communicationLogAvailable ? communicationLogFileName : '';
+      communicationLogNameInput.placeholder = communicationLogAvailable ? '' : 'Not configured';
+    }
+    if (renameCommunicationLogButton) renameCommunicationLogButton.disabled = !communicationLogAvailable;
+    if (duplicateCommunicationLogButton) duplicateCommunicationLogButton.disabled = !communicationLogAvailable;
     if (progressState) {
       status.textContent = progressStatus(exportKind === 'md' ? 'Extract MD' : 'Extract JSONL');
     } else {
@@ -8685,7 +8888,7 @@ Image elapsed: ${formatDuration(imageElapsed)} — Completed: ${imageCompleted}/
       <div class="tm-log-output" data-role="log-output" hidden></div>
       <div class="tm-status" data-role="status"></div>
       <div class="tm-row"><span class="tm-label">Diagnostics</span><select data-role="diagnostics"><option value="errors">Errors</option><option value="warnings">Warnings</option><option value="debug">Debug</option><option value="verbose">Verbose</option></select><label><input data-role="console-diagnostics" type="checkbox"> console</label><button data-role="test" type="button">Test</button></div>
-      <div class="tm-row"><span class="tm-label">Communication log</span><button data-role="reset-communication-log" type="button">Reset log</button></div>
+      <div class="tm-row"><span class="tm-label">Communication log</span><input data-role="communication-log-name" type="text" readonly aria-label="Current communication log filename" title="Current communication log filename"><button data-role="rename-communication-log" type="button" aria-label="Rename communication log" title="Rename communication log">✎</button><button data-role="duplicate-communication-log" type="button">Duplicate</button><button data-role="reset-communication-log" type="button">Reset log</button></div>
       <div class="tm-row"><span class="tm-label">Screen on when extracting</span><button class="tm-switch" data-role="screen-on" type="button" role="switch" aria-checked="false" aria-label="Keep screen on while extracting"><span class="tm-switch-thumb"></span></button></div>
       <div class="tm-row"><button data-role="jump" type="button">Jump</button></div>
       <div class="tm-row tm-extract-formats"><button data-role="extract" type="button">Extract</button><label><input data-role="format-jsonl" type="checkbox"> JSONL</label><label><input data-role="format-md" type="checkbox" checked> MD</label></div>
@@ -8726,6 +8929,43 @@ Image elapsed: ${formatDuration(imageElapsed)} — Completed: ${imageCompleted}/
     });
     panel.querySelector('[data-role="test"]').addEventListener('click', event => openTestMatrix(event.currentTarget));
     panel.querySelector('[data-role="jump"]').addEventListener('click', () => void runJump());
+    const communicationLogNameInput = panel.querySelector('[data-role="communication-log-name"]');
+    const renameCommunicationLogButton = panel.querySelector('[data-role="rename-communication-log"]');
+    const duplicateCommunicationLogButton = panel.querySelector('[data-role="duplicate-communication-log"]');
+    renameCommunicationLogButton?.addEventListener('click', () => {
+      if (renameCommunicationLogButton.disabled || !communicationLogFileName) return;
+      const requestedName = window.prompt('Rename communication log', communicationLogFileName);
+      if (requestedName === null || requestedName === communicationLogFileName) return;
+      renameCommunicationLogButton.disabled = true;
+      duplicateCommunicationLogButton.disabled = true;
+      void communicationLogRename(requestedName)
+        .then(newFileName => {
+          setStatus(`Communication log renamed to ${newFileName}.`);
+        })
+        .catch(error => {
+          setStatus(`⚠ Communication log rename failed: ${error?.message ?? String(error)}`);
+        })
+        .finally(() => {
+          refreshStatus();
+        });
+    });
+    duplicateCommunicationLogButton?.addEventListener('click', () => {
+      if (duplicateCommunicationLogButton.disabled || !communicationLogFileName) return;
+      duplicateCommunicationLogButton.disabled = true;
+      renameCommunicationLogButton.disabled = true;
+      duplicateCommunicationLogButton.textContent = 'Duplicating…';
+      void communicationLogDuplicate()
+        .then(duplicateName => {
+          setStatus(`Communication log duplicated as ${duplicateName}.`);
+        })
+        .catch(error => {
+          setStatus(`⚠ Communication log duplicate failed: ${error?.message ?? String(error)}`);
+        })
+        .finally(() => {
+          duplicateCommunicationLogButton.textContent = 'Duplicate';
+          refreshStatus();
+        });
+    });
     const resetCommunicationLogButton = panel.querySelector('[data-role="reset-communication-log"]');
     resetCommunicationLogButton?.addEventListener('click', () => {
       if (resetCommunicationLogButton.disabled) return;

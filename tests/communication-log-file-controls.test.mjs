@@ -95,15 +95,12 @@ function issue134Harness(initialFiles = {}) {
       origin: 'https://chatgpt.com',
       href: 'https://chatgpt.com/c/conversation-1'
     },
-    communicationLogDirectoryHandle: directory,
-    communicationLogFileName: 'DownloadConversation_test.jsonl',
-    communicationLogReady: true,
-    communicationLogWriteChain: Promise.resolve(),
+    __issue134Directory: directory,
     __issue134Events: events
   };
 
   vm.runInNewContext(
-    `${diskBlock()}\ncommunicationLogReportFailure = (stage, error) => {\n  this.__issue134Events.push(\`failure:\${stage}:\${error?.message ?? error}\`);\n};\nthis.__issue134 = {\n  rename: communicationLogRename,\n  duplicate: communicationLogDuplicate,\n  duplicateName: communicationLogDuplicateFileName,\n  setWriter(writer, dirty) {\n    communicationLogWritable = writer;\n    communicationLogWriterDirty = dirty;\n  },\n  setWriteChain(chain) {\n    communicationLogWriteChain = chain;\n  },\n  state() {\n    return {\n      writable: communicationLogWritable,\n      dirty: communicationLogWriterDirty,\n      fileName: communicationLogFileName\n    };\n  }\n};`,
+    `${diskBlock()}\ncommunicationLogDirectoryHandle = this.__issue134Directory;\ncommunicationLogFileName = 'DownloadConversation_test.jsonl';\ncommunicationLogReady = true;\ncommunicationLogWriteChain = Promise.resolve();\ncommunicationLogReportFailure = (stage, error) => {\n  this.__issue134Events.push(\`failure:\${stage}:\${error?.message ?? error}\`);\n};\nthis.__issue134 = {\n  rename: communicationLogRename,\n  duplicate: communicationLogDuplicate,\n  duplicateName: communicationLogDuplicateFileName,\n  setWriter(writer, dirty) {\n    communicationLogWritable = writer;\n    communicationLogWriterDirty = dirty;\n  },\n  setWriteChain(chain) {\n    communicationLogWriteChain = chain;\n  },\n  state() {\n    return {\n      writable: communicationLogWritable,\n      dirty: communicationLogWriterDirty,\n      fileName: communicationLogFileName\n    };\n  }\n};`,
     context
   );
 
