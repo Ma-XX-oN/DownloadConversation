@@ -30,6 +30,24 @@ jobs:
       - name: Apply issue 75 correction
         if: steps.gate.outputs.needed == 'true'
         run: python3 tools/issue75-apply.py
+      - name: Align direct-mount regression with incremental traversal
+        if: steps.gate.outputs.needed == 'true'
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+
+          path = Path('tests/jump-materialization.test.mjs')
+          text = path.read_text(encoding='utf-8')
+          old_name = "test('Jump 0 succeeds when moving to the top directly mounts the requested message without a TOC control', async () => {"
+          new_name = "test('Jump 0 succeeds when upward traversal directly mounts the requested message without a TOC control', async () => {"
+          old_condition = "      if (kind === 'to' && root.scrollTop === 0) state.mounted = true;"
+          new_condition = "      if (kind === 'by' && root.scrollTop === 0) state.mounted = true;"
+          assert text.count(old_name) == 1, 'Expected one old direct-mount test name.'
+          assert text.count(old_condition) == 1, 'Expected one old direct scrollTo test condition.'
+          text = text.replace(old_name, new_name, 1)
+          text = text.replace(old_condition, new_condition, 1)
+          path.write_text(text, encoding='utf-8')
+          PY
       - name: Verify focused correction
         if: steps.gate.outputs.needed == 'true'
         run: |
