@@ -12,7 +12,7 @@ jobs:
   apply:
     if: "${{ github.event.head_commit.message == 'ci(#75): apply historical-loading diagnostics' }}"
     runs-on: ubuntu-latest
-    timeout-minutes: 10
+    timeout-minutes: 12
     steps:
       - uses: actions/checkout@v4
         with:
