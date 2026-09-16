@@ -7,7 +7,7 @@ const userscript = await readFile(
   'utf8'
 );
 
-test('Issue 134 keeps filename controls on one non-wrapping row and Reset log below it', () => {
+test('Issue 134 keeps filename controls on one non-wrapping row and Reset below it', () => {
   assert.match(userscript,
     /#\$\{PANEL_ID\} \.tm-communication-log-row\{[^}]*flex-wrap:nowrap[^}]*\}/,
     'The active filename/control row must explicitly prohibit wrapping.');
@@ -15,16 +15,46 @@ test('Issue 134 keeps filename controls on one non-wrapping row and Reset log be
   const rowStart = userscript.indexOf('class="tm-row tm-communication-log-row"');
   assert.ok(rowStart >= 0, 'The dedicated communication-log filename/control row is missing.');
   const resetRowStart = userscript.indexOf(
-    '<div class="tm-row"><button data-role="reset-communication-log"',
+    '<div class="tm-row"><button class="tm-icon-button" data-role="reset-communication-log"',
     rowStart
   );
   assert.ok(resetRowStart > rowStart,
-    'Reset log must appear below the filename/control row.');
+    'Reset must appear below the filename/control row.');
   const row = userscript.slice(rowStart, resetRowStart);
 
   assert.match(row, /data-role="communication-log-name-viewport"/);
   assert.match(row, /data-role="rename-communication-log"/);
-  assert.match(row, /data-role="duplicate-communication-log"/);
+  assert.match(row,
+    /class="tm-icon-button" data-role="duplicate-communication-log"[^>]*aria-label="Duplicate communication log"/);
+  assert.doesNotMatch(row, />Duplicate<\/button>/,
+    'Duplicate must be an icon-only action, not a text button.');
   assert.doesNotMatch(row, /data-role="reset-communication-log"/,
-    'Reset log must remain a separate action below the filename controls.');
+    'Reset must remain a separate action below the filename controls.');
+});
+
+test('active filename is plain text rather than a button-like field', () => {
+  const rule = userscript.match(
+    /#\$\{PANEL_ID\} \.tm-log-name-viewport\{([^}]*)\}/
+  );
+  assert.ok(rule, 'Filename viewport CSS rule is missing.');
+  assert.doesNotMatch(rule[1], /(?:^|;)\s*border(?:-radius)?\s*:/,
+    'Filename viewport must not have a button-like border or rounded border.');
+  assert.doesNotMatch(rule[1], /(?:^|;)\s*background\s*:/,
+    'Filename viewport must not have a button-like background.');
+  assert.match(userscript, /\.tm-log-name-viewport:hover\s+\.tm-log-name-text/,
+    'Long filenames must retain hover scrolling.');
+});
+
+test('Duplicate and Reset use their approved icon treatments', () => {
+  assert.match(userscript, /function duplicateIconMarkup\(\)/);
+  assert.match(userscript,
+    /duplicateIconMarkup[\s\S]*<rect[^>]+>[\s\S]*<rect[^>]+>[\s\S]*<rect[^>]+>/,
+    'Duplicate icon must use the approved one-source-to-two-target branching metaphor.');
+  assert.match(userscript, /function resetIconMarkup\(\)/);
+  assert.match(userscript, /data:image\/png;base64,iVBORw0KGgo/,
+    'Reset must embed the AgentPanelSpeaker config-reset PNG.');
+  assert.match(userscript,
+    /class="tm-icon-button" data-role="reset-communication-log"[^>]*aria-label="Reset communication log"/);
+  assert.doesNotMatch(userscript, />Reset log<\/button>/,
+    'Reset must be icon-only rather than a text button.');
 });
