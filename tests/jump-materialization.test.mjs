@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import vm from 'node:vm';
-import { userscript } from './helpers/userscript-source.mjs';
+import { productionFunctionSource, userscript } from './helpers/userscript-source.mjs';
 
 function jumpProductionSource() {
   const start = userscript.indexOf('function jumpTocIndexControl(');
@@ -111,6 +111,36 @@ test('Jump 0 succeeds when moving to the top directly mounts the requested messa
     'The directly materialized target should receive the final Jump scroll.');
 });
 
+test('Jump 0 re-pins the top after prepend pagination scroll anchoring moves the viewport', async () => {
+  let topScrolls = 0;
+  let prepended = false;
+  const harness = makeHarness({
+    onScroll({ kind, root, state }) {
+      if (kind !== 'to' || root.scrollTop !== 0) return;
+      topScrolls += 1;
+      if (topScrolls >= 2 && prepended) state.mounted = true;
+    },
+    onSettle({ root, state }) {
+      if (prepended || topScrolls !== 1 || state.settleCount !== 1) return;
+      root.scrollHeight += 4000;
+      root.scrollTop += 4000;
+      prepended = true;
+    }
+  });
+
+  const target = {
+    uap_index: 0,
+    role: 'user',
+    message_id: 'fb3c34bb-46be-475a-bd68-bcb2722a1262',
+    spine: { records: [] }
+  };
+
+  const section = await harness.context.jumpToResolvedTarget(target);
+  assert.equal(section, harness.targetSection);
+  assert.ok(topScrolls >= 2,
+    'Historical materialization must return to scrollTop 0 after prepended content anchors the viewport forward.');
+});
+
 test('Jump traversal does not treat the first current scroll extent as whole-conversation convergence', async () => {
   let boundarySettles = 0;
   let expanded = false;
@@ -177,4 +207,38 @@ test('Jump accepts the requested message itself after a later virtualized extent
   assert.equal(expanded, true);
   assert.equal(harness.state.tocAvailable, false,
     'The requested message itself must be sufficient; a TOC control is not required.');
+});
+
+test('numeric Jump inputs start navigation without waiting for a Conversation API snapshot', async () => {
+  for (const requested of ['0', '174', '-1', '-2']) {
+    let numericRequest = null;
+    let fetchCount = 0;
+    const diagnostics = [];
+    const context = vm.createContext({
+      exportInProgress: false,
+      testInProgress: false,
+      jumpInProgress: false,
+      window: { prompt: () => requested },
+      currentConversationId: () => 'conversation-id',
+      updateUi() {},
+      setStatus() {},
+      boundedDiagnosticText: value => String(value),
+      errorMessage: error => error instanceof Error ? error.message : String(error),
+      logDiagnostic: (level, event, details) => diagnostics.push({ level, event, details }),
+      jumpToNumericUap: async value => { numericRequest = value; },
+      fetchConversationPages: async () => {
+        fetchCount += 1;
+        throw new Error('Conversation API must not be required for numeric Jump.');
+      },
+      conversationSpineFromPages: () => ({ records: [] }),
+      resolveJumpIdentifier: () => { throw new Error('numeric resolver should not use API spine'); },
+      jumpToResolvedTarget: async () => { throw new Error('numeric resolver should use direct numeric navigation'); }
+    });
+    vm.runInContext(productionFunctionSource('runJump'), context);
+
+    await context.runJump();
+
+    assert.equal(numericRequest, Number(requested), `Numeric Jump ${requested} did not use direct numeric navigation.`);
+    assert.equal(fetchCount, 0, `Numeric Jump ${requested} waited for the Conversation API.`);
+  }
 });
