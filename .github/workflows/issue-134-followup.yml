@@ -1,4 +1,4 @@
-name: Issue 134 follow-up
+name: Issue 134 DRY cleanup
 
 on:
   push:
@@ -11,12 +11,46 @@ permissions:
   contents: write
 
 jobs:
-  focused:
+  apply-and-verify:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
       - uses: actions/setup-node@v4
         with:
           node-version: 22
-      - name: Issue 134 focused regression
-        run: node --test tests/communication-log-file-controls.test.mjs
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.13'
+      - name: Apply DRY cleanup
+        run: python scripts/issue-134-dry-cleanup.py
+      - name: Production JSDoc coverage
+        run: node scripts/check-jsdoc.mjs
+      - name: JavaScript syntax
+        run: node --check chatgpt-conversation-markdown-export.user.js
+      - name: Focused DRY and communication-log regressions
+        run: >-
+          node --test
+          tests/communication-log-file-controls.test.mjs
+          tests/communication-log-layout-contract.test.mjs
+          tests/communication-log-reset.test.mjs
+          tests/disk-communication-recorder.test.mjs
+          tests/directory-picker-gesture.test.mjs
+          tests/stock-network-diagnostics.test.mjs
+          tests/console-diagnostics.test.mjs
+          tests/heading-metadata-controls.test.mjs
+          tests/modal-focus-retention.test.mjs
+          tests/sediment-resolver.test.mjs
+          tests/dry-contract.test.mjs
+      - name: Remove temporary carriers and obsolete patch script
+        run: rm -f .github/workflows/issue-134-followup.yml scripts/issue-134-dry-cleanup.py scripts/format-launcher-v156.py
+      - name: Commit verified cleanup
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add -A
+          git diff --cached --check
+          git diff --cached --quiet && { echo "No cleanup diff produced"; exit 1; }
+          git commit -m "refactor(#134): consolidate recorder and test helpers"
+          git push origin HEAD:issue-134-communication-log-file-controls
