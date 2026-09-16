@@ -83,7 +83,7 @@ test('stock historical-page URL classifier is exact and excludes DownloadConvers
 });
 
 test('historical-loading snapshot retains only bounded virtual-window identity and extent evidence', () => {
-  const snapshot = diagnosticsHarness().snapshot();
+  const snapshot = JSON.parse(JSON.stringify(diagnosticsHarness().snapshot()));
   assert.deepEqual(snapshot, {
     scroll_top: 120,
     scroll_height: 2400,
