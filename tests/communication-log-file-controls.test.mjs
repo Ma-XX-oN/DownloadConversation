@@ -100,7 +100,7 @@ function issue134Harness(initialFiles = {}) {
   };
 
   vm.runInNewContext(
-    `${diskBlock()}\ncommunicationLogDirectoryHandle = this.__issue134Directory;\ncommunicationLogFileName = 'DownloadConversation_test.jsonl';\ncommunicationLogReady = true;\ncommunicationLogWriteChain = Promise.resolve();\ncommunicationLogReportFailure = (stage, error) => {\n  this.__issue134Events.push(\`failure:\${stage}:\${error?.message ?? error}\`);\n};\nthis.__issue134 = {\n  rename: communicationLogRename,\n  duplicate: communicationLogDuplicate,\n  duplicateName: communicationLogDuplicateFileName,\n  setWriter(writer, dirty) {\n    communicationLogWritable = writer;\n    communicationLogWriterDirty = dirty;\n  },\n  setWriteChain(chain) {\n    communicationLogWriteChain = chain;\n  },\n  state() {\n    return {\n      writable: communicationLogWritable,\n      dirty: communicationLogWriterDirty,\n      fileName: communicationLogFileName\n    };\n  }\n};`,
+    `${diskBlock()}\ncommunicationLogDirectoryHandle = this.__issue134Directory;\ncommunicationLogFileName = 'DownloadConversation_test.jsonl';\ncommunicationLogReady = true;\ncommunicationLogWriteChain = Promise.resolve();\ncommunicationLogReportFailure = (stage, error) => {\n  this.__issue134Events.push(\`failure:\${stage}:\${error?.message ?? error}\`);\n};\nthis.__issue134 = {\n  rename: communicationLogRename,\n  duplicate: communicationLogDuplicate,\n  duplicateName: communicationLogDuplicateFileName,\n  departureCheckpoint: typeof communicationLogCheckpointForDocumentDeparture === 'function'\n    ? communicationLogCheckpointForDocumentDeparture\n    : null,\n  setWriter(writer, dirty) {\n    communicationLogWritable = writer;\n    communicationLogWriterDirty = dirty;\n  },\n  setWriteChain(chain) {\n    communicationLogWriteChain = chain;\n  },\n  state() {\n    return {\n      writable: communicationLogWritable,\n      dirty: communicationLogWriterDirty,\n      fileName: communicationLogFileName\n    };\n  }\n};`,
     context
   );
 
@@ -112,13 +112,60 @@ async function blobText(blob) {
 }
 
 test('Issue 134 production version and filename controls are present', () => {
-  assert.match(userscript, /@version\s+1\.2\.0-issue\.134\.1/);
+  assert.match(userscript, /@version\s+1\.2\.0-issue\.134\.2/);
   assert.match(userscript, /data-role="communication-log-name"/);
   assert.match(userscript, /data-role="rename-communication-log"/);
   assert.match(userscript, /aria-label="Rename communication log"/);
   assert.match(userscript, /data-role="duplicate-communication-log"[^>]*>Duplicate<\/button>/);
   assert.match(userscript, /querySelector\('\[data-role="rename-communication-log"\]'\)/);
   assert.match(userscript, /querySelector\('\[data-role="duplicate-communication-log"\]'\)/);
+});
+
+test('long active filename uses a dark hover-scroll viewport instead of a readonly text input', () => {
+  assert.match(userscript, /data-role="communication-log-name-viewport"/);
+  assert.match(userscript, /class="tm-log-name-text"[^>]*data-role="communication-log-name"/);
+  assert.doesNotMatch(userscript,
+    /<input[^>]*data-role="communication-log-name"[^>]*readonly/);
+  assert.match(userscript, /--tm-log-name-overflow/);
+  assert.match(userscript, /\.tm-log-name-viewport:hover\s+\.tm-log-name-text/);
+  assert.match(userscript, /overflow:hidden/);
+});
+
+test('document-departure checkpoint waits for queued writes and commits the dirty writer', async () => {
+  const { api, events } = issue134Harness({
+    'DownloadConversation_test.jsonl': 'source'
+  });
+  assert.equal(typeof api.departureCheckpoint, 'function',
+    'Issue 134 must expose one shared document-departure checkpoint path.');
+
+  let releasePending;
+  const pending = new Promise(resolve => { releasePending = resolve; });
+  api.setWriteChain(pending);
+  api.setWriter({
+    async close() {
+      events.push('departure-close');
+    }
+  }, true);
+
+  let resolved = false;
+  const operation = api.departureCheckpoint('beforeunload').then(value => {
+    resolved = true;
+    return value;
+  });
+  await Promise.resolve();
+  assert.equal(resolved, false);
+  assert.deepEqual(events, [], 'Departure checkpoint must remain behind pending writes.');
+
+  releasePending();
+  assert.equal(await operation, true);
+  assert.deepEqual(events, ['departure-close']);
+  assert.equal(api.state().writable, null);
+  assert.equal(api.state().dirty, false);
+
+  assert.match(userscript,
+    /addEventListener\('beforeunload',[\s\S]*communicationLogCheckpointForDocumentDeparture\('beforeunload'\)/);
+  assert.match(userscript,
+    /addEventListener\('pagehide',[\s\S]*communicationLogCheckpointForDocumentDeparture\('pagehide'\)/);
 });
 
 test('duplicate names use the lowest unused positive suffix with no space before parenthesis', async () => {
