@@ -1,0 +1,32 @@
+name: Issue 134 regression isolation
+
+on:
+  push:
+    branches:
+      - issue-134-communication-log-file-controls
+    paths:
+      - .github/workflows/issue-134-regression-isolation.yml
+
+jobs:
+  isolate:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - name: Tail consistency
+        continue-on-error: true
+        run: node --test tests/tail-consistency.test.mjs
+      - name: Stream tail recovery
+        continue-on-error: true
+        run: node --test tests/stream-tail-recovery.test.mjs
+      - name: Stock network diagnostics
+        continue-on-error: true
+        run: node --test tests/stock-network-diagnostics.test.mjs
+      - name: Disk communication recorder
+        continue-on-error: true
+        run: node --test tests/disk-communication-recorder.test.mjs
+      - name: Directory picker gesture
+        continue-on-error: true
+        run: node --test tests/directory-picker-gesture.test.mjs
