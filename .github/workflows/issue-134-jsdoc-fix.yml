@@ -1,0 +1,43 @@
+name: Issue 134 JSDoc fix
+
+on:
+  push:
+    branches:
+      - issue-134-communication-log-file-controls
+    paths:
+      - scripts/fix-issue-134-jsdoc.py
+      - .github/workflows/issue-134-jsdoc-fix.yml
+
+permissions:
+  contents: write
+
+jobs:
+  fix:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.13'
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - name: Compile correction
+        run: python -m py_compile scripts/fix-issue-134-jsdoc.py
+      - name: Apply correction
+        run: python scripts/fix-issue-134-jsdoc.py
+      - name: Production JSDoc coverage
+        run: node scripts/check-jsdoc.mjs
+      - name: JavaScript syntax
+        run: node --check chatgpt-conversation-markdown-export.user.js
+      - name: Issue 134 focused regression
+        run: node --test tests/communication-log-file-controls.test.mjs
+      - name: Diff check
+        run: git diff --check
+      - name: Commit correction
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add chatgpt-conversation-markdown-export.user.js
+          git commit -m "docs: satisfy Issue 134 JSDoc audit"
+          git push
