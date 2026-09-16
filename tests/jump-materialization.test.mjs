@@ -35,6 +35,9 @@ function makeHarness({ onScroll = null, onSettle = null, tocForSelector = null }
     diagnostics: [],
     settleCount: 0
   };
+  tocElement.click = () => {
+    state.mounted = true;
+  };
   const scrollRoot = {
     scrollTop: 500,
     scrollHeight: 1000,
@@ -133,8 +136,43 @@ test('Jump traversal does not treat the first current scroll extent as whole-con
     spine: { records: [] }
   };
 
-  await harness.context.jumpToResolvedTarget(target);
+  const section = await harness.context.jumpToResolvedTarget(target);
+  assert.equal(section, harness.targetSection);
   assert.equal(expanded, true, 'The harness must expose a later virtualized scroll extent.');
   assert.equal(harness.state.tocAvailable, true,
     'Jump must keep traversing until the later TOC materialization becomes available.');
+});
+
+test('Jump accepts the requested message itself after a later virtualized extent mounts it without a TOC control', async () => {
+  let boundarySettles = 0;
+  let expanded = false;
+  const harness = makeHarness({
+    onSettle({ root, state }) {
+      const maxScrollTop = Math.max(0, root.scrollHeight - root.clientHeight);
+      if (root.scrollTop < maxScrollTop - 1) return;
+      boundarySettles += 1;
+      if (!expanded && boundarySettles >= 2) {
+        root.scrollHeight = 1500;
+        expanded = true;
+        boundarySettles = 0;
+        return;
+      }
+      if (expanded && root.scrollTop >= 1000 && boundarySettles >= 2) {
+        state.mounted = true;
+      }
+    }
+  });
+
+  const target = {
+    uap_index: 174,
+    role: 'user',
+    message_id: '410a4586-994a-417c-9316-90cd2445ca87',
+    spine: { records: [] }
+  };
+
+  const section = await harness.context.jumpToResolvedTarget(target);
+  assert.equal(section, harness.targetSection);
+  assert.equal(expanded, true);
+  assert.equal(harness.state.tocAvailable, false,
+    'The requested message itself must be sufficient; a TOC control is not required.');
 });
