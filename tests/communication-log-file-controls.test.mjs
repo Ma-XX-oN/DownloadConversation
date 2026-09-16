@@ -112,11 +112,11 @@ async function blobText(blob) {
 }
 
 test('Issue 134 production version and filename controls are present', () => {
-  assert.match(userscript, /@version\s+1\.2\.0-issue\.134\.2/);
+  assert.match(userscript, /@version\s+1\.2\.0-issue\.134\.3/);
   assert.match(userscript, /data-role="communication-log-name"/);
   assert.match(userscript, /data-role="rename-communication-log"/);
   assert.match(userscript, /aria-label="Rename communication log"/);
-  assert.match(userscript, /data-role="duplicate-communication-log"[^>]*>Duplicate<\/button>/);
+  assert.match(userscript, /class="tm-icon-button" data-role="duplicate-communication-log"[^>]*aria-label="Duplicate communication log"/);
   assert.match(userscript, /querySelector\('\[data-role="rename-communication-log"\]'\)/);
   assert.match(userscript, /querySelector\('\[data-role="duplicate-communication-log"\]'\)/);
 });

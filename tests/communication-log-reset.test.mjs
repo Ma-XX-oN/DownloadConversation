@@ -72,7 +72,7 @@ this.__issue133 = {
 
 test('general status panel exposes a communication-log reset button wired to production reset', () => {
   assert.match(userscript,
-    /<button data-role="reset-communication-log" type="button">Reset log<\/button>/);
+    /<button class="tm-icon-button" data-role="reset-communication-log"[^>]*aria-label="Reset communication log"/);
   assert.match(userscript,
     /querySelector\('\[data-role="reset-communication-log"\]'\)/);
   assert.match(userscript, /communicationLogReset\(\)/);
