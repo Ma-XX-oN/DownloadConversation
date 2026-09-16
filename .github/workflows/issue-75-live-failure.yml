@@ -1,0 +1,53 @@
+name: Issue 75 live-failure correction
+
+on:
+  push:
+    branches:
+      - issue-75-jump-materialization-convergence
+    paths:
+      - scripts/issue-75-live-failure.py
+      - .github/workflows/issue-75-live-failure.yml
+
+permissions:
+  contents: write
+
+jobs:
+  apply:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.13'
+      - name: Apply correction
+        run: python scripts/issue-75-live-failure.py
+      - name: Production JSDoc coverage
+        run: node scripts/check-jsdoc.mjs
+      - name: JavaScript syntax
+        run: node --check chatgpt-conversation-markdown-export.user.js
+      - name: Jump materialization regression
+        run: node --test tests/jump-materialization.test.mjs
+      - name: Version identity regression
+        run: node --test tests/version-identity.test.mjs
+      - name: Agent completion sound regression
+        run: node --test tests/agent-completion-sounds.test.mjs
+      - name: Single-snapshot export regression
+        run: node --test tests/export-single-snapshot.test.mjs
+      - name: Recorder panel UI regression
+        run: node --test tests/recorder-panel-ui.test.mjs tests/modal-focus-retention.test.mjs tests/heading-metadata-controls.test.mjs
+      - name: Diff integrity
+        run: git diff --check
+      - name: Commit verified correction
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add chatgpt-conversation-markdown-export.user.js tests/jump-materialization.test.mjs
+          git diff --cached --check
+          git diff --cached --quiet && { echo "No correction diff produced"; exit 1; }
+          git commit -m "fix(#75): repin oldest Jump during prepend pagination"
+          git push origin HEAD:issue-75-jump-materialization-convergence
