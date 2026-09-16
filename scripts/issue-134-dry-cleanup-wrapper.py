@@ -146,4 +146,12 @@ dry_source = dry_source.replace(
 )
 dry_test.write_text(dry_source, encoding='utf-8')
 
+disk_test = ROOT / 'tests' / 'disk-communication-recorder.test.mjs'
+disk_source = disk_test.read_text(encoding='utf-8')
+old_issue132 = '${diskBlock()}\nthis.__issue132Records = [];'
+new_issue132 = '${diskHarnessSource()}\nthis.__issue132Records = [];'
+if disk_source.count(old_issue132) != 1:
+    raise RuntimeError('Issue #132 stream-body harness replacement did not match exactly once')
+disk_test.write_text(disk_source.replace(old_issue132, new_issue132, 1), encoding='utf-8')
+
 print('Issue #134 DRY cleanup wrapper corrections applied.')
