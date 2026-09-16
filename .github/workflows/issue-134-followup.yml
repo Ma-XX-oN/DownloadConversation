@@ -1,0 +1,22 @@
+name: Issue 134 follow-up
+
+on:
+  push:
+    branches:
+      - issue-134-communication-log-file-controls
+    paths:
+      - .github/workflows/issue-134-followup.yml
+
+permissions:
+  contents: write
+
+jobs:
+  focused:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - name: Issue 134 focused regression
+        run: node --test tests/communication-log-file-controls.test.mjs
