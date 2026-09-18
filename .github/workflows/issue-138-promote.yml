@@ -1,0 +1,61 @@
+name: Issue 138 release promotion
+
+on:
+  push:
+    branches:
+      - issue-137-agent-sound-volume-popup
+
+permissions:
+  contents: write
+
+jobs:
+  promote:
+    if: github.actor != 'github-actions[bot]'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - name: Promote development version to 1.3.0
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+
+          replacements = {
+            Path('chatgpt-conversation-markdown-export.user.js'): (
+              '// @version      1.2.0-issue.137.1',
+              '// @version      1.3.0'
+            ),
+            Path('tests/agent-turn-stopwatch.test.mjs'): (
+              r'assert.match(userscript, /@version\s+1\.2\.0-issue\.137\.1/);',
+              r'assert.match(userscript, /@version\s+1\.3\.0/);'
+            ),
+          }
+          for path, (old, new) in replacements.items():
+            text = path.read_text(encoding='utf-8')
+            count = text.count(old)
+            assert count == 1, f'{path}: expected exactly one promotion anchor, found {count}'
+            path.write_text(text.replace(old, new, 1), encoding='utf-8')
+          PY
+          ! git grep -n '1\.2\.0-issue\.137\.1' -- '*.js' '*.mjs' '*.md'
+      - name: Production JSDoc coverage
+        run: node scripts/check-jsdoc.mjs
+      - name: JavaScript syntax
+        run: node --check chatgpt-conversation-markdown-export.user.js
+      - name: Version identity regression
+        run: node --test tests/version-identity.test.mjs
+      - name: Stopwatch regression
+        run: node --test tests/agent-turn-stopwatch.test.mjs
+      - name: Sound regression
+        run: node --test tests/agent-completion-sounds.test.mjs
+      - name: Commit release promotion
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add chatgpt-conversation-markdown-export.user.js tests/agent-turn-stopwatch.test.mjs
+          git diff --cached --check
+          git commit -m "release(#138): promote stacked issues 132-137 to 1.3.0"
+          git push
