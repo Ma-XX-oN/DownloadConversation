@@ -32,6 +32,7 @@ function soundHarness() {
     function logDiagnostic(level, name, details) { this.diagnostics.push({ level, name, details }); }
     ${productionFunctionSource('agentSoundTerminalKey')}
     ${productionFunctionSource('agentSoundRememberTerminalKey')}
+    ${productionFunctionSource('agentTerminalIsPollingTimeout')}
     ${productionFunctionSource('agentSoundClassifyTerminal')}
     ${productionFunctionSource('agentSoundObserveTerminal')}
     this.api = {
@@ -78,6 +79,7 @@ function stopwatchHarness() {
     ${productionFunctionSource('agentStopwatchObserveRequest')}
     ${productionFunctionSource('agentStopwatchObserveInputMessage')}
     ${productionFunctionSource('agentStopwatchSuccessfulFinal')}
+    ${productionFunctionSource('agentTerminalIsPollingTimeout')}
     ${productionFunctionSource('agentStopwatchObserveTerminal')}
     this.api = {
       request: agentStopwatchObserveRequest,

@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         ChatGPT Conversation Markdown Recorder
 // @namespace    https://chatgpt.com/
-// @version      1.3.0
+// @version      1.3.0-issue.139.1
 // @description  Exports the current ChatGPT conversation directly from the Conversation API as Markdown or JSONL.
 // @match        https://chatgpt.com/*
 // @match        https://chat.openai.com/*
@@ -2704,6 +2704,93 @@
   }
 
   /**
+   * Returns whether one normalized client terminal event is the evidenced polling timeout.
+   *
+   * @param {Object|null} event - Normalized client terminal event.
+   * @returns {boolean} True only for the exact structured polling-timeout state.
+   */
+  function agentTerminalIsPollingTimeout(event) {
+    return event?.type === 'client_terminal_error' &&
+      event?.code === 'network_error' &&
+      event?.source === 'completion_stream_polling_fallback' &&
+      event?.reason === 'polling_timeout';
+  }
+
+  /**
+   * Normalizes the exact stock ChatGPT stats counter emitted for polling timeout.
+   *
+   * @param {Object|null} payload - Parsed `/ces/statsc/flush` request payload.
+   * @returns {Object|null} Normalized terminal event, or null for unrelated stats.
+   */
+  function agentTerminalFailureFromStatsPayload(payload) {
+    const counters = Array.isArray(payload?.counters) ? payload.counters : [];
+    const matched = counters.find(counter =>
+      counter?.namespace === 'default' &&
+      counter?.metric === 'chatgpt_web_message_delivery_failure_shown' &&
+      counter?.tags?.source === 'completion_stream_polling_fallback' &&
+      counter?.tags?.error_code === 'network_error' &&
+      counter?.tags?.failure_reason === 'polling_timeout' &&
+      Number(counter?.value) > 0
+    );
+    if (!matched) return null;
+    return {
+      type: 'client_terminal_error',
+      code: 'network_error',
+      source: 'completion_stream_polling_fallback',
+      reason: 'polling_timeout'
+    };
+  }
+
+  /**
+   * Returns whether a URL is the exact same-origin ChatGPT stats-flush endpoint.
+   *
+   * @param {string} url - Candidate request URL.
+   * @returns {boolean} True only for `/ces/statsc/flush` on the current origin.
+   */
+  function isAgentTerminalStatsUrl(url) {
+    try {
+      const parsed = new URL(String(url ?? ''), location.href);
+      return parsed.origin === location.origin && parsed.pathname === '/ces/statsc/flush';
+    } catch {
+      return false;
+    }
+  }
+
+  /**
+   * Observes one stock stats-flush request for the exact structured polling-timeout terminal state.
+   *
+   * @param {Request} request - Original page request; only a clone is consumed.
+   * @param {string} requestUrl - Resolved request URL.
+   * @param {string} requestMethod - Uppercase HTTP method.
+   * @returns {Promise<void>} Resolves after relevant structured terminal evidence is handled.
+   */
+  async function agentTerminalObserveStatsRequest(request, requestUrl, requestMethod) {
+    if (requestMethod !== 'POST' || !isAgentTerminalStatsUrl(requestUrl)) return;
+    const cloned = cloneSafely(request);
+    if (!cloned) return;
+    try {
+      const payload = JSON.parse(await cloned.text());
+      const event = agentTerminalFailureFromStatsPayload(payload);
+      if (!event) return;
+      const capture = streamTailCapture;
+      if (!capture) {
+        logDiagnostic('warnings', 'agent-terminal-polling-timeout-without-capture', {});
+        return;
+      }
+      logDiagnostic('debug', 'agent-terminal-polling-timeout-observed', {
+        conversation_id: capture?.conversation_id ?? null,
+        terminal_key: agentSoundTerminalKey(capture)
+      });
+      agentSoundObserveTerminal(capture, event);
+      agentStopwatchObserveTerminal(capture, event);
+    } catch (error) {
+      logDiagnostic('debug', 'agent-terminal-stats-request-parse-failed', {
+        error: boundedDiagnosticText(errorMessage(error), 1000)
+      });
+    }
+  }
+
+  /**
    * Classifies the currently known structured generation terminal state.
    *
    * Error matching is intentionally field-based and finite. New provider terminal states are added
@@ -2718,6 +2805,7 @@
     if (event && typeof event === 'object' && !Array.isArray(event)) structured.push(event);
     if (event?.v && typeof event.v === 'object' && !Array.isArray(event.v)) structured.push(event.v);
     for (const candidate of structured) {
+      if (agentTerminalIsPollingTimeout(candidate)) return 'error';
       const providerCode = candidate.code ?? candidate?.error?.code ?? null;
       if (candidate.type === 'error' && providerCode === 'conversation_too_large') return 'error';
       if (candidate.result === 'error' &&
@@ -2726,13 +2814,13 @@
         return 'error';
       }
     }
-    const success = (capture?.stream_messages ?? []).some(message =>
+    const successfulFinal = [...(capture?.stream_messages ?? [])].reverse().find(message =>
       message?.author?.role === 'assistant' &&
       message?.channel === 'final' &&
       message?.status === 'finished_successfully' &&
       message?.end_turn === true
     );
-    return success ? 'success' : null;
+    return successfulFinal ? 'success' : null;
   }
 
   /**
@@ -3011,15 +3099,17 @@
   }
 
   /**
-   * Stops the active stopwatch only for a successful final Assistant in the same working exchange.
+   * Stops the active stopwatch for a successful final Assistant or evidenced polling timeout in the same exchange.
    *
    * @param {Object} capture - Mutable streamed-turn capture.
+   * @param {Object|null} event - Structured terminal event when the client reports one.
    * @returns {void} No value is returned.
    */
-  function agentStopwatchObserveTerminal(capture) {
+  function agentStopwatchObserveTerminal(capture, event = null) {
     if (!agentStopwatchState?.active) return;
     const finalMessage = agentStopwatchSuccessfulFinal(capture);
-    if (!finalMessage) return;
+    const pollingTimeout = agentTerminalIsPollingTimeout(event);
+    if (!finalMessage && !pollingTimeout) return;
     const exchangeId = capture?.stopwatch_exchange_id ?? null;
     if (!exchangeId || exchangeId !== agentStopwatchState.exchange_id) return;
     const completedAtMs = performance.now();
@@ -3043,7 +3133,7 @@
     if (event && event.type === 'input_message' && event.input_message?.author?.role === 'user') {
       agentStopwatchObserveInputMessage(capture, event.input_message);
     }
-    agentStopwatchObserveTerminal(capture);
+    agentStopwatchObserveTerminal(capture, event);
   }
 
   // BEGIN Issue #123 streamed-tail recovery
@@ -3659,6 +3749,7 @@
         rememberApiRequestContext(requestUrl, request?.headers, init.headers);
         recordClickDiagnosticNetworkRequest(requestUrl, 'fetch');
         const requestMethod = String(request?.method ?? init.method ?? 'GET').toUpperCase();
+        if (request) void agentTerminalObserveStatsRequest(request, requestUrl, requestMethod);
         const generationRequest = isGenerationStreamUrl(requestUrl) && requestMethod === 'POST';
         const steerTurnRequest = isSteerTurnUrl(requestUrl) && requestMethod === 'POST';
         const generationSubmittedAtMs = generationRequest ? performance.now() : null;

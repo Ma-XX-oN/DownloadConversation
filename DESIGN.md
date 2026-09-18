@@ -543,3 +543,23 @@ Terminal sound identity remains structured-stream-only. Successful completion is
 Trusted pointer/keyboard gestures and nonzero volume interaction create or resume the single Web Audio context. Playback diagnostics record terminal classification, duplicate or volume-zero suppression, AudioContext unlock state, playback attempt, successful oscillator scheduling, and playback failure. These diagnostics are observability only and do not introduce an alternate trigger or playback path.
 
 Cue amplitude scales linearly with the selected slider level, with level 10 using a peak gain of 1.0. Success and error retain their distinct oscillator waveforms, pitch envelopes, and durations. The volume control does not alter streamed-tail reconciliation, stopwatch timing, exports, or ChatGPT request semantics.
+
+## Issue #139 structured polling-timeout terminal state
+
+A stock ChatGPT message-delivery polling timeout is terminal evidence only when the
+page emits the exact structured `/ces/statsc/flush` counter observed in production:
+`chatgpt_web_message_delivery_failure_shown` with source
+`completion_stream_polling_fallback`, `error_code=network_error`, and
+`failure_reason=polling_timeout`. DownloadConversation observes a clone of that
+stock request and normalizes the counter to one internal terminal-error event.
+
+That normalized event is correlated with the current structured generation capture.
+When its exchange identity matches the active stopwatch exchange, the stopwatch
+freezes its final lap and Total. The same event is passed through the existing
+terminal-sound de-duplication path and emits one error cue when volume is nonzero.
+Repeated observations cannot stop the stopwatch twice or replay the sound for the
+same generation identity.
+
+Rendered error text, DOM lifecycle labels, elapsed-time thresholds, and retry counts
+are not terminal-state authorities. The recorder does not infer this state from the
+visible `Retry` UI and does not add an alternate/fallback terminal-detection path.

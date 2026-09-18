@@ -56,6 +56,7 @@ function stopwatchHarness() {
     ${productionFunctionSource('agentStopwatchObserveRequest')}
     ${productionFunctionSource('agentStopwatchObserveInputMessage')}
     ${productionFunctionSource('agentStopwatchSuccessfulFinal')}
+    ${productionFunctionSource('agentTerminalIsPollingTimeout')}
     ${productionFunctionSource('agentStopwatchObserveTerminal')}
     ${productionFunctionSource('agentStopwatchObserveStreamEvent')}
     this.api = {
@@ -132,7 +133,7 @@ function finalCapture(exchangeId) {
 }
 
 test('Issue 136 development version and fixed top-right stopwatch control are present', () => {
-  assert.match(userscript, /@version\s+1\.3\.0/);
+  assert.match(userscript, /@version\s+1\.3\.0-issue\.139\.1/);
   assert.match(userscript, /AGENT_STOPWATCH_ID\s*=\s*'tm-agent-turn-stopwatch'/);
   const ensure = productionFunctionSource('ensureAgentStopwatchControl');
   assert.match(ensure, /style\.position\s*=\s*'fixed'/);

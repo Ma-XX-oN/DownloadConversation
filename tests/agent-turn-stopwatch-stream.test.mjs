@@ -69,6 +69,7 @@ function streamHarness() {
     ${productionFunctionSource('agentStopwatchObserveSteerTurn')}
     ${productionFunctionSource('agentStopwatchObserveInputMessage')}
     ${productionFunctionSource('agentStopwatchSuccessfulFinal')}
+    ${productionFunctionSource('agentTerminalIsPollingTimeout')}
     ${productionFunctionSource('agentStopwatchObserveTerminal')}
     ${productionFunctionSource('agentStopwatchObserveStreamEvent')}
     ${productionFunctionSource('isGenerationStreamUrl')}
