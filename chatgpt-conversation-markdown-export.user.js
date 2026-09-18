@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         ChatGPT Conversation Markdown Recorder
 // @namespace    https://chatgpt.com/
-// @version      1.2.0-issue.136.5
+// @version      1.2.0-issue.137.1
 // @description  Exports the current ChatGPT conversation directly from the Conversation API as Markdown or JSONL.
 // @match        https://chatgpt.com/*
 // @match        https://chat.openai.com/*
@@ -40,8 +40,10 @@
   const SHOW_TURN_IDS_STORAGE_KEY = 'tm-conversation-recorder-show-turn-ids';
   /** Local-storage key for Markdown Core debug-provenance visibility. */
   const SHOW_DEBUG_PROVENANCE_STORAGE_KEY = 'tm-conversation-recorder-show-debug-provenance';
-  /** Local-storage key for audible agent terminal-state notifications. */
-  const AGENT_SOUNDS_STORAGE_KEY = 'tm-conversation-recorder-agent-sounds';
+  /** Local-storage key for the current integer agent terminal-sound volume. */
+  const AGENT_SOUND_VOLUME_STORAGE_KEY = 'tm-conversation-recorder-agent-sound-volume';
+  /** Legacy boolean sound preference retained only for deterministic migration. */
+  const LEGACY_AGENT_SOUNDS_STORAGE_KEY = 'tm-conversation-recorder-agent-sounds';
   /** DOM id of the fixed agent-turn stopwatch display. */
   const AGENT_STOPWATCH_ID = 'tm-agent-turn-stopwatch';
   /** Refresh cadence for the live agent-turn stopwatch display. */
@@ -107,8 +109,25 @@
   let showTurnIds = localStorage.getItem(SHOW_TURN_IDS_STORAGE_KEY) === 'true';
   /** Whether Markdown headings should include Core-derived source debug provenance. */
   let showDebugProvenance = localStorage.getItem(SHOW_DEBUG_PROVENANCE_STORAGE_KEY) === 'true';
-  /** Whether successful/error agent terminal states should emit an audible cue. */
-  let agentSoundsEnabled = localStorage.getItem(AGENT_SOUNDS_STORAGE_KEY) === 'true';
+  /**
+   * Loads the persisted 0-10 terminal-sound volume, including the legacy checkbox migration.
+   *
+   * @returns {number} Integer terminal-sound volume from 0 through 10.
+   */
+  function loadAgentSoundVolume() {
+    const stored = localStorage.getItem(AGENT_SOUND_VOLUME_STORAGE_KEY);
+    if (stored !== null) {
+      const parsed = Number.parseInt(stored, 10);
+      return Number.isFinite(parsed) ? Math.max(0, Math.min(10, parsed)) : 0;
+    }
+    const legacy = localStorage.getItem(LEGACY_AGENT_SOUNDS_STORAGE_KEY);
+    if (legacy === 'true') return 10;
+    if (legacy === 'false') return 0;
+    return 0;
+  }
+
+  /** Persisted integer terminal-sound volume; zero is the only disabled state. */
+  let agentSoundVolume = loadAgentSoundVolume();
   /** AudioContext unlocked by a user gesture when terminal sounds are enabled. */
   let agentSoundAudioContext = null;
   /** Bounded stable turn identities that have already emitted a terminal sound. */
@@ -2520,15 +2539,57 @@
    * @returns {Promise<boolean>} True when the audio context is ready to play.
    */
   async function unlockAgentSoundAudio() {
-    if (!agentSoundsEnabled) return false;
+    const volume = agentSoundVolume;
+    const beforeState = agentSoundAudioContext?.state ?? 'absent';
+    if (volume <= 0) {
+      logDiagnostic('debug', 'agent-sound-audio-unlock', {
+        volume,
+        before_state: beforeState,
+        after_state: beforeState,
+        resume_attempted: false,
+        ready: false,
+        reason: 'volume-zero'
+      });
+      return false;
+    }
+    let resumeAttempted = false;
     try {
       const AudioContextClass = window.AudioContext || window.webkitAudioContext;
-      if (typeof AudioContextClass !== 'function') return false;
+      if (typeof AudioContextClass !== 'function') {
+        logDiagnostic('warnings', 'agent-sound-audio-unlock', {
+          volume,
+          before_state: beforeState,
+          after_state: 'unavailable',
+          resume_attempted: false,
+          ready: false,
+          reason: 'audio-context-unavailable'
+        });
+        return false;
+      }
       if (!agentSoundAudioContext) agentSoundAudioContext = new AudioContextClass();
-      if (agentSoundAudioContext.state === 'suspended') await agentSoundAudioContext.resume();
-      return agentSoundAudioContext.state === 'running';
+      if (agentSoundAudioContext.state === 'suspended') {
+        resumeAttempted = true;
+        await agentSoundAudioContext.resume();
+      }
+      const afterState = agentSoundAudioContext.state;
+      const ready = afterState === 'running';
+      logDiagnostic('debug', 'agent-sound-audio-unlock', {
+        volume,
+        before_state: beforeState,
+        after_state: afterState,
+        resume_attempted: resumeAttempted,
+        ready
+      });
+      return ready;
     } catch (error) {
-      logDiagnostic('warnings', 'agent-sound-audio-unlock-failure', { message: errorMessage(error) });
+      logDiagnostic('warnings', 'agent-sound-audio-unlock', {
+        volume,
+        before_state: beforeState,
+        after_state: agentSoundAudioContext?.state ?? 'absent',
+        resume_attempted: resumeAttempted,
+        ready: false,
+        message: errorMessage(error)
+      });
       return false;
     }
   }
@@ -2539,7 +2600,7 @@
    * @returns {void} No value is returned.
    */
   function agentSoundHandleUserGesture() {
-    if (agentSoundsEnabled) void unlockAgentSoundAudio();
+    if (agentSoundVolume > 0) void unlockAgentSoundAudio();
   }
 
   /**
@@ -2549,35 +2610,63 @@
    * @returns {void} No value is returned.
    */
   function playAgentSound(kind) {
-    if (!agentSoundsEnabled || (kind !== 'success' && kind !== 'error')) return;
+    const volume = agentSoundVolume;
     const audio = agentSoundAudioContext;
-    if (!audio || audio.state !== 'running') return;
+    const audioContextState = audio?.state ?? 'absent';
+    logDiagnostic('debug', 'agent-sound-playback-attempt', {
+      kind,
+      volume,
+      audio_context_state: audioContextState
+    });
+    if (volume <= 0 || (kind !== 'success' && kind !== 'error')) return false;
+    if (!audio || audio.state !== 'running') {
+      logDiagnostic('warnings', 'agent-sound-playback-unavailable', {
+        kind,
+        volume,
+        audio_context_state: audioContextState
+      });
+      return false;
+    }
     try {
       const oscillator = audio.createOscillator();
       const gain = audio.createGain();
-      const now = audio.currentTime;
+      const start = audio.currentTime;
+      const volumeScale = Math.max(0, Math.min(10, volume)) / 10;
       oscillator.connect(gain);
       gain.connect(audio.destination);
-      gain.gain.setValueAtTime(0.0001, now);
-      if (kind === 'error') {
-        oscillator.type = 'sawtooth';
-        oscillator.frequency.setValueAtTime(115, now);
-        oscillator.frequency.linearRampToValueAtTime(82, now + 0.28);
-        gain.gain.exponentialRampToValueAtTime(0.075, now + 0.012);
-        gain.gain.exponentialRampToValueAtTime(0.0001, now + 0.28);
-        oscillator.start(now);
-        oscillator.stop(now + 0.29);
-      } else if (kind === 'success') {
+      gain.gain.setValueAtTime(0.0001, start);
+      if (kind === 'success') {
         oscillator.type = 'sine';
-        oscillator.frequency.setValueAtTime(880, now);
-        oscillator.frequency.setValueAtTime(1320, now + 0.09);
-        gain.gain.exponentialRampToValueAtTime(0.11, now + 0.012);
-        gain.gain.exponentialRampToValueAtTime(0.0001, now + 0.22);
-        oscillator.start(now);
-        oscillator.stop(now + 0.23);
+        oscillator.frequency.setValueAtTime(740, start);
+        oscillator.frequency.linearRampToValueAtTime(988, start + 0.16);
+        gain.gain.exponentialRampToValueAtTime(volumeScale, start + 0.025);
+        gain.gain.exponentialRampToValueAtTime(0.0001, start + 0.32);
+        oscillator.start(start);
+        oscillator.stop(start + 0.34);
+      } else {
+        oscillator.type = 'sawtooth';
+        oscillator.frequency.setValueAtTime(210, start);
+        oscillator.frequency.linearRampToValueAtTime(150, start + 0.32);
+        gain.gain.exponentialRampToValueAtTime(volumeScale, start + 0.02);
+        gain.gain.exponentialRampToValueAtTime(0.0001, start + 0.42);
+        oscillator.start(start);
+        oscillator.stop(start + 0.44);
       }
+      logDiagnostic('debug', 'agent-sound-playback-started', {
+        kind,
+        volume,
+        peak_gain: volumeScale,
+        audio_context_state: audio.state
+      });
+      return true;
     } catch (error) {
-      logDiagnostic('warnings', 'agent-sound-playback-failure', { kind, message: errorMessage(error) });
+      logDiagnostic('warnings', 'agent-sound-playback-failure', {
+        kind,
+        volume,
+        audio_context_state: audio?.state ?? 'absent',
+        message: errorMessage(error)
+      });
+      return false;
     }
   }
 
@@ -2654,13 +2743,33 @@
    * @returns {void} No value is returned.
    */
   function agentSoundObserveTerminal(capture, event) {
-    if (!agentSoundsEnabled) return;
     const kind = agentSoundClassifyTerminal(capture, event);
     if (!kind) return;
     const key = agentSoundTerminalKey(capture);
-    if (!key || agentSoundTerminalKeys.has(key)) return;
-    agentSoundRememberTerminalKey(key);
-    playAgentSound(kind);
+    logDiagnostic('debug', 'agent-sound-terminal-classified', {
+      kind,
+      terminal_key: key,
+      volume: agentSoundVolume,
+      audio_context_state: agentSoundAudioContext?.state ?? 'absent'
+    });
+    if (!key) return;
+    if (agentSoundTerminalKeys.has(key)) {
+      logDiagnostic('debug', 'agent-sound-duplicate-suppressed', {
+        kind,
+        terminal_key: key,
+        volume: agentSoundVolume
+      });
+      return;
+    }
+    if (agentSoundVolume <= 0) {
+      logDiagnostic('debug', 'agent-sound-volume-zero-suppressed', {
+        kind,
+        terminal_key: key,
+        volume: agentSoundVolume
+      });
+      return;
+    }
+    if (playAgentSound(kind)) agentSoundRememberTerminalKey(key);
   }
 
   document.addEventListener('pointerdown', agentSoundHandleUserGesture, true);
@@ -8852,6 +8961,12 @@ Image elapsed: ${formatDuration(imageElapsed)} — Completed: ${imageCompleted}/
       #${PANEL_ID} .tm-close{position:absolute;right:9px;top:7px;border:0;background:transparent;color:#fff;font-size:24px;cursor:pointer}
       #${PANEL_ID} .tm-status{white-space:pre-wrap;margin:10px 0 12px;min-height:24px}
       #${PANEL_ID} .tm-row{display:flex;gap:10px;align-items:center;flex-wrap:wrap;margin-top:10px}
+      #${PANEL_ID} .tm-sound-control-row{position:relative}
+      #${PANEL_ID} .tm-sound-control{min-width:92px}
+      #${PANEL_ID} .tm-sound-popup[hidden]{display:none}
+      #${PANEL_ID} .tm-sound-popup{position:absolute;left:0;top:calc(100% + 6px);z-index:3;display:flex;flex-direction:column;align-items:center;gap:6px;padding:9px;border:1px solid rgba(127,127,127,.55);border-radius:9px;background:rgba(24,24,24,.99);box-shadow:0 4px 14px rgba(0,0,0,.4)}
+      #${PANEL_ID} .tm-sound-volume-slider{writing-mode:vertical-lr;direction:rtl;width:24px;height:120px}
+      #${PANEL_ID} .tm-sound-volume-value{min-width:2ch;text-align:center;font-variant-numeric:tabular-nums}
       #${PANEL_ID} .tm-communication-log-row{flex-wrap:nowrap}
       #${PANEL_ID} .tm-log-name-viewport{flex:1 1 auto;min-width:0;overflow:hidden;color:#fff;box-sizing:border-box}
       #${PANEL_ID} .tm-log-name-text{display:block;width:max-content;min-width:100%;box-sizing:border-box;padding:7px 0;white-space:nowrap;transform:translateX(0);transition:transform var(--tm-log-name-duration,1.5s) linear .35s}
@@ -9548,7 +9663,7 @@ Image elapsed: ${formatDuration(imageElapsed)} — Completed: ${imageCompleted}/
       <div class="tm-row"><span class="tm-label">Communication log</span></div>
       <div class="tm-row tm-communication-log-row"><div class="tm-log-name-viewport" data-role="communication-log-name-viewport" role="textbox" aria-readonly="true" aria-label="Current communication log filename" title="Current communication log filename"><span class="tm-log-name-text" data-role="communication-log-name"></span></div><button class="tm-icon-button" data-role="rename-communication-log" type="button" aria-label="Rename communication log" title="Rename communication log"></button><button class="tm-icon-button" data-role="duplicate-communication-log" type="button" aria-label="Duplicate communication log" title="Duplicate communication log"></button><button class="tm-icon-button" data-role="reset-communication-log" type="button" aria-label="Reset communication log" title="Reset communication log"></button></div>
       <div class="tm-row"><span class="tm-label">Screen on when extracting</span><button class="tm-switch" data-role="screen-on" type="button" role="switch" aria-checked="false" aria-label="Keep screen on while extracting"><span class="tm-switch-thumb"></span></button></div>
-      <div class="tm-row"><label><input data-role="agent-sounds" type="checkbox"> Sounds</label></div>
+      <div class="tm-row tm-sound-control-row"><button class="tm-sound-control" data-role="agent-sound-control" type="button" aria-haspopup="dialog" aria-expanded="false">Sound <span data-role="agent-sound-control-value"></span></button><div class="tm-sound-popup" data-role="agent-sound-popup" hidden role="dialog" aria-label="Agent sound volume"><input class="tm-sound-volume-slider" data-role="agent-sound-volume" type="range" min="0" max="10" step="1" aria-label="Agent sound volume"><output class="tm-sound-volume-value" data-role="agent-sound-volume-value"></output></div></div>
       <div class="tm-row"><button data-role="jump" type="button">Jump</button></div>
       <div class="tm-row tm-extract-formats"><button data-role="extract" type="button">Extract</button><label><input data-role="format-jsonl" type="checkbox"> JSONL</label><label><input data-role="format-md" type="checkbox" checked> MD</label></div>
       <div class="tm-row tm-md-metadata"><span class="tm-label">MD headings</span><label><input data-role="show-timestamps" type="checkbox"> Timestamp</label><label><input data-role="show-record-numbers" type="checkbox"> Record #</label><label><input data-role="show-turn-ids" type="checkbox"> Turn ID</label><label><input data-role="show-debug-provenance" type="checkbox"> provenance</label></div>
@@ -9657,9 +9772,53 @@ Image elapsed: ${formatDuration(imageElapsed)} — Completed: ${imageCompleted}/
     bindStoredCheckbox(panel, 'show-debug-provenance', SHOW_DEBUG_PROVENANCE_STORAGE_KEY, showDebugProvenance, value => {
       showDebugProvenance = value;
     });
-    bindStoredCheckbox(panel, 'agent-sounds', AGENT_SOUNDS_STORAGE_KEY, agentSoundsEnabled, value => {
-      agentSoundsEnabled = value;
-      if (value) void unlockAgentSoundAudio();
+    const soundControl = panel.querySelector('[data-role="agent-sound-control"]');
+    const soundPopup = panel.querySelector('[data-role="agent-sound-popup"]');
+    const soundVolumeInput = panel.querySelector('[data-role="agent-sound-volume"]');
+    const soundVolumeValue = panel.querySelector('[data-role="agent-sound-volume-value"]');
+    const soundControlValue = panel.querySelector('[data-role="agent-sound-control-value"]');
+    /**
+     * Renders the current integer sound volume into the popup and control label.
+     *
+     * @returns {void} No value is returned.
+     */
+    const renderSoundVolume = () => {
+      const value = String(agentSoundVolume);
+      if (soundVolumeInput instanceof HTMLInputElement) soundVolumeInput.value = value;
+      if (soundVolumeValue) soundVolumeValue.textContent = value;
+      if (soundControlValue) soundControlValue.textContent = value;
+    };
+    /**
+     * Opens or closes the sound-volume popup and mirrors the expanded state for accessibility.
+     *
+     * @param {boolean} open - True to show the volume popup.
+     * @returns {void} No value is returned.
+     */
+    const setSoundPopupOpen = open => {
+      if (!soundPopup || !soundControl) return;
+      soundPopup.hidden = !open;
+      soundControl.setAttribute('aria-expanded', String(open));
+    };
+    renderSoundVolume();
+    soundControl?.addEventListener('click', event => {
+      event.stopPropagation();
+      const open = Boolean(soundPopup?.hidden);
+      setSoundPopupOpen(open);
+      if (open && agentSoundVolume > 0) void unlockAgentSoundAudio();
+    });
+    soundPopup?.addEventListener('click', event => event.stopPropagation());
+    soundVolumeInput?.addEventListener('input', () => {
+      const parsed = Number.parseInt(soundVolumeInput.value, 10);
+      agentSoundVolume = Number.isFinite(parsed) ? Math.max(0, Math.min(10, parsed)) : 0;
+      localStorage.setItem(AGENT_SOUND_VOLUME_STORAGE_KEY, String(agentSoundVolume));
+      renderSoundVolume();
+      logDiagnostic('debug', 'agent-sound-volume-changed', { volume: agentSoundVolume });
+      if (agentSoundVolume > 0) void unlockAgentSoundAudio();
+    });
+    document.addEventListener('click', event => {
+      if (!soundPopup || soundPopup.hidden) return;
+      if (event.target instanceof Node && panel.querySelector('.tm-sound-control-row')?.contains(event.target)) return;
+      setSoundPopupOpen(false);
     });
     /**
      * Handles run selected exports.

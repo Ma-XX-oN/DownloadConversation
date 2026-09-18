@@ -532,3 +532,14 @@ The floating stopwatch always renders a `Total` line. While the stopwatch is act
 ## Agent-turn stopwatch single-lap display
 
 The floating stopwatch always renders `Total`. When the current stopwatch session contains only one represented lap, the redundant `Lap 1` line is suppressed and only `Total` is shown. Once a follow-up creates a second lap, all lap lines are shown together with the continuously running Total. The same rule applies after completion: a one-lap completed session shows only the frozen Total, while multi-lap sessions preserve their individual lap lines plus Total.
+
+
+## Agent terminal sound volume and reliable playback
+
+The general status panel exposes one **Sound** control rather than a boolean sound checkbox. Activating it opens a compact popup containing a vertical integer slider from 0 through 10 and a numeric value. Volume 0 is the single disabled state; nonzero values enable the same structured terminal-state cues. The integer volume is persisted under `tm-conversation-recorder-agent-sound-volume`. A legacy saved boolean `tm-conversation-recorder-agent-sounds` migrates deterministically to 10 when true or 0 when false when no integer value exists.
+
+Terminal sound identity remains structured-stream-only. Successful completion is still the exact final successful Assistant state, and errors remain established structured terminal error events; rendered text is not inspected as a fallback. The stable terminal identity is de-duplicated only after oscillator scheduling succeeds. A missing or suspended AudioContext therefore cannot permanently consume a terminal key before a sound has actually started.
+
+Trusted pointer/keyboard gestures and nonzero volume interaction create or resume the single Web Audio context. Playback diagnostics record terminal classification, duplicate or volume-zero suppression, AudioContext unlock state, playback attempt, successful oscillator scheduling, and playback failure. These diagnostics are observability only and do not introduce an alternate trigger or playback path.
+
+Cue amplitude scales linearly with the selected slider level, with level 10 using a peak gain of 1.0. Success and error retain their distinct oscillator waveforms, pitch envelopes, and durations. The volume control does not alter streamed-tail reconciliation, stopwatch timing, exports, or ChatGPT request semantics.
