@@ -22,6 +22,8 @@ jobs:
         run: node --test tests/export-single-snapshot.test.mjs
       - name: Agent completion sound regression
         run: node --test tests/agent-completion-sounds.test.mjs
+      - name: Agent turn stopwatch regression
+        run: node --test tests/agent-turn-stopwatch.test.mjs
       - name: Communication log file controls regression
         run: node --test tests/communication-log-file-controls.test.mjs tests/communication-log-layout-contract.test.mjs tests/dry-contract.test.mjs
       - name: Tail consistency regression
