@@ -35,6 +35,8 @@ function streamHarness() {
     }
   };
   const context = {
+    URL,
+    location: { origin: 'https://chatgpt.com' },
     document,
     structuredClone,
     performance: { now: () => now },
@@ -68,6 +70,7 @@ function streamHarness() {
     ${productionFunctionSource('agentStopwatchSuccessfulFinal')}
     ${productionFunctionSource('agentStopwatchObserveTerminal')}
     ${productionFunctionSource('agentStopwatchObserveStreamEvent')}
+    ${productionFunctionSource('isGenerationStreamUrl')}
     ${productionFunctionSource('createStreamTailCapture')}
     ${productionFunctionSource('streamTailClone')}
     ${productionFunctionSource('streamTailUpsertMessage')}
@@ -80,6 +83,7 @@ function streamHarness() {
       create: createStreamTailCapture,
       request: agentStopwatchObserveRequest,
       consume: consumeStreamTailSseChunk,
+      isGeneration: isGenerationStreamUrl,
       state: () => agentStopwatchState,
       text: () => document.getElementById(AGENT_STOPWATCH_ID)?.textContent ?? ''
     };
@@ -205,4 +209,10 @@ test('captured production SSE fixture reaches final completion through the real 
   assert.equal(state.exchange_id, 'bb0909f8-df1a-43a7-9bda-ebee076f6e09');
   assert.equal(state.total_ms, 30000);
   assert.deepEqual(Array.from(state.laps_ms), [30000]);
+});
+
+test('live follow-up endpoint /backend-api/f/steer_turn is recognized as a stopwatch submission boundary', () => {
+  const harness = streamHarness();
+  assert.equal(harness.api.isGeneration('https://chatgpt.com/backend-api/f/conversation'), true);
+  assert.equal(harness.api.isGeneration('https://chatgpt.com/backend-api/f/steer_turn'), true);
 });
