@@ -28,6 +28,8 @@ jobs:
         run: node --test tests/agent-turn-stopwatch-stream.test.mjs
       - name: Agent turn stopwatch live total
         run: node --test tests/agent-turn-stopwatch-live-total.test.mjs
+      - name: Agent terminal polling-timeout regression
+        run: node --test tests/agent-terminal-polling-timeout.test.mjs
       - name: Communication log file controls regression
         run: node --test tests/communication-log-file-controls.test.mjs tests/communication-log-layout-contract.test.mjs tests/dry-contract.test.mjs
       - name: Tail consistency regression
