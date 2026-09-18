@@ -132,7 +132,7 @@ function finalCapture(exchangeId) {
 }
 
 test('Issue 136 development version and fixed top-right stopwatch control are present', () => {
-  assert.match(userscript, /@version\s+1\.2\.0-issue\.136\.3/);
+  assert.match(userscript, /@version\s+1\.2\.0-issue\.136\.4/);
   assert.match(userscript, /AGENT_STOPWATCH_ID\s*=\s*'tm-agent-turn-stopwatch'/);
   const ensure = productionFunctionSource('ensureAgentStopwatchControl');
   assert.match(ensure, /style\.position\s*=\s*'fixed'/);
@@ -153,7 +153,7 @@ test('initial prompt starts Lap 1 at the local submission boundary', () => {
   assert.equal(state.active, true);
   assert.equal(state.exchange_id, 'exchange-A');
   assert.deepEqual(Array.from(state.laps_ms), []);
-  assert.equal(harness.api.text(), 'Lap 1: 1 m 5 s');
+  assert.equal(harness.api.text(), 'Lap 1: 1 m 5 s\nTotal: 1 m 5 s');
 });
 
 test('same-exchange User message_type next freezes a lap at submission time and starts the next lap', () => {
@@ -170,7 +170,7 @@ test('same-exchange User message_type next freezes a lap at submission time and 
   const state = harness.api.state();
   assert.deepEqual(Array.from(state.laps_ms), [70000]);
   assert.equal(state.lap_started_at_ms, 71000);
-  assert.equal(harness.api.text(), 'Lap 1: 1 m 10 s\nLap 2: 0 m 5 s');
+  assert.equal(harness.api.text(), 'Lap 1: 1 m 10 s\nLap 2: 0 m 5 s\nTotal: 1 m 15 s');
 });
 
 test('multiple User follow-ups remain one stopwatch session and final completion freezes last lap and Total', () => {
@@ -235,7 +235,7 @@ test('next independent prompt after completion replaces the completed stopwatch 
   assert.equal(state.active, true);
   assert.equal(state.exchange_id, 'exchange-B');
   assert.deepEqual(Array.from(state.laps_ms), []);
-  assert.equal(harness.api.text(), 'Lap 1: 0 m 5 s');
+  assert.equal(harness.api.text(), 'Lap 1: 0 m 5 s\nTotal: 0 m 5 s');
 });
 
 test('same-exchange User input creates a lap without relying on message_type metadata', () => {

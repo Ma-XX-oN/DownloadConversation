@@ -522,3 +522,8 @@ Each streamed generation capture retains the working exchange learned from its U
 Live browser diagnostics establish that a User follow-up submitted while the current working turn remains active is sent through `POST /backend-api/f/steer_turn`, not through the `/backend-api/f/conversation` generation endpoint. The stopwatch treats that exact same-origin POST as the follow-up submission boundary and records the lap immediately using the local monotonic pre-transmission timestamp.
 
 `/backend-api/f/steer_turn` is not treated as another generation stream. The existing `/backend-api/f/conversation` capture remains authoritative for streamed turn identity and terminal completion. Because a steer-turn lap is recorded directly at the steering POST boundary, later streamed User metadata has no pending stopwatch submission and therefore cannot double-count the same follow-up.
+
+
+## Agent-turn stopwatch live total
+
+The floating stopwatch always renders a `Total` line. While the stopwatch is active, Total is the live monotonic elapsed duration from the initial prompt submission (`now - started_at_ms`) and refreshes on the same interval as the current lap. On successful terminal completion, the same line switches to the frozen `total_ms` value. Follow-up lap boundaries do not reset Total.
