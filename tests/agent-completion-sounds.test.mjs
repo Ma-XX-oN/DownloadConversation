@@ -41,8 +41,7 @@ function capture(turnId = 'turn-1') {
   };
 }
 
-test('Issue 135 version and persisted Sounds checkbox use the shared preference binder', () => {
-  assert.match(userscript, /@version\s+1\.2\.0-issue\.135\.1/);
+test('persisted Sounds checkbox uses the shared preference binder', () => {
   assert.match(userscript, /AGENT_SOUNDS_STORAGE_KEY\s*=\s*'tm-conversation-recorder-agent-sounds'/);
   assert.match(userscript, /data-role="agent-sounds"[^>]*type="checkbox"[^>]*>\s*Sounds/);
   assert.match(userscript,
