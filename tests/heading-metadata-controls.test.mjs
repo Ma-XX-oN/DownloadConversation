@@ -1,8 +1,6 @@
+import { userscript } from './helpers/userscript-source.mjs';
 import assert from 'node:assert/strict';
-import { readFile } from 'node:fs/promises';
 import test from 'node:test';
-
-const userscript = await readFile(new URL('../chatgpt-conversation-markdown-export.user.js', import.meta.url), 'utf8');
 
 test('heading metadata controls default off and Core owns semantic values', () => {
   assert.match(userscript, /^\/\/ @version\s+\d+\.\d+\.\d+(?:-issue\.\d+\.\d+)?$/m);
@@ -30,8 +28,9 @@ test('four independent Markdown heading controls remain persistent UI state', ()
   assert.match(userscript, /data-role="show-record-numbers" type="checkbox"> Record #/);
   assert.match(userscript, /data-role="show-turn-ids" type="checkbox"> Turn ID/);
   assert.match(userscript, /data-role="show-debug-provenance" type="checkbox"> provenance/);
-  assert.match(userscript, /localStorage\.setItem\(SHOW_TURN_IDS_STORAGE_KEY, String\(showTurnIds\)\)/);
-  assert.match(userscript, /localStorage\.setItem\(SHOW_DEBUG_PROVENANCE_STORAGE_KEY, String\(showDebugProvenance\)\)/);
+  assert.match(userscript, /bindStoredCheckbox\(panel, 'show-turn-ids', SHOW_TURN_IDS_STORAGE_KEY, showTurnIds/);
+  assert.match(userscript, /bindStoredCheckbox\(panel, 'show-debug-provenance', SHOW_DEBUG_PROVENANCE_STORAGE_KEY, showDebugProvenance/);
+  assert.match(userscript, /localStorage\.setItem\(storageKey, String\(checkbox\.checked\)\)/);
   assert.match(userscript, /if \(turnIds\) turnIds\.disabled = metadataDisabled/);
   assert.match(userscript, /if \(debugProvenance\) debugProvenance\.disabled = metadataDisabled/);
   assert.doesNotMatch(userscript, /diagnosticsLevel = showDebugProvenance/);

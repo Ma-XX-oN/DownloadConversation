@@ -1,16 +1,6 @@
+import { productionFunctionSource, userscript } from './helpers/userscript-source.mjs';
 import assert from 'node:assert/strict';
-import { readFile } from 'node:fs/promises';
 import test from 'node:test';
-
-const userscript = await readFile(new URL('../chatgpt-conversation-markdown-export.user.js', import.meta.url), 'utf8');
-
-function extractTopLevelFunction(name) {
-  const start = userscript.indexOf(`function ${name}(`);
-  assert.ok(start >= 0, `Missing production function ${name}.`);
-  const end = userscript.indexOf('\n  /**', start + 1);
-  assert.ok(end > start, `Could not isolate production function ${name}.`);
-  return userscript.slice(start, end);
-}
 
 class FakeHTMLElement {
   constructor(parent = null) {
@@ -68,8 +58,8 @@ const fakeDocument = {
 };
 
 function productionModalContract() {
-  const modalFocusableSource = extractTopLevelFunction('modalFocusableElements');
-  const installSource = extractTopLevelFunction('installModalContract');
+  const modalFocusableSource = productionFunctionSource('modalFocusableElements');
+  const installSource = productionFunctionSource('installModalContract');
   const factory = new Function(
     'HTMLElement',
     'HTMLButtonElement',

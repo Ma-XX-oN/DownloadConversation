@@ -20,8 +20,26 @@ jobs:
         run: node --test tests/version-identity.test.mjs
       - name: Single-snapshot export regression
         run: node --test tests/export-single-snapshot.test.mjs
-      - name: Live tail consistency regression
-        run: node --test tests/tail-consistency.test.mjs tests/stream-tail-recovery.test.mjs tests/stock-network-diagnostics.test.mjs tests/disk-communication-recorder.test.mjs tests/directory-picker-gesture.test.mjs
+      - name: Agent completion sound regression
+        run: node --test tests/agent-completion-sounds.test.mjs
+      - name: Agent turn stopwatch regression
+        run: node --test tests/agent-turn-stopwatch.test.mjs
+      - name: Agent turn stopwatch stream integration
+        run: node --test tests/agent-turn-stopwatch-stream.test.mjs
+      - name: Agent turn stopwatch live total
+        run: node --test tests/agent-turn-stopwatch-live-total.test.mjs
+      - name: Communication log file controls regression
+        run: node --test tests/communication-log-file-controls.test.mjs tests/communication-log-layout-contract.test.mjs tests/dry-contract.test.mjs
+      - name: Tail consistency regression
+        run: node --test tests/tail-consistency.test.mjs
+      - name: Stream tail recovery regression
+        run: node --test tests/stream-tail-recovery.test.mjs
+      - name: Stock network diagnostics regression
+        run: node --test tests/stock-network-diagnostics.test.mjs
+      - name: Disk communication recorder regression
+        run: node --test tests/disk-communication-recorder.test.mjs
+      - name: Directory picker gesture regression
+        run: node --test tests/directory-picker-gesture.test.mjs
       - name: Console lifecycle and provenance controls
         run: node --test tests/console-diagnostics.test.mjs
       - name: Canonical final-render regressions

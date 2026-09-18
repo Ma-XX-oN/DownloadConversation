@@ -48,6 +48,12 @@ JSONL serialization and Markdown rendering are separate projections over the sam
 
 The communication recorder begins at document-start, observes stock page networking plus DownloadConversation's own API traffic, and writes its JSONL trace to the authorized directory.  It is designed to preserve evidence across reloads and rare failures.  It does not alter ChatGPT requests, does not become the source of normal exports, and does not change the Core rendering boundary.
 
+### Communication-log active-file lifecycle
+
+The general status panel exposes the exact active communication-log filename and serializes rename, duplicate, reset, append, and checkpoint operations through the same write chain. Duplicate creates an exact committed sibling snapshot while recording remains attached to the original file. Rename commits the writer before moving identity to the verified replacement file.
+
+Periodic and document-lifecycle checkpoints close dirty long-lived writers so committed bytes are available on disk. Hard document departure starts the same checkpoint path at `beforeunload` and again at `pagehide`; these browser lifecycle calls are best-effort because unload events do not guarantee awaiting arbitrary asynchronous work. Any full-document reload or navigation initiated by DownloadConversation must explicitly await that checkpoint before changing location. Same-document/SPA route changes are not treated as unload events.
+
 ### Continuous recording and Resume are deferred
 
 Durable continuous recording and Resume/rebuild are not current production behaviour.  Future API-based continuous recording is tracked by issue #112 and must reuse the same Conversation API/Core ownership model rather than reviving the retired DOM-first recorder architecture.
@@ -473,3 +479,67 @@ communication recorder.
 This changes only the authorization UX for the diagnostic communication recorder.  It
 does not change the single-snapshot export contract, source precedence/recovery rules,
 or the AIConversationCore rendering boundary.
+
+
+## Agent-turn stopwatch
+
+Issue #136 adds a display-only stopwatch for one working agent exchange.  The clock
+starts from a monotonic local timestamp captured immediately before the stock
+`POST /backend-api/f/conversation` request is transmitted.  Request bodies do not
+reliably contain the enriched working-exchange metadata, so the response stream's
+structured User `input_message` is the authority for classifying the submission.
+
+An initial User input binds the active stopwatch to its `turn_exchange_id` (falling
+back only to `working_turn_id`).  A later User input records a lap only when provider
+metadata explicitly marks `message_type: "next"` and the working-exchange identity
+matches.  The lap boundary remains the earlier local submission timestamp, not the
+time at which the enriched stream record arrives.  Returning composer control to the
+User, whether normally, because input is required, after interruption, or after an
+error, is not a terminal stopwatch event by itself.
+
+The stopwatch stops only when the captured structured stream contains an Assistant
+message for the same exchange with `channel: "final"`,
+`status: "finished_successfully"`, and `end_turn: true`.  At that boundary the final
+lap and total elapsed time are frozen.  A later independent User exchange replaces
+the completed session with a new stopwatch.
+
+The UI is a fixed, pointer-transparent top-right viewport control below the ChatGPT
+header controls.  It is not part of transcript chronology, does not move with the
+conversation scroll, and does not alter requests, exports, communication recording,
+streamed-tail reconciliation, or AIConversationCore semantics.  Elapsed time uses
+`performance.now()`; wall-clock timestamps are not used for duration measurement.
+
+
+## Agent-turn stopwatch live-stream identity
+
+The stopwatch classifies User submissions from the production SSE stream by working-exchange identity, not by `message_type`. Captured provider evidence shows that the top-level User `input_message` carries `turn_exchange_id` / `working_turn_id` but may omit `message_type`, while a later hidden system record in the same turn may carry `message_type: next`. The stopwatch therefore treats a pending User submission with the same working exchange as a lap boundary and a different working exchange as a new timing session.
+
+Each streamed generation capture retains the working exchange learned from its User `input_message`. Terminal stopwatch validation uses that capture-level identity together with the completed final Assistant record. This avoids depending on later message-metadata patch representation while keeping exchange matching explicit and single-path.
+
+
+## Agent-turn stopwatch steer-turn boundary
+
+Live browser diagnostics establish that a User follow-up submitted while the current working turn remains active is sent through `POST /backend-api/f/steer_turn`, not through the `/backend-api/f/conversation` generation endpoint. The stopwatch treats that exact same-origin POST as the follow-up submission boundary and records the lap immediately using the local monotonic pre-transmission timestamp.
+
+`/backend-api/f/steer_turn` is not treated as another generation stream. The existing `/backend-api/f/conversation` capture remains authoritative for streamed turn identity and terminal completion. Because a steer-turn lap is recorded directly at the steering POST boundary, later streamed User metadata has no pending stopwatch submission and therefore cannot double-count the same follow-up.
+
+
+## Agent-turn stopwatch live total
+
+The floating stopwatch always renders a `Total` line. While the stopwatch is active, Total is the live monotonic elapsed duration from the initial prompt submission (`now - started_at_ms`) and refreshes on the same interval as the current lap. On successful terminal completion, the same line switches to the frozen `total_ms` value. Follow-up lap boundaries do not reset Total.
+
+
+## Agent-turn stopwatch single-lap display
+
+The floating stopwatch always renders `Total`. When the current stopwatch session contains only one represented lap, the redundant `Lap 1` line is suppressed and only `Total` is shown. Once a follow-up creates a second lap, all lap lines are shown together with the continuously running Total. The same rule applies after completion: a one-lap completed session shows only the frozen Total, while multi-lap sessions preserve their individual lap lines plus Total.
+
+
+## Agent terminal sound volume and reliable playback
+
+The general status panel exposes one **Sound** control rather than a boolean sound checkbox. Activating it opens a compact popup containing a vertical integer slider from 0 through 10 and a numeric value. Volume 0 is the single disabled state; nonzero values enable the same structured terminal-state cues. The integer volume is persisted under `tm-conversation-recorder-agent-sound-volume`. A legacy saved boolean `tm-conversation-recorder-agent-sounds` migrates deterministically to 10 when true or 0 when false when no integer value exists.
+
+Terminal sound identity remains structured-stream-only. Successful completion is still the exact final successful Assistant state, and errors remain established structured terminal error events; rendered text is not inspected as a fallback. The stable terminal identity is de-duplicated only after oscillator scheduling succeeds. A missing or suspended AudioContext therefore cannot permanently consume a terminal key before a sound has actually started.
+
+Trusted pointer/keyboard gestures and nonzero volume interaction create or resume the single Web Audio context. Playback diagnostics record terminal classification, duplicate or volume-zero suppression, AudioContext unlock state, playback attempt, successful oscillator scheduling, and playback failure. These diagnostics are observability only and do not introduce an alternate trigger or playback path.
+
+Cue amplitude scales linearly with the selected slider level, with level 10 using a peak gain of 1.0. Success and error retain their distinct oscillator waveforms, pitch envelopes, and durations. The volume control does not alter streamed-tail reconciliation, stopwatch timing, exports, or ChatGPT request semantics.

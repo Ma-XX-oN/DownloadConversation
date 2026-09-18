@@ -1,12 +1,8 @@
+import { userscript } from './helpers/userscript-source.mjs';
 import assert from 'node:assert/strict';
-import { readFile } from 'node:fs/promises';
 import test from 'node:test';
 import vm from 'node:vm';
 
-const userscript = await readFile(
-  new URL('../chatgpt-conversation-markdown-export.user.js', import.meta.url),
-  'utf8'
-);
 const start = userscript.indexOf("  function cgCodeFence(text, language = '') {");
 const end = userscript.indexOf('  function cgRenderDetail', start);
 assert.ok(start >= 0 && end > start, 'Production cgCodeFence helper is missing.');

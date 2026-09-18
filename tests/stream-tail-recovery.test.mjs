@@ -1,9 +1,7 @@
+import { userscript } from './helpers/userscript-source.mjs';
 import assert from 'node:assert/strict';
-import { readFile } from 'node:fs/promises';
 import test from 'node:test';
 import vm from 'node:vm';
-
-const userscript = await readFile(new URL('../chatgpt-conversation-markdown-export.user.js', import.meta.url), 'utf8');
 
 function sourceBlock() {
   const start = userscript.indexOf('  // BEGIN Issue #123 streamed-tail recovery');
@@ -29,6 +27,8 @@ function harness() {
       removeItem(key) { storage.delete(key); }
     },
     logDiagnostic() {},
+    agentSoundObserveTerminal() {},
+    agentStopwatchObserveStreamEvent() {},
     conversationSpineFromPages(pages) {
       const messages = [];
       const seen = new Set();

@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         ChatGPT Conversation Markdown Recorder
 // @namespace    https://chatgpt.com/
-// @version      1.2.0
+// @version      1.3.0
 // @description  Exports the current ChatGPT conversation directly from the Conversation API as Markdown or JSONL.
 // @match        https://chatgpt.com/*
 // @match        https://chat.openai.com/*
@@ -40,6 +40,14 @@
   const SHOW_TURN_IDS_STORAGE_KEY = 'tm-conversation-recorder-show-turn-ids';
   /** Local-storage key for Markdown Core debug-provenance visibility. */
   const SHOW_DEBUG_PROVENANCE_STORAGE_KEY = 'tm-conversation-recorder-show-debug-provenance';
+  /** Local-storage key for the current integer agent terminal-sound volume. */
+  const AGENT_SOUND_VOLUME_STORAGE_KEY = 'tm-conversation-recorder-agent-sound-volume';
+  /** Legacy boolean sound preference retained only for deterministic migration. */
+  const LEGACY_AGENT_SOUNDS_STORAGE_KEY = 'tm-conversation-recorder-agent-sounds';
+  /** DOM id of the fixed agent-turn stopwatch display. */
+  const AGENT_STOPWATCH_ID = 'tm-agent-turn-stopwatch';
+  /** Refresh cadence for the live agent-turn stopwatch display. */
+  const AGENT_STOPWATCH_REFRESH_MS = 250;
   /** Local-storage key for continued console mirroring after the status panel first appears. */
   const CONSOLE_DIAGNOSTICS_STORAGE_KEY = 'tm-conversation-recorder-console-diagnostics';
   /** Session-storage key for the retained recorder diagnostic log. */
@@ -101,6 +109,35 @@
   let showTurnIds = localStorage.getItem(SHOW_TURN_IDS_STORAGE_KEY) === 'true';
   /** Whether Markdown headings should include Core-derived source debug provenance. */
   let showDebugProvenance = localStorage.getItem(SHOW_DEBUG_PROVENANCE_STORAGE_KEY) === 'true';
+  /**
+   * Loads the persisted 0-10 terminal-sound volume, including the legacy checkbox migration.
+   *
+   * @returns {number} Integer terminal-sound volume from 0 through 10.
+   */
+  function loadAgentSoundVolume() {
+    const stored = localStorage.getItem(AGENT_SOUND_VOLUME_STORAGE_KEY);
+    if (stored !== null) {
+      const parsed = Number.parseInt(stored, 10);
+      return Number.isFinite(parsed) ? Math.max(0, Math.min(10, parsed)) : 0;
+    }
+    const legacy = localStorage.getItem(LEGACY_AGENT_SOUNDS_STORAGE_KEY);
+    if (legacy === 'true') return 10;
+    if (legacy === 'false') return 0;
+    return 0;
+  }
+
+  /** Persisted integer terminal-sound volume; zero is the only disabled state. */
+  let agentSoundVolume = loadAgentSoundVolume();
+  /** AudioContext unlocked by a user gesture when terminal sounds are enabled. */
+  let agentSoundAudioContext = null;
+  /** Bounded stable turn identities that have already emitted a terminal sound. */
+  const agentSoundTerminalKeys = new Set();
+  /** Maximum number of emitted terminal turn identities retained for de-duplication. */
+  const AGENT_SOUND_TERMINAL_KEY_LIMIT = 128;
+  /** Current agent-turn stopwatch session, including completed lap durations. */
+  let agentStopwatchState = null;
+  /** Interval handle refreshing the live agent-turn stopwatch, or null while stopped. */
+  let agentStopwatchTimer = null;
   /** Active screen wake-lock handle, or null when no lock is held. */
   let wakeLockSentinel = null;
   /** Serializes export work so overlapping extraction runs cannot start. */
@@ -179,6 +216,8 @@
   let communicationLogLastAssistantLifecycleKey = null;
   /** Guards page/session lifecycle listeners against duplicate installation after reauthorization. */
   let communicationLogLifecycleInstalled = false;
+  /** Whether one communication-log file-management action is currently updating panel state. */
+  let communicationLogUiActionInProgress = false;
   /** Unique identity correlating all communication records produced by this page lifetime. */
   const communicationLogSessionId = crypto.randomUUID();
   try {
@@ -197,6 +236,62 @@
    */
   function assert(condition, message) {
     if (!condition) throw new Error(message);
+  }
+
+  /**
+   * Normalizes one thrown value to readable diagnostic text.
+   *
+   * @param {unknown} error - Thrown value to describe.
+   * @returns {string} Readable error text.
+   */
+  function errorMessage(error) {
+    if (error instanceof Error) return error.message;
+    if (error && typeof error === 'object' && typeof error.message === 'string') return error.message;
+    return String(error);
+  }
+
+  /**
+   * Clones one Request/Response-like object without allowing a clone failure to escape.
+   *
+   * @param {Object|null} value - Cloneable object, when available.
+   * @returns {Object|null} Independent clone, or null when cloning is unavailable or fails.
+   */
+  function cloneSafely(value) {
+    try {
+      return typeof value?.clone === 'function' ? value.clone() : null;
+    } catch {
+      return null;
+    }
+  }
+
+  /**
+   * Releases one stream-reader lock without allowing cleanup failure to replace the primary outcome.
+   *
+   * @param {Object|null} reader - Reader whose lock should be released.
+   * @returns {void} No value is returned.
+   */
+  function releaseReaderLockQuietly(reader) {
+    try { reader?.releaseLock?.(); } catch {}
+  }
+
+  /**
+   * Aborts one writable stream without allowing cleanup failure to replace the primary outcome.
+   *
+   * @param {Object|null} writable - Writable stream to abort when present.
+   * @returns {Promise<void>} Resolves after best-effort abort cleanup.
+   */
+  async function abortWritableQuietly(writable) {
+    try { await writable?.abort?.(); } catch {}
+  }
+
+  /**
+   * Cancels one readable body without allowing cleanup failure to replace the primary outcome.
+   *
+   * @param {Object|null} body - Readable stream body to cancel when present.
+   * @returns {Promise<void>} Resolves after best-effort cancellation.
+   */
+  async function cancelReadableBodyQuietly(body) {
+    try { await body?.cancel?.(); } catch {}
   }
 
   /**
@@ -500,6 +595,23 @@
   }
 
   /**
+   * Classifies one bounded stock-network text body into JSON identity or text identity evidence.
+   *
+   * @param {string} text - Bounded response text.
+   * @param {string} contentType - Response content type used as JSON evidence.
+   * @returns {Object} Exactly one JSON-identity or text-identity projection.
+   */
+  function stockNetworkBodyIdentity(text, contentType) {
+    const value = String(text ?? '');
+    if (/json/i.test(contentType) || /^[\s\r\n]*[\[{]/.test(value)) {
+      try {
+        return { json_identity: stockNetworkJsonIdentitySummary(JSON.parse(value)) };
+      } catch {}
+    }
+    return { text_identity: stockNetworkTextIdentitySummary(value) };
+  }
+
+  /**
    * Projects request headers without retaining authentication or other secret values.
    *
    * @param {Object} headers - Headers-like request headers.
@@ -584,7 +696,7 @@
       }
       text += decoder.decode();
     } finally {
-      try { reader.releaseLock(); } catch {}
+      releaseReaderLockQuietly(reader);
     }
     return { text, byte_count: byteCount, truncated };
   }
@@ -600,26 +712,21 @@
     try {
       const bounded = await stockNetworkReadBoundedText(response);
       const contentType = response.headers?.get?.('content-type') ?? '';
-      let jsonIdentity = null;
-      let textIdentity = null;
-      if (/json/i.test(contentType) || /^[\s\r\n]*[\[{]/.test(bounded.text)) {
-        try { jsonIdentity = stockNetworkJsonIdentitySummary(JSON.parse(bounded.text)); } catch {}
-      }
-      if (!jsonIdentity) textIdentity = stockNetworkTextIdentitySummary(bounded.text);
+      const identity = stockNetworkBodyIdentity(bounded.text, contentType);
       logDiagnostic('debug', 'stock-network-fetch-body-summary', {
         network_sequence: trace.sequence,
         url: trace.url,
         content_type: boundedDiagnosticText(contentType, 500),
         byte_count: bounded.byte_count,
         truncated: bounded.truncated,
-        json_identity: jsonIdentity,
-        text_identity: textIdentity
+        json_identity: identity.json_identity ?? null,
+        text_identity: identity.text_identity ?? null
       });
     } catch (error) {
       logDiagnostic('debug', 'stock-network-fetch-body-summary-failed', {
         network_sequence: trace.sequence,
         url: trace.url,
-        error: boundedDiagnosticText(error?.message ?? String(error), 1000)
+        error: boundedDiagnosticText(errorMessage(error), 1000)
       });
     }
   }
@@ -651,8 +758,7 @@
       /\/backend-api\/(?:conversation|conversations|f\/conversation)(?:\/|\?|$)/.test(trace.url)
     );
     if (!inspectable) return;
-    let cloned = null;
-    try { cloned = response.clone(); } catch {}
+    const cloned = cloneSafely(response);
     if (cloned) void stockNetworkInspectFetchBody(cloned, trace);
   }
 
@@ -716,16 +822,10 @@
       } else if (!xhr.responseType || xhr.responseType === 'text') {
         const rawText = String(xhr.responseText ?? '');
         const boundedText = rawText.slice(0, STOCK_NETWORK_JSON_BYTE_LIMIT);
-        let jsonIdentity = null;
-        if (/json/i.test(contentType) || /^[\s\r\n]*[\[{]/.test(boundedText)) {
-          try { jsonIdentity = stockNetworkJsonIdentitySummary(JSON.parse(boundedText)); } catch {}
-        }
-        bodyIdentity = jsonIdentity
-          ? { json_identity: jsonIdentity, truncated: rawText.length > boundedText.length }
-          : {
-              text_identity: stockNetworkTextIdentitySummary(boundedText),
-              truncated: rawText.length > boundedText.length
-            };
+        bodyIdentity = {
+          ...stockNetworkBodyIdentity(boundedText, contentType),
+          truncated: rawText.length > boundedText.length
+        };
       }
     } catch {}
     logDiagnostic('debug', 'stock-network-xhr-response', {
@@ -860,6 +960,21 @@
   }
 
   /**
+   * Commits queued communication-log state at a hard document-departure boundary.
+   *
+   * Browser lifecycle events start this operation on a best-effort basis because
+   * the browser does not promise to await arbitrary asynchronous unload work.
+   * DownloadConversation-initiated full-document navigation must await this same
+   * function before changing location.
+   *
+   * @param {string} reason - Lifecycle boundary identifying why the document is departing.
+   * @returns {Promise<boolean>} True when dirty writer bytes were checkpointed.
+   */
+  function communicationLogCheckpointForDocumentDeparture(reason) {
+    return communicationLogCheckpoint(reason);
+  }
+
+  /**
    * Installs page/session lifecycle records after the disk recorder becomes writable.
    *
    * @returns {void} No value is returned.
@@ -868,12 +983,15 @@
     if (communicationLogLifecycleInstalled) return;
     communicationLogLifecycleInstalled = true;
     communicationLogCheckpointTimer = setInterval(() => void communicationLogCheckpoint('periodic'), COMMUNICATION_LOG_CHECKPOINT_MS);
+    window.addEventListener('beforeunload', () => {
+      void communicationLogCheckpointForDocumentDeparture('beforeunload');
+    });
     window.addEventListener('pagehide', event => {
       void communicationLogRecord('communication_pagehide', {
         persisted: event.persisted === true,
         visibility_state: document.visibilityState
       });
-      void communicationLogCheckpoint('pagehide');
+      void communicationLogCheckpointForDocumentDeparture('pagehide');
     });
     document.addEventListener('visibilitychange', () => {
       void communicationLogRecord('communication_visibility_change', {
@@ -1327,7 +1445,7 @@
         await writable.close();
         return before.size;
       } catch (error) {
-        try { await writable?.abort(); } catch {}
+        await abortWritableQuietly(writable);
         if (!communicationLogIsStaleFileStateError(error) || attempt >= COMMUNICATION_LOG_WRITE_RETRY_LIMIT) throw error;
         const afterSnapshot = await communicationLogRefreshedFileSnapshot();
         const after = afterSnapshot.file;
@@ -1466,7 +1584,7 @@
       communicationLogWriterDirty = false;
       return communicationLogWritable;
     } catch (error) {
-      try { await writable?.abort(); } catch {}
+      await abortWritableQuietly(writable);
       throw error;
     }
   }
@@ -1478,7 +1596,7 @@
    * @returns {Promise<boolean>} True when dirty bytes were checkpointed.
    */
   function communicationLogCheckpoint(reason) {
-    const operation = communicationLogWriteChain.then(async () => {
+    const queued = communicationLogEnqueue(`checkpoint:${reason}`, async () => {
       if (!communicationLogWritable || !communicationLogWriterDirty) return false;
       try {
         await communicationLogWritable.close();
@@ -1500,12 +1618,244 @@
           throw recoveryError;
         }
       }
-    });
+    }, false);
+    return queued.chain;
+  }
+
+  /**
+   * Validates an exact communication-log filename without silently rewriting it.
+   *
+   * @param {string} fileName - Candidate basename in the authorized directory.
+   * @returns {string} The unchanged validated basename.
+   */
+  function communicationLogValidateFileName(fileName) {
+    if (typeof fileName !== 'string'
+        || fileName.length === 0
+        || fileName.trim() !== fileName
+        || fileName === '.'
+        || fileName === '..'
+        || /[<>:"/\\|?*\u0000-\u001F]/.test(fileName)
+        || /[. ]$/.test(fileName)) {
+      throw new Error('Invalid communication log filename.');
+    }
+    return fileName;
+  }
+
+  /**
+   * Builds the deterministic duplicate filename for one positive suffix number.
+   *
+   * @param {string} fileName - Original communication-log filename.
+   * @param {number} number - Positive duplicate suffix number.
+   * @returns {string} Filename with `(N)` inserted immediately before the extension.
+   */
+  function communicationLogDuplicateFileName(fileName, number) {
+    if (!Number.isInteger(number) || number < 1) {
+      throw new Error('Communication log duplicate number must be a positive integer.');
+    }
+    const extensionIndex = fileName.lastIndexOf('.');
+    const hasExtension = extensionIndex > 0;
+    const stem = hasExtension ? fileName.slice(0, extensionIndex) : fileName;
+    const extension = hasExtension ? fileName.slice(extensionIndex) : '';
+    return `${stem}(${number})${extension}`;
+  }
+
+  /**
+   * Checks whether a sibling file currently exists in the authorized directory.
+   *
+   * @param {string} fileName - Exact sibling filename.
+   * @returns {Promise<boolean>} True when the sibling exists.
+   */
+  async function communicationLogFileExists(fileName) {
+    if (!communicationLogDirectoryHandle) {
+      throw new Error('Communication log directory is not ready.');
+    }
+    try {
+      await communicationLogDirectoryHandle.getFileHandle(fileName, { create: false });
+      return true;
+    } catch (error) {
+      if (error?.name === 'NotFoundError') return false;
+      throw error;
+    }
+  }
+
+  /**
+   * Commits and releases the active long-lived writer before a file mutation.
+   *
+   * @returns {Promise<void>} Resolves after any active writer is closed.
+   */
+  async function communicationLogCloseActiveWriter() {
+    if (!communicationLogWritable) return;
+    try {
+      await communicationLogWritable.close();
+    } finally {
+      communicationLogWritable = null;
+      communicationLogWriterDirty = false;
+    }
+  }
+
+  /**
+   * Serializes one communication-log operation and recovers the shared write chain after failure.
+   *
+   * @param {string} stage - Diagnostic stage reported when the operation rejects.
+   * @param {Function} task - Deferred filesystem/recording operation executed behind prior work.
+   * @param {unknown} failureValue - Value used to recover the shared chain after failure.
+   * @returns {Object} Original operation promise plus the recovered shared-chain promise.
+   */
+  function communicationLogEnqueue(stage, task, failureValue = undefined) {
+    const operation = communicationLogWriteChain.then(task);
     communicationLogWriteChain = operation.catch(communicationError => {
-      communicationLogReportFailure(`checkpoint:${reason}`, communicationError);
-      return false;
+      communicationLogReportFailure(stage, communicationError);
+      return failureValue;
     });
-    return communicationLogWriteChain;
+    return { operation, chain: communicationLogWriteChain };
+  }
+
+  /**
+   * Copies one committed source snapshot to a new sibling and verifies exact bytes.
+   *
+   * @param {Blob} sourceFile - Committed source file snapshot.
+   * @param {string} destinationName - New sibling filename that must not exist.
+   * @returns {Promise<void>} Resolves after the destination is committed and verified.
+   */
+  async function communicationLogCopySnapshot(sourceFile, destinationName) {
+    if (!communicationLogDirectoryHandle) {
+      throw new Error('Communication log directory is not ready.');
+    }
+    if (await communicationLogFileExists(destinationName)) {
+      throw new Error(`Communication log file already exists: ${destinationName}`);
+    }
+
+    let destinationCreated = false;
+    let writable = null;
+    try {
+      const destinationHandle = await communicationLogDirectoryHandle.getFileHandle(
+        destinationName,
+        { create: true }
+      );
+      destinationCreated = true;
+      writable = await destinationHandle.createWritable();
+      await writable.write(sourceFile);
+      await writable.close();
+      writable = null;
+
+      const copiedFile = await destinationHandle.getFile();
+      if (copiedFile.size !== sourceFile.size
+          || !(await communicationLogBlobsEqual(sourceFile, copiedFile))) {
+        throw new Error(`Communication log copy verification failed: ${destinationName}`);
+      }
+    } catch (error) {
+      await abortWritableQuietly(writable);
+      if (destinationCreated) {
+        try { await communicationLogDirectoryHandle.removeEntry(destinationName); } catch {}
+      }
+      throw error;
+    }
+  }
+
+  /**
+   * Renames the active communication log by verified copy-then-delete.
+   *
+   * The operation is serialized behind pending communication writes. The original
+   * is deleted only after the new sibling is byte-for-byte verified, and the active
+   * filename is switched only after that delete succeeds.
+   *
+   * @param {string} newFileName - Exact new basename in the authorized directory.
+   * @returns {Promise<string>} The new active filename.
+   */
+  function communicationLogRename(newFileName) {
+    const queued = communicationLogEnqueue('rename', async () => {
+      const validatedName = communicationLogValidateFileName(newFileName);
+      if (!communicationLogReady || !communicationLogDirectoryHandle || !communicationLogFileName) {
+        throw new Error('Communication log directory/file is not ready.');
+      }
+      if (validatedName === communicationLogFileName) return communicationLogFileName;
+      if (await communicationLogFileExists(validatedName)) {
+        throw new Error(`Communication log file already exists: ${validatedName}`);
+      }
+
+      await communicationLogCloseActiveWriter();
+      const sourceName = communicationLogFileName;
+      const sourceSnapshot = await communicationLogRefreshedFileSnapshot();
+      await communicationLogCopySnapshot(sourceSnapshot.file, validatedName);
+
+      try {
+        await communicationLogDirectoryHandle.removeEntry(sourceName);
+      } catch (error) {
+        try { await communicationLogDirectoryHandle.removeEntry(validatedName); } catch {}
+        throw error;
+      }
+
+      communicationLogFileName = validatedName;
+      return validatedName;
+    });
+    return queued.operation;
+  }
+
+  /**
+   * Creates a committed point-in-time duplicate of the active communication log.
+   *
+   * The lowest unused positive `(N)` suffix is inserted immediately before the
+   * extension with no intervening space. The active filename never changes.
+   *
+   * @returns {Promise<string>} The created duplicate filename.
+   */
+  function communicationLogDuplicate() {
+    const queued = communicationLogEnqueue('duplicate', async () => {
+      if (!communicationLogReady || !communicationLogDirectoryHandle || !communicationLogFileName) {
+        throw new Error('Communication log directory/file is not ready.');
+      }
+
+      await communicationLogCloseActiveWriter();
+      const sourceSnapshot = await communicationLogRefreshedFileSnapshot();
+      let duplicateNumber = 1;
+      let duplicateName = communicationLogDuplicateFileName(
+        communicationLogFileName,
+        duplicateNumber
+      );
+      while (await communicationLogFileExists(duplicateName)) {
+        duplicateNumber += 1;
+        duplicateName = communicationLogDuplicateFileName(
+          communicationLogFileName,
+          duplicateNumber
+        );
+      }
+
+      await communicationLogCopySnapshot(sourceSnapshot.file, duplicateName);
+      return duplicateName;
+    });
+    return queued.operation;
+  }
+
+  /**
+   * Truncates the active communication log to a verified zero-byte committed file.
+   *
+   * The reset is serialized with normal communication writes. The authorized
+   * directory and active filename remain unchanged, and the next record lazily
+   * reopens the normal long-lived writer at the new EOF.
+   *
+   * @returns {Promise<void>} Resolves after the empty file is committed and verified.
+   */
+  function communicationLogReset() {
+    const queued = communicationLogEnqueue('reset', async () => {
+      await communicationLogCloseActiveWriter();
+      const refreshed = await communicationLogRefreshedFileSnapshot();
+      let writable = null;
+      try {
+        writable = await refreshed.handle.createWritable({ keepExistingData: true });
+        await writable.truncate(0);
+        await writable.close();
+        writable = null;
+        communicationLogWriterDirty = false;
+        const verified = await communicationLogRefreshedFileSnapshot();
+        if (verified.file.size !== 0) {
+          throw new Error(`Communication log reset verification failed: expected 0 bytes, found ${verified.file.size}.`);
+        }
+      } catch (error) {
+        await abortWritableQuietly(writable);
+        throw error;
+      }
+    });
+    return queued.operation;
   }
 
   /**
@@ -1515,15 +1865,12 @@
    * @returns {Promise<void>} Resolves after the bytes are accepted by the active writer.
    */
   function communicationLogAppendLine(line) {
-    const operation = communicationLogWriteChain.then(async () => {
+    const queued = communicationLogEnqueue('append', async () => {
       await communicationLogOpenWriter();
       await communicationLogWritable.write(line);
       communicationLogWriterDirty = true;
     });
-    communicationLogWriteChain = operation.catch(communicationError => {
-      communicationLogReportFailure('append', communicationError);
-    });
-    return operation;
+    return queued.operation;
   }
 
   /**
@@ -1537,7 +1884,7 @@
     logDiagnostic('warnings', 'communication-log-write-failure', {
       stage,
       file_name: communicationLogFileName,
-      message: boundedDiagnosticText(error?.message ?? String(error), 2000)
+      message: boundedDiagnosticText(errorMessage(error), 2000)
     });
   }
 
@@ -1582,12 +1929,25 @@
   }
 
   /**
+   * Waits for recorder readiness and records one intentional pre-ready drop when unavailable.
+   *
+   * @param {Object|null} body - Optional cloned body to cancel when the recorder remains unavailable.
+   * @returns {Promise<boolean>} True when recording may continue; otherwise false after drop cleanup.
+   */
+  async function communicationLogAwaitReadyOrDrop(body = null) {
+    if (await communicationLogAwaitReady()) return true;
+    communicationLogDroppedBeforeReady += 1;
+    await cancelReadableBodyQuietly(body);
+    return false;
+  }
+
+  /**
    * Persists one textual body stream in bounded JSONL chunks without accumulating the whole body.
    *
    * @param {ReadableStream|null} body - Cloned Request/Response body stream.
    * @param {string} recordType - JSONL chunk record type.
    * @param {Object} context - Correlation metadata repeated on each chunk.
-   * @returns {Promise<Object>} Persisted byte/chunk counts.
+   * @returns {Promise<Object>} Persisted byte/chunk counts, plus incomplete-stream metadata when reading aborts.
    */
   async function communicationLogStreamBody(body, recordType, context) {
     if (!body) return { byte_count: 0, chunk_count: 0 };
@@ -1597,9 +1957,17 @@
     let safePending = '';
     let byteCount = 0;
     let chunkCount = 0;
+    // Terminal cloned-body read error; null means the reader reached clean EOF.
+    let streamErrorMessage = null;
     try {
       for (;;) {
-        const result = await reader.read();
+        let result = null;
+        try {
+          result = await reader.read();
+        } catch (error) {
+          streamErrorMessage = errorMessage(error);
+          break;
+        }
         if (result.done) break;
         if (!result.value?.byteLength) continue;
         byteCount += result.value.byteLength;
@@ -1638,9 +2006,14 @@
           data: safePending
         });
       }
-      return { byte_count: byteCount, chunk_count: chunkCount };
+      const summary = { byte_count: byteCount, chunk_count: chunkCount };
+      if (streamErrorMessage !== null) {
+        summary.body_incomplete = true;
+        summary.error_message = streamErrorMessage;
+      }
+      return summary;
     } finally {
-      try { reader.releaseLock(); } catch {}
+      releaseReaderLockQuietly(reader);
     }
   }
 
@@ -1704,13 +2077,8 @@
    * @returns {Promise<void>} Resolves after request data is persisted or deliberately omitted.
    */
   async function communicationLogFetchRequest(request, trace) {
-    let cloned = null;
-    try { cloned = request?.clone?.() ?? null; } catch {}
-    if (!(await communicationLogAwaitReady())) {
-      communicationLogDroppedBeforeReady += 1;
-      try { await cloned?.body?.cancel?.(); } catch {}
-      return;
-    }
+    const cloned = cloneSafely(request);
+    if (!(await communicationLogAwaitReadyOrDrop(cloned?.body ?? null))) return;
     const contentType = request?.headers?.get?.('content-type') ?? '';
     await communicationLogRecord('communication_fetch_request', {
       origin: trace?.origin ?? 'stock-chatgpt',
@@ -1740,7 +2108,7 @@
         binary_body_omitted: true,
         body_omitted: 'binary'
       });
-      try { await cloned.body.cancel(); } catch {}
+      await cancelReadableBodyQuietly(cloned.body);
     }
   }
 
@@ -1752,13 +2120,8 @@
    * @returns {Promise<void>} Resolves after response data is persisted or deliberately omitted.
    */
   async function communicationLogFetchResponse(response, trace) {
-    let cloned = null;
-    try { cloned = response.clone(); } catch {}
-    if (!(await communicationLogAwaitReady())) {
-      communicationLogDroppedBeforeReady += 1;
-      try { await cloned?.body?.cancel?.(); } catch {}
-      return;
-    }
+    const cloned = cloneSafely(response);
+    if (!(await communicationLogAwaitReadyOrDrop(cloned?.body ?? null))) return;
     const contentType = response?.headers?.get?.('content-type') ?? '';
     const responseUrl = response?.url ?? trace?.url ?? '';
     await communicationLogRecord('communication_fetch_response', {
@@ -1784,13 +2147,22 @@
         network_sequence: trace?.sequence ?? null,
         ...summary
       });
+      if (summary.body_incomplete) {
+        logDiagnostic('warnings', 'communication-log-response-body-incomplete', {
+          network_sequence: trace?.sequence ?? null,
+          response_url: stockNetworkSafeUrl(responseUrl),
+          byte_count: summary.byte_count,
+          chunk_count: summary.chunk_count,
+          message: summary.error_message
+        });
+      }
     } else if (cloned?.body) {
       await communicationLogRecord('communication_fetch_response_body_end', {
         network_sequence: trace?.sequence ?? null,
         binary_body_omitted: true,
         body_omitted: 'binary'
       });
-      try { await cloned.body.cancel(); } catch {}
+      await cancelReadableBodyQuietly(cloned.body);
     }
     try {
       if (new URL(responseUrl, location.href).pathname === '/backend-api/f/conversation') {
@@ -1808,10 +2180,7 @@
    * @returns {Promise<void>} Resolves after request data is persisted.
    */
   async function communicationLogXhrRequest(info, body, trace) {
-    if (!(await communicationLogAwaitReady())) {
-      communicationLogDroppedBeforeReady += 1;
-      return;
-    }
+    if (!(await communicationLogAwaitReadyOrDrop())) return;
     const contentType = info?.headers?.['content-type'] ?? '';
     await communicationLogRecord('communication_xhr_request', {
       network_sequence: trace?.sequence ?? null,
@@ -1842,10 +2211,7 @@
    * @returns {Promise<void>} Resolves after response data is persisted.
    */
   async function communicationLogXhrResponse(xhr, trace) {
-    if (!(await communicationLogAwaitReady())) {
-      communicationLogDroppedBeforeReady += 1;
-      return;
-    }
+    if (!(await communicationLogAwaitReadyOrDrop())) return;
     const responseHeaders = {};
     try {
       for (const line of String(xhr?.getAllResponseHeaders?.() ?? '').split(/\r?\n/)) {
@@ -1906,10 +2272,7 @@
    * @returns {Promise<void>} Resolves after frame metadata/content is persisted.
    */
   async function communicationLogWebSocketSend(url, data) {
-    if (!(await communicationLogAwaitReady())) {
-      communicationLogDroppedBeforeReady += 1;
-      return;
-    }
+    if (!(await communicationLogAwaitReadyOrDrop())) return;
     await communicationLogRecord('communication_websocket_send', {
       url: stockNetworkSafeUrl(url),
       data_type: typeof data === 'string' ? 'text' : Object.prototype.toString.call(data)
@@ -1932,10 +2295,7 @@
    * @returns {Promise<void>} Resolves after frame metadata/content is persisted.
    */
   async function communicationLogWebSocketMessage(url, data) {
-    if (!(await communicationLogAwaitReady())) {
-      communicationLogDroppedBeforeReady += 1;
-      return;
-    }
+    if (!(await communicationLogAwaitReadyOrDrop())) return;
     await communicationLogRecord('communication_websocket_message', {
       url: stockNetworkSafeUrl(url),
       data_type: typeof data === 'string' ? 'text' : Object.prototype.toString.call(data)
@@ -2172,6 +2532,520 @@
     setTimeout(() => finishConversationClickDiagnostic(observation, 'timer'), 2500);
   }
 
+
+  /**
+   * Unlocks the browser Web Audio context from a user gesture when sounds are enabled.
+   *
+   * @returns {Promise<boolean>} True when the audio context is ready to play.
+   */
+  async function unlockAgentSoundAudio() {
+    const volume = agentSoundVolume;
+    const beforeState = agentSoundAudioContext?.state ?? 'absent';
+    if (volume <= 0) {
+      logDiagnostic('debug', 'agent-sound-audio-unlock', {
+        volume,
+        before_state: beforeState,
+        after_state: beforeState,
+        resume_attempted: false,
+        ready: false,
+        reason: 'volume-zero'
+      });
+      return false;
+    }
+    let resumeAttempted = false;
+    try {
+      const AudioContextClass = window.AudioContext || window.webkitAudioContext;
+      if (typeof AudioContextClass !== 'function') {
+        logDiagnostic('warnings', 'agent-sound-audio-unlock', {
+          volume,
+          before_state: beforeState,
+          after_state: 'unavailable',
+          resume_attempted: false,
+          ready: false,
+          reason: 'audio-context-unavailable'
+        });
+        return false;
+      }
+      if (!agentSoundAudioContext) agentSoundAudioContext = new AudioContextClass();
+      if (agentSoundAudioContext.state === 'suspended') {
+        resumeAttempted = true;
+        await agentSoundAudioContext.resume();
+      }
+      const afterState = agentSoundAudioContext.state;
+      const ready = afterState === 'running';
+      logDiagnostic('debug', 'agent-sound-audio-unlock', {
+        volume,
+        before_state: beforeState,
+        after_state: afterState,
+        resume_attempted: resumeAttempted,
+        ready
+      });
+      return ready;
+    } catch (error) {
+      logDiagnostic('warnings', 'agent-sound-audio-unlock', {
+        volume,
+        before_state: beforeState,
+        after_state: agentSoundAudioContext?.state ?? 'absent',
+        resume_attempted: resumeAttempted,
+        ready: false,
+        message: errorMessage(error)
+      });
+      return false;
+    }
+  }
+
+  /**
+   * Handles a trusted browser gesture that can unlock persisted terminal sounds after reload.
+   *
+   * @returns {void} No value is returned.
+   */
+  function agentSoundHandleUserGesture() {
+    if (agentSoundVolume > 0) void unlockAgentSoundAudio();
+  }
+
+  /**
+   * Plays one short browser-generated terminal-state cue.
+   *
+   * @param {string} kind - `success` for the ding or `error` for the buzz.
+   * @returns {void} No value is returned.
+   */
+  function playAgentSound(kind) {
+    const volume = agentSoundVolume;
+    const audio = agentSoundAudioContext;
+    const audioContextState = audio?.state ?? 'absent';
+    logDiagnostic('debug', 'agent-sound-playback-attempt', {
+      kind,
+      volume,
+      audio_context_state: audioContextState
+    });
+    if (volume <= 0 || (kind !== 'success' && kind !== 'error')) return false;
+    if (!audio || audio.state !== 'running') {
+      logDiagnostic('warnings', 'agent-sound-playback-unavailable', {
+        kind,
+        volume,
+        audio_context_state: audioContextState
+      });
+      return false;
+    }
+    try {
+      const oscillator = audio.createOscillator();
+      const gain = audio.createGain();
+      const start = audio.currentTime;
+      const volumeScale = Math.max(0, Math.min(10, volume)) / 10;
+      oscillator.connect(gain);
+      gain.connect(audio.destination);
+      gain.gain.setValueAtTime(0.0001, start);
+      if (kind === 'success') {
+        oscillator.type = 'sine';
+        oscillator.frequency.setValueAtTime(740, start);
+        oscillator.frequency.linearRampToValueAtTime(988, start + 0.16);
+        gain.gain.exponentialRampToValueAtTime(volumeScale, start + 0.025);
+        gain.gain.exponentialRampToValueAtTime(0.0001, start + 0.32);
+        oscillator.start(start);
+        oscillator.stop(start + 0.34);
+      } else {
+        oscillator.type = 'sawtooth';
+        oscillator.frequency.setValueAtTime(210, start);
+        oscillator.frequency.linearRampToValueAtTime(150, start + 0.32);
+        gain.gain.exponentialRampToValueAtTime(volumeScale, start + 0.02);
+        gain.gain.exponentialRampToValueAtTime(0.0001, start + 0.42);
+        oscillator.start(start);
+        oscillator.stop(start + 0.44);
+      }
+      logDiagnostic('debug', 'agent-sound-playback-started', {
+        kind,
+        volume,
+        peak_gain: volumeScale,
+        audio_context_state: audio.state
+      });
+      return true;
+    } catch (error) {
+      logDiagnostic('warnings', 'agent-sound-playback-failure', {
+        kind,
+        volume,
+        audio_context_state: audio?.state ?? 'absent',
+        message: errorMessage(error)
+      });
+      return false;
+    }
+  }
+
+  /**
+   * Returns one stable generation-turn identity for terminal-sound de-duplication.
+   *
+   * @param {Object} capture - Mutable streamed-turn capture.
+   * @returns {string|null} Stable conversation/turn key, or null when the request lacks identity.
+   */
+  function agentSoundTerminalKey(capture) {
+    const request = [...(capture?.request_messages ?? [])]
+      .reverse()
+      .find(message => typeof message?.id === 'string' && message.id);
+    const metadata = request?.metadata ?? {};
+    const turnIdentity = metadata.turn_exchange_id || metadata.working_turn_id ||
+      metadata.request_id || request?.id || capture?.parent_message_id || null;
+    if (!turnIdentity) return null;
+    return `${capture?.conversation_id ?? 'new'}:${turnIdentity}`;
+  }
+
+  /**
+   * Retains one terminal turn key in a bounded insertion-ordered set.
+   *
+   * @param {string} key - Stable terminal turn key.
+   * @returns {void} No value is returned.
+   */
+  function agentSoundRememberTerminalKey(key) {
+    if (!key || agentSoundTerminalKeys.has(key)) return;
+    while (agentSoundTerminalKeys.size >= AGENT_SOUND_TERMINAL_KEY_LIMIT) {
+      const oldest = agentSoundTerminalKeys.values().next().value;
+      if (oldest === undefined) break;
+      agentSoundTerminalKeys.delete(oldest);
+    }
+    agentSoundTerminalKeys.add(key);
+  }
+
+  /**
+   * Classifies the currently known structured generation terminal state.
+   *
+   * Error matching is intentionally field-based and finite. New provider terminal states are added
+   * here only after a real captured log establishes their exact structured shape.
+   *
+   * @param {Object} capture - Mutable streamed-turn capture.
+   * @param {Object|null} event - Most recently parsed structured SSE/v1 event, when any.
+   * @returns {string|null} `success`, `error`, or null when the turn is not terminal.
+   */
+  function agentSoundClassifyTerminal(capture, event) {
+    const structured = [];
+    if (event && typeof event === 'object' && !Array.isArray(event)) structured.push(event);
+    if (event?.v && typeof event.v === 'object' && !Array.isArray(event.v)) structured.push(event.v);
+    for (const candidate of structured) {
+      const providerCode = candidate.code ?? candidate?.error?.code ?? null;
+      if (candidate.type === 'error' && providerCode === 'conversation_too_large') return 'error';
+      if (candidate.result === 'error' &&
+          candidate?.error?.reason === 'request_failed' &&
+          Number(candidate?.error?.status_code) >= 400) {
+        return 'error';
+      }
+    }
+    const success = (capture?.stream_messages ?? []).some(message =>
+      message?.author?.role === 'assistant' &&
+      message?.channel === 'final' &&
+      message?.status === 'finished_successfully' &&
+      message?.end_turn === true
+    );
+    return success ? 'success' : null;
+  }
+
+  /**
+   * Emits a terminal-state sound once for one stable generation turn.
+   *
+   * @param {Object} capture - Mutable streamed-turn capture.
+   * @param {Object|null} event - Most recently parsed structured SSE/v1 event, when any.
+   * @returns {void} No value is returned.
+   */
+  function agentSoundObserveTerminal(capture, event) {
+    const kind = agentSoundClassifyTerminal(capture, event);
+    if (!kind) return;
+    const key = agentSoundTerminalKey(capture);
+    logDiagnostic('debug', 'agent-sound-terminal-classified', {
+      kind,
+      terminal_key: key,
+      volume: agentSoundVolume,
+      audio_context_state: agentSoundAudioContext?.state ?? 'absent'
+    });
+    if (!key) return;
+    if (agentSoundTerminalKeys.has(key)) {
+      logDiagnostic('debug', 'agent-sound-duplicate-suppressed', {
+        kind,
+        terminal_key: key,
+        volume: agentSoundVolume
+      });
+      return;
+    }
+    if (agentSoundVolume <= 0) {
+      logDiagnostic('debug', 'agent-sound-volume-zero-suppressed', {
+        kind,
+        terminal_key: key,
+        volume: agentSoundVolume
+      });
+      return;
+    }
+    if (playAgentSound(kind)) agentSoundRememberTerminalKey(key);
+  }
+
+  document.addEventListener('pointerdown', agentSoundHandleUserGesture, true);
+  document.addEventListener('keydown', agentSoundHandleUserGesture, true);
+
+
+  /**
+   * Formats one non-negative stopwatch duration as whole minutes and seconds.
+   *
+   * @param {number} milliseconds - Monotonic elapsed milliseconds.
+   * @returns {string} Human-readable `X m Y s` duration.
+   */
+  function agentStopwatchFormatDuration(milliseconds) {
+    assert(Number.isFinite(milliseconds) && milliseconds >= 0,
+      'Agent stopwatch duration must be finite and non-negative.');
+    const seconds = Math.floor(milliseconds / 1000);
+    return `${Math.floor(seconds / 60)} m ${seconds % 60} s`;
+  }
+
+  /**
+   * Returns the provider working-exchange identity carried by one message.
+   *
+   * @param {Object|null} message - Structured provider message.
+   * @returns {string|null} Stable exchange id, or null when the message has none.
+   */
+  function agentStopwatchExchangeId(message) {
+    const metadata = message?.metadata ?? {};
+    return metadata.turn_exchange_id || metadata.working_turn_id || null;
+  }
+
+  /**
+   * Returns the fixed viewport control used to display agent-turn stopwatch state.
+   *
+   * @returns {HTMLElement} Existing or newly created stopwatch element.
+   */
+  function ensureAgentStopwatchControl() {
+    let control = document.getElementById(AGENT_STOPWATCH_ID);
+    if (control) return control;
+    control = document.createElement('div');
+    control.id = AGENT_STOPWATCH_ID;
+    control.style.position = 'fixed';
+    control.style.top = '56px';
+    control.style.right = '16px';
+    control.style.zIndex = '2147483646';
+    control.style.padding = '8px 10px';
+    control.style.border = '1px solid rgba(127, 127, 127, 0.35)';
+    control.style.borderRadius = '8px';
+    control.style.background = 'rgba(32, 32, 32, 0.92)';
+    control.style.color = '#f5f5f5';
+    control.style.font = '12px/1.45 ui-monospace, SFMono-Regular, Menlo, Consolas, monospace';
+    control.style.whiteSpace = 'pre';
+    control.style.pointerEvents = 'none';
+    control.style.boxShadow = '0 2px 8px rgba(0, 0, 0, 0.25)';
+    (document.body || document.documentElement).append(control);
+    return control;
+  }
+
+  /**
+   * Renders the current completed and live lap state into the fixed stopwatch control.
+   *
+   * @param {number} nowMs - Current monotonic timestamp.
+   * @returns {void} No value is returned.
+   */
+  function agentStopwatchRender(nowMs = performance.now()) {
+    if (!agentStopwatchState) return;
+    assert(Number.isFinite(nowMs), 'Agent stopwatch render timestamp must be finite.');
+    const representedLapCount = agentStopwatchState.laps_ms.length +
+      (agentStopwatchState.active ? 1 : 0);
+    const showLapLines = representedLapCount > 1;
+    const lines = showLapLines
+      ? agentStopwatchState.laps_ms.map((duration, index) =>
+        `Lap ${index + 1}: ${agentStopwatchFormatDuration(duration)}`
+      )
+      : [];
+    let totalMs;
+    if (agentStopwatchState.active) {
+      assert(Number.isFinite(agentStopwatchState.lap_started_at_ms),
+        'Active agent stopwatch must have a lap start timestamp.');
+      assert(Number.isFinite(agentStopwatchState.started_at_ms),
+        'Active agent stopwatch must have an overall start timestamp.');
+      const current = Math.max(0, nowMs - agentStopwatchState.lap_started_at_ms);
+      if (showLapLines) {
+        lines.push(`Lap ${agentStopwatchState.laps_ms.length + 1}: ${agentStopwatchFormatDuration(current)}`);
+      }
+      totalMs = Math.max(0, nowMs - agentStopwatchState.started_at_ms);
+    } else {
+      assert(Number.isFinite(agentStopwatchState.total_ms),
+        'Completed agent stopwatch must have a total duration.');
+      totalMs = agentStopwatchState.total_ms;
+    }
+    lines.push(`Total: ${agentStopwatchFormatDuration(totalMs)}`);
+    ensureAgentStopwatchControl().textContent = lines.join('\n');
+  }
+
+  /**
+   * Starts periodic live rendering for the active agent-turn stopwatch.
+   *
+   * @returns {void} No value is returned.
+   */
+  function agentStopwatchStartTimer() {
+    if (agentStopwatchTimer !== null) return;
+    agentStopwatchTimer = setInterval(
+      () => agentStopwatchRender(performance.now()),
+      AGENT_STOPWATCH_REFRESH_MS
+    );
+  }
+
+  /**
+   * Stops periodic stopwatch rendering while preserving the completed display.
+   *
+   * @returns {void} No value is returned.
+   */
+  function agentStopwatchStopTimer() {
+    if (agentStopwatchTimer === null) return;
+    clearInterval(agentStopwatchTimer);
+    agentStopwatchTimer = null;
+  }
+
+  /**
+   * Starts a fresh agent-turn stopwatch at one local user-submission boundary.
+   *
+   * @param {number} submittedAtMs - Monotonic timestamp captured before request transmission.
+   * @returns {void} No value is returned.
+   */
+  function agentStopwatchStartNew(submittedAtMs) {
+    assert(Number.isFinite(submittedAtMs), 'Agent stopwatch submission timestamp must be finite.');
+    agentStopwatchStopTimer();
+    agentStopwatchState = {
+      active: true,
+      started_at_ms: submittedAtMs,
+      lap_started_at_ms: submittedAtMs,
+      laps_ms: [],
+      total_ms: null,
+      exchange_id: null,
+      pending_submission_at_ms: null,
+      pending_message_id: null
+    };
+    agentStopwatchRender(submittedAtMs);
+    agentStopwatchStartTimer();
+  }
+
+  /**
+   * Freezes the current lap at an exact local user-submission or final-completion boundary.
+   *
+   * @param {number} boundaryMs - Monotonic boundary timestamp.
+   * @returns {void} No value is returned.
+   */
+  function agentStopwatchRecordLap(boundaryMs) {
+    assert(agentStopwatchState?.active, 'Cannot record a lap without an active agent stopwatch.');
+    assert(Number.isFinite(boundaryMs) && boundaryMs >= agentStopwatchState.lap_started_at_ms,
+      'Agent stopwatch lap boundary precedes the active lap.');
+    agentStopwatchState.laps_ms.push(boundaryMs - agentStopwatchState.lap_started_at_ms);
+    agentStopwatchState.lap_started_at_ms = boundaryMs;
+  }
+
+  /**
+   * Registers one local ChatGPT generation submission before enriched stream metadata arrives.
+   *
+   * @param {Object} capture - Mutable streamed-turn capture for the submitted request.
+   * @returns {void} No value is returned.
+   */
+  function agentStopwatchObserveRequest(capture) {
+    const submittedAtMs = capture?.stopwatch_submitted_at_ms;
+    if (!Number.isFinite(submittedAtMs)) return;
+    const userMessage = [...(capture?.request_messages ?? [])]
+      .reverse()
+      .find(message => message?.author?.role === 'user' && typeof message?.id === 'string');
+    if (!agentStopwatchState?.active) agentStopwatchStartNew(submittedAtMs);
+    agentStopwatchState.pending_submission_at_ms = submittedAtMs;
+    agentStopwatchState.pending_message_id = userMessage?.id ?? null;
+    agentStopwatchRender(performance.now());
+  }
+
+  /**
+   * Records a User follow-up submitted through ChatGPT's same-turn steering endpoint.
+   *
+   * `/backend-api/f/steer_turn` is the submission boundary for a User follow-up while the
+   * current working exchange remains active. Record the lap at the pre-transmission local
+   * timestamp; later streamed User metadata must not create a second lap for this submission.
+   *
+   * @param {number} submittedAtMs - Monotonic timestamp captured before request transmission.
+   * @returns {void} No value is returned.
+   */
+  function agentStopwatchObserveSteerTurn(submittedAtMs) {
+    if (!agentStopwatchState?.active || !Number.isFinite(submittedAtMs)) return;
+    agentStopwatchRecordLap(submittedAtMs);
+    agentStopwatchState.pending_submission_at_ms = null;
+    agentStopwatchState.pending_message_id = null;
+    agentStopwatchRender(performance.now());
+  }
+
+  /**
+   * Classifies one enriched streamed User input as the initial prompt, a same-exchange follow-up,
+   * or a new exchange.
+   *
+   * The live provider `input_message` carries the working exchange identity but does not reliably
+   * carry `message_type`. A pending local User submission in the same working exchange is therefore
+   * the follow-up boundary; a different working exchange starts a fresh stopwatch session.
+   *
+   * @param {Object} capture - Mutable streamed-turn capture associated with the input.
+   * @param {Object} message - Enriched provider User input_message.
+   * @returns {void} No value is returned.
+   */
+  function agentStopwatchObserveInputMessage(capture, message) {
+    if (message?.author?.role !== 'user' || !agentStopwatchState?.active) return;
+    const pendingId = agentStopwatchState.pending_message_id;
+    if (pendingId && message?.id && message.id !== pendingId) return;
+    const submittedAtMs = agentStopwatchState.pending_submission_at_ms;
+    if (!Number.isFinite(submittedAtMs)) return;
+    const exchangeId = agentStopwatchExchangeId(message);
+    if (!exchangeId) return;
+    capture.stopwatch_exchange_id = exchangeId;
+    if (!agentStopwatchState.exchange_id) {
+      agentStopwatchState.exchange_id = exchangeId;
+    } else if (exchangeId !== agentStopwatchState.exchange_id) {
+      agentStopwatchStartNew(submittedAtMs);
+      agentStopwatchState.exchange_id = exchangeId;
+    } else {
+      agentStopwatchRecordLap(submittedAtMs);
+    }
+    agentStopwatchState.pending_submission_at_ms = null;
+    agentStopwatchState.pending_message_id = null;
+    agentStopwatchRender(performance.now());
+  }
+
+  /**
+   * Returns the successful final Assistant message that terminates one working exchange.
+   *
+   * @param {Object} capture - Mutable streamed-turn capture.
+   * @returns {Object|null} Matching final Assistant message, or null while work remains open.
+   */
+  function agentStopwatchSuccessfulFinal(capture) {
+    return [...(capture?.stream_messages ?? [])].reverse().find(message =>
+      message?.author?.role === 'assistant' &&
+      message?.channel === 'final' &&
+      message?.status === 'finished_successfully' &&
+      message?.end_turn === true
+    ) ?? null;
+  }
+
+  /**
+   * Stops the active stopwatch only for a successful final Assistant in the same working exchange.
+   *
+   * @param {Object} capture - Mutable streamed-turn capture.
+   * @returns {void} No value is returned.
+   */
+  function agentStopwatchObserveTerminal(capture) {
+    if (!agentStopwatchState?.active) return;
+    const finalMessage = agentStopwatchSuccessfulFinal(capture);
+    if (!finalMessage) return;
+    const exchangeId = capture?.stopwatch_exchange_id ?? null;
+    if (!exchangeId || exchangeId !== agentStopwatchState.exchange_id) return;
+    const completedAtMs = performance.now();
+    agentStopwatchRecordLap(completedAtMs);
+    agentStopwatchState.active = false;
+    agentStopwatchState.total_ms = completedAtMs - agentStopwatchState.started_at_ms;
+    agentStopwatchState.pending_submission_at_ms = null;
+    agentStopwatchState.pending_message_id = null;
+    agentStopwatchStopTimer();
+    agentStopwatchRender(completedAtMs);
+  }
+
+  /**
+   * Observes one parsed generation stream event for User follow-up identity and terminal completion.
+   *
+   * @param {Object} capture - Mutable streamed-turn capture.
+   * @param {Object} event - Parsed provider stream event.
+   * @returns {void} No value is returned.
+   */
+  function agentStopwatchObserveStreamEvent(capture, event) {
+    if (event && event.type === 'input_message' && event.input_message?.author?.role === 'user') {
+      agentStopwatchObserveInputMessage(capture, event.input_message);
+    }
+    agentStopwatchObserveTerminal(capture);
+  }
+
   // BEGIN Issue #123 streamed-tail recovery
   /**
    * Tests whether a URL is the stock streaming conversation-generation endpoint.
@@ -2183,6 +3057,21 @@
     try {
       const parsed = new URL(url, `${location.origin}/`);
       return parsed.origin === location.origin && parsed.pathname === '/backend-api/f/conversation';
+    } catch {
+      return false;
+    }
+  }
+
+  /**
+   * Tests whether a URL is the stock same-turn User steering endpoint.
+   *
+   * @param {string} url - Candidate request URL.
+   * @returns {boolean} True only for this origin's exact /backend-api/f/steer_turn path.
+   */
+  function isSteerTurnUrl(url) {
+    try {
+      const parsed = new URL(url, `${location.origin}/`);
+      return parsed.origin === location.origin && parsed.pathname === '/backend-api/f/steer_turn';
     } catch {
       return false;
     }
@@ -2433,12 +3322,15 @@
           capture.complete = true;
         }
         capture.updated_at = Date.now();
+        agentSoundObserveTerminal(capture, null);
         continue;
       }
       let parsed;
       try { parsed = JSON.parse(data); } catch { continue; }
       if (typeof parsed === 'string') continue;
       streamTailApplyEvent(capture, parsed);
+      agentStopwatchObserveStreamEvent(capture, parsed);
+      agentSoundObserveTerminal(capture, parsed);
     }
     if (capture.complete) streamTailPersistCapture(capture);
   }
@@ -2634,9 +3526,10 @@
    * Parses the stock /f/conversation request clone into a new passive capture.
    *
    * @param {Request} request - Page-owned request cloned before transmission.
+   * @param {number} submittedAtMs - Monotonic timestamp captured before request transmission.
    * @returns {Promise<Object|null>} Capture associated with this request, or null when unreadable.
    */
-  async function captureGenerationStreamRequest(request) {
+  async function captureGenerationStreamRequest(request, submittedAtMs) {
     try {
       const body = JSON.parse(await request.clone().text());
       const conversationId = typeof body?.conversation_id === 'string'
@@ -2644,12 +3537,14 @@
         : currentConversationId();
       const capture = createStreamTailCapture(conversationId);
       streamTailCaptureRequest(capture, body);
+      capture.stopwatch_submitted_at_ms = submittedAtMs;
+      agentStopwatchObserveRequest(capture);
       streamTailCapture = capture;
       streamTailPersistCapture(capture);
       return capture;
     } catch (error) {
       logDiagnostic('warnings', 'conversation-stream-tail-request-capture-failure', {
-        message: error instanceof Error ? error.message : String(error)
+        message: errorMessage(error)
       });
       return null;
     }
@@ -2686,10 +3581,10 @@
       streamTailPersistCapture(capture);
       logDiagnostic('warnings', 'conversation-stream-tail-response-capture-failure', {
         conversation_id: capture.conversation_id,
-        message: error instanceof Error ? error.message : String(error)
+        message: errorMessage(error)
       });
     } finally {
-      try { reader.releaseLock(); } catch {}
+      releaseReaderLockQuietly(reader);
     }
   }
 
@@ -2763,10 +3658,13 @@
           .catch(communicationError => communicationLogReportFailure('fetch-request', communicationError));
         rememberApiRequestContext(requestUrl, request?.headers, init.headers);
         recordClickDiagnosticNetworkRequest(requestUrl, 'fetch');
-        const generationRequest = isGenerationStreamUrl(requestUrl) &&
-          String(request?.method ?? init.method ?? 'GET').toUpperCase() === 'POST';
+        const requestMethod = String(request?.method ?? init.method ?? 'GET').toUpperCase();
+        const generationRequest = isGenerationStreamUrl(requestUrl) && requestMethod === 'POST';
+        const steerTurnRequest = isSteerTurnUrl(requestUrl) && requestMethod === 'POST';
+        const generationSubmittedAtMs = generationRequest ? performance.now() : null;
+        if (steerTurnRequest) agentStopwatchObserveSteerTurn(performance.now());
         const capturePromise = generationRequest && request
-          ? captureGenerationStreamRequest(request)
+          ? captureGenerationStreamRequest(request, generationSubmittedAtMs)
           : null;
         const responsePromise = originalFetch.apply(this, args);
         return responsePromise.then(response => {
@@ -2776,8 +3674,8 @@
           if (capturePromise) {
             void capturePromise.then(capture => {
               if (!capture) return;
-              let cloned;
-              try { cloned = response.clone(); } catch { return; }
+              const cloned = cloneSafely(response);
+              if (!cloned) return;
               void captureGenerationStreamResponse(cloned, capture);
             });
           }
@@ -2788,7 +3686,7 @@
             method: stockTrace.method,
             url: stockTrace.url,
             duration_ms: Math.round(performance.now() - stockTrace.started_at),
-            error: boundedDiagnosticText(error?.message ?? String(error), 1000)
+            error: boundedDiagnosticText(errorMessage(error), 1000)
           });
           throw error;
         });
@@ -2999,7 +3897,7 @@
       logDiagnostic('errors', 'conversation-api-page-network-failure', {
         ...requestDetails,
         elapsed_ms: Math.round(performance.now() - startedAt),
-        message: error instanceof Error ? error.message : String(error)
+        message: errorMessage(error)
       });
       throw error;
     }
@@ -3017,7 +3915,7 @@
       try {
         bodyPreview = boundedDiagnosticText(await response.clone().text());
       } catch (error) {
-        bodyPreview = `[response body unavailable: ${error instanceof Error ? error.message : String(error)}]`;
+        bodyPreview = `[response body unavailable: ${errorMessage(error)}]`;
       }
       logDiagnostic('errors', 'conversation-api-page-http-failure', {
         ...responseDetails,
@@ -3032,7 +3930,7 @@
     } catch (error) {
       logDiagnostic('errors', 'conversation-api-page-json-failure', {
         ...responseDetails,
-        message: error instanceof Error ? error.message : String(error)
+        message: errorMessage(error)
       });
       throw error;
     }
@@ -5382,6 +6280,62 @@ Image elapsed: ${formatDuration(imageElapsed)} — Completed: ${imageCompleted}/
   }
 
   /**
+   * Returns the communication-log controls from the static recorder panel DOM.
+   *
+   * @param {Element|null} panel - Recorder panel root, or null to look it up by stable id.
+   * @returns {Object} Current filename viewport/text and file-action button elements.
+   */
+  function communicationLogPanelControls(panel = document.getElementById(PANEL_ID)) {
+    const root = panel instanceof Element ? panel : null;
+    return {
+      communicationLogNameViewport: root?.querySelector('[data-role="communication-log-name-viewport"]') ?? null,
+      communicationLogNameText: root?.querySelector('[data-role="communication-log-name"]') ?? null,
+      renameCommunicationLogButton: root?.querySelector('[data-role="rename-communication-log"]') ?? null,
+      duplicateCommunicationLogButton: root?.querySelector('[data-role="duplicate-communication-log"]') ?? null,
+      resetCommunicationLogButton: root?.querySelector('[data-role="reset-communication-log"]') ?? null
+    };
+  }
+
+  /**
+   * Runs one communication-log panel action with shared busy, accessibility, and failure handling.
+   *
+   * @param {HTMLButtonElement|null} button - Action button that owns busy presentation.
+   * @param {Object} options - Labels, operation callback, success callback, and failure prefix.
+   * @returns {Promise<void>} Resolves after the action and shared UI state are complete.
+   */
+  async function runCommunicationLogPanelAction(button, options) {
+    if (!(button instanceof HTMLButtonElement) || button.disabled || communicationLogUiActionInProgress) return;
+    communicationLogUiActionInProgress = true;
+    button.setAttribute('aria-label', options.busyLabel);
+    button.title = options.busyTitle;
+    refreshStatus();
+    try {
+      const result = await options.operation();
+      if (typeof options.onSuccess === 'function') await options.onSuccess(result);
+    } catch (error) {
+      setStatus(`⚠ ${options.failurePrefix}: ${errorMessage(error)}`);
+    } finally {
+      communicationLogUiActionInProgress = false;
+      button.setAttribute('aria-label', options.idleLabel);
+      button.title = options.idleTitle ?? options.idleLabel;
+      refreshStatus();
+    }
+  }
+
+  /**
+   * Measures the active communication-log filename and sets its hover-scroll distance.
+   *
+   * @returns {void} No value is returned.
+   */
+  function refreshCommunicationLogNameOverflow() {
+    const { communicationLogNameViewport, communicationLogNameText } = communicationLogPanelControls();
+    if (!communicationLogNameViewport || !communicationLogNameText) return;
+    const overflow = Math.max(0, communicationLogNameText.scrollWidth - communicationLogNameViewport.clientWidth);
+    communicationLogNameText.style.setProperty('--tm-log-name-overflow', `${overflow}px`);
+    communicationLogNameText.style.setProperty('--tm-log-name-duration', overflow > 0 ? `${Math.max(1.5, overflow / 40)}s` : '0s');
+  }
+
+  /**
    * Refreshes status.
    *
    * @returns {void} No value is returned.
@@ -5389,6 +6343,33 @@ Image elapsed: ${formatDuration(imageElapsed)} — Completed: ${imageCompleted}/
   function refreshStatus() {
     const status = document.querySelector(`#${PANEL_ID} [data-role="status"]`);
     if (!status) return;
+    const {
+      communicationLogNameViewport,
+      communicationLogNameText,
+      renameCommunicationLogButton,
+      duplicateCommunicationLogButton,
+      resetCommunicationLogButton
+    } = communicationLogPanelControls();
+    const communicationLogAvailable = Boolean(communicationLogReady && communicationLogFileName);
+    const communicationLogDisplayName = communicationLogAvailable ? communicationLogFileName : 'Not configured';
+    if (communicationLogNameText) communicationLogNameText.textContent = communicationLogDisplayName;
+    if (communicationLogNameViewport) {
+      communicationLogNameViewport.title = communicationLogDisplayName;
+      communicationLogNameViewport.setAttribute(
+        'aria-label',
+        communicationLogAvailable
+          ? `Current communication log filename: ${communicationLogFileName}`
+          : 'Current communication log filename: not configured'
+      );
+      requestAnimationFrame(refreshCommunicationLogNameOverflow);
+    }
+    if (renameCommunicationLogButton) {
+      renameCommunicationLogButton.disabled = !communicationLogAvailable || communicationLogUiActionInProgress;
+    }
+    if (duplicateCommunicationLogButton) {
+      duplicateCommunicationLogButton.disabled = !communicationLogAvailable || communicationLogUiActionInProgress;
+    }
+    if (resetCommunicationLogButton) resetCommunicationLogButton.disabled = communicationLogUiActionInProgress;
     if (progressState) {
       status.textContent = progressStatus(exportKind === 'md' ? 'Extract MD' : 'Extract JSONL');
     } else {
@@ -6406,7 +7387,7 @@ Image elapsed: ${formatDuration(imageElapsed)} — Completed: ${imageCompleted}/
       });
       setStatus(`Jumped to ${target.role === 'assistant' ? 'Assistant' : 'User'} turn ${target.message_id}.`);
     } catch (error) {
-      const message = error instanceof Error ? error.message : String(error);
+      const message = errorMessage(error);
       logDiagnostic('warnings', 'conversation-jump-failure', {
         raw_requested_identifier: boundedDiagnosticText(requested, 500),
         identifier,
@@ -6815,7 +7796,7 @@ Image elapsed: ${formatDuration(imageElapsed)} — Completed: ${imageCompleted}/
           blob_bytes: timing.blob_bytes ?? null,
           data_url_chars: timing.data_url_chars ?? null,
           elapsed_ms: timing.total_ms ?? Math.round(performance.now() - startedAt),
-          message: error instanceof Error ? error.message : String(error)
+          message: errorMessage(error)
         });
         throw error;
       } finally {
@@ -6908,7 +7889,7 @@ Image elapsed: ${formatDuration(imageElapsed)} — Completed: ${imageCompleted}/
                 image_ordinal: index + 1,
                 http_status: Number.isFinite(status) ? status : null,
                 fallback: images[index],
-                message: error instanceof Error ? error.message : String(error)
+                message: errorMessage(error)
               });
               continue;
             }
@@ -7117,7 +8098,7 @@ Image elapsed: ${formatDuration(imageElapsed)} — Completed: ${imageCompleted}/
         setStatus(`⚠ Export completed with tail consistency warning: ${tailConsistencyWarnings.join(' | ')}`);
       }
     } catch (error) {
-      const message = error instanceof Error ? error.message : String(error);
+      const message = errorMessage(error);
       logDiagnostic('errors', 'conversation-export-failure', {
         kind: activeKind,
         stage: progressState?.stage ?? null,
@@ -7180,7 +8161,7 @@ Image elapsed: ${formatDuration(imageElapsed)} — Completed: ${imageCompleted}/
         page_info: { has_next_page: cursor !== null, has_previous_page: true, start_cursor: 'loop' }
       }));
     } catch (error) {
-      repeatedCursorRejected = /repeated start_cursor/.test(String(error?.message ?? error));
+      repeatedCursorRejected = /repeated start_cursor/.test(errorMessage(error));
     }
     assert(repeatedCursorRejected, 'Pagination test did not reject a repeated cursor.');
   }
@@ -7206,7 +8187,7 @@ Image elapsed: ${formatDuration(imageElapsed)} — Completed: ${imageCompleted}/
     try {
       conversationSpineFromPages([{ messages: [{}], page_info: {} }]);
     } catch (error) {
-      missingIdRejected = /missing a stable id/.test(String(error?.message ?? error));
+      missingIdRejected = /missing a stable id/.test(errorMessage(error));
     }
     assert(missingIdRejected, 'Stable-ID test did not reject a message without an id.');
   }
@@ -7500,7 +8481,7 @@ Image elapsed: ${formatDuration(imageElapsed)} — Completed: ${imageCompleted}/
       testMatrixCurrentResults.set(name, { status: 'PASS', detail: '' });
       return `✅ ${name}`;
     } catch (error) {
-      const detail = error instanceof Error ? error.message : String(error);
+      const detail = errorMessage(error);
       testMatrixCurrentResults.set(name, { status: 'FAIL', detail });
       return `❌ ${name}: ${detail}`;
     } finally {
@@ -7814,6 +8795,33 @@ Image elapsed: ${formatDuration(imageElapsed)} — Completed: ${imageCompleted}/
   }
 
   /**
+   * Returns the shared pencil/edit action icon.
+   *
+   * @returns {string} Inline SVG markup for the Rename button.
+   */
+  function renameIconMarkup() {
+    return '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 20h4L19 9l-4-4L4 16v4z"></path><path d="m13.5 6.5 4 4"></path></svg>';
+  }
+
+  /**
+   * Returns the approved branching Duplicate action icon.
+   *
+   * @returns {string} Inline SVG markup for the Duplicate button.
+   */
+  function duplicateIconMarkup() {
+    return '<svg viewBox="0 0 24 24" aria-hidden="true"><rect x="1.5" y="8" width="6" height="8" rx="1.5"></rect><rect x="16.5" y="2" width="6" height="7" rx="1.5"></rect><rect x="16.5" y="15" width="6" height="7" rx="1.5"></rect><path d="M7.5 12h3c2.8 0 2.8-6.5 6-6.5"></path><path d="M7.5 12h3c2.8 0 2.8 6.5 6 6.5"></path><path d="m14.5 4 2 1.5-2 1.5"></path><path d="m14.5 17 2 1.5-2 1.5"></path></svg>';
+  }
+
+  /**
+   * Returns the AgentPanelSpeaker config-reset icon using its exact PNG bytes.
+   *
+   * @returns {string} Inline image markup for the Reset button.
+   */
+  function resetIconMarkup() {
+    return '<img src="data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAC8AAAAvCAYAAABzJ5OsAAAF9ElEQVR4nO1YTahdVxX+1t7n3HPuuzGx1rY4SAYiJoPGpP5gUVSkA1EnOggiOCm06EScSEHEiRMH4kARBBEcOIsFQYigo+hElJumtNWWpzRpS7V59Nn37tl/59y99+cg56T3Je8l970mvie8DzZczvnO2t9ae629177AIfYHshsySQVAAeAwRIT3Qtgy2JX4ZUFStrF91x1dSjxJJSLZWvutuq4fCiFc0lr/fW1t7eqJEyd8L1b19tJOInueBpB7zr1ftSGSxpgX2cM516WUXjXGfHcb/rEQwkljzFljzNkQwgdJvnsbnu5t7wnFMsJFhLPZ7AEA72vbNsYYQVIppY6LyDpJ1bbt50XkcyQ/6r1/P8n3lmWpASDGmEII686550Xk2ZzzryeTyV9EJA1ODL/vKkhqAJjNZp9KKdEYk621tNZm731njPmx9/5PXdcNi8K2bemcozGG1loaY1II4cZ7Y4zvum5qjHl8dXW1WpxnN7jjkpEsRCQ2TfPNI0eO/MRaG0WkePs1WxEBybmIjElqpZTknJOIaAAQEeSc2T+PIiJlWeoYI4qieD6l9O3xePyHfjdburDVsl5qrc/s4LxWStUAJkqpQkRmJC+LyBWlVBaRTPIlEbkG4I2yLAutte66bp5zbouiOD0ajX7vnPueiGQAsmwdLCN+yMXTACAiWwyLSJFz3gBwNef82sAfjUYfqOta1XWttNanABiS6ySbGONfRaTRWlfOuei9z+Px+Pve+1/txoHbEoZi3djYeE9RFC+XZXlsPp/zZgdINgDGAHJRFKOUUgbwFaXUfwBIznmC61vkJ3LOX9Naj0i+AOBUXdcPeu+ziMSVlZWRc+7nk8nk6++4iM+fP68BwFr7aIxxsVi3jBACnXNDkeb5fJ6bpjm9nc22bR8OIfwyhBC6rmPTNFe89/Te0xgTSHI2mz3VB+W2RXzbtDl37twQ4Ue01sDbKbQFKSWQBEkASEVRiIh8hKReXV2t+v1ck1RVVb1Q1/XjKaWvzufzi2VZguTrOec1rfUohBDruv7B5ubmoyKSbufAHfd5ABCRh3POt+wAvK52cQwOFiRP9pPL4vKTVJcuXdKTyeQ33vvLInIRwFs553lRFPd3XSdVVamiKH5E8jMA8jsSn1LaUEoJgNhHFwCU1lqVZSn9qmyxqZQ6Pui9KRAZQJ5Op+V4PL66sbHxWFVVl6qqqpRSWilF59xMa33GOfeFyWTy2z3lP0lFUpxzJ0II/+ICcs601gZr7VVr7R+dc79wzj0VQvgSyQ9tbm7efyf70+m0BIDZbPZESqlrmubPzrk3vfe+bdsrTdM8PejY7vtlDikREa6vrx8/evTokzHGGsBLWut/lmX5CoA3RKTdVVS22i8AZGPMT0ej0WMxRqu1PpVzfl1rTQBfrqrqb0NzuJcJ7rSlKpJFP/SwYkvaVgDQtu3ZEMI/nHMvOuectTb1rcR3FpzcgmULlgsXkRvzDmPI42VsbWM796v7rLV2tSiKz8YYKxFh13VvicjJnnqL/aXbAxHJIhIXRuqf3Y2eXPUOXCyKYk7yFVzv+QsAHydZDk7uSfy9hogwpfQMyQ7AqwBijPEIgIeccw8MtMVvDox4ACAZReQ+EfkwyVHOmWVZ3kfywe34S+X8/woiUvZ7/btI3mild+IfqMhrrducc04pOZJpuAPsxD9Q4nPOx0huAngOQKeU4nw+3xCRN7fjHxTxAgBKqUcAvCwiI6XUSGu9DuDfKysraz1vSwodlJxPJJVz7pMkT4nIKOcMrfUKgOdEpNvuhN33yPeiaK09q5RaizE+rZTyALqyLCcicrmn3qL1QER+Op2WIvINAGdItgBGIjILIbQppQs9bU8n+D3D0NdYaz/mvX/Nez/13m8aY9qu61zTNL9b5N2MfU2b4ci/cOHCMwCeEBGp6/qoUmozxriulPrZQN1PnUvh2rVrR9q2/WF/V5iSlJ2ifqCweFcNIXxxNpt9un9+8MUD1+8Ne/nb70BhuNDst45DHOIQhzjEIQ7xf4f/AvHrLnXbKeMKAAAAAElFTkSuQmCC" alt="" aria-hidden="true">';
+  }
+
+  /**
    * Refreshes diagnostic log.
    *
    * Collapsed logs update only their count and controls. Thousands of hidden row
@@ -7953,10 +8961,22 @@ Image elapsed: ${formatDuration(imageElapsed)} — Completed: ${imageCompleted}/
       #${PANEL_ID} .tm-close{position:absolute;right:9px;top:7px;border:0;background:transparent;color:#fff;font-size:24px;cursor:pointer}
       #${PANEL_ID} .tm-status{white-space:pre-wrap;margin:10px 0 12px;min-height:24px}
       #${PANEL_ID} .tm-row{display:flex;gap:10px;align-items:center;flex-wrap:wrap;margin-top:10px}
-      #${PANEL_ID} select,#${PANEL_ID} button{border:1px solid #666;border-radius:9px;background:#292929;color:#fff;padding:9px 12px;font:inherit}
+      #${PANEL_ID} .tm-sound-control-row{position:relative}
+      #${PANEL_ID} .tm-sound-control{min-width:92px}
+      #${PANEL_ID} .tm-sound-popup[hidden]{display:none}
+      #${PANEL_ID} .tm-sound-popup{position:absolute;left:0;top:calc(100% + 6px);z-index:3;display:flex;flex-direction:column;align-items:center;gap:6px;padding:9px;border:1px solid rgba(127,127,127,.55);border-radius:9px;background:rgba(24,24,24,.99);box-shadow:0 4px 14px rgba(0,0,0,.4)}
+      #${PANEL_ID} .tm-sound-volume-slider{writing-mode:vertical-lr;direction:rtl;width:24px;height:120px}
+      #${PANEL_ID} .tm-sound-volume-value{min-width:2ch;text-align:center;font-variant-numeric:tabular-nums}
+      #${PANEL_ID} .tm-communication-log-row{flex-wrap:nowrap}
+      #${PANEL_ID} .tm-log-name-viewport{flex:1 1 auto;min-width:0;overflow:hidden;color:#fff;box-sizing:border-box}
+      #${PANEL_ID} .tm-log-name-text{display:block;width:max-content;min-width:100%;box-sizing:border-box;padding:7px 0;white-space:nowrap;transform:translateX(0);transition:transform var(--tm-log-name-duration,1.5s) linear .35s}
+      #${PANEL_ID} .tm-log-name-viewport:hover .tm-log-name-text{transform:translateX(calc(-1 * var(--tm-log-name-overflow,0px)))}
+      #${PANEL_ID} .tm-communication-log-row button{flex:0 0 auto}
+      #${PANEL_ID} select,#${PANEL_ID} button,#${TEST_MATRIX_ID} button{border:1px solid #666;background:#292929;color:#fff;font:inherit}
+      #${PANEL_ID} select,#${PANEL_ID} button{border-radius:9px;padding:9px 12px}
       #${PANEL_ID} select{flex:1;min-width:150px}
-      #${PANEL_ID} button{cursor:pointer}
-      #${PANEL_ID} button:disabled{opacity:.45;cursor:not-allowed}
+      #${PANEL_ID} button,#${TEST_MATRIX_ID} button{cursor:pointer}
+      #${PANEL_ID} button:disabled,#${TEST_MATRIX_ID} button:disabled{opacity:.45;cursor:not-allowed}
       #${PANEL_ID} .tm-label{color:#ddd}
       #${TEST_MATRIX_ID}{position:fixed;inset:0;z-index:2147483647;background:rgba(0,0,0,.58);display:grid;place-items:center;padding:24px;box-sizing:border-box}
       #${TEST_MATRIX_ID} .tm-test-dialog{width:min(920px,96vw);max-height:88vh;overflow:hidden;display:flex;flex-direction:column;border:1px solid #666;border-radius:12px;background:#202020;color:#f2f2f2;box-shadow:0 10px 40px rgba(0,0,0,.5);font:13px/1.35 system-ui,sans-serif}
@@ -7968,14 +8988,13 @@ Image elapsed: ${formatDuration(imageElapsed)} — Completed: ${imageCompleted}/
       #${TEST_MATRIX_ID} .tm-test-table th,#${TEST_MATRIX_ID} .tm-test-table td{padding:8px 10px;border-bottom:1px solid #444;text-align:left;vertical-align:top}
       #${TEST_MATRIX_ID} .tm-test-table th{position:sticky;top:0;background:#292929;z-index:1}
       #${TEST_MATRIX_ID} .tm-test-table td:nth-child(2),#${TEST_MATRIX_ID} .tm-test-table td:nth-child(3),#${TEST_MATRIX_ID} .tm-test-table td:nth-child(4){white-space:nowrap}
-      #${TEST_MATRIX_ID} button{border:1px solid #666;border-radius:8px;background:#292929;color:#fff;padding:7px 10px;font:inherit;cursor:pointer}
-      #${TEST_MATRIX_ID} button:disabled{opacity:.45;cursor:not-allowed}
+      #${TEST_MATRIX_ID} button{border-radius:8px;padding:7px 10px}
       #${TEST_MATRIX_ID} .tm-test-actions{justify-content:flex-end;border-top:1px solid #555}
       #${PANEL_ID} .tm-log-head{display:flex;align-items:center;gap:6px;margin-top:4px}
       #${PANEL_ID} .tm-log-head [data-role="log-count"]{margin-right:auto}
-      #${PANEL_ID} .tm-icon-button{width:30px;height:28px;padding:4px;display:grid;place-items:center}
+      #${PANEL_ID} .tm-icon-button{box-sizing:border-box;width:30px;height:28px;padding:4px;display:grid;place-items:center;transition:opacity .2s ease}
       #${PANEL_ID} .tm-icon-button svg{width:16px;height:16px;fill:none;stroke:currentColor;stroke-width:2;stroke-linecap:round;stroke-linejoin:round}
-      #${PANEL_ID} .tm-icon-button{transition:opacity .2s ease}
+      #${PANEL_ID} .tm-icon-button img{width:16px;height:16px;display:block;object-fit:contain}
       #${PANEL_ID} .tm-copy-fade{opacity:0}
       #${PANEL_ID} .tm-log-output{margin:6px 0 10px;max-height:190px;overflow:auto;border:1px solid #555;border-radius:8px;background:#111;font:11px/1.35 ui-monospace,SFMono-Regular,Consolas,monospace;color:#ddd}
       #${PANEL_ID} .tm-log-row{padding:6px 8px;white-space:pre-wrap;overflow-wrap:anywhere}
@@ -8602,6 +9621,27 @@ Image elapsed: ${formatDuration(imageElapsed)} — Completed: ${imageCompleted}/
   }
 
   /**
+   * Binds one persistent checkbox to a state setter and the shared recorder UI refresh.
+   *
+   * @param {Element} panel - Recorder panel containing the checkbox.
+   * @param {string} role - Stable data-role value identifying the checkbox.
+   * @param {string} storageKey - Local-storage key retaining the preference.
+   * @param {boolean} initialValue - Current preference value applied at panel creation.
+   * @param {Function} applyValue - Callback that updates the corresponding in-memory state.
+   * @returns {void} No value is returned.
+   */
+  function bindStoredCheckbox(panel, role, storageKey, initialValue, applyValue) {
+    const checkbox = panel.querySelector(`[data-role="${role}"]`);
+    if (!(checkbox instanceof HTMLInputElement)) return;
+    checkbox.checked = initialValue;
+    checkbox.addEventListener('change', () => {
+      applyValue(checkbox.checked);
+      localStorage.setItem(storageKey, String(checkbox.checked));
+      updateUi();
+    });
+  }
+
+  /**
    * Handles make panel.
    *
    * @returns {void} No value is returned.
@@ -8620,7 +9660,10 @@ Image elapsed: ${formatDuration(imageElapsed)} — Completed: ${imageCompleted}/
       <div class="tm-log-output" data-role="log-output" hidden></div>
       <div class="tm-status" data-role="status"></div>
       <div class="tm-row"><span class="tm-label">Diagnostics</span><select data-role="diagnostics"><option value="errors">Errors</option><option value="warnings">Warnings</option><option value="debug">Debug</option><option value="verbose">Verbose</option></select><label><input data-role="console-diagnostics" type="checkbox"> console</label><button data-role="test" type="button">Test</button></div>
+      <div class="tm-row"><span class="tm-label">Communication log</span></div>
+      <div class="tm-row tm-communication-log-row"><div class="tm-log-name-viewport" data-role="communication-log-name-viewport" role="textbox" aria-readonly="true" aria-label="Current communication log filename" title="Current communication log filename"><span class="tm-log-name-text" data-role="communication-log-name"></span></div><button class="tm-icon-button" data-role="rename-communication-log" type="button" aria-label="Rename communication log" title="Rename communication log"></button><button class="tm-icon-button" data-role="duplicate-communication-log" type="button" aria-label="Duplicate communication log" title="Duplicate communication log"></button><button class="tm-icon-button" data-role="reset-communication-log" type="button" aria-label="Reset communication log" title="Reset communication log"></button></div>
       <div class="tm-row"><span class="tm-label">Screen on when extracting</span><button class="tm-switch" data-role="screen-on" type="button" role="switch" aria-checked="false" aria-label="Keep screen on while extracting"><span class="tm-switch-thumb"></span></button></div>
+      <div class="tm-row tm-sound-control-row"><button class="tm-sound-control" data-role="agent-sound-control" type="button" aria-haspopup="dialog" aria-expanded="false">Sound <span data-role="agent-sound-control-value"></span></button><div class="tm-sound-popup" data-role="agent-sound-popup" hidden role="dialog" aria-label="Agent sound volume"><input class="tm-sound-volume-slider" data-role="agent-sound-volume" type="range" min="0" max="10" step="1" aria-label="Agent sound volume"><output class="tm-sound-volume-value" data-role="agent-sound-volume-value"></output></div></div>
       <div class="tm-row"><button data-role="jump" type="button">Jump</button></div>
       <div class="tm-row tm-extract-formats"><button data-role="extract" type="button">Extract</button><label><input data-role="format-jsonl" type="checkbox"> JSONL</label><label><input data-role="format-md" type="checkbox" checked> MD</label></div>
       <div class="tm-row tm-md-metadata"><span class="tm-label">MD headings</span><label><input data-role="show-timestamps" type="checkbox"> Timestamp</label><label><input data-role="show-record-numbers" type="checkbox"> Record #</label><label><input data-role="show-turn-ids" type="checkbox"> Turn ID</label><label><input data-role="show-debug-provenance" type="checkbox"> provenance</label></div>
@@ -8654,12 +9697,62 @@ Image elapsed: ${formatDuration(imageElapsed)} — Completed: ${imageCompleted}/
     panel.querySelector('[data-role="copy-log"]').addEventListener('click', () => {
       void copyDiagnosticLog().catch(error => {
         logDiagnostic('errors', 'diagnostic-log-copy-failure', {
-          message: error instanceof Error ? error.message : String(error)
+          message: errorMessage(error)
         });
       });
     });
     panel.querySelector('[data-role="test"]').addEventListener('click', event => openTestMatrix(event.currentTarget));
     panel.querySelector('[data-role="jump"]').addEventListener('click', () => void runJump());
+    const {
+      communicationLogNameViewport,
+      renameCommunicationLogButton,
+      duplicateCommunicationLogButton,
+      resetCommunicationLogButton
+    } = communicationLogPanelControls(panel);
+    if (renameCommunicationLogButton) renameCommunicationLogButton.innerHTML = renameIconMarkup();
+    if (duplicateCommunicationLogButton) duplicateCommunicationLogButton.innerHTML = duplicateIconMarkup();
+    if (resetCommunicationLogButton) resetCommunicationLogButton.innerHTML = resetIconMarkup();
+    communicationLogNameViewport?.addEventListener('pointerenter', refreshCommunicationLogNameOverflow);
+    renameCommunicationLogButton?.addEventListener('click', () => {
+      if (renameCommunicationLogButton.disabled || communicationLogUiActionInProgress || !communicationLogFileName) return;
+      const requestedName = window.prompt('Rename communication log', communicationLogFileName);
+      if (requestedName === null || requestedName === communicationLogFileName) return;
+      void runCommunicationLogPanelAction(renameCommunicationLogButton, {
+        idleLabel: 'Rename communication log',
+        busyLabel: 'Renaming communication log',
+        busyTitle: 'Renaming…',
+        operation: () => communicationLogRename(requestedName),
+        onSuccess: newFileName => setStatus(`Communication log renamed to ${newFileName}.`),
+        failurePrefix: 'Communication log rename failed'
+      });
+    });
+    duplicateCommunicationLogButton?.addEventListener('click', () => {
+      if (duplicateCommunicationLogButton.disabled || communicationLogUiActionInProgress || !communicationLogFileName) return;
+      void runCommunicationLogPanelAction(duplicateCommunicationLogButton, {
+        idleLabel: 'Duplicate communication log',
+        busyLabel: 'Duplicating communication log',
+        busyTitle: 'Duplicating…',
+        operation: communicationLogDuplicate,
+        onSuccess: duplicateName => setStatus(`Communication log duplicated as ${duplicateName}.`),
+        failurePrefix: 'Communication log duplicate failed'
+      });
+    });
+    resetCommunicationLogButton?.addEventListener('click', () => {
+      if (resetCommunicationLogButton.disabled || communicationLogUiActionInProgress) return;
+      void runCommunicationLogPanelAction(resetCommunicationLogButton, {
+        idleLabel: 'Reset communication log',
+        busyLabel: 'Resetting communication log',
+        busyTitle: 'Resetting…',
+        operation: communicationLogReset,
+        onSuccess: () => {
+          logDiagnostic('debug', 'communication-log-reset-complete', {
+            file_name: communicationLogFileName
+          });
+          setStatus('Communication log reset to empty.');
+        },
+        failurePrefix: 'Communication log reset failed'
+      });
+    });
     panel.querySelector('[data-role="screen-on"]').addEventListener('click', () => {
       screenOnWhenCapturing = !screenOnWhenCapturing;
       localStorage.setItem(SCREEN_ON_STORAGE_KEY, String(screenOnWhenCapturing));
@@ -8667,42 +9760,66 @@ Image elapsed: ${formatDuration(imageElapsed)} — Completed: ${imageCompleted}/
       else void releaseWakeLock();
       updateUi();
     });
-    const timestamps = panel.querySelector('[data-role="show-timestamps"]');
-    const recordNumbers = panel.querySelector('[data-role="show-record-numbers"]');
-    const turnIds = panel.querySelector('[data-role="show-turn-ids"]');
-    const debugProvenance = panel.querySelector('[data-role="show-debug-provenance"]');
-    if (timestamps) {
-      timestamps.checked = showTimestamps;
-      timestamps.addEventListener('change', () => {
-        showTimestamps = timestamps.checked;
-        localStorage.setItem(SHOW_TIMESTAMPS_STORAGE_KEY, String(showTimestamps));
-        updateUi();
-      });
-    }
-    if (recordNumbers) {
-      recordNumbers.checked = showRecordNumbers;
-      recordNumbers.addEventListener('change', () => {
-        showRecordNumbers = recordNumbers.checked;
-        localStorage.setItem(SHOW_RECORD_NUMBERS_STORAGE_KEY, String(showRecordNumbers));
-        updateUi();
-      });
-    }
-    if (turnIds) {
-      turnIds.checked = showTurnIds;
-      turnIds.addEventListener('change', () => {
-        showTurnIds = turnIds.checked;
-        localStorage.setItem(SHOW_TURN_IDS_STORAGE_KEY, String(showTurnIds));
-        updateUi();
-      });
-    }
-    if (debugProvenance) {
-      debugProvenance.checked = showDebugProvenance;
-      debugProvenance.addEventListener('change', () => {
-        showDebugProvenance = debugProvenance.checked;
-        localStorage.setItem(SHOW_DEBUG_PROVENANCE_STORAGE_KEY, String(showDebugProvenance));
-        updateUi();
-      });
-    }
+    bindStoredCheckbox(panel, 'show-timestamps', SHOW_TIMESTAMPS_STORAGE_KEY, showTimestamps, value => {
+      showTimestamps = value;
+    });
+    bindStoredCheckbox(panel, 'show-record-numbers', SHOW_RECORD_NUMBERS_STORAGE_KEY, showRecordNumbers, value => {
+      showRecordNumbers = value;
+    });
+    bindStoredCheckbox(panel, 'show-turn-ids', SHOW_TURN_IDS_STORAGE_KEY, showTurnIds, value => {
+      showTurnIds = value;
+    });
+    bindStoredCheckbox(panel, 'show-debug-provenance', SHOW_DEBUG_PROVENANCE_STORAGE_KEY, showDebugProvenance, value => {
+      showDebugProvenance = value;
+    });
+    const soundControl = panel.querySelector('[data-role="agent-sound-control"]');
+    const soundPopup = panel.querySelector('[data-role="agent-sound-popup"]');
+    const soundVolumeInput = panel.querySelector('[data-role="agent-sound-volume"]');
+    const soundVolumeValue = panel.querySelector('[data-role="agent-sound-volume-value"]');
+    const soundControlValue = panel.querySelector('[data-role="agent-sound-control-value"]');
+    /**
+     * Renders the current integer sound volume into the popup and control label.
+     *
+     * @returns {void} No value is returned.
+     */
+    const renderSoundVolume = () => {
+      const value = String(agentSoundVolume);
+      if (soundVolumeInput instanceof HTMLInputElement) soundVolumeInput.value = value;
+      if (soundVolumeValue) soundVolumeValue.textContent = value;
+      if (soundControlValue) soundControlValue.textContent = value;
+    };
+    /**
+     * Opens or closes the sound-volume popup and mirrors the expanded state for accessibility.
+     *
+     * @param {boolean} open - True to show the volume popup.
+     * @returns {void} No value is returned.
+     */
+    const setSoundPopupOpen = open => {
+      if (!soundPopup || !soundControl) return;
+      soundPopup.hidden = !open;
+      soundControl.setAttribute('aria-expanded', String(open));
+    };
+    renderSoundVolume();
+    soundControl?.addEventListener('click', event => {
+      event.stopPropagation();
+      const open = Boolean(soundPopup?.hidden);
+      setSoundPopupOpen(open);
+      if (open && agentSoundVolume > 0) void unlockAgentSoundAudio();
+    });
+    soundPopup?.addEventListener('click', event => event.stopPropagation());
+    soundVolumeInput?.addEventListener('input', () => {
+      const parsed = Number.parseInt(soundVolumeInput.value, 10);
+      agentSoundVolume = Number.isFinite(parsed) ? Math.max(0, Math.min(10, parsed)) : 0;
+      localStorage.setItem(AGENT_SOUND_VOLUME_STORAGE_KEY, String(agentSoundVolume));
+      renderSoundVolume();
+      logDiagnostic('debug', 'agent-sound-volume-changed', { volume: agentSoundVolume });
+      if (agentSoundVolume > 0) void unlockAgentSoundAudio();
+    });
+    document.addEventListener('click', event => {
+      if (!soundPopup || soundPopup.hidden) return;
+      if (event.target instanceof Node && panel.querySelector('.tm-sound-control-row')?.contains(event.target)) return;
+      setSoundPopupOpen(false);
+    });
     /**
      * Handles run selected exports.
      *

@@ -1,9 +1,8 @@
+import { userscript } from './helpers/userscript-source.mjs';
 import assert from 'node:assert/strict';
-import { readFile } from 'node:fs/promises';
 import test from 'node:test';
 import vm from 'node:vm';
 
-const userscript = await readFile(new URL('../chatgpt-conversation-markdown-export.user.js', import.meta.url), 'utf8');
 const markerLimit = Number(userscript.match(/const LIVE_TAIL_MARKER_LIMIT = (\d+);/)?.[1]);
 const textLimit = Number(userscript.match(/const LIVE_TAIL_TEXT_LIMIT = (\d+);/)?.[1]);
 assert.equal(markerLimit, 10, 'Production live-tail marker limit must remain ten.');
