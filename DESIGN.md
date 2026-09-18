@@ -515,3 +515,10 @@ streamed-tail reconciliation, or AIConversationCore semantics.  Elapsed time use
 The stopwatch classifies User submissions from the production SSE stream by working-exchange identity, not by `message_type`. Captured provider evidence shows that the top-level User `input_message` carries `turn_exchange_id` / `working_turn_id` but may omit `message_type`, while a later hidden system record in the same turn may carry `message_type: next`. The stopwatch therefore treats a pending User submission with the same working exchange as a lap boundary and a different working exchange as a new timing session.
 
 Each streamed generation capture retains the working exchange learned from its User `input_message`. Terminal stopwatch validation uses that capture-level identity together with the completed final Assistant record. This avoids depending on later message-metadata patch representation while keeping exchange matching explicit and single-path.
+
+
+## Agent-turn stopwatch steer-turn boundary
+
+Live browser diagnostics establish that a User follow-up submitted while the current working turn remains active is sent through `POST /backend-api/f/steer_turn`, not through the `/backend-api/f/conversation` generation endpoint. The stopwatch treats that exact same-origin POST as the follow-up submission boundary and records the lap immediately using the local monotonic pre-transmission timestamp.
+
+`/backend-api/f/steer_turn` is not treated as another generation stream. The existing `/backend-api/f/conversation` capture remains authoritative for streamed turn identity and terminal completion. Because a steer-turn lap is recorded directly at the steering POST boundary, later streamed User metadata has no pending stopwatch submission and therefore cannot double-count the same follow-up.

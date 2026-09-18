@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         ChatGPT Conversation Markdown Recorder
 // @namespace    https://chatgpt.com/
-// @version      1.2.0-issue.136.2
+// @version      1.2.0-issue.136.3
 // @description  Exports the current ChatGPT conversation directly from the Conversation API as Markdown or JSONL.
 // @match        https://chatgpt.com/*
 // @match        https://chat.openai.com/*
@@ -2821,6 +2821,24 @@
   }
 
   /**
+   * Records a User follow-up submitted through ChatGPT's same-turn steering endpoint.
+   *
+   * `/backend-api/f/steer_turn` is the submission boundary for a User follow-up while the
+   * current working exchange remains active. Record the lap at the pre-transmission local
+   * timestamp; later streamed User metadata must not create a second lap for this submission.
+   *
+   * @param {number} submittedAtMs - Monotonic timestamp captured before request transmission.
+   * @returns {void} No value is returned.
+   */
+  function agentStopwatchObserveSteerTurn(submittedAtMs) {
+    if (!agentStopwatchState?.active || !Number.isFinite(submittedAtMs)) return;
+    agentStopwatchRecordLap(submittedAtMs);
+    agentStopwatchState.pending_submission_at_ms = null;
+    agentStopwatchState.pending_message_id = null;
+    agentStopwatchRender(performance.now());
+  }
+
+  /**
    * Classifies one enriched streamed User input as the initial prompt, a same-exchange follow-up,
    * or a new exchange.
    *
@@ -2916,6 +2934,21 @@
     try {
       const parsed = new URL(url, `${location.origin}/`);
       return parsed.origin === location.origin && parsed.pathname === '/backend-api/f/conversation';
+    } catch {
+      return false;
+    }
+  }
+
+  /**
+   * Tests whether a URL is the stock same-turn User steering endpoint.
+   *
+   * @param {string} url - Candidate request URL.
+   * @returns {boolean} True only for this origin's exact /backend-api/f/steer_turn path.
+   */
+  function isSteerTurnUrl(url) {
+    try {
+      const parsed = new URL(url, `${location.origin}/`);
+      return parsed.origin === location.origin && parsed.pathname === '/backend-api/f/steer_turn';
     } catch {
       return false;
     }
@@ -3502,9 +3535,11 @@
           .catch(communicationError => communicationLogReportFailure('fetch-request', communicationError));
         rememberApiRequestContext(requestUrl, request?.headers, init.headers);
         recordClickDiagnosticNetworkRequest(requestUrl, 'fetch');
-        const generationRequest = isGenerationStreamUrl(requestUrl) &&
-          String(request?.method ?? init.method ?? 'GET').toUpperCase() === 'POST';
+        const requestMethod = String(request?.method ?? init.method ?? 'GET').toUpperCase();
+        const generationRequest = isGenerationStreamUrl(requestUrl) && requestMethod === 'POST';
+        const steerTurnRequest = isSteerTurnUrl(requestUrl) && requestMethod === 'POST';
         const generationSubmittedAtMs = generationRequest ? performance.now() : null;
+        if (steerTurnRequest) agentStopwatchObserveSteerTurn(performance.now());
         const capturePromise = generationRequest && request
           ? captureGenerationStreamRequest(request, generationSubmittedAtMs)
           : null;

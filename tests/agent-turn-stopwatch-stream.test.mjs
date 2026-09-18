@@ -66,11 +66,13 @@ function streamHarness() {
     ${productionFunctionSource('agentStopwatchStartNew')}
     ${productionFunctionSource('agentStopwatchRecordLap')}
     ${productionFunctionSource('agentStopwatchObserveRequest')}
+    ${productionFunctionSource('agentStopwatchObserveSteerTurn')}
     ${productionFunctionSource('agentStopwatchObserveInputMessage')}
     ${productionFunctionSource('agentStopwatchSuccessfulFinal')}
     ${productionFunctionSource('agentStopwatchObserveTerminal')}
     ${productionFunctionSource('agentStopwatchObserveStreamEvent')}
     ${productionFunctionSource('isGenerationStreamUrl')}
+    ${productionFunctionSource('isSteerTurnUrl')}
     ${productionFunctionSource('createStreamTailCapture')}
     ${productionFunctionSource('streamTailClone')}
     ${productionFunctionSource('streamTailUpsertMessage')}
@@ -82,8 +84,10 @@ function streamHarness() {
     this.api = {
       create: createStreamTailCapture,
       request: agentStopwatchObserveRequest,
+      steer: agentStopwatchObserveSteerTurn,
       consume: consumeStreamTailSseChunk,
       isGeneration: isGenerationStreamUrl,
+      isSteer: isSteerTurnUrl,
       state: () => agentStopwatchState,
       text: () => document.getElementById(AGENT_STOPWATCH_ID)?.textContent ?? ''
     };
@@ -211,8 +215,28 @@ test('captured production SSE fixture reaches final completion through the real 
   assert.deepEqual(Array.from(state.laps_ms), [30000]);
 });
 
-test('live follow-up endpoint /backend-api/f/steer_turn is recognized as a stopwatch submission boundary', () => {
+test('live steer_turn follow-up records one lap at the POST boundary without double-counting later stream input', () => {
   const harness = streamHarness();
+
   assert.equal(harness.api.isGeneration('https://chatgpt.com/backend-api/f/conversation'), true);
-  assert.equal(harness.api.isGeneration('https://chatgpt.com/backend-api/f/steer_turn'), true);
+  assert.equal(harness.api.isGeneration('https://chatgpt.com/backend-api/f/steer_turn'), false);
+  assert.equal(harness.api.isSteer('https://chatgpt.com/backend-api/f/steer_turn'), true);
+  assert.equal(harness.api.isSteer('https://chatgpt.com/backend-api/f/conversation'), false);
+  assert.equal(harness.api.isSteer('https://example.com/backend-api/f/steer_turn'), false);
+
+  harness.setNow(1000);
+  const initial = requestCapture(harness, 'user-1', 1000);
+  harness.api.consume(initial, inputMessageSse('user-1', 'exchange-A'));
+
+  harness.setNow(71000);
+  harness.api.steer(71000);
+  assert.deepEqual(Array.from(harness.api.state().laps_ms), [70000]);
+  assert.equal(harness.api.state().lap_started_at_ms, 71000);
+
+  harness.api.consume(initial, inputMessageSse('user-2', 'exchange-A'));
+  assert.deepEqual(Array.from(harness.api.state().laps_ms), [70000]);
+
+  const install = productionFunctionSource('installNetworkCapture');
+  assert.match(install, /isSteerTurnUrl\(requestUrl\)/);
+  assert.match(install, /agentStopwatchObserveSteerTurn\(performance\.now\(\)\)/);
 });
