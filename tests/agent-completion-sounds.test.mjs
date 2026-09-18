@@ -178,7 +178,7 @@ test('terminal key is remembered only after playback actually starts', () => {
 
   harness.api.observe(state, null);
   assert.deepEqual(harness.emitted, ['success']);
-  assert.deepEqual(harness.api.keys(), [], 'failed playback must not consume the terminal key');
+  assert.deepEqual(Array.from(harness.api.keys()), [], 'failed playback must not consume the terminal key');
 
   harness.api.observe(state, null);
   assert.deepEqual(harness.emitted, ['success', 'success'], 'same terminal may retry after a failed playback attempt');
