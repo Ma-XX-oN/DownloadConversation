@@ -527,3 +527,8 @@ Live browser diagnostics establish that a User follow-up submitted while the cur
 ## Agent-turn stopwatch live total
 
 The floating stopwatch always renders a `Total` line. While the stopwatch is active, Total is the live monotonic elapsed duration from the initial prompt submission (`now - started_at_ms`) and refreshes on the same interval as the current lap. On successful terminal completion, the same line switches to the frozen `total_ms` value. Follow-up lap boundaries do not reset Total.
+
+
+## Agent-turn stopwatch single-lap display
+
+The floating stopwatch always renders `Total`. When the current stopwatch session contains only one represented lap, the redundant `Lap 1` line is suppressed and only `Total` is shown. Once a follow-up creates a second lap, all lap lines are shown together with the continuously running Total. The same rule applies after completion: a one-lap completed session shows only the frozen Total, while multi-lap sessions preserve their individual lap lines plus Total.

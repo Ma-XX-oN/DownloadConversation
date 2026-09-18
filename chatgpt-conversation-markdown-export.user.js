@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         ChatGPT Conversation Markdown Recorder
 // @namespace    https://chatgpt.com/
-// @version      1.2.0-issue.136.4
+// @version      1.2.0-issue.136.5
 // @description  Exports the current ChatGPT conversation directly from the Conversation API as Markdown or JSONL.
 // @match        https://chatgpt.com/*
 // @match        https://chat.openai.com/*
@@ -2727,9 +2727,14 @@
   function agentStopwatchRender(nowMs = performance.now()) {
     if (!agentStopwatchState) return;
     assert(Number.isFinite(nowMs), 'Agent stopwatch render timestamp must be finite.');
-    const lines = agentStopwatchState.laps_ms.map((duration, index) =>
-      `Lap ${index + 1}: ${agentStopwatchFormatDuration(duration)}`
-    );
+    const representedLapCount = agentStopwatchState.laps_ms.length +
+      (agentStopwatchState.active ? 1 : 0);
+    const showLapLines = representedLapCount > 1;
+    const lines = showLapLines
+      ? agentStopwatchState.laps_ms.map((duration, index) =>
+        `Lap ${index + 1}: ${agentStopwatchFormatDuration(duration)}`
+      )
+      : [];
     let totalMs;
     if (agentStopwatchState.active) {
       assert(Number.isFinite(agentStopwatchState.lap_started_at_ms),
@@ -2737,7 +2742,9 @@
       assert(Number.isFinite(agentStopwatchState.started_at_ms),
         'Active agent stopwatch must have an overall start timestamp.');
       const current = Math.max(0, nowMs - agentStopwatchState.lap_started_at_ms);
-      lines.push(`Lap ${agentStopwatchState.laps_ms.length + 1}: ${agentStopwatchFormatDuration(current)}`);
+      if (showLapLines) {
+        lines.push(`Lap ${agentStopwatchState.laps_ms.length + 1}: ${agentStopwatchFormatDuration(current)}`);
+      }
       totalMs = Math.max(0, nowMs - agentStopwatchState.started_at_ms);
     } else {
       assert(Number.isFinite(agentStopwatchState.total_ms),
