@@ -291,4 +291,4 @@ are not terminal-state authorities. The recorder does not infer this state from 
 visible `Retry` UI and does not add an alternate/fallback terminal-detection path.
 '''
 assert '## Issue #139 structured polling-timeout terminal state' not in design_text
-DESIGN.write_text(design_text.rstrip() + section + '\n', encoding='utf-8')
+DESIGN.write_text(design_text.rstrip() + section.rstrip() + '\n', encoding='utf-8')
