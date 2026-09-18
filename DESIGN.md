@@ -508,3 +508,10 @@ header controls.  It is not part of transcript chronology, does not move with th
 conversation scroll, and does not alter requests, exports, communication recording,
 streamed-tail reconciliation, or AIConversationCore semantics.  Elapsed time uses
 `performance.now()`; wall-clock timestamps are not used for duration measurement.
+
+
+## Agent-turn stopwatch live-stream identity
+
+The stopwatch classifies User submissions from the production SSE stream by working-exchange identity, not by `message_type`. Captured provider evidence shows that the top-level User `input_message` carries `turn_exchange_id` / `working_turn_id` but may omit `message_type`, while a later hidden system record in the same turn may carry `message_type: next`. The stopwatch therefore treats a pending User submission with the same working exchange as a lap boundary and a different working exchange as a new timing session.
+
+Each streamed generation capture retains the working exchange learned from its User `input_message`. Terminal stopwatch validation uses that capture-level identity together with the completed final Assistant record. This avoids depending on later message-metadata patch representation while keeping exchange matching explicit and single-path.

@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         ChatGPT Conversation Markdown Recorder
 // @namespace    https://chatgpt.com/
-// @version      1.2.0-issue.136.1
+// @version      1.2.0-issue.136.2
 // @description  Exports the current ChatGPT conversation directly from the Conversation API as Markdown or JSONL.
 // @match        https://chatgpt.com/*
 // @match        https://chat.openai.com/*
@@ -2821,27 +2821,32 @@
   }
 
   /**
-   * Classifies one enriched streamed User input as the initial prompt, a follow-up, or a new exchange.
+   * Classifies one enriched streamed User input as the initial prompt, a same-exchange follow-up,
+   * or a new exchange.
+   *
+   * The live provider `input_message` carries the working exchange identity but does not reliably
+   * carry `message_type`. A pending local User submission in the same working exchange is therefore
+   * the follow-up boundary; a different working exchange starts a fresh stopwatch session.
    *
    * @param {Object} capture - Mutable streamed-turn capture associated with the input.
    * @param {Object} message - Enriched provider User input_message.
-   * @param {boolean} isFollowUp - Whether provider metadata explicitly marks `message_type: next`.
    * @returns {void} No value is returned.
    */
-  function agentStopwatchObserveInputMessage(capture, message, isFollowUp) {
+  function agentStopwatchObserveInputMessage(capture, message) {
     if (message?.author?.role !== 'user' || !agentStopwatchState?.active) return;
     const pendingId = agentStopwatchState.pending_message_id;
     if (pendingId && message?.id && message.id !== pendingId) return;
-    const submittedAtMs = agentStopwatchState.pending_submission_at_ms ??
-      capture?.stopwatch_submitted_at_ms;
+    const submittedAtMs = agentStopwatchState.pending_submission_at_ms;
     if (!Number.isFinite(submittedAtMs)) return;
     const exchangeId = agentStopwatchExchangeId(message);
+    if (!exchangeId) return;
+    capture.stopwatch_exchange_id = exchangeId;
     if (!agentStopwatchState.exchange_id) {
       agentStopwatchState.exchange_id = exchangeId;
-    } else if (exchangeId && exchangeId !== agentStopwatchState.exchange_id) {
+    } else if (exchangeId !== agentStopwatchState.exchange_id) {
       agentStopwatchStartNew(submittedAtMs);
       agentStopwatchState.exchange_id = exchangeId;
-    } else if (isFollowUp && exchangeId === agentStopwatchState.exchange_id) {
+    } else {
       agentStopwatchRecordLap(submittedAtMs);
     }
     agentStopwatchState.pending_submission_at_ms = null;
@@ -2874,9 +2879,8 @@
     if (!agentStopwatchState?.active) return;
     const finalMessage = agentStopwatchSuccessfulFinal(capture);
     if (!finalMessage) return;
-    const exchangeId = agentStopwatchExchangeId(finalMessage);
-    if (agentStopwatchState.exchange_id && exchangeId !== agentStopwatchState.exchange_id) return;
-    if (!agentStopwatchState.exchange_id) agentStopwatchState.exchange_id = exchangeId;
+    const exchangeId = capture?.stopwatch_exchange_id ?? null;
+    if (!exchangeId || exchangeId !== agentStopwatchState.exchange_id) return;
     const completedAtMs = performance.now();
     agentStopwatchRecordLap(completedAtMs);
     agentStopwatchState.active = false;
@@ -2896,8 +2900,7 @@
    */
   function agentStopwatchObserveStreamEvent(capture, event) {
     if (event && event.type === 'input_message' && event.input_message?.author?.role === 'user') {
-      const isFollowUp = event.input_message?.metadata?.message_type === 'next';
-      agentStopwatchObserveInputMessage(capture, event.input_message, isFollowUp);
+      agentStopwatchObserveInputMessage(capture, event.input_message);
     }
     agentStopwatchObserveTerminal(capture);
   }

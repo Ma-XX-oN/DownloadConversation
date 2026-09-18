@@ -115,6 +115,7 @@ function inputEvent(messageId, exchangeId, messageType = null) {
 function finalCapture(exchangeId) {
   return {
     conversation_id: 'conversation-1',
+    stopwatch_exchange_id: exchangeId,
     stream_messages: [{
       id: `assistant-${exchangeId}`,
       author: { role: 'assistant' },
@@ -131,7 +132,7 @@ function finalCapture(exchangeId) {
 }
 
 test('Issue 136 development version and fixed top-right stopwatch control are present', () => {
-  assert.match(userscript, /@version\s+1\.2\.0-issue\.136\.1/);
+  assert.match(userscript, /@version\s+1\.2\.0-issue\.136\.2/);
   assert.match(userscript, /AGENT_STOPWATCH_ID\s*=\s*'tm-agent-turn-stopwatch'/);
   const ensure = productionFunctionSource('ensureAgentStopwatchControl');
   assert.match(ensure, /style\.position\s*=\s*'fixed'/);
@@ -237,16 +238,16 @@ test('next independent prompt after completion replaces the completed stopwatch 
   assert.equal(harness.api.text(), 'Lap 1: 0 m 5 s');
 });
 
-test('non-follow-up input does not create a lap merely because control returned to the User', () => {
+test('same-exchange User input creates a lap without relying on message_type metadata', () => {
   const harness = stopwatchHarness();
   const initial = requestCapture('user-1', 1000);
   harness.api.request(initial);
   harness.api.event(initial, inputEvent('user-1', 'exchange-A'));
 
-  const ambiguous = requestCapture('user-2', 41000);
-  harness.api.request(ambiguous);
-  harness.api.event(ambiguous, inputEvent('user-2', 'exchange-A'));
-  assert.deepEqual(Array.from(harness.api.state().laps_ms), []);
+  const followUp = requestCapture('user-2', 41000);
+  harness.api.request(followUp);
+  harness.api.event(followUp, inputEvent('user-2', 'exchange-A'));
+  assert.deepEqual(Array.from(harness.api.state().laps_ms), [40000]);
 });
 
 test('stopwatch is wired to local POST time, enriched input_message state, and structured final state', () => {
@@ -262,7 +263,7 @@ test('stopwatch is wired to local POST time, enriched input_message state, and s
   assert.match(consumer, /streamTailApplyEvent\(capture, parsed\);[\s\S]*agentStopwatchObserveStreamEvent\(capture, parsed\)/);
   const observer = productionFunctionSource('agentStopwatchObserveStreamEvent');
   assert.match(observer, /event\.type === 'input_message'/);
-  assert.match(observer, /message_type === 'next'/);
+  assert.doesNotMatch(observer, /message_type/);
 
   const terminal = productionFunctionSource('agentStopwatchSuccessfulFinal');
   assert.match(terminal, /channel === 'final'/);
