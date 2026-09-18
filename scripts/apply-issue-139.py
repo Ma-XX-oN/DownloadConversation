@@ -199,6 +199,12 @@ replace_function(USER, 'agentSoundClassifyTerminal', r'''  function agentSoundCl
     return successfulFinal ? 'success' : null;
   }''')
 
+replace_once(
+  USER,
+  "  /**\n   * Stops the active stopwatch only for a successful final Assistant in the same working exchange.\n   *\n   * @param {Object} capture - Mutable streamed-turn capture.\n   * @returns {void} No value is returned.\n   */\n  function agentStopwatchObserveTerminal(capture)",
+  "  /**\n   * Stops the active stopwatch for a successful final Assistant or evidenced polling timeout in the same exchange.\n   *\n   * @param {Object} capture - Mutable streamed-turn capture.\n   * @param {Object|null} event - Structured terminal event when the client reports one.\n   * @returns {void} No value is returned.\n   */\n  function agentStopwatchObserveTerminal(capture)"
+)
+
 replace_function(USER, 'agentStopwatchObserveTerminal', r'''  function agentStopwatchObserveTerminal(capture, event = null) {
     if (!agentStopwatchState?.active) return;
     const finalMessage = agentStopwatchSuccessfulFinal(capture);
