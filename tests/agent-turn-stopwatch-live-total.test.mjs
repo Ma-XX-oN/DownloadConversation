@@ -42,7 +42,7 @@ function renderHarness(state, nowMs) {
   return context.text;
 }
 
-test('active stopwatch always displays a live Total line', () => {
+test('single active lap displays only the live Total line', () => {
   const text = renderHarness({
     active: true,
     started_at_ms: 1000,
@@ -54,10 +54,10 @@ test('active stopwatch always displays a live Total line', () => {
     pending_message_id: null
   }, 66000);
 
-  assert.equal(text, 'Lap 1: 1 m 5 s\nTotal: 1 m 5 s');
+  assert.equal(text, 'Total: 1 m 5 s');
 });
 
-test('live Total spans all laps while the current lap keeps its own duration', () => {
+test('two or more laps display lap lines plus live Total', () => {
   const text = renderHarness({
     active: true,
     started_at_ms: 1000,
@@ -72,7 +72,22 @@ test('live Total spans all laps while the current lap keeps its own duration', (
   assert.equal(text, 'Lap 1: 1 m 10 s\nLap 2: 0 m 5 s\nTotal: 1 m 15 s');
 });
 
-test('completed stopwatch keeps the frozen Total value', () => {
+test('completed single-lap stopwatch displays only frozen Total', () => {
+  const text = renderHarness({
+    active: false,
+    started_at_ms: 1000,
+    lap_started_at_ms: 1000,
+    laps_ms: [65000],
+    total_ms: 65000,
+    exchange_id: 'exchange-A',
+    pending_submission_at_ms: null,
+    pending_message_id: null
+  }, 200000);
+
+  assert.equal(text, 'Total: 1 m 5 s');
+});
+
+test('completed multi-lap stopwatch keeps lap lines and frozen Total', () => {
   const text = renderHarness({
     active: false,
     started_at_ms: 1000,
