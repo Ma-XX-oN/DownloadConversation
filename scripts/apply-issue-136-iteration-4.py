@@ -53,7 +53,7 @@ replacement = '''  function agentStopwatchRender(nowMs = performance.now()) {
   }
 
   /**'''
-source_text, count = pattern.subn(replacement, source_text, count=1)
+source_text, count = pattern.subn(lambda _match: replacement, source_text, count=1)
 assert count == 1, f'{SOURCE}: expected one agentStopwatchRender function, found {count}'
 source_path.write_text(source_text, encoding='utf-8')
 
