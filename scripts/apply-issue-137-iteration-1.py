@@ -248,12 +248,19 @@ new_binding = """    const soundControl = panel.querySelector('[data-role="agent
     const soundVolumeInput = panel.querySelector('[data-role="agent-sound-volume"]');
     const soundVolumeValue = panel.querySelector('[data-role="agent-sound-volume-value"]');
     const soundControlValue = panel.querySelector('[data-role="agent-sound-control-value"]');
+    /** Renders the current integer sound volume into the popup and control label. */
     const renderSoundVolume = () => {
       const value = String(agentSoundVolume);
       if (soundVolumeInput instanceof HTMLInputElement) soundVolumeInput.value = value;
       if (soundVolumeValue) soundVolumeValue.textContent = value;
       if (soundControlValue) soundControlValue.textContent = value;
     };
+    /**
+     * Opens or closes the sound-volume popup and mirrors the expanded state for accessibility.
+     *
+     * @param {boolean} open - True to show the volume popup.
+     * @returns {void} No value is returned.
+     */
     const setSoundPopupOpen = open => {
       if (!soundPopup || !soundControl) return;
       soundPopup.hidden = !open;
