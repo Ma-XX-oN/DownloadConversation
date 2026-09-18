@@ -1,0 +1,42 @@
+{
+  "endpoint": "/ces/statsc/flush",
+  "stats_flush": {
+    "counters": [
+      {
+        "namespace": "default",
+        "metric": "chatgpt_web_message_delivery_failure_shown",
+        "tags": {
+          "source": "completion_stream_polling_fallback",
+          "model_slug": "gpt-5-6-thinking",
+          "stream_protocol": "sse",
+          "error_code": "network_error",
+          "poll_type": "0",
+          "failure_reason": "polling_timeout"
+        },
+        "value": 1
+      },
+      {
+        "namespace": "segment",
+        "metric": "unstructured_statsig_transport.outcome",
+        "tags": {
+          "event_name": "chatgpt_conversation_turn_turn_exchange_failed_due_to_polling",
+          "outcome": "bridged",
+          "reason": "none"
+        },
+        "value": 1
+      }
+    ]
+  },
+  "turn_analytics": {
+    "message": "Turn exchange complete",
+    "status": "error",
+    "conversation_id": "6aaccd11-1bfc-83ea-a35e-10df47c9be46",
+    "turn_analytics": {
+      "received_final_assistant_message": false,
+      "result": "error",
+      "error": {
+        "reason": "network_error"
+      }
+    }
+  }
+}

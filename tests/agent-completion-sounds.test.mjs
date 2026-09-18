@@ -23,6 +23,7 @@ function soundHarness(volume = 10, playbackResults = [true]) {
     function logDiagnostic(level, name, details) { this.diagnostics.push({ level, name, details }); }
     ${productionFunctionSource('agentSoundTerminalKey')}
     ${productionFunctionSource('agentSoundRememberTerminalKey')}
+    ${productionFunctionSource('agentTerminalIsPollingTimeout')}
     ${productionFunctionSource('agentSoundClassifyTerminal')}
     ${productionFunctionSource('agentSoundObserveTerminal')}
     this.api = {
