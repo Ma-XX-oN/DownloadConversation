@@ -190,6 +190,15 @@ play_new = """  function playAgentSound(kind) {
   }"""
 replace_function(SOURCE, '  function playAgentSound(kind) {', play_new)
 
+observe_old = """  function agentSoundObserveTerminal(capture, event) {
+    if (!agentSoundsEnabled) return;
+    const kind = agentSoundClassifyTerminal(capture, event);
+    if (!kind) return;
+    const key = agentSoundTerminalKey(capture);
+    if (!key || agentSoundTerminalKeys.has(key)) return;
+    agentSoundRememberTerminalKey(key);
+    playAgentSound(kind);
+  }"""
 observe_new = """  function agentSoundObserveTerminal(capture, event) {
     const kind = agentSoundClassifyTerminal(capture, event);
     if (!kind) return;
@@ -219,7 +228,7 @@ observe_new = """  function agentSoundObserveTerminal(capture, event) {
     }
     if (playAgentSound(kind)) agentSoundRememberTerminalKey(key);
   }"""
-replace_function(SOURCE, '  function agentSoundObserveTerminal(capture, event) {', observe_new)
+replace_once(SOURCE, observe_old, observe_new)
 
 replace_once(
   SOURCE,
