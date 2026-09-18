@@ -11,8 +11,8 @@ function soundHarness(volume = 10, playbackResults = [true]) {
     document: { addEventListener() {} }
   };
   vm.runInNewContext(`
-    let agentSoundsEnabled = ${volume > 0 ? 'true' : 'false'};
     let agentSoundVolume = ${volume};
+    let agentSoundAudioContext = null;
     const AGENT_SOUND_TERMINAL_KEY_LIMIT = 128;
     const agentSoundTerminalKeys = new Set();
     function playAgentSound(kind) {
@@ -45,7 +45,6 @@ function playbackHarness(volume, state = 'running') {
   };
   vm.runInNewContext(`
     let agentSoundVolume = ${volume};
-    let agentSoundsEnabled = ${volume > 0 ? 'true' : 'false'};
     let agentSoundAudioContext = {
       state: ${JSON.stringify(state)},
       currentTime: 10,
