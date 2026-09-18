@@ -248,7 +248,11 @@ new_binding = """    const soundControl = panel.querySelector('[data-role="agent
     const soundVolumeInput = panel.querySelector('[data-role="agent-sound-volume"]');
     const soundVolumeValue = panel.querySelector('[data-role="agent-sound-volume-value"]');
     const soundControlValue = panel.querySelector('[data-role="agent-sound-control-value"]');
-    /** Renders the current integer sound volume into the popup and control label. */
+    /**
+     * Renders the current integer sound volume into the popup and control label.
+     *
+     * @returns {void} No value is returned.
+     */
     const renderSoundVolume = () => {
       const value = String(agentSoundVolume);
       if (soundVolumeInput instanceof HTMLInputElement) soundVolumeInput.value = value;
