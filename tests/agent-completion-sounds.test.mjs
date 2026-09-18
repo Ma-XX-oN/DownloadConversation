@@ -3,25 +3,80 @@ import test from 'node:test';
 import vm from 'node:vm';
 import { productionFunctionSource, userscript } from './helpers/userscript-source.mjs';
 
-function soundHarness(enabled = true) {
+function soundHarness(volume = 10, playbackResults = [true]) {
   const context = {
     emitted: [],
+    playbackResults: [...playbackResults],
+    diagnostics: [],
     document: { addEventListener() {} }
   };
   vm.runInNewContext(`
-    let agentSoundsEnabled = ${enabled ? 'true' : 'false'};
+    let agentSoundsEnabled = ${volume > 0 ? 'true' : 'false'};
+    let agentSoundVolume = ${volume};
     const AGENT_SOUND_TERMINAL_KEY_LIMIT = 128;
     const agentSoundTerminalKeys = new Set();
-    function playAgentSound(kind) { this.emitted.push(kind); }
+    function playAgentSound(kind) {
+      this.emitted.push(kind);
+      return this.playbackResults.length ? this.playbackResults.shift() : true;
+    }
     function agentSoundHandleUserGesture() {}
+    function logDiagnostic(level, name, details) { this.diagnostics.push({ level, name, details }); }
     ${productionFunctionSource('agentSoundTerminalKey')}
     ${productionFunctionSource('agentSoundRememberTerminalKey')}
     ${productionFunctionSource('agentSoundClassifyTerminal')}
     ${productionFunctionSource('agentSoundObserveTerminal')}
     this.api = {
       classify: agentSoundClassifyTerminal,
-      observe: agentSoundObserveTerminal
+      observe: agentSoundObserveTerminal,
+      keys: () => [...agentSoundTerminalKeys]
     };
+  `, context);
+  return context;
+}
+
+function playbackHarness(volume, state = 'running') {
+  const ramps = [];
+  const oscillatorStarts = [];
+  const context = {
+    ramps,
+    oscillatorStarts,
+    diagnostics: [],
+    window: {},
+  };
+  vm.runInNewContext(`
+    let agentSoundVolume = ${volume};
+    let agentSoundsEnabled = ${volume > 0 ? 'true' : 'false'};
+    let agentSoundAudioContext = {
+      state: ${JSON.stringify(state)},
+      currentTime: 10,
+      destination: {},
+      createOscillator() {
+        return {
+          type: '',
+          frequency: {
+            setValueAtTime() {},
+            linearRampToValueAtTime() {}
+          },
+          connect() {},
+          start(at) { thisContext.oscillatorStarts.push(at); },
+          stop() {}
+        };
+      },
+      createGain() {
+        return {
+          connect() {},
+          gain: {
+            setValueAtTime(value, at) { thisContext.ramps.push({ type: 'set', value, at }); },
+            exponentialRampToValueAtTime(value, at) { thisContext.ramps.push({ type: 'exp', value, at }); }
+          }
+        };
+      }
+    };
+    const thisContext = this;
+    function errorMessage(error) { return String(error?.message ?? error); }
+    function logDiagnostic(level, name, details) { this.diagnostics.push({ level, name, details }); }
+    ${productionFunctionSource('playAgentSound')}
+    this.result = playAgentSound('success');
   `, context);
   return context;
 }
@@ -41,24 +96,42 @@ function capture(turnId = 'turn-1') {
   };
 }
 
-test('persisted Sounds checkbox uses the shared preference binder', () => {
-  assert.match(userscript, /AGENT_SOUNDS_STORAGE_KEY\s*=\s*'tm-conversation-recorder-agent-sounds'/);
-  assert.match(userscript, /data-role="agent-sounds"[^>]*type="checkbox"[^>]*>\s*Sounds/);
-  assert.match(userscript,
-    /bindStoredCheckbox\(panel, 'agent-sounds', AGENT_SOUNDS_STORAGE_KEY, agentSoundsEnabled,/);
-});
-
-test('exact successful final Assistant terminal state is classified as success', () => {
-  const { api } = soundHarness();
-  const state = capture();
+function successfulCapture(turnId = 'turn-1') {
+  const state = capture(turnId);
   state.stream_messages.push({
-    id: 'assistant-final',
+    id: `assistant-${turnId}`,
     author: { role: 'assistant' },
     channel: 'final',
     status: 'finished_successfully',
     end_turn: true
   });
-  assert.equal(api.classify(state, null), 'success');
+  return state;
+}
+
+test('Sound checkbox is replaced by a persisted 0-10 vertical volume popup', () => {
+  assert.match(userscript,
+    /AGENT_SOUND_VOLUME_STORAGE_KEY\s*=\s*'tm-conversation-recorder-agent-sound-volume'/);
+  assert.doesNotMatch(userscript, /data-role="agent-sounds"[^>]*type="checkbox"/);
+  assert.match(userscript, /data-role="agent-sound-control"[^>]*aria-haspopup="dialog"/);
+  assert.match(userscript, /data-role="agent-sound-popup"[^>]*hidden/);
+  assert.match(userscript,
+    /data-role="agent-sound-volume"[^>]*type="range"[^>]*min="0"[^>]*max="10"[^>]*step="1"/);
+  assert.match(userscript, /\.tm-sound-volume-slider[^}]*writing-mode:\s*vertical-lr/);
+  assert.match(userscript, /\.tm-sound-volume-slider[^}]*direction:\s*rtl/);
+  assert.match(userscript, /localStorage\.setItem\(AGENT_SOUND_VOLUME_STORAGE_KEY,/);
+});
+
+test('legacy boolean sound preference migrates deterministically to volume 10 or 0', () => {
+  assert.match(userscript,
+    /LEGACY_AGENT_SOUNDS_STORAGE_KEY\s*=\s*'tm-conversation-recorder-agent-sounds'/);
+  const load = productionFunctionSource('loadAgentSoundVolume');
+  assert.match(load, /legacy[^\n]*=== 'true'[\s\S]*10/);
+  assert.match(load, /legacy[^\n]*=== 'false'[\s\S]*0/);
+});
+
+test('exact successful final Assistant terminal state is classified as success', () => {
+  const { api } = soundHarness();
+  assert.equal(api.classify(successfulCapture(), null), 'success');
 });
 
 test('intermediate finished records and arbitrary error text are not terminal sounds', () => {
@@ -100,54 +173,25 @@ test('known structured terminal generation errors classify as error without text
   }), 'error');
 });
 
-test('terminal sound is edge-triggered per turn and distinct turns may sound again', () => {
-  const harness = soundHarness();
-  const first = capture('turn-1');
-  first.stream_messages.push({
-    id: 'assistant-1',
-    author: { role: 'assistant' },
-    channel: 'final',
-    status: 'finished_successfully',
-    end_turn: true
-  });
-  harness.api.observe(first, null);
-  harness.api.observe(first, null);
-  assert.deepEqual(harness.emitted, ['success']);
+test('terminal key is remembered only after playback actually starts', () => {
+  const harness = soundHarness(10, [false, true]);
+  const state = successfulCapture('turn-1');
 
-  const retrySameTurn = capture('turn-1');
-  retrySameTurn.stream_messages.push({
-    id: 'assistant-1-retry',
-    author: { role: 'assistant' },
-    channel: 'final',
-    status: 'finished_successfully',
-    end_turn: true
-  });
-  harness.api.observe(retrySameTurn, null);
+  harness.api.observe(state, null);
   assert.deepEqual(harness.emitted, ['success']);
+  assert.deepEqual(harness.api.keys(), [], 'failed playback must not consume the terminal key');
 
-  const second = capture('turn-2');
-  harness.api.observe(second, {
-    result: 'error',
-    error: { reason: 'request_failed', status_code: 500 }
-  });
-  harness.api.observe(second, {
-    result: 'error',
-    error: { reason: 'request_failed', status_code: 500 }
-  });
-  assert.deepEqual(harness.emitted, ['success', 'error']);
+  harness.api.observe(state, null);
+  assert.deepEqual(harness.emitted, ['success', 'success'], 'same terminal may retry after a failed playback attempt');
+  assert.equal(harness.api.keys().length, 1, 'successful playback consumes the terminal key exactly once');
+
+  harness.api.observe(state, null);
+  assert.deepEqual(harness.emitted, ['success', 'success'], 'successful playback remains de-duplicated');
 });
 
-test('disabled Sounds preference suppresses both success and error sounds', () => {
-  const harness = soundHarness(false);
-  const state = capture();
-  state.stream_messages.push({
-    id: 'assistant-final',
-    author: { role: 'assistant' },
-    channel: 'final',
-    status: 'finished_successfully',
-    end_turn: true
-  });
-  harness.api.observe(state, null);
+test('volume 0 is the single disabled state for success and error sounds', () => {
+  const harness = soundHarness(0);
+  harness.api.observe(successfulCapture(), null);
   harness.api.observe(capture('turn-2'), {
     result: 'error',
     error: { reason: 'request_failed', status_code: 500 }
@@ -155,15 +199,35 @@ test('disabled Sounds preference suppresses both success and error sounds', () =
   assert.deepEqual(harness.emitted, []);
 });
 
-test('sound detection is wired into the existing SSE parser and Web Audio has ding/buzz profiles', () => {
+test('volume 10 reaches gain 1.0 and is materially louder than the old fixed success gain', () => {
+  const playback = playbackHarness(10);
+  const peak = Math.max(...playback.ramps.map(item => item.value));
+  assert.equal(playback.result, true);
+  assert.equal(peak, 1.0);
+  assert.ok(peak > 0.11 * 2, 'maximum volume must be materially louder than the old 0.11 success peak');
+  assert.equal(playback.oscillatorStarts.length, 1);
+});
+
+test('sound diagnostics expose classification, suppression, AudioContext, and successful scheduling states', () => {
+  const observe = productionFunctionSource('agentSoundObserveTerminal');
+  const unlock = productionFunctionSource('unlockAgentSoundAudio');
+  const play = productionFunctionSource('playAgentSound');
+  assert.match(observe, /agent-sound-terminal-classified/);
+  assert.match(observe, /agent-sound-duplicate-suppressed/);
+  assert.match(observe, /agent-sound-volume-zero-suppressed/);
+  assert.match(unlock, /agent-sound-audio-unlock/);
+  assert.match(play, /agent-sound-playback-attempt/);
+  assert.match(play, /agent-sound-playback-started/);
+  assert.match(play, /audio_context_state/);
+  assert.match(play, /volume/);
+});
+
+test('sound detection remains wired to structured SSE and does not scan visible error text', () => {
   const consumer = productionFunctionSource('consumeStreamTailSseChunk');
   assert.match(consumer, /streamTailApplyEvent\(capture, parsed\);[\s\S]*agentSoundObserveTerminal\(capture, parsed\)/);
   assert.match(consumer, /data === '\[DONE\]'[\s\S]*agentSoundObserveTerminal\(capture, null\)/);
   assert.doesNotMatch(userscript, /includes\(['"]conversation_too_large['"]\)/,
     'Terminal error detection must not scan raw text for an error word/code.');
-  const play = productionFunctionSource('playAgentSound');
-  assert.match(play, /createOscillator\(/);
-  assert.match(play, /createGain\(/);
-  assert.match(play, /kind === 'error'/);
-  assert.match(play, /kind === 'success'/);
+  assert.doesNotMatch(userscript, /Message delivery timed out/,
+    'Visible timeout text must not become a terminal-state detector.');
 });
