@@ -479,3 +479,32 @@ communication recorder.
 This changes only the authorization UX for the diagnostic communication recorder.  It
 does not change the single-snapshot export contract, source precedence/recovery rules,
 or the AIConversationCore rendering boundary.
+
+
+## Agent-turn stopwatch
+
+Issue #136 adds a display-only stopwatch for one working agent exchange.  The clock
+starts from a monotonic local timestamp captured immediately before the stock
+`POST /backend-api/f/conversation` request is transmitted.  Request bodies do not
+reliably contain the enriched working-exchange metadata, so the response stream's
+structured User `input_message` is the authority for classifying the submission.
+
+An initial User input binds the active stopwatch to its `turn_exchange_id` (falling
+back only to `working_turn_id`).  A later User input records a lap only when provider
+metadata explicitly marks `message_type: "next"` and the working-exchange identity
+matches.  The lap boundary remains the earlier local submission timestamp, not the
+time at which the enriched stream record arrives.  Returning composer control to the
+User, whether normally, because input is required, after interruption, or after an
+error, is not a terminal stopwatch event by itself.
+
+The stopwatch stops only when the captured structured stream contains an Assistant
+message for the same exchange with `channel: "final"`,
+`status: "finished_successfully"`, and `end_turn: true`.  At that boundary the final
+lap and total elapsed time are frozen.  A later independent User exchange replaces
+the completed session with a new stopwatch.
+
+The UI is a fixed, pointer-transparent top-right viewport control below the ChatGPT
+header controls.  It is not part of transcript chronology, does not move with the
+conversation scroll, and does not alter requests, exports, communication recording,
+streamed-tail reconciliation, or AIConversationCore semantics.  Elapsed time uses
+`performance.now()`; wall-clock timestamps are not used for duration measurement.

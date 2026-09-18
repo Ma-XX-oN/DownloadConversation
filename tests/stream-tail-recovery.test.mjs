@@ -28,6 +28,7 @@ function harness() {
     },
     logDiagnostic() {},
     agentSoundObserveTerminal() {},
+    agentStopwatchObserveStreamEvent() {},
     conversationSpineFromPages(pages) {
       const messages = [];
       const seen = new Set();
