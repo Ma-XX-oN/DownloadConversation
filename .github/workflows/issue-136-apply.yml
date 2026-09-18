@@ -21,6 +21,17 @@ jobs:
           node-version: 22
       - name: Apply asserted issue 136 patch
         run: python scripts/apply-issue-136.py
+      - name: Align observer guard with explicit event contract
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+          path = Path('chatgpt-conversation-markdown-export.user.js')
+          text = path.read_text(encoding='utf-8')
+          old = "    if (event?.type === 'input_message' && event?.input_message?.author?.role === 'user') {"
+          new = "    if (event && event.type === 'input_message' && event.input_message?.author?.role === 'user') {"
+          assert text.count(old) == 1
+          path.write_text(text.replace(old, new, 1), encoding='utf-8')
+          PY
       - name: Production JSDoc coverage
         run: node scripts/check-jsdoc.mjs
       - name: JavaScript syntax
