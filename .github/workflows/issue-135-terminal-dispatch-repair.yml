@@ -19,18 +19,36 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: 22
-      - name: Repair shared terminal dispatch key
+      - name: Repair shared terminal dispatch ownership
         shell: pwsh
         run: |
           @'
           import fs from 'node:fs';
           const path = 'chatgpt-conversation-markdown-export.user.js';
           let text = fs.readFileSync(path, 'utf8');
-          const oldText = 'terminal_key: agentSoundTerminalKey(capture)';
-          const newText = 'terminal_key: agentTerminalKey(capture)';
+          const oldText = [
+            '        conversation_id: capture?.conversation_id ?? null,',
+            '        terminal_key: agentSoundTerminalKey(capture)'
+          ].join('\n');
+          const newText = '        conversation_id: capture?.conversation_id ?? null';
           const count = text.split(oldText).length - 1;
-          if (count !== 1) throw new Error(`Expected one stale terminal key reference, found ${count}.`);
+          if (count !== 1) throw new Error(`Expected one stale terminal-key derivation, found ${count}.`);
           text = text.replace(oldText, newText);
+
+          const retiredCalls = [
+            'agentSoundTerminalKey(',
+            'agentSoundClassifyTerminal(',
+            'agentSoundObserveTerminal(',
+            'agentStopwatchSuccessfulFinal(',
+            'agentStopwatchObserveTerminal('
+          ];
+          for (const retired of retiredCalls) {
+            if (text.includes(retired)) throw new Error(`Retired terminal helper remains callable: ${retired}`);
+          }
+          const sharedKeyReferences = text.match(/\bagentTerminalKey\s*\(/g) ?? [];
+          if (sharedKeyReferences.length !== 2) {
+            throw new Error(`Expected agentTerminalKey only in its declaration and shared normalizer; found ${sharedKeyReferences.length} references.`);
+          }
           fs.writeFileSync(path, text, 'utf8');
           '@ | node --input-type=module
       - name: Verify issue/version identity
@@ -39,9 +57,10 @@ jobs:
         run: node scripts/check-jsdoc.mjs
       - name: Verify userscript syntax
         run: node --check chatgpt-conversation-markdown-export.user.js
-      - name: Verify terminal error causal chain
+      - name: Verify terminal error causal chain and DRY contract
         run: >-
           node --test
+          tests/agent-terminal-dry-contract.test.mjs
           tests/agent-terminal-polling-timeout-observer.test.mjs
           tests/agent-terminal-polling-timeout.test.mjs
           tests/agent-terminal-dispatch.test.mjs
