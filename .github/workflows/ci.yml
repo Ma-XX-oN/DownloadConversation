@@ -33,7 +33,7 @@ jobs:
       - name: Agent turn stopwatch reload restoration
         run: node --test tests/agent-turn-stopwatch-reload.test.mjs
       - name: Agent favicon state regression
-        run: node --test tests/agent-favicon-state.test.mjs
+        run: node --test tests/agent-favicon-state.test.mjs tests/agent-favicon-browser-selection.test.mjs
       - name: Agent terminal polling-timeout regression
         run: node --test tests/agent-terminal-polling-timeout.test.mjs
       - name: Communication log file controls regression
