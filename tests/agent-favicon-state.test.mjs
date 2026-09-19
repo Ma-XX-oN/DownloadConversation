@@ -108,22 +108,20 @@ function renderHarness() {
     diagnostics: []
   };
   vm.runInNewContext(`
-    const AGENT_FAVICON_OVERRIDE_ID = 'tm-agent-state-favicon';
     const AGENT_FAVICON_PROCESSING_RGB = Object.freeze([255, 255, 0]);
     const AGENT_FAVICON_COMPLETED_RGB = Object.freeze([144, 238, 144]);
     const AGENT_FAVICON_ERROR_RGB = Object.freeze([255, 0, 0]);
-    let agentFaviconOriginalHref = null;
+    const agentFaviconOriginalSources = new Map();
     let agentFaviconRenderGeneration = 0;
     function logDiagnostic(level, name, details) { this.diagnostics.push({ level, name, details }); }
     ${productionFunctionSource('errorMessage')}
-    ${productionFunctionSource('agentFaviconOriginalSource')}
-    ${productionFunctionSource('ensureAgentFaviconOverrideLink')}
+    ${productionFunctionSource('agentFaviconCurrentCandidates')}
     ${productionFunctionSource('agentFaviconRecolorPixels')}
+    ${productionFunctionSource('agentFaviconRenderCandidate')}
     ${productionFunctionSource('agentFaviconRenderState')}
     this.api = {
       render: agentFaviconRenderState,
-      source: agentFaviconOriginalSource,
-      override: () => document.getElementById(AGENT_FAVICON_OVERRIDE_ID)
+      href: () => document.querySelectorAll('link[rel~="icon"]')[0].href
     };
   `, context);
   return { context, originalHref };
@@ -211,11 +209,11 @@ test('a new prompt after completed state returns favicon to processing', () => {
 test('every colored favicon render uses the captured original stock favicon source', async () => {
   const { context, originalHref } = renderHarness();
   assert.equal(await context.api.render('processing'), true);
-  const yellowHref = context.api.override().href;
+  const yellowHref = context.api.href();
   assert.equal(await context.api.render('completed'), true);
-  const greenHref = context.api.override().href;
+  const greenHref = context.api.href();
   assert.equal(await context.api.render('error'), true);
-  const redHref = context.api.override().href;
+  const redHref = context.api.href();
 
   assert.deepEqual(context.imageSources, [originalHref, originalHref, originalHref]);
   assert.match(yellowHref, /pixels=255,255,0$/);

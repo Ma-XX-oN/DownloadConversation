@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         ChatGPT Conversation Markdown Recorder
 // @namespace    https://chatgpt.com/
-// @version      1.5.0-issue.148.1
+// @version      1.5.0-issue.148.2
 // @description  Exports the current ChatGPT conversation directly from the Conversation API as Markdown or JSONL.
 // @match        https://chatgpt.com/*
 // @match        https://chat.openai.com/*
@@ -44,12 +44,12 @@
   const AGENT_SOUND_VOLUME_STORAGE_KEY = 'tm-conversation-recorder-agent-sound-volume';
   /** Legacy boolean sound preference retained only for deterministic migration. */
   const LEGACY_AGENT_SOUNDS_STORAGE_KEY = 'tm-conversation-recorder-agent-sounds';
-  /** DOM id of the userscript-owned favicon override link. */
-  const AGENT_FAVICON_OVERRIDE_ID = 'tm-agent-state-favicon';
   /** Yellow RGB used while Agent processing is observed. */
   const AGENT_FAVICON_PROCESSING_RGB = Object.freeze([255, 255, 0]);
   /** Light-green RGB used after a current-page successful completion. */
   const AGENT_FAVICON_COMPLETED_RGB = Object.freeze([144, 238, 144]);
+  /** Red RGB used after a normalized Agent terminal error. */
+  const AGENT_FAVICON_ERROR_RGB = Object.freeze([255, 0, 0]);
   /** DOM id of the fixed agent-turn stopwatch display. */
   const AGENT_STOPWATCH_ID = 'tm-agent-turn-stopwatch';
   /** Refresh cadence for the live agent-turn stopwatch display. */
@@ -140,8 +140,8 @@
   const agentSoundTerminalKeys = new Set();
   /** Maximum number of emitted terminal turn identities retained for de-duplication. */
   const AGENT_SOUND_TERMINAL_KEY_LIMIT = 128;
-  /** Original stock favicon href captured before any userscript override is rendered. */
-  let agentFaviconOriginalHref = null;
+  /** Original source href retained per stock favicon link before DownloadConversation recolors it. */
+  const agentFaviconOriginalSources = new Map();
   /** Monotonic render generation preventing stale asynchronous favicon writes. */
   let agentFaviconRenderGeneration = 0;
   /** Whether processing has been observed in this loaded page and may transition to green. */
@@ -2831,32 +2831,28 @@
 
 
   /**
-   * Returns and memoizes the stock favicon source before any userscript override.
+   * Returns current stock favicon candidates and captures each candidate's original source once.
    *
-   * @returns {string|null} Original favicon href, or null when no stock icon is available.
+   * The browser may choose among multiple rel=icon links using media/type/sizes.
+   * DownloadConversation therefore projects one state onto every current stock candidate.
+   *
+   * @returns {Array<Object>} Current favicon candidates paired with their original source hrefs.
    */
-  function agentFaviconOriginalSource() {
-    if (agentFaviconOriginalHref) return agentFaviconOriginalHref;
+  function agentFaviconCurrentCandidates() {
     const links = [...document.querySelectorAll('link[rel~="icon"]')]
-      .filter(link => link?.id !== AGENT_FAVICON_OVERRIDE_ID && typeof link?.href === 'string' && link.href);
-    const source = links.at(-1)?.href ?? null;
-    if (source) agentFaviconOriginalHref = source;
-    return agentFaviconOriginalHref;
-  }
-
-  /**
-   * Returns the userscript-owned favicon override link, creating it after stock icon links when needed.
-   *
-   * @returns {HTMLLinkElement} Existing or newly created favicon override link.
-   */
-  function ensureAgentFaviconOverrideLink() {
-    let link = document.getElementById(AGENT_FAVICON_OVERRIDE_ID);
-    if (link) return link;
-    link = document.createElement('link');
-    link.id = AGENT_FAVICON_OVERRIDE_ID;
-    link.rel = 'icon';
-    (document.head || document.documentElement).append(link);
-    return link;
+      .filter(link => typeof link?.href === 'string' && link.href);
+    return links.map(link => {
+      if (!agentFaviconOriginalSources.has(link)) {
+        agentFaviconOriginalSources.set(link, link.href);
+      }
+      return {
+        link,
+        original_href: agentFaviconOriginalSources.get(link),
+        media: typeof link.media === 'string' ? link.media : '',
+        type: typeof link.type === 'string' ? link.type : '',
+        sizes: typeof link.sizes?.value === 'string' ? link.sizes.value : ''
+      };
+    });
   }
 
   /**
@@ -2893,28 +2889,17 @@
   }
 
   /**
-   * Renders one Agent favicon state from the memoized original stock favicon.
+   * Renders one colored state for one stock favicon candidate from its captured original source.
    *
-   * @param {string} state - `processing`, `completed`, or `original`.
-   * @returns {Promise<boolean>} True when the requested favicon state was applied.
+   * @param {Object} candidate - Current stock favicon link and its captured original source.
+   * @param {Array<number>} targetRgb - Three target RGB channel values.
+   * @param {string} state - Agent favicon state being rendered.
+   * @param {number} generation - Monotonic favicon render generation.
+   * @param {number} ordinal - One-based candidate ordinal for diagnostics.
+   * @param {number} total - Total current favicon candidate count.
+   * @returns {Promise<Object>} Candidate render result for aggregate state diagnostics.
    */
-  function agentFaviconRenderState(state) {
-    const generation = ++agentFaviconRenderGeneration;
-    if (state === 'original') {
-      document.getElementById(AGENT_FAVICON_OVERRIDE_ID)?.remove();
-      return Promise.resolve(true);
-    }
-    const targetRgb = state === 'processing'
-      ? AGENT_FAVICON_PROCESSING_RGB
-      : state === 'completed'
-        ? AGENT_FAVICON_COMPLETED_RGB
-        : null;
-    if (!targetRgb) return Promise.resolve(false);
-    const originalHref = agentFaviconOriginalSource();
-    if (!originalHref) {
-      logDiagnostic('warnings', 'agent-favicon-original-missing', { state });
-      return Promise.resolve(false);
-    }
+  function agentFaviconRenderCandidate(candidate, targetRgb, state, generation, ordinal, total) {
     return new Promise(resolve => {
       const image = new Image();
       image.onload = () => {
@@ -2922,8 +2907,13 @@
           const width = image.naturalWidth;
           const height = image.naturalHeight;
           if (!width || !height) {
-            logDiagnostic('warnings', 'agent-favicon-image-empty', { state, original_href: originalHref });
-            resolve(false);
+            logDiagnostic('warnings', 'agent-favicon-image-empty', {
+              state,
+              candidate_ordinal: ordinal,
+              candidate_count: total,
+              original_href: candidate.original_href
+            });
+            resolve({ applied: false, recolored_pixels: 0, width, height });
             return;
           }
           const canvas = document.createElement('canvas');
@@ -2931,8 +2921,12 @@
           canvas.height = height;
           const context = canvas.getContext('2d');
           if (!context) {
-            logDiagnostic('warnings', 'agent-favicon-canvas-unavailable', { state });
-            resolve(false);
+            logDiagnostic('warnings', 'agent-favicon-canvas-unavailable', {
+              state,
+              candidate_ordinal: ordinal,
+              candidate_count: total
+            });
+            resolve({ applied: false, recolored_pixels: 0, width, height });
             return;
           }
           context.drawImage(image, 0, 0, width, height);
@@ -2940,33 +2934,99 @@
           const changed = agentFaviconRecolorPixels(pixels.data, targetRgb);
           context.putImageData(pixels, 0, 0);
           if (generation !== agentFaviconRenderGeneration) {
-            resolve(false);
+            resolve({ applied: false, stale: true, recolored_pixels: changed, width, height });
             return;
           }
-          ensureAgentFaviconOverrideLink().href = canvas.toDataURL('image/png');
-          logDiagnostic('debug', 'agent-favicon-state-rendered', {
+          candidate.link.href = canvas.toDataURL('image/png');
+          logDiagnostic('debug', 'agent-favicon-candidate-rendered', {
             state,
+            candidate_ordinal: ordinal,
+            candidate_count: total,
             recolored_pixels: changed,
             width,
-            height
+            height,
+            media: candidate.media || null,
+            type: candidate.type || null,
+            sizes: candidate.sizes || null
           });
-          resolve(true);
+          resolve({ applied: true, recolored_pixels: changed, width, height });
         } catch (error) {
           logDiagnostic('warnings', 'agent-favicon-render-failed', {
             state,
+            candidate_ordinal: ordinal,
+            candidate_count: total,
             message: errorMessage(error)
           });
-          resolve(false);
+          resolve({ applied: false, recolored_pixels: 0, width: null, height: null });
         }
       };
       image.onerror = () => {
         logDiagnostic('warnings', 'agent-favicon-image-load-failed', {
           state,
-          original_href: originalHref
+          candidate_ordinal: ordinal,
+          candidate_count: total,
+          original_href: candidate.original_href
         });
-        resolve(false);
+        resolve({ applied: false, recolored_pixels: 0, width: null, height: null });
       };
-      image.src = originalHref;
+      image.src = candidate.original_href;
+    });
+  }
+
+  /**
+   * Renders one Agent favicon state across every stock favicon candidate the browser may select.
+   *
+   * @param {string} state - `processing`, `completed`, `error`, or `original`.
+   * @returns {Promise<boolean>} True only when the requested state is applied to every current candidate.
+   */
+  function agentFaviconRenderState(state) {
+    const generation = ++agentFaviconRenderGeneration;
+    const candidates = agentFaviconCurrentCandidates();
+    if (!candidates.length) {
+      logDiagnostic('warnings', 'agent-favicon-original-missing', { state });
+      return Promise.resolve(false);
+    }
+    if (state === 'original') {
+      for (const candidate of candidates) candidate.link.href = candidate.original_href;
+      logDiagnostic('debug', 'agent-favicon-state-rendered', {
+        state,
+        candidate_count: candidates.length,
+        applied_candidate_count: candidates.length,
+        recolored_pixels: 0
+      });
+      return Promise.resolve(true);
+    }
+    const targetRgb = state === 'processing'
+      ? AGENT_FAVICON_PROCESSING_RGB
+      : state === 'completed'
+        ? AGENT_FAVICON_COMPLETED_RGB
+        : state === 'error'
+          ? AGENT_FAVICON_ERROR_RGB
+          : null;
+    if (!targetRgb) return Promise.resolve(false);
+    return Promise.all(candidates.map((candidate, index) =>
+      agentFaviconRenderCandidate(
+        candidate,
+        targetRgb,
+        state,
+        generation,
+        index + 1,
+        candidates.length
+      )
+    )).then(results => {
+      if (generation !== agentFaviconRenderGeneration) return false;
+      const applied = results.filter(result => result.applied).length;
+      const recoloredPixels = results.reduce(
+        (total, result) => total + (Number(result.recolored_pixels) || 0),
+        0
+      );
+      logDiagnostic(applied === candidates.length ? 'debug' : 'warnings', 'agent-favicon-state-rendered', {
+        state,
+        candidate_count: candidates.length,
+        applied_candidate_count: applied,
+        recolored_pixels: recoloredPixels
+      });
+      return applied === candidates.length;
     });
   }
 
@@ -2997,6 +3057,11 @@
    * @returns {void} No value is returned.
    */
   function agentFaviconHandleTerminal(terminal) {
+    if (terminal?.kind === 'error') {
+      agentFaviconProcessingObserved = false;
+      void agentFaviconRenderState('error');
+      return;
+    }
     if (terminal?.kind !== 'success' || !agentFaviconProcessingObserved) return;
     agentFaviconProcessingObserved = false;
     void agentFaviconRenderState('completed');

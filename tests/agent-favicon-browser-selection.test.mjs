@@ -80,16 +80,15 @@ function multiCandidateHarness() {
   };
 
   vm.runInNewContext(`
-    const AGENT_FAVICON_OVERRIDE_ID = 'tm-agent-state-favicon';
     const AGENT_FAVICON_PROCESSING_RGB = Object.freeze([255, 255, 0]);
     const AGENT_FAVICON_COMPLETED_RGB = Object.freeze([144, 238, 144]);
-    let agentFaviconOriginalHref = null;
+    const agentFaviconOriginalSources = new Map();
     let agentFaviconRenderGeneration = 0;
     function logDiagnostic(level, name, details) { this.diagnostics.push({ level, name, details }); }
     ${productionFunctionSource('errorMessage')}
-    ${productionFunctionSource('agentFaviconOriginalSource')}
-    ${productionFunctionSource('ensureAgentFaviconOverrideLink')}
+    ${productionFunctionSource('agentFaviconCurrentCandidates')}
     ${productionFunctionSource('agentFaviconRecolorPixels')}
+    ${productionFunctionSource('agentFaviconRenderCandidate')}
     ${productionFunctionSource('agentFaviconRenderState')}
     this.render = agentFaviconRenderState;
   `, context);
