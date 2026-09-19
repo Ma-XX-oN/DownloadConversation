@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         ChatGPT Conversation Markdown Recorder
 // @namespace    https://chatgpt.com/
-// @version      1.5.0-issue.135.2
+// @version      1.5.0-issue.148.1
 // @description  Exports the current ChatGPT conversation directly from the Conversation API as Markdown or JSONL.
 // @match        https://chatgpt.com/*
 // @match        https://chat.openai.com/*
@@ -44,6 +44,12 @@
   const AGENT_SOUND_VOLUME_STORAGE_KEY = 'tm-conversation-recorder-agent-sound-volume';
   /** Legacy boolean sound preference retained only for deterministic migration. */
   const LEGACY_AGENT_SOUNDS_STORAGE_KEY = 'tm-conversation-recorder-agent-sounds';
+  /** DOM id of the userscript-owned favicon override link. */
+  const AGENT_FAVICON_OVERRIDE_ID = 'tm-agent-state-favicon';
+  /** Yellow RGB used while Agent processing is observed. */
+  const AGENT_FAVICON_PROCESSING_RGB = Object.freeze([255, 255, 0]);
+  /** Light-green RGB used after a current-page successful completion. */
+  const AGENT_FAVICON_COMPLETED_RGB = Object.freeze([144, 238, 144]);
   /** DOM id of the fixed agent-turn stopwatch display. */
   const AGENT_STOPWATCH_ID = 'tm-agent-turn-stopwatch';
   /** Refresh cadence for the live agent-turn stopwatch display. */
@@ -134,6 +140,12 @@
   const agentSoundTerminalKeys = new Set();
   /** Maximum number of emitted terminal turn identities retained for de-duplication. */
   const AGENT_SOUND_TERMINAL_KEY_LIMIT = 128;
+  /** Original stock favicon href captured before any userscript override is rendered. */
+  let agentFaviconOriginalHref = null;
+  /** Monotonic render generation preventing stale asynchronous favicon writes. */
+  let agentFaviconRenderGeneration = 0;
+  /** Whether processing has been observed in this loaded page and may transition to green. */
+  let agentFaviconProcessingObserved = false;
   /** Current agent-turn stopwatch session, including completed lap durations. */
   let agentStopwatchState = null;
   /** Interval handle refreshing the live agent-turn stopwatch, or null while stopped. */
@@ -2817,6 +2829,179 @@
     return agentTerminalSuccessfulFinal(capture) ? 'success' : null;
   }
 
+
+  /**
+   * Returns and memoizes the stock favicon source before any userscript override.
+   *
+   * @returns {string|null} Original favicon href, or null when no stock icon is available.
+   */
+  function agentFaviconOriginalSource() {
+    if (agentFaviconOriginalHref) return agentFaviconOriginalHref;
+    const links = [...document.querySelectorAll('link[rel~="icon"]')]
+      .filter(link => link?.id !== AGENT_FAVICON_OVERRIDE_ID && typeof link?.href === 'string' && link.href);
+    const source = links.at(-1)?.href ?? null;
+    if (source) agentFaviconOriginalHref = source;
+    return agentFaviconOriginalHref;
+  }
+
+  /**
+   * Returns the userscript-owned favicon override link, creating it after stock icon links when needed.
+   *
+   * @returns {HTMLLinkElement} Existing or newly created favicon override link.
+   */
+  function ensureAgentFaviconOverrideLink() {
+    let link = document.getElementById(AGENT_FAVICON_OVERRIDE_ID);
+    if (link) return link;
+    link = document.createElement('link');
+    link.id = AGENT_FAVICON_OVERRIDE_ID;
+    link.rel = 'icon';
+    (document.head || document.documentElement).append(link);
+    return link;
+  }
+
+  /**
+   * Recolors visible near-white favicon pixels while preserving all other pixels and alpha values.
+   *
+   * @param {Uint8ClampedArray} data - Mutable RGBA pixel buffer.
+   * @param {Array<number>} targetRgb - Three target RGB channel values.
+   * @returns {number} Number of recolored visible pixels.
+   */
+  function agentFaviconRecolorPixels(data, targetRgb) {
+    if (!data || typeof data.length !== 'number') {
+      throw new TypeError('Agent favicon recoloring requires an RGBA pixel buffer.');
+    }
+    if (!Array.isArray(targetRgb) || targetRgb.length !== 3) {
+      throw new TypeError('Agent favicon recoloring requires three target RGB channels.');
+    }
+    let changed = 0;
+    for (let index = 0; index + 3 < data.length; index += 4) {
+      const red = data[index];
+      const green = data[index + 1];
+      const blue = data[index + 2];
+      const alpha = data[index + 3];
+      if (alpha === 0) continue;
+      const minimum = Math.min(red, green, blue);
+      const maximum = Math.max(red, green, blue);
+      if (minimum < 240 || maximum - minimum > 16) continue;
+      const intensity = (red + green + blue) / (3 * 255);
+      data[index] = Math.round(targetRgb[0] * intensity);
+      data[index + 1] = Math.round(targetRgb[1] * intensity);
+      data[index + 2] = Math.round(targetRgb[2] * intensity);
+      changed += 1;
+    }
+    return changed;
+  }
+
+  /**
+   * Renders one Agent favicon state from the memoized original stock favicon.
+   *
+   * @param {string} state - `processing`, `completed`, or `original`.
+   * @returns {Promise<boolean>} True when the requested favicon state was applied.
+   */
+  function agentFaviconRenderState(state) {
+    const generation = ++agentFaviconRenderGeneration;
+    if (state === 'original') {
+      document.getElementById(AGENT_FAVICON_OVERRIDE_ID)?.remove();
+      return Promise.resolve(true);
+    }
+    const targetRgb = state === 'processing'
+      ? AGENT_FAVICON_PROCESSING_RGB
+      : state === 'completed'
+        ? AGENT_FAVICON_COMPLETED_RGB
+        : null;
+    if (!targetRgb) return Promise.resolve(false);
+    const originalHref = agentFaviconOriginalSource();
+    if (!originalHref) {
+      logDiagnostic('warnings', 'agent-favicon-original-missing', { state });
+      return Promise.resolve(false);
+    }
+    return new Promise(resolve => {
+      const image = new Image();
+      image.onload = () => {
+        try {
+          const width = image.naturalWidth;
+          const height = image.naturalHeight;
+          if (!width || !height) {
+            logDiagnostic('warnings', 'agent-favicon-image-empty', { state, original_href: originalHref });
+            resolve(false);
+            return;
+          }
+          const canvas = document.createElement('canvas');
+          canvas.width = width;
+          canvas.height = height;
+          const context = canvas.getContext('2d');
+          if (!context) {
+            logDiagnostic('warnings', 'agent-favicon-canvas-unavailable', { state });
+            resolve(false);
+            return;
+          }
+          context.drawImage(image, 0, 0, width, height);
+          const pixels = context.getImageData(0, 0, width, height);
+          const changed = agentFaviconRecolorPixels(pixels.data, targetRgb);
+          context.putImageData(pixels, 0, 0);
+          if (generation !== agentFaviconRenderGeneration) {
+            resolve(false);
+            return;
+          }
+          ensureAgentFaviconOverrideLink().href = canvas.toDataURL('image/png');
+          logDiagnostic('debug', 'agent-favicon-state-rendered', {
+            state,
+            recolored_pixels: changed,
+            width,
+            height
+          });
+          resolve(true);
+        } catch (error) {
+          logDiagnostic('warnings', 'agent-favicon-render-failed', {
+            state,
+            message: errorMessage(error)
+          });
+          resolve(false);
+        }
+      };
+      image.onerror = () => {
+        logDiagnostic('warnings', 'agent-favicon-image-load-failed', {
+          state,
+          original_href: originalHref
+        });
+        resolve(false);
+      };
+      image.src = originalHref;
+    });
+  }
+
+  /**
+   * Records that Agent processing was observed in this page and renders the yellow favicon.
+   *
+   * @returns {void} No value is returned.
+   */
+  function agentFaviconObserveProcessing() {
+    agentFaviconProcessingObserved = true;
+    void agentFaviconRenderState('processing');
+  }
+
+  /**
+   * Projects the already-fetched reload stream status into favicon processing state.
+   *
+   * @param {Object|null} streamStatus - Structured provider stream-status payload.
+   * @returns {void} No value is returned.
+   */
+  function agentFaviconObserveStreamStatus(streamStatus) {
+    if (agentStopwatchStreamIsActive(streamStatus)) agentFaviconObserveProcessing();
+  }
+
+  /**
+   * Handles one shared normalized terminal event for favicon completion state.
+   *
+   * @param {Object} terminal - Shared normalized terminal event.
+   * @returns {void} No value is returned.
+   */
+  function agentFaviconHandleTerminal(terminal) {
+    if (terminal?.kind !== 'success' || !agentFaviconProcessingObserved) return;
+    agentFaviconProcessingObserved = false;
+    void agentFaviconRenderState('completed');
+  }
+
   /**
    * Handles one already-normalized terminal event for browser audio only.
    *
@@ -3304,6 +3489,7 @@
     if (!recovery.ready || agentStopwatchState) return;
 
     const streamStatus = await agentStopwatchFetchStreamStatus(conversationId);
+    agentFaviconObserveStreamStatus(streamStatus);
     if (agentStopwatchState) return;
     agentStopwatchApplyRecovery(
       recovery,
@@ -3391,7 +3577,8 @@
   /** Ordered consumers of one shared normalized terminal event. */
   const agentTerminalHandlers = Object.freeze([
     agentSoundHandleTerminal,
-    agentStopwatchHandleTerminal
+    agentStopwatchHandleTerminal,
+    agentFaviconHandleTerminal
   ]);
 
   /**
@@ -4045,6 +4232,7 @@
         const generationRequest = isGenerationStreamUrl(requestUrl) && requestMethod === 'POST';
         const steerTurnRequest = isSteerTurnUrl(requestUrl) && requestMethod === 'POST';
         const generationSubmittedAtMs = generationRequest ? performance.now() : null;
+        if (generationRequest) agentFaviconObserveProcessing();
         if (steerTurnRequest) agentStopwatchObserveSteerTurn(performance.now());
         const capturePromise = generationRequest && request
           ? captureGenerationStreamRequest(request, generationSubmittedAtMs)
