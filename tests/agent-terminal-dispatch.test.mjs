@@ -27,7 +27,7 @@ function successfulCapture() {
   };
 }
 
-test('successful final is normalized once with the structured final exchange identity', () => {
+function terminalHarness() {
   const context = { performance: { now: () => 45000 } };
   vm.runInNewContext(`
     ${productionFunctionSource('agentTerminalIsPollingTimeout')}
@@ -38,12 +38,30 @@ test('successful final is normalized once with the structured final exchange ide
     ${productionFunctionSource('agentTerminalNormalize')}
     this.normalize = agentTerminalNormalize;
   `, context);
+  return context;
+}
 
+test('successful final is normalized once with the structured final exchange identity', () => {
+  const context = terminalHarness();
   const terminal = context.normalize(successfulCapture(), null);
   assert.equal(terminal.kind, 'success');
   assert.equal(terminal.exchange_id, 'exchange-A');
   assert.equal(terminal.terminal_key, 'conversation-1:exchange-A');
   assert.equal(terminal.completed_at_ms, 45000);
+});
+
+test('top-level provider error_code is normalized as the shared terminal error kind', () => {
+  const context = terminalHarness();
+  const terminal = context.normalize(successfulCapture(), {
+    message: null,
+    conversation_id: 'conversation-1',
+    error: 'You have reached the maximum length for this conversation.',
+    error_code: 'conversation_too_large'
+  });
+
+  assert.equal(terminal.kind, 'error');
+  assert.equal(terminal.exchange_id, 'exchange-A');
+  assert.equal(terminal.terminal_key, 'conversation-1:exchange-A');
 });
 
 test('one normalized terminal object drives both sound and stopwatch', () => {
