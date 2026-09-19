@@ -29,7 +29,7 @@ jobs:
       - name: Agent completion sound regression
         run: node --test tests/agent-completion-sounds.test.mjs tests/agent-completion-sound-pending.test.mjs
       - name: Agent terminal shared dispatch regression
-        run: node --test tests/agent-terminal-dispatch.test.mjs
+        run: node --test tests/agent-terminal-dispatch.test.mjs tests/agent-terminal-dry-contract.test.mjs
       - name: Agent turn stopwatch regression
         run: node --test tests/agent-turn-stopwatch.test.mjs
       - name: Agent turn stopwatch stream integration
@@ -41,7 +41,7 @@ jobs:
       - name: Agent favicon state regression
         run: node --test tests/agent-favicon-state.test.mjs tests/agent-favicon-browser-selection.test.mjs
       - name: Agent terminal polling-timeout regression
-        run: node --test tests/agent-terminal-polling-timeout.test.mjs
+        run: node --test tests/agent-terminal-polling-timeout.test.mjs tests/agent-terminal-polling-timeout-observer.test.mjs
       - name: Communication log file controls regression
         run: node --test tests/communication-log-file-controls.test.mjs tests/communication-log-layout-contract.test.mjs tests/dry-contract.test.mjs
       - name: Tail consistency regression
