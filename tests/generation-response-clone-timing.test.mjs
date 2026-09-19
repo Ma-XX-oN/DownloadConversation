@@ -60,6 +60,7 @@ test('generation response clone is acquired before the stock response can be dis
     agentTerminalObserveStatsRequest: async () => {},
     isGenerationStreamUrl: url => url.endsWith('/backend-api/f/conversation'),
     isSteerTurnUrl: () => false,
+    agentFaviconObserveProcessing() {},
     agentStopwatchObserveSteerTurn() {},
     captureGenerationStreamRequest: () => captureReady.promise,
     stockNetworkTraceFetchResponse() {},
