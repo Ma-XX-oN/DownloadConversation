@@ -27,7 +27,7 @@ jobs:
       - name: Agent turn stopwatch regression
         run: node --test tests/agent-turn-stopwatch.test.mjs
       - name: Agent turn stopwatch stream integration
-        run: node --test tests/agent-turn-stopwatch-stream.test.mjs
+        run: node --test tests/agent-resume-metadata-patch.test.mjs tests/agent-turn-stopwatch-stream.test.mjs
       - name: Agent turn stopwatch live total
         run: node --test tests/agent-turn-stopwatch-live-total.test.mjs
       - name: Agent turn stopwatch reload restoration
