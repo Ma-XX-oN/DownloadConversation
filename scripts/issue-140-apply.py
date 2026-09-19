@@ -1,197 +1,60 @@
 from pathlib import Path
 
-path = Path('chatgpt-conversation-markdown-export.user.js')
-text = path.read_text(encoding='utf-8')
 
-
-def replace_once(old: str, new: str) -> None:
-  global text
+def replace_once(path: Path, old: str, new: str) -> None:
+  text = path.read_text(encoding='utf-8')
   count = text.count(old)
   if count != 1:
-    raise SystemExit(f'Expected exactly one match, found {count}: {old[:160]!r}')
-  text = text.replace(old, new, 1)
+    raise SystemExit(f'{path}: expected exactly one documentation anchor, found {count}.')
+  path.write_text(text.replace(old, new, 1), encoding='utf-8')
 
 
+design = Path('DESIGN.md')
 replace_once(
-  '// @version      1.5.0-issue.140.3',
-  '// @version      1.5.0-issue.140.4'
+  design,
+  """### Observe once, normalize once, fan out
+
+Cross-cutting ChatGPT lifecycle state follows a watcher/consumer design pattern. Authoritative structured evidence is observed once at the provider/browser boundary, normalized once into stable project state, and then fanned out to independent consumers. Sound, stopwatch, favicon, and future Agent-state features must attach to that shared watcher rather than duplicating network interception, terminal classification, exchange identity, or reload polling.
+
+If a consumer needs a fact the watcher does not yet expose, extend the shared watcher at the evidenced structured boundary first. Do not solve the gap by creating a consumer-specific detector. The current provider/browser contracts and the evidence behind them are maintained in `CHATGPT-WEB-INTEGRATION.md`.""",
+  """### Observe once, normalize once, fan out
+
+Cross-cutting ChatGPT lifecycle state follows a watcher/consumer design pattern. Authoritative structured evidence is observed once at the provider/browser boundary, normalized once into stable project state, and then fanned out to independent consumers. Sound, stopwatch, favicon, and future Agent-state features must attach to that shared watcher rather than duplicating network interception, terminal classification, exchange identity, or reload polling.
+
+The watcher can have more than one authoritative provider input when ChatGPT itself exposes the same lifecycle through different stock transports. Current-page generation observes `POST /backend-api/f/conversation`; after a hard reload of an active turn, ChatGPT continues that turn through `POST /backend-api/f/conversation/resume`. Both SSE sources feed the same stream parser and terminal normalizer. The reload-resume observation is lifecycle evidence; it does not replace the separately persisted generation capture used for streamed-tail export reconciliation.
+
+If a consumer needs a fact the watcher does not yet expose, extend the shared watcher at the evidenced structured boundary first. Do not solve the gap by creating a consumer-specific detector. The current provider/browser contracts and the evidence behind them are maintained in `CHATGPT-WEB-INTEGRATION.md`."""
 )
 
-# The reload resume endpoint is a distinct stock source of the same conversation SSE protocol.
-resume_detector = r'''
-  /**
-   * Tests whether a URL is the stock conversation-resume stream endpoint used after reload.
-   *
-   * @param {string} url - Candidate request URL.
-   * @returns {boolean} True only for this origin's exact /backend-api/f/conversation/resume path.
-   */
-  function isConversationResumeUrl(url) {
-    try {
-      const parsed = new URL(url, `${location.origin}/`);
-      return parsed.origin === location.origin &&
-        parsed.pathname === '/backend-api/f/conversation/resume';
-    } catch {
-      return false;
-    }
-  }
-
-'''
-steer_marker = "  /**\n   * Tests whether a URL is the stock same-turn User steering endpoint."
-if text.count(steer_marker) != 1:
-  raise SystemExit('Could not locate steering endpoint documentation marker.')
-text = text.replace(steer_marker, resume_detector + steer_marker, 1)
-
-# Generalize the cloned-stream reader so normal generation and reload resume share the exact parser.
-start_marker = "  /**\n   * Reads a cloned /f/conversation response without consuming or delaying the stock page response."
-end_marker = "  /**\n   * Extracts encoded SSE items from one matching ChatGPT WebSocket topic frame."
-start = text.find(start_marker)
-end = text.find(end_marker, start)
-if start < 0 or end <= start:
-  raise SystemExit('Could not locate cloned conversation-stream response reader block.')
-replacement = r'''  /**
-   * Consumes one independently owned ChatGPT conversation SSE response through the canonical
-   * stream parser and terminal dispatcher.
-   *
-   * @param {Response} response - Independently owned stock response clone.
-   * @param {Object} capture - Mutable parser state for this observed stream.
-   * @param {Object} options2 - Stream-consumption options.
-   * @param {boolean} options2.persistCapture - Whether this stream is authoritative tail-recovery state.
-   * @param {string} options2.source - Diagnostic source label.
-   * @returns {Promise<void>} Resolves after the cloned response stream ends.
-   */
-  async function consumeObservedConversationStreamResponse(
-    response,
-    capture,
-    { persistCapture, source }
-  ) {
-    if (!capture || !response?.body) return;
-    const reader = response.body.getReader();
-    const decoder = new TextDecoder();
-    try {
-      for (;;) {
-        const { value, done } = await reader.read();
-        if (done) break;
-        consumeStreamTailSseChunk(capture, decoder.decode(value, { stream: true }), false, false);
-      }
-      consumeStreamTailSseChunk(capture, decoder.decode(), true, false);
-      if (persistCapture) streamTailPersistCapture(capture);
-      logDiagnostic('debug', 'conversation-stream-response-observed', {
-        source,
-        conversation_id: capture.conversation_id,
-        stream_record_count: capture.stream_messages.length,
-        handed_off: capture.handed_off,
-        handoff_topic_id: capture.handoff_topic_id,
-        complete: capture.complete
-      });
-    } catch (error) {
-      capture.complete = false;
-      if (persistCapture) streamTailPersistCapture(capture);
-      logDiagnostic('warnings', 'conversation-stream-response-observation-failure', {
-        source,
-        conversation_id: capture.conversation_id,
-        message: errorMessage(error)
-      });
-    } finally {
-      releaseReaderLockQuietly(reader);
-    }
-  }
-
-  /**
-   * Reads a cloned /f/conversation response without consuming or delaying the stock page response.
-   *
-   * @param {Response} response - Cloned stock response.
-   * @param {Object} capture - Capture associated with the request.
-   * @returns {Promise<void>} Resolves after the cloned response stream ends.
-   */
-  async function captureGenerationStreamResponse(response, capture) {
-    await consumeObservedConversationStreamResponse(response, capture, {
-      persistCapture: true,
-      source: 'generation'
-    });
-  }
-
-  /**
-   * Observes a cloned /f/conversation/resume response through the same canonical stream parser.
-   *
-   * The resume stream is lifecycle evidence only here; it must not replace the authoritative
-   * tail-recovery snapshot captured from the original generation request.
-   *
-   * @param {Response} response - Independently owned resume response clone.
-   * @param {Request} request - Independently owned resume request clone.
-   * @returns {Promise<void>} Resolves after the cloned resume stream ends.
-   */
-  async function captureConversationResumeStreamResponse(response, request) {
-    if (!response?.body || !request) return;
-    try {
-      const body = JSON.parse(await request.text());
-      const conversationId = typeof body?.conversation_id === 'string' && body.conversation_id
-        ? body.conversation_id
-        : null;
-      if (!conversationId) {
-        throw new Error('Conversation resume request did not contain conversation_id.');
-      }
-      const capture = createStreamTailCapture(conversationId);
-      await consumeObservedConversationStreamResponse(response, capture, {
-        persistCapture: false,
-        source: 'resume'
-      });
-    } catch (error) {
-      logDiagnostic('warnings', 'conversation-resume-stream-observation-failure', {
-        message: errorMessage(error)
-      });
-    }
-  }
-
-'''
-text = text[:start] + replacement + text[end:]
-
+integration = Path('CHATGPT-WEB-INTEGRATION.md')
 replace_once(
-  """        const generationRequest = isGenerationStreamUrl(requestUrl) && requestMethod === 'POST';
-        const steerTurnRequest = isSteerTurnUrl(requestUrl) && requestMethod === 'POST';""",
-  """        const generationRequest = isGenerationStreamUrl(requestUrl) && requestMethod === 'POST';
-        const resumeRequest = isConversationResumeUrl(requestUrl) && requestMethod === 'POST';
-        const steerTurnRequest = isSteerTurnUrl(requestUrl) && requestMethod === 'POST';"""
+  integration,
+  """Do not issue duplicate stream-status requests for individual consumers.
+
+## History can lag the live stream""",
+  """Do not issue duplicate stream-status requests for individual consumers.
+
+## Reload continuation stream
+
+When a hard reload occurs while `stream_status` reports `IS_STREAMING`, ChatGPT can continue the active turn through:
+
+`POST /backend-api/f/conversation/resume`
+
+Live evidence from conversation `6aae0d5c-7cbc-83e9-ac16-fbf6c7d5e82d` established that the resume response is `text/event-stream` and contains the authoritative final lifecycle evidence for the already-running exchange. The captured sequence included the active User `input_message`, the final Assistant message, patches to `status: \"finished_successfully\"` and `end_turn: true`, `last_token`, `message_stream_complete`, and `[DONE]`. ChatGPT subsequently emitted a WebSocket `conversation-turn-complete` notification and telemetry identifying the reload source as `resume_stream` with result `success`.
+
+Therefore `/f/conversation/resume` is an authoritative input to the **same** lifecycle watcher. DownloadConversation passively clones its request and response before returning the stock objects to ChatGPT and feeds the cloned SSE through the existing conversation-stream parser and terminal normalizer. It must not install a second terminal classifier, infer completion from the DOM, or poll for a substitute terminal signal.
+
+The resume observation is deliberately lifecycle-only. It uses fresh parser state and does not overwrite the persisted original-generation capture used by streamed-tail export reconciliation.
+
+As with the normal generation response, the resume Response clone must be acquired synchronously in the fetch response handler before the original Response is returned to ChatGPT. The resume Request is also cloned before transmission so its `conversation_id` remains available to the passive observer without consuming the page-owned body.
+
+## Provider v1 patch semantics
+
+In the observed reload SSE, the final Assistant message initially carried `request_id`, `turn_exchange_id`, `working_turn_id`, and `turn_id` in `message.metadata`. A later provider patch used `o: \"append\"` at `/message/metadata` to add completion fields such as `is_complete`, `can_save`, and `finish_details`.
+
+For an existing object receiving an object-valued v1 `append`, DownloadConversation must **merge the appended fields into the existing object**. Replacing the object erases the exchange identity immediately before terminal normalization. String append and array append retain their distinct existing semantics; object merge applies only when both existing and appended values are non-array objects.
+
+This rule is covered by a fixed regression derived from the captured reload stream. Do not reinterpret provider patch operators ad hoc in consumers.
+
+## History can lag the live stream"""
 )
-
-replace_once(
-  """        const capturePromise = generationRequest && request
-          ? captureGenerationStreamRequest(request, generationSubmittedAtMs)
-          : null;
-        const responsePromise = originalFetch.apply(this, args);""",
-  """        const capturePromise = generationRequest && request
-          ? captureGenerationStreamRequest(request, generationSubmittedAtMs)
-          : null;
-        const resumeRequestClone = resumeRequest && request ? cloneSafely(request) : null;
-        const responsePromise = originalFetch.apply(this, args);"""
-)
-
-replace_once(
-  """        return responsePromise.then(response => {
-          const generationResponse = capturePromise ? cloneSafely(response) : null;
-          const stopwatchConversationResponse = stopwatchConversationRequest""",
-  """        return responsePromise.then(response => {
-          const generationResponse = capturePromise ? cloneSafely(response) : null;
-          const resumeResponse = resumeRequest ? cloneSafely(response) : null;
-          const stopwatchConversationResponse = stopwatchConversationRequest"""
-)
-
-resume_projection = r'''          if (resumeRequest && !resumeRequestClone) {
-            logDiagnostic('warnings', 'conversation-resume-request-clone-failure', {
-              url: boundedDiagnosticText(requestUrl, 320)
-            });
-          }
-          if (resumeRequest && !resumeResponse) {
-            logDiagnostic('warnings', 'conversation-resume-response-clone-failure', {
-              url: boundedDiagnosticText(response?.url ?? requestUrl, 320)
-            });
-          }
-          if (resumeRequestClone && resumeResponse) {
-            void captureConversationResumeStreamResponse(resumeResponse, resumeRequestClone);
-          }
-'''
-generation_clone_marker = "          if (capturePromise && !generationResponse) {"
-if text.count(generation_clone_marker) != 1:
-  raise SystemExit('Could not locate generation clone diagnostic marker.')
-text = text.replace(generation_clone_marker, resume_projection + generation_clone_marker, 1)
-
-path.write_text(text, encoding='utf-8')
