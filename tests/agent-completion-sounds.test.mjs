@@ -180,6 +180,36 @@ test('known structured terminal generation errors classify as error without text
   }), 'error');
 });
 
+test('captured top-level conversation_too_large error_code shape classifies as error', () => {
+  const { api } = soundHarness();
+  assert.equal(api.classify(capture(), {
+    message: null,
+    conversation_id: 'conversation-1',
+    error: 'You have reached the maximum length for this conversation.',
+    error_code: 'conversation_too_large'
+  }), 'error');
+});
+
+test('same-turn success then conversation_too_large emits one ding and one buzz', () => {
+  const harness = soundHarness(10, [true, true]);
+  const state = successfulCapture('turn-1');
+  const tooLarge = {
+    message: null,
+    conversation_id: 'conversation-1',
+    error: 'You have reached the maximum length for this conversation.',
+    error_code: 'conversation_too_large'
+  };
+
+  harness.api.observe(state, null);
+  harness.api.observe(state, tooLarge);
+  harness.api.observe(state, null);
+  harness.api.observe(state, tooLarge);
+
+  assert.deepEqual(harness.emitted, ['success', 'error']);
+  assert.equal(harness.api.keys().length, 2,
+    'successful and error terminal states for one turn must de-duplicate independently');
+});
+
 test('terminal key is remembered only after playback actually starts', () => {
   const harness = soundHarness(10, [false, true]);
   const state = successfulCapture('turn-1');
