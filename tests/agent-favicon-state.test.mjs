@@ -114,6 +114,7 @@ function renderHarness() {
     let agentFaviconOriginalHref = null;
     let agentFaviconRenderGeneration = 0;
     function logDiagnostic(level, name, details) { this.diagnostics.push({ level, name, details }); }
+    ${productionFunctionSource('errorMessage')}
     ${productionFunctionSource('agentFaviconOriginalSource')}
     ${productionFunctionSource('ensureAgentFaviconOverrideLink')}
     ${productionFunctionSource('agentFaviconRecolorPixels')}
