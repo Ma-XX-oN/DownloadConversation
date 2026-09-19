@@ -278,7 +278,7 @@ test('resume repetition of an already recovered User message does not create ano
 });
 
 test('reload restoration is wired from a synchronously cloned stock conversation response', () => {
-  assert.match(userscript, /@version\s+1\.4\.0-issue\.140\.3/);
+  assert.match(userscript, /@version\s+1\.5\.0/);
   const install = productionFunctionSource('installNetworkCapture');
   assert.match(install, /agentStopwatchIsInitialConversationUrl\(requestUrl\)/);
   assert.match(install, /cloneSafely\(response\)/);

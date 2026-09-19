@@ -140,7 +140,7 @@ function finalCapture(exchangeId) {
 }
 
 test('Issue 136 development version and fixed top-right stopwatch control are present', () => {
-  assert.match(userscript, /@version\s+1\.4\.0/);
+  assert.match(userscript, /@version\s+1\.5\.0/);
   assert.match(userscript, /AGENT_STOPWATCH_ID\s*=\s*'tm-agent-turn-stopwatch'/);
   const ensure = productionFunctionSource('ensureAgentStopwatchControl');
   assert.match(ensure, /style\.position\s*=\s*'fixed'/);
