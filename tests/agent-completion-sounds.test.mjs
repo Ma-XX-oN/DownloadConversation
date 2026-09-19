@@ -14,6 +14,7 @@ function soundHarness(volume = 10, playbackResults = [true]) {
   vm.runInNewContext(`
     let agentSoundVolume = ${volume};
     let agentSoundAudioContext = null;
+    let agentSoundPendingTerminal = null;
     const AGENT_SOUND_TERMINAL_KEY_LIMIT = 128;
     const agentSoundTerminalKeys = new Set();
     function playAgentSound(kind) {
@@ -23,6 +24,9 @@ function soundHarness(volume = 10, playbackResults = [true]) {
     function agentSoundHandleUserGesture() {}
     function logDiagnostic(level, name, details) { this.diagnostics.push({ level, name, details }); }
     ${productionFunctionSource('agentSoundRememberTerminalKey')}
+    ${productionFunctionSource('agentSoundRememberPendingTerminal')}
+    ${productionFunctionSource('agentSoundClearPendingTerminal')}
+    ${productionFunctionSource('agentSoundRetryPendingTerminal')}
     ${productionFunctionSource('agentTerminalIsPollingTimeout')}
     ${productionFunctionSource('agentTerminalSuccessfulFinal')}
     ${productionFunctionSource('agentTerminalExchangeId')}
@@ -36,7 +40,9 @@ function soundHarness(volume = 10, playbackResults = [true]) {
         const terminal = agentTerminalNormalize(capture, event);
         if (terminal) agentSoundHandleTerminal(terminal);
       },
-      keys: () => [...agentSoundTerminalKeys]
+      retry() { return agentSoundRetryPendingTerminal(); },
+      keys: () => [...agentSoundTerminalKeys],
+      pending: () => agentSoundPendingTerminal ? { ...agentSoundPendingTerminal } : null
     };
   `, context);
   return context;
@@ -210,17 +216,23 @@ test('same-turn success then conversation_too_large emits one ding and one buzz'
     'successful and error terminal states for one turn must de-duplicate independently');
 });
 
-test('terminal key is remembered only after playback actually starts', () => {
+test('terminal cue is retained after failed playback and remembered only after replay starts', () => {
   const harness = soundHarness(10, [false, true]);
   const state = successfulCapture('turn-1');
 
   harness.api.observe(state, null);
   assert.deepEqual(harness.emitted, ['success']);
   assert.deepEqual(Array.from(harness.api.keys()), [], 'failed playback must not consume the terminal key');
+  assert.equal(harness.api.pending()?.kind, 'success', 'failed playback must retain the terminal cue');
 
   harness.api.observe(state, null);
-  assert.deepEqual(harness.emitted, ['success', 'success'], 'same terminal may retry after a failed playback attempt');
-  assert.equal(harness.api.keys().length, 1, 'successful playback consumes the terminal key exactly once');
+  assert.deepEqual(harness.emitted, ['success'],
+    'duplicate terminal observation must not be the retry trigger while a cue is pending');
+
+  assert.equal(harness.api.retry(), true, 'trusted-unlock replay must start the retained cue');
+  assert.deepEqual(harness.emitted, ['success', 'success']);
+  assert.equal(harness.api.pending(), null, 'successful replay consumes the pending cue');
+  assert.equal(harness.api.keys().length, 1, 'successful replay consumes the terminal key exactly once');
 
   harness.api.observe(state, null);
   assert.deepEqual(harness.emitted, ['success', 'success'], 'successful playback remains de-duplicated');
