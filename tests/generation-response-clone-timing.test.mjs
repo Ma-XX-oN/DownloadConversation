@@ -27,6 +27,18 @@ class FakeRequest {
     this.url = typeof input === 'string' ? input : input.url;
     this.method = String(init.method ?? input?.method ?? 'GET').toUpperCase();
     this.headers = new Map();
+    this.bodyText = init.body ?? input?.bodyText ?? '';
+  }
+
+  clone() {
+    return new FakeRequest(this.url, {
+      method: this.method,
+      body: this.bodyText
+    });
+  }
+
+  async text() {
+    return String(this.bodyText ?? '');
   }
 }
 
@@ -130,7 +142,14 @@ test('reload resume response clone is acquired before the stock response can be 
   };
   vm.runInNewContext(productionFetchWrapperSource(), context);
 
-  const returned = await pageWindow.fetch('/backend-api/f/conversation/resume', { method: 'POST' });
+  const resumeBody = JSON.stringify({
+    conversation_id: 'conversation-1',
+    offset: 0
+  });
+  const returned = await pageWindow.fetch('/backend-api/f/conversation/resume', {
+    method: 'POST',
+    body: resumeBody
+  });
   assert.equal(returned, originalResponse,
     'The stock page must receive its original resume Response unchanged.');
 
@@ -144,4 +163,6 @@ test('reload resume response clone is acquired before the stock response can be 
   assert.equal(resumedResponses[0].response.independent_clone, true,
     'Reload terminal observation must consume only the independent resume Response clone.');
   assert.equal(resumedResponses[0].request.url, '/backend-api/f/conversation/resume');
+  assert.equal(await resumedResponses[0].request.text(), resumeBody,
+    'The independently-owned resume Request clone must preserve the submitted body.');
 });
