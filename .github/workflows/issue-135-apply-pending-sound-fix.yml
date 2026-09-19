@@ -19,7 +19,7 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: 22
-      - name: Apply isolated pending-sound correction
+      - name: Apply isolated pending-sound and terminal-dispatch correction
         run: node scripts/issue-135-apply-pending-sound-fix.mjs
       - name: Verify issue/version identity
         run: node scripts/check-development-version.mjs --branch issue-135-agent-completion-sounds
@@ -34,6 +34,7 @@ jobs:
           tests/agent-completion-sound-pending.test.mjs
           tests/agent-terminal-dispatch.test.mjs
           tests/agent-terminal-polling-timeout.test.mjs
+          tests/agent-terminal-polling-timeout-observer.test.mjs
           tests/agent-turn-stopwatch-stream.test.mjs
           tests/agent-favicon-state.test.mjs
           tests/agent-favicon-browser-selection.test.mjs
@@ -51,5 +52,5 @@ jobs:
           git config user.name 'github-actions[bot]'
           git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
           git add chatgpt-conversation-markdown-export.user.js
-          git commit -m 'fix(#135): replay pending sound after audio unlock'
+          git commit -m 'fix(#135): repair terminal dispatch and pending sound'
           git push origin HEAD:issue-135-agent-completion-sounds
