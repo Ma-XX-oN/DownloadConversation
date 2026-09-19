@@ -49,3 +49,20 @@ test('v1 object append to message metadata preserves existing exchange identity 
   assert.equal(capture.current_envelope.message.metadata.is_complete, true);
   assert.equal(capture.current_envelope.message.metadata.can_save, true);
 });
+
+test('resume detector recognizes only the exact same-origin f/conversation/resume endpoint', () => {
+  const context = {
+    URL,
+    location: { origin: 'https://chatgpt.com' }
+  };
+  vm.runInNewContext(`
+    ${productionFunctionSource('isConversationResumeUrl')}
+    this.match = isConversationResumeUrl;
+  `, context);
+
+  assert.equal(context.match('https://chatgpt.com/backend-api/f/conversation/resume'), true);
+  assert.equal(context.match('/backend-api/f/conversation/resume'), true);
+  assert.equal(context.match('/backend-api/f/conversation'), false);
+  assert.equal(context.match('/backend-api/f/conversation/resume/extra'), false);
+  assert.equal(context.match('https://example.com/backend-api/f/conversation/resume'), false);
+});
