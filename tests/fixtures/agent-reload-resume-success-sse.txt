@@ -1,0 +1,22 @@
+event: delta_encoding
+data: "v1"
+
+data: {"type":"input_message","input_message":{"id":"31d021ea-4720-4a1c-88bf-8d84d5e66f2b","author":{"role":"user","name":null,"metadata":{}},"create_time":1789799227.041,"content":{"content_type":"text","parts":["Do it again"]},"status":"finished_successfully","end_turn":null,"metadata":{"request_id":"461ff2ed-8eea-424c-b858-a1c27fd09338","turn_exchange_id":"d224d5a7-3ba9-4fd9-beb7-7d4c234e9b4d","working_turn_id":"d224d5a7-3ba9-4fd9-beb7-7d4c234e9b4d","turn_id":"4c03452f-815b-4d38-804f-6e0b7ac2596a","parent_id":"a8a3d032-f31d-4b55-adb2-262df73e8600"},"recipient":"all","channel":null},"conversation_id":"6aae0d5c-7cbc-83e9-ac16-fbf6c7d5e82d"}
+
+event: delta
+data: {"v":{"message":{"id":"e30fde15-3d8c-4cb5-8275-502895162756","author":{"role":"assistant","name":null,"metadata":{}},"create_time":1789799243.393911,"content":{"content_type":"text","parts":[""]},"status":"in_progress","end_turn":null,"metadata":{"request_id":"461ff2ed-8eea-424c-b858-a1c27fd09338","turn_exchange_id":"d224d5a7-3ba9-4fd9-beb7-7d4c234e9b4d","working_turn_id":"d224d5a7-3ba9-4fd9-beb7-7d4c234e9b4d","turn_id":"4f99570e-99fe-4a11-aef3-cbdea340a5b8"},"recipient":"all","channel":"final"},"conversation_id":"6aae0d5c-7cbc-83e9-ac16-fbf6c7d5e82d","error":null,"error_code":null}}
+
+data: {"type":"message_marker","conversation_id":"6aae0d5c-7cbc-83e9-ac16-fbf6c7d5e82d","message_id":"e30fde15-3d8c-4cb5-8275-502895162756","marker":"final_channel_token","event":"first"}
+
+event: delta
+data: {"p":"/message/content/parts/0","o":"append","v":"Done"}
+
+event: delta
+data: {"p":"","o":"patch","v":[{"p":"/message/content/parts/0","o":"append","v":". I waited about 10 seconds again."},{"p":"/message/status","o":"replace","v":"finished_successfully"},{"p":"/message/end_turn","o":"replace","v":true},{"p":"/message/metadata","o":"append","v":{"is_complete":true,"can_save":true,"finish_details":{"type":"stop","stop_tokens":[200002]}}}]}
+
+data: {"type":"message_marker","conversation_id":"6aae0d5c-7cbc-83e9-ac16-fbf6c7d5e82d","message_id":"e30fde15-3d8c-4cb5-8275-502895162756","marker":"last_token","event":"last"}
+
+data: {"type":"message_stream_complete","conversation_id":"6aae0d5c-7cbc-83e9-ac16-fbf6c7d5e82d"}
+
+data: [DONE]
+
