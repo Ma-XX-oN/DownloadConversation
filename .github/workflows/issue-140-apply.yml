@@ -1,0 +1,39 @@
+name: Issue 140 apply resume parser correction
+
+on:
+  push:
+    branches:
+      - issue-140-reload-resume-terminal
+
+permissions:
+  contents: write
+
+jobs:
+  apply:
+    if: github.actor != 'github-actions[bot]'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - name: Apply verified parser correction
+        run: python scripts/issue-140-apply.py
+      - name: Production JSDoc coverage
+        run: node scripts/check-jsdoc.mjs
+      - name: JavaScript syntax
+        run: node --check chatgpt-conversation-markdown-export.user.js
+      - name: Resume metadata and SSE regressions
+        run: node --test tests/agent-resume-metadata-patch.test.mjs tests/agent-turn-stopwatch-stream.test.mjs
+      - name: Shared terminal regression
+        run: node --test tests/agent-terminal-dispatch.test.mjs tests/agent-completion-sounds.test.mjs
+      - name: Commit parser correction
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add chatgpt-conversation-markdown-export.user.js
+          git diff --cached --check
+          git commit -m "fix(#140): preserve metadata on v1 object append"
+          git push origin HEAD:issue-140-reload-resume-terminal
