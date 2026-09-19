@@ -20,7 +20,7 @@ jobs:
         with:
           node-version: 22
       - name: Apply production, tests, and design correction
-        run: python scripts/issue-148-favicon-red-browser-fix.py
+        run: python scripts/issue-148-favicon-red-browser-fix-wrapper.py
       - name: Production JSDoc coverage
         run: node scripts/check-jsdoc.mjs
       - name: JavaScript syntax
