@@ -1,0 +1,58 @@
+name: Issue 140 reload guarded correction
+
+on:
+  push:
+    branches:
+      - issue-140-success-terminal-capture
+
+permissions:
+  contents: write
+
+jobs:
+  apply:
+    if: github.actor != 'github-actions[bot]'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - name: Apply asserted correction
+        run: python scripts/apply-issue-140-reload.py
+      - name: Production JSDoc coverage
+        run: node scripts/check-jsdoc.mjs
+      - name: JavaScript syntax
+        run: node --check chatgpt-conversation-markdown-export.user.js
+      - name: Version identity regression
+        run: node --test tests/version-identity.test.mjs
+      - name: Reload stopwatch restoration regression
+        run: node --test tests/agent-turn-stopwatch-reload.test.mjs
+      - name: Agent terminal shared dispatch regression
+        run: node --test tests/agent-terminal-dispatch.test.mjs
+      - name: Agent completion sound regression
+        run: node --test tests/agent-completion-sounds.test.mjs
+      - name: Agent turn stopwatch regression
+        run: node --test tests/agent-turn-stopwatch.test.mjs
+      - name: Agent turn stopwatch stream integration
+        run: node --test tests/agent-turn-stopwatch-stream.test.mjs
+      - name: Agent turn stopwatch live total
+        run: node --test tests/agent-turn-stopwatch-live-total.test.mjs
+      - name: Agent terminal polling-timeout regression
+        run: node --test tests/agent-terminal-polling-timeout.test.mjs
+      - name: Generation response clone timing
+        run: node --test tests/generation-response-clone-timing.test.mjs
+      - name: Stream tail recovery regression
+        run: node --test tests/stream-tail-recovery.test.mjs
+      - name: Stock network diagnostics regression
+        run: node --test tests/stock-network-diagnostics.test.mjs
+      - name: Commit verified correction
+        run: |
+          git diff --check
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add chatgpt-conversation-markdown-export.user.js DESIGN.md
+          git diff --cached --quiet && { echo "No correction produced"; exit 1; }
+          git commit -m "fix(#140): restore stopwatch after reload"
+          git push
