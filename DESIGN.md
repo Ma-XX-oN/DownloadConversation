@@ -567,3 +567,7 @@ visible `Retry` UI and does not add an alternate/fallback terminal-detection pat
 ## Generation response clone ownership
 
 For `POST /backend-api/f/conversation`, DownloadConversation must acquire its passive generation-response clone synchronously in the fetch response handler, before returning the original `Response` to ChatGPT. Request-body parsing may finish later; the already-owned response clone waits for that request capture and is then consumed by the existing structured SSE path. This prevents ChatGPT from locking or disturbing the original response body before DownloadConversation acquires its clone. Clone acquisition failure is diagnostic-only and does not add a rendered-text or DOM terminal fallback.
+
+## Shared agent terminal dispatch
+
+Structured terminal state is normalized exactly once before any terminal side effect. The normalizer determines terminal kind, conversation identity, exchange identity, terminal de-duplication key, and one monotonic completion timestamp. Successful-final exchange identity prefers the final Assistant message metadata; structured capture/request identity is used only by the same shared normalizer when needed. The normalized immutable terminal object is then dispatched to the sound and stopwatch handlers. Neither consumer independently classifies terminal state or reconstructs terminal identity. The stopwatch still rejects a normalized terminal whose exchange identity does not match the active stopwatch session. Rendered text and DOM error strings are not terminal detectors.

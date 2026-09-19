@@ -20,7 +20,8 @@ function soundHarness() {
   const context = {
     emitted: [],
     document: { addEventListener() {} },
-    diagnostics: []
+    diagnostics: [],
+    performance: { now: () => 1000 }
   };
   vm.runInNewContext(`
     let agentSoundVolume = 10;
@@ -30,14 +31,20 @@ function soundHarness() {
     function playAgentSound(kind) { this.emitted.push(kind); return true; }
     function agentSoundHandleUserGesture() {}
     function logDiagnostic(level, name, details) { this.diagnostics.push({ level, name, details }); }
-    ${productionFunctionSource('agentSoundTerminalKey')}
     ${productionFunctionSource('agentSoundRememberTerminalKey')}
     ${productionFunctionSource('agentTerminalIsPollingTimeout')}
-    ${productionFunctionSource('agentSoundClassifyTerminal')}
-    ${productionFunctionSource('agentSoundObserveTerminal')}
+    ${productionFunctionSource('agentTerminalSuccessfulFinal')}
+    ${productionFunctionSource('agentTerminalExchangeId')}
+    ${productionFunctionSource('agentTerminalKey')}
+    ${productionFunctionSource('agentTerminalClassifyKind')}
+    ${productionFunctionSource('agentTerminalNormalize')}
+    ${productionFunctionSource('agentSoundHandleTerminal')}
     this.api = {
-      classify: agentSoundClassifyTerminal,
-      observe: agentSoundObserveTerminal,
+      classify(capture, event) { return agentTerminalNormalize(capture, event)?.kind ?? null; },
+      observe(capture, event) {
+        const terminal = agentTerminalNormalize(capture, event);
+        if (terminal) agentSoundHandleTerminal(terminal);
+      },
       keys: () => [...agentSoundTerminalKeys]
     };
   `, context);
@@ -78,13 +85,20 @@ function stopwatchHarness() {
     ${productionFunctionSource('agentStopwatchRecordLap')}
     ${productionFunctionSource('agentStopwatchObserveRequest')}
     ${productionFunctionSource('agentStopwatchObserveInputMessage')}
-    ${productionFunctionSource('agentStopwatchSuccessfulFinal')}
     ${productionFunctionSource('agentTerminalIsPollingTimeout')}
-    ${productionFunctionSource('agentStopwatchObserveTerminal')}
+    ${productionFunctionSource('agentTerminalSuccessfulFinal')}
+    ${productionFunctionSource('agentTerminalExchangeId')}
+    ${productionFunctionSource('agentTerminalKey')}
+    ${productionFunctionSource('agentTerminalClassifyKind')}
+    ${productionFunctionSource('agentTerminalNormalize')}
+    ${productionFunctionSource('agentStopwatchHandleTerminal')}
     this.api = {
       request: agentStopwatchObserveRequest,
       input: agentStopwatchObserveInputMessage,
-      terminal: agentStopwatchObserveTerminal,
+      terminal(capture, event = null) {
+        const terminal = agentTerminalNormalize(capture, event);
+        if (terminal) agentStopwatchHandleTerminal(terminal);
+      },
       state: () => agentStopwatchState,
       text: () => document.getElementById(AGENT_STOPWATCH_ID)?.textContent ?? ''
     };

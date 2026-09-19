@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         ChatGPT Conversation Markdown Recorder
 // @namespace    https://chatgpt.com/
-// @version      1.4.0-issue.140.1
+// @version      1.4.0-issue.140.2
 // @description  Exports the current ChatGPT conversation directly from the Conversation API as Markdown or JSONL.
 // @match        https://chatgpt.com/*
 // @match        https://chat.openai.com/*
@@ -2671,18 +2671,21 @@
   }
 
   /**
-   * Returns one stable generation-turn identity for terminal-sound de-duplication.
+   * Returns one stable terminal identity from the shared normalized exchange identity.
    *
    * @param {Object} capture - Mutable streamed-turn capture.
-   * @returns {string|null} Stable conversation/turn key, or null when the request lacks identity.
+   * @param {string|null} exchangeId - Shared structured exchange identity, when available.
+   * @param {Object|null} finalMessage - Structured successful final Assistant message, when available.
+   * @returns {string|null} Stable conversation/turn key, or null when no structured identity exists.
    */
-  function agentSoundTerminalKey(capture) {
+  function agentTerminalKey(capture, exchangeId = null, finalMessage = null) {
     const request = [...(capture?.request_messages ?? [])]
       .reverse()
       .find(message => typeof message?.id === 'string' && message.id);
-    const metadata = request?.metadata ?? {};
-    const turnIdentity = metadata.turn_exchange_id || metadata.working_turn_id ||
-      metadata.request_id || request?.id || capture?.parent_message_id || null;
+    const finalMetadata = finalMessage?.metadata ?? {};
+    const requestMetadata = request?.metadata ?? {};
+    const turnIdentity = exchangeId || finalMetadata.request_id || requestMetadata.request_id ||
+      request?.id || capture?.parent_message_id || null;
     if (!turnIdentity) return null;
     return `${capture?.conversation_id ?? 'new'}:${turnIdentity}`;
   }
@@ -2781,8 +2784,7 @@
         conversation_id: capture?.conversation_id ?? null,
         terminal_key: agentSoundTerminalKey(capture)
       });
-      agentSoundObserveTerminal(capture, event);
-      agentStopwatchObserveTerminal(capture, event);
+      agentTerminalObserve(capture, event);
     } catch (error) {
       logDiagnostic('debug', 'agent-terminal-stats-request-parse-failed', {
         error: boundedDiagnosticText(errorMessage(error), 1000)
@@ -2791,16 +2793,13 @@
   }
 
   /**
-   * Classifies the currently known structured generation terminal state.
-   *
-   * Error matching is intentionally field-based and finite. New provider terminal states are added
-   * here only after a real captured log establishes their exact structured shape.
+   * Classifies one structured agent terminal observation without deriving consumer-specific state.
    *
    * @param {Object} capture - Mutable streamed-turn capture.
    * @param {Object|null} event - Most recently parsed structured SSE/v1 event, when any.
    * @returns {string|null} `success`, `error`, or null when the turn is not terminal.
    */
-  function agentSoundClassifyTerminal(capture, event) {
+  function agentTerminalClassifyKind(capture, event) {
     const structured = [];
     if (event && typeof event === 'object' && !Array.isArray(event)) structured.push(event);
     if (event?.v && typeof event.v === 'object' && !Array.isArray(event.v)) structured.push(event.v);
@@ -2814,29 +2813,23 @@
         return 'error';
       }
     }
-    const successfulFinal = [...(capture?.stream_messages ?? [])].reverse().find(message =>
-      message?.author?.role === 'assistant' &&
-      message?.channel === 'final' &&
-      message?.status === 'finished_successfully' &&
-      message?.end_turn === true
-    );
-    return successfulFinal ? 'success' : null;
+    return agentTerminalSuccessfulFinal(capture) ? 'success' : null;
   }
 
   /**
-   * Emits a terminal-state sound once for one stable generation turn.
+   * Handles one already-normalized terminal event for browser audio only.
    *
-   * @param {Object} capture - Mutable streamed-turn capture.
-   * @param {Object|null} event - Most recently parsed structured SSE/v1 event, when any.
+   * @param {Object} terminal - Shared normalized terminal event.
    * @returns {void} No value is returned.
    */
-  function agentSoundObserveTerminal(capture, event) {
-    const kind = agentSoundClassifyTerminal(capture, event);
+  function agentSoundHandleTerminal(terminal) {
+    const kind = terminal?.kind ?? null;
+    const key = terminal?.terminal_key ?? null;
     if (!kind) return;
-    const key = agentSoundTerminalKey(capture);
     logDiagnostic('debug', 'agent-sound-terminal-classified', {
       kind,
       terminal_key: key,
+      exchange_id: terminal?.exchange_id ?? null,
       volume: agentSoundVolume,
       audio_context_state: agentSoundAudioContext?.state ?? 'absent'
     });
@@ -3084,12 +3077,12 @@
   }
 
   /**
-   * Returns the successful final Assistant message that terminates one working exchange.
+   * Returns the exact structured successful final Assistant message for one capture.
    *
    * @param {Object} capture - Mutable streamed-turn capture.
-   * @returns {Object|null} Matching final Assistant message, or null while work remains open.
+   * @returns {Object|null} Successful final Assistant message, or null when not terminal-success.
    */
-  function agentStopwatchSuccessfulFinal(capture) {
+  function agentTerminalSuccessfulFinal(capture) {
     return [...(capture?.stream_messages ?? [])].reverse().find(message =>
       message?.author?.role === 'assistant' &&
       message?.channel === 'final' &&
@@ -3099,20 +3092,56 @@
   }
 
   /**
-   * Stops the active stopwatch for a successful final Assistant or evidenced polling timeout in the same exchange.
+   * Derives the shared structured exchange identity for one terminal observation.
    *
    * @param {Object} capture - Mutable streamed-turn capture.
-   * @param {Object|null} event - Structured terminal event when the client reports one.
+   * @param {Object|null} finalMessage - Structured successful final Assistant message, when available.
+   * @returns {string|null} Turn exchange identity shared by all terminal consumers, or null.
+   */
+  function agentTerminalExchangeId(capture, finalMessage = null) {
+    const finalMetadata = finalMessage?.metadata ?? {};
+    const request = [...(capture?.request_messages ?? [])]
+      .reverse()
+      .find(message => typeof message?.id === 'string' && message.id);
+    const requestMetadata = request?.metadata ?? {};
+    return finalMetadata.turn_exchange_id || finalMetadata.working_turn_id ||
+      capture?.stopwatch_exchange_id || requestMetadata.turn_exchange_id ||
+      requestMetadata.working_turn_id || null;
+  }
+
+  /**
+   * Normalizes one structured terminal observation exactly once before fan-out to consumers.
+   *
+   * @param {Object} capture - Mutable streamed-turn capture.
+   * @param {Object|null} event - Most recently parsed structured SSE/v1 event, when any.
+   * @returns {Object|null} Shared immutable terminal event, or null when not terminal.
+   */
+  function agentTerminalNormalize(capture, event = null) {
+    const kind = agentTerminalClassifyKind(capture, event);
+    if (!kind) return null;
+    const finalMessage = kind === 'success' ? agentTerminalSuccessfulFinal(capture) : null;
+    const exchangeId = agentTerminalExchangeId(capture, finalMessage);
+    return Object.freeze({
+      kind,
+      conversation_id: capture?.conversation_id ?? null,
+      exchange_id: exchangeId,
+      terminal_key: agentTerminalKey(capture, exchangeId, finalMessage),
+      completed_at_ms: performance.now()
+    });
+  }
+
+  /**
+   * Handles one already-normalized terminal event for the active stopwatch only.
+   *
+   * @param {Object} terminal - Shared normalized terminal event.
    * @returns {void} No value is returned.
    */
-  function agentStopwatchObserveTerminal(capture, event = null) {
+  function agentStopwatchHandleTerminal(terminal) {
     if (!agentStopwatchState?.active) return;
-    const finalMessage = agentStopwatchSuccessfulFinal(capture);
-    const pollingTimeout = agentTerminalIsPollingTimeout(event);
-    if (!finalMessage && !pollingTimeout) return;
-    const exchangeId = capture?.stopwatch_exchange_id ?? null;
+    const exchangeId = terminal?.exchange_id ?? null;
     if (!exchangeId || exchangeId !== agentStopwatchState.exchange_id) return;
-    const completedAtMs = performance.now();
+    const completedAtMs = terminal.completed_at_ms;
+    if (!Number.isFinite(completedAtMs)) return;
     agentStopwatchRecordLap(completedAtMs);
     agentStopwatchState.active = false;
     agentStopwatchState.total_ms = completedAtMs - agentStopwatchState.started_at_ms;
@@ -3122,8 +3151,33 @@
     agentStopwatchRender(completedAtMs);
   }
 
+  /** Ordered consumers of one shared normalized terminal event. */
+  const agentTerminalHandlers = Object.freeze([
+    agentSoundHandleTerminal,
+    agentStopwatchHandleTerminal
+  ]);
+
   /**
-   * Observes one parsed generation stream event for User follow-up identity and terminal completion.
+   * Normalizes one structured terminal observation once and fans it out to all terminal consumers.
+   *
+   * @param {Object} capture - Mutable streamed-turn capture.
+   * @param {Object|null} event - Most recently parsed structured SSE/v1 event, when any.
+   * @returns {void} No value is returned.
+   */
+  function agentTerminalObserve(capture, event = null) {
+    const terminal = agentTerminalNormalize(capture, event);
+    if (!terminal) return;
+    logDiagnostic('debug', 'agent-terminal-normalized', {
+      kind: terminal.kind,
+      conversation_id: terminal.conversation_id,
+      exchange_id: terminal.exchange_id,
+      terminal_key: terminal.terminal_key
+    });
+    for (const handler of agentTerminalHandlers) handler(terminal);
+  }
+
+  /**
+   * Observes structured stream events that affect stopwatch submission/lap state before terminal fan-out.
    *
    * @param {Object} capture - Mutable streamed-turn capture.
    * @param {Object} event - Parsed provider stream event.
@@ -3133,7 +3187,6 @@
     if (event && event.type === 'input_message' && event.input_message?.author?.role === 'user') {
       agentStopwatchObserveInputMessage(capture, event.input_message);
     }
-    agentStopwatchObserveTerminal(capture, event);
   }
 
   // BEGIN Issue #123 streamed-tail recovery
@@ -3412,7 +3465,7 @@
           capture.complete = true;
         }
         capture.updated_at = Date.now();
-        agentSoundObserveTerminal(capture, null);
+        agentTerminalObserve(capture, null);
         continue;
       }
       let parsed;
@@ -3420,7 +3473,7 @@
       if (typeof parsed === 'string') continue;
       streamTailApplyEvent(capture, parsed);
       agentStopwatchObserveStreamEvent(capture, parsed);
-      agentSoundObserveTerminal(capture, parsed);
+      agentTerminalObserve(capture, parsed);
     }
     if (capture.complete) streamTailPersistCapture(capture);
   }

@@ -55,14 +55,21 @@ function stopwatchHarness() {
     ${productionFunctionSource('agentStopwatchRecordLap')}
     ${productionFunctionSource('agentStopwatchObserveRequest')}
     ${productionFunctionSource('agentStopwatchObserveInputMessage')}
-    ${productionFunctionSource('agentStopwatchSuccessfulFinal')}
     ${productionFunctionSource('agentTerminalIsPollingTimeout')}
-    ${productionFunctionSource('agentStopwatchObserveTerminal')}
+    ${productionFunctionSource('agentTerminalSuccessfulFinal')}
+    ${productionFunctionSource('agentTerminalExchangeId')}
+    ${productionFunctionSource('agentTerminalKey')}
+    ${productionFunctionSource('agentTerminalClassifyKind')}
+    ${productionFunctionSource('agentTerminalNormalize')}
+    ${productionFunctionSource('agentStopwatchHandleTerminal')}
     ${productionFunctionSource('agentStopwatchObserveStreamEvent')}
     this.api = {
       request: agentStopwatchObserveRequest,
       event: agentStopwatchObserveStreamEvent,
-      terminal: agentStopwatchObserveTerminal,
+      terminal(capture, event = null) {
+        const terminal = agentTerminalNormalize(capture, event);
+        if (terminal) agentStopwatchHandleTerminal(terminal);
+      },
       render: agentStopwatchRender,
       state: () => agentStopwatchState,
       text: () => document.getElementById(AGENT_STOPWATCH_ID)?.textContent ?? ''
@@ -266,7 +273,7 @@ test('stopwatch is wired to local POST time, enriched input_message state, and s
   assert.match(observer, /event\.type === 'input_message'/);
   assert.doesNotMatch(observer, /message_type/);
 
-  const terminal = productionFunctionSource('agentStopwatchSuccessfulFinal');
+  const terminal = productionFunctionSource('agentTerminalSuccessfulFinal');
   assert.match(terminal, /channel === 'final'/);
   assert.match(terminal, /status === 'finished_successfully'/);
   assert.match(terminal, /end_turn === true/);
