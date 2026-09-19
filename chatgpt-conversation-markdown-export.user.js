@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         ChatGPT Conversation Markdown Recorder
 // @namespace    https://chatgpt.com/
-// @version      1.5.0
+// @version      1.5.0-issue.135.2
 // @description  Exports the current ChatGPT conversation directly from the Conversation API as Markdown or JSONL.
 // @match        https://chatgpt.com/*
 // @match        https://chat.openai.com/*
@@ -2691,9 +2691,9 @@
   }
 
   /**
-   * Retains one terminal turn key in a bounded insertion-ordered set.
+   * Retains one terminal sound-event identity in a bounded insertion-ordered set.
    *
-   * @param {string} key - Stable terminal turn key.
+   * @param {string} key - Stable terminal sound-event key.
    * @returns {void} No value is returned.
    */
   function agentSoundRememberTerminalKey(key) {
@@ -2805,8 +2805,9 @@
     if (event?.v && typeof event.v === 'object' && !Array.isArray(event.v)) structured.push(event.v);
     for (const candidate of structured) {
       if (agentTerminalIsPollingTimeout(candidate)) return 'error';
-      const providerCode = candidate.code ?? candidate?.error?.code ?? null;
-      if (candidate.type === 'error' && providerCode === 'conversation_too_large') return 'error';
+      const providerCode = candidate.error_code ?? candidate.code ?? candidate?.error?.code ?? null;
+      if (providerCode === 'conversation_too_large' &&
+          (candidate.type === 'error' || candidate.error_code === 'conversation_too_large')) return 'error';
       if (candidate.result === 'error' &&
           candidate?.error?.reason === 'request_failed' &&
           Number(candidate?.error?.status_code) >= 400) {
@@ -2825,6 +2826,7 @@
   function agentSoundHandleTerminal(terminal) {
     const kind = terminal?.kind ?? null;
     const key = terminal?.terminal_key ?? null;
+    const soundKey = key && kind ? `${key}:${kind}` : null;
     if (!kind) return;
     logDiagnostic('debug', 'agent-sound-terminal-classified', {
       kind,
@@ -2833,8 +2835,8 @@
       volume: agentSoundVolume,
       audio_context_state: agentSoundAudioContext?.state ?? 'absent'
     });
-    if (!key) return;
-    if (agentSoundTerminalKeys.has(key)) {
+    if (!soundKey) return;
+    if (agentSoundTerminalKeys.has(soundKey)) {
       logDiagnostic('debug', 'agent-sound-duplicate-suppressed', {
         kind,
         terminal_key: key,
@@ -2850,7 +2852,7 @@
       });
       return;
     }
-    if (playAgentSound(kind)) agentSoundRememberTerminalKey(key);
+    if (playAgentSound(kind)) agentSoundRememberTerminalKey(soundKey);
   }
 
   document.addEventListener('pointerdown', agentSoundHandleUserGesture, true);
@@ -3354,7 +3356,7 @@
   function agentTerminalNormalize(capture, event = null) {
     const kind = agentTerminalClassifyKind(capture, event);
     if (!kind) return null;
-    const finalMessage = kind === 'success' ? agentTerminalSuccessfulFinal(capture) : null;
+    const finalMessage = agentTerminalSuccessfulFinal(capture);
     const exchangeId = agentTerminalExchangeId(capture, finalMessage);
     return Object.freeze({
       kind,
