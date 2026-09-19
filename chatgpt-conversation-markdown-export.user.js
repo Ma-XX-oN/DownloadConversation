@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         ChatGPT Conversation Markdown Recorder
 // @namespace    https://chatgpt.com/
-// @version      1.4.0-issue.140.2
+// @version      1.4.0-issue.140.3
 // @description  Exports the current ChatGPT conversation directly from the Conversation API as Markdown or JSONL.
 // @match        https://chatgpt.com/*
 // @match        https://chat.openai.com/*
@@ -3077,6 +3077,241 @@
   }
 
   /**
+   * Scans chronological Conversation API messages for the newest User-started
+   * working exchange and reports whether its true start boundary is proven.
+   *
+   * @param {Array<Object>} messages - Chronological de-duplicated API messages.
+   * @param {boolean} hasPreviousPage - Whether still-older API history exists.
+   * @returns {Object} Recovery candidate and boundary-completeness state.
+   */
+  function agentStopwatchRecoveryScan(messages, hasPreviousPage) {
+    const source = Array.isArray(messages) ? messages : [];
+    const latestUser = [...source].reverse().find(message =>
+      message?.author?.role === 'user' && agentStopwatchExchangeId(message)
+    );
+    if (!latestUser) {
+      return {
+        ready: !hasPreviousPage,
+        exchange_id: null,
+        user_messages: [],
+        final_message: null
+      };
+    }
+
+    const exchangeId = agentStopwatchExchangeId(latestUser);
+    const userMessages = source.filter(message =>
+      message?.author?.role === 'user' && agentStopwatchExchangeId(message) === exchangeId
+    );
+    const firstUser = userMessages[0] ?? null;
+    const firstUserIndex = firstUser ? source.indexOf(firstUser) : -1;
+    const olderBoundary = firstUserIndex > 0 && source.slice(0, firstUserIndex).some(message => {
+      const olderExchangeId = agentStopwatchExchangeId(message);
+      return olderExchangeId && olderExchangeId !== exchangeId;
+    });
+    const ready = olderBoundary || !hasPreviousPage;
+    const finalMessage = [...source].reverse().find(message =>
+      message?.author?.role === 'assistant' &&
+      agentStopwatchExchangeId(message) === exchangeId &&
+      message?.channel === 'final' &&
+      message?.status === 'finished_successfully' &&
+      message?.end_turn === true
+    ) ?? null;
+
+    return {
+      ready,
+      exchange_id: exchangeId,
+      user_messages: userMessages,
+      final_message: finalMessage
+    };
+  }
+
+  /**
+   * Pages backward only until the newest stopwatch exchange's true starting
+   * User prompt has been proven.
+   *
+   * @param {Object} initialPage - Stock initial Conversation API response.
+   * @param {Function} fetchOlderPage - Fetches one older page by start cursor.
+   * @param {Function} buildSpine - Builds chronological de-duplicated messages.
+   * @returns {Promise<Object>} Proven recovery candidate, or an empty candidate.
+   */
+  async function agentStopwatchCollectRecovery(initialPage, fetchOlderPage, buildSpine) {
+    assert(initialPage && typeof initialPage === 'object',
+      'Agent stopwatch recovery requires an initial Conversation API page.');
+    assert(typeof fetchOlderPage === 'function',
+      'Agent stopwatch recovery requires an older-page fetcher.');
+    assert(typeof buildSpine === 'function',
+      'Agent stopwatch recovery requires a conversation-spine builder.');
+
+    const pages = [initialPage];
+    const seenCursors = new Set();
+    while (true) {
+      const oldestPage = pages[pages.length - 1];
+      const hasPreviousPage = oldestPage?.page_info?.has_previous_page === true;
+      const spine = buildSpine(pages);
+      const recovery = agentStopwatchRecoveryScan(spine?.messages ?? [], hasPreviousPage);
+      if (recovery.ready || !hasPreviousPage) return recovery;
+
+      const cursor = oldestPage?.page_info?.start_cursor ?? null;
+      assert(cursor, 'Agent stopwatch recovery page is missing start_cursor.');
+      assert(!seenCursors.has(cursor),
+        `Agent stopwatch recovery repeated start_cursor ${cursor}.`);
+      seenCursors.add(cursor);
+      const olderPage = await fetchOlderPage(cursor);
+      assert(olderPage && typeof olderPage === 'object',
+        'Agent stopwatch recovery older-page fetch returned no page.');
+      pages.push(olderPage);
+    }
+  }
+
+  /**
+   * Tests the exact provider stream-status state that means the recovered
+   * stopwatch should continue advancing.
+   *
+   * @param {Object|null} payload - Parsed stream-status response.
+   * @returns {boolean} True only for the exact `IS_STREAMING` state.
+   */
+  function agentStopwatchStreamIsActive(payload) {
+    return payload?.status === 'IS_STREAMING';
+  }
+
+  /**
+   * Restores stopwatch state from persisted provider timestamps and bridges an
+   * active exchange into the current page's monotonic performance clock.
+   *
+   * @param {Object} recovery - Proven recovery candidate.
+   * @param {boolean} isStreaming - Whether the provider says work is streaming.
+   * @param {number} wallNowMs - Current wall-clock epoch milliseconds.
+   * @param {number} monotonicNowMs - Current page monotonic milliseconds.
+   * @returns {void} No value is returned.
+   */
+  function agentStopwatchApplyRecovery(recovery, isStreaming, wallNowMs, monotonicNowMs) {
+    if (!recovery?.ready || !recovery?.exchange_id || !recovery?.user_messages?.length) return;
+    assert(Number.isFinite(wallNowMs), 'Agent stopwatch recovery wall timestamp must be finite.');
+    assert(Number.isFinite(monotonicNowMs),
+      'Agent stopwatch recovery monotonic timestamp must be finite.');
+
+    const userTimesMs = recovery.user_messages.map(message => Number(message?.create_time) * 1000);
+    assert(userTimesMs.every(Number.isFinite),
+      'Agent stopwatch recovery User timestamps must be finite.');
+    for (let index = 1; index < userTimesMs.length; index += 1) {
+      assert(userTimesMs[index] >= userTimesMs[index - 1],
+        'Agent stopwatch recovery User timestamps must be chronological.');
+    }
+
+    const completedLaps = [];
+    for (let index = 1; index < userTimesMs.length; index += 1) {
+      completedLaps.push(userTimesMs[index] - userTimesMs[index - 1]);
+    }
+
+    const firstWallMs = userTimesMs[0];
+    const currentLapWallMs = userTimesMs[userTimesMs.length - 1];
+    agentStopwatchStopTimer();
+    if (isStreaming) {
+      agentStopwatchState = {
+        active: true,
+        started_at_ms: monotonicNowMs - Math.max(0, wallNowMs - firstWallMs),
+        lap_started_at_ms: monotonicNowMs - Math.max(0, wallNowMs - currentLapWallMs),
+        laps_ms: completedLaps,
+        total_ms: null,
+        exchange_id: recovery.exchange_id,
+        pending_submission_at_ms: null,
+        pending_message_id: null
+      };
+      agentStopwatchRender(monotonicNowMs);
+      agentStopwatchStartTimer();
+      return;
+    }
+
+    const finalMessage = recovery.final_message;
+    const finalSeconds = Number.isFinite(Number(finalMessage?.update_time))
+      ? Number(finalMessage.update_time)
+      : Number(finalMessage?.create_time);
+    const completedWallMs = finalSeconds * 1000;
+    assert(Number.isFinite(completedWallMs) && completedWallMs >= currentLapWallMs,
+      'Completed agent stopwatch recovery requires a terminal provider timestamp.');
+    completedLaps.push(completedWallMs - currentLapWallMs);
+    agentStopwatchState = {
+      active: false,
+      started_at_ms: monotonicNowMs - Math.max(0, wallNowMs - firstWallMs),
+      lap_started_at_ms: null,
+      laps_ms: completedLaps,
+      total_ms: completedWallMs - firstWallMs,
+      exchange_id: recovery.exchange_id,
+      pending_submission_at_ms: null,
+      pending_message_id: null
+    };
+    agentStopwatchRender(monotonicNowMs);
+  }
+
+  /**
+   * Tests whether one request URL is the stock initial Conversation API history
+   * endpoint whose response can restore stopwatch state after reload.
+   *
+   * @param {string} url - Candidate request URL.
+   * @returns {boolean} True only for `/backend-api/conversations/<id>`.
+   */
+  function agentStopwatchIsInitialConversationUrl(url) {
+    try {
+      const parsed = new URL(String(url ?? ''), location.href);
+      return parsed.origin === location.origin &&
+        /^\/backend-api\/conversations\/[^/]+$/.test(parsed.pathname);
+    } catch {
+      return false;
+    }
+  }
+
+  /**
+   * Fetches the provider stream status for one recovered conversation using the
+   * already captured authenticated Conversation API request context.
+   *
+   * @param {string} conversationId - Stable provider conversation id.
+   * @returns {Promise<Object>} Parsed stream-status payload.
+   */
+  async function agentStopwatchFetchStreamStatus(conversationId) {
+    const url = `${location.origin}/backend-api/conversation/${encodeURIComponent(conversationId)}/stream_status`;
+    const response = await apiFetch(url);
+    if (!response?.ok) {
+      throw new Error(`Agent stopwatch stream-status request failed with HTTP ${response?.status ?? 'unknown'}.`);
+    }
+    return response.json();
+  }
+
+  /**
+   * Reconstructs the newest stopwatch exchange from one cloned stock reload
+   * history response, paging backward only when the true prompt predates it.
+   *
+   * @param {Response} response - Independently owned stock history response clone.
+   * @returns {Promise<void>} Resolves after restoration is applied or skipped.
+   */
+  async function agentStopwatchObserveConversationResponse(response) {
+    if (agentStopwatchState) return;
+    if (!response?.ok) return;
+    const initialPage = await response.json();
+    const conversationId = initialPage?.conversation_id || currentConversationId();
+    if (!conversationId) return;
+
+    const recovery = await agentStopwatchCollectRecovery(
+      initialPage,
+      cursor => fetchOneConversationPage(
+        pageUrl(conversationId, cursor),
+        'Agent stopwatch recovery pagination request',
+        { request_kind: 'stopwatch-recovery', cursor }
+      ),
+      conversationSpineFromPages
+    );
+    if (!recovery.ready || agentStopwatchState) return;
+
+    const streamStatus = await agentStopwatchFetchStreamStatus(conversationId);
+    if (agentStopwatchState) return;
+    agentStopwatchApplyRecovery(
+      recovery,
+      agentStopwatchStreamIsActive(streamStatus),
+      Date.now(),
+      performance.now()
+    );
+  }
+
+  /**
    * Returns the exact structured successful final Assistant message for one capture.
    *
    * @param {Object} capture - Mutable streamed-turn capture.
@@ -3803,6 +4038,8 @@
         recordClickDiagnosticNetworkRequest(requestUrl, 'fetch');
         const requestMethod = String(request?.method ?? init.method ?? 'GET').toUpperCase();
         if (request) void agentTerminalObserveStatsRequest(request, requestUrl, requestMethod);
+        const stopwatchConversationRequest =
+          requestMethod === 'GET' && agentStopwatchIsInitialConversationUrl(requestUrl);
         const generationRequest = isGenerationStreamUrl(requestUrl) && requestMethod === 'POST';
         const steerTurnRequest = isSteerTurnUrl(requestUrl) && requestMethod === 'POST';
         const generationSubmittedAtMs = generationRequest ? performance.now() : null;
@@ -3813,9 +4050,23 @@
         const responsePromise = originalFetch.apply(this, args);
         return responsePromise.then(response => {
           const generationResponse = capturePromise ? cloneSafely(response) : null;
+          const stopwatchConversationResponse = stopwatchConversationRequest
+            ? cloneSafely(response)
+            : null;
           stockNetworkTraceFetchResponse(response, stockTrace);
           void communicationLogFetchResponse(response, stockTrace)
             .catch(communicationError => communicationLogReportFailure('fetch-response', communicationError));
+          if (stopwatchConversationRequest && !stopwatchConversationResponse) {
+            logDiagnostic('warnings', 'agent-stopwatch-recovery-response-clone-failure', {
+              url: boundedDiagnosticText(response?.url ?? requestUrl, 320)
+            });
+          }
+          if (stopwatchConversationResponse) {
+            void agentStopwatchObserveConversationResponse(stopwatchConversationResponse)
+              .catch(error => logDiagnostic('warnings', 'agent-stopwatch-recovery-failed', {
+                message: boundedDiagnosticText(errorMessage(error), 1000)
+              }));
+          }
           if (capturePromise && !generationResponse) {
             logDiagnostic('warnings', 'conversation-stream-tail-response-clone-failure', {
               url: boundedDiagnosticText(response?.url ?? requestUrl, 320)
