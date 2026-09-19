@@ -563,3 +563,7 @@ same generation identity.
 Rendered error text, DOM lifecycle labels, elapsed-time thresholds, and retry counts
 are not terminal-state authorities. The recorder does not infer this state from the
 visible `Retry` UI and does not add an alternate/fallback terminal-detection path.
+
+## Generation response clone ownership
+
+For `POST /backend-api/f/conversation`, DownloadConversation must acquire its passive generation-response clone synchronously in the fetch response handler, before returning the original `Response` to ChatGPT. Request-body parsing may finish later; the already-owned response clone waits for that request capture and is then consumed by the existing structured SSE path. This prevents ChatGPT from locking or disturbing the original response body before DownloadConversation acquires its clone. Clone acquisition failure is diagnostic-only and does not add a rendered-text or DOM terminal fallback.

@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         ChatGPT Conversation Markdown Recorder
 // @namespace    https://chatgpt.com/
-// @version      1.4.0
+// @version      1.4.0-issue.140.1
 // @description  Exports the current ChatGPT conversation directly from the Conversation API as Markdown or JSONL.
 // @match        https://chatgpt.com/*
 // @match        https://chat.openai.com/*
@@ -3759,15 +3759,25 @@
           : null;
         const responsePromise = originalFetch.apply(this, args);
         return responsePromise.then(response => {
+          const generationResponse = capturePromise ? cloneSafely(response) : null;
           stockNetworkTraceFetchResponse(response, stockTrace);
           void communicationLogFetchResponse(response, stockTrace)
             .catch(communicationError => communicationLogReportFailure('fetch-response', communicationError));
-          if (capturePromise) {
+          if (capturePromise && !generationResponse) {
+            logDiagnostic('warnings', 'conversation-stream-tail-response-clone-failure', {
+              url: boundedDiagnosticText(response?.url ?? requestUrl, 320)
+            });
+          }
+          if (capturePromise && generationResponse) {
             void capturePromise.then(capture => {
-              if (!capture) return;
-              const cloned = cloneSafely(response);
-              if (!cloned) return;
-              void captureGenerationStreamResponse(cloned, capture);
+              if (!capture) {
+                const cancelPromise = generationResponse.body?.cancel?.();
+                if (cancelPromise && typeof cancelPromise.catch === 'function') {
+                  void cancelPromise.catch(() => {});
+                }
+                return;
+              }
+              void captureGenerationStreamResponse(generationResponse, capture);
             });
           }
           return response;
