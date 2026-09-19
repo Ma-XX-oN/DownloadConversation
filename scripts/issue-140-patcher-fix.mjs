@@ -40,7 +40,7 @@ const after = `function exactFunctionEnd(source, functionStart, name) {
       }
       if ((mode === 'single' && char === "'") ||
           (mode === 'double' && char === '"') ||
-          (mode === 'template' && char === '\\`')) {
+          (mode === 'template' && char.charCodeAt(0) === 96)) {
         mode = 'code';
       }
       continue;
@@ -64,7 +64,7 @@ const after = `function exactFunctionEnd(source, functionStart, name) {
       mode = 'double';
       continue;
     }
-    if (char === '\\`') {
+    if (char.charCodeAt(0) === 96) {
       mode = 'template';
       continue;
     }
