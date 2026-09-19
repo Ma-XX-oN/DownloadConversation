@@ -151,6 +151,10 @@ line is promoted, the release increments the minor component `y` from the curren
 release, resets `z` to zero, and drops the issue qualifier; accepted releases therefore
 use the plain `x.y.0` form for that promotion.
 
+Version identity is established before issue work proceeds. On every issue-owned development branch, setting the correct `x.y.z-issue.<issue>.<iteration>` version is the first branch change before feature, production, test, documentation, or integration work. After integrating a dependency branch whose version belongs to another issue, the receiving branch immediately restores or advances its own issue-qualified version before any other work continues. Version correction is never deferred to cleanup, CI completion, user testing, or release preparation.
+
+Ordinary CI runs `scripts/check-development-version.mjs` before feature-specific verification. The guard derives the owning issue from `issue-<number>-...` branch identity, parses exactly one production userscript `@version`, and fails when the issue qualifier is malformed or belongs to a different issue. The guard validates only; it never rewrites a version or supplies a fallback. Non-issue branches do not invent an issue owner requirement.
+
 The AIConversationCore browser dependency remains pinned to an exact commit. Its
 semantic version is derived from the actually loaded bundle through
 `AIConversationCore.getVersion()` and is never duplicated as a DownloadConversation
