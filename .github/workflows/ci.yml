@@ -12,6 +12,8 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: 22
+      - name: Development branch/version identity
+        run: node scripts/check-development-version.mjs
       - name: Production JSDoc coverage
         run: node scripts/check-jsdoc.mjs
       - name: JavaScript syntax
