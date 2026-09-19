@@ -10,6 +10,10 @@ const fixture = JSON.parse(await readFile(
 ));
 
 test('stats-flush observer dispatches recognized polling timeout through shared terminal lifecycle', async () => {
+  const observerSource = productionFunctionSource('agentTerminalObserveStatsRequest');
+  assert.doesNotMatch(observerSource, /agent(?:Sound)?TerminalKey\s*\(/,
+    'Stats observer must not derive terminal identity outside the shared normalizer.');
+
   const context = {
     URL,
     payload: fixture.stats_flush,
@@ -35,10 +39,9 @@ test('stats-flush observer dispatches recognized polling timeout through shared 
     function agentTerminalObserve(capture, event) {
       this.dispatches.push({ capture, event });
     }
-    ${productionFunctionSource('agentTerminalKey')}
     ${productionFunctionSource('agentTerminalFailureFromStatsPayload')}
     ${productionFunctionSource('isAgentTerminalStatsUrl')}
-    ${productionFunctionSource('agentTerminalObserveStatsRequest')}
+    ${observerSource}
     this.run = () => agentTerminalObserveStatsRequest({
       async text() { return JSON.stringify(payload); }
     }, 'https://chatgpt.com/ces/statsc/flush', 'POST');
@@ -62,8 +65,7 @@ test('stats-flush observer dispatches recognized polling timeout through shared 
       level: 'debug',
       name: 'agent-terminal-polling-timeout-observed',
       details: {
-        conversation_id: 'conversation-1',
-        terminal_key: 'conversation-1:user-1'
+        conversation_id: 'conversation-1'
       }
     }]
   );
