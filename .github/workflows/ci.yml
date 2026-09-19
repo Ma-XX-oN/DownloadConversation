@@ -22,6 +22,8 @@ jobs:
         run: node --test tests/export-single-snapshot.test.mjs
       - name: Agent completion sound regression
         run: node --test tests/agent-completion-sounds.test.mjs
+      - name: Agent terminal shared dispatch regression
+        run: node --test tests/agent-terminal-dispatch.test.mjs
       - name: Agent turn stopwatch regression
         run: node --test tests/agent-turn-stopwatch.test.mjs
       - name: Agent turn stopwatch stream integration
