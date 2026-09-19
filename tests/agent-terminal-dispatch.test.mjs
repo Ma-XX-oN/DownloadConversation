@@ -50,7 +50,8 @@ test('one normalized terminal object drives both sound and stopwatch', () => {
   const context = {
     emitted: [],
     diagnostics: [],
-    performance: { now: () => 45000 }
+    performance: { now: () => 45000 },
+    document: { addEventListener() {} }
   };
   vm.runInNewContext(`
     let agentSoundVolume = 10;
@@ -69,6 +70,7 @@ test('one normalized terminal object drives both sound and stopwatch', () => {
     let stopped = false;
     let rendered = false;
     function playAgentSound(kind) { this.emitted.push(kind); return true; }
+    function agentSoundHandleUserGesture() {}
     function logDiagnostic(level, name, details) { this.diagnostics.push({ level, name, details }); }
     function agentStopwatchRecordLap(at) {
       recordedLapAt = at;
