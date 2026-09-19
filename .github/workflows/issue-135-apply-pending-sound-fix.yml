@@ -19,8 +19,22 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: 22
-      - name: Apply isolated pending-sound and terminal-dispatch correction
+      - name: Apply isolated pending-sound correction
         run: node scripts/issue-135-apply-pending-sound-fix.mjs
+      - name: Repair shared terminal dispatch key
+        shell: pwsh
+        run: |
+          @'
+          import fs from 'node:fs';
+          const path = 'chatgpt-conversation-markdown-export.user.js';
+          let text = fs.readFileSync(path, 'utf8');
+          const oldText = 'terminal_key: agentSoundTerminalKey(capture)';
+          const newText = 'terminal_key: agentTerminalKey(capture)';
+          const count = text.split(oldText).length - 1;
+          if (count !== 1) throw new Error(`Expected one stale terminal key reference, found ${count}.`);
+          text = text.replace(oldText, newText);
+          fs.writeFileSync(path, text, 'utf8');
+          '@ | node --input-type=module
       - name: Verify issue/version identity
         run: node scripts/check-development-version.mjs --branch issue-135-agent-completion-sounds
       - name: Verify JSDoc coverage
