@@ -65,6 +65,27 @@ Before changing code or changing/clarifying a requirement:
    decision supersedes it; record the correction or superseding decision in the
    issue history.
 
+### Rename/removal call-path audit
+
+Before removing or renaming any production function, helper, constant, or
+callable API:
+
+- Enumerate every production and test reference to the retiring symbol before
+  editing it.
+- Trace every entry path that can reach the retiring symbol, including ordinary
+  callers, diagnostics and error paths, network observers, callbacks, generated
+  or source-extraction harnesses, and other indirect references.
+- After editing, search for the retired symbol and verify that no unintended
+  executable reference remains. Historical documentation or fixtures may retain
+  a name only when that retention is deliberate and non-executable.
+- Trace every affected entry path through the replacement or shared owner and
+  verify the resulting control/data flow still reaches its intended consumer.
+- Add regression coverage that executes the path which previously called the
+  retired symbol rather than relying only on source-shape assertions.
+
+A removal or rename is incomplete until both the stale-reference audit and the
+entry-path execution/audit pass.
+
 ### Scope and evidence rule
 
 When implementing a requested fix or update:
