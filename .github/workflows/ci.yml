@@ -35,7 +35,7 @@ jobs:
       - name: Tail consistency regression
         run: node --test tests/tail-consistency.test.mjs
       - name: Stream tail recovery regression
-        run: node --test tests/stream-tail-recovery.test.mjs
+        run: node --test tests/stream-tail-recovery.test.mjs tests/generation-response-clone-timing.test.mjs
       - name: Stock network diagnostics regression
         run: node --test tests/stock-network-diagnostics.test.mjs
       - name: Disk communication recorder regression
