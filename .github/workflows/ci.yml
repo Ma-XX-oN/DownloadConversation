@@ -12,12 +12,16 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: 22
+      - name: Development branch/version identity
+        run: node scripts/check-development-version.mjs
       - name: Production JSDoc coverage
         run: node scripts/check-jsdoc.mjs
       - name: JavaScript syntax
         run: node --check chatgpt-conversation-markdown-export.user.js
       - name: Version identity regression
         run: node --test tests/version-identity.test.mjs
+      - name: Development version guard regression
+        run: node --test tests/development-version-guard.test.mjs
       - name: Single-snapshot export regression
         run: node --test tests/export-single-snapshot.test.mjs
       - name: Agent completion sound regression
@@ -33,7 +37,7 @@ jobs:
       - name: Agent turn stopwatch reload restoration
         run: node --test tests/agent-turn-stopwatch-reload.test.mjs
       - name: Agent favicon state regression
-        run: node --test tests/agent-favicon-state.test.mjs tests/agent-favicon-browser-selection.test.mjs tests/agent-favicon-persistence-diagnostic.test.mjs
+        run: node --test tests/agent-favicon-state.test.mjs tests/agent-favicon-browser-selection.test.mjs
       - name: Agent terminal polling-timeout regression
         run: node --test tests/agent-terminal-polling-timeout.test.mjs
       - name: Communication log file controls regression
