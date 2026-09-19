@@ -23,6 +23,8 @@ jobs:
         run: node scripts/issue-140-patcher-fix.mjs
       - name: Apply exact shared-terminal correction
         run: node scripts/issue-140-terminal-dispatch-apply.mjs
+      - name: Update stream-tail harness for shared terminal hook
+        run: node scripts/issue-140-stream-tail-harness-apply.mjs
       - name: Check patch whitespace
         run: git diff --check
       - name: Production JSDoc coverage
@@ -53,7 +55,8 @@ jobs:
             tests/agent-completion-sounds.test.mjs \
             tests/agent-turn-stopwatch.test.mjs \
             tests/agent-turn-stopwatch-stream.test.mjs \
-            tests/agent-terminal-polling-timeout.test.mjs
+            tests/agent-terminal-polling-timeout.test.mjs \
+            tests/stream-tail-recovery.test.mjs
           git diff --cached --check
           git commit -m 'fix(#140): unify agent terminal dispatch'
           git push origin HEAD:issue-140-success-terminal-capture
