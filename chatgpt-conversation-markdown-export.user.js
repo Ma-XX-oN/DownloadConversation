@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         ChatGPT Conversation Markdown Recorder
 // @namespace    https://chatgpt.com/
-// @version      1.5.0-issue.148.2
+// @version      1.5.0-issue.140.3
 // @description  Exports the current ChatGPT conversation directly from the Conversation API as Markdown or JSONL.
 // @match        https://chatgpt.com/*
 // @match        https://chat.openai.com/*
@@ -3833,7 +3833,10 @@
     if (op === 'append' || op === 'a') {
       if (typeof target[key] === 'string' && typeof value === 'string') target[key] += value;
       else if (Array.isArray(target[key])) target[key].push(streamTailClone(value));
-      else target[key] = streamTailClone(value);
+      else if (target[key] && typeof target[key] === 'object' && !Array.isArray(target[key]) &&
+               value && typeof value === 'object' && !Array.isArray(value)) {
+        Object.assign(target[key], streamTailClone(value));
+      } else target[key] = streamTailClone(value);
     } else if (op === 'replace' || op === 'r' || op === 'add') {
       target[key] = streamTailClone(value);
     } else {
