@@ -1,0 +1,38 @@
+name: Issue 149 establish owning version
+
+on:
+  push:
+    branches:
+      - issue-149-version-identity-guard
+
+permissions:
+  contents: write
+
+jobs:
+  establish-version:
+    if: github.actor != 'github-actions[bot]'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Set issue 149 development version before implementation
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+          path = Path('chatgpt-conversation-markdown-export.user.js')
+          text = path.read_text(encoding='utf-8')
+          old = '// @version      1.5.0'
+          new = '// @version      1.5.0-issue.149.1'
+          if text.count(old) != 1:
+            raise SystemExit(f'Expected exactly one release version line, found {text.count(old)}')
+          path.write_text(text.replace(old, new, 1), encoding='utf-8')
+          PY
+      - name: Verify exact version
+        run: grep -Fxq '// @version      1.5.0-issue.149.1' chatgpt-conversation-markdown-export.user.js
+      - name: Commit version establishment
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add chatgpt-conversation-markdown-export.user.js
+          git diff --cached --check
+          git commit -m "chore(#149): establish 1.5.0-issue.149.1 version identity"
+          git push origin HEAD:issue-149-version-identity-guard
