@@ -111,6 +111,7 @@ function renderHarness() {
     const AGENT_FAVICON_OVERRIDE_ID = 'tm-agent-state-favicon';
     const AGENT_FAVICON_PROCESSING_RGB = Object.freeze([255, 255, 0]);
     const AGENT_FAVICON_COMPLETED_RGB = Object.freeze([144, 238, 144]);
+    const AGENT_FAVICON_ERROR_RGB = Object.freeze([255, 0, 0]);
     let agentFaviconOriginalHref = null;
     let agentFaviconRenderGeneration = 0;
     function logDiagnostic(level, name, details) { this.diagnostics.push({ level, name, details }); }
@@ -183,12 +184,20 @@ test('reload IS_STREAMING renders processing while NOT_STREAMING leaves original
   assert.equal(idle.api.observed(), false);
 });
 
-test('post-success terminal error does not replace completed favicon state', () => {
+test('terminal error replaces processing favicon with red', () => {
+  const harness = lifecycleHarness();
+  harness.api.processing();
+  harness.api.terminal({ kind: 'error', terminal_key: 'conversation-1:exchange-A' });
+  assert.equal(harness.api.observed(), false);
+  assert.deepEqual(harness.rendered, ['processing', 'error']);
+});
+
+test('post-success terminal error replaces completed favicon with red', () => {
   const harness = lifecycleHarness();
   harness.api.processing();
   harness.api.terminal({ kind: 'success', terminal_key: 'conversation-1:exchange-A' });
   harness.api.terminal({ kind: 'error', terminal_key: 'conversation-1:exchange-A' });
-  assert.deepEqual(harness.rendered, ['processing', 'completed']);
+  assert.deepEqual(harness.rendered, ['processing', 'completed', 'error']);
 });
 
 test('a new prompt after completed state returns favicon to processing', () => {
@@ -205,11 +214,15 @@ test('every colored favicon render uses the captured original stock favicon sour
   const yellowHref = context.api.override().href;
   assert.equal(await context.api.render('completed'), true);
   const greenHref = context.api.override().href;
+  assert.equal(await context.api.render('error'), true);
+  const redHref = context.api.override().href;
 
-  assert.deepEqual(context.imageSources, [originalHref, originalHref]);
+  assert.deepEqual(context.imageSources, [originalHref, originalHref, originalHref]);
   assert.match(yellowHref, /pixels=255,255,0$/);
   assert.match(greenHref, /pixels=144,238,144$/);
+  assert.match(redHref, /pixels=255,0,0$/);
   assert.notEqual(yellowHref, greenHref);
+  assert.notEqual(greenHref, redHref);
 });
 
 test('favicon is wired to the existing request, terminal, and reload watchers', () => {
