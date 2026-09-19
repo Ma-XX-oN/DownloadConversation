@@ -1,0 +1,43 @@
+name: Issue 148 favicon persistence diagnostic
+
+on:
+  push:
+    branches:
+      - issue-148-agent-favicon-state
+
+permissions:
+  contents: write
+
+jobs:
+  apply:
+    if: github.actor != 'github-actions[bot]'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - name: Apply diagnostic-only favicon observer
+        run: python scripts/issue-148-persistence-diagnostic.py
+      - name: Production JSDoc coverage
+        run: node scripts/check-jsdoc.mjs
+      - name: JavaScript syntax
+        run: node --check chatgpt-conversation-markdown-export.user.js
+      - name: Favicon state and persistence regressions
+        run: node --test tests/agent-favicon-state.test.mjs tests/agent-favicon-browser-selection.test.mjs tests/agent-favicon-persistence-diagnostic.test.mjs
+      - name: Shared lifecycle consumers
+        run: node --test tests/agent-terminal-dispatch.test.mjs tests/agent-completion-sounds.test.mjs tests/agent-turn-stopwatch.test.mjs tests/agent-turn-stopwatch-reload.test.mjs tests/agent-resume-metadata-patch.test.mjs tests/agent-turn-stopwatch-stream.test.mjs
+      - name: Response ownership regression
+        run: node --test tests/generation-response-clone-timing.test.mjs
+      - name: Version identity regression
+        run: node --test tests/version-identity.test.mjs
+      - name: Commit diagnostic build
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add chatgpt-conversation-markdown-export.user.js
+          git diff --cached --check
+          git commit -m "diag(#148): detect favicon projection overwrite"
+          git push origin HEAD:issue-148-agent-favicon-state
