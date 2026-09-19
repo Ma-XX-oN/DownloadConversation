@@ -76,6 +76,8 @@ AIConversationCore owns canonical transcript semantics.  DownloadConversation su
 
 Cross-cutting ChatGPT lifecycle state follows a watcher/consumer design pattern. Authoritative structured evidence is observed once at the provider/browser boundary, normalized once into stable project state, and then fanned out to independent consumers. Sound, stopwatch, favicon, and future Agent-state features must attach to that shared watcher rather than duplicating network interception, terminal classification, exchange identity, or reload polling.
 
+The watcher can have more than one authoritative provider input when ChatGPT itself exposes the same lifecycle through different stock transports. Current-page generation observes `POST /backend-api/f/conversation`; after a hard reload of an active turn, ChatGPT continues that turn through `POST /backend-api/f/conversation/resume`. Both SSE sources feed the same stream parser and terminal normalizer. The reload-resume observation is lifecycle evidence; it does not replace the separately persisted generation capture used for streamed-tail export reconciliation.
+
 If a consumer needs a fact the watcher does not yet expose, extend the shared watcher at the evidenced structured boundary first. Do not solve the gap by creating a consumer-specific detector. The current provider/browser contracts and the evidence behind them are maintained in `CHATGPT-WEB-INTEGRATION.md`.
 
 ### Documentation is part of the implementation

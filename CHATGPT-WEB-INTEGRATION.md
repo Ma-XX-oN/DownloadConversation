@@ -115,6 +115,28 @@ A non-streaming result is **not** proof that the current loaded page observed a 
 
 Do not issue duplicate stream-status requests for individual consumers.
 
+## Reload continuation stream
+
+When a hard reload occurs while `stream_status` reports `IS_STREAMING`, ChatGPT can continue the active turn through:
+
+`POST /backend-api/f/conversation/resume`
+
+Live evidence from conversation `6aae0d5c-7cbc-83e9-ac16-fbf6c7d5e82d` established that the resume response is `text/event-stream` and contains the authoritative final lifecycle evidence for the already-running exchange. The captured sequence included the active User `input_message`, the final Assistant message, patches to `status: "finished_successfully"` and `end_turn: true`, `last_token`, `message_stream_complete`, and `[DONE]`. ChatGPT subsequently emitted a WebSocket `conversation-turn-complete` notification and telemetry identifying the reload source as `resume_stream` with result `success`.
+
+Therefore `/f/conversation/resume` is an authoritative input to the **same** lifecycle watcher. DownloadConversation passively clones its request and response before returning the stock objects to ChatGPT and feeds the cloned SSE through the existing conversation-stream parser and terminal normalizer. It must not install a second terminal classifier, infer completion from the DOM, or poll for a substitute terminal signal.
+
+The resume observation is deliberately lifecycle-only. It uses fresh parser state and does not overwrite the persisted original-generation capture used by streamed-tail export reconciliation.
+
+As with the normal generation response, the resume Response clone must be acquired synchronously in the fetch response handler before the original Response is returned to ChatGPT. The resume Request is also cloned before transmission so its `conversation_id` remains available to the passive observer without consuming the page-owned body.
+
+## Provider v1 patch semantics
+
+In the observed reload SSE, the final Assistant message initially carried `request_id`, `turn_exchange_id`, `working_turn_id`, and `turn_id` in `message.metadata`. A later provider patch used `o: "append"` at `/message/metadata` to add completion fields such as `is_complete`, `can_save`, and `finish_details`.
+
+For an existing object receiving an object-valued v1 `append`, DownloadConversation must **merge the appended fields into the existing object**. Replacing the object erases the exchange identity immediately before terminal normalization. String append and array append retain their distinct existing semantics; object merge applies only when both existing and appended values are non-array objects.
+
+This rule is covered by a fixed regression derived from the captured reload stream. Do not reinterpret provider patch operators ad hoc in consumers.
+
 ## History can lag the live stream
 
 Conversation API history can be stale relative to a just-completed live streamed turn. A complete successful final Assistant response may be present in the captured live stream while absent from the persisted Conversation API snapshot after reload/export.
