@@ -61,6 +61,7 @@ jobs:
         run: >-
           node --test
           tests/agent-terminal-dry-contract.test.mjs
+          tests/agent-terminal-polling-timeout-integration.test.mjs
           tests/agent-terminal-polling-timeout-observer.test.mjs
           tests/agent-terminal-polling-timeout.test.mjs
           tests/agent-terminal-dispatch.test.mjs
