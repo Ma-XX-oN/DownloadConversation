@@ -19,6 +19,17 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: 22
+      - name: Correct asserted patcher escaping
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+          path = Path('scripts/apply-issue-140-reload.py')
+          text = path.read_text(encoding='utf-8')
+          old = r'^\\/backend-api\\/conversations\\/[^/]+$'
+          new = r'^\/backend-api\/conversations\/[^/]+$'
+          assert text.count(old) == 1, 'expected one over-escaped history URL regex'
+          path.write_text(text.replace(old, new, 1), encoding='utf-8')
+          PY
       - name: Apply asserted correction
         run: python scripts/apply-issue-140-reload.py
       - name: Production JSDoc coverage
