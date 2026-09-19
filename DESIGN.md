@@ -563,3 +563,39 @@ same generation identity.
 Rendered error text, DOM lifecycle labels, elapsed-time thresholds, and retry counts
 are not terminal-state authorities. The recorder does not infer this state from the
 visible `Retry` UI and does not add an alternate/fallback terminal-detection path.
+
+## Generation response clone ownership
+
+For `POST /backend-api/f/conversation`, DownloadConversation must acquire its passive generation-response clone synchronously in the fetch response handler, before returning the original `Response` to ChatGPT. Request-body parsing may finish later; the already-owned response clone waits for that request capture and is then consumed by the existing structured SSE path. This prevents ChatGPT from locking or disturbing the original response body before DownloadConversation acquires its clone. Clone acquisition failure is diagnostic-only and does not add a rendered-text or DOM terminal fallback.
+
+## Agent-turn stopwatch reload restoration
+
+A full page reload clears the stopwatch's page-lifetime monotonic state, but the
+stock Conversation API history retains provider `create_time` values and working
+exchange identities. DownloadConversation restores the floating stopwatch from
+that structured history rather than establishing a new local start time.
+
+The synchronously cloned stock `GET /backend-api/conversations/<id>` response is
+the restoration trigger. The newest User-started working exchange is identified
+from the de-duplicated chronological API spine. If the initial history window
+starts inside that exchange, DownloadConversation follows `start_cursor` backward
+until an older different exchange proves the true starting User prompt or the
+beginning of conversation is reached. Every same-exchange User `create_time`
+becomes a historical lap boundary.
+
+The provider `/backend-api/conversation/<id>/stream_status` response controls only
+whether the recovered stopwatch continues to advance. `IS_STREAMING` bridges the
+persisted wall-clock boundaries into the new page's `performance.now()` domain;
+completed lap durations remain fixed while the current lap and Total advance.
+When the stream is not active, the recovered successful final Assistant timestamp
+freezes the final lap and Total. In both states the recovered stopwatch remains
+visible. Repeated streamed copies of recovered User messages do not create laps
+because restoration leaves no pending local submission boundary.
+
+Reload restoration does not add a second terminal classifier. Subsequent live
+terminal state continues through the existing shared structured terminal dispatcher.
+No rendered-text or DOM transcript fallback is introduced.
+
+## Shared agent terminal dispatch
+
+Structured terminal state is normalized exactly once before any terminal side effect. The normalizer determines terminal kind, conversation identity, exchange identity, terminal de-duplication key, and one monotonic completion timestamp. Successful-final exchange identity prefers the final Assistant message metadata; structured capture/request identity is used only by the same shared normalizer when needed. The normalized immutable terminal object is then dispatched to the sound and stopwatch handlers. Neither consumer independently classifies terminal state or reconstructs terminal identity. The stopwatch still rejects a normalized terminal whose exchange identity does not match the active stopwatch session. Rendered text and DOM error strings are not terminal detectors.

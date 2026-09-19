@@ -8,6 +8,7 @@ function soundHarness(volume = 10, playbackResults = [true]) {
     emitted: [],
     playbackResults: [...playbackResults],
     diagnostics: [],
+    performance: { now: () => 1000 },
     document: { addEventListener() {} }
   };
   vm.runInNewContext(`
@@ -21,14 +22,20 @@ function soundHarness(volume = 10, playbackResults = [true]) {
     }
     function agentSoundHandleUserGesture() {}
     function logDiagnostic(level, name, details) { this.diagnostics.push({ level, name, details }); }
-    ${productionFunctionSource('agentSoundTerminalKey')}
     ${productionFunctionSource('agentSoundRememberTerminalKey')}
     ${productionFunctionSource('agentTerminalIsPollingTimeout')}
-    ${productionFunctionSource('agentSoundClassifyTerminal')}
-    ${productionFunctionSource('agentSoundObserveTerminal')}
+    ${productionFunctionSource('agentTerminalSuccessfulFinal')}
+    ${productionFunctionSource('agentTerminalExchangeId')}
+    ${productionFunctionSource('agentTerminalKey')}
+    ${productionFunctionSource('agentTerminalClassifyKind')}
+    ${productionFunctionSource('agentTerminalNormalize')}
+    ${productionFunctionSource('agentSoundHandleTerminal')}
     this.api = {
-      classify: agentSoundClassifyTerminal,
-      observe: agentSoundObserveTerminal,
+      classify(capture, event) { return agentTerminalNormalize(capture, event)?.kind ?? null; },
+      observe(capture, event) {
+        const terminal = agentTerminalNormalize(capture, event);
+        if (terminal) agentSoundHandleTerminal(terminal);
+      },
       keys: () => [...agentSoundTerminalKeys]
     };
   `, context);
@@ -209,7 +216,7 @@ test('volume 10 reaches gain 1.0 and is materially louder than the old fixed suc
 });
 
 test('sound diagnostics expose classification, suppression, AudioContext, and successful scheduling states', () => {
-  const observe = productionFunctionSource('agentSoundObserveTerminal');
+  const observe = productionFunctionSource('agentSoundHandleTerminal');
   const unlock = productionFunctionSource('unlockAgentSoundAudio');
   const play = productionFunctionSource('playAgentSound');
   assert.match(observe, /agent-sound-terminal-classified/);
@@ -224,8 +231,8 @@ test('sound diagnostics expose classification, suppression, AudioContext, and su
 
 test('sound detection remains wired to structured SSE and does not scan visible error text', () => {
   const consumer = productionFunctionSource('consumeStreamTailSseChunk');
-  assert.match(consumer, /streamTailApplyEvent\(capture, parsed\);[\s\S]*agentSoundObserveTerminal\(capture, parsed\)/);
-  assert.match(consumer, /data === '\[DONE\]'[\s\S]*agentSoundObserveTerminal\(capture, null\)/);
+  assert.match(consumer, /streamTailApplyEvent\(capture, parsed\);[\s\S]*agentTerminalObserve\(capture, parsed\)/);
+  assert.match(consumer, /data === '\[DONE\]'[\s\S]*agentTerminalObserve\(capture, null\)/);
   assert.doesNotMatch(userscript, /includes\(['"]conversation_too_large['"]\)/,
     'Terminal error detection must not scan raw text for an error word/code.');
   assert.doesNotMatch(userscript, /Message delivery timed out/,

@@ -55,7 +55,8 @@ function streamHarness() {
     let agentStopwatchState = null;
     let agentStopwatchTimer = null;
     function streamTailPersistCapture() { return true; }
-    function agentSoundObserveTerminal() {}
+    function agentSoundHandleTerminal() {}
+    function logDiagnostic() {}
     ${productionFunctionSource('assert')}
     ${productionFunctionSource('agentStopwatchFormatDuration')}
     ${productionFunctionSource('agentStopwatchExchangeId')}
@@ -68,9 +69,15 @@ function streamHarness() {
     ${productionFunctionSource('agentStopwatchObserveRequest')}
     ${productionFunctionSource('agentStopwatchObserveSteerTurn')}
     ${productionFunctionSource('agentStopwatchObserveInputMessage')}
-    ${productionFunctionSource('agentStopwatchSuccessfulFinal')}
     ${productionFunctionSource('agentTerminalIsPollingTimeout')}
-    ${productionFunctionSource('agentStopwatchObserveTerminal')}
+    ${productionFunctionSource('agentTerminalSuccessfulFinal')}
+    ${productionFunctionSource('agentTerminalExchangeId')}
+    ${productionFunctionSource('agentTerminalKey')}
+    ${productionFunctionSource('agentTerminalClassifyKind')}
+    ${productionFunctionSource('agentTerminalNormalize')}
+    ${productionFunctionSource('agentStopwatchHandleTerminal')}
+    const agentTerminalHandlers = Object.freeze([agentSoundHandleTerminal, agentStopwatchHandleTerminal]);
+    ${productionFunctionSource('agentTerminalObserve')}
     ${productionFunctionSource('agentStopwatchObserveStreamEvent')}
     ${productionFunctionSource('isGenerationStreamUrl')}
     ${productionFunctionSource('isSteerTurnUrl')}

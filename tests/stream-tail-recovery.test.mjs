@@ -27,7 +27,7 @@ function harness() {
       removeItem(key) { storage.delete(key); }
     },
     logDiagnostic() {},
-    agentSoundObserveTerminal() {},
+    agentTerminalObserve() {},
     agentStopwatchObserveStreamEvent() {},
     conversationSpineFromPages(pages) {
       const messages = [];

@@ -22,12 +22,16 @@ jobs:
         run: node --test tests/export-single-snapshot.test.mjs
       - name: Agent completion sound regression
         run: node --test tests/agent-completion-sounds.test.mjs
+      - name: Agent terminal shared dispatch regression
+        run: node --test tests/agent-terminal-dispatch.test.mjs
       - name: Agent turn stopwatch regression
         run: node --test tests/agent-turn-stopwatch.test.mjs
       - name: Agent turn stopwatch stream integration
         run: node --test tests/agent-turn-stopwatch-stream.test.mjs
       - name: Agent turn stopwatch live total
         run: node --test tests/agent-turn-stopwatch-live-total.test.mjs
+      - name: Agent turn stopwatch reload restoration
+        run: node --test tests/agent-turn-stopwatch-reload.test.mjs
       - name: Agent terminal polling-timeout regression
         run: node --test tests/agent-terminal-polling-timeout.test.mjs
       - name: Communication log file controls regression
@@ -35,7 +39,7 @@ jobs:
       - name: Tail consistency regression
         run: node --test tests/tail-consistency.test.mjs
       - name: Stream tail recovery regression
-        run: node --test tests/stream-tail-recovery.test.mjs
+        run: node --test tests/stream-tail-recovery.test.mjs tests/generation-response-clone-timing.test.mjs
       - name: Stock network diagnostics regression
         run: node --test tests/stock-network-diagnostics.test.mjs
       - name: Disk communication recorder regression
