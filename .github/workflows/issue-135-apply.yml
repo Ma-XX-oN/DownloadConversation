@@ -41,6 +41,10 @@ jobs:
               "if (providerCode === 'conversation_too_large' &&\n          (candidate.type === 'error' || candidate.error_code === 'conversation_too_large')) return 'error';"
             ),
             (
+              "const finalMessage = kind === 'success' ? agentTerminalSuccessfulFinal(capture) : null;",
+              "const finalMessage = agentTerminalSuccessfulFinal(capture);"
+            ),
+            (
               "const key = terminal?.terminal_key ?? null;\n    if (!kind) return;",
               "const key = terminal?.terminal_key ?? null;\n    const soundKey = key && kind ? `${key}:${kind}` : null;\n    if (!kind) return;"
             ),
