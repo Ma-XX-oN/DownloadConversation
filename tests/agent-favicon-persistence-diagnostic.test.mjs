@@ -8,8 +8,10 @@ function auditHarness() {
     { rel: 'icon', href: 'data:image/png;render=1' },
     { rel: 'icon', href: 'data:image/png;render=2' }
   ];
+  const expectedEntries = links.map(link => [link, link.href]);
   const context = {
     diagnostics: [],
+    expectedEntries,
     document: {
       querySelectorAll(selector) {
         assert.equal(selector, 'link[rel~="icon"]');
@@ -19,6 +21,10 @@ function auditHarness() {
   };
   vm.runInNewContext(`
     let agentFaviconDesiredState = 'processing';
+    const agentFaviconProjectedSources = new WeakMap();
+    for (const [link, href] of this.expectedEntries) {
+      agentFaviconProjectedSources.set(link, href);
+    }
     function logDiagnostic(level, name, details) {
       this.diagnostics.push({ level, name, details });
     }
@@ -29,7 +35,7 @@ function auditHarness() {
   return { context, links };
 }
 
-test('favicon projection audit is quiet while every candidate remains userscript-projected', () => {
+test('favicon projection audit is quiet while every candidate retains its exact generated href', () => {
   const harness = auditHarness();
   assert.equal(harness.context.audit('mutation'), true);
   assert.deepEqual(harness.context.diagnostics, []);
@@ -49,6 +55,16 @@ test('favicon projection audit reports a stock candidate restored after colored 
     candidate_count: 2,
     unprojected_candidate_count: 1
   });
+});
+
+test('favicon projection audit reports replacement icon candidates with no projected identity', () => {
+  const harness = auditHarness();
+  harness.links.push({ rel: 'icon', href: 'https://chatgpt.com/new-hydrated-icon.svg' });
+
+  assert.equal(harness.context.audit('mutation'), false);
+  assert.equal(harness.context.diagnostics.length, 1);
+  assert.equal(harness.context.diagnostics[0].details.candidate_count, 3);
+  assert.equal(harness.context.diagnostics[0].details.unprojected_candidate_count, 1);
 });
 
 test('favicon projection audit ignores stock links while desired state is original', () => {
