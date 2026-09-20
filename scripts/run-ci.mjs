@@ -7,7 +7,12 @@ import { fileURLToPath } from 'node:url';
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const failures = [];
 const nodeCommand = process.execPath;
-const npmCommand = process.platform === 'win32' ? 'npm.cmd' : 'npm';
+const npmCommand = process.platform === 'win32'
+  ? (process.env.ComSpec ?? 'cmd.exe')
+  : 'npm';
+const npmArguments = process.platform === 'win32'
+  ? ['/d', '/s', '/c', 'npm', 'ci']
+  : ['ci'];
 const pythonCommand = process.env.PYTHON ?? 'python';
 
 const ordinaryStages = [
@@ -119,7 +124,7 @@ function runCrossConsumerCi() {
     if (!runStage(
       'Install DownloadConversation AIConversationCore dependencies',
       npmCommand,
-      ['ci'],
+      npmArguments,
       { cwd: roots['phase7-core'] }
     )) {
       console.error('\nCross-consumer dependency installation failed; dependent tests are skipped.');
