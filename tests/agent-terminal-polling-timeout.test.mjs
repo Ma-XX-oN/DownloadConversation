@@ -26,12 +26,16 @@ function soundHarness() {
   vm.runInNewContext(`
     let agentSoundVolume = 10;
     let agentSoundAudioContext = null;
+    let agentSoundPendingTerminal = null;
     const AGENT_SOUND_TERMINAL_KEY_LIMIT = 128;
     const agentSoundTerminalKeys = new Set();
     function playAgentSound(kind) { this.emitted.push(kind); return true; }
     function agentSoundHandleUserGesture() {}
     function logDiagnostic(level, name, details) { this.diagnostics.push({ level, name, details }); }
     ${productionFunctionSource('agentSoundRememberTerminalKey')}
+    ${productionFunctionSource('agentSoundRememberPendingTerminal')}
+    ${productionFunctionSource('agentSoundClearPendingTerminal')}
+    ${productionFunctionSource('agentSoundRetryPendingTerminal')}
     ${productionFunctionSource('agentTerminalIsPollingTimeout')}
     ${productionFunctionSource('agentTerminalSuccessfulFinal')}
     ${productionFunctionSource('agentTerminalExchangeId')}
