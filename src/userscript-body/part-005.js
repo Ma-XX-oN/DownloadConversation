@@ -242,3 +242,4 @@
     candidates.sort((left, right) => left.index - right.index || right.prefix.length - left.prefix.length);
     return candidates[0];
   }
+
