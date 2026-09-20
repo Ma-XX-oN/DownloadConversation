@@ -17,8 +17,9 @@ const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const CORE_COMMIT = 'cf34d9374f51ac525acfb90cfd6b247006a7bf6e';
 const CORE_BLOB = '5a999c8c02f127b4fc03b923a40496961c9cacc0';
 const LEGACY_BLOB = '44a4ab373a6515caed5527aeb19cbdff7ce91e07';
+const USER_SCRIPT_HEADER_END = '// ==/UserScript==\n';
 
-test('manifest defines ordered logical source modules instead of anonymous transfer fragments', async () => {
+test('manifest groups ordered small source segments under logical subsystem modules', async () => {
   const manifest = await readUserscriptManifest(root);
   assert.equal(manifest.format_version, 2);
   assert.deepEqual(
@@ -41,7 +42,7 @@ test('manifest defines ordered logical source modules instead of anonymous trans
   for (const sourcePath of sourcePaths) {
     const info = await stat(path.join(root, sourcePath));
     assert.ok(info.isFile(), `${sourcePath} is not a source file.`);
-    assert.ok(info.size > 0 && info.size < 16 * 1024, `${sourcePath} is not a small source chunk.`);
+    assert.ok(info.size > 0 && info.size < 16 * 1024, `${sourcePath} is not a small source segment.`);
   }
 });
 
@@ -94,6 +95,35 @@ test('ordered source preserves the userscript runtime IIFE boundary', async () =
   assert.match(source, /const CORE_VERSION = canonicalCore\(\)\.getVersion\(\);/);
 });
 
+test('migration preserves every non-whitespace legacy runtime byte in source order', async () => {
+  const manifest = await readUserscriptManifest(root);
+  const fixture = await readFile(path.join(root, manifest.migration_source.path), 'utf8');
+  const headerEnd = fixture.indexOf(USER_SCRIPT_HEADER_END);
+  assert.ok(headerEnd >= 0, 'Legacy fixture userscript metadata terminator is missing.');
+  const legacyBody = fixture.slice(headerEnd + USER_SCRIPT_HEADER_END.length);
+  let cursor = 0;
+
+  for (const sourcePath of orderedSourcePaths(manifest)) {
+    const segment = await readFile(path.join(root, sourcePath), 'utf8');
+    const payload = segment.trim();
+    assert.ok(payload, `${sourcePath} contains no non-whitespace source bytes.`);
+    const match = legacyBody.indexOf(payload, cursor);
+    assert.ok(match >= cursor, `${sourcePath} does not occur in legacy runtime order.`);
+    assert.match(
+      legacyBody.slice(cursor, match),
+      /^\s*$/,
+      `${sourcePath} is separated from the previous source segment by non-whitespace legacy bytes.`
+    );
+    cursor = match + payload.length;
+  }
+
+  assert.match(
+    legacyBody.slice(cursor),
+    /^\s*$/,
+    'Legacy runtime contains non-whitespace bytes after the final authoritative source segment.'
+  );
+});
+
 test('assembly is deterministic and places verified dependency before DownloadConversation runtime', () => {
   const header = '// ==UserScript==\n// @run-at document-start\n// ==/UserScript==\n';
   const content = 'globalThis.AIConversationCore = {};\n';
@@ -111,9 +141,8 @@ test('assembly is deterministic and places verified dependency before DownloadCo
   assert.equal(first, second);
   assert.ok(first.indexOf(content) < first.indexOf('downloadConversationLoaded'));
   assert.match(first, /BEGIN bundled fixture-core commit=/);
-  assert.match(first, /Build-time dependency provenance only/);
-  const metadata = first.slice(0, first.indexOf('// ==/UserScript==') + '// ==/UserScript=='.length);
-  assert.doesNotMatch(metadata, /^\/\/ @require\b/m);
+  assert.match(first, /\/\/ source https:\/\/example\.test\//);
+  assert.doesNotMatch(first, /^\/\/ @require\b/m);
 });
 
 test('legacy monolith is retained only as a provenance fixture with its original Git blob identity', async () => {
