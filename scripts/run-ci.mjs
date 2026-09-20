@@ -6,36 +6,39 @@ import { fileURLToPath } from 'node:url';
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const failures = [];
+const nodeCommand = process.execPath;
+const npmCommand = process.platform === 'win32' ? 'npm.cmd' : 'npm';
+const pythonCommand = process.env.PYTHON ?? 'python';
 
 const ordinaryStages = [
-  ['Build production userscript', 'node', ['scripts/build-userscript.mjs']],
-  ['Verify generated userscript is current', 'node', ['scripts/build-userscript.mjs', '--check']],
-  ['Modular userscript build regression', 'node', ['--test', 'tests/modular-userscript-build.test.mjs', 'tests/development-version-source.test.mjs']],
-  ['Development branch/version identity', 'node', ['scripts/check-development-version.mjs']],
-  ['Production JSDoc coverage', 'node', ['scripts/check-jsdoc.mjs']],
-  ['JavaScript syntax', 'node', ['--check', 'chatgpt-conversation-markdown-export.user.js']],
-  ['Version identity regression', 'node', ['--test', 'tests/version-identity.test.mjs']],
-  ['Development version guard regression', 'node', ['--test', 'tests/development-version-guard.test.mjs']],
-  ['Development version setter regression', 'node', ['--test', 'tests/set-development-version.test.mjs']],
-  ['Single-snapshot export regression', 'node', ['--test', 'tests/export-single-snapshot.test.mjs']],
-  ['Agent completion sound regression', 'node', ['--test', 'tests/agent-completion-sounds.test.mjs', 'tests/agent-completion-sound-pending.test.mjs']],
-  ['Agent terminal shared dispatch regression', 'node', ['--test', 'tests/agent-terminal-dispatch.test.mjs', 'tests/agent-terminal-dry-contract.test.mjs']],
-  ['Agent turn stopwatch regression', 'node', ['--test', 'tests/agent-turn-stopwatch.test.mjs']],
-  ['Agent turn stopwatch stream integration', 'node', ['--test', 'tests/agent-resume-metadata-patch.test.mjs', 'tests/agent-turn-stopwatch-stream.test.mjs']],
-  ['Agent turn stopwatch live total', 'node', ['--test', 'tests/agent-turn-stopwatch-live-total.test.mjs']],
-  ['Agent turn stopwatch reload restoration', 'node', ['--test', 'tests/agent-turn-stopwatch-reload.test.mjs']],
-  ['Agent favicon state regression', 'node', ['--test', 'tests/agent-favicon-state.test.mjs', 'tests/agent-favicon-browser-selection.test.mjs']],
-  ['Agent terminal polling-timeout regression', 'node', ['--test', 'tests/agent-terminal-polling-timeout.test.mjs', 'tests/agent-terminal-polling-timeout-observer.test.mjs']],
-  ['Communication log file controls regression', 'node', ['--test', 'tests/communication-log-file-controls.test.mjs', 'tests/communication-log-layout-contract.test.mjs', 'tests/dry-contract.test.mjs']],
-  ['Tail consistency regression', 'node', ['--test', 'tests/tail-consistency.test.mjs']],
-  ['Stream tail recovery regression', 'node', ['--test', 'tests/stream-tail-recovery.test.mjs', 'tests/generation-response-clone-timing.test.mjs']],
-  ['Stock network diagnostics regression', 'node', ['--test', 'tests/stock-network-diagnostics.test.mjs']],
-  ['Disk communication recorder regression', 'node', ['--test', 'tests/disk-communication-recorder.test.mjs']],
-  ['Directory picker gesture regression', 'node', ['--test', 'tests/directory-picker-gesture.test.mjs']],
-  ['Console lifecycle and provenance controls', 'node', ['--test', 'tests/console-diagnostics.test.mjs']],
-  ['Canonical final-render regressions', 'node', ['--test', 'tests/core-integration.test.mjs', 'tests/phase5-rich-core-integration.test.mjs', 'tests/fallback-adaptive-fence.test.mjs', 'tests/tool-language-diagnostics.test.mjs', 'tests/sediment-resolver.test.mjs']],
-  ['Built-in test list UI regression', 'node', ['--test', 'tests/test-list-ui.test.mjs']],
-  ['Recorder panel UI regression', 'node', ['--test', 'tests/recorder-panel-ui.test.mjs', 'tests/modal-focus-retention.test.mjs', 'tests/heading-metadata-controls.test.mjs']]
+  ['Build production userscript', nodeCommand, ['scripts/build-userscript.mjs']],
+  ['Verify generated userscript is current', nodeCommand, ['scripts/build-userscript.mjs', '--check']],
+  ['Modular userscript build regression', nodeCommand, ['--test', 'tests/modular-userscript-build.test.mjs', 'tests/development-version-source.test.mjs']],
+  ['Development branch/version identity', nodeCommand, ['scripts/check-development-version.mjs']],
+  ['Production JSDoc coverage', nodeCommand, ['scripts/check-jsdoc.mjs']],
+  ['JavaScript syntax', nodeCommand, ['--check', 'chatgpt-conversation-markdown-export.user.js']],
+  ['Version identity regression', nodeCommand, ['--test', 'tests/version-identity.test.mjs']],
+  ['Development version guard regression', nodeCommand, ['--test', 'tests/development-version-guard.test.mjs']],
+  ['Development version setter regression', nodeCommand, ['--test', 'tests/set-development-version.test.mjs']],
+  ['Single-snapshot export regression', nodeCommand, ['--test', 'tests/export-single-snapshot.test.mjs']],
+  ['Agent completion sound regression', nodeCommand, ['--test', 'tests/agent-completion-sounds.test.mjs', 'tests/agent-completion-sound-pending.test.mjs']],
+  ['Agent terminal shared dispatch regression', nodeCommand, ['--test', 'tests/agent-terminal-dispatch.test.mjs', 'tests/agent-terminal-dry-contract.test.mjs']],
+  ['Agent turn stopwatch regression', nodeCommand, ['--test', 'tests/agent-turn-stopwatch.test.mjs']],
+  ['Agent turn stopwatch stream integration', nodeCommand, ['--test', 'tests/agent-resume-metadata-patch.test.mjs', 'tests/agent-turn-stopwatch-stream.test.mjs']],
+  ['Agent turn stopwatch live total', nodeCommand, ['--test', 'tests/agent-turn-stopwatch-live-total.test.mjs']],
+  ['Agent turn stopwatch reload restoration', nodeCommand, ['--test', 'tests/agent-turn-stopwatch-reload.test.mjs']],
+  ['Agent favicon state regression', nodeCommand, ['--test', 'tests/agent-favicon-state.test.mjs', 'tests/agent-favicon-browser-selection.test.mjs']],
+  ['Agent terminal polling-timeout regression', nodeCommand, ['--test', 'tests/agent-terminal-polling-timeout.test.mjs', 'tests/agent-terminal-polling-timeout-observer.test.mjs']],
+  ['Communication log file controls regression', nodeCommand, ['--test', 'tests/communication-log-file-controls.test.mjs', 'tests/communication-log-layout-contract.test.mjs', 'tests/dry-contract.test.mjs']],
+  ['Tail consistency regression', nodeCommand, ['--test', 'tests/tail-consistency.test.mjs']],
+  ['Stream tail recovery regression', nodeCommand, ['--test', 'tests/stream-tail-recovery.test.mjs', 'tests/generation-response-clone-timing.test.mjs']],
+  ['Stock network diagnostics regression', nodeCommand, ['--test', 'tests/stock-network-diagnostics.test.mjs']],
+  ['Disk communication recorder regression', nodeCommand, ['--test', 'tests/disk-communication-recorder.test.mjs']],
+  ['Directory picker gesture regression', nodeCommand, ['--test', 'tests/directory-picker-gesture.test.mjs']],
+  ['Console lifecycle and provenance controls', nodeCommand, ['--test', 'tests/console-diagnostics.test.mjs']],
+  ['Canonical final-render regressions', nodeCommand, ['--test', 'tests/core-integration.test.mjs', 'tests/phase5-rich-core-integration.test.mjs', 'tests/fallback-adaptive-fence.test.mjs', 'tests/tool-language-diagnostics.test.mjs', 'tests/sediment-resolver.test.mjs']],
+  ['Built-in test list UI regression', nodeCommand, ['--test', 'tests/test-list-ui.test.mjs']],
+  ['Recorder panel UI regression', nodeCommand, ['--test', 'tests/recorder-panel-ui.test.mjs', 'tests/modal-focus-retention.test.mjs', 'tests/heading-metadata-controls.test.mjs']]
 ];
 
 const crossConsumerRepositories = [
@@ -115,7 +118,7 @@ function runCrossConsumerCi() {
 
     if (!runStage(
       'Install DownloadConversation AIConversationCore dependencies',
-      'npm',
+      npmCommand,
       ['ci'],
       { cwd: roots['phase7-core'] }
     )) {
@@ -124,7 +127,7 @@ function runCrossConsumerCi() {
     }
 
     const venvRoot = path.join(temporaryRoot, 'python-venv');
-    if (!runStage('Create cross-consumer Python virtual environment', 'python', ['-m', 'venv', venvRoot])) {
+    if (!runStage('Create cross-consumer Python virtual environment', pythonCommand, ['-m', 'venv', venvRoot])) {
       console.error('\nPython environment setup failed; dependent tests are skipped.');
       return;
     }
@@ -148,17 +151,20 @@ function runCrossConsumerCi() {
       PHASE7_AIGM_CORE_ROOT: roots['phase7-aigm-core']
     };
 
-    runStage('Mixed rich final-render parity', 'node', ['tests/phase7-cross-consumer-parity.mjs'], { env });
-    runStage('Markdown-shape and multi-exchange parity', 'node', ['tests/phase7-cross-consumer-markdown-shape.mjs'], { env });
-    runStage('Adversarial containment and normalization parity', 'node', ['tests/phase7-cross-consumer-adversarial.mjs'], { env });
+    runStage('Mixed rich final-render parity', nodeCommand, ['tests/phase7-cross-consumer-parity.mjs'], { env });
+    runStage('Markdown-shape and multi-exchange parity', nodeCommand, ['tests/phase7-cross-consumer-markdown-shape.mjs'], { env });
+    runStage('Adversarial containment and normalization parity', nodeCommand, ['tests/phase7-cross-consumer-adversarial.mjs'], { env });
   } finally {
     rmSync(temporaryRoot, { recursive: true, force: true });
   }
 }
 
-console.log(`DownloadConversation local CI`);
+console.log('DownloadConversation local CI');
 console.log(`Repository: ${root}`);
 console.log(`Node: ${process.version}`);
+if (Number(process.versions.node.split('.')[0]) !== 22) {
+  console.warn('WARNING: GitHub CI uses Node 22; this local run is using a different Node major version.');
+}
 
 const ordinaryPrerequisitesPassed = runOrdinaryCi();
 if (ordinaryPrerequisitesPassed) runCrossConsumerCi();
