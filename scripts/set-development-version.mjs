@@ -2,7 +2,7 @@ import { execFileSync } from 'node:child_process';
 import { readFile, writeFile } from 'node:fs/promises';
 import { fileURLToPath } from 'node:url';
 
-const DEFAULT_USERSCRIPT = 'chatgpt-conversation-markdown-export.user.js';
+const DEFAULT_VERSION_SOURCE = 'src/userscript-header.js';
 const ISSUE_BRANCH_RE = /^issue-(\d+)(?:-|$)/;
 const RELEASE_VERSION_RE = /^\d+\.\d+\.\d+$/;
 const VERSION_WITH_OPTIONAL_ISSUE_RE = /^(\d+\.\d+\.\d+)(?:-issue\.\d+\.\d+)?$/;
@@ -17,7 +17,7 @@ function fail(message) {
 function parseArgs(argv) {
   const options = {
     branch: null,
-    file: DEFAULT_USERSCRIPT,
+    file: DEFAULT_VERSION_SOURCE,
     iteration: null,
     release: null
   };
