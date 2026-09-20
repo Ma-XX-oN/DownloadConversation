@@ -11,7 +11,7 @@ permissions:
 jobs:
   apply-and-verify:
     if: "github.event.head_commit.message == 'chore(#135): apply terminal dispatch repair'"
-    runs-on: windows-latest
+    runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
         with:
