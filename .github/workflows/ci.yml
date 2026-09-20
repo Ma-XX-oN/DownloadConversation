@@ -14,11 +14,6 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: 22
-      - name: Stable main release tag guard
-        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
-        run: |
-          git fetch --force --tags
-          node scripts/check-release-tag.mjs --branch main
       - name: Build production userscript
         run: node scripts/build-userscript.mjs
       - name: Verify generated userscript is current
@@ -142,3 +137,42 @@ jobs:
           PHASE7_AIGM_ROOT: ${{ github.workspace }}/.phase7-aigm
           PHASE7_AIGM_CORE_ROOT: ${{ github.workspace }}/.phase7-aigm-core
         run: node tests/phase7-cross-consumer-adversarial.mjs
+
+  publish-release:
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    needs:
+      - test
+      - cross-consumer-final-render
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: main
+          fetch-depth: 0
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - name: Configure annotated-tag identity
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+      - name: Publish verified stable release tag
+        run: node scripts/release.mjs --from-source
+
+  verify-release-tag:
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    needs: publish-release
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: main
+          fetch-depth: 0
+      - name: Verify published stable release tag
+        run: |
+          git fetch --force --tags
+          node scripts/check-release-tag.mjs --branch main
