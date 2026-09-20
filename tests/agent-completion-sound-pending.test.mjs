@@ -7,7 +7,8 @@ function pendingHarness(volume = 10, playbackResults = [false, true]) {
   const context = {
     emitted: [],
     playbackResults: [...playbackResults],
-    diagnostics: []
+    diagnostics: [],
+    document: { addEventListener() {} }
   };
 
   vm.runInNewContext(`
@@ -17,6 +18,7 @@ function pendingHarness(volume = 10, playbackResults = [false, true]) {
     const agentSoundTerminalKeys = new Set();
     let agentSoundPendingTerminal = null;
 
+    function agentSoundHandleUserGesture() {}
     function playAgentSound(kind) {
       this.emitted.push(kind);
       return this.playbackResults.length ? this.playbackResults.shift() : true;
