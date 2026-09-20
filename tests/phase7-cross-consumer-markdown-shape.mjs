@@ -1,11 +1,11 @@
 import assert from 'node:assert/strict';
 import { readFile, writeFile } from 'node:fs/promises';
 import path from 'node:path';
-import { pathToFileURL } from 'node:url';
+import { fileURLToPath, pathToFileURL } from 'node:url';
 import { spawnSync } from 'node:child_process';
 import vm from 'node:vm';
 
-const root = path.resolve(new URL('..', import.meta.url).pathname);
+const root = path.resolve(fileURLToPath(new URL('..', import.meta.url)));
 const coreRoot = path.resolve(process.env.PHASE7_CORE_ROOT ?? path.join(root, '.phase7-core'));
 const aigmRoot = path.resolve(process.env.PHASE7_AIGM_ROOT ?? path.join(root, '.phase7-aigm'));
 const aigmCoreRoot = path.resolve(process.env.PHASE7_AIGM_CORE_ROOT ?? path.join(root, '.phase7-aigm-core'));
@@ -63,9 +63,10 @@ async function aiTranscriptMarkdown() {
     }
   );
   assert.equal(result.status, 0, `AI-transcript.py failed: ${result.stderr}`);
-  const start = result.stdout.indexOf('## ');
+  const stdout = result.stdout.replace(/\r\n?/g, '\n');
+  const start = stdout.indexOf('## ');
   assert.ok(start >= 0, 'AI-transcript.py output contains no transcript heading.');
-  return result.stdout.slice(start);
+  return stdout.slice(start);
 }
 
 async function downloadConversationMarkdown() {
