@@ -1,58 +1,77 @@
 import { mkdir, readFile, writeFile } from 'node:fs/promises';
-import { fileURLToPath } from 'node:url';
 import path from 'node:path';
-
+import { fileURLToPath } from 'node:url';
 import {
   assembleUserscript,
-  gitBlobSha1,
-  readUserscriptManifest
+  readDownloadConversationSource,
+  readUserscriptHeader,
+  readUserscriptManifest,
+  validatePinnedDependency
 } from './userscript-build-lib.mjs';
 
-const rootDir = fileURLToPath(new URL('..', import.meta.url));
-const defaultOutput = 'dist/chatgpt-conversation-markdown-export.user.js';
+const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 
-function parseArgs(argv) {
-  const options = { check: false, output: defaultOutput };
+function parseArguments(argv) {
+  let check = false;
+  let output = null;
   for (let index = 0; index < argv.length; index += 1) {
-    const arg = argv[index];
-    if (arg === '--check') {
-      options.check = true;
+    const argument = argv[index];
+    if (argument === '--check') {
+      check = true;
       continue;
     }
-    if (arg === '--output') {
-      const value = argv[index + 1];
-      if (!value || value.startsWith('--')) throw new Error('--output requires a path.');
-      options.output = value;
+    if (argument === '--output') {
+      output = argv[index + 1] ?? null;
+      if (!output) throw new Error('--output requires a path.');
       index += 1;
       continue;
     }
-    throw new Error(`Unknown argument: ${arg}`);
+    throw new Error(`Unknown argument: ${argument}`);
   }
-  return options;
+  return { check, output };
 }
 
-async function main() {
-  const options = parseArgs(process.argv.slice(2));
-  const manifest = await readUserscriptManifest(rootDir);
-  const output = await assembleUserscript(rootDir, manifest);
-  const outputPath = path.resolve(rootDir, options.output);
-
-  if (options.check) {
-    const existing = await readFile(outputPath, 'utf8');
-    if (existing !== output) {
-      throw new Error(`${options.output} is stale; run node scripts/build-userscript.mjs.`);
-    }
-    process.stdout.write(
-      `Userscript build is current: ${options.output} (${gitBlobSha1(output)}).\n`
+async function fetchPinnedDependency(dependency) {
+  const response = await fetch(dependency.url, { redirect: 'follow' });
+  if (!response.ok) {
+    throw new Error(
+      `Could not fetch pinned ${dependency.name} dependency: HTTP ${response.status} ${response.statusText}.`
     );
-    return;
   }
-
-  await mkdir(path.dirname(outputPath), { recursive: true });
-  await writeFile(outputPath, output, 'utf8');
-  process.stdout.write(
-    `Built ${options.output} from ${manifest.parts.length} source fragments (${gitBlobSha1(output)}).\n`
-  );
+  const content = await response.text();
+  validatePinnedDependency(dependency, content);
+  return { manifest: dependency, content };
 }
 
-await main();
+const args = parseArguments(process.argv.slice(2));
+const manifest = await readUserscriptManifest(root);
+const outputPath = path.resolve(root, args.output ?? manifest.generated_artifact);
+const header = await readUserscriptHeader(root, manifest);
+const source = await readDownloadConversationSource(root, manifest);
+const dependencies = [];
+for (const dependency of manifest.dependencies) {
+  dependencies.push(await fetchPinnedDependency(dependency));
+}
+const built = assembleUserscript(header, dependencies, source);
+
+if (args.check) {
+  let existing;
+  try {
+    existing = await readFile(outputPath, 'utf8');
+  } catch (error) {
+    if (error?.code === 'ENOENT') {
+      throw new Error(`Generated userscript is missing: ${path.relative(root, outputPath)}`);
+    }
+    throw error;
+  }
+  if (existing !== built) {
+    throw new Error(
+      `Generated userscript is stale: ${path.relative(root, outputPath)}. Run node scripts/build-userscript.mjs.`
+    );
+  }
+  console.log(`Generated userscript is current: ${path.relative(root, outputPath)}`);
+} else {
+  await mkdir(path.dirname(outputPath), { recursive: true });
+  await writeFile(outputPath, built, 'utf8');
+  console.log(`Built ${path.relative(root, outputPath)} (${Buffer.byteLength(built, 'utf8')} bytes).`);
+}

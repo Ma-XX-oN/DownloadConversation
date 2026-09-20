@@ -1,55 +1,102 @@
 {
-  "format_version": 1,
+  "format_version": 2,
   "header": "src/userscript-header.js",
-  "parts": [
-    "src/userscript-body/part-001.js",
-    "src/userscript-body/part-002.js",
-    "src/userscript-body/part-003.js",
-    "src/userscript-body/part-004.js",
-    "src/userscript-body/part-005.js",
-    "src/userscript-body/part-006.js",
-    "src/userscript-body/part-007.js",
-    "src/userscript-body/part-008.js",
-    "src/userscript-body/part-009.js",
-    "src/userscript-body/part-010.js",
-    "src/userscript-body/part-011.js",
-    "src/userscript-body/part-012.js",
-    "src/userscript-body/part-013.js",
-    "src/userscript-body/part-014.js",
-    "src/userscript-body/part-015.js",
-    "src/userscript-body/part-016.js",
-    "src/userscript-body/part-017.js",
-    "src/userscript-body/part-018.js",
-    "src/userscript-body/part-019.js",
-    "src/userscript-body/part-020.js",
-    "src/userscript-body/part-021.js",
-    "src/userscript-body/part-022.js",
-    "src/userscript-body/part-023.js",
-    "src/userscript-body/part-024.js",
-    "src/userscript-body/part-025.js",
-    "src/userscript-body/part-026.js",
-    "src/userscript-body/part-027.js",
-    "src/userscript-body/part-028.js",
-    "src/userscript-body/part-029.js",
-    "src/userscript-body/part-030.js",
-    "src/userscript-body/part-031.js",
-    "src/userscript-body/part-032.js",
-    "src/userscript-body/part-033.js",
-    "src/userscript-body/part-034.js",
-    "src/userscript-body/part-035.js",
-    "src/userscript-body/part-036.js",
-    "src/userscript-body/part-037.js",
-    "src/userscript-body/part-038.js",
-    "src/userscript-body/part-039.js",
-    "src/userscript-body/part-040.js",
-    "src/userscript-body/part-041.js",
-    "src/userscript-body/part-042.js",
-    "src/userscript-body/part-043.js",
-    "src/userscript-body/part-044.js"
+  "generated_artifact": "chatgpt-conversation-markdown-export.user.js",
+  "dependencies": [
+    {
+      "name": "AIConversationCore",
+      "repository": "Ma-XX-oN/AIConversationCore",
+      "commit": "cf34d9374f51ac525acfb90cfd6b247006a7bf6e",
+      "path": "dist/aiconversationcore.chatgpt.browser.js",
+      "url": "https://raw.githubusercontent.com/Ma-XX-oN/AIConversationCore/cf34d9374f51ac525acfb90cfd6b247006a7bf6e/dist/aiconversationcore.chatgpt.browser.js",
+      "git_blob_sha1": "5a999c8c02f127b4fc03b923a40496961c9cacc0",
+      "byte_length": 264693
+    }
   ],
-  "fragment_max_bytes": 24576,
+  "modules": [
+    {
+      "name": "runtime",
+      "files": [
+        "src/userscript/01-runtime/01-bootstrap.js",
+        "src/userscript/01-runtime/02-shared-network-transition.js"
+      ]
+    },
+    {
+      "name": "network-communication",
+      "files": [
+        "src/userscript/02-network-communication/01-stock-network-identities.js",
+        "src/userscript/02-network-communication/02-stock-network-responses.js",
+        "src/userscript/02-network-communication/03-communication-lifecycle.js",
+        "src/userscript/02-network-communication/04-communication-redaction.js",
+        "src/userscript/02-network-communication/05-communication-recovery.js",
+        "src/userscript/02-network-communication/06-communication-files.js",
+        "src/userscript/02-network-communication/07-communication-streams.js",
+        "src/userscript/02-network-communication/08-communication-xhr.js"
+      ]
+    },
+    {
+      "name": "agent-lifecycle",
+      "files": [
+        "src/userscript/03-agent-lifecycle/01-click-sound-transition.js",
+        "src/userscript/03-agent-lifecycle/02-terminal-events.js",
+        "src/userscript/03-agent-lifecycle/03-favicon.js",
+        "src/userscript/03-agent-lifecycle/04-stopwatch-live.js",
+        "src/userscript/03-agent-lifecycle/05-stopwatch-recovery.js",
+        "src/userscript/03-agent-lifecycle/06-generation-stream-detection.js",
+        "src/userscript/03-agent-lifecycle/07-generation-stream-sse.js",
+        "src/userscript/03-agent-lifecycle/08-generation-request.js",
+        "src/userscript/03-agent-lifecycle/09-network-install-api-transition.js"
+      ]
+    },
+    {
+      "name": "conversation-rendering",
+      "files": [
+        "src/userscript/04-conversation-rendering/01-api-pages.js",
+        "src/userscript/04-conversation-rendering/02-record-identities.js",
+        "src/userscript/04-conversation-rendering/03-uap-grouping.js",
+        "src/userscript/04-conversation-rendering/04-citation-parsing.js",
+        "src/userscript/04-conversation-rendering/05-source-citations.js",
+        "src/userscript/04-conversation-rendering/06-sandbox-links.js",
+        "src/userscript/04-conversation-rendering/07-image-pointer-rendering.js",
+        "src/userscript/04-conversation-rendering/08-thought-rendering.js",
+        "src/userscript/04-conversation-rendering/09-canonical-core-rendering.js",
+        "src/userscript/04-conversation-rendering/10-markdown-rendering.js"
+      ]
+    },
+    {
+      "name": "live-navigation",
+      "files": [
+        "src/userscript/05-live-navigation/01-status-jump-live-transition.js",
+        "src/userscript/05-live-navigation/02-live-tail-markers.js",
+        "src/userscript/05-live-navigation/03-live-tail-input.js",
+        "src/userscript/05-live-navigation/04-live-api-consistency.js",
+        "src/userscript/05-live-navigation/05-jump-image-transition.js"
+      ]
+    },
+    {
+      "name": "image-export-tests",
+      "files": [
+        "src/userscript/06-image-export-tests/01-image-fetch.js",
+        "src/userscript/06-image-export-tests/02-image-recovery.js",
+        "src/userscript/06-image-export-tests/03-export-tests-transition.js",
+        "src/userscript/06-image-export-tests/04-tests-modal-transition.js",
+        "src/userscript/06-image-export-tests/05-modal-contract.js"
+      ]
+    },
+    {
+      "name": "panel-launcher",
+      "files": [
+        "src/userscript/07-panel-launcher/01-panel-diagnostics.js",
+        "src/userscript/07-panel-launcher/02-launcher-lifecycle.js",
+        "src/userscript/07-panel-launcher/03-launcher-topology.js",
+        "src/userscript/07-panel-launcher/04-launcher-removal.js",
+        "src/userscript/07-panel-launcher/05-bootstrap.js"
+      ]
+    }
+  ],
   "migration_source": {
-    "path": "chatgpt-conversation-markdown-export.user.js",
-    "git_blob_sha1": "44a4ab373a6515caed5527aeb19cbdff7ce91e07"
+    "path": "tests/fixtures/legacy-userscript-issue-135.3.user.js",
+    "git_blob_sha1": "44a4ab373a6515caed5527aeb19cbdff7ce91e07",
+    "note": "Behavior-preserving migration fixture only; not authoritative source."
   }
 }
