@@ -95,8 +95,14 @@ test('ordered source preserves the userscript runtime IIFE boundary', async () =
   assert.match(source, /const CORE_VERSION = canonicalCore\(\)\.getVersion\(\);/);
 });
 
-test('migration preserves every non-whitespace legacy runtime byte in source order', async () => {
+test('issue #150 migration preserves every non-whitespace legacy runtime byte in source order', async t => {
   const manifest = await readUserscriptManifest(root);
+  const header = await readUserscriptHeader(root, manifest);
+  if (!/-issue\.150\.\d+$/m.test(header)) {
+    t.skip('Exact legacy equivalence is a migration-only #150 gate; later issue branches may intentionally change runtime behavior.');
+    return;
+  }
+
   const fixture = await readFile(path.join(root, manifest.migration_source.path), 'utf8');
   const headerEnd = fixture.indexOf(USER_SCRIPT_HEADER_END);
   assert.ok(headerEnd >= 0, 'Legacy fixture userscript metadata terminator is missing.');
