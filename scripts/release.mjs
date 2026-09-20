@@ -4,7 +4,8 @@ import { resolve } from 'node:path';
 import {
   assertUserscriptReleaseVersion,
   buildReleasePlan,
-  parseReleaseVersion
+  parseReleaseVersion,
+  userscriptVersion
 } from './release-lib.mjs';
 import {
   RELEASE_ROOT,
@@ -44,6 +45,8 @@ async function publishRelease(requestedVersion) {
     throw new Error(`Release tag ${plan.tag} already exists on origin.`);
   }
 
+  run(process.execPath, ['scripts/build-userscript.mjs']);
+
   const sourceHeader = await readFile(SOURCE_HEADER_PATH, 'utf8');
   const generatedArtifact = await readFile(GENERATED_ARTIFACT_PATH, 'utf8');
   assertUserscriptReleaseVersion(sourceHeader, generatedArtifact, version);
@@ -70,12 +73,17 @@ async function publishRelease(requestedVersion) {
   console.log(`Published ${plan.tag} on verified main commit ${head}.`);
 }
 
-const requestedVersion = process.argv[2];
-if (!requestedVersion || process.argv.length !== 3) {
-  console.error('Usage: node scripts/release.mjs <version>');
+/** Release version argument supplied explicitly or derived from authoritative stable source. */
+const releaseArgument = process.argv[2];
+if (!releaseArgument || process.argv.length !== 3) {
+  console.error('Usage: node scripts/release.mjs <version> | --from-source');
   process.exitCode = 2;
 } else {
   try {
+    /** Plain stable version requested for this release operation. */
+    const requestedVersion = releaseArgument === '--from-source'
+      ? parseReleaseVersion(userscriptVersion(await readFile(SOURCE_HEADER_PATH, 'utf8')))
+      : parseReleaseVersion(releaseArgument);
     await publishRelease(requestedVersion);
   } catch (error) {
     console.error(error instanceof Error ? error.message : String(error));
