@@ -18,6 +18,8 @@ jobs:
         run: node scripts/check-jsdoc.mjs
       - name: JavaScript syntax
         run: node --check chatgpt-conversation-markdown-export.user.js
+      - name: Modular userscript build regression
+        run: node --test tests/modular-userscript-build.test.mjs tests/development-version-source.test.mjs
       - name: Version identity regression
         run: node --test tests/version-identity.test.mjs
       - name: Development version guard regression
