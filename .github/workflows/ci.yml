@@ -9,6 +9,8 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
       - uses: actions/setup-node@v4
         with:
           node-version: 22
@@ -40,6 +42,8 @@ jobs:
         run: node --test tests/development-version-guard.test.mjs
       - name: Development version setter regression
         run: node --test tests/set-development-version.test.mjs
+      - name: Release tagging regression
+        run: node --test tests/release-tagging.test.mjs
       - name: Single-snapshot export regression
         run: node --test tests/export-single-snapshot.test.mjs
       - name: Agent completion sound regression
@@ -133,3 +137,42 @@ jobs:
           PHASE7_AIGM_ROOT: ${{ github.workspace }}/.phase7-aigm
           PHASE7_AIGM_CORE_ROOT: ${{ github.workspace }}/.phase7-aigm-core
         run: node tests/phase7-cross-consumer-adversarial.mjs
+
+  publish-release:
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    needs:
+      - test
+      - cross-consumer-final-render
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: main
+          fetch-depth: 0
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - name: Configure annotated-tag identity
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+      - name: Publish verified stable release tag
+        run: node scripts/release.mjs --from-source
+
+  verify-release-tag:
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    needs: publish-release
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: main
+          fetch-depth: 0
+      - name: Verify published stable release tag
+        run: |
+          git fetch --force --tags
+          node scripts/check-release-tag.mjs --branch main
