@@ -1,5 +1,5 @@
 import { coreDependency, coreUrl } from './helpers/core-pin.mjs';
-import { userscript } from './helpers/userscript-source.mjs';
+import { downloadConversationSource, userscript } from './helpers/userscript-source.mjs';
 import assert from 'node:assert/strict';
 import { readFile } from 'node:fs/promises';
 import test from 'node:test';
@@ -17,10 +17,10 @@ const CORE_BLOB_SHA1 = '5a999c8c02f127b4fc03b923a40496961c9cacc0';
 test('DownloadConversation keeps one caller-version authority in userscript metadata and shows it at the top of general status', () => {
   const metadataVersion = userscript.match(/^\/\/ @version\s+(\S+)$/m);
   assert.ok(metadataVersion, 'Userscript metadata version is missing.');
-  assert.match(userscript, /const VERSION = \(typeof GM_info !== 'undefined' && GM_info\?\.script\?\.version\) \|\| 'unknown';/);
-  assert.doesNotMatch(userscript, /const VERSION = ['"]\d/);
+  assert.match(downloadConversationSource, /const VERSION = \(typeof GM_info !== 'undefined' && GM_info\?\.script\?\.version\) \|\| 'unknown';/);
+  assert.doesNotMatch(downloadConversationSource, /const VERSION = ['"]\d/);
   assert.match(
-    userscript,
+    downloadConversationSource,
     /if \(title\) title\.textContent = `ChatGPT Recorder v\$\{VERSION\}`;/,
     'General status title must show the authoritative caller version at the top.'
   );
@@ -63,9 +63,9 @@ test('the manifest-pinned browser bundle reports Core 1.0.0', async () => {
 });
 
 test('runtime diagnostics derive and report both caller and Core semantic versions', () => {
-  assert.match(userscript, /const CORE_VERSION = canonicalCore\(\)\.getVersion\(\);/);
-  assert.match(userscript, /typeof core\.getVersion === 'function'/);
-  assert.match(userscript, /logDiagnostic\('debug', 'recorder-panel-created', \{\s*script_version: VERSION,\s*core_version: CORE_VERSION\s*\}\);/s);
-  assert.match(userscript, /\[DownloadConversation v\$\{VERSION\} \| AIConversationCore v\$\{CORE_VERSION\}\] bootstrap/);
-  assert.doesNotMatch(userscript, /(?:const CORE_VERSION\s*=|core_version:\s*)['"]1\.0\.0['"]/);
+  assert.match(downloadConversationSource, /const CORE_VERSION = canonicalCore\(\)\.getVersion\(\);/);
+  assert.match(downloadConversationSource, /typeof core\.getVersion === 'function'/);
+  assert.match(downloadConversationSource, /logDiagnostic\('debug', 'recorder-panel-created', \{\s*script_version: VERSION,\s*core_version: CORE_VERSION\s*\}\);/s);
+  assert.match(downloadConversationSource, /\[DownloadConversation v\$\{VERSION\} \| AIConversationCore v\$\{CORE_VERSION\}\] bootstrap/);
+  assert.doesNotMatch(downloadConversationSource, /(?:const CORE_VERSION\s*=|core_version:\s*)['"]1\.0\.0['"]/);
 });
