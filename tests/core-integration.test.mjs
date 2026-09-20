@@ -1,13 +1,13 @@
+import { coreDependency, coreUrl } from './helpers/core-pin.mjs';
 import { userscript } from './helpers/userscript-source.mjs';
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import vm from 'node:vm';
 
-const requireMatch = userscript.match(/^\/\/ @require\s+(https:\/\/raw\.githubusercontent\.com\/Ma-XX-oN\/AIConversationCore\/([0-9a-f]{40})\/dist\/aiconversationcore\.chatgpt\.browser\.js)$/m);
-assert.ok(requireMatch, 'Production userscript must pin the AIConversationCore browser bundle to an exact commit.');
-assert.equal(requireMatch[2], 'cf34d9374f51ac525acfb90cfd6b247006a7bf6e');
+assert.equal(coreDependency.commit, 'cf34d9374f51ac525acfb90cfd6b247006a7bf6e');
+assert.equal(coreDependency.git_blob_sha1, '5a999c8c02f127b4fc03b923a40496961c9cacc0');
 
-const response = await fetch(requireMatch[1]);
+const response = await fetch(coreUrl);
 assert.equal(response.status, 200, `Could not load pinned AIConversationCore bundle: HTTP ${response.status}`);
 const bundle = await response.text();
 const context = {};
