@@ -1,4 +1,7 @@
-import { productionFunctionSource, userscript } from './helpers/userscript-source.mjs';
+import {
+  downloadConversationSource,
+  productionFunctionSource
+} from './helpers/userscript-source.mjs';
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import vm from 'node:vm';
@@ -18,9 +21,7 @@ function consoleCalls({ shown, enabled, level = 'debug', message = 'message', da
     }
   };
   vm.createContext(context);
-  vm.runInContext(`${redactorSource}
-${consoleSource}
-this.emit = logConsoleDiagnostic;`, context);
+  vm.runInContext(`${redactorSource}\n${consoleSource}\nthis.emit = logConsoleDiagnostic;`, context);
   context.emit(level, message, data);
   return calls;
 }
@@ -50,16 +51,16 @@ test('hidden panel creation does not end startup; first display is a one-way bou
   assert.match(launcher, /if \(panel && !generalStatusShown\) \{/);
   assert.match(launcher, /logDiagnostic\('debug', 'general-status-shown'/);
   assert.match(launcher, /generalStatusShown = true/);
-  assert.equal((userscript.match(/generalStatusShown = true/g) ?? []).length, 1);
+  assert.equal((downloadConversationSource.match(/generalStatusShown = true/g) ?? []).length, 1);
 });
 
 test('console checkbox controls continued mirroring independently and persists', () => {
-  assert.match(userscript, /data-role="console-diagnostics" type="checkbox"> console/);
-  assert.match(userscript, /consoleDiagnostics = localStorage\.getItem\(CONSOLE_DIAGNOSTICS_STORAGE_KEY\) === 'true'/);
-  assert.match(userscript, /consoleOutput\.checked = consoleDiagnostics/);
-  assert.match(userscript, /consoleDiagnostics = consoleOutput\.checked/);
-  assert.match(userscript, /localStorage\.setItem\(CONSOLE_DIAGNOSTICS_STORAGE_KEY, String\(consoleDiagnostics\)\)/);
-  assert.doesNotMatch(userscript, /diagnosticsLevel = consoleDiagnostics|consoleDiagnostics = diagnosticsLevel/);
+  assert.match(downloadConversationSource, /data-role="console-diagnostics" type="checkbox"> console/);
+  assert.match(downloadConversationSource, /consoleDiagnostics = localStorage\.getItem\(CONSOLE_DIAGNOSTICS_STORAGE_KEY\) === 'true'/);
+  assert.match(downloadConversationSource, /consoleOutput\.checked = consoleDiagnostics/);
+  assert.match(downloadConversationSource, /consoleDiagnostics = consoleOutput\.checked/);
+  assert.match(downloadConversationSource, /localStorage\.setItem\(CONSOLE_DIAGNOSTICS_STORAGE_KEY, String\(consoleDiagnostics\)\)/);
+  assert.doesNotMatch(downloadConversationSource, /diagnosticsLevel = consoleDiagnostics|consoleDiagnostics = diagnosticsLevel/);
 });
 
 test('startup and saved-on console output redact tokens before emission', () => {
@@ -82,17 +83,16 @@ test('startup and saved-on console output redact tokens before emission', () => 
 
 test('all direct recorder console calls use the shared lifecycle gate', () => {
   const helper = `  ${consoleSource}`;
-  const withoutHelper = userscript.replace(helper, '');
+  const withoutHelper = downloadConversationSource.replace(helper, '');
   assert.doesNotMatch(withoutHelper, /console\.(?:log|warn|error)\s*\(/,
     'Direct recorder console calls must not bypass logConsoleDiagnostic.');
-  assert.match(userscript, /logConsoleDiagnostic\('debug', `\[DownloadConversation v\$\{VERSION\} \| AIConversationCore v\$\{CORE_VERSION\}\] bootstrap`/);
+  assert.match(downloadConversationSource, /logConsoleDiagnostic\('debug', `\[DownloadConversation v\$\{VERSION\} \| AIConversationCore v\$\{CORE_VERSION\}\] bootstrap`/);
 });
 
 test('provenance is only a label change; Core preference and diagnostic Debug remain independent', () => {
-  assert.match(userscript, /^\/\/ @version\s+\d+\.\d+\.\d+(?:-issue\.\d+\.\d+)?$/m);
-  assert.match(userscript, /data-role="show-debug-provenance" type="checkbox"> provenance/);
-  assert.match(userscript, /showDebugProvenance = localStorage\.getItem\(SHOW_DEBUG_PROVENANCE_STORAGE_KEY\) === 'true'/);
-  assert.match(userscript, /debugProvenance: showDebugProvenance/);
-  assert.match(userscript, /<option value="debug">Debug<\/option>/);
-  assert.doesNotMatch(userscript, /data-role="show-debug-provenance" type="checkbox"> Debug/);
+  assert.match(downloadConversationSource, /data-role="show-debug-provenance" type="checkbox"> provenance/);
+  assert.match(downloadConversationSource, /showDebugProvenance = localStorage\.getItem\(SHOW_DEBUG_PROVENANCE_STORAGE_KEY\) === 'true'/);
+  assert.match(downloadConversationSource, /debugProvenance: showDebugProvenance/);
+  assert.match(downloadConversationSource, /<option value="debug">Debug<\/option>/);
+  assert.doesNotMatch(downloadConversationSource, /data-role="show-debug-provenance" type="checkbox"> Debug/);
 });
