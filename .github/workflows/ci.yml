@@ -19,7 +19,17 @@ jobs:
       - name: JavaScript syntax
         run: node --check chatgpt-conversation-markdown-export.user.js
       - name: Modular userscript build regression
-        run: node --test tests/modular-userscript-build.test.mjs tests/development-version-source.test.mjs
+        id: modular-userscript-build
+        shell: bash
+        run: |
+          set -o pipefail
+          node --test tests/modular-userscript-build.test.mjs tests/development-version-source.test.mjs 2>&1 | tee modular-userscript-build.log
+      - name: Upload modular userscript failure log
+        if: always() && steps.modular-userscript-build.outcome == 'failure'
+        uses: actions/upload-artifact@v4
+        with:
+          name: modular-userscript-build-failure
+          path: modular-userscript-build.log
       - name: Version identity regression
         run: node --test tests/version-identity.test.mjs
       - name: Development version guard regression
