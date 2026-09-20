@@ -1,3 +1,4 @@
+import { coreDependency, coreUrl } from './helpers/core-pin.mjs';
 import { userscript } from './helpers/userscript-source.mjs';
 import assert from 'node:assert/strict';
 import { readFile } from 'node:fs/promises';
@@ -11,13 +12,7 @@ const sedimentResolver = await readFile(new URL('./sediment-resolver.test.mjs', 
 
 const OLD_CORE_COMMIT = 'd6d76b54db3d48baf3f5e3a76099be1732d32785';
 const CORE_COMMIT = 'cf34d9374f51ac525acfb90cfd6b247006a7bf6e';
-
-function pinnedCoreUrl() {
-  const match = userscript.match(/^\/\/ @require\s+(https:\/\/raw\.githubusercontent\.com\/Ma-XX-oN\/AIConversationCore\/([0-9a-f]{40})\/dist\/aiconversationcore\.chatgpt\.browser\.js)$/m);
-  assert.ok(match, 'Production userscript must pin AIConversationCore to an exact commit.');
-  assert.equal(match[2], CORE_COMMIT);
-  return match[1];
-}
+const CORE_BLOB_SHA1 = '5a999c8c02f127b4fc03b923a40496961c9cacc0';
 
 test('DownloadConversation keeps one caller-version authority in userscript metadata and shows it at the top of general status', () => {
   const metadataVersion = userscript.match(/^\/\/ @version\s+(\S+)$/m);
@@ -31,9 +26,20 @@ test('DownloadConversation keeps one caller-version authority in userscript meta
   );
 });
 
-test('every configured DownloadConversation Core pin uses the verified versioned Core commit', () => {
+test('build manifest is the Core pin authority and generated userscript embeds that exact dependency without @require', () => {
+  assert.equal(coreDependency.commit, CORE_COMMIT);
+  assert.equal(coreDependency.git_blob_sha1, CORE_BLOB_SHA1);
+  assert.equal(coreUrl, coreDependency.url);
+  assert.equal(coreUrl.includes(`/${CORE_COMMIT}/dist/aiconversationcore.chatgpt.browser.js`), true);
+  assert.doesNotMatch(userscript, /^\/\/ @require\s+/m,
+    'Generated userscript must not load AIConversationCore through runtime @require.');
+  assert.match(
+    userscript,
+    new RegExp(`^// BEGIN bundled AIConversationCore commit=${CORE_COMMIT} blob=${CORE_BLOB_SHA1}$`, 'm'),
+    'Generated userscript must record the exact build-time Core commit and blob provenance.'
+  );
+
   const pinnedConsumers = [
-    ['userscript', userscript],
     ['CI', ci],
     ['core integration', coreIntegration],
     ['phase 5 integration', phase5Integration],
@@ -45,8 +51,8 @@ test('every configured DownloadConversation Core pin uses the verified versioned
   }
 });
 
-test('the actually pinned browser bundle reports Core 1.0.0', async () => {
-  const response = await fetch(pinnedCoreUrl());
+test('the manifest-pinned browser bundle reports Core 1.0.0', async () => {
+  const response = await fetch(coreUrl);
   assert.equal(response.status, 200, `Could not load pinned AIConversationCore bundle: HTTP ${response.status}`);
   const bundle = await response.text();
   const context = { URL };
