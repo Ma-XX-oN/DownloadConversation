@@ -100,6 +100,7 @@ test('assembly is deterministic and places verified dependency before DownloadCo
   const dependency = {
     name: 'fixture-core',
     commit: '1'.repeat(40),
+    url: `https://example.test/${'1'.repeat(40)}/fixture.js`,
     git_blob_sha1: 'b82dac162a42aa04170be5265afc69061dc0de30',
     byte_length: 36
   };
@@ -110,7 +111,9 @@ test('assembly is deterministic and places verified dependency before DownloadCo
   assert.equal(first, second);
   assert.ok(first.indexOf(content) < first.indexOf('downloadConversationLoaded'));
   assert.match(first, /BEGIN bundled fixture-core commit=/);
-  assert.doesNotMatch(first, /^\/\/ @require\b/m);
+  assert.match(first, /Build-time dependency provenance only/);
+  const metadata = first.slice(0, first.indexOf('// ==/UserScript==') + '// ==/UserScript=='.length);
+  assert.doesNotMatch(metadata, /^\/\/ @require\b/m);
 });
 
 test('legacy monolith is retained only as a provenance fixture with its original Git blob identity', async () => {

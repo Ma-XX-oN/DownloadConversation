@@ -88,10 +88,13 @@ export function validatePinnedDependency(dependency, content) {
 }
 
 function dependencyBanner(dependency, content) {
+  const provenance =
+    '// Build-time dependency provenance only; this line is outside the userscript metadata block.\n' +
+    `// @require ${dependency.url}\n`;
   const prefix =
     `// BEGIN bundled ${dependency.name} commit=${dependency.commit} blob=${dependency.git_blob_sha1}\n`;
   const suffix = `// END bundled ${dependency.name}\n`;
-  return `${prefix}${content}${content.endsWith('\n') ? '' : '\n'}${suffix}`;
+  return `${provenance}${prefix}${content}${content.endsWith('\n') ? '' : '\n'}${suffix}`;
 }
 
 export function assembleUserscript(header, dependencies, source) {
