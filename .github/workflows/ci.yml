@@ -12,6 +12,10 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: 22
+      - name: Build production userscript
+        run: node scripts/build-userscript.mjs
+      - name: Verify generated userscript is current
+        run: node scripts/build-userscript.mjs --check
       - name: Modular userscript build regression
         id: modular_userscript_build
         shell: bash
@@ -104,6 +108,8 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: '3.13'
+      - name: Build DownloadConversation production userscript
+        run: node scripts/build-userscript.mjs
       - name: Install DownloadConversation AIConversationCore dependencies
         working-directory: .phase7-core
         run: npm ci
