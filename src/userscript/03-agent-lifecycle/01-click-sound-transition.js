@@ -94,6 +94,7 @@
     const volume = agentSoundVolume;
     const beforeState = agentSoundAudioContext?.state ?? 'absent';
     if (volume <= 0) {
+      agentSoundClearPendingTerminal();
       logDiagnostic('debug', 'agent-sound-audio-unlock', {
         volume,
         before_state: beforeState,
@@ -132,6 +133,7 @@
         resume_attempted: resumeAttempted,
         ready
       });
+      if (ready) agentSoundRetryPendingTerminal();
       return ready;
     } catch (error) {
       logDiagnostic('warnings', 'agent-sound-audio-unlock', {
