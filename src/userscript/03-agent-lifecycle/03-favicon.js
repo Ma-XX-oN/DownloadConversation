@@ -117,6 +117,68 @@
     void agentFaviconRenderState('completed');
   }
 
+  /** Single undelivered terminal cue retained until the next successful trusted audio unlock. */
+  let agentSoundPendingTerminal = null;
+
+  /**
+   * Retains the newest terminal cue whose browser playback could not start.
+   *
+   * @param {string} kind - `success` for the ding or `error` for the buzz.
+   * @param {string} terminalKey - Stable normalized terminal identity.
+   * @param {string} soundKey - Terminal identity qualified by sound kind.
+   * @returns {void} No value is returned.
+   */
+  function agentSoundRememberPendingTerminal(kind, terminalKey, soundKey) {
+    agentSoundPendingTerminal = {
+      kind,
+      terminal_key: terminalKey,
+      sound_key: soundKey
+    };
+    logDiagnostic('debug', 'agent-sound-pending-retained', {
+      kind,
+      terminal_key: terminalKey,
+      volume: agentSoundVolume,
+      audio_context_state: agentSoundAudioContext?.state ?? 'absent'
+    });
+  }
+
+  /**
+   * Discards the single retained terminal cue without marking it delivered.
+   *
+   * @returns {void} No value is returned.
+   */
+  function agentSoundClearPendingTerminal() {
+    agentSoundPendingTerminal = null;
+  }
+
+  /**
+   * Replays the single retained terminal cue after a trusted audio unlock.
+   *
+   * @returns {boolean} True only when retained cue playback starts successfully.
+   */
+  function agentSoundRetryPendingTerminal() {
+    const pending = agentSoundPendingTerminal;
+    if (!pending) return false;
+    if (agentSoundVolume <= 0) {
+      agentSoundClearPendingTerminal();
+      return false;
+    }
+    if (!pending.sound_key || agentSoundTerminalKeys.has(pending.sound_key)) {
+      agentSoundClearPendingTerminal();
+      return false;
+    }
+    if (!playAgentSound(pending.kind)) return false;
+    agentSoundClearPendingTerminal();
+    agentSoundRememberTerminalKey(pending.sound_key);
+    logDiagnostic('debug', 'agent-sound-pending-replayed', {
+      kind: pending.kind,
+      terminal_key: pending.terminal_key,
+      volume: agentSoundVolume,
+      audio_context_state: agentSoundAudioContext?.state ?? 'absent'
+    });
+    return true;
+  }
+
   /**
    * Handles one already-normalized terminal event for browser audio only.
    *
@@ -136,15 +198,17 @@
       audio_context_state: agentSoundAudioContext?.state ?? 'absent'
     });
     if (!soundKey) return;
-    if (agentSoundTerminalKeys.has(soundKey)) {
+    if (agentSoundTerminalKeys.has(soundKey) || agentSoundPendingTerminal?.sound_key === soundKey) {
       logDiagnostic('debug', 'agent-sound-duplicate-suppressed', {
         kind,
         terminal_key: key,
-        volume: agentSoundVolume
+        volume: agentSoundVolume,
+        pending: agentSoundPendingTerminal?.sound_key === soundKey
       });
       return;
     }
     if (agentSoundVolume <= 0) {
+      agentSoundClearPendingTerminal();
       logDiagnostic('debug', 'agent-sound-volume-zero-suppressed', {
         kind,
         terminal_key: key,
@@ -152,7 +216,12 @@
       });
       return;
     }
-    if (playAgentSound(kind)) agentSoundRememberTerminalKey(soundKey);
+    if (playAgentSound(kind)) {
+      agentSoundClearPendingTerminal();
+      agentSoundRememberTerminalKey(soundKey);
+      return;
+    }
+    agentSoundRememberPendingTerminal(kind, key, soundKey);
   }
 
   document.addEventListener('pointerdown', agentSoundHandleUserGesture, true);
