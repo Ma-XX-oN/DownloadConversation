@@ -1,7 +1,7 @@
 import { execFileSync } from 'node:child_process';
 import { readFile } from 'node:fs/promises';
 
-const DEFAULT_USERSCRIPT = 'chatgpt-conversation-markdown-export.user.js';
+const DEFAULT_VERSION_SOURCE = 'src/userscript-header.js';
 const DEVELOPMENT_VERSION_RE = /^(\d+)\.(\d+)\.(\d+)-issue\.(\d+)\.(\d+)$/;
 const ISSUE_BRANCH_RE = /^issue-(\d+)(?:-|$)/;
 
@@ -11,7 +11,7 @@ function fail(message) {
 }
 
 function parseArgs(argv) {
-  const options = { branch: null, file: DEFAULT_USERSCRIPT };
+  const options = { branch: null, file: DEFAULT_VERSION_SOURCE };
   for (let index = 0; index < argv.length; index += 1) {
     const arg = argv[index];
     if (arg === '--branch' || arg === '--file') {
