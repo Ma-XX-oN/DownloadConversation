@@ -2,75 +2,62 @@ import { readFile } from 'node:fs/promises';
 import { resolve } from 'node:path';
 
 import {
-  assertUserscriptReleaseVersion,
-  buildReleasePlan,
   parseReleaseVersion,
   userscriptVersion
 } from './release-lib.mjs';
 import {
   RELEASE_ROOT,
-  assertCleanWorkingTree,
   currentBranch,
   git,
-  localTagExists,
-  remoteTagExists,
   run
 } from './release-git.mjs';
 
 /** Authoritative userscript metadata header. */
 const SOURCE_HEADER_PATH = resolve(RELEASE_ROOT, 'src/userscript-header.js');
-/** Generated installable Tampermonkey artifact. */
-const GENERATED_ARTIFACT_PATH = resolve(RELEASE_ROOT, 'chatgpt-conversation-markdown-export.user.js');
 
 /**
- * Verifies merged stable main state, creates/reuses the exact local tag, and publishes it atomically.
+ * Resolves and validates the stable version requested by the release wrapper.
  *
- * @param {string} requestedVersion - Requested plain stable semantic version.
+ * The authoritative source remains the userscript header. An explicit version
+ * is a recovery/diagnostic assertion only; it cannot override the source value.
+ *
+ * @param {string} releaseArgument - Explicit plain semantic version or `--from-source`.
+ * @returns {Promise<string>} Validated stable userscript version.
+ */
+async function requestedStableVersion(releaseArgument) {
+  const sourceHeader = await readFile(SOURCE_HEADER_PATH, 'utf8');
+  const sourceVersion = parseReleaseVersion(userscriptVersion(sourceHeader));
+  if (releaseArgument === '--from-source') return sourceVersion;
+
+  const explicitVersion = parseReleaseVersion(releaseArgument);
+  if (explicitVersion !== sourceVersion) {
+    throw new Error(
+      `Requested release ${explicitVersion} does not match authoritative source ${sourceVersion}.`
+    );
+  }
+  return explicitVersion;
+}
+
+/**
+ * Runs the unified test-cycle path for stable main and independently verifies its tag.
+ *
+ * `scripts/run-ci.mjs` owns generated-artifact materialization, the complete test
+ * cycle, and post-success publication of the exact tested commit under `v<version>`.
+ * This wrapper adds only stable-main eligibility and the independent stable-tag guard.
+ *
+ * @param {string} version - Validated plain stable semantic version.
  * @returns {Promise<void>}
  */
-async function publishRelease(requestedVersion) {
-  const version = parseReleaseVersion(requestedVersion);
-  const plan = buildReleasePlan(version, currentBranch());
-
-  assertCleanWorkingTree();
-  git(['fetch', 'origin', 'main', '--tags', '--prune']);
-
-  const head = git(['rev-parse', 'HEAD'], true).trim();
-  const originMain = git(['rev-parse', 'origin/main'], true).trim();
-  if (head !== originMain) {
-    throw new Error(`Release requires local main HEAD ${head} to equal origin/main ${originMain}.`);
+async function publishStableRelease(version) {
+  const branch = currentBranch();
+  if (branch !== 'main') {
+    throw new Error(`Stable release publication requires branch main, got ${branch || '<detached>'}.`);
   }
 
-  if (remoteTagExists(plan.tag)) {
-    throw new Error(`Release tag ${plan.tag} already exists on origin.`);
-  }
-
-  run(process.execPath, ['scripts/build-userscript.mjs']);
-
-  const sourceHeader = await readFile(SOURCE_HEADER_PATH, 'utf8');
-  const generatedArtifact = await readFile(GENERATED_ARTIFACT_PATH, 'utf8');
-  assertUserscriptReleaseVersion(sourceHeader, generatedArtifact, version);
-
-  run(process.execPath, ['scripts/build-userscript.mjs', '--check']);
   run(process.execPath, ['scripts/run-ci.mjs']);
-  assertCleanWorkingTree();
-
-  if (localTagExists(plan.tag)) {
-    const localTarget = git(['rev-list', '-n', '1', plan.tag], true).trim();
-    if (localTarget !== head) {
-      throw new Error(`Existing local tag ${plan.tag} points to ${localTarget}, not verified main ${head}.`);
-    }
-  } else {
-    git(['tag', '-a', plan.tag, '-m', plan.tagMessage]);
-  }
-
-  const tagTarget = git(['rev-list', '-n', '1', plan.tag], true).trim();
-  if (tagTarget !== head) {
-    throw new Error(`Release tag ${plan.tag} does not point to verified main ${head}.`);
-  }
-
-  git(plan.pushArgs);
-  console.log(`Published ${plan.tag} on verified main commit ${head}.`);
+  git(['fetch', '--force', '--tags']);
+  run(process.execPath, ['scripts/check-release-tag.mjs', '--branch', 'main']);
+  console.log(`Verified stable release v${version} through the unified test-cycle publisher.`);
 }
 
 /** Release version argument supplied explicitly or derived from authoritative stable source. */
@@ -80,11 +67,8 @@ if (!releaseArgument || process.argv.length !== 3) {
   process.exitCode = 2;
 } else {
   try {
-    /** Plain stable version requested for this release operation. */
-    const requestedVersion = releaseArgument === '--from-source'
-      ? parseReleaseVersion(userscriptVersion(await readFile(SOURCE_HEADER_PATH, 'utf8')))
-      : parseReleaseVersion(releaseArgument);
-    await publishRelease(requestedVersion);
+    const version = await requestedStableVersion(releaseArgument);
+    await publishStableRelease(version);
   } catch (error) {
     console.error(error instanceof Error ? error.message : String(error));
     process.exitCode = 1;
