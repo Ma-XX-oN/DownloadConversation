@@ -97,6 +97,7 @@
   "migration_source": {
     "path": "tests/fixtures/legacy-userscript-issue-135.3.user.js",
     "git_blob_sha1": "44a4ab373a6515caed5527aeb19cbdff7ce91e07",
-    "note": "Behavior-preserving migration fixture only; not authoritative source."
+    "snapshot_commit": "62571e15af8f7f3e4472258e7a18bb2f2d48cef5",
+    "note": "Behavior-preserving migration fixture and verified #150 migration snapshot; not authoritative source."
   }
 }
