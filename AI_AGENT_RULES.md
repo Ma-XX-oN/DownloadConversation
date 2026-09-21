@@ -65,6 +65,40 @@ Before changing code or changing/clarifying a requirement:
    decision supersedes it; record the correction or superseding decision in the
    issue history.
 
+### Repository-enforced tested-artifact publication invariant
+
+This is a general engineering rule that should be applied to other repositories
+with generated/runtime deliverables as well as DownloadConversation.
+
+When a test cycle validates a generated or runtime artifact, that test cycle is
+not complete until the exact artifact bytes exercised by the tests are durably
+represented in the repository. Whenever technically possible, the repository
+must enforce the following automatically rather than relying on a human or AI
+to remember a post-test step:
+
+- Materialize the deterministic artifact and commit it before the tests that
+  claim to validate it. The artifact may be generated-only and must never be
+  hand-edited, but generated does not imply untracked.
+- Make all parallel CI jobs test the same exact prepared commit rather than each
+  independently rebuilding a potentially different working-tree artifact.
+- Verify at the start of each test job that the committed artifact is exactly
+  the deterministic output of the authoritative source and pinned inputs.
+- Publish an immutable version-derived tag for the exact tested commit only
+  after the entire required test cycle passes.
+- Never tag a failed test cycle.
+- If the same version tag already identifies a different commit, fail visibly
+  and advance the version/iteration; never move or silently replace the tag.
+- Prevent recursive CI loops when automation creates the artifact commit or tag.
+- Ensure the normal local test runner and hosted CI use the same prepare,
+  verify, and publish mechanism so local and remote evidence identify the same
+  kind of repository object.
+- A script that merely exists is not sufficient. The ordinary test/CI entry
+  points must invoke the mechanism automatically.
+
+For DownloadConversation, `scripts/test-cycle-artifact.mjs` is the repository
+owner of this invariant and the userscript `@version` supplies the immutable
+`v<version>` test-cycle tag identity.
+
 ### Rename/removal call-path audit
 
 Before removing or renaming any production function, helper, constant, or
