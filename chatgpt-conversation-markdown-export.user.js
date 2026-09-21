@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         ChatGPT Conversation Markdown Recorder
 // @namespace    https://chatgpt.com/
-// @version      1.5.0-issue.135.12
+// @version      1.5.0-issue.135.13
 // @description  Exports the current ChatGPT conversation directly from the Conversation API as Markdown or JSONL.
 // @match        https://chatgpt.com/*
 // @match        https://chat.openai.com/*
@@ -10414,7 +10414,10 @@ function projectCanonicalConversation(events) {
     for (const frame of frames) {
       if (!frame || typeof frame !== 'object') continue;
       if (frame.type === 'message') {
-        agentTerminalObserveConversationTurnCompleteFrame(frame);
+        if (frame.topic_id === 'conversations' &&
+            frame?.payload?.type === 'conversation-turn-complete') {
+          agentTerminalObserveConversationTurnCompleteFrame(frame);
+        }
         if (capture?.handed_off && capture.handoff_topic_id) {
           streamTailConsumeWebSocketMessage(capture, frame);
         }
