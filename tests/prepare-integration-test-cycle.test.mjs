@@ -90,6 +90,26 @@ test('one command prepares and pushes the integration test-cycle branch safely',
   }
 });
 
+test('allows untracked diagnostic files while preparing the integration branch', async () => {
+  const { fixtureRoot, remoteRoot } = await createFixture();
+  try {
+    await writeFile(path.join(fixtureRoot, 'test-run-output.log'), 'diagnostic output\n');
+    await writeFile(path.join(fixtureRoot, '.phase7-h1-filtered.jsonl'), '{"diagnostic":true}\n');
+
+    const result = spawnSync(
+      process.execPath,
+      [script, '--branch', 'issue-135-integration-150'],
+      { cwd: fixtureRoot, encoding: 'utf8' }
+    );
+    assert.equal(result.status, 0, result.stderr || result.stdout);
+    assert.match(git(fixtureRoot, ['status', '--porcelain']), /\?\? \.phase7-h1-filtered\.jsonl/);
+    assert.match(git(fixtureRoot, ['status', '--porcelain']), /\?\? test-run-output\.log/);
+  } finally {
+    await rm(fixtureRoot, { recursive: true, force: true });
+    await rm(remoteRoot, { recursive: true, force: true });
+  }
+});
+
 test('refuses to overwrite a divergent local integration branch', async () => {
   const { fixtureRoot, remoteRoot } = await createFixture();
   try {
@@ -112,17 +132,20 @@ test('refuses to overwrite a divergent local integration branch', async () => {
   }
 });
 
-test('refuses to begin from a dirty working tree', async () => {
+test('refuses to begin with tracked working-tree changes', async () => {
   const { fixtureRoot, remoteRoot } = await createFixture();
   try {
-    await writeFile(path.join(fixtureRoot, 'dirty.txt'), 'dirty\n');
+    await writeFile(
+      path.join(fixtureRoot, 'src', 'userscript-header.js'),
+      '// ==UserScript==\n// @version      1.5.0-issue.135.99\n// ==/UserScript==\n'
+    );
     const result = spawnSync(
       process.execPath,
       [script, '--branch', 'issue-135-integration-150'],
       { cwd: fixtureRoot, encoding: 'utf8' }
     );
     assert.notEqual(result.status, 0);
-    assert.match(`${result.stdout}\n${result.stderr}`, /working tree.*clean|clean.*working tree/i);
+    assert.match(`${result.stdout}\n${result.stderr}`, /tracked.*clean|clean.*tracked/i);
   } finally {
     await rm(fixtureRoot, { recursive: true, force: true });
     await rm(remoteRoot, { recursive: true, force: true });
