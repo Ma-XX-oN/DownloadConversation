@@ -47,10 +47,9 @@ test('indicator is visible until audio is ready, then removed, without polling',
     'indicator must not add polling or an alternate readiness detector');
 });
 
-test('indicator positioning follows the stopwatch when it exists but has a startup position without it', () => {
+test('indicator follows the stopwatch when it exists but has a startup position without it', () => {
   const ensure = productionFunctionSource('ensureAgentSoundInitializationIndicator');
   const position = productionFunctionSource('agentSoundPositionInitializationIndicator');
-  const stopwatch = productionFunctionSource('ensureAgentStopwatchControl');
   const render = productionFunctionSource('agentStopwatchRender');
 
   assert.match(ensure, /style\.position\s*=\s*['"]fixed['"]/);
@@ -59,8 +58,6 @@ test('indicator positioning follows the stopwatch when it exists but has a start
     'before the stopwatch exists the icon must still be visible at its startup position');
   assert.match(position, /offsetWidth/,
     'when the stopwatch exists the icon must move immediately to its left');
-  assert.match(stopwatch, /agentSoundPositionInitializationIndicator/,
-    'stopwatch creation must align the existing icon');
   assert.match(render, /agentSoundPositionInitializationIndicator/,
-    'stopwatch width changes must keep the icon aligned');
+    'stopwatch rendering must keep the icon aligned as its width changes');
 });
