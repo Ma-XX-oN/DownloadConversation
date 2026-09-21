@@ -4,6 +4,7 @@ import vm from 'node:vm';
 import { productionFunctionSource, userscript } from './helpers/userscript-source.mjs';
 
 const ACTIVE_BACKGROUND = 'rgba(32, 32, 32, 0.92)';
+const SUCCESS_BACKGROUND = 'darkgreen';
 
 function user(id, exchangeId, createTime) {
   return {
@@ -208,14 +209,14 @@ test('same-exchange User create_time values reconstruct completed lap boundaries
   assert.equal(recovery.final_message.id, 'final');
 });
 
-test('completed non-streaming exchange restores frozen timing without inventing terminal color', () => {
+test('completed reload uses final create_time despite later update_time and restores structured success green', () => {
   const harness = restoreHarness();
   const exchange = 'exchange-A';
   const recovery = harness.api.scan([
     user('previous', 'exchange-Z', 10),
     user('start', exchange, 100),
     user('follow', exchange, 160),
-    assistant('final', exchange, 170, 220)
+    assistant('final', exchange, 170, 21600)
   ], false);
 
   harness.setNow(5000);
@@ -224,16 +225,16 @@ test('completed non-streaming exchange restores frozen timing without inventing 
   const state = harness.api.state();
   assert.equal(state.active, false);
   assert.equal(state.exchange_id, exchange);
-  assert.equal(state.terminal_kind, null);
-  assert.deepEqual(Array.from(state.laps_ms), [60000, 60000]);
-  assert.equal(state.total_ms, 120000);
-  assert.equal(harness.api.text(), 'Lap 1: 1 m 0 s\nLap 2: 1 m 0 s\nTotal: 2 m 0 s');
-  assert.equal(harness.element().style.background, ACTIVE_BACKGROUND);
+  assert.equal(state.terminal_kind, 'success');
+  assert.deepEqual(Array.from(state.laps_ms), [60000, 10000]);
+  assert.equal(state.total_ms, 70000);
+  assert.equal(harness.api.text(), 'Lap 1: 1 m 0 s\nLap 2: 0 m 10 s\nTotal: 1 m 10 s');
+  assert.equal(harness.element().style.background, SUCCESS_BACKGROUND);
 
   harness.setNow(65000);
   harness.tick();
-  assert.equal(harness.api.text(), 'Lap 1: 1 m 0 s\nLap 2: 1 m 0 s\nTotal: 2 m 0 s');
-  assert.equal(harness.element().style.background, ACTIVE_BACKGROUND);
+  assert.equal(harness.api.text(), 'Lap 1: 1 m 0 s\nLap 2: 0 m 10 s\nTotal: 1 m 10 s');
+  assert.equal(harness.element().style.background, SUCCESS_BACKGROUND);
 });
 
 test('IS_STREAMING restores the same history with active styling and continues current lap and Total', () => {
