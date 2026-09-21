@@ -102,7 +102,7 @@ test('uninitialized indicator is deployed only with the stopwatch', () => {
   assert.ok(indicator, 'uninitialized audio must deploy the readiness icon with the stopwatch');
   assert.equal(indicator.parentNode, withStopwatch.stopwatch);
   assert.equal(indicator.style.position, 'absolute');
-  assert.equal(indicator.style.top, '0');
+  assert.equal(indicator.style.top, '5px');
   assert.equal(indicator.style.right, 'calc(100% + 8px)');
   assert.equal(withStopwatch.body.children.includes(indicator), false,
     'the readiness icon must not be a body-level sibling of the stopwatch');
