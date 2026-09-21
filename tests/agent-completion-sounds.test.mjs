@@ -179,48 +179,85 @@ test('known structured terminal generation errors classify as error without text
       message: 'You have reached the maximum length for this conversation.'
     }
   }), 'error');
+  assert.equal(api.classify(state, {
+    type: 'error',
+    code: 'conversation_too_large'
+  }), 'error');
+  assert.equal(api.classify(state, {
+    type: 'error',
+    error: { code: 'conversation_too_large' }
+  }), 'error');
 });
 
-test('normalized terminal playback is de-duplicated per turn and kind', () => {
+test('captured top-level conversation_too_large error_code shape classifies as error', () => {
+  const { api } = soundHarness();
+  assert.equal(api.classify(capture(), {
+    message: null,
+    conversation_id: 'conversation-1',
+    error: 'You have reached the maximum length for this conversation.',
+    error_code: 'conversation_too_large'
+  }), 'error');
+});
+
+test('same-turn success then conversation_too_large emits one ding and one buzz', () => {
   const harness = soundHarness(10, [true, true]);
   const state = successfulCapture('turn-1');
+  const tooLarge = {
+    message: null,
+    conversation_id: 'conversation-1',
+    error: 'You have reached the maximum length for this conversation.',
+    error_code: 'conversation_too_large'
+  };
+
   harness.api.observe(state, null);
+  harness.api.observe(state, tooLarge);
+  harness.api.observe(state, null);
+  harness.api.observe(state, tooLarge);
+
+  assert.deepEqual(harness.emitted, ['success', 'error']);
+  assert.equal(harness.api.keys().length, 2,
+    'successful and error terminal states for one turn must de-duplicate independently');
+});
+
+test('terminal cue is retained after failed playback and remembered only after replay starts', () => {
+  const harness = soundHarness(10, [false, true]);
+  const state = successfulCapture('turn-1');
+
   harness.api.observe(state, null);
   assert.deepEqual(harness.emitted, ['success']);
-  assert.equal(harness.api.keys().length, 1);
-});
+  assert.deepEqual(Array.from(harness.api.keys()), [], 'failed playback must not consume the terminal key');
+  assert.equal(harness.api.pending()?.kind, 'success', 'failed playback must retain the terminal cue');
 
-test('distinct later turn may sound after an earlier terminal turn', () => {
-  const harness = soundHarness(10, [true, true]);
-  harness.api.observe(successfulCapture('turn-1'), null);
-  harness.api.observe(successfulCapture('turn-2'), null);
+  harness.api.observe(state, null);
+  assert.deepEqual(harness.emitted, ['success'],
+    'duplicate terminal observation must not be the retry trigger while a cue is pending');
+
+  assert.equal(harness.api.retry(), true, 'trusted-unlock replay must start the retained cue');
   assert.deepEqual(harness.emitted, ['success', 'success']);
-  assert.equal(harness.api.keys().length, 2);
+  assert.equal(harness.api.pending(), null, 'successful replay consumes the pending cue');
+  assert.equal(harness.api.keys().length, 1, 'successful replay consumes the terminal key exactly once');
+
+  harness.api.observe(state, null);
+  assert.deepEqual(harness.emitted, ['success', 'success'], 'successful playback remains de-duplicated');
 });
 
-test('volume zero suppresses both success and error terminal playback', () => {
-  const harness = soundHarness(0, [true, true]);
-  harness.api.observe(successfulCapture('turn-1'), null);
-  const state = capture('turn-2');
-  harness.api.observe(state, {
+test('volume 0 is the single disabled state for success and error sounds', () => {
+  const harness = soundHarness(0);
+  harness.api.observe(successfulCapture(), null);
+  harness.api.observe(capture('turn-2'), {
     result: 'error',
     error: { reason: 'request_failed', status_code: 500 }
   });
   assert.deepEqual(harness.emitted, []);
 });
 
-test('browser-generated success cue uses volume as peak gain and does not require external media', () => {
-  const harness = playbackHarness(7);
-  assert.equal(harness.result, true);
-  assert.equal(harness.oscillatorStarts.length, 1);
-  assert.ok(harness.ramps.some(step => step.type === 'exp' && step.value === 0.7),
-    'volume 7 must schedule a peak gain of 0.7');
-});
-
-test('browser-generated cue refuses playback while AudioContext is not running', () => {
-  const harness = playbackHarness(10, 'suspended');
-  assert.equal(harness.result, false);
-  assert.equal(harness.oscillatorStarts.length, 0);
+test('volume 10 reaches gain 1.0 and is materially louder than the old fixed success gain', () => {
+  const playback = playbackHarness(10);
+  const peak = Math.max(...playback.ramps.map(item => item.value));
+  assert.equal(playback.result, true);
+  assert.equal(peak, 1.0);
+  assert.ok(peak > 0.11 * 2, 'maximum volume must be materially louder than the old 0.11 success peak');
+  assert.equal(playback.oscillatorStarts.length, 1);
 });
 
 test('sound diagnostics expose classification, suppression, AudioContext, and successful scheduling states', () => {
@@ -233,5 +270,16 @@ test('sound diagnostics expose classification, suppression, AudioContext, and su
   assert.match(unlock, /agent-sound-audio-unlock/);
   assert.match(play, /agent-sound-playback-attempt/);
   assert.match(play, /agent-sound-playback-started/);
-  assert.match(play, /agent-sound-playback-unavailable/);
+  assert.match(play, /audio_context_state/);
+  assert.match(play, /volume/);
+});
+
+test('sound detection remains wired to structured SSE and does not scan visible error text', () => {
+  const consumer = productionFunctionSource('consumeStreamTailSseChunk');
+  assert.match(consumer, /streamTailApplyEvent\(capture, parsed\);[\s\S]*agentTerminalObserve\(capture, parsed\)/);
+  assert.match(consumer, /data === '\[DONE\]'[\s\S]*agentTerminalObserve\(capture, null\)/);
+  assert.doesNotMatch(userscript, /includes\(['"]conversation_too_large['"]\)/,
+    'Terminal error detection must not scan raw text for an error word/code.');
+  assert.doesNotMatch(userscript, /Message delivery timed out/,
+    'Visible timeout text must not become a terminal-state detector.');
 });
