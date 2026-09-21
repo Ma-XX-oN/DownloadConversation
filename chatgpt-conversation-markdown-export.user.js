@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         ChatGPT Conversation Markdown Recorder
 // @namespace    https://chatgpt.com/
-// @version      1.5.0-issue.151.4
+// @version      1.5.0-issue.151.5
 // @description  Exports the current ChatGPT conversation directly from the Conversation API as Markdown or JSONL.
 // @match        https://chatgpt.com/*
 // @match        https://chat.openai.com/*
@@ -8432,7 +8432,7 @@ function projectCanonicalConversation(events) {
     setTimeout(() => finishConversationClickDiagnostic(observation, 'timer'), 2500);
   }
 
-  /** DOM id of the standalone sound-readiness indicator. */
+  /** DOM id of the stopwatch-owned sound-readiness indicator. */
   const AGENT_SOUND_INITIALIZATION_INDICATOR_ID = 'tm-agent-sound-uninitialized';
   /** Horizontal gap between the sound-readiness indicator and the stopwatch. */
   const AGENT_SOUND_INITIALIZATION_GAP_PX = 8;
@@ -8447,9 +8447,9 @@ function projectCanonicalConversation(events) {
   }
 
   /**
-   * Positions the standalone sound-readiness indicator at the stopwatch top and immediately
-   * to its left when the stopwatch exists. Before a stopwatch exists, the indicator remains
-   * visible at the same top-right status location.
+   * Keeps the sound-readiness indicator owned by the stopwatch and positions it immediately
+   * to the stopwatch's left. If no stopwatch exists yet, no independent page-level indicator
+   * is deployed.
    *
    * @param {HTMLElement|null} indicator - Existing readiness indicator, when already resolved.
    * @returns {void} No value is returned.
@@ -8457,52 +8457,57 @@ function projectCanonicalConversation(events) {
   function agentSoundPositionInitializationIndicator(
     indicator = document.getElementById(AGENT_SOUND_INITIALIZATION_INDICATOR_ID)
   ) {
-    if (!indicator) return;
-    indicator.style.top = '56px';
     const stopwatch = document.getElementById(AGENT_STOPWATCH_ID);
     if (!stopwatch) {
-      indicator.style.right = '16px';
+      indicator?.remove();
       return;
     }
-    indicator.style.right = `${16 + AGENT_SOUND_INITIALIZATION_GAP_PX + stopwatch.offsetWidth}px`;
+    if (agentSoundAudioReady()) {
+      indicator?.remove();
+      return;
+    }
+    const visibleIndicator = indicator || ensureAgentSoundInitializationIndicator();
+    if (!visibleIndicator) return;
+    if (visibleIndicator.parentNode !== stopwatch) stopwatch.append(visibleIndicator);
+    visibleIndicator.style.position = 'absolute';
+    visibleIndicator.style.top = '0';
+    visibleIndicator.style.right = `calc(100% + ${AGENT_SOUND_INITIALIZATION_GAP_PX}px)`;
   }
 
   /**
-   * Returns the single standalone disabled-speaker sound-readiness indicator.
+   * Returns the single disabled-speaker sound-readiness indicator owned by the stopwatch.
    *
-   * @returns {HTMLElement|null} Existing/new indicator, or null before a document root exists.
+   * @returns {HTMLElement|null} Existing/new indicator, or null until the stopwatch exists.
    */
   function ensureAgentSoundInitializationIndicator() {
+    const stopwatch = document.getElementById(AGENT_STOPWATCH_ID);
+    if (!stopwatch) return null;
     let indicator = document.getElementById(AGENT_SOUND_INITIALIZATION_INDICATOR_ID);
-    if (indicator) return indicator;
-    const parent = document.body || document.documentElement;
-    if (!parent) return null;
-    indicator = document.createElement('div');
-    indicator.id = AGENT_SOUND_INITIALIZATION_INDICATOR_ID;
-    indicator.setAttribute('aria-hidden', 'true');
-    indicator.style.position = 'fixed';
-    indicator.style.top = '56px';
-    indicator.style.right = '16px';
-    indicator.style.zIndex = '2147483647';
-    indicator.style.width = '24px';
-    indicator.style.height = '24px';
-    indicator.style.boxSizing = 'border-box';
-    indicator.style.border = '1px solid rgba(245, 245, 245, 0.9)';
-    indicator.style.borderRadius = '50%';
-    indicator.style.backgroundColor = 'rgba(32, 32, 32, 0.92)';
-    indicator.style.backgroundImage = "url(\"data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24'%3E%3Cpath fill='%23f5f5f5' d='M4 9h4l5-4v14l-5-4H4z'/%3E%3Cpath d='M5 5l14 14' stroke='%23f5f5f5' stroke-width='2.5' stroke-linecap='round'/%3E%3C/svg%3E\")";
-    indicator.style.backgroundPosition = 'center';
-    indicator.style.backgroundRepeat = 'no-repeat';
-    indicator.style.backgroundSize = '20px 20px';
-    indicator.style.pointerEvents = 'none';
-    indicator.style.boxShadow = '0 2px 8px rgba(0, 0, 0, 0.25)';
-    parent.append(indicator);
+    if (!indicator) {
+      indicator = document.createElement('div');
+      indicator.id = AGENT_SOUND_INITIALIZATION_INDICATOR_ID;
+      indicator.setAttribute('aria-hidden', 'true');
+      indicator.style.zIndex = '2147483647';
+      indicator.style.width = '24px';
+      indicator.style.height = '24px';
+      indicator.style.boxSizing = 'border-box';
+      indicator.style.border = '1px solid rgba(245, 245, 245, 0.9)';
+      indicator.style.borderRadius = '50%';
+      indicator.style.backgroundColor = 'rgba(32, 32, 32, 0.92)';
+      indicator.style.backgroundImage = "url(\"data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24'%3E%3Cpath fill='%23f5f5f5' d='M4 9h4l5-4v14l-5-4H4z'/%3E%3Cpath d='M5 5l14 14' stroke='%23f5f5f5' stroke-width='2.5' stroke-linecap='round'/%3E%3C/svg%3E\")";
+      indicator.style.backgroundPosition = 'center';
+      indicator.style.backgroundRepeat = 'no-repeat';
+      indicator.style.backgroundSize = '20px 20px';
+      indicator.style.pointerEvents = 'none';
+      indicator.style.boxShadow = '0 2px 8px rgba(0, 0, 0, 0.25)';
+    }
+    if (indicator.parentNode !== stopwatch) stopwatch.append(indicator);
     agentSoundPositionInitializationIndicator(indicator);
     return indicator;
   }
 
   /**
-   * Projects authoritative AudioContext readiness onto the standalone status icon.
+   * Projects authoritative AudioContext readiness onto the stopwatch-owned status icon.
    *
    * @returns {boolean} True when audio is ready and the uninitialized status is absent.
    */
