@@ -32,6 +32,7 @@ function renderHarness(state, nowMs) {
   vm.runInNewContext(`
     const AGENT_STOPWATCH_ID = 'tm-agent-turn-stopwatch';
     let agentStopwatchState = ${JSON.stringify(state)};
+    function agentSoundPositionInitializationIndicator() {}
     ${productionFunctionSource('assert')}
     ${productionFunctionSource('agentStopwatchFormatDuration')}
     ${productionFunctionSource('ensureAgentStopwatchControl')}
