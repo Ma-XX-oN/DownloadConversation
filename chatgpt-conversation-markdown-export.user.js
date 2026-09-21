@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         ChatGPT Conversation Markdown Recorder
 // @namespace    https://chatgpt.com/
-// @version      1.5.0-issue.135.11
+// @version      1.5.0-issue.135.12
 // @description  Exports the current ChatGPT conversation directly from the Conversation API as Markdown or JSONL.
 // @match        https://chatgpt.com/*
 // @match        https://chat.openai.com/*
@@ -8608,6 +8608,40 @@ function projectCanonicalConversation(events) {
     agentSoundTerminalKeys.add(key);
   }
 
+  /** Unresolved page-lifetime captures eligible for conversation-only provider completion correlation. */
+  const agentTerminalLifecycleCaptures = [];
+
+  /**
+   * Registers one generation/resume capture for shared terminal-lifecycle correlation.
+   *
+   * Resolved captures are discarded when the next capture is registered. More than one unresolved
+   * same-conversation capture is retained deliberately so the conversation-only provider completion
+   * observer can detect ambiguity and fail closed instead of terminating a newer exchange.
+   *
+   * @param {Object} capture - Mutable generation or resume capture.
+   * @returns {boolean} True when the capture is registered or was already registered.
+   */
+  function agentTerminalRegisterLifecycleCapture(capture) {
+    if (!capture || typeof capture !== 'object') return false;
+    if (agentTerminalLifecycleCaptures.includes(capture)) return true;
+    for (let index = agentTerminalLifecycleCaptures.length - 1; index >= 0; index -= 1) {
+      const existing = agentTerminalLifecycleCaptures[index];
+      if (existing?.agent_terminal_success_observed === true ||
+          existing?.agent_terminal_error_observed === true) {
+        agentTerminalLifecycleCaptures.splice(index, 1);
+      }
+    }
+    if (agentTerminalLifecycleCaptures.length >= 16) {
+      logDiagnostic('warnings', 'agent-terminal-lifecycle-capture-overflow', {
+        unresolved_capture_count: agentTerminalLifecycleCaptures.length,
+        conversation_id: capture?.conversation_id ?? null
+      });
+      return false;
+    }
+    agentTerminalLifecycleCaptures.push(capture);
+    return true;
+  }
+
   /**
    * Returns whether one normalized client terminal event is the evidenced polling timeout.
    *
@@ -8619,6 +8653,89 @@ function projectCanonicalConversation(events) {
       event?.code === 'network_error' &&
       event?.source === 'completion_stream_polling_fallback' &&
       event?.reason === 'polling_timeout';
+  }
+
+  /**
+   * Returns the newest structured Assistant record that the provider marked finished successfully.
+   *
+   * This is not terminal by itself. It is only corroborating success evidence when the provider
+   * separately emits the exact `conversation-turn-complete` lifecycle notification.
+   *
+   * @param {Object} capture - Mutable streamed-turn capture.
+   * @returns {Object|null} Finished Assistant record, or null when none has been observed.
+   */
+  function agentTerminalHasFinishedAssistant(capture) {
+    return [...(capture?.stream_messages ?? [])].reverse().find(message =>
+      message?.author?.role === 'assistant' &&
+      message?.status === 'finished_successfully'
+    ) ?? null;
+  }
+
+  /**
+   * Tests the normalized provider completion event against one lifecycle capture.
+   *
+   * @param {Object} capture - Candidate shared Agent lifecycle capture.
+   * @param {Object|null} event - Normalized provider lifecycle event.
+   * @returns {boolean} True only for corroborated successful provider turn completion.
+   */
+  function agentTerminalIsConversationTurnComplete(capture, event) {
+    return event?.type === 'provider_conversation_turn_complete' &&
+      typeof event?.conversation_id === 'string' &&
+      event.conversation_id === capture?.conversation_id &&
+      Boolean(agentTerminalHasFinishedAssistant(capture));
+  }
+
+  /**
+   * Routes one exact global ChatGPT `conversation-turn-complete` WebSocket frame into the shared
+   * Agent terminal watcher only when conversation identity selects one unambiguous unresolved capture.
+   *
+   * The observed provider frame carries no exchange id. If two unresolved exchanges for the same
+   * conversation are present, correlation is information-theoretically ambiguous and therefore no
+   * terminal is inferred. This prevents a delayed older completion from terminating a newer exchange.
+   *
+   * @param {Object} frame - Parsed page WebSocket frame.
+   * @returns {boolean} True when an exact unambiguous provider completion was dispatched.
+   */
+  function agentTerminalObserveConversationTurnCompleteFrame(frame) {
+    if (frame?.type !== 'message' || frame?.topic_id !== 'conversations' ||
+        frame?.payload?.type !== 'conversation-turn-complete') return false;
+    const conversationId = frame?.payload?.payload?.conversation_id;
+    if (typeof conversationId !== 'string' || !conversationId) return false;
+    const unresolved = agentTerminalLifecycleCaptures.filter(capture =>
+      capture?.conversation_id === conversationId &&
+      capture?.agent_terminal_success_observed !== true &&
+      capture?.agent_terminal_error_observed !== true
+    );
+    if (unresolved.length !== 1) {
+      logDiagnostic('debug', 'agent-terminal-conversation-turn-complete-ignored', {
+        conversation_id: conversationId,
+        unresolved_capture_count: unresolved.length,
+        reason: unresolved.length === 0
+          ? 'no-unresolved-lifecycle-capture'
+          : 'ambiguous-unresolved-lifecycle-captures'
+      });
+      return false;
+    }
+    const capture = unresolved[0];
+    const finishedAssistant = agentTerminalHasFinishedAssistant(capture);
+    if (!finishedAssistant) {
+      logDiagnostic('debug', 'agent-terminal-conversation-turn-complete-ignored', {
+        conversation_id: conversationId,
+        reason: 'no-finished-assistant-evidence'
+      });
+      return false;
+    }
+    logDiagnostic('debug', 'agent-terminal-conversation-turn-complete-observed', {
+      conversation_id: conversationId,
+      assistant_message_id: finishedAssistant.id ?? null,
+      assistant_channel: finishedAssistant.channel ?? null,
+      assistant_end_turn: finishedAssistant.end_turn === true
+    });
+    agentTerminalObserve(capture, {
+      type: 'provider_conversation_turn_complete',
+      conversation_id: conversationId
+    });
+    return true;
   }
 
   /**
@@ -8714,6 +8831,7 @@ function projectCanonicalConversation(events) {
           Number(candidate?.error?.status_code) >= 400) {
         return 'error';
       }
+      if (agentTerminalIsConversationTurnComplete(capture, candidate)) return 'success';
     }
     return agentTerminalSuccessfulFinal(capture) ? 'success' : null;
   }
@@ -8836,8 +8954,7 @@ function projectCanonicalConversation(events) {
             height,
             media: candidate.media || null,
             type: candidate.type || null,
-            sizes: candidate.sizes || null
-          });
+            sizes: candidate.sizes || null          });
           resolve({ applied: true, recolored_pixels: changed, width, height });
         } catch (error) {
           logDiagnostic('warnings', 'agent-favicon-render-failed', {
@@ -9546,11 +9663,19 @@ function projectCanonicalConversation(events) {
    */
   function agentTerminalExchangeId(capture, finalMessage = null) {
     const finalMetadata = finalMessage?.metadata ?? {};
+    const streamedMessage = [...(capture?.stream_messages ?? [])]
+      .reverse()
+      .find(message => {
+        const metadata = message?.metadata ?? {};
+        return metadata.turn_exchange_id || metadata.working_turn_id;
+      });
+    const streamedMetadata = streamedMessage?.metadata ?? {};
     const request = [...(capture?.request_messages ?? [])]
       .reverse()
       .find(message => typeof message?.id === 'string' && message.id);
     const requestMetadata = request?.metadata ?? {};
     return finalMetadata.turn_exchange_id || finalMetadata.working_turn_id ||
+      streamedMetadata.turn_exchange_id || streamedMetadata.working_turn_id ||
       capture?.stopwatch_exchange_id || requestMetadata.turn_exchange_id ||
       requestMetadata.working_turn_id || null;
   }
@@ -9614,6 +9739,8 @@ function projectCanonicalConversation(events) {
   function agentTerminalObserve(capture, event = null) {
     const terminal = agentTerminalNormalize(capture, event);
     if (!terminal) return;
+    if (terminal.kind === 'success') capture.agent_terminal_success_observed = true;
+    if (terminal.kind === 'error') capture.agent_terminal_error_observed = true;
     logDiagnostic('debug', 'agent-terminal-normalized', {
       kind: terminal.kind,
       conversation_id: terminal.conversation_id,
@@ -9640,8 +9767,7 @@ function projectCanonicalConversation(events) {
   /**
    * Tests whether a URL is the stock streaming conversation-generation endpoint.
    *
-   * @param {string} url - Candidate request URL.
-   * @returns {boolean} True only for this origin's exact /backend-api/f/conversation path.
+   * @param {string} url - Candidate request URL.   * @returns {boolean} True only for this origin's exact /backend-api/f/conversation path.
    */
   function isGenerationStreamUrl(url) {
     try {
@@ -10146,6 +10272,7 @@ function projectCanonicalConversation(events) {
         ? body.conversation_id
         : currentConversationId();
       const capture = createStreamTailCapture(conversationId);
+      agentTerminalRegisterLifecycleCapture(capture);
       streamTailCaptureRequest(capture, body);
       capture.stopwatch_submitted_at_ms = submittedAtMs;
       agentStopwatchObserveRequest(capture);
@@ -10243,6 +10370,7 @@ function projectCanonicalConversation(events) {
         throw new Error('Conversation resume request did not contain conversation_id.');
       }
       const capture = createStreamTailCapture(conversationId);
+      agentTerminalRegisterLifecycleCapture(capture);
       await consumeObservedConversationStreamResponse(response, capture, {
         persistCapture: false,
         source: 'resume'
@@ -10271,23 +10399,27 @@ function projectCanonicalConversation(events) {
   }
 
   /**
-   * Passively observes one page WebSocket frame and consumes only the active handoff topic.
+   * Passively observes page WebSocket frames for both the active streamed-tail handoff topic and
+   * the exact global provider turn-completion lifecycle notification.
    *
    * @param {Object} data - WebSocket message data.
    * @returns {void} No value is returned.
    */
   function captureGenerationWebSocketFrame(data) {
-    const capture = streamTailCapture;
-    if (!capture?.handed_off || !capture.handoff_topic_id) return;
     if (typeof data !== 'string') return;
     let parsed;
     try { parsed = JSON.parse(data); } catch { return; }
     const frames = Array.isArray(parsed) ? parsed : [parsed];
+    const capture = streamTailCapture;
     for (const frame of frames) {
       if (!frame || typeof frame !== 'object') continue;
       if (frame.type === 'message') {
-        streamTailConsumeWebSocketMessage(capture, frame);
-      } else if (frame.type === 'reply' && frame.reply?.topic_id === capture.handoff_topic_id) {
+        agentTerminalObserveConversationTurnCompleteFrame(frame);
+        if (capture?.handed_off && capture.handoff_topic_id) {
+          streamTailConsumeWebSocketMessage(capture, frame);
+        }
+      } else if (capture?.handed_off && capture.handoff_topic_id &&
+                 frame.type === 'reply' && frame.reply?.topic_id === capture.handoff_topic_id) {
         for (const catchup of Array.isArray(frame.reply.catchups) ? frame.reply.catchups : []) {
           streamTailConsumeWebSocketMessage(capture, catchup);
         }
@@ -10375,8 +10507,7 @@ function projectCanonicalConversation(events) {
           if (capturePromise && !generationResponse) {
             logDiagnostic('warnings', 'conversation-stream-tail-response-clone-failure', {
               url: boundedDiagnosticText(response?.url ?? requestUrl, 320)
-            });
-          }
+            });          }
           if (capturePromise && generationResponse) {
             void capturePromise.then(capture => {
               if (!capture) {
