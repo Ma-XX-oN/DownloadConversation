@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         ChatGPT Conversation Markdown Recorder
 // @namespace    https://chatgpt.com/
-// @version      1.5.0-issue.135.13
+// @version      1.5.0-issue.151.1
 // @description  Exports the current ChatGPT conversation directly from the Conversation API as Markdown or JSONL.
 // @match        https://chatgpt.com/*
 // @match        https://chat.openai.com/*
@@ -8432,6 +8432,85 @@ function projectCanonicalConversation(events) {
     setTimeout(() => finishConversationClickDiagnostic(observation, 'timer'), 2500);
   }
 
+  /** Document-root attribute projecting that browser audio is not currently ready for terminal cues. */
+  const AGENT_SOUND_INITIALIZATION_ATTRIBUTE = 'data-tm-agent-sound-uninitialized';
+  /** DOM id of the single stylesheet rendering the sound-readiness status beside the stopwatch. */
+  const AGENT_SOUND_INITIALIZATION_STYLE_ID = 'tm-agent-sound-uninitialized-style';
+  /** Horizontal gap between the sound-readiness status icon and the stopwatch. */
+  const AGENT_SOUND_INITIALIZATION_GAP_PX = 8;
+
+  /**
+   * Tests the same AudioContext state that production playback requires.
+   *
+   * @returns {boolean} True only when terminal audio can be scheduled immediately.
+   */
+  function agentSoundAudioReady() {
+    return agentSoundAudioContext?.state === 'running';
+  }
+
+  /**
+   * Builds the stylesheet for the disabled-speaker readiness status anchored to the stopwatch.
+   *
+   * @returns {string} CSS rendering one circle/slash speaker immediately left of the stopwatch.
+   */
+  function agentSoundInitializationIndicatorCss() {
+    return `
+      html[${AGENT_SOUND_INITIALIZATION_ATTRIBUTE}="true"] #${AGENT_STOPWATCH_ID}::before{
+        content:'';
+        position:absolute;
+        top:0;
+        right:calc(100% + ${AGENT_SOUND_INITIALIZATION_GAP_PX}px);
+        width:24px;
+        height:24px;
+        box-sizing:border-box;
+        display:block;
+        border:1px solid rgba(245,245,245,.9);
+        border-radius:50%;
+        background-color:rgba(32,32,32,.92);
+        background-image:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24'%3E%3Cpath fill='%23f5f5f5' d='M4 9h4l5-4v14l-5-4H4z'/%3E%3Cpath d='M5 5l14 14' stroke='%23f5f5f5' stroke-width='2.5' stroke-linecap='round'/%3E%3C/svg%3E");
+        background-position:center;
+        background-repeat:no-repeat;
+        background-size:20px 20px;
+        pointer-events:none;
+        box-shadow:0 2px 8px rgba(0,0,0,.25);
+      }
+    `;
+  }
+
+  /**
+   * Installs the single stylesheet used by the sound-initialization status projection.
+   *
+   * @returns {HTMLStyleElement|null} Existing/new style element, or null before a document root exists.
+   */
+  function ensureAgentSoundInitializationIndicatorStyle() {
+    const existing = document.getElementById(AGENT_SOUND_INITIALIZATION_STYLE_ID);
+    if (existing) return existing;
+    const parent = document.head || document.documentElement;
+    if (!parent) return null;
+    const style = document.createElement('style');
+    style.id = AGENT_SOUND_INITIALIZATION_STYLE_ID;
+    style.textContent = agentSoundInitializationIndicatorCss();
+    parent.append(style);
+    return style;
+  }
+
+  /**
+   * Projects authoritative AudioContext readiness onto the stopwatch-adjacent status icon.
+   *
+   * @returns {boolean} True when audio is ready and the uninitialized status is hidden.
+   */
+  function agentSoundSyncInitializationIndicator() {
+    const ready = agentSoundAudioReady();
+    const root = document.documentElement;
+    if (!root) return ready;
+    ensureAgentSoundInitializationIndicatorStyle();
+    if (ready) root.removeAttribute(AGENT_SOUND_INITIALIZATION_ATTRIBUTE);
+    else root.setAttribute(AGENT_SOUND_INITIALIZATION_ATTRIBUTE, 'true');
+    return ready;
+  }
+
+  agentSoundSyncInitializationIndicator();
+  document.addEventListener('DOMContentLoaded', agentSoundSyncInitializationIndicator, { once: true });
 
   /**
    * Unlocks the browser Web Audio context from a user gesture when sounds are enabled.
@@ -8443,6 +8522,7 @@ function projectCanonicalConversation(events) {
     const beforeState = agentSoundAudioContext?.state ?? 'absent';
     if (volume <= 0) {
       agentSoundClearPendingTerminal();
+      agentSoundSyncInitializationIndicator();
       logDiagnostic('debug', 'agent-sound-audio-unlock', {
         volume,
         before_state: beforeState,
@@ -8457,6 +8537,7 @@ function projectCanonicalConversation(events) {
     try {
       const AudioContextClass = window.AudioContext || window.webkitAudioContext;
       if (typeof AudioContextClass !== 'function') {
+        agentSoundSyncInitializationIndicator();
         logDiagnostic('warnings', 'agent-sound-audio-unlock', {
           volume,
           before_state: beforeState,
@@ -8467,13 +8548,17 @@ function projectCanonicalConversation(events) {
         });
         return false;
       }
-      if (!agentSoundAudioContext) agentSoundAudioContext = new AudioContextClass();
+      if (!agentSoundAudioContext) {
+        agentSoundAudioContext = new AudioContextClass();
+        agentSoundAudioContext.addEventListener('statechange', agentSoundSyncInitializationIndicator);
+      }
       if (agentSoundAudioContext.state === 'suspended') {
         resumeAttempted = true;
         await agentSoundAudioContext.resume();
       }
       const afterState = agentSoundAudioContext.state;
-      const ready = afterState === 'running';
+      const ready = agentSoundAudioReady();
+      agentSoundSyncInitializationIndicator();
       logDiagnostic('debug', 'agent-sound-audio-unlock', {
         volume,
         before_state: beforeState,
@@ -8484,6 +8569,7 @@ function projectCanonicalConversation(events) {
       if (ready) agentSoundRetryPendingTerminal();
       return ready;
     } catch (error) {
+      agentSoundSyncInitializationIndicator();
       logDiagnostic('warnings', 'agent-sound-audio-unlock', {
         volume,
         before_state: beforeState,
@@ -8521,7 +8607,7 @@ function projectCanonicalConversation(events) {
       audio_context_state: audioContextState
     });
     if (volume <= 0 || (kind !== 'success' && kind !== 'error')) return false;
-    if (!audio || audio.state !== 'running') {
+    if (!audio || !agentSoundAudioReady()) {
       logDiagnostic('warnings', 'agent-sound-playback-unavailable', {
         kind,
         volume,
@@ -8592,8 +8678,7 @@ function projectCanonicalConversation(events) {
     return `${capture?.conversation_id ?? 'new'}:${turnIdentity}`;
   }
 
-  /**
-   * Retains one terminal sound-event identity in a bounded insertion-ordered set.
+  /**   * Retains one terminal sound-event identity in a bounded insertion-ordered set.
    *
    * @param {string} key - Stable terminal sound-event key.
    * @returns {void} No value is returned.
