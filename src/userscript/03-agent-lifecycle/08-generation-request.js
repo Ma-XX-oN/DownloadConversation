@@ -13,6 +13,7 @@
         ? body.conversation_id
         : currentConversationId();
       const capture = createStreamTailCapture(conversationId);
+      agentTerminalLifecycleCapture = capture;
       streamTailCaptureRequest(capture, body);
       capture.stopwatch_submitted_at_ms = submittedAtMs;
       agentStopwatchObserveRequest(capture);
@@ -110,6 +111,7 @@
         throw new Error('Conversation resume request did not contain conversation_id.');
       }
       const capture = createStreamTailCapture(conversationId);
+      agentTerminalLifecycleCapture = capture;
       await consumeObservedConversationStreamResponse(response, capture, {
         persistCapture: false,
         source: 'resume'
@@ -138,23 +140,27 @@
   }
 
   /**
-   * Passively observes one page WebSocket frame and consumes only the active handoff topic.
+   * Passively observes page WebSocket frames for both the active streamed-tail handoff topic and
+   * the exact global provider turn-completion lifecycle notification.
    *
    * @param {Object} data - WebSocket message data.
    * @returns {void} No value is returned.
    */
   function captureGenerationWebSocketFrame(data) {
-    const capture = streamTailCapture;
-    if (!capture?.handed_off || !capture.handoff_topic_id) return;
     if (typeof data !== 'string') return;
     let parsed;
     try { parsed = JSON.parse(data); } catch { return; }
     const frames = Array.isArray(parsed) ? parsed : [parsed];
+    const capture = streamTailCapture;
     for (const frame of frames) {
       if (!frame || typeof frame !== 'object') continue;
       if (frame.type === 'message') {
-        streamTailConsumeWebSocketMessage(capture, frame);
-      } else if (frame.type === 'reply' && frame.reply?.topic_id === capture.handoff_topic_id) {
+        agentTerminalObserveConversationTurnCompleteFrame(frame);
+        if (capture?.handed_off && capture.handoff_topic_id) {
+          streamTailConsumeWebSocketMessage(capture, frame);
+        }
+      } else if (capture?.handed_off && capture.handoff_topic_id &&
+                 frame.type === 'reply' && frame.reply?.topic_id === capture.handoff_topic_id) {
         for (const catchup of Array.isArray(frame.reply.catchups) ? frame.reply.catchups : []) {
           streamTailConsumeWebSocketMessage(capture, catchup);
         }
