@@ -3,14 +3,6 @@ import test from 'node:test';
 import vm from 'node:vm';
 import { productionFunctionSource } from './helpers/userscript-source.mjs';
 
-function optionalProductionFunctionSource(name, fallback) {
-  try {
-    return productionFunctionSource(name);
-  } catch {
-    return fallback;
-  }
-}
-
 function commentaryCapture() {
   return {
     conversation_id: 'conversation-1',
@@ -18,11 +10,7 @@ function commentaryCapture() {
     request_messages: [{
       id: 'user-1',
       author: { role: 'user' },
-      metadata: {
-        turn_exchange_id: 'exchange-A',
-        working_turn_id: 'exchange-A',
-        request_id: 'request-1'
-      }
+      metadata: { request_id: 'request-1' }
     }],
     stream_messages: [{
       id: 'assistant-commentary-1',
@@ -43,7 +31,7 @@ function commentaryCapture() {
   };
 }
 
-function frame(conversationId = 'conversation-1') {
+function providerFrame(conversationId = 'conversation-1') {
   return JSON.stringify([{
     type: 'message',
     topic_id: 'conversations',
@@ -55,45 +43,159 @@ function frame(conversationId = 'conversation-1') {
   }]);
 }
 
-function routingHarness(capture = commentaryCapture()) {
-  const context = {
-    capture,
-    terminalEvents: [],
-    diagnostics: []
-  };
-  const providerObserver = optionalProductionFunctionSource(
-    'agentTerminalObserveConversationTurnCompleteFrame',
-    'function agentTerminalObserveConversationTurnCompleteFrame() { return false; }'
-  );
+function terminalSourceBlock() {
+  return `
+    ${productionFunctionSource('agentTerminalIsPollingTimeout')}
+    ${productionFunctionSource('agentTerminalHasFinishedAssistant')}
+    ${productionFunctionSource('agentTerminalIsConversationTurnComplete')}
+    ${productionFunctionSource('agentTerminalSuccessfulFinal')}
+    ${productionFunctionSource('agentTerminalExchangeId')}
+    ${productionFunctionSource('agentTerminalKey')}
+    ${productionFunctionSource('agentTerminalClassifyKind')}
+    ${productionFunctionSource('agentTerminalNormalize')}
+  `;
+}
+
+function normalizeHarness() {
+  const context = { performance: { now: () => 45000 } };
   vm.runInNewContext(`
-    let streamTailCapture = this.capture;
-    function logDiagnostic(level, name, details) {
-      this.diagnostics.push({ level, name, details });
-    }
-    function agentTerminalObserve(capture, event) {
-      this.terminalEvents.push({ capture, event });
-      capture.agent_terminal_success_observed = true;
-    }
-    function streamTailConsumeWebSocketMessage() {}
-    ${optionalProductionFunctionSource(
-      'agentTerminalHasFinishedAssistant',
-      'function agentTerminalHasFinishedAssistant() { return null; }'
-    )}
-    ${providerObserver}
-    ${productionFunctionSource('captureGenerationWebSocketFrame')}
-    this.receive = captureGenerationWebSocketFrame;
+    ${terminalSourceBlock()}
+    this.normalize = agentTerminalNormalize;
   `, context);
   return context;
 }
 
-test('captured provider conversation-turn-complete reaches the shared terminal watcher for the current successful commentary-only turn', () => {
-  const context = routingHarness();
+function lifecycleHarness(capture = commentaryCapture()) {
+  const context = {
+    capture,
+    sounds: [],
+    stopwatch: [],
+    favicon: [],
+    diagnostics: []
+  };
+  vm.runInNewContext(`
+    let streamTailCapture = this.capture;
+    let agentTerminalLifecycleCapture = this.capture;
+    const performance = { now: () => 45000 };
+    function logDiagnostic(level, name, details) {
+      this.diagnostics.push({ level, name, details });
+    }
+    function agentSoundHandleTerminal(terminal) { this.sounds.push(terminal); }
+    function agentStopwatchHandleTerminal(terminal) { this.stopwatch.push(terminal); }
+    function agentFaviconHandleTerminal(terminal) { this.favicon.push(terminal); }
+    const agentTerminalHandlers = Object.freeze([
+      agentSoundHandleTerminal,
+      agentStopwatchHandleTerminal,
+      agentFaviconHandleTerminal
+    ]);
+    function streamTailConsumeWebSocketMessage() {}
+    ${terminalSourceBlock()}
+    ${productionFunctionSource('agentTerminalObserve')}
+    ${productionFunctionSource('agentTerminalObserveConversationTurnCompleteFrame')}
+    ${productionFunctionSource('captureGenerationWebSocketFrame')}
+    this.receive = captureGenerationWebSocketFrame;
+    this.observeProviderFrame = agentTerminalObserveConversationTurnCompleteFrame;
+  `, context);
+  return context;
+}
 
-  context.receive(frame());
+test('commentary finished_successfully remains nonterminal without provider completion', () => {
+  const context = normalizeHarness();
+  assert.equal(context.normalize(commentaryCapture(), null), null);
+});
 
-  assert.equal(context.terminalEvents.length, 1,
-    'The structured provider completion event must reach the shared terminal watcher exactly once.');
-  assert.equal(context.terminalEvents[0].capture, context.capture);
-  assert.equal(context.terminalEvents[0].event.type, 'provider_conversation_turn_complete');
-  assert.equal(context.terminalEvents[0].event.conversation_id, 'conversation-1');
+test('provider conversation-turn-complete promotes corroborated commentary-only completion through the shared normalizer', () => {
+  const context = normalizeHarness();
+  const capture = commentaryCapture();
+  const terminal = context.normalize(capture, {
+    type: 'provider_conversation_turn_complete',
+    conversation_id: 'conversation-1'
+  });
+
+  assert.equal(terminal.kind, 'success');
+  assert.equal(terminal.conversation_id, 'conversation-1');
+  assert.equal(terminal.exchange_id, 'exchange-A',
+    'The exchange identity must come from structured streamed Assistant metadata when no final message exists.');
+  assert.equal(terminal.terminal_key, 'conversation-1:exchange-A');
+  assert.equal(terminal.completed_at_ms, 45000);
+});
+
+test('provider completion does not infer success without finished Assistant evidence', () => {
+  const context = normalizeHarness();
+  const capture = commentaryCapture();
+  capture.stream_messages[0].status = 'in_progress';
+  assert.equal(context.normalize(capture, {
+    type: 'provider_conversation_turn_complete',
+    conversation_id: 'conversation-1'
+  }), null);
+});
+
+test('provider completion for another conversation does not normalize the active capture', () => {
+  const context = normalizeHarness();
+  assert.equal(context.normalize(commentaryCapture(), {
+    type: 'provider_conversation_turn_complete',
+    conversation_id: 'conversation-2'
+  }), null);
+});
+
+test('captured provider completion reaches all shared terminal consumers without requiring a stream-handoff topic', () => {
+  const context = lifecycleHarness();
+
+  context.receive(providerFrame());
+
+  assert.equal(context.sounds.length, 1);
+  assert.equal(context.stopwatch.length, 1);
+  assert.equal(context.favicon.length, 1);
+  assert.equal(context.sounds[0], context.stopwatch[0]);
+  assert.equal(context.sounds[0], context.favicon[0]);
+  assert.equal(context.sounds[0].kind, 'success');
+  assert.equal(context.sounds[0].exchange_id, 'exchange-A');
+  assert.equal(context.capture.agent_terminal_success_observed, true);
+});
+
+test('duplicate provider completion is suppressed before a second normalized fan-out', () => {
+  const context = lifecycleHarness();
+
+  context.receive(providerFrame());
+  context.receive(providerFrame());
+
+  assert.equal(context.sounds.length, 1);
+  assert.equal(context.stopwatch.length, 1);
+  assert.equal(context.favicon.length, 1);
+  assert.ok(context.diagnostics.some(entry =>
+    entry.name === 'agent-terminal-conversation-turn-complete-ignored' &&
+    entry.details?.reason === 'terminal-success-already-observed'
+  ));
+});
+
+test('provider completion cannot convert a capture whose structured terminal error was already observed', () => {
+  const capture = commentaryCapture();
+  capture.agent_terminal_error_observed = true;
+  const context = lifecycleHarness(capture);
+
+  context.receive(providerFrame());
+
+  assert.equal(context.sounds.length, 0);
+  assert.equal(context.stopwatch.length, 0);
+  assert.equal(context.favicon.length, 0);
+});
+
+test('provider completion is correlated to the lifecycle capture conversation identity', () => {
+  const context = lifecycleHarness();
+
+  context.receive(providerFrame('conversation-2'));
+
+  assert.equal(context.sounds.length, 0);
+  assert.equal(context.stopwatch.length, 0);
+  assert.equal(context.favicon.length, 0);
+});
+
+test('generation and resume capture paths both install the shared lifecycle capture before stream consumption', () => {
+  const generation = productionFunctionSource('captureGenerationStreamRequest');
+  const resume = productionFunctionSource('captureConversationResumeStreamResponse');
+
+  assert.match(generation,
+    /const capture = createStreamTailCapture\(conversationId\);\s*agentTerminalLifecycleCapture = capture;/);
+  assert.match(resume,
+    /const capture = createStreamTailCapture\(conversationId\);\s*agentTerminalLifecycleCapture = capture;/);
 });
