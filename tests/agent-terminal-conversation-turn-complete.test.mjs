@@ -85,7 +85,6 @@ function lifecycleHarness(capture = commentaryCapture()) {
     let streamTailCapture = this.capture;
     let agentTerminalLifecycleCapture = null;
     const agentTerminalLifecycleCaptures = [];
-    const AGENT_TERMINAL_LIFECYCLE_CAPTURE_LIMIT = 16;
     const performance = { now: () => 45000 };
     function logDiagnostic(level, name, details) {
       this.diagnostics.push({ level, name, details });
@@ -202,7 +201,7 @@ test('provider completion is correlated to the lifecycle capture conversation id
   assert.equal(context.favicon.length, 0);
 });
 
-test('a delayed completion resolves the oldest unresolved same-conversation capture, not a newer exchange', () => {
+test('provider completion fails closed when an older and newer same-conversation exchange are both unresolved', () => {
   const older = commentaryCapture('exchange-A');
   const newer = commentaryCapture('exchange-B');
   const context = lifecycleHarness(older);
@@ -210,16 +209,12 @@ test('a delayed completion resolves the oldest unresolved same-conversation capt
 
   context.receive(providerFrame());
 
-  assert.equal(context.sounds.length, 1);
-  assert.equal(context.sounds[0].exchange_id, 'exchange-A',
-    'A delayed completion from an older turn must not terminate the newer same-conversation exchange.');
-  assert.equal(older.agent_terminal_success_observed, true);
+  assert.equal(context.sounds.length, 0,
+    'Conversation-only provider evidence is ambiguous across two unresolved exchanges and must not terminate either one.');
+  assert.equal(context.stopwatch.length, 0);
+  assert.equal(context.favicon.length, 0);
+  assert.equal(older.agent_terminal_success_observed, false);
   assert.equal(newer.agent_terminal_success_observed, false);
-
-  context.receive(providerFrame());
-  assert.equal(context.sounds.length, 2);
-  assert.equal(context.sounds[1].exchange_id, 'exchange-B');
-  assert.equal(newer.agent_terminal_success_observed, true);
 });
 
 test('generation and resume capture paths register shared lifecycle captures before stream consumption', () => {
