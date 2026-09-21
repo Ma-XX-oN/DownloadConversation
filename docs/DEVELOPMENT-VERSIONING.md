@@ -106,6 +106,31 @@ The invariant is:
 
 The generated artifact is therefore both reproducible from authoritative source and durably retrievable from the exact branch/tag that was tested.
 
+## Integration preparation recovery
+
+Normal hosted integration preparation is automatic. If GitHub Actions cannot start a runner and an integration staging branch must be prepared from a local checkout, use the repository-owned one-command recovery wrapper:
+
+```bash
+node scripts/prepare-integration-test-cycle.mjs \
+  --branch issue-135-integration-150
+```
+
+The wrapper performs the entire preparation operation rather than requiring remembered `git fetch`, branch switching, reset, version checks, artifact preparation, push, and post-check commands. It:
+
+- requires the current working tree to be completely clean before switching branches;
+- fetches `origin` and resolves the exact remote integration branch;
+- refuses to overwrite or reset a divergent local integration branch;
+- switches to the exact remote branch safely;
+- verifies the branch/version ownership contract before preparation;
+- invokes `test-cycle-artifact.mjs prepare --push`;
+- re-runs branch/version and committed-artifact verification afterward;
+- verifies that local and remote integration branch HEADs are identical;
+- verifies that source and generated artifact versions match;
+- reports the prepared version and commit;
+- deliberately does **not** create a version tag.
+
+This wrapper is a recovery path for infrastructure failure, not a replacement for normal CI. Its own regression is part of both local and hosted CI so the recovery mechanism cannot silently drift.
+
 ## Local full test cycle
 
 The normal local full gate remains:
