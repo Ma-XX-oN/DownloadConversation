@@ -17,44 +17,54 @@ function audioReady(state) {
   return context.result;
 }
 
-function indicatorHarness({ audioState = null, stopwatchWidth = null } = {}) {
+function indicatorHarness({ audioState = null, withStopwatch = false } = {}) {
   const elements = new Map();
-  const parent = {
+  const makeContainer = (id = '') => ({
+    id,
+    style: {},
+    children: [],
+    parentNode: null,
     append(element) {
+      if (element.parentNode?.children) {
+        element.parentNode.children = element.parentNode.children.filter(child => child !== element);
+      }
       element.parentNode = this;
-      elements.set(element.id, element);
+      this.children.push(element);
+      if (element.id) elements.set(element.id, element);
     }
-  };
+  });
+  const body = makeContainer();
   const document = {
-    body: parent,
-    documentElement: parent,
+    body,
+    documentElement: body,
     addEventListener() {},
     getElementById(id) {
       return elements.get(id) ?? null;
     },
     createElement(tagName) {
-      return {
-        tagName,
-        id: '',
-        style: {},
-        attributes: new Map(),
-        parentNode: null,
-        setAttribute(name, value) {
-          this.attributes.set(name, value);
-        },
-        remove() {
-          if (elements.get(this.id) === this) elements.delete(this.id);
-          this.parentNode = null;
-        }
+      const element = makeContainer();
+      element.tagName = tagName;
+      element.attributes = new Map();
+      element.setAttribute = function setAttribute(name, value) {
+        this.attributes.set(name, value);
       };
+      element.remove = function remove() {
+        if (this.parentNode?.children) {
+          this.parentNode.children = this.parentNode.children.filter(child => child !== this);
+        }
+        if (elements.get(this.id) === this) elements.delete(this.id);
+        this.parentNode = null;
+      };
+      return element;
     }
   };
 
-  if (stopwatchWidth !== null) {
-    elements.set(STOPWATCH_ID, {
-      id: STOPWATCH_ID,
-      offsetWidth: stopwatchWidth
-    });
+  let stopwatch = null;
+  if (withStopwatch) {
+    stopwatch = makeContainer(STOPWATCH_ID);
+    stopwatch.style.position = 'fixed';
+    elements.set(STOPWATCH_ID, stopwatch);
+    body.append(stopwatch);
   }
 
   const context = {
@@ -71,7 +81,7 @@ function indicatorHarness({ audioState = null, stopwatchWidth = null } = {}) {
     ${productionFunctionSource('agentSoundSyncInitializationIndicator')}
     this.syncIndicator = agentSoundSyncInitializationIndicator;
   `, context);
-  return { context, elements };
+  return { context, elements, body, stopwatch };
 }
 
 test('sound readiness is exactly the running AudioContext state', () => {
@@ -80,23 +90,36 @@ test('sound readiness is exactly the running AudioContext state', () => {
   assert.equal(audioReady('running'), true);
 });
 
-test('refresh state shows one standalone indicator even when no stopwatch exists', () => {
-  const { context, elements } = indicatorHarness();
+test('uninitialized indicator is deployed only with the stopwatch', () => {
+  const withoutStopwatch = indicatorHarness();
+  assert.equal(withoutStopwatch.context.syncIndicator(), false);
+  assert.equal(withoutStopwatch.elements.has(INDICATOR_ID), false,
+    'the readiness icon must not be deployed as an independent page-level control');
 
-  assert.equal(context.syncIndicator(), false);
-  const first = elements.get(INDICATOR_ID);
-  assert.ok(first, 'uninitialized audio must create the indicator without a stopwatch');
-  assert.equal(first.style.position, 'fixed');
-  assert.equal(first.style.top, '56px');
-  assert.equal(first.style.right, '16px');
-
-  assert.equal(context.syncIndicator(), false);
-  assert.equal(elements.get(INDICATOR_ID), first,
-    'repeated readiness projection must reuse the same indicator');
+  const withStopwatch = indicatorHarness({ withStopwatch: true });
+  assert.equal(withStopwatch.context.syncIndicator(), false);
+  const indicator = withStopwatch.elements.get(INDICATOR_ID);
+  assert.ok(indicator, 'uninitialized audio must deploy the readiness icon with the stopwatch');
+  assert.equal(indicator.parentNode, withStopwatch.stopwatch);
+  assert.equal(indicator.style.position, 'absolute');
+  assert.equal(indicator.style.top, '0');
+  assert.equal(indicator.style.right, 'calc(100% + 8px)');
+  assert.equal(withStopwatch.body.children.includes(indicator), false,
+    'the readiness icon must not be a body-level sibling of the stopwatch');
 });
 
-test('running audio removes the visible uninitialized indicator immediately', () => {
-  const { context, elements } = indicatorHarness();
+test('repeated readiness projection keeps one stopwatch-owned indicator', () => {
+  const { context, elements, stopwatch } = indicatorHarness({ withStopwatch: true });
+
+  context.syncIndicator();
+  const first = elements.get(INDICATOR_ID);
+  context.syncIndicator();
+  assert.equal(elements.get(INDICATOR_ID), first);
+  assert.equal(stopwatch.children.filter(child => child.id === INDICATOR_ID).length, 1);
+});
+
+test('running audio removes the stopwatch-owned uninitialized indicator immediately', () => {
+  const { context, elements } = indicatorHarness({ withStopwatch: true });
 
   context.syncIndicator();
   assert.ok(elements.has(INDICATOR_ID));
@@ -105,23 +128,16 @@ test('running audio removes the visible uninitialized indicator immediately', ()
   assert.equal(elements.has(INDICATOR_ID), false);
 });
 
-test('indicator moves immediately left of an existing stopwatch', () => {
-  const { context, elements } = indicatorHarness({ stopwatchWidth: 120 });
-
-  context.syncIndicator();
-  const indicator = elements.get(INDICATOR_ID);
-  assert.ok(indicator);
-  assert.equal(indicator.style.top, '56px');
-  assert.equal(indicator.style.right, '144px');
-});
-
-test('stopwatch rendering keeps the independent indicator aligned and readiness adds no polling', () => {
+test('stopwatch creation/rendering owns indicator deployment and readiness adds no polling', () => {
+  const ensureStopwatch = productionFunctionSource('ensureAgentStopwatchControl');
   const render = productionFunctionSource('agentStopwatchRender');
   const sync = productionFunctionSource('agentSoundSyncInitializationIndicator');
   const unlock = productionFunctionSource('unlockAgentSoundAudio');
 
-  assert.match(render, /agentSoundPositionInitializationIndicator/,
-    'stopwatch rendering must realign the indicator after its width changes');
+  assert.match(ensureStopwatch, /agentSoundSyncInitializationIndicator\(\)/,
+    'stopwatch creation must project sound readiness onto its own indicator');
+  assert.match(render, /agentSoundSyncInitializationIndicator\(\)/,
+    'stopwatch rendering must preserve/redeploy its readiness indicator after text rendering');
   assert.match(unlock, /agentSoundSyncInitializationIndicator\(\)/,
     'audio unlock must immediately refresh the readiness projection');
   assert.match(unlock, /addEventListener\(['"]statechange['"]\s*,\s*agentSoundSyncInitializationIndicator/,
