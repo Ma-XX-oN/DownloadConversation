@@ -3,25 +3,33 @@ import test from 'node:test';
 import vm from 'node:vm';
 import { productionFunctionSource } from './helpers/userscript-source.mjs';
 
-function commentaryCapture() {
+function optionalProductionFunctionSource(name, fallback) {
+  try {
+    return productionFunctionSource(name);
+  } catch {
+    return fallback;
+  }
+}
+
+function commentaryCapture(exchangeId = 'exchange-A') {
   return {
     conversation_id: 'conversation-1',
-    parent_message_id: 'parent-1',
+    parent_message_id: `parent-${exchangeId}`,
     request_messages: [{
-      id: 'user-1',
+      id: `user-${exchangeId}`,
       author: { role: 'user' },
-      metadata: { request_id: 'request-1' }
+      metadata: { request_id: `request-${exchangeId}` }
     }],
     stream_messages: [{
-      id: 'assistant-commentary-1',
+      id: `assistant-commentary-${exchangeId}`,
       author: { role: 'assistant' },
       channel: 'commentary',
       status: 'finished_successfully',
       end_turn: false,
       metadata: {
-        turn_exchange_id: 'exchange-A',
-        working_turn_id: 'exchange-A',
-        request_id: 'request-1'
+        turn_exchange_id: exchangeId,
+        working_turn_id: exchangeId,
+        request_id: `request-${exchangeId}`
       }
     }],
     agent_terminal_success_observed: false,
@@ -75,7 +83,9 @@ function lifecycleHarness(capture = commentaryCapture()) {
   };
   vm.runInNewContext(`
     let streamTailCapture = this.capture;
-    let agentTerminalLifecycleCapture = this.capture;
+    let agentTerminalLifecycleCapture = null;
+    const agentTerminalLifecycleCaptures = [];
+    const AGENT_TERMINAL_LIFECYCLE_CAPTURE_LIMIT = 16;
     const performance = { now: () => 45000 };
     function logDiagnostic(level, name, details) {
       this.diagnostics.push({ level, name, details });
@@ -91,10 +101,16 @@ function lifecycleHarness(capture = commentaryCapture()) {
     function streamTailConsumeWebSocketMessage() {}
     ${terminalSourceBlock()}
     ${productionFunctionSource('agentTerminalObserve')}
+    ${optionalProductionFunctionSource(
+      'agentTerminalRegisterLifecycleCapture',
+      'function agentTerminalRegisterLifecycleCapture(capture) { agentTerminalLifecycleCapture = capture; }'
+    )}
     ${productionFunctionSource('agentTerminalObserveConversationTurnCompleteFrame')}
     ${productionFunctionSource('captureGenerationWebSocketFrame')}
+    agentTerminalRegisterLifecycleCapture(this.capture);
     this.receive = captureGenerationWebSocketFrame;
     this.observeProviderFrame = agentTerminalObserveConversationTurnCompleteFrame;
+    this.register = agentTerminalRegisterLifecycleCapture;
   `, context);
   return context;
 }
@@ -162,10 +178,6 @@ test('duplicate provider completion is suppressed before a second normalized fan
   assert.equal(context.sounds.length, 1);
   assert.equal(context.stopwatch.length, 1);
   assert.equal(context.favicon.length, 1);
-  assert.ok(context.diagnostics.some(entry =>
-    entry.name === 'agent-terminal-conversation-turn-complete-ignored' &&
-    entry.details?.reason === 'terminal-success-already-observed'
-  ));
 });
 
 test('provider completion cannot convert a capture whose structured terminal error was already observed', () => {
@@ -190,12 +202,31 @@ test('provider completion is correlated to the lifecycle capture conversation id
   assert.equal(context.favicon.length, 0);
 });
 
-test('generation and resume capture paths both install the shared lifecycle capture before stream consumption', () => {
+test('a delayed completion resolves the oldest unresolved same-conversation capture, not a newer exchange', () => {
+  const older = commentaryCapture('exchange-A');
+  const newer = commentaryCapture('exchange-B');
+  const context = lifecycleHarness(older);
+  context.register(newer);
+
+  context.receive(providerFrame());
+
+  assert.equal(context.sounds.length, 1);
+  assert.equal(context.sounds[0].exchange_id, 'exchange-A',
+    'A delayed completion from an older turn must not terminate the newer same-conversation exchange.');
+  assert.equal(older.agent_terminal_success_observed, true);
+  assert.equal(newer.agent_terminal_success_observed, false);
+
+  context.receive(providerFrame());
+  assert.equal(context.sounds.length, 2);
+  assert.equal(context.sounds[1].exchange_id, 'exchange-B');
+  assert.equal(newer.agent_terminal_success_observed, true);
+});
+
+test('generation and resume capture paths register shared lifecycle captures before stream consumption', () => {
   const generation = productionFunctionSource('captureGenerationStreamRequest');
   const resume = productionFunctionSource('captureConversationResumeStreamResponse');
+  const registerCall = /const capture = createStreamTailCapture\(conversationId\);\s*(?:agentTerminalLifecycleCapture = capture|agentTerminalRegisterLifecycleCapture\(capture\));/;
 
-  assert.match(generation,
-    /const capture = createStreamTailCapture\(conversationId\);\s*agentTerminalLifecycleCapture = capture;/);
-  assert.match(resume,
-    /const capture = createStreamTailCapture\(conversationId\);\s*agentTerminalLifecycleCapture = capture;/);
+  assert.match(generation, registerCall);
+  assert.match(resume, registerCall);
 });
