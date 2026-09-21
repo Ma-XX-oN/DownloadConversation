@@ -72,6 +72,8 @@ jobs:
         run: node --test tests/set-development-version.test.mjs
       - name: Test-cycle artifact publication regression
         run: node --test tests/test-cycle-artifact-publication.test.mjs
+      - name: Integration test-cycle preparation regression
+        run: node --test tests/prepare-integration-test-cycle.test.mjs
       - name: Release tagging regression
         run: node --test tests/release-tagging.test.mjs
       - name: Single-snapshot export regression
