@@ -195,11 +195,17 @@
    * @returns {void} No value is returned.
    */
   function agentStopwatchHandleTerminal(terminal) {
-    if (!agentStopwatchState?.active) return;
+    if (!agentStopwatchState) return;
     const exchangeId = terminal?.exchange_id ?? null;
     if (!exchangeId || exchangeId !== agentStopwatchState.exchange_id) return;
     const completedAtMs = terminal.completed_at_ms;
     if (!Number.isFinite(completedAtMs)) return;
+    if (!agentStopwatchState.active) {
+      if (terminal.kind !== 'error' || agentStopwatchState.terminal_kind === 'error') return;
+      agentStopwatchState.terminal_kind = 'error';
+      agentStopwatchRender(completedAtMs);
+      return;
+    }
     agentStopwatchRecordLap(completedAtMs);
     agentStopwatchState.active = false;
     agentStopwatchState.terminal_kind = terminal.kind;
