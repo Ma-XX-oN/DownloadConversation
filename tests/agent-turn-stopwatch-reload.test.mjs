@@ -96,6 +96,7 @@ function restoreHarness() {
     const AGENT_STOPWATCH_REFRESH_MS = 250;
     let agentStopwatchState = null;
     let agentStopwatchTimer = null;
+    function agentSoundPositionInitializationIndicator() {}
     ${productionFunctionSource('assert')}
     ${productionFunctionSource('agentStopwatchFormatDuration')}
     ${productionFunctionSource('agentStopwatchExchangeId')}
