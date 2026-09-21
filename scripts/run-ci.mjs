@@ -16,8 +16,7 @@ const npmArguments = process.platform === 'win32'
 const pythonCommand = process.env.PYTHON ?? 'python';
 
 const ordinaryStages = [
-  ['Build production userscript', nodeCommand, ['scripts/build-userscript.mjs']],
-  ['Verify generated userscript is current', nodeCommand, ['scripts/build-userscript.mjs', '--check']],
+  ['Verify committed production userscript is current', nodeCommand, ['scripts/build-userscript.mjs', '--check']],
   ['Modular userscript build regression', nodeCommand, ['--test', 'tests/modular-userscript-build.test.mjs', 'tests/development-version-source.test.mjs']],
   ['Development branch/version identity', nodeCommand, ['scripts/check-development-version.mjs']],
   ['Production JSDoc coverage', nodeCommand, ['scripts/check-jsdoc.mjs']],
@@ -94,17 +93,12 @@ function clonePinnedRepository(repository, commit, destination) {
 }
 
 function runOrdinaryCi() {
-  const buildPassed = runStage(...ordinaryStages[0]);
-  if (!buildPassed) {
-    console.error('\nProduction build failed; bundled-code tests are not trustworthy against a stale artifact.');
+  const artifactPassed = runStage(...ordinaryStages[0]);
+  if (!artifactPassed) {
+    console.error('\nCommitted production userscript is missing or stale; CI will not repair generated output.');
     return false;
   }
-  const checkPassed = runStage(...ordinaryStages[1]);
-  if (!checkPassed) {
-    console.error('\nGenerated-artifact verification failed; bundled-code tests are not trustworthy.');
-    return false;
-  }
-  for (const stage of ordinaryStages.slice(2)) runStage(...stage);
+  for (const stage of ordinaryStages.slice(1)) runStage(...stage);
   return true;
 }
 
