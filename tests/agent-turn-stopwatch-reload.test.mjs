@@ -3,6 +3,8 @@ import test from 'node:test';
 import vm from 'node:vm';
 import { productionFunctionSource, userscript } from './helpers/userscript-source.mjs';
 
+const ACTIVE_BACKGROUND = 'rgba(32, 32, 32, 0.92)';
+
 function user(id, exchangeId, createTime) {
   return {
     id,
@@ -127,6 +129,9 @@ function restoreHarness() {
     },
     tick() {
       intervalCallback?.();
+    },
+    element() {
+      return elements.get('tm-agent-turn-stopwatch') ?? null;
     }
   };
 }
@@ -203,7 +208,7 @@ test('same-exchange User create_time values reconstruct completed lap boundaries
   assert.equal(recovery.final_message.id, 'final');
 });
 
-test('completed non-streaming exchange restores frozen laps and Total from persisted timestamps', () => {
+test('completed non-streaming exchange restores frozen timing without inventing terminal color', () => {
   const harness = restoreHarness();
   const exchange = 'exchange-A';
   const recovery = harness.api.scan([
@@ -219,16 +224,19 @@ test('completed non-streaming exchange restores frozen laps and Total from persi
   const state = harness.api.state();
   assert.equal(state.active, false);
   assert.equal(state.exchange_id, exchange);
+  assert.equal(state.terminal_kind, null);
   assert.deepEqual(Array.from(state.laps_ms), [60000, 60000]);
   assert.equal(state.total_ms, 120000);
   assert.equal(harness.api.text(), 'Lap 1: 1 m 0 s\nLap 2: 1 m 0 s\nTotal: 2 m 0 s');
+  assert.equal(harness.element().style.background, ACTIVE_BACKGROUND);
 
   harness.setNow(65000);
   harness.tick();
   assert.equal(harness.api.text(), 'Lap 1: 1 m 0 s\nLap 2: 1 m 0 s\nTotal: 2 m 0 s');
+  assert.equal(harness.element().style.background, ACTIVE_BACKGROUND);
 });
 
-test('IS_STREAMING restores the same history and continues current lap and Total', () => {
+test('IS_STREAMING restores the same history with active styling and continues current lap and Total', () => {
   const harness = restoreHarness();
   const exchange = 'exchange-A';
   const recovery = harness.api.scan([
@@ -247,14 +255,18 @@ test('IS_STREAMING restores the same history and continues current lap and Total
   let state = harness.api.state();
   assert.equal(state.active, true);
   assert.equal(state.exchange_id, exchange);
+  assert.equal(state.terminal_kind, null);
   assert.deepEqual(Array.from(state.laps_ms), [60000]);
   assert.equal(harness.api.text(), 'Lap 1: 1 m 0 s\nLap 2: 0 m 30 s\nTotal: 1 m 30 s');
+  assert.equal(harness.element().style.background, ACTIVE_BACKGROUND);
 
   harness.setNow(15000);
   harness.tick();
   state = harness.api.state();
   assert.equal(state.active, true);
+  assert.equal(state.terminal_kind, null);
   assert.equal(harness.api.text(), 'Lap 1: 1 m 0 s\nLap 2: 0 m 40 s\nTotal: 1 m 40 s');
+  assert.equal(harness.element().style.background, ACTIVE_BACKGROUND);
 });
 
 test('resume repetition of an already recovered User message does not create another lap', () => {
@@ -276,6 +288,8 @@ test('resume repetition of an already recovered User message does not create ano
   );
 
   assert.deepEqual(Array.from(harness.api.state().laps_ms), before);
+  assert.equal(harness.api.state().terminal_kind, null);
+  assert.equal(harness.element().style.background, ACTIVE_BACKGROUND);
 });
 
 test('reload restoration is wired from a synchronously cloned stock conversation response', () => {
