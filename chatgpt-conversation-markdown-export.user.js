@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         ChatGPT Conversation Markdown Recorder
 // @namespace    https://chatgpt.com/
-// @version      1.5.0-issue.151.1
+// @version      1.5.0-issue.151.2
 // @description  Exports the current ChatGPT conversation directly from the Conversation API as Markdown or JSONL.
 // @match        https://chatgpt.com/*
 // @match        https://chat.openai.com/*
@@ -8678,7 +8678,8 @@ function projectCanonicalConversation(events) {
     return `${capture?.conversation_id ?? 'new'}:${turnIdentity}`;
   }
 
-  /**   * Retains one terminal sound-event identity in a bounded insertion-ordered set.
+  /**
+   * Retains one terminal sound-event identity in a bounded insertion-ordered set.
    *
    * @param {string} key - Stable terminal sound-event key.
    * @returns {void} No value is returned.
