@@ -1,5 +1,11 @@
     lines.push(`Total: ${agentStopwatchFormatDuration(totalMs)}`);
-    ensureAgentStopwatchControl().textContent = lines.join('\n');
+    const control = ensureAgentStopwatchControl();
+    control.style.background = agentStopwatchState.terminal_kind === 'success'
+      ? 'darkgreen'
+      : agentStopwatchState.terminal_kind === 'error'
+        ? 'darkred'
+        : 'rgba(32, 32, 32, 0.92)';
+    control.textContent = lines.join('\n');
     agentSoundPositionInitializationIndicator();
   }
 
@@ -38,6 +44,7 @@
     agentStopwatchStopTimer();
     agentStopwatchState = {
       active: true,
+      terminal_kind: null,
       started_at_ms: submittedAtMs,
       lap_started_at_ms: submittedAtMs,
       laps_ms: [],
