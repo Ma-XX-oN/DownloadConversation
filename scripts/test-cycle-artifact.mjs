@@ -201,13 +201,47 @@ async function verifyArtifact() {
 }
 
 /**
+ * Resolves the remote branch head without changing the local checkout.
+ *
+ * @param {string} branch - Branch whose origin ref should be inspected.
+ * @returns {string|null} Remote branch commit SHA, or null when absent.
+ */
+function remoteBranchTarget(branch) {
+  const output = git(
+    ['ls-remote', '--heads', 'origin', `refs/heads/${branch}`],
+    true
+  ).trim();
+  if (!output) return null;
+  return output.split(/\s+/)[0];
+}
+
+/**
+ * Pushes the prepared artifact commit to the branch when a CI fan-out requires it remotely.
+ *
+ * @param {string} branch - Branch receiving the exact prepared test-cycle commit.
+ * @returns {void}
+ */
+function pushPreparedBranch(branch) {
+  const head = git(['rev-parse', 'HEAD'], true).trim();
+  const remote = remoteBranchTarget(branch);
+  if (remote !== head) {
+    git(['push', 'origin', `HEAD:refs/heads/${branch}`]);
+  }
+  if (remoteBranchTarget(branch) !== head) {
+    throw new Error(`Prepared branch publication failed for ${branch}; expected ${head}.`);
+  }
+}
+
+/**
  * Materializes the deterministic artifact and commits only that artifact when its bytes changed.
  * Source changes must already be committed so the resulting HEAD is the exact state tests exercise.
  *
+ * @param {string|null|undefined} explicitBranch - Optional branch for detached CI checkout.
+ * @param {boolean} pushBranch - Whether to push the prepared commit before CI fan-out.
  * @returns {Promise<void>}
  */
-async function prepareArtifact() {
-  const branch = resolveBranch(null);
+async function prepareArtifact(explicitBranch, pushBranch) {
+  const branch = resolveBranch(explicitBranch);
   assertTrackedTreeClean();
   runBuild(false);
   git(['add', '--', ARTIFACT_PATH]);
@@ -225,7 +259,7 @@ async function prepareArtifact() {
     git([
       'commit',
       '-m',
-      `build(test-cycle): materialize ${version}`,
+      `build(test-cycle): materialize ${version} [skip ci]`,
       '--',
       ARTIFACT_PATH
     ]);
@@ -233,6 +267,7 @@ async function prepareArtifact() {
   }
 
   const version = await verifyArtifact();
+  if (pushBranch) pushPreparedBranch(branch);
   console.log(`Test-cycle artifact ready on ${branch}: ${version}.`);
 }
 
@@ -277,21 +312,6 @@ function remoteTagTarget(tag) {
     else if (ref === `refs/tags/${tag}`) direct = sha;
   }
   return peeled ?? direct;
-}
-
-/**
- * Resolves the remote branch head without changing the local checkout.
- *
- * @param {string} branch - Branch whose origin ref should be inspected.
- * @returns {string|null} Remote branch commit SHA, or null when absent.
- */
-function remoteBranchTarget(branch) {
-  const output = git(
-    ['ls-remote', '--heads', 'origin', `refs/heads/${branch}`],
-    true
-  ).trim();
-  if (!output) return null;
-  return output.split(/\s+/)[0];
 }
 
 /**
@@ -352,21 +372,30 @@ async function publishArtifact(explicitBranch) {
 }
 
 /**
- * Parses the required lifecycle command and optional explicit branch.
+ * Parses the required lifecycle command, optional branch, and prepare-push flag.
  *
  * @param {Array<string>} argv - CLI arguments after the script name.
- * @returns {{command: string, branch: string|null}} Parsed lifecycle command and branch.
+ * @returns {{command: string, branch: string|null, pushBranch: boolean}} Parsed lifecycle options.
  */
 function parseArgs(argv) {
   const command = argv[0];
   if (!['prepare', 'verify', 'publish'].includes(command)) {
     throw new Error(
-      'Usage: node scripts/test-cycle-artifact.mjs <prepare|verify|publish> [--branch <name>]'
+      'Usage: node scripts/test-cycle-artifact.mjs <prepare|verify|publish> '
+      + '[--branch <name>] [--push]'
     );
   }
 
   let branch = null;
+  let pushBranch = false;
   for (let index = 1; index < argv.length; index += 1) {
+    if (argv[index] === '--push') {
+      if (command !== 'prepare') {
+        throw new Error('--push is valid only with prepare.');
+      }
+      pushBranch = true;
+      continue;
+    }
     if (
       argv[index] !== '--branch'
       || !argv[index + 1]
@@ -377,13 +406,13 @@ function parseArgs(argv) {
     branch = argv[index + 1];
     index += 1;
   }
-  return { command, branch };
+  return { command, branch, pushBranch };
 }
 
 try {
-  const { command, branch } = parseArgs(process.argv.slice(2));
+  const { command, branch, pushBranch } = parseArgs(process.argv.slice(2));
   if (command === 'prepare') {
-    await prepareArtifact();
+    await prepareArtifact(branch, pushBranch);
   } else if (command === 'verify') {
     const version = await verifyArtifact();
     console.log(`Verified committed test-cycle artifact ${version}.`);
