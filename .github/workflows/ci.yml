@@ -2,6 +2,8 @@ name: CI
 
 on:
   push:
+    branches:
+      - '**'
   pull_request:
 
 jobs:
@@ -14,8 +16,8 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: 22
-      - name: Verify committed production userscript is current
-        run: node scripts/build-userscript.mjs --check
+      - name: Verify committed test-cycle artifact before tests
+        run: node scripts/test-cycle-artifact.mjs verify
       - name: Modular userscript build regression
         id: modular_userscript_build
         shell: bash
@@ -40,6 +42,8 @@ jobs:
         run: node --test tests/development-version-guard.test.mjs
       - name: Development version setter regression
         run: node --test tests/set-development-version.test.mjs
+      - name: Test-cycle artifact publication regression
+        run: node --test tests/test-cycle-artifact-publication.test.mjs
       - name: Release tagging regression
         run: node --test tests/release-tagging.test.mjs
       - name: Single-snapshot export regression
@@ -86,6 +90,13 @@ jobs:
     steps:
       - name: Check out DownloadConversation
         uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - name: Verify committed test-cycle artifact before tests
+        run: node scripts/test-cycle-artifact.mjs verify
       - name: Check out pinned DownloadConversation AIConversationCore
         uses: actions/checkout@v4
         with:
@@ -104,14 +115,9 @@ jobs:
           repository: Ma-XX-oN/AIConversationCore
           ref: 4b1bebe6fd7d82d8bbb15f4ad5c1a59cfd03132a
           path: .phase7-aigm-core
-      - uses: actions/setup-node@v4
-        with:
-          node-version: 22
       - uses: actions/setup-python@v5
         with:
           python-version: '3.13'
-      - name: Verify committed DownloadConversation production userscript is current
-        run: node scripts/build-userscript.mjs --check
       - name: Install DownloadConversation AIConversationCore dependencies
         working-directory: .phase7-core
         run: npm ci
@@ -136,8 +142,8 @@ jobs:
           PHASE7_AIGM_CORE_ROOT: ${{ github.workspace }}/.phase7-aigm-core
         run: node tests/phase7-cross-consumer-adversarial.mjs
 
-  publish-release:
-    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+  publish-test-cycle:
+    if: github.event_name == 'push' && startsWith(github.ref, 'refs/heads/')
     needs:
       - test
       - cross-consumer-final-render
@@ -147,7 +153,7 @@ jobs:
     steps:
       - uses: actions/checkout@v4
         with:
-          ref: main
+          ref: ${{ github.ref_name }}
           fetch-depth: 0
       - uses: actions/setup-node@v4
         with:
@@ -156,12 +162,12 @@ jobs:
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-      - name: Publish verified stable release tag
-        run: node scripts/release.mjs --from-source
+      - name: Publish tested artifact commit and version tag
+        run: node scripts/test-cycle-artifact.mjs publish --branch "${GITHUB_REF_NAME}"
 
   verify-release-tag:
     if: github.event_name == 'push' && github.ref == 'refs/heads/main'
-    needs: publish-release
+    needs: publish-test-cycle
     runs-on: ubuntu-latest
     permissions:
       contents: read
