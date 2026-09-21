@@ -149,10 +149,9 @@ function lifecycleHarness(capture = commentaryCapture()) {
       'agentTerminalRegisterLifecycleCapture',
       'function agentTerminalRegisterLifecycleCapture(capture) { agentTerminalLifecycleCapture = capture; }'
     )}
-    ${optionalProductionFunctionSource(
-      'agentTerminalObserveConversationUpdateFrame',
-      'function agentTerminalObserveConversationUpdateFrame() { return false; }'
-    )}
+    ${productionFunctionSource('agentTerminalWebSocketMessageExchangeId')}
+    ${productionFunctionSource('agentTerminalCaptureHasExchange')}
+    ${productionFunctionSource('agentTerminalObserveConversationUpdateFrame')}
     ${productionFunctionSource('agentTerminalObserveConversationTurnCompleteFrame')}
     ${productionFunctionSource('captureGenerationWebSocketFrame')}
     agentTerminalRegisterLifecycleCapture(this.capture);
