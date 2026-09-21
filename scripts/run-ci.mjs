@@ -16,7 +16,6 @@ const npmArguments = process.platform === 'win32'
 const pythonCommand = process.env.PYTHON ?? 'python';
 
 const ordinaryStages = [
-  ['Verify committed production userscript is current', nodeCommand, ['scripts/build-userscript.mjs', '--check']],
   ['Modular userscript build regression', nodeCommand, ['--test', 'tests/modular-userscript-build.test.mjs', 'tests/development-version-source.test.mjs']],
   ['Development branch/version identity', nodeCommand, ['scripts/check-development-version.mjs']],
   ['Production JSDoc coverage', nodeCommand, ['scripts/check-jsdoc.mjs']],
@@ -24,6 +23,7 @@ const ordinaryStages = [
   ['Version identity regression', nodeCommand, ['--test', 'tests/version-identity.test.mjs']],
   ['Development version guard regression', nodeCommand, ['--test', 'tests/development-version-guard.test.mjs']],
   ['Development version setter regression', nodeCommand, ['--test', 'tests/set-development-version.test.mjs']],
+  ['Test-cycle artifact publication regression', nodeCommand, ['--test', 'tests/test-cycle-artifact-publication.test.mjs']],
   ['Release tagging regression', nodeCommand, ['--test', 'tests/release-tagging.test.mjs']],
   ['Single-snapshot export regression', nodeCommand, ['--test', 'tests/export-single-snapshot.test.mjs']],
   ['Agent completion sound regression', nodeCommand, ['--test', 'tests/agent-completion-sounds.test.mjs', 'tests/agent-completion-sound-pending.test.mjs']],
@@ -93,13 +93,7 @@ function clonePinnedRepository(repository, commit, destination) {
 }
 
 function runOrdinaryCi() {
-  const artifactPassed = runStage(...ordinaryStages[0]);
-  if (!artifactPassed) {
-    console.error('\nCommitted production userscript is missing or stale; CI will not repair generated output.');
-    return false;
-  }
-  for (const stage of ordinaryStages.slice(1)) runStage(...stage);
-  return true;
+  for (const stage of ordinaryStages) runStage(...stage);
 }
 
 function runCrossConsumerCi() {
@@ -166,12 +160,27 @@ if (Number(process.versions.node.split('.')[0]) !== 22) {
   console.warn('WARNING: GitHub CI uses Node 22; this local run is using a different Node major version.');
 }
 
-const ordinaryPrerequisitesPassed = runOrdinaryCi();
-if (ordinaryPrerequisitesPassed) runCrossConsumerCi();
+const artifactPrepared = runStage(
+  'Prepare committed test-cycle artifact',
+  nodeCommand,
+  ['scripts/test-cycle-artifact.mjs', 'prepare']
+);
+if (artifactPrepared) {
+  runOrdinaryCi();
+  if (failures.length === 0) runCrossConsumerCi();
+}
+
+if (failures.length === 0) {
+  runStage(
+    'Publish tested artifact commit and version tag',
+    nodeCommand,
+    ['scripts/test-cycle-artifact.mjs', 'publish']
+  );
+}
 
 console.log('\n=== Local CI summary ===');
 if (failures.length === 0) {
-  console.log('PASS: all local CI stages passed.');
+  console.log('PASS: all local CI stages passed and the tested artifact commit/tag is published.');
 } else {
   console.error(`FAIL: ${failures.length} stage(s) failed:`);
   for (const failure of failures) console.error(`- ${failure}`);
