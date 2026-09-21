@@ -18,11 +18,12 @@ const versioningDocUrl = new URL('../docs/DEVELOPMENT-VERSIONING.md', import.met
 const ciWorkflowUrl = new URL('../.github/workflows/ci.yml', import.meta.url);
 const releaseScriptUrl = new URL('../scripts/release.mjs', import.meta.url);
 const runCiScriptUrl = new URL('../scripts/run-ci.mjs', import.meta.url);
+const cycleScriptUrl = new URL('../scripts/test-cycle-artifact.mjs', import.meta.url);
 const gitignoreUrl = new URL('../.gitignore', import.meta.url);
 
 test('stable release versions are plain semantic versions only', () => {
   assert.equal(parseReleaseVersion('1.6.0'), '1.6.0');
-  assert.throws(() => parseReleaseVersion('1.6.0-issue.150.8'), /plain semantic version/);
+  assert.throws(() => parseReleaseVersion('1.6.0-issue.150.9'), /plain semantic version/);
   assert.throws(() => parseReleaseVersion('v1.6.0'), /plain semantic version/);
   assert.throws(() => parseReleaseVersion('1.6'), /plain semantic version/);
 });
@@ -52,7 +53,7 @@ test('source and generated artifact must both equal the requested stable release
   );
 });
 
-test('release plan is main-only and atomically publishes main plus the exact tag', () => {
+test('legacy stable release plan remains main-only and atomic', () => {
   assert.deepEqual(buildReleasePlan('1.6.0', 'main'), {
     version: '1.6.0',
     tag: 'v1.6.0',
@@ -72,9 +73,10 @@ test('release plan is main-only and atomically publishes main plus the exact tag
   );
 });
 
-test('generated installable userscript is tracked and CI verifies rather than repairs it', async () => {
+test('generated installable userscript is tracked and the test-cycle path owns materialization', async () => {
   const gitignore = await readFile(gitignoreUrl, 'utf8');
   const runCiScript = await readFile(runCiScriptUrl, 'utf8');
+  const cycleScript = await readFile(cycleScriptUrl, 'utf8');
   const workflow = await readFile(ciWorkflowUrl, 'utf8');
 
   assert.doesNotMatch(gitignore, /^\/chatgpt-conversation-markdown-export\.user\.js$/m);
@@ -85,71 +87,75 @@ test('generated installable userscript is tracked and CI verifies rather than re
   );
   assert.equal(tracked.trim(), artifactPath);
 
-  assert.match(runCiScript, /Verify committed production userscript is current/);
-  assert.doesNotMatch(runCiScript, /\['Build production userscript'/);
-  assert.match(
-    runCiScript,
-    /\['scripts\/build-userscript\.mjs', '--check'\]/
-  );
+  assert.match(cycleScript, /build-userscript\.mjs/);
+  assert.match(cycleScript, /git[\s\S]*commit[\s\S]*build\(test-cycle\): materialize/);
+  assert.match(cycleScript, /\[skip ci\]/);
+  assert.match(cycleScript, /const tag = `v\$\{version\}`/);
+  assert.match(cycleScript, /git\(\[\s*'push',\s*'--atomic'/);
 
-  assert.match(workflow, /Verify committed production userscript is current/);
-  assert.doesNotMatch(workflow, /run: node scripts\/build-userscript\.mjs\n/);
-  assert.match(workflow, /run: node scripts\/build-userscript\.mjs --check/);
+  const prepareIndex = runCiScript.indexOf("['scripts/test-cycle-artifact.mjs', 'prepare'");
+  const testIndex = runCiScript.indexOf('Modular userscript build regression');
+  const publishIndex = runCiScript.lastIndexOf("['scripts/test-cycle-artifact.mjs', 'publish'");
+  assert.ok(prepareIndex >= 0 && prepareIndex < testIndex);
+  assert.ok(publishIndex > testIndex);
+  assert.match(runCiScript, /failures\.length === 0[\s\S]*test-cycle-artifact\.mjs[\s\S]*publish/);
+
+  const prepareJob = workflow.indexOf('  prepare-test-cycle:');
+  const testJob = workflow.indexOf('  test:');
+  const crossJob = workflow.indexOf('  cross-consumer-final-render:');
+  const publishJob = workflow.indexOf('  publish-test-cycle:');
+  assert.ok(prepareJob >= 0 && testJob > prepareJob && crossJob > testJob && publishJob > crossJob);
+  assert.match(workflow.slice(prepareJob, testJob), /test-cycle-artifact\.mjs prepare[\s\S]*--push/);
+  assert.match(workflow.slice(testJob, crossJob), /test-cycle-artifact\.mjs verify/);
+  assert.match(workflow.slice(crossJob, publishJob), /test-cycle-artifact\.mjs verify/);
+  assert.match(workflow.slice(publishJob), /test-cycle-artifact\.mjs publish/);
 });
 
-test('release rebuilds and verifies the committed generated artifact before publishing it', async () => {
+test('stable release wrapper delegates verification and publication to the unified test-cycle path', async () => {
   const releaseScript = await readFile(releaseScriptUrl, 'utf8');
-  const buildIndex = releaseScript.indexOf("['scripts/build-userscript.mjs']");
-  const generatedReadIndex = releaseScript.indexOf("readFile(GENERATED_ARTIFACT_PATH");
-  const versionCheckIndex = releaseScript.indexOf('assertUserscriptReleaseVersion(');
-  const ciIndex = releaseScript.indexOf("['scripts/run-ci.mjs']");
-  const finalCleanIndex = releaseScript.lastIndexOf('assertCleanWorkingTree();');
 
-  assert.ok(buildIndex >= 0, 'release script must rebuild the committed production artifact');
-  assert.ok(generatedReadIndex > buildIndex, 'generated artifact must be read only after build');
-  assert.ok(versionCheckIndex > generatedReadIndex, 'version identity must be checked after generation');
-  assert.ok(ciIndex > versionCheckIndex, 'full CI must run after generated version verification');
-  assert.ok(finalCleanIndex > ciIndex, 'release must reject an uncommitted artifact change before tagging');
-  assert.match(releaseScript, /--from-source/);
+  assert.match(releaseScript, /parseReleaseVersion/);
+  assert.match(releaseScript, /userscriptVersion/);
+  assert.match(releaseScript, /test-cycle-artifact\.mjs/);
+  assert.match(releaseScript, /scripts\/run-ci\.mjs/);
+  assert.match(releaseScript, /check-release-tag\.mjs/);
+  assert.doesNotMatch(releaseScript, /git\(\['tag'/);
+  assert.doesNotMatch(releaseScript, /remoteTagExists/);
+  assert.doesNotMatch(releaseScript, /buildReleasePlan/);
 });
 
-test('durable documentation and CI automatically publish then independently verify stable main tags', async () => {
+test('durable documentation and CI use one version-derived artifact tag contract for development and stable cycles', async () => {
   const documentation = await readFile(versioningDocUrl, 'utf8');
   const workflow = await readFile(ciWorkflowUrl, 'utf8');
 
-  assert.match(documentation, /node scripts\/release\.mjs <version>/);
-  assert.match(documentation, /node scripts\/release\.mjs --from-source/);
   assert.match(documentation, /generated.*committed|committed.*generated/is);
   assert.doesNotMatch(documentation, /generated.*ignored|ignored.*generated/is);
-  assert.match(documentation, /push.*`main`.*automatic|automatic.*push.*`main`/is);
-  assert.match(documentation, /git push --atomic/);
-  assert.match(documentation, /annotated `vX\.Y\.Z` tag/);
-  assert.match(documentation, /Do not manually publish/);
-  assert.match(documentation, /after.*publish.*guard|guard.*after.*publish/is);
+  assert.match(documentation, /v<version>/i);
+  assert.match(documentation, /v1\.5\.0-issue\.150\.9|vX\.Y\.Z-issue\.<issue>\.<iteration>/i);
+  assert.match(documentation, /failed.*not.*tag|not.*tag.*failed/is);
+  assert.match(documentation, /collision.*advance.*version|advance.*version.*collision/is);
+  assert.match(documentation, /test cycle.*commit.*tag|commit.*tag.*test cycle/is);
+  assert.match(documentation, /node scripts\/release\.mjs <version>/);
+  assert.match(documentation, /node scripts\/release\.mjs --from-source/);
 
-  assert.match(workflow, /publish-release:/);
-  assert.match(workflow, /needs:\s*\n\s*- test\s*\n\s*- cross-consumer-final-render/);
-  assert.match(workflow, /if: github\.event_name == 'push' && github\.ref == 'refs\/heads\/main'/);
-  assert.match(workflow, /permissions:\s*\n\s*contents: write/);
+  assert.match(workflow, /prepare-test-cycle:/);
+  assert.match(workflow, /publish-test-cycle:/);
+  assert.match(workflow, /needs:\s*\n\s*- prepare-test-cycle\s*\n\s*- test\s*\n\s*- cross-consumer-final-render/);
+  assert.match(workflow, /contents: write/);
   assert.match(workflow, /git config user\.name "github-actions\[bot\]"/);
-  assert.match(workflow, /node scripts\/release\.mjs --from-source/);
+  assert.match(workflow, /node scripts\/test-cycle-artifact\.mjs publish/);
   assert.match(workflow, /verify-release-tag:/);
-  assert.match(workflow, /needs: publish-release/);
-  assert.match(workflow, /Verify published stable release tag/);
-  assert.match(workflow, /git fetch --force --tags/);
+  assert.match(workflow, /needs: publish-test-cycle/);
   assert.match(workflow, /node scripts\/check-release-tag\.mjs --branch main/);
 
-  const verifyArtifactStep = workflow.indexOf('- name: Verify committed production userscript is current');
-  const publishJob = workflow.indexOf('  publish-release:');
+  const prepareJob = workflow.indexOf('  prepare-test-cycle:');
+  const publishJob = workflow.indexOf('  publish-test-cycle:');
   const tagGuard = workflow.indexOf('  verify-release-tag:');
-  assert.ok(
-    verifyArtifactStep >= 0 && publishJob > verifyArtifactStep,
-    'main publisher must follow committed-artifact verification'
-  );
-  assert.ok(tagGuard > publishJob, 'stable tag guard must run only after automatic publication');
+  assert.ok(prepareJob >= 0 && publishJob > prepareJob);
+  assert.ok(tagGuard > publishJob, 'stable tag guard must run only after successful test-cycle publication');
   assert.equal(
     workflow.slice(0, publishJob).includes('node scripts/check-release-tag.mjs --branch main'),
     false,
-    'pre-publication verification must not fail solely because the publisher has not created the tag yet'
+    'pre-publication verification must not fail solely because the version tag is not created yet'
   );
 });
