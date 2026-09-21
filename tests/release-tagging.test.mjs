@@ -140,7 +140,10 @@ test('durable documentation and CI use one version-derived artifact tag contract
   assert.match(documentation, /v<version>/i);
   assert.match(documentation, /v1\.5\.0-issue\.150\.9|vX\.Y\.Z-issue\.<issue>\.<iteration>/i);
   assert.match(documentation, /failed.*not.*tag|not.*tag.*failed/is);
-  assert.match(documentation, /collision.*advance.*version|advance.*version.*collision/is);
+  assert.match(
+    documentation,
+    /tag[\s\S]*different commit[\s\S]*advance[\s\S]*version|advance[\s\S]*version[\s\S]*tag[\s\S]*different commit/is
+  );
   assert.match(documentation, /test cycle.*commit.*tag|commit.*tag.*test cycle/is);
   assert.match(documentation, /node scripts\/release\.mjs <version>/);
   assert.match(documentation, /node scripts\/release\.mjs --from-source/);
