@@ -148,11 +148,19 @@
    */
   function agentTerminalExchangeId(capture, finalMessage = null) {
     const finalMetadata = finalMessage?.metadata ?? {};
+    const streamedMessage = [...(capture?.stream_messages ?? [])]
+      .reverse()
+      .find(message => {
+        const metadata = message?.metadata ?? {};
+        return metadata.turn_exchange_id || metadata.working_turn_id;
+      });
+    const streamedMetadata = streamedMessage?.metadata ?? {};
     const request = [...(capture?.request_messages ?? [])]
       .reverse()
       .find(message => typeof message?.id === 'string' && message.id);
     const requestMetadata = request?.metadata ?? {};
     return finalMetadata.turn_exchange_id || finalMetadata.working_turn_id ||
+      streamedMetadata.turn_exchange_id || streamedMetadata.working_turn_id ||
       capture?.stopwatch_exchange_id || requestMetadata.turn_exchange_id ||
       requestMetadata.working_turn_id || null;
   }
@@ -216,6 +224,8 @@
   function agentTerminalObserve(capture, event = null) {
     const terminal = agentTerminalNormalize(capture, event);
     if (!terminal) return;
+    if (terminal.kind === 'success') capture.agent_terminal_success_observed = true;
+    if (terminal.kind === 'error') capture.agent_terminal_error_observed = true;
     logDiagnostic('debug', 'agent-terminal-normalized', {
       kind: terminal.kind,
       conversation_id: terminal.conversation_id,
