@@ -18,7 +18,11 @@ function commentaryCapture(exchangeId = 'exchange-A') {
     request_messages: [{
       id: `user-${exchangeId}`,
       author: { role: 'user' },
-      metadata: { request_id: `request-${exchangeId}` }
+      metadata: {
+        turn_exchange_id: exchangeId,
+        working_turn_id: exchangeId,
+        request_id: `request-${exchangeId}`
+      }
     }],
     stream_messages: [{
       id: `assistant-commentary-${exchangeId}`,
@@ -39,6 +43,27 @@ function commentaryCapture(exchangeId = 'exchange-A') {
   };
 }
 
+function inProgressCapture(exchangeId = 'exchange-A') {
+  const capture = commentaryCapture(exchangeId);
+  capture.stream_messages[0].status = 'in_progress';
+  return capture;
+}
+
+function finalAssistant(exchangeId = 'exchange-A') {
+  return {
+    id: `assistant-final-${exchangeId}`,
+    author: { role: 'assistant' },
+    channel: 'final',
+    status: 'finished_successfully',
+    end_turn: true,
+    metadata: {
+      turn_exchange_id: exchangeId,
+      working_turn_id: exchangeId,
+      request_id: `request-${exchangeId}`
+    }
+  };
+}
+
 function providerFrame(conversationId = 'conversation-1') {
   return JSON.stringify([{
     type: 'message',
@@ -49,6 +74,19 @@ function providerFrame(conversationId = 'conversation-1') {
       metadata: null
     }
   }]);
+}
+
+function conversationUpdateFrame(message, conversationId = 'conversation-1') {
+  return JSON.stringify({
+    type: 'conversation-update',
+    payload: {
+      conversation_id: conversationId,
+      update_type: 'add-messages',
+      update_content: {
+        messages: [message]
+      }
+    }
+  });
 }
 
 function terminalSourceBlock() {
@@ -98,12 +136,22 @@ function lifecycleHarness(capture = commentaryCapture()) {
       agentFaviconHandleTerminal
     ]);
     function streamTailConsumeWebSocketMessage() {}
+    function streamTailUpsertMessage(capture, message) {
+      const index = capture.stream_messages.findIndex(item => item?.id === message?.id);
+      const copy = JSON.parse(JSON.stringify(message));
+      if (index >= 0) capture.stream_messages[index] = copy;
+      else capture.stream_messages.push(copy);
+      return true;
+    }
     ${terminalSourceBlock()}
     ${productionFunctionSource('agentTerminalObserve')}
     ${optionalProductionFunctionSource(
       'agentTerminalRegisterLifecycleCapture',
       'function agentTerminalRegisterLifecycleCapture(capture) { agentTerminalLifecycleCapture = capture; }'
     )}
+    ${productionFunctionSource('agentTerminalWebSocketMessageExchangeId')}
+    ${productionFunctionSource('agentTerminalCaptureHasExchange')}
+    ${productionFunctionSource('agentTerminalObserveConversationUpdateFrame')}
     ${productionFunctionSource('agentTerminalObserveConversationTurnCompleteFrame')}
     ${productionFunctionSource('captureGenerationWebSocketFrame')}
     agentTerminalRegisterLifecycleCapture(this.capture);
@@ -215,6 +263,43 @@ test('provider completion fails closed when an older and newer same-conversation
   assert.equal(context.favicon.length, 0);
   assert.equal(older.agent_terminal_success_observed, false);
   assert.equal(newer.agent_terminal_success_observed, false);
+});
+
+test('late websocket final resolves an exchange after early provider completion lacked finished evidence', () => {
+  const capture = inProgressCapture('exchange-A');
+  const context = lifecycleHarness(capture);
+
+  context.receive(providerFrame());
+  assert.equal(context.sounds.length, 0,
+    'The early conversation-only completion must remain nonterminal before finished Assistant evidence exists.');
+
+  context.receive(conversationUpdateFrame(finalAssistant('exchange-A')));
+
+  assert.equal(context.sounds.length, 1);
+  assert.equal(context.stopwatch.length, 1);
+  assert.equal(context.favicon.length, 1);
+  assert.equal(context.sounds[0].exchange_id, 'exchange-A');
+  assert.equal(capture.agent_terminal_success_observed, true);
+});
+
+test('exchange-correlated websocket final resolves the newer capture after conversation-only completion became ambiguous', () => {
+  const older = inProgressCapture('exchange-A');
+  const newer = inProgressCapture('exchange-B');
+  const context = lifecycleHarness(older);
+  context.register(newer);
+
+  context.receive(providerFrame());
+  assert.equal(context.sounds.length, 0);
+
+  context.receive(conversationUpdateFrame(finalAssistant('exchange-B')));
+
+  assert.equal(context.sounds.length, 1);
+  assert.equal(context.stopwatch.length, 1);
+  assert.equal(context.favicon.length, 1);
+  assert.equal(context.sounds[0].exchange_id, 'exchange-B');
+  assert.equal(older.agent_terminal_success_observed, false,
+    'The stale unresolved capture must not be terminated by a later exchange final.');
+  assert.equal(newer.agent_terminal_success_observed, true);
 });
 
 test('generation and resume capture paths register shared lifecycle captures before stream consumption', () => {
