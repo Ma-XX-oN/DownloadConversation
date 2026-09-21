@@ -8,6 +8,7 @@ import { fileURLToPath } from 'node:url';
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const cycleScript = path.join(root, 'scripts', 'test-cycle-artifact.mjs');
+const versionGuardPath = path.join(root, 'scripts', 'check-development-version.mjs');
 const runCiPath = path.join(root, 'scripts', 'run-ci.mjs');
 const workflowPath = path.join(root, '.github', 'workflows', 'ci.yml');
 const versioningDocPath = path.join(root, 'docs', 'DEVELOPMENT-VERSIONING.md');
@@ -55,11 +56,20 @@ async function createFixture() {
       ''
     ].join('\n')
   );
+  await writeFile(
+    path.join(fixtureRoot, 'scripts', 'check-development-version.mjs'),
+    await readFile(versionGuardPath, 'utf8')
+  );
 
   git(fixtureRoot, ['init', '-b', 'issue-9-fixture']);
   git(fixtureRoot, ['config', 'user.name', 'Fixture User']);
   git(fixtureRoot, ['config', 'user.email', 'fixture@example.invalid']);
-  git(fixtureRoot, ['add', 'src/userscript-header.js', 'scripts/build-userscript.mjs']);
+  git(fixtureRoot, [
+    'add',
+    'src/userscript-header.js',
+    'scripts/build-userscript.mjs',
+    'scripts/check-development-version.mjs'
+  ]);
   git(fixtureRoot, ['commit', '-m', 'fixture source']);
   execFileSync('git', ['init', '--bare', remoteRoot], { encoding: 'utf8' });
   git(fixtureRoot, ['remote', 'add', 'origin', remoteRoot]);
