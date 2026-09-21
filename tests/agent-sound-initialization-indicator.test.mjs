@@ -128,16 +128,16 @@ test('running audio removes the stopwatch-owned uninitialized indicator immediat
   assert.equal(elements.has(INDICATOR_ID), false);
 });
 
-test('stopwatch creation/rendering owns indicator deployment and readiness adds no polling', () => {
-  const ensureStopwatch = productionFunctionSource('ensureAgentStopwatchControl');
+test('stopwatch rendering redeploys its indicator after text rendering and readiness adds no polling', () => {
   const render = productionFunctionSource('agentStopwatchRender');
+  const position = productionFunctionSource('agentSoundPositionInitializationIndicator');
   const sync = productionFunctionSource('agentSoundSyncInitializationIndicator');
   const unlock = productionFunctionSource('unlockAgentSoundAudio');
 
-  assert.match(ensureStopwatch, /agentSoundSyncInitializationIndicator\(\)/,
-    'stopwatch creation must project sound readiness onto its own indicator');
-  assert.match(render, /agentSoundSyncInitializationIndicator\(\)/,
-    'stopwatch rendering must preserve/redeploy its readiness indicator after text rendering');
+  assert.match(render, /agentSoundPositionInitializationIndicator\(\)/,
+    'stopwatch rendering must redeploy/align the indicator after replacing stopwatch text');
+  assert.match(position, /ensureAgentSoundInitializationIndicator\(\)/,
+    'stopwatch-owned positioning must recreate the indicator when text rendering removed it');
   assert.match(unlock, /agentSoundSyncInitializationIndicator\(\)/,
     'audio unlock must immediately refresh the readiness projection');
   assert.match(unlock, /addEventListener\(['"]statechange['"]\s*,\s*agentSoundSyncInitializationIndicator/,
