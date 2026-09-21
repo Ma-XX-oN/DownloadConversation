@@ -13,8 +13,39 @@
     agentSoundTerminalKeys.add(key);
   }
 
-  /** Current capture used only for shared Agent terminal lifecycle correlation. */
-  let agentTerminalLifecycleCapture = null;
+  /** Unresolved page-lifetime captures eligible for conversation-only provider completion correlation. */
+  const agentTerminalLifecycleCaptures = [];
+
+  /**
+   * Registers one generation/resume capture for shared terminal-lifecycle correlation.
+   *
+   * Resolved captures are discarded when the next capture is registered. More than one unresolved
+   * same-conversation capture is retained deliberately so the conversation-only provider completion
+   * observer can detect ambiguity and fail closed instead of terminating a newer exchange.
+   *
+   * @param {Object} capture - Mutable generation or resume capture.
+   * @returns {boolean} True when the capture is registered or was already registered.
+   */
+  function agentTerminalRegisterLifecycleCapture(capture) {
+    if (!capture || typeof capture !== 'object') return false;
+    if (agentTerminalLifecycleCaptures.includes(capture)) return true;
+    for (let index = agentTerminalLifecycleCaptures.length - 1; index >= 0; index -= 1) {
+      const existing = agentTerminalLifecycleCaptures[index];
+      if (existing?.agent_terminal_success_observed === true ||
+          existing?.agent_terminal_error_observed === true) {
+        agentTerminalLifecycleCaptures.splice(index, 1);
+      }
+    }
+    if (agentTerminalLifecycleCaptures.length >= 16) {
+      logDiagnostic('warnings', 'agent-terminal-lifecycle-capture-overflow', {
+        unresolved_capture_count: agentTerminalLifecycleCaptures.length,
+        conversation_id: capture?.conversation_id ?? null
+      });
+      return false;
+    }
+    agentTerminalLifecycleCaptures.push(capture);
+    return true;
+  }
 
   /**
    * Returns whether one normalized client terminal event is the evidenced polling timeout.
@@ -46,9 +77,9 @@
   }
 
   /**
-   * Tests the normalized provider completion event against the current lifecycle capture.
+   * Tests the normalized provider completion event against one lifecycle capture.
    *
-   * @param {Object} capture - Current shared Agent lifecycle capture.
+   * @param {Object} capture - Candidate shared Agent lifecycle capture.
    * @param {Object|null} event - Normalized provider lifecycle event.
    * @returns {boolean} True only for corroborated successful provider turn completion.
    */
@@ -61,46 +92,36 @@
 
   /**
    * Routes one exact global ChatGPT `conversation-turn-complete` WebSocket frame into the shared
-   * Agent terminal watcher when it belongs to the current lifecycle capture.
+   * Agent terminal watcher only when conversation identity selects one unambiguous unresolved capture.
+   *
+   * The observed provider frame carries no exchange id. If two unresolved exchanges for the same
+   * conversation are present, correlation is information-theoretically ambiguous and therefore no
+   * terminal is inferred. This prevents a delayed older completion from terminating a newer exchange.
    *
    * @param {Object} frame - Parsed page WebSocket frame.
-   * @returns {boolean} True when an exact matching provider completion was dispatched.
+   * @returns {boolean} True when an exact unambiguous provider completion was dispatched.
    */
   function agentTerminalObserveConversationTurnCompleteFrame(frame) {
     if (frame?.type !== 'message' || frame?.topic_id !== 'conversations' ||
         frame?.payload?.type !== 'conversation-turn-complete') return false;
     const conversationId = frame?.payload?.payload?.conversation_id;
     if (typeof conversationId !== 'string' || !conversationId) return false;
-    const capture = agentTerminalLifecycleCapture;
-    if (!capture) {
+    const unresolved = agentTerminalLifecycleCaptures.filter(capture =>
+      capture?.conversation_id === conversationId &&
+      capture?.agent_terminal_success_observed !== true &&
+      capture?.agent_terminal_error_observed !== true
+    );
+    if (unresolved.length !== 1) {
       logDiagnostic('debug', 'agent-terminal-conversation-turn-complete-ignored', {
         conversation_id: conversationId,
-        reason: 'no-lifecycle-capture'
+        unresolved_capture_count: unresolved.length,
+        reason: unresolved.length === 0
+          ? 'no-unresolved-lifecycle-capture'
+          : 'ambiguous-unresolved-lifecycle-captures'
       });
       return false;
     }
-    if (capture.conversation_id !== conversationId) {
-      logDiagnostic('debug', 'agent-terminal-conversation-turn-complete-ignored', {
-        conversation_id: conversationId,
-        capture_conversation_id: capture.conversation_id ?? null,
-        reason: 'conversation-mismatch'
-      });
-      return false;
-    }
-    if (capture.agent_terminal_error_observed === true) {
-      logDiagnostic('debug', 'agent-terminal-conversation-turn-complete-ignored', {
-        conversation_id: conversationId,
-        reason: 'terminal-error-already-observed'
-      });
-      return false;
-    }
-    if (capture.agent_terminal_success_observed === true) {
-      logDiagnostic('debug', 'agent-terminal-conversation-turn-complete-ignored', {
-        conversation_id: conversationId,
-        reason: 'terminal-success-already-observed'
-      });
-      return false;
-    }
+    const capture = unresolved[0];
     const finishedAssistant = agentTerminalHasFinishedAssistant(capture);
     if (!finishedAssistant) {
       logDiagnostic('debug', 'agent-terminal-conversation-turn-complete-ignored', {
