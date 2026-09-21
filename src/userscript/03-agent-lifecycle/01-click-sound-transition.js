@@ -146,7 +146,7 @@
       indicator.style.border = 'none';
       indicator.style.borderRadius = '50%';
       indicator.style.backgroundColor = 'rgba(32, 32, 32, 0.92)';
-      indicator.style.backgroundImage = "url(\"data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24'%3E%3Ccircle cx='12' cy='12' r='10.5' fill='none' stroke='%23f5f5f5' stroke-width='2.1'/%3E%3Cpath fill='%23f5f5f5' d='M4 9h4l5-4v14l-5-4H4z'/%3E%3Cpath d='M4.6 19.4L19.4 4.6' stroke='%23d93025' stroke-width='2.1' stroke-linecap='round'/%3E%3C/svg%3E\")";
+      indicator.style.backgroundImage = "url(\"data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24'%3E%3Ccircle cx='12' cy='12' r='10.5' fill='none' stroke='%23d93025' stroke-width='2.1'/%3E%3Cpath fill='%23f5f5f5' d='M4 9h4l5-4v14l-5-4H4z'/%3E%3Cpath d='M4.6 19.4L19.4 4.6' stroke='%23d93025' stroke-width='2.1' stroke-linecap='round'/%3E%3C/svg%3E\")";
       indicator.style.backgroundPosition = 'center';
       indicator.style.backgroundRepeat = 'no-repeat';
       indicator.style.backgroundSize = '24px 24px';
