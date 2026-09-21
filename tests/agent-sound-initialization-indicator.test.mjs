@@ -28,6 +28,7 @@ function indicatorHarness({ audioState = null, stopwatchWidth = null } = {}) {
   const document = {
     body: parent,
     documentElement: parent,
+    addEventListener() {},
     getElementById(id) {
       return elements.get(id) ?? null;
     },
