@@ -133,3 +133,17 @@ test('setter runs the read-only guard after mutation', async () => {
     assert.match(result.stdout, /Development version guard: branch issue-149-version-identity-guard issue 149 matches version 1\.5\.0-issue\.149\.2/);
   });
 });
+
+test('default production setter regenerates the committed artifact while custom fixture mode stays isolated', async () => {
+  const source = await readFile(setterPath, 'utf8');
+  assert.match(source, /DEFAULT_VERSION_SOURCE/);
+  assert.match(source, /build-userscript\.mjs/);
+  assert.match(
+    source,
+    /options\.file\s*===\s*DEFAULT_VERSION_SOURCE[\s\S]*build-userscript\.mjs/
+  );
+  assert.match(
+    source,
+    /execFileSync\(process\.execPath,[\s\S]*build-userscript\.mjs/
+  );
+});
