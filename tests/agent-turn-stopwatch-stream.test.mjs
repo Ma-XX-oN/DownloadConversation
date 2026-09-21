@@ -60,6 +60,7 @@ function streamHarness() {
     let agentStopwatchTimer = null;
     function streamTailPersistCapture() { return true; }
     function agentSoundHandleTerminal() {}
+    function agentSoundPositionInitializationIndicator() {}
     function logDiagnostic() {}
     ${productionFunctionSource('assert')}
     ${productionFunctionSource('agentStopwatchFormatDuration')}
