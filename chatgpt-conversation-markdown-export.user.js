@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         ChatGPT Conversation Markdown Recorder
 // @namespace    https://chatgpt.com/
-// @version      1.5.0-issue.151.11
+// @version      1.5.0-issue.152.1
 // @description  Exports the current ChatGPT conversation directly from the Conversation API as Markdown or JSONL.
 // @match        https://chatgpt.com/*
 // @match        https://chat.openai.com/*
@@ -9369,7 +9369,13 @@ function projectCanonicalConversation(events) {
       totalMs = agentStopwatchState.total_ms;
     }
     lines.push(`Total: ${agentStopwatchFormatDuration(totalMs)}`);
-    ensureAgentStopwatchControl().textContent = lines.join('\n');
+    const control = ensureAgentStopwatchControl();
+    control.style.background = agentStopwatchState.terminal_kind === 'success'
+      ? 'darkgreen'
+      : agentStopwatchState.terminal_kind === 'error'
+        ? 'darkred'
+        : 'rgba(32, 32, 32, 0.92)';
+    control.textContent = lines.join('\n');
     agentSoundPositionInitializationIndicator();
   }
 
@@ -9408,6 +9414,7 @@ function projectCanonicalConversation(events) {
     agentStopwatchStopTimer();
     agentStopwatchState = {
       active: true,
+      terminal_kind: null,
       started_at_ms: submittedAtMs,
       lap_started_at_ms: submittedAtMs,
       laps_ms: [],
@@ -9637,6 +9644,7 @@ function projectCanonicalConversation(events) {
     if (isStreaming) {
       agentStopwatchState = {
         active: true,
+        terminal_kind: null,
         started_at_ms: monotonicNowMs - Math.max(0, wallNowMs - firstWallMs),
         lap_started_at_ms: monotonicNowMs - Math.max(0, wallNowMs - currentLapWallMs),
         laps_ms: completedLaps,
@@ -9660,6 +9668,7 @@ function projectCanonicalConversation(events) {
     completedLaps.push(completedWallMs - currentLapWallMs);
     agentStopwatchState = {
       active: false,
+      terminal_kind: null,
       started_at_ms: monotonicNowMs - Math.max(0, wallNowMs - firstWallMs),
       lap_started_at_ms: null,
       laps_ms: completedLaps,
@@ -9809,13 +9818,20 @@ function projectCanonicalConversation(events) {
    * @returns {void} No value is returned.
    */
   function agentStopwatchHandleTerminal(terminal) {
-    if (!agentStopwatchState?.active) return;
+    if (!agentStopwatchState) return;
     const exchangeId = terminal?.exchange_id ?? null;
     if (!exchangeId || exchangeId !== agentStopwatchState.exchange_id) return;
     const completedAtMs = terminal.completed_at_ms;
     if (!Number.isFinite(completedAtMs)) return;
+    if (!agentStopwatchState.active) {
+      if (terminal.kind !== 'error' || agentStopwatchState.terminal_kind === 'error') return;
+      agentStopwatchState.terminal_kind = 'error';
+      agentStopwatchRender(completedAtMs);
+      return;
+    }
     agentStopwatchRecordLap(completedAtMs);
     agentStopwatchState.active = false;
+    agentStopwatchState.terminal_kind = terminal.kind;
     agentStopwatchState.total_ms = completedAtMs - agentStopwatchState.started_at_ms;
     agentStopwatchState.pending_submission_at_ms = null;
     agentStopwatchState.pending_message_id = null;
