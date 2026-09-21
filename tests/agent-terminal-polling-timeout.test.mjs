@@ -37,6 +37,8 @@ function soundHarness() {
     ${productionFunctionSource('agentSoundClearPendingTerminal')}
     ${productionFunctionSource('agentSoundRetryPendingTerminal')}
     ${productionFunctionSource('agentTerminalIsPollingTimeout')}
+    ${productionFunctionSource('agentTerminalHasFinishedAssistant')}
+    ${productionFunctionSource('agentTerminalIsConversationTurnComplete')}
     ${productionFunctionSource('agentTerminalSuccessfulFinal')}
     ${productionFunctionSource('agentTerminalExchangeId')}
     ${productionFunctionSource('agentTerminalKey')}
@@ -90,6 +92,8 @@ function stopwatchHarness() {
     ${productionFunctionSource('agentStopwatchObserveRequest')}
     ${productionFunctionSource('agentStopwatchObserveInputMessage')}
     ${productionFunctionSource('agentTerminalIsPollingTimeout')}
+    ${productionFunctionSource('agentTerminalHasFinishedAssistant')}
+    ${productionFunctionSource('agentTerminalIsConversationTurnComplete')}
     ${productionFunctionSource('agentTerminalSuccessfulFinal')}
     ${productionFunctionSource('agentTerminalExchangeId')}
     ${productionFunctionSource('agentTerminalKey')}
