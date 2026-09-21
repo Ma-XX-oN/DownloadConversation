@@ -36,16 +36,14 @@
     }
 
     const finalMessage = recovery.final_message;
-    const finalSeconds = Number.isFinite(Number(finalMessage?.update_time))
-      ? Number(finalMessage.update_time)
-      : Number(finalMessage?.create_time);
+    const finalSeconds = Number(finalMessage?.create_time);
     const completedWallMs = finalSeconds * 1000;
     assert(Number.isFinite(completedWallMs) && completedWallMs >= currentLapWallMs,
       'Completed agent stopwatch recovery requires a terminal provider timestamp.');
     completedLaps.push(completedWallMs - currentLapWallMs);
     agentStopwatchState = {
       active: false,
-      terminal_kind: null,
+      terminal_kind: 'success',
       started_at_ms: monotonicNowMs - Math.max(0, wallNowMs - firstWallMs),
       lap_started_at_ms: null,
       laps_ms: completedLaps,
