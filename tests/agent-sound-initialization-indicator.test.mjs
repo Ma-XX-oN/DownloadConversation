@@ -108,7 +108,7 @@ test('uninitialized indicator is deployed only with the stopwatch', () => {
     'the readiness icon must not be a body-level sibling of the stopwatch');
 });
 
-test('disabled-speaker artwork uses a balanced circle and red bottom-left to top-right slash', () => {
+test('disabled-speaker artwork uses a red prohibition circle and slash over a white speaker', () => {
   const { context, elements } = indicatorHarness({ withStopwatch: true });
   context.syncIndicator();
   const indicator = elements.get(INDICATOR_ID);
@@ -116,14 +116,14 @@ test('disabled-speaker artwork uses a balanced circle and red bottom-left to top
   assert.equal(indicator.style.border, 'none',
     'the circle must come from the SVG so its stroke and slash endpoints share one coordinate system');
   assert.match(indicator.style.backgroundImage,
-    /%3Ccircle cx='12' cy='12' r='10\.5' fill='none' stroke='%23f5f5f5' stroke-width='2\.1'\/%3E/,
-    'the white circle should use the same visual stroke weight as the slash');
+    /%3Ccircle cx='12' cy='12' r='10\.5' fill='none' stroke='%23d93025' stroke-width='2\.1'\/%3E/,
+    'the prohibition circle must be red');
   assert.match(indicator.style.backgroundImage,
     /%3Cpath fill='%23f5f5f5' d='M4 9h4l5-4v14l-5-4H4z'\/%3E/,
-    'the speaker should remain white');
+    'the speaker must remain white');
   assert.match(indicator.style.backgroundImage,
     /%3Cpath d='M4\.6 19\.4L19\.4 4\.6' stroke='%23d93025' stroke-width='2\.1' stroke-linecap='round'\/%3E/,
-    'the slash should be red, run bottom-left to top-right, and terminate at the circle');
+    'the slash must be red, run bottom-left to top-right, and terminate at the circle');
   assert.equal(indicator.style.backgroundSize, '24px 24px');
 });
 
