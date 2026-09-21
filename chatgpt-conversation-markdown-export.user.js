@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         ChatGPT Conversation Markdown Recorder
 // @namespace    https://chatgpt.com/
-// @version      1.5.0-issue.151.2
+// @version      1.5.0-issue.151.3
 // @description  Exports the current ChatGPT conversation directly from the Conversation API as Markdown or JSONL.
 // @match        https://chatgpt.com/*
 // @match        https://chat.openai.com/*
@@ -8432,11 +8432,9 @@ function projectCanonicalConversation(events) {
     setTimeout(() => finishConversationClickDiagnostic(observation, 'timer'), 2500);
   }
 
-  /** Document-root attribute projecting that browser audio is not currently ready for terminal cues. */
-  const AGENT_SOUND_INITIALIZATION_ATTRIBUTE = 'data-tm-agent-sound-uninitialized';
-  /** DOM id of the single stylesheet rendering the sound-readiness status beside the stopwatch. */
-  const AGENT_SOUND_INITIALIZATION_STYLE_ID = 'tm-agent-sound-uninitialized-style';
-  /** Horizontal gap between the sound-readiness status icon and the stopwatch. */
+  /** DOM id of the standalone sound-readiness indicator. */
+  const AGENT_SOUND_INITIALIZATION_INDICATOR_ID = 'tm-agent-sound-uninitialized';
+  /** Horizontal gap between the sound-readiness indicator and the stopwatch. */
   const AGENT_SOUND_INITIALIZATION_GAP_PX = 8;
 
   /**
@@ -8449,64 +8447,75 @@ function projectCanonicalConversation(events) {
   }
 
   /**
-   * Builds the stylesheet for the disabled-speaker readiness status anchored to the stopwatch.
+   * Positions the standalone sound-readiness indicator at the stopwatch top and immediately
+   * to its left when the stopwatch exists. Before a stopwatch exists, the indicator remains
+   * visible at the same top-right status location.
    *
-   * @returns {string} CSS rendering one circle/slash speaker immediately left of the stopwatch.
+   * @param {HTMLElement|null} indicator - Existing readiness indicator, when already resolved.
+   * @returns {void} No value is returned.
    */
-  function agentSoundInitializationIndicatorCss() {
-    return `
-      html[${AGENT_SOUND_INITIALIZATION_ATTRIBUTE}="true"] #${AGENT_STOPWATCH_ID}::before{
-        content:'';
-        position:absolute;
-        top:0;
-        right:calc(100% + ${AGENT_SOUND_INITIALIZATION_GAP_PX}px);
-        width:24px;
-        height:24px;
-        box-sizing:border-box;
-        display:block;
-        border:1px solid rgba(245,245,245,.9);
-        border-radius:50%;
-        background-color:rgba(32,32,32,.92);
-        background-image:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24'%3E%3Cpath fill='%23f5f5f5' d='M4 9h4l5-4v14l-5-4H4z'/%3E%3Cpath d='M5 5l14 14' stroke='%23f5f5f5' stroke-width='2.5' stroke-linecap='round'/%3E%3C/svg%3E");
-        background-position:center;
-        background-repeat:no-repeat;
-        background-size:20px 20px;
-        pointer-events:none;
-        box-shadow:0 2px 8px rgba(0,0,0,.25);
-      }
-    `;
+  function agentSoundPositionInitializationIndicator(
+    indicator = document.getElementById(AGENT_SOUND_INITIALIZATION_INDICATOR_ID)
+  ) {
+    if (!indicator) return;
+    indicator.style.top = '56px';
+    const stopwatch = document.getElementById(AGENT_STOPWATCH_ID);
+    if (!stopwatch) {
+      indicator.style.right = '16px';
+      return;
+    }
+    indicator.style.right = `${16 + AGENT_SOUND_INITIALIZATION_GAP_PX + stopwatch.offsetWidth}px`;
   }
 
   /**
-   * Installs the single stylesheet used by the sound-initialization status projection.
+   * Returns the single standalone disabled-speaker sound-readiness indicator.
    *
-   * @returns {HTMLStyleElement|null} Existing/new style element, or null before a document root exists.
+   * @returns {HTMLElement|null} Existing/new indicator, or null before a document root exists.
    */
-  function ensureAgentSoundInitializationIndicatorStyle() {
-    const existing = document.getElementById(AGENT_SOUND_INITIALIZATION_STYLE_ID);
-    if (existing) return existing;
-    const parent = document.head || document.documentElement;
+  function ensureAgentSoundInitializationIndicator() {
+    let indicator = document.getElementById(AGENT_SOUND_INITIALIZATION_INDICATOR_ID);
+    if (indicator) return indicator;
+    const parent = document.body || document.documentElement;
     if (!parent) return null;
-    const style = document.createElement('style');
-    style.id = AGENT_SOUND_INITIALIZATION_STYLE_ID;
-    style.textContent = agentSoundInitializationIndicatorCss();
-    parent.append(style);
-    return style;
+    indicator = document.createElement('div');
+    indicator.id = AGENT_SOUND_INITIALIZATION_INDICATOR_ID;
+    indicator.setAttribute('aria-hidden', 'true');
+    indicator.style.position = 'fixed';
+    indicator.style.top = '56px';
+    indicator.style.right = '16px';
+    indicator.style.zIndex = '2147483647';
+    indicator.style.width = '24px';
+    indicator.style.height = '24px';
+    indicator.style.boxSizing = 'border-box';
+    indicator.style.border = '1px solid rgba(245, 245, 245, 0.9)';
+    indicator.style.borderRadius = '50%';
+    indicator.style.backgroundColor = 'rgba(32, 32, 32, 0.92)';
+    indicator.style.backgroundImage = "url(\"data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24'%3E%3Cpath fill='%23f5f5f5' d='M4 9h4l5-4v14l-5-4H4z'/%3E%3Cpath d='M5 5l14 14' stroke='%23f5f5f5' stroke-width='2.5' stroke-linecap='round'/%3E%3C/svg%3E\")";
+    indicator.style.backgroundPosition = 'center';
+    indicator.style.backgroundRepeat = 'no-repeat';
+    indicator.style.backgroundSize = '20px 20px';
+    indicator.style.pointerEvents = 'none';
+    indicator.style.boxShadow = '0 2px 8px rgba(0, 0, 0, 0.25)';
+    parent.append(indicator);
+    agentSoundPositionInitializationIndicator(indicator);
+    return indicator;
   }
 
   /**
-   * Projects authoritative AudioContext readiness onto the stopwatch-adjacent status icon.
+   * Projects authoritative AudioContext readiness onto the standalone status icon.
    *
-   * @returns {boolean} True when audio is ready and the uninitialized status is hidden.
+   * @returns {boolean} True when audio is ready and the uninitialized status is absent.
    */
   function agentSoundSyncInitializationIndicator() {
     const ready = agentSoundAudioReady();
-    const root = document.documentElement;
-    if (!root) return ready;
-    ensureAgentSoundInitializationIndicatorStyle();
-    if (ready) root.removeAttribute(AGENT_SOUND_INITIALIZATION_ATTRIBUTE);
-    else root.setAttribute(AGENT_SOUND_INITIALIZATION_ATTRIBUTE, 'true');
-    return ready;
+    const indicator = document.getElementById(AGENT_SOUND_INITIALIZATION_INDICATOR_ID);
+    if (ready) {
+      indicator?.remove();
+      return true;
+    }
+    const visibleIndicator = indicator || ensureAgentSoundInitializationIndicator();
+    agentSoundPositionInitializationIndicator(visibleIndicator);
+    return false;
   }
 
   agentSoundSyncInitializationIndicator();
@@ -8678,8 +8687,7 @@ function projectCanonicalConversation(events) {
     return `${capture?.conversation_id ?? 'new'}:${turnIdentity}`;
   }
 
-  /**
-   * Retains one terminal sound-event identity in a bounded insertion-ordered set.
+  /**   * Retains one terminal sound-event identity in a bounded insertion-ordered set.
    *
    * @param {string} key - Stable terminal sound-event key.
    * @returns {void} No value is returned.
@@ -9356,6 +9364,7 @@ function projectCanonicalConversation(events) {
     }
     lines.push(`Total: ${agentStopwatchFormatDuration(totalMs)}`);
     ensureAgentStopwatchControl().textContent = lines.join('\n');
+    agentSoundPositionInitializationIndicator();
   }
 
   /**
