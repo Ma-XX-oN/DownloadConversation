@@ -168,6 +168,14 @@ A non-streaming result is **not** proof that the current loaded page observed a 
 
 Do not issue duplicate stream-status requests for individual consumers.
 
+### Persisted final timestamps on reload
+
+Live #152 evidence established that persisted Assistant `update_time` is mutable and can move long after the response actually completed. In the captured exchange, the successful final Assistant retained its original `create_time` near the end of the live response, while `update_time` had been rewritten roughly six hours later. Treating that later value as the stopwatch terminal boundary inflated an approximately 12.7-minute exchange to approximately 359 minutes after reload.
+
+For completed stopwatch reconstruction, the exact structured successful final Assistant (`channel:"final"`, `status:"finished_successfully"`, `end_turn:true`) supplies both the success state and the persisted terminal record. Its `create_time` is the completion timestamp used for duration reconstruction; `update_time` is not a stable terminal-event timestamp and must not be used for elapsed timing.
+
+This does not weaken the stream-status rule above. `COMPLETE`, `NOT_STREAMING`, or any other non-streaming status remains insufficient by itself to infer success. The recovered green stopwatch state is justified by the exact successful-final history record, not by the absence of streaming.
+
 ## Reload continuation stream
 
 When a hard reload occurs while `stream_status` reports `IS_STREAMING`, ChatGPT can continue the active turn through:
