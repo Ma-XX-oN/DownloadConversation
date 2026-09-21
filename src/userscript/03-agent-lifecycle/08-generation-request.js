@@ -13,7 +13,7 @@
         ? body.conversation_id
         : currentConversationId();
       const capture = createStreamTailCapture(conversationId);
-      agentTerminalLifecycleCapture = capture;
+      agentTerminalRegisterLifecycleCapture(capture);
       streamTailCaptureRequest(capture, body);
       capture.stopwatch_submitted_at_ms = submittedAtMs;
       agentStopwatchObserveRequest(capture);
@@ -111,7 +111,7 @@
         throw new Error('Conversation resume request did not contain conversation_id.');
       }
       const capture = createStreamTailCapture(conversationId);
-      agentTerminalLifecycleCapture = capture;
+      agentTerminalRegisterLifecycleCapture(capture);
       await consumeObservedConversationStreamResponse(response, capture, {
         persistCapture: false,
         source: 'resume'
