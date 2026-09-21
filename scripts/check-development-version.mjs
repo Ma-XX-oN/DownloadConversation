@@ -36,15 +36,19 @@ function normalizeBranch(value) {
     .replace(/^origin\//, '');
 }
 
-function gitBranch() {
+function gitOutput(args) {
   try {
-    return execFileSync('git', ['rev-parse', '--abbrev-ref', 'HEAD'], {
+    return execFileSync('git', args, {
       encoding: 'utf8',
       stdio: ['ignore', 'pipe', 'ignore']
     }).trim();
   } catch {
     return '';
   }
+}
+
+function gitBranch() {
+  return gitOutput(['rev-parse', '--abbrev-ref', 'HEAD']);
 }
 
 function resolveBranch(explicitBranch) {
@@ -100,12 +104,41 @@ function validate(branch, version) {
   return `Development version guard: branch ${branch} issue ${owner} matches version ${version}.`;
 }
 
+function localTagTarget(tag) {
+  if (!gitOutput(['show-ref', '--verify', `refs/tags/${tag}`])) return null;
+  const target = gitOutput(['rev-list', '-n', '1', tag]);
+  if (!target) throw new Error(`Could not resolve existing version tag ${tag}.`);
+  return target;
+}
+
+function validatePublishedVersionReuse(branch, version, file) {
+  if (file !== DEFAULT_VERSION_SOURCE || owningIssue(branch) === null) return null;
+  const tag = `v${version}`;
+  const publishedTarget = localTagTarget(tag);
+  if (publishedTarget === null) return null;
+
+  const head = gitOutput(['rev-parse', 'HEAD']);
+  if (!head) {
+    throw new Error(`Could not determine current HEAD while validating published version ${version}.`);
+  }
+  if (publishedTarget !== head) {
+    throw new Error(
+      `Development version ${version} is already published by ${tag} at ${publishedTarget}; `
+      + `current HEAD is ${head}. Advance the development version iteration before further work.`
+    );
+  }
+
+  return `Published version guard: ${tag} identifies current HEAD ${head}.`;
+}
+
 async function main() {
   const options = parseArgs(process.argv.slice(2));
   const branch = resolveBranch(options.branch);
   const source = await readFile(options.file, 'utf8');
   const version = extractVersion(source);
   process.stdout.write(`${validate(branch, version)}\n`);
+  const publishedIdentity = validatePublishedVersionReuse(branch, version, options.file);
+  if (publishedIdentity) process.stdout.write(`${publishedIdentity}\n`);
 }
 
 try {
