@@ -180,12 +180,22 @@ test('local and GitHub CI use the same test-cycle artifact contract', async () =
   const runCi = await readFile(runCiPath, 'utf8');
   const workflow = await readFile(workflowPath, 'utf8');
 
-  const prepareIndex = runCi.indexOf("['scripts/test-cycle-artifact.mjs', 'prepare'");
-  const firstOrdinaryTest = runCi.indexOf('Modular userscript build regression');
-  const publishIndex = runCi.lastIndexOf("['scripts/test-cycle-artifact.mjs', 'publish'");
-  assert.ok(prepareIndex >= 0 && prepareIndex < firstOrdinaryTest, 'local CI must prepare artifact first');
-  assert.ok(publishIndex > firstOrdinaryTest, 'local CI must publish only after tests');
-  assert.match(runCi, /failures\.length === 0[\s\S]*test-cycle-artifact\.mjs[\s\S]*publish/);
+  const orchestrationStart = runCi.indexOf("console.log('DownloadConversation local CI');");
+  assert.ok(orchestrationStart >= 0, 'local CI orchestration entry point is missing');
+  const orchestration = runCi.slice(orchestrationStart);
+  const prepareIndex = orchestration.indexOf("['scripts/test-cycle-artifact.mjs', 'prepare']");
+  const ordinaryIndex = orchestration.indexOf('runOrdinaryCi();');
+  const crossIndex = orchestration.indexOf('runCrossConsumerCi();');
+  const publishIndex = orchestration.indexOf("['scripts/test-cycle-artifact.mjs', 'publish']");
+  assert.ok(
+    prepareIndex >= 0 && ordinaryIndex > prepareIndex,
+    'local CI must prepare the artifact before executing ordinary tests'
+  );
+  assert.ok(
+    crossIndex > ordinaryIndex && publishIndex > crossIndex,
+    'local CI must publish only after ordinary and cross-consumer tests'
+  );
+  assert.match(orchestration, /failures\.length === 0[\s\S]*test-cycle-artifact\.mjs[\s\S]*publish/);
 
   const prepareJob = workflow.indexOf('  prepare-test-cycle:');
   const prepareCommand = workflow.indexOf('node scripts/test-cycle-artifact.mjs prepare', prepareJob);
