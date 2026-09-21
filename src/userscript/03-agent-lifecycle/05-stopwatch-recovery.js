@@ -21,6 +21,7 @@
     if (isStreaming) {
       agentStopwatchState = {
         active: true,
+        terminal_kind: null,
         started_at_ms: monotonicNowMs - Math.max(0, wallNowMs - firstWallMs),
         lap_started_at_ms: monotonicNowMs - Math.max(0, wallNowMs - currentLapWallMs),
         laps_ms: completedLaps,
@@ -44,6 +45,7 @@
     completedLaps.push(completedWallMs - currentLapWallMs);
     agentStopwatchState = {
       active: false,
+      terminal_kind: null,
       started_at_ms: monotonicNowMs - Math.max(0, wallNowMs - firstWallMs),
       lap_started_at_ms: null,
       laps_ms: completedLaps,
@@ -200,6 +202,7 @@
     if (!Number.isFinite(completedAtMs)) return;
     agentStopwatchRecordLap(completedAtMs);
     agentStopwatchState.active = false;
+    agentStopwatchState.terminal_kind = terminal.kind;
     agentStopwatchState.total_ms = completedAtMs - agentStopwatchState.started_at_ms;
     agentStopwatchState.pending_submission_at_ms = null;
     agentStopwatchState.pending_message_id = null;
