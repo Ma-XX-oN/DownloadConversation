@@ -1,13 +1,15 @@
 import { execFileSync } from 'node:child_process';
-import { readFile, writeFile } from 'node:fs/promises';
+import { readFile, rm, writeFile } from 'node:fs/promises';
 import { fileURLToPath } from 'node:url';
 
 const DEFAULT_VERSION_SOURCE = 'src/userscript-header.js';
+const GENERATED_ARTIFACT = 'chatgpt-conversation-markdown-export.user.js';
 const ISSUE_BRANCH_RE = /^issue-(\d+)(?:-|$)/;
 const RELEASE_VERSION_RE = /^\d+\.\d+\.\d+$/;
 const VERSION_WITH_OPTIONAL_ISSUE_RE = /^(\d+\.\d+\.\d+)(?:-issue\.\d+\.\d+)?$/;
 const VERSION_LINE_RE = /^\/\/ @version[ \t]+(\S+)([ \t]*)\r?$/gm;
 const guardPath = fileURLToPath(new URL('./check-development-version.mjs', import.meta.url));
+const buildPath = fileURLToPath(new URL('./build-userscript.mjs', import.meta.url));
 
 function fail(message) {
   process.stderr.write(`${message}\n`);
@@ -141,6 +143,31 @@ function runGuard(file, branch) {
   });
 }
 
+function rebuildCommittedArtifact() {
+  return execFileSync(process.execPath, [buildPath], {
+    encoding: 'utf8',
+    stdio: ['ignore', 'pipe', 'pipe']
+  });
+}
+
+async function readArtifactSnapshot() {
+  try {
+    return await readFile(GENERATED_ARTIFACT);
+  } catch (error) {
+    if (error?.code === 'ENOENT') return null;
+    throw error;
+  }
+}
+
+async function restoreProductionFiles(headerBytes, artifactBytes) {
+  await writeFile(DEFAULT_VERSION_SOURCE, headerBytes);
+  if (artifactBytes === null) {
+    await rm(GENERATED_ARTIFACT, { force: true });
+  } else {
+    await writeFile(GENERATED_ARTIFACT, artifactBytes);
+  }
+}
+
 async function main() {
   const options = parseArgs(process.argv.slice(2));
   const branch = resolveBranch(options.branch);
@@ -151,15 +178,25 @@ async function main() {
   const token = locateVersionToken(text);
   const release = releaseTarget(token.currentVersion, options.release);
   const newVersion = `${release}-issue.${issue}.${iteration}`;
+  const productionSource = options.file === DEFAULT_VERSION_SOURCE;
+  const artifactBefore = productionSource ? await readArtifactSnapshot() : null;
 
-  if (newVersion !== token.currentVersion) {
-    const after = replaceVersionToken(before, text, token, newVersion);
-    await writeFile(options.file, after);
+  try {
+    if (newVersion !== token.currentVersion) {
+      const after = replaceVersionToken(before, text, token, newVersion);
+      await writeFile(options.file, after);
+    }
+
+    let buildOutput = '';
+    if (productionSource) buildOutput = rebuildCommittedArtifact();
+    const guardOutput = runGuard(options.file, branch);
+    process.stdout.write(`Established development version ${newVersion} for branch ${branch}.\n`);
+    if (buildOutput) process.stdout.write(buildOutput);
+    process.stdout.write(guardOutput);
+  } catch (error) {
+    if (productionSource) await restoreProductionFiles(before, artifactBefore);
+    throw error;
   }
-
-  const guardOutput = runGuard(options.file, branch);
-  process.stdout.write(`Established development version ${newVersion} for branch ${branch}.\n`);
-  process.stdout.write(guardOutput);
 }
 
 try {
