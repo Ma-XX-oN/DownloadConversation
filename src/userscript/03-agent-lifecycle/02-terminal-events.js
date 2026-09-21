@@ -13,6 +13,9 @@
     agentSoundTerminalKeys.add(key);
   }
 
+  /** Current capture used only for shared Agent terminal lifecycle correlation. */
+  let agentTerminalLifecycleCapture = null;
+
   /**
    * Returns whether one normalized client terminal event is the evidenced polling timeout.
    *
@@ -24,6 +27,99 @@
       event?.code === 'network_error' &&
       event?.source === 'completion_stream_polling_fallback' &&
       event?.reason === 'polling_timeout';
+  }
+
+  /**
+   * Returns the newest structured Assistant record that the provider marked finished successfully.
+   *
+   * This is not terminal by itself. It is only corroborating success evidence when the provider
+   * separately emits the exact `conversation-turn-complete` lifecycle notification.
+   *
+   * @param {Object} capture - Mutable streamed-turn capture.
+   * @returns {Object|null} Finished Assistant record, or null when none has been observed.
+   */
+  function agentTerminalHasFinishedAssistant(capture) {
+    return [...(capture?.stream_messages ?? [])].reverse().find(message =>
+      message?.author?.role === 'assistant' &&
+      message?.status === 'finished_successfully'
+    ) ?? null;
+  }
+
+  /**
+   * Tests the normalized provider completion event against the current lifecycle capture.
+   *
+   * @param {Object} capture - Current shared Agent lifecycle capture.
+   * @param {Object|null} event - Normalized provider lifecycle event.
+   * @returns {boolean} True only for corroborated successful provider turn completion.
+   */
+  function agentTerminalIsConversationTurnComplete(capture, event) {
+    return event?.type === 'provider_conversation_turn_complete' &&
+      typeof event?.conversation_id === 'string' &&
+      event.conversation_id === capture?.conversation_id &&
+      Boolean(agentTerminalHasFinishedAssistant(capture));
+  }
+
+  /**
+   * Routes one exact global ChatGPT `conversation-turn-complete` WebSocket frame into the shared
+   * Agent terminal watcher when it belongs to the current lifecycle capture.
+   *
+   * @param {Object} frame - Parsed page WebSocket frame.
+   * @returns {boolean} True when an exact matching provider completion was dispatched.
+   */
+  function agentTerminalObserveConversationTurnCompleteFrame(frame) {
+    if (frame?.type !== 'message' || frame?.topic_id !== 'conversations' ||
+        frame?.payload?.type !== 'conversation-turn-complete') return false;
+    const conversationId = frame?.payload?.payload?.conversation_id;
+    if (typeof conversationId !== 'string' || !conversationId) return false;
+    const capture = agentTerminalLifecycleCapture;
+    if (!capture) {
+      logDiagnostic('debug', 'agent-terminal-conversation-turn-complete-ignored', {
+        conversation_id: conversationId,
+        reason: 'no-lifecycle-capture'
+      });
+      return false;
+    }
+    if (capture.conversation_id !== conversationId) {
+      logDiagnostic('debug', 'agent-terminal-conversation-turn-complete-ignored', {
+        conversation_id: conversationId,
+        capture_conversation_id: capture.conversation_id ?? null,
+        reason: 'conversation-mismatch'
+      });
+      return false;
+    }
+    if (capture.agent_terminal_error_observed === true) {
+      logDiagnostic('debug', 'agent-terminal-conversation-turn-complete-ignored', {
+        conversation_id: conversationId,
+        reason: 'terminal-error-already-observed'
+      });
+      return false;
+    }
+    if (capture.agent_terminal_success_observed === true) {
+      logDiagnostic('debug', 'agent-terminal-conversation-turn-complete-ignored', {
+        conversation_id: conversationId,
+        reason: 'terminal-success-already-observed'
+      });
+      return false;
+    }
+    const finishedAssistant = agentTerminalHasFinishedAssistant(capture);
+    if (!finishedAssistant) {
+      logDiagnostic('debug', 'agent-terminal-conversation-turn-complete-ignored', {
+        conversation_id: conversationId,
+        reason: 'no-finished-assistant-evidence'
+      });
+      return false;
+    }
+    logDiagnostic('debug', 'agent-terminal-conversation-turn-complete-observed', {
+      conversation_id: conversationId,
+      assistant_message_id: finishedAssistant.id ?? null,
+      assistant_channel: finishedAssistant.channel ?? null,
+      assistant_end_turn: finishedAssistant.end_turn === true
+    });
+    agentTerminalObserve(capture, {
+      type: 'provider_conversation_turn_complete',
+      conversation_id: conversationId
+    });
+    return true;
   }
 
   /**
@@ -119,6 +215,7 @@
           Number(candidate?.error?.status_code) >= 400) {
         return 'error';
       }
+      if (agentTerminalIsConversationTurnComplete(capture, candidate)) return 'success';
     }
     return agentTerminalSuccessfulFinal(capture) ? 'success' : null;
   }
