@@ -77,20 +77,16 @@ function providerFrame(conversationId = 'conversation-1') {
 }
 
 function conversationUpdateFrame(message, conversationId = 'conversation-1') {
-  return JSON.stringify([{
-    type: 'message',
-    topic_id: 'conversations',
+  return JSON.stringify({
+    type: 'conversation-update',
     payload: {
-      type: 'conversation-update',
-      payload: {
-        conversation_id: conversationId,
-        update_type: 'add-messages',
-        update_content: {
-          messages: [message]
-        }
+      conversation_id: conversationId,
+      update_type: 'add-messages',
+      update_content: {
+        messages: [message]
       }
     }
-  }]);
+  });
 }
 
 function terminalSourceBlock() {
