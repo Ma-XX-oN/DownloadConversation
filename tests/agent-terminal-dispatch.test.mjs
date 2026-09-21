@@ -31,6 +31,8 @@ function terminalHarness() {
   const context = { performance: { now: () => 45000 } };
   vm.runInNewContext(`
     ${productionFunctionSource('agentTerminalIsPollingTimeout')}
+    ${productionFunctionSource('agentTerminalHasFinishedAssistant')}
+    ${productionFunctionSource('agentTerminalIsConversationTurnComplete')}
     ${productionFunctionSource('agentTerminalSuccessfulFinal')}
     ${productionFunctionSource('agentTerminalExchangeId')}
     ${productionFunctionSource('agentTerminalKey')}
@@ -102,6 +104,8 @@ test('one normalized terminal object drives both sound and stopwatch', () => {
     ${productionFunctionSource('agentSoundClearPendingTerminal')}
     ${productionFunctionSource('agentSoundRetryPendingTerminal')}
     ${productionFunctionSource('agentTerminalIsPollingTimeout')}
+    ${productionFunctionSource('agentTerminalHasFinishedAssistant')}
+    ${productionFunctionSource('agentTerminalIsConversationTurnComplete')}
     ${productionFunctionSource('agentTerminalSuccessfulFinal')}
     ${productionFunctionSource('agentTerminalExchangeId')}
     ${productionFunctionSource('agentTerminalKey')}
