@@ -28,6 +28,8 @@ function soundHarness(volume = 10, playbackResults = [true]) {
     ${productionFunctionSource('agentSoundClearPendingTerminal')}
     ${productionFunctionSource('agentSoundRetryPendingTerminal')}
     ${productionFunctionSource('agentTerminalIsPollingTimeout')}
+    ${productionFunctionSource('agentTerminalHasFinishedAssistant')}
+    ${productionFunctionSource('agentTerminalIsConversationTurnComplete')}
     ${productionFunctionSource('agentTerminalSuccessfulFinal')}
     ${productionFunctionSource('agentTerminalExchangeId')}
     ${productionFunctionSource('agentTerminalKey')}
