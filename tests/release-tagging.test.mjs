@@ -93,12 +93,16 @@ test('generated installable userscript is tracked and the test-cycle path owns m
   assert.match(cycleScript, /const tag = `v\$\{version\}`/);
   assert.match(cycleScript, /git\(\[\s*'push',\s*'--atomic'/);
 
-  const prepareIndex = runCiScript.indexOf("['scripts/test-cycle-artifact.mjs', 'prepare'");
-  const testIndex = runCiScript.indexOf('Modular userscript build regression');
-  const publishIndex = runCiScript.lastIndexOf("['scripts/test-cycle-artifact.mjs', 'publish'");
-  assert.ok(prepareIndex >= 0 && prepareIndex < testIndex);
-  assert.ok(publishIndex > testIndex);
-  assert.match(runCiScript, /failures\.length === 0[\s\S]*test-cycle-artifact\.mjs[\s\S]*publish/);
+  const orchestrationStart = runCiScript.indexOf("console.log('DownloadConversation local CI');");
+  assert.ok(orchestrationStart >= 0, 'local CI orchestration entry point is missing');
+  const orchestration = runCiScript.slice(orchestrationStart);
+  const prepareIndex = orchestration.indexOf("['scripts/test-cycle-artifact.mjs', 'prepare']");
+  const ordinaryIndex = orchestration.indexOf('runOrdinaryCi();');
+  const crossIndex = orchestration.indexOf('runCrossConsumerCi();');
+  const publishIndex = orchestration.indexOf("['scripts/test-cycle-artifact.mjs', 'publish']");
+  assert.ok(prepareIndex >= 0 && ordinaryIndex > prepareIndex);
+  assert.ok(crossIndex > ordinaryIndex && publishIndex > crossIndex);
+  assert.match(orchestration, /failures\.length === 0[\s\S]*test-cycle-artifact\.mjs[\s\S]*publish/);
 
   const prepareJob = workflow.indexOf('  prepare-test-cycle:');
   const testJob = workflow.indexOf('  test:');
@@ -111,13 +115,16 @@ test('generated installable userscript is tracked and the test-cycle path owns m
   assert.match(workflow.slice(publishJob), /test-cycle-artifact\.mjs publish/);
 });
 
-test('stable release wrapper delegates verification and publication to the unified test-cycle path', async () => {
-  const releaseScript = await readFile(releaseScriptUrl, 'utf8');
+test('stable release wrapper delegates verification and publication through the unified test-cycle path', async () => {
+  const [releaseScript, runCiScript] = await Promise.all([
+    readFile(releaseScriptUrl, 'utf8'),
+    readFile(runCiScriptUrl, 'utf8')
+  ]);
 
   assert.match(releaseScript, /parseReleaseVersion/);
   assert.match(releaseScript, /userscriptVersion/);
-  assert.match(releaseScript, /test-cycle-artifact\.mjs/);
   assert.match(releaseScript, /scripts\/run-ci\.mjs/);
+  assert.match(runCiScript, /test-cycle-artifact\.mjs/);
   assert.match(releaseScript, /check-release-tag\.mjs/);
   assert.doesNotMatch(releaseScript, /git\(\['tag'/);
   assert.doesNotMatch(releaseScript, /remoteTagExists/);
