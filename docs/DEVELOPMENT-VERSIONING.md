@@ -117,7 +117,7 @@ node scripts/prepare-integration-test-cycle.mjs \
 
 The wrapper performs the entire preparation operation rather than requiring remembered `git fetch`, branch switching, reset, version checks, artifact preparation, push, and post-check commands. It:
 
-- requires the current working tree to be completely clean before switching branches;
+- requires tracked working-tree and index content to be clean before switching branches; untracked diagnostic files are allowed and are not part of the artifact identity;
 - fetches `origin` and resolves the exact remote integration branch;
 - refuses to overwrite or reset a divergent local integration branch;
 - switches to the exact remote branch safely;
