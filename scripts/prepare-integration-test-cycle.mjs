@@ -32,11 +32,12 @@ function parseArgs(argv) {
   return { branch: argv[1] };
 }
 
-function assertCleanWorkingTree() {
-  const status = git(['status', '--porcelain'], true);
+function assertTrackedWorkingTreeClean() {
+  const status = git(['status', '--porcelain', '--untracked-files=no'], true);
   if (status) {
     throw new Error(
-      'Integration preparation requires a clean working tree; refusing to switch branches.'
+      'Integration preparation requires tracked working-tree and index content to be clean; '
+      + 'refusing to switch branches.'
     );
   }
 }
@@ -110,7 +111,7 @@ async function verifyVersions() {
 
 async function main() {
   const { branch } = parseArgs(process.argv.slice(2));
-  assertCleanWorkingTree();
+  assertTrackedWorkingTreeClean();
   switchToExactRemoteBranch(branch);
 
   run(process.execPath, ['scripts/check-development-version.mjs', '--branch', branch]);
