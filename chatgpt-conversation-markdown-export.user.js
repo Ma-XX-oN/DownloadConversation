@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         ChatGPT Conversation Markdown Recorder
 // @namespace    https://chatgpt.com/
-// @version      1.5.0-issue.151.5
+// @version      1.5.0-issue.151.6
 // @description  Exports the current ChatGPT conversation directly from the Conversation API as Markdown or JSONL.
 // @match        https://chatgpt.com/*
 // @match        https://chat.openai.com/*
@@ -8470,7 +8470,7 @@ function projectCanonicalConversation(events) {
     if (!visibleIndicator) return;
     if (visibleIndicator.parentNode !== stopwatch) stopwatch.append(visibleIndicator);
     visibleIndicator.style.position = 'absolute';
-    visibleIndicator.style.top = '0';
+    visibleIndicator.style.top = '5px';
     visibleIndicator.style.right = `calc(100% + ${AGENT_SOUND_INITIALIZATION_GAP_PX}px)`;
   }
 
