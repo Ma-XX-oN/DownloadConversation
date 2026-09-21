@@ -9,7 +9,6 @@ const RELEASE_VERSION_RE = /^\d+\.\d+\.\d+$/;
 const VERSION_WITH_OPTIONAL_ISSUE_RE = /^(\d+\.\d+\.\d+)(?:-issue\.\d+\.\d+)?$/;
 const VERSION_LINE_RE = /^\/\/ @version[ \t]+(\S+)([ \t]*)\r?$/gm;
 const guardPath = fileURLToPath(new URL('./check-development-version.mjs', import.meta.url));
-const buildPath = fileURLToPath(new URL('./build-userscript.mjs', import.meta.url));
 
 function fail(message) {
   process.stderr.write(`${message}\n`);
@@ -143,8 +142,9 @@ function runGuard(file, branch) {
   });
 }
 
-function rebuildCommittedArtifact() {
-  return execFileSync(process.execPath, [buildPath], {
+function rebuildCommittedArtifact(relativeBuildPath) {
+  const buildScript = fileURLToPath(new URL(relativeBuildPath, import.meta.url));
+  return execFileSync(process.execPath, [buildScript], {
     encoding: 'utf8',
     stdio: ['ignore', 'pipe', 'pipe']
   });
@@ -188,7 +188,9 @@ async function main() {
     }
 
     let buildOutput = '';
-    if (productionSource) buildOutput = rebuildCommittedArtifact();
+    if (options.file === DEFAULT_VERSION_SOURCE) {
+      buildOutput = rebuildCommittedArtifact('./build-userscript.mjs');
+    }
     const guardOutput = runGuard(options.file, branch);
     process.stdout.write(`Established development version ${newVersion} for branch ${branch}.\n`);
     if (buildOutput) process.stdout.write(buildOutput);
