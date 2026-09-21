@@ -20,41 +20,47 @@ test('sound readiness is exactly the running AudioContext state', () => {
   assert.equal(audioReady('running'), true);
 });
 
-test('uninitialized indicator is anchored to the stopwatch without geometry calculations', () => {
-  const context = {
-    AGENT_SOUND_INITIALIZATION_ATTRIBUTE: 'data-tm-agent-sound-uninitialized',
-    AGENT_STOPWATCH_ID: 'tm-agent-turn-stopwatch',
-    AGENT_SOUND_INITIALIZATION_GAP_PX: 8
-  };
-  vm.runInNewContext(`
-    ${productionFunctionSource('agentSoundInitializationIndicatorCss')}
-    this.css = agentSoundInitializationIndicatorCss();
-  `, context);
+test('uninitialized indicator is an independent DOM element that does not require the stopwatch', () => {
+  const ensure = productionFunctionSource('ensureAgentSoundInitializationIndicator');
 
-  assert.match(context.css, /#tm-agent-turn-stopwatch::before/);
-  assert.match(context.css, /position:absolute/);
-  assert.match(context.css, /top:0/);
-  assert.match(context.css, /right:calc\(100% \+ 8px\)/);
-  assert.match(context.css, /border-radius:50%/);
-  assert.match(context.css, /M4 9h4l5-4v14l-5-4H4z/,
-    'indicator must contain a speaker glyph');
-  assert.match(context.css, /M5 5l14 14/,
-    'indicator must contain the slash overlay');
+  assert.match(ensure, /document\.createElement\(['"]div['"]\)/,
+    'indicator must be its own DOM element');
+  assert.match(ensure, /AGENT_SOUND_INITIALIZATION_INDICATOR_ID/,
+    'repeated synchronization must reuse one indicator');
+  assert.doesNotMatch(ensure, /AGENT_STOPWATCH_ID|::before/,
+    'indicator creation must not require the stopwatch element');
 });
 
-test('readiness projection toggles from the same sound state and does not poll', () => {
+test('indicator is visible until audio is ready, then removed, without polling', () => {
   const sync = productionFunctionSource('agentSoundSyncInitializationIndicator');
-  const ensureStyle = productionFunctionSource('ensureAgentSoundInitializationIndicatorStyle');
   const unlock = productionFunctionSource('unlockAgentSoundAudio');
 
-  assert.match(sync, /setAttribute\(AGENT_SOUND_INITIALIZATION_ATTRIBUTE, 'true'\)/);
-  assert.match(sync, /removeAttribute\(AGENT_SOUND_INITIALIZATION_ATTRIBUTE\)/);
-  assert.match(ensureStyle, /getElementById\(AGENT_SOUND_INITIALIZATION_STYLE_ID\)/,
-    'repeated synchronization must reuse one stylesheet');
+  assert.match(sync, /ensureAgentSoundInitializationIndicator\(\)/,
+    'unready state must create/show the independent indicator');
+  assert.match(sync, /\.remove\(\)/,
+    'ready state must remove the indicator');
   assert.match(unlock, /agentSoundSyncInitializationIndicator\(\)/,
     'audio unlock must immediately refresh the readiness projection');
   assert.match(unlock, /addEventListener\(['"]statechange['"]\s*,\s*agentSoundSyncInitializationIndicator/,
     'later AudioContext readiness changes must use the same state projection');
   assert.doesNotMatch(sync, /setInterval|setTimeout|MutationObserver/,
     'indicator must not add polling or an alternate readiness detector');
+});
+
+test('indicator positioning follows the stopwatch when it exists but has a startup position without it', () => {
+  const ensure = productionFunctionSource('ensureAgentSoundInitializationIndicator');
+  const position = productionFunctionSource('agentSoundPositionInitializationIndicator');
+  const stopwatch = productionFunctionSource('ensureAgentStopwatchControl');
+  const render = productionFunctionSource('agentStopwatchRender');
+
+  assert.match(ensure, /style\.position\s*=\s*['"]fixed['"]/);
+  assert.match(ensure, /style\.top\s*=\s*['"]56px['"]/);
+  assert.match(ensure, /style\.right\s*=\s*['"]16px['"]/,
+    'before the stopwatch exists the icon must still be visible at its startup position');
+  assert.match(position, /offsetWidth/,
+    'when the stopwatch exists the icon must move immediately to its left');
+  assert.match(stopwatch, /agentSoundPositionInitializationIndicator/,
+    'stopwatch creation must align the existing icon');
+  assert.match(render, /agentSoundPositionInitializationIndicator/,
+    'stopwatch width changes must keep the icon aligned');
 });
