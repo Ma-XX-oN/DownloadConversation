@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         ChatGPT Conversation Markdown Recorder
 // @namespace    https://chatgpt.com/
-// @version      1.5.0-issue.151.9
+// @version      1.5.0-issue.140.4
 // @description  Exports the current ChatGPT conversation directly from the Conversation API as Markdown or JSONL.
 // @match        https://chatgpt.com/*
 // @match        https://chat.openai.com/*
@@ -8494,7 +8494,7 @@ function projectCanonicalConversation(events) {
       indicator.style.border = 'none';
       indicator.style.borderRadius = '50%';
       indicator.style.backgroundColor = 'rgba(32, 32, 32, 0.92)';
-      indicator.style.backgroundImage = "url(\"data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24'%3E%3Ccircle cx='12' cy='12' r='10.5' fill='none' stroke='%23f5f5f5' stroke-width='2.1'/%3E%3Cpath fill='%23f5f5f5' d='M4 9h4l5-4v14l-5-4H4z'/%3E%3Cpath d='M4.6 19.4L19.4 4.6' stroke='%23d93025' stroke-width='2.1' stroke-linecap='round'/%3E%3C/svg%3E\")";
+      indicator.style.backgroundImage = "url(\"data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24'%3E%3Ccircle cx='12' cy='12' r='10.5' fill='none' stroke='%23d93025' stroke-width='2.1'/%3E%3Cpath fill='%23f5f5f5' d='M4 9h4l5-4v14l-5-4H4z'/%3E%3Cpath d='M4.6 19.4L19.4 4.6' stroke='%23d93025' stroke-width='2.1' stroke-linecap='round'/%3E%3C/svg%3E\")";
       indicator.style.backgroundPosition = 'center';
       indicator.style.backgroundRepeat = 'no-repeat';
       indicator.style.backgroundSize = '24px 24px';
@@ -10500,8 +10500,95 @@ function projectCanonicalConversation(events) {
   }
 
   /**
-   * Passively observes page WebSocket frames for both the active streamed-tail handoff topic and
-   * the exact global provider turn-completion lifecycle notification.
+   * Returns one structured exchange identity carried by a provider message.
+   *
+   * @param {Object|null} message - Provider message from a conversation WebSocket update.
+   * @returns {string|null} Exchange identity, or null when the message does not carry one.
+   */
+  function agentTerminalWebSocketMessageExchangeId(message) {
+    const metadata = message?.metadata ?? {};
+    if (typeof metadata.turn_exchange_id === 'string' && metadata.turn_exchange_id) {
+      return metadata.turn_exchange_id;
+    }
+    if (typeof metadata.working_turn_id === 'string' && metadata.working_turn_id) {
+      return metadata.working_turn_id;
+    }
+    return null;
+  }
+
+  /**
+   * Tests whether one lifecycle capture contains structured evidence for an exchange identity.
+   *
+   * @param {Object|null} capture - Candidate unresolved lifecycle capture.
+   * @param {string} exchangeId - Exchange identity carried by a WebSocket message.
+   * @returns {boolean} True when request or streamed records identify the same exchange.
+   */
+  function agentTerminalCaptureHasExchange(capture, exchangeId) {
+    if (!capture || !exchangeId) return false;
+    return [
+      ...(capture.request_messages ?? []),
+      ...(capture.stream_messages ?? [])
+    ].some(message => agentTerminalWebSocketMessageExchangeId(message) === exchangeId);
+  }
+
+  /**
+   * Projects exact `conversation-update` / `add-messages` WebSocket Assistant records into the
+   * matching unresolved lifecycle capture so the existing shared terminal normalizer can classify
+   * a final that arrived after the original generation SSE ended.
+   *
+   * @param {Object} frame - Parsed top-level ChatGPT WebSocket conversation-update frame.
+   * @returns {boolean} True when at least one Assistant message was projected to one capture.
+   */
+  function agentTerminalObserveConversationUpdateFrame(frame) {
+    if (frame?.type !== 'conversation-update') return false;
+    const payload = frame?.payload;
+    const conversationId = payload?.conversation_id;
+    if (typeof conversationId !== 'string' || !conversationId ||
+        payload?.update_type !== 'add-messages') return false;
+    const messages = payload?.update_content?.messages;
+    if (!Array.isArray(messages)) return false;
+    let observed = false;
+    for (const message of messages) {
+      if (message?.author?.role !== 'assistant') continue;
+      const exchangeId = agentTerminalWebSocketMessageExchangeId(message);
+      if (!exchangeId) continue;
+      const matching = agentTerminalLifecycleCaptures.filter(capture =>
+        capture?.conversation_id === conversationId &&
+        capture?.agent_terminal_success_observed !== true &&
+        capture?.agent_terminal_error_observed !== true &&
+        agentTerminalCaptureHasExchange(capture, exchangeId)
+      );
+      if (matching.length !== 1) {
+        logDiagnostic('debug', 'agent-terminal-conversation-update-ignored', {
+          conversation_id: conversationId,
+          exchange_id: exchangeId,
+          unresolved_capture_count: matching.length,
+          reason: matching.length === 0
+            ? 'no-matching-lifecycle-capture'
+            : 'ambiguous-matching-lifecycle-captures'
+        });
+        continue;
+      }
+      const capture = matching[0];
+      if (!streamTailUpsertMessage(capture, message)) continue;
+      logDiagnostic('debug', 'agent-terminal-conversation-update-observed', {
+        conversation_id: conversationId,
+        exchange_id: exchangeId,
+        assistant_message_id: message.id ?? null,
+        assistant_channel: message.channel ?? null,
+        assistant_status: message.status ?? null,
+        assistant_end_turn: message.end_turn === true
+      });
+      agentTerminalObserve(capture, null);
+      observed = true;
+    }
+    return observed;
+  }
+
+  /**
+   * Passively observes page WebSocket frames for active streamed-tail handoff topics, exact global
+   * provider completion notifications, and structured conversation updates that may carry a final
+   * Assistant record after the original generation SSE has ended.
    *
    * @param {Object} data - WebSocket message data.
    * @returns {void} No value is returned.
@@ -10514,6 +10601,9 @@ function projectCanonicalConversation(events) {
     const capture = streamTailCapture;
     for (const frame of frames) {
       if (!frame || typeof frame !== 'object') continue;
+      if (frame.type === 'conversation-update') {
+        agentTerminalObserveConversationUpdateFrame(frame);
+      }
       if (frame.type === 'message') {
         if (frame.topic_id === 'conversations' &&
             frame?.payload?.type === 'conversation-turn-complete') {
