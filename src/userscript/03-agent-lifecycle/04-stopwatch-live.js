@@ -1,5 +1,6 @@
     lines.push(`Total: ${agentStopwatchFormatDuration(totalMs)}`);
     ensureAgentStopwatchControl().textContent = lines.join('\n');
+    agentSoundPositionInitializationIndicator();
   }
 
   /**
