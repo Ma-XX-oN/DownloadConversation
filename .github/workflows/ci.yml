@@ -79,7 +79,7 @@ jobs:
       - name: Single-snapshot export regression
         run: node --test tests/export-single-snapshot.test.mjs
       - name: Agent completion sound regression
-        run: node --test tests/agent-completion-sounds.test.mjs tests/agent-completion-sound-pending.test.mjs
+        run: node --test tests/agent-completion-sounds.test.mjs tests/agent-completion-sound-pending.test.mjs tests/agent-sound-initialization-indicator.test.mjs
       - name: Agent terminal shared dispatch regression
         run: node --test tests/agent-terminal-dispatch.test.mjs tests/agent-terminal-dry-contract.test.mjs tests/agent-terminal-conversation-turn-complete.test.mjs
       - name: Agent turn stopwatch regression
