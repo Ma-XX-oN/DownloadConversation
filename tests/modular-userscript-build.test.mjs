@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict';
+import { execFileSync } from 'node:child_process';
 import { readFile, stat } from 'node:fs/promises';
 import path from 'node:path';
 import test from 'node:test';
@@ -17,7 +18,16 @@ const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const CORE_COMMIT = 'cf34d9374f51ac525acfb90cfd6b247006a7bf6e';
 const CORE_BLOB = '5a999c8c02f127b4fc03b923a40496961c9cacc0';
 const LEGACY_BLOB = '44a4ab373a6515caed5527aeb19cbdff7ce91e07';
+const MIGRATION_SNAPSHOT_COMMIT = '62571e15af8f7f3e4472258e7a18bb2f2d48cef5';
 const USER_SCRIPT_HEADER_END = '// ==/UserScript==\n';
+
+function readSnapshotFile(commit, sourcePath) {
+  return execFileSync(
+    'git',
+    ['show', `${commit}:${sourcePath}`],
+    { cwd: root, encoding: 'utf8' }
+  );
+}
 
 test('manifest groups ordered small source segments under logical subsystem modules', async () => {
   const manifest = await readUserscriptManifest(root);
@@ -95,13 +105,14 @@ test('ordered source preserves the userscript runtime IIFE boundary', async () =
   assert.match(source, /const CORE_VERSION = canonicalCore\(\)\.getVersion\(\);/);
 });
 
-test('issue #150 migration preserves every non-whitespace legacy runtime byte in source order', async t => {
+test('verified #150 migration snapshot preserves every non-whitespace legacy runtime byte in source order', async () => {
   const manifest = await readUserscriptManifest(root);
-  const header = await readUserscriptHeader(root, manifest);
-  if (!/-issue\.150\.\d+$/m.test(header)) {
-    t.skip('Exact legacy equivalence is a migration-only #150 gate; later issue branches may intentionally change runtime behavior.');
-    return;
-  }
+  assert.equal(manifest.migration_source.snapshot_commit, MIGRATION_SNAPSHOT_COMMIT);
+
+  const snapshotManifest = JSON.parse(
+    readSnapshotFile(MIGRATION_SNAPSHOT_COMMIT, 'src/userscript-manifest.json')
+  );
+  assert.equal(snapshotManifest.migration_source.git_blob_sha1, LEGACY_BLOB);
 
   const fixture = await readFile(path.join(root, manifest.migration_source.path), 'utf8');
   const headerEnd = fixture.indexOf(USER_SCRIPT_HEADER_END);
@@ -109,8 +120,8 @@ test('issue #150 migration preserves every non-whitespace legacy runtime byte in
   const legacyBody = fixture.slice(headerEnd + USER_SCRIPT_HEADER_END.length);
   let cursor = 0;
 
-  for (const sourcePath of orderedSourcePaths(manifest)) {
-    const segment = await readFile(path.join(root, sourcePath), 'utf8');
+  for (const sourcePath of orderedSourcePaths(snapshotManifest)) {
+    const segment = readSnapshotFile(MIGRATION_SNAPSHOT_COMMIT, sourcePath);
     const payload = segment.trim();
     assert.ok(payload, `${sourcePath} contains no non-whitespace source bytes.`);
     const match = legacyBody.indexOf(payload, cursor);
@@ -126,7 +137,7 @@ test('issue #150 migration preserves every non-whitespace legacy runtime byte in
   assert.match(
     legacyBody.slice(cursor),
     /^\s*$/,
-    'Legacy runtime contains non-whitespace bytes after the final authoritative source segment.'
+    'Legacy runtime contains non-whitespace bytes after the final migration source segment.'
   );
 });
 
@@ -154,6 +165,7 @@ test('assembly is deterministic and places verified dependency before DownloadCo
 test('legacy monolith is retained only as a provenance fixture with its original Git blob identity', async () => {
   const manifest = await readUserscriptManifest(root);
   assert.equal(manifest.migration_source.git_blob_sha1, LEGACY_BLOB);
+  assert.equal(manifest.migration_source.snapshot_commit, MIGRATION_SNAPSHOT_COMMIT);
   assert.match(manifest.migration_source.note, /not authoritative source/i);
   const fixture = await readFile(path.join(root, manifest.migration_source.path));
   assert.equal(gitBlobSha1(fixture), LEGACY_BLOB);
