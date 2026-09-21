@@ -122,7 +122,7 @@
     if (!visibleIndicator) return;
     if (visibleIndicator.parentNode !== stopwatch) stopwatch.append(visibleIndicator);
     visibleIndicator.style.position = 'absolute';
-    visibleIndicator.style.top = '0';
+    visibleIndicator.style.top = '5px';
     visibleIndicator.style.right = `calc(100% + ${AGENT_SOUND_INITIALIZATION_GAP_PX}px)`;
   }
 
