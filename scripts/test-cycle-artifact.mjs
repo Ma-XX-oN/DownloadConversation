@@ -242,6 +242,7 @@ function pushPreparedBranch(branch) {
  */
 async function prepareArtifact(explicitBranch, pushBranch) {
   const branch = resolveBranch(explicitBranch);
+  run(process.execPath, ['scripts/check-development-version.mjs', '--branch', branch]);
   assertTrackedTreeClean();
   runBuild(false);
   git(['add', '--', ARTIFACT_PATH]);
