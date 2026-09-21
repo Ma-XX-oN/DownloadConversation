@@ -25,10 +25,10 @@ A provider fact can be shared across projects. An observation mechanism or polic
 | Reload activity check | `GET /backend-api/conversation/<conversation-id>/stream_status` | `IS_STREAMING` is positive evidence that the existing response is still active. |
 | Reload continuation | `POST /backend-api/f/conversation/resume` | SSE continuation of an already-running exchange after reload; can carry the authoritative terminal sequence. |
 | Successful terminal | Structured Assistant final message | `channel:"final"`, `status:"finished_successfully"`, `end_turn:true`. |
+| Provider completion corroboration | ChatGPT WebSocket global `conversations` topic | Exact `conversation-turn-complete` can corroborate success when exactly one unresolved same-conversation lifecycle capture has structured finished-Assistant evidence. The captured notification has no exchange id, so ambiguous correlation fails closed. |
 | Max-conversation terminal error | Structured stream event | Can arrive after a successful final with top-level `error_code:"conversation_too_large"`. |
 | Polling-timeout terminal error | `POST /ces/statsc/flush` telemetry | Structured counter identifies `completion_stream_polling_fallback` / `network_error` / `polling_timeout`. |
 | Persisted/history snapshot | `/backend-api/conversations/<id>` | Can lag a completed live stream and can omit stream-only/visually-hidden records. |
-| Reload completion corroboration | ChatGPT WebSocket | A `conversation-turn-complete` notification was observed after successful resume completion. It is corroborating evidence, not currently the primary DownloadConversation terminal source. |
 
 The table is an evidence inventory. It does not declare one source universally authoritative for transcript reconstruction.
 
@@ -94,6 +94,25 @@ The evidenced successful Assistant terminal state is a structured Assistant mess
 The surrounding successful sequence can also include `last_token`, `message_stream_complete`, and `[DONE]`. These markers are useful ordering evidence, but the structured final Assistant state supplies the successful terminal message semantics used by the shared watcher.
 
 Terminal state is normalized centrally before consumers act on it.
+
+## Provider `conversation-turn-complete` corroboration
+
+Live evidence from conversation `6ab06eba-88e8-83ea-855a-d7a22259bd77` established a second successful lifecycle shape. DownloadConversation observed Assistant commentary/tool records with `status:"finished_successfully"` but no Assistant `channel:"final"`, `end_turn:true` record. The observed `/backend-api/f/conversation/resume` clone remained incomplete, a later resume request returned 404, and no shared terminal was normalized. ChatGPT subsequently emitted a WebSocket frame on `topic_id:"conversations"` whose payload type was `conversation-turn-complete` and whose payload contained the same `conversation_id`.
+
+That notification is structured provider completion evidence, but the captured shape carries **conversation identity only**. It contains no `turn_exchange_id`, `working_turn_id`, request id, or message id. DownloadConversation therefore treats it as corroborating success evidence only under a fail-closed correlation contract:
+
+1. the WebSocket frame must exactly be a `message` on the global `conversations` topic with payload type `conversation-turn-complete` and a non-empty `conversation_id`;
+2. exactly one unresolved lifecycle capture must exist for that conversation;
+3. that capture must already contain a structured Assistant record with `status:"finished_successfully"`;
+4. no success/error terminal may already have been normalized for that capture.
+
+A `finished_successfully` commentary/tool record remains nonterminal by itself. The provider notification and the structured finished-Assistant evidence corroborate each other.
+
+If two unresolved exchanges for the same conversation are present, the provider frame is **not** assigned to the newest or oldest capture and no timing heuristic is used. Correlation is ambiguous because the provider frame has no exchange identity, so the watcher ignores it rather than risking termination of a newer exchange. This is the required safety behaviour for delayed provider completion.
+
+When correlation is unambiguous, exchange identity is still derived from structured captured message metadata. In the commentary-only shape, streamed Assistant metadata can provide `turn_exchange_id` / `working_turn_id` even though no final Assistant record exists. The resulting terminal is normalized through the same shared fan-out used by normal success, so sound, stopwatch, and favicon consume one common terminal event.
+
+The generation/resume lifecycle-correlation captures are distinct from the persisted streamed-tail export capture. Resume observation remains lifecycle-only and must not replace the original generation snapshot used for export reconciliation.
 
 ## Terminal errors can follow a successful final
 
@@ -163,6 +182,8 @@ The resume observation is deliberately lifecycle-only. It uses fresh parser stat
 
 As with the normal generation response, the resume Response clone must be acquired synchronously in the fetch response handler before the original Response is returned to ChatGPT. The resume Request is also cloned before transmission so its `conversation_id` remains available to the passive observer without consuming the page-owned body.
 
+When the resume observation does not deliver the final Assistant terminal but does retain structured finished-Assistant evidence, the exact global WebSocket `conversation-turn-complete` notification may corroborate success under the fail-closed correlation rules above. `NOT_STREAMING` remains insufficient by itself.
+
 ### Reload consumer sequence established by live evidence
 
 The latest reload run established a useful distinction:
@@ -175,7 +196,7 @@ The latest reload run established a useful distinction:
 
 The #140 correction routes resume SSE through the shared parser/normalizer and preserves its exchange identity. Repository regression/CI is green; live acceptance of the corrected reload completion path is still a separate runtime verification step.
 
-The important provider lesson for other projects is that **`IS_STREAMING` establishes active work, while `/f/conversation/resume` can establish the later terminal transition**. Do not infer that transition solely by polling `stream_status` until it becomes non-streaming.
+The later #135 evidence adds the commentary-only/incomplete-resume shape described above. The important provider lesson is now: **`IS_STREAMING` establishes active work; a final Assistant from `/f/conversation/resume` establishes normal success; and an exact `conversation-turn-complete` WebSocket notification can corroborate success only when structured capture state makes its conversation-only identity unambiguous.** Do not infer terminal state solely by polling `stream_status` until it becomes non-streaming.
 
 ## Provider v1 patch semantics
 
@@ -247,7 +268,7 @@ For Multi-AI, the equivalent architectural lesson is to attach its supported hos
 Important established evidence is tracked in the owning issues rather than only in prose here:
 
 - DownloadConversation #116 — completed live stream can lead stale History; stream-only/visually-hidden records.
-- DownloadConversation #135 — terminal sound classification and terminal ordering consequences.
+- DownloadConversation #135 — terminal sound classification, provider `conversation-turn-complete` corroboration, fail-closed exchange correlation, and terminal ordering consequences.
 - DownloadConversation #136 — User follow-up/stopwatch exchange semantics.
 - DownloadConversation #139 — structured polling-timeout evidence.
 - DownloadConversation #140 — reload resume terminal observation and v1 object-append identity preservation.
