@@ -74,6 +74,7 @@ test('one normalized terminal object drives both sound and stopwatch', () => {
   vm.runInNewContext(`
     let agentSoundVolume = 10;
     let agentSoundAudioContext = { state: 'running' };
+    let agentSoundPendingTerminal = null;
     const AGENT_SOUND_TERMINAL_KEY_LIMIT = 128;
     const agentSoundTerminalKeys = new Set();
     let agentStopwatchState = {
@@ -97,6 +98,9 @@ test('one normalized terminal object drives both sound and stopwatch', () => {
     function agentStopwatchStopTimer() { stopped = true; }
     function agentStopwatchRender() { rendered = true; }
     ${productionFunctionSource('agentSoundRememberTerminalKey')}
+    ${productionFunctionSource('agentSoundRememberPendingTerminal')}
+    ${productionFunctionSource('agentSoundClearPendingTerminal')}
+    ${productionFunctionSource('agentSoundRetryPendingTerminal')}
     ${productionFunctionSource('agentTerminalIsPollingTimeout')}
     ${productionFunctionSource('agentTerminalSuccessfulFinal')}
     ${productionFunctionSource('agentTerminalExchangeId')}

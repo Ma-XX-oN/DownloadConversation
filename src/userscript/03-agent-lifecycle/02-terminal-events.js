@@ -88,8 +88,7 @@
         return;
       }
       logDiagnostic('debug', 'agent-terminal-polling-timeout-observed', {
-        conversation_id: capture?.conversation_id ?? null,
-        terminal_key: agentSoundTerminalKey(capture)
+        conversation_id: capture?.conversation_id ?? null
       });
       agentTerminalObserve(capture, event);
     } catch (error) {

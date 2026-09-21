@@ -21,6 +21,7 @@
       renderSoundVolume();
       logDiagnostic('debug', 'agent-sound-volume-changed', { volume: agentSoundVolume });
       if (agentSoundVolume > 0) void unlockAgentSoundAudio();
+      else agentSoundClearPendingTerminal();
     });
     document.addEventListener('click', event => {
       if (!soundPopup || soundPopup.hidden) return;
