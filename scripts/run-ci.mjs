@@ -24,6 +24,7 @@ const ordinaryStages = [
   ['Development version guard regression', nodeCommand, ['--test', 'tests/development-version-guard.test.mjs']],
   ['Development version setter regression', nodeCommand, ['--test', 'tests/set-development-version.test.mjs']],
   ['Test-cycle artifact publication regression', nodeCommand, ['--test', 'tests/test-cycle-artifact-publication.test.mjs']],
+  ['Integration test-cycle preparation regression', nodeCommand, ['--test', 'tests/prepare-integration-test-cycle.test.mjs']],
   ['Release tagging regression', nodeCommand, ['--test', 'tests/release-tagging.test.mjs']],
   ['Single-snapshot export regression', nodeCommand, ['--test', 'tests/export-single-snapshot.test.mjs']],
   ['Agent completion sound regression', nodeCommand, ['--test', 'tests/agent-completion-sounds.test.mjs', 'tests/agent-completion-sound-pending.test.mjs']],
