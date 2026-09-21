@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         ChatGPT Conversation Markdown Recorder
 // @namespace    https://chatgpt.com/
-// @version      1.5.0-issue.151.7
+// @version      1.5.0-issue.151.8
 // @description  Exports the current ChatGPT conversation directly from the Conversation API as Markdown or JSONL.
 // @match        https://chatgpt.com/*
 // @match        https://chat.openai.com/*
@@ -8491,13 +8491,13 @@ function projectCanonicalConversation(events) {
       indicator.style.width = '24px';
       indicator.style.height = '24px';
       indicator.style.boxSizing = 'border-box';
-      indicator.style.border = '1px solid rgba(245, 245, 245, 0.9)';
+      indicator.style.border = 'none';
       indicator.style.borderRadius = '50%';
       indicator.style.backgroundColor = 'rgba(32, 32, 32, 0.92)';
-      indicator.style.backgroundImage = "url(\"data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24'%3E%3Cpath fill='%23f5f5f5' d='M4 9h4l5-4v14l-5-4H4z'/%3E%3Cpath d='M5 5l14 14' stroke='%23f5f5f5' stroke-width='2.5' stroke-linecap='round'/%3E%3C/svg%3E\")";
+      indicator.style.backgroundImage = "url(\"data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24'%3E%3Ccircle cx='12' cy='12' r='10.5' fill='none' stroke='%23f5f5f5' stroke-width='2.1'/%3E%3Cpath fill='%23f5f5f5' d='M4 9h4l5-4v14l-5-4H4z'/%3E%3Cpath d='M4.6 19.4L19.4 4.6' stroke='%23d93025' stroke-width='2.1' stroke-linecap='round'/%3E%3C/svg%3E\")";
       indicator.style.backgroundPosition = 'center';
       indicator.style.backgroundRepeat = 'no-repeat';
-      indicator.style.backgroundSize = '20px 20px';
+      indicator.style.backgroundSize = '24px 24px';
       indicator.style.pointerEvents = 'none';
       indicator.style.boxShadow = '0 2px 8px rgba(0, 0, 0, 0.25)';
     }
