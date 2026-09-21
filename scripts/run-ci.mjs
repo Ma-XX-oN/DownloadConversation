@@ -28,7 +28,7 @@ const ordinaryStages = [
   ['Release tagging regression', nodeCommand, ['--test', 'tests/release-tagging.test.mjs']],
   ['Single-snapshot export regression', nodeCommand, ['--test', 'tests/export-single-snapshot.test.mjs']],
   ['Agent completion sound regression', nodeCommand, ['--test', 'tests/agent-completion-sounds.test.mjs', 'tests/agent-completion-sound-pending.test.mjs']],
-  ['Agent terminal shared dispatch regression', nodeCommand, ['--test', 'tests/agent-terminal-dispatch.test.mjs', 'tests/agent-terminal-dry-contract.test.mjs']],
+  ['Agent terminal shared dispatch regression', nodeCommand, ['--test', 'tests/agent-terminal-dispatch.test.mjs', 'tests/agent-terminal-dry-contract.test.mjs', 'tests/agent-terminal-conversation-turn-complete.test.mjs']],
   ['Agent turn stopwatch regression', nodeCommand, ['--test', 'tests/agent-turn-stopwatch.test.mjs']],
   ['Agent turn stopwatch stream integration', nodeCommand, ['--test', 'tests/agent-resume-metadata-patch.test.mjs', 'tests/agent-turn-stopwatch-stream.test.mjs']],
   ['Agent turn stopwatch live total', nodeCommand, ['--test', 'tests/agent-turn-stopwatch-live-total.test.mjs']],
