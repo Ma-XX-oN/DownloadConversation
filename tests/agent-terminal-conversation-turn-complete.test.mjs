@@ -138,7 +138,7 @@ function lifecycleHarness(capture = commentaryCapture()) {
     function streamTailConsumeWebSocketMessage() {}
     function streamTailUpsertMessage(capture, message) {
       const index = capture.stream_messages.findIndex(item => item?.id === message?.id);
-      const copy = structuredClone(message);
+      const copy = JSON.parse(JSON.stringify(message));
       if (index >= 0) capture.stream_messages[index] = copy;
       else capture.stream_messages.push(copy);
       return true;
