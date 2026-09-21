@@ -18,10 +18,10 @@ function git(cwd, args) {
   return execFileSync('git', args, { cwd, encoding: 'utf8' }).trim();
 }
 
-function runCycle(cwd, command, branch = 'issue-9-fixture') {
+function runCycle(cwd, command, branch = 'issue-9-fixture', extraArgs = []) {
   return spawnSync(
     process.execPath,
-    [cycleScript, command, '--branch', branch],
+    [cycleScript, command, '--branch', branch, ...extraArgs],
     { cwd, encoding: 'utf8' }
   );
 }
@@ -78,11 +78,12 @@ async function withFixture(callback) {
   }
 }
 
-test('test-cycle artifact publisher exposes prepare, verify, and publish commands', async () => {
+test('test-cycle artifact publisher exposes prepare, verify, publish, and CI prepare-push commands', async () => {
   const source = await readFile(cycleScript, 'utf8');
   assert.match(source, /\bprepare\b/);
   assert.match(source, /\bverify\b/);
   assert.match(source, /\bpublish\b/);
+  assert.match(source, /--push/);
   assert.match(source, /v\$\{version\}/);
   assert.match(source, /git[\s\S]*push[\s\S]*--atomic/);
 });
@@ -98,9 +99,24 @@ test('prepare materializes and commits the exact generated artifact before tests
     assert.equal(git(fixtureRoot, ['ls-files', '--error-unmatch', artifactPath]), artifactPath);
     assert.equal(git(fixtureRoot, ['status', '--porcelain']), '');
     assert.match(git(fixtureRoot, ['log', '-1', '--pretty=%s']), /materialize 1\.2\.0-issue\.9\.1/);
+    assert.match(git(fixtureRoot, ['log', '-1', '--pretty=%s']), /\[skip ci\]/);
 
     const artifact = await readFile(path.join(fixtureRoot, artifactPath), 'utf8');
     assert.match(artifact, /@version\s+1\.2\.0-issue\.9\.1/);
+  });
+});
+
+test('CI prepare-push publishes one shared artifact commit before test fan-out', async () => {
+  await withFixture(async (fixtureRoot, remoteRoot) => {
+    const result = runCycle(fixtureRoot, 'prepare', 'issue-9-fixture', ['--push']);
+    assert.equal(result.status, 0, result.stderr || result.stdout);
+    const preparedHead = git(fixtureRoot, ['rev-parse', 'HEAD']);
+    const remoteHead = execFileSync(
+      'git',
+      ['--git-dir', remoteRoot, 'rev-parse', 'refs/heads/issue-9-fixture'],
+      { encoding: 'utf8' }
+    ).trim();
+    assert.equal(remoteHead, preparedHead);
   });
 });
 
@@ -171,18 +187,29 @@ test('local and GitHub CI use the same test-cycle artifact contract', async () =
   assert.ok(publishIndex > firstOrdinaryTest, 'local CI must publish only after tests');
   assert.match(runCi, /failures\.length === 0[\s\S]*test-cycle-artifact\.mjs[\s\S]*publish/);
 
+  const prepareJob = workflow.indexOf('  prepare-test-cycle:');
+  const prepareCommand = workflow.indexOf('node scripts/test-cycle-artifact.mjs prepare', prepareJob);
   const testJob = workflow.indexOf('  test:');
+  assert.ok(prepareJob >= 0 && prepareCommand > prepareJob && prepareCommand < testJob);
+  assert.match(workflow.slice(prepareJob, testJob), /--push/);
+  assert.match(workflow.slice(prepareJob, testJob), /tested_sha/);
+  assert.match(workflow.slice(prepareJob, testJob), /contents: write/);
+
   const firstVerify = workflow.indexOf('node scripts/test-cycle-artifact.mjs verify', testJob);
   const firstFeatureTest = workflow.indexOf('Modular userscript build regression', testJob);
-  assert.ok(firstVerify > testJob && firstVerify < firstFeatureTest, 'CI test job must verify artifact first');
+  assert.ok(firstVerify > testJob && firstVerify < firstFeatureTest, 'CI test job must verify prepared artifact first');
+  assert.match(workflow.slice(testJob, workflow.indexOf('  cross-consumer-final-render:')), /needs: prepare-test-cycle/);
+  assert.match(workflow.slice(testJob, workflow.indexOf('  cross-consumer-final-render:')), /tested_sha/);
 
   const crossJob = workflow.indexOf('  cross-consumer-final-render:');
   const crossVerify = workflow.indexOf('node scripts/test-cycle-artifact.mjs verify', crossJob);
   const crossFeatureTest = workflow.indexOf('Install DownloadConversation AIConversationCore dependencies', crossJob);
-  assert.ok(crossVerify > crossJob && crossVerify < crossFeatureTest, 'cross-consumer CI must verify artifact first');
+  assert.ok(crossVerify > crossJob && crossVerify < crossFeatureTest, 'cross-consumer CI must verify prepared artifact first');
+  assert.match(workflow.slice(crossJob, workflow.indexOf('  publish-test-cycle:')), /needs: prepare-test-cycle/);
+  assert.match(workflow.slice(crossJob, workflow.indexOf('  publish-test-cycle:')), /tested_sha/);
 
   assert.match(workflow, /publish-test-cycle:/);
-  assert.match(workflow, /needs:\s*\n\s*- test\s*\n\s*- cross-consumer-final-render/);
+  assert.match(workflow, /needs:\s*\n\s*- prepare-test-cycle\s*\n\s*- test\s*\n\s*- cross-consumer-final-render/);
   assert.match(workflow, /node scripts\/test-cycle-artifact\.mjs publish/);
   assert.match(workflow, /contents: write/);
 });
