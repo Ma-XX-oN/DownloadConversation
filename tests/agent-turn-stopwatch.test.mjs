@@ -263,6 +263,32 @@ test('matching normalized terminal error freezes the stopwatch dark red', () => 
   assert.equal(harness.element().style.background, ERROR_BACKGROUND);
 });
 
+test('later same-exchange error supersedes frozen success color without changing timing', () => {
+  const harness = stopwatchHarness();
+  const initial = requestCapture('user-1', 1000);
+  harness.api.request(initial);
+  harness.api.event(initial, inputEvent('user-1', 'exchange-A'));
+
+  harness.setNow(31000);
+  harness.api.terminal(finalCapture('exchange-A'));
+  assert.equal(harness.api.state().terminal_kind, 'success');
+  assert.equal(harness.element().style.background, SUCCESS_BACKGROUND);
+  const completedLaps = [...harness.api.state().laps_ms];
+  const completedTotal = harness.api.state().total_ms;
+
+  harness.setNow(32000);
+  harness.api.terminal(errorCapture('exchange-A'), {
+    type: 'error',
+    error_code: 'conversation_too_large'
+  });
+
+  assert.equal(harness.api.state().active, false);
+  assert.equal(harness.api.state().terminal_kind, 'error');
+  assert.deepEqual(Array.from(harness.api.state().laps_ms), completedLaps);
+  assert.equal(harness.api.state().total_ms, completedTotal);
+  assert.equal(harness.element().style.background, ERROR_BACKGROUND);
+});
+
 test('terminal completion for another exchange cannot stop or recolor the active stopwatch', () => {
   const harness = stopwatchHarness();
   const initial = requestCapture('user-1', 1000);
