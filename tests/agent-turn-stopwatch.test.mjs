@@ -3,6 +3,10 @@ import test from 'node:test';
 import vm from 'node:vm';
 import { productionFunctionSource, userscript } from './helpers/userscript-source.mjs';
 
+const ACTIVE_BACKGROUND = 'rgba(32, 32, 32, 0.92)';
+const SUCCESS_BACKGROUND = 'darkgreen';
+const ERROR_BACKGROUND = 'darkred';
+
 function stopwatchHarness() {
   let now = 0;
   let intervalCallback = null;
@@ -142,6 +146,15 @@ function finalCapture(exchangeId) {
   };
 }
 
+function errorCapture(exchangeId) {
+  return {
+    conversation_id: 'conversation-1',
+    stopwatch_exchange_id: exchangeId,
+    request_messages: [],
+    stream_messages: []
+  };
+}
+
 test('Issue 136 development version and fixed top-right stopwatch control are present', () => {
   assert.match(userscript, /@version\s+1\.5\.0/);
   assert.match(userscript, /AGENT_STOPWATCH_ID\s*=\s*'tm-agent-turn-stopwatch'/);
@@ -151,7 +164,7 @@ test('Issue 136 development version and fixed top-right stopwatch control are pr
   assert.match(ensure, /style\.right\s*=\s*'16px'/);
 });
 
-test('initial prompt starts Lap 1 at the local submission boundary', () => {
+test('initial prompt starts Lap 1 at the local submission boundary with active styling', () => {
   const harness = stopwatchHarness();
   harness.setNow(1000);
   const capture = requestCapture('user-1', 1000);
@@ -163,8 +176,10 @@ test('initial prompt starts Lap 1 at the local submission boundary', () => {
   const state = harness.api.state();
   assert.equal(state.active, true);
   assert.equal(state.exchange_id, 'exchange-A');
+  assert.equal(state.terminal_kind, null);
   assert.deepEqual(Array.from(state.laps_ms), []);
   assert.equal(harness.api.text(), 'Total: 1 m 5 s');
+  assert.equal(harness.element().style.background, ACTIVE_BACKGROUND);
 });
 
 test('same-exchange User message_type next freezes a lap at submission time and starts the next lap', () => {
@@ -181,10 +196,12 @@ test('same-exchange User message_type next freezes a lap at submission time and 
   const state = harness.api.state();
   assert.deepEqual(Array.from(state.laps_ms), [70000]);
   assert.equal(state.lap_started_at_ms, 71000);
+  assert.equal(state.terminal_kind, null);
+  assert.equal(harness.element().style.background, ACTIVE_BACKGROUND);
   assert.equal(harness.api.text(), 'Lap 1: 1 m 10 s\nLap 2: 0 m 5 s\nTotal: 1 m 15 s');
 });
 
-test('multiple User follow-ups remain one stopwatch session and final completion freezes last lap and Total', () => {
+test('multiple User follow-ups remain one stopwatch session and successful completion freezes green', () => {
   const harness = stopwatchHarness();
   const initial = requestCapture('user-1', 1000);
   harness.api.request(initial);
@@ -202,22 +219,51 @@ test('multiple User follow-ups remain one stopwatch session and final completion
   harness.api.terminal(finalCapture('exchange-A'));
   const state = harness.api.state();
   assert.equal(state.active, false);
+  assert.equal(state.terminal_kind, 'success');
   assert.deepEqual(Array.from(state.laps_ms), [70000, 30000, 30000]);
   assert.equal(state.total_ms, 130000);
+  assert.equal(harness.element().style.background, SUCCESS_BACKGROUND);
   assert.equal(
     harness.api.text(),
     'Lap 1: 1 m 10 s\nLap 2: 0 m 30 s\nLap 3: 0 m 30 s\nTotal: 2 m 10 s'
   );
 
   harness.setNow(191000);
+  harness.api.render();
+  assert.equal(harness.element().style.background, SUCCESS_BACKGROUND);
   harness.tick();
   assert.equal(
     harness.api.text(),
     'Lap 1: 1 m 10 s\nLap 2: 0 m 30 s\nLap 3: 0 m 30 s\nTotal: 2 m 10 s'
   );
+  assert.equal(harness.element().style.background, SUCCESS_BACKGROUND);
 });
 
-test('terminal completion for another exchange cannot stop the active stopwatch', () => {
+test('matching normalized terminal error freezes the stopwatch dark red', () => {
+  const harness = stopwatchHarness();
+  const initial = requestCapture('user-1', 1000);
+  harness.api.request(initial);
+  harness.api.event(initial, inputEvent('user-1', 'exchange-A'));
+
+  harness.setNow(31000);
+  harness.api.terminal(errorCapture('exchange-A'), {
+    type: 'error',
+    error_code: 'conversation_too_large'
+  });
+
+  const state = harness.api.state();
+  assert.equal(state.active, false);
+  assert.equal(state.terminal_kind, 'error');
+  assert.deepEqual(Array.from(state.laps_ms), [30000]);
+  assert.equal(state.total_ms, 30000);
+  assert.equal(harness.element().style.background, ERROR_BACKGROUND);
+
+  harness.setNow(91000);
+  harness.api.render();
+  assert.equal(harness.element().style.background, ERROR_BACKGROUND);
+});
+
+test('terminal completion for another exchange cannot stop or recolor the active stopwatch', () => {
   const harness = stopwatchHarness();
   const initial = requestCapture('user-1', 1000);
   harness.api.request(initial);
@@ -225,16 +271,19 @@ test('terminal completion for another exchange cannot stop the active stopwatch'
   harness.setNow(31000);
   harness.api.terminal(finalCapture('exchange-B'));
   assert.equal(harness.api.state().active, true);
+  assert.equal(harness.api.state().terminal_kind, null);
   assert.deepEqual(Array.from(harness.api.state().laps_ms), []);
+  assert.equal(harness.element().style.background, ACTIVE_BACKGROUND);
 });
 
-test('next independent prompt after completion replaces the completed stopwatch session', () => {
+test('next independent prompt after completion replaces terminal color with active styling', () => {
   const harness = stopwatchHarness();
   const initial = requestCapture('user-1', 1000);
   harness.api.request(initial);
   harness.api.event(initial, inputEvent('user-1', 'exchange-A'));
   harness.setNow(31000);
   harness.api.terminal(finalCapture('exchange-A'));
+  assert.equal(harness.element().style.background, SUCCESS_BACKGROUND);
 
   const next = requestCapture('user-4', 200000);
   harness.api.request(next);
@@ -245,8 +294,10 @@ test('next independent prompt after completion replaces the completed stopwatch 
   const state = harness.api.state();
   assert.equal(state.active, true);
   assert.equal(state.exchange_id, 'exchange-B');
+  assert.equal(state.terminal_kind, null);
   assert.deepEqual(Array.from(state.laps_ms), []);
   assert.equal(harness.api.text(), 'Total: 0 m 5 s');
+  assert.equal(harness.element().style.background, ACTIVE_BACKGROUND);
 });
 
 test('same-exchange User input creates a lap without relying on message_type metadata', () => {
@@ -259,6 +310,8 @@ test('same-exchange User input creates a lap without relying on message_type met
   harness.api.request(followUp);
   harness.api.event(followUp, inputEvent('user-2', 'exchange-A'));
   assert.deepEqual(Array.from(harness.api.state().laps_ms), [40000]);
+  assert.equal(harness.api.state().terminal_kind, null);
+  assert.equal(harness.element().style.background, ACTIVE_BACKGROUND);
 });
 
 test('stopwatch is wired to local POST time, enriched input_message state, and structured final state', () => {
