@@ -45,14 +45,15 @@ node scripts/set-development-version.mjs \
   --iteration 3
 ```
 
-The setter:
+For the default authoritative production header, the setter:
 
 - requires an issue-owned branch;
 - requires an explicit positive iteration rather than guessing one;
 - preserves the current `x.y.z` release target by default;
-- changes only the single userscript `@version` token;
-- preserves every other byte in the file, including existing LF or CRLF line endings;
-- runs the read-only guard after mutation and fails if the resulting identity is invalid.
+- changes only the single `@version` token in `src/userscript-header.js` and preserves every other header byte, including existing LF or CRLF line endings;
+- immediately regenerates the tracked `chatgpt-conversation-markdown-export.user.js` from the authoritative source and pinned Core artifact, so version-first work cannot silently leave the committed distribution artifact stale;
+- runs the read-only guard after regeneration;
+- restores the previous header and generated artifact if regeneration or validation fails rather than leaving a half-applied version change.
 
 To intentionally change the release target at the same time, supply it explicitly:
 
@@ -63,7 +64,7 @@ node scripts/set-development-version.mjs \
   --release 1.6.0
 ```
 
-A different userscript path may be supplied with `--file` for tests or tooling.
+A different userscript path may be supplied with `--file` for tests or tooling. Custom-file mode mutates only that supplied fixture/file and does not rebuild the repository production artifact.
 
 The setter is an explicit mutation tool. CI does not silently repair a mismatch, and the setter does not infer an iteration from unrelated branch history.
 
@@ -77,7 +78,7 @@ The generated userscript is intentionally **tracked and committed** at the repos
 node scripts/build-userscript.mjs
 ```
 
-and the resulting `chatgpt-conversation-markdown-export.user.js` change must be committed with the authoritative source change.
+and the resulting `chatgpt-conversation-markdown-export.user.js` change must be committed with the authoritative source change. Version changes made through the default development-version setter perform this regeneration automatically.
 
 A clean checkout must therefore already contain the installable userscript. Ordinary CI does **not** repair a missing or stale artifact before testing. It first runs:
 
