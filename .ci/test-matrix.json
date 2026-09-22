@@ -1,0 +1,42 @@
+{
+  "schema": 1,
+  "environments": [
+    {
+      "id": "ubuntu-node22-python313",
+      "runner": "ubuntu-latest",
+      "required": true,
+      "os": "ubuntu",
+      "runtimes": {
+        "node": "22",
+        "python": "3.13"
+      },
+      "probes": [
+        {
+          "name": "node",
+          "command": ["node", "--version"]
+        },
+        {
+          "name": "git",
+          "command": ["git", "--version"]
+        }
+      ],
+      "steps": [
+        {
+          "name": "Verify committed userscript artifact",
+          "kind": "validation",
+          "command": ["node", "scripts/test-cycle-artifact.mjs", "verify"]
+        },
+        {
+          "name": "Run DownloadConversation validation",
+          "kind": "validation",
+          "command": ["node", "scripts/ci-environment.mjs"]
+        },
+        {
+          "name": "CI contract regression",
+          "kind": "validation",
+          "command": ["python", "-m", "unittest", "tests/test_ci_contract.py"]
+        }
+      ]
+    }
+  ]
+}
