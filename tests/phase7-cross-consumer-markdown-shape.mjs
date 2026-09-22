@@ -1,11 +1,11 @@
 import assert from 'node:assert/strict';
 import { readFile, writeFile } from 'node:fs/promises';
 import path from 'node:path';
-import { pathToFileURL } from 'node:url';
+import { fileURLToPath, pathToFileURL } from 'node:url';
 import { spawnSync } from 'node:child_process';
 import vm from 'node:vm';
 
-const root = path.resolve(new URL('..', import.meta.url).pathname);
+const root = path.resolve(fileURLToPath(new URL('..', import.meta.url)));
 const coreRoot = path.resolve(process.env.PHASE7_CORE_ROOT ?? path.join(root, '.phase7-core'));
 const aigmRoot = path.resolve(process.env.PHASE7_AIGM_ROOT ?? path.join(root, '.phase7-aigm'));
 const aigmCoreRoot = path.resolve(process.env.PHASE7_AIGM_CORE_ROOT ?? path.join(root, '.phase7-aigm-core'));
@@ -44,6 +44,37 @@ function projectedDownloadConversationGolden(canonical) {
   return rendered;
 }
 
+function restorePythonLogicalStdout(stdout, platform = process.platform) {
+  if (platform !== 'win32') return stdout;
+  let restored = '';
+  for (let offset = 0; offset < stdout.length;) {
+    if (stdout.startsWith('\r\r\n', offset)) {
+      restored += '\r\n';
+      offset += 3;
+      continue;
+    }
+    if (stdout.startsWith('\r\n', offset)) {
+      restored += '\n';
+      offset += 2;
+      continue;
+    }
+    restored += stdout[offset];
+    offset += 1;
+  }
+  return restored;
+}
+
+assert.equal(
+  restorePythonLogicalStdout('generated\r\nembedded\r\r\nend', 'win32'),
+  'generated\nembedded\r\nend',
+  'Windows Python stdout decoding must distinguish generated LF from embedded CRLF.'
+);
+assert.equal(
+  restorePythonLogicalStdout('generated\nembedded\r\nend', 'linux'),
+  'generated\nembedded\r\nend',
+  'Non-Windows Python stdout must remain byte-identical.'
+);
+
 async function directCoreMarkdown() {
   const core = await import(pathToFileURL(path.join(coreRoot, 'src', 'index.js')).href);
   return core.renderCanonicalMarkdown(core.adaptChatGPTRecords(records));
@@ -63,9 +94,10 @@ async function aiTranscriptMarkdown() {
     }
   );
   assert.equal(result.status, 0, `AI-transcript.py failed: ${result.stderr}`);
-  const start = result.stdout.indexOf('## ');
+  const stdout = restorePythonLogicalStdout(result.stdout);
+  const start = stdout.indexOf('## ');
   assert.ok(start >= 0, 'AI-transcript.py output contains no transcript heading.');
-  return result.stdout.slice(start);
+  return stdout.slice(start);
 }
 
 async function downloadConversationMarkdown() {

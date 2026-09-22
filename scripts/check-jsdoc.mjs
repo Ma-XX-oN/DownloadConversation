@@ -1,7 +1,11 @@
-import fs from 'node:fs';
+import { readDownloadConversationSource, readUserscriptManifest } from './userscript-build-lib.mjs';
+import path from 'node:path';
+import { fileURLToPath } from 'node:url';
 
-const file = 'chatgpt-conversation-markdown-export.user.js';
-const text = fs.readFileSync(file, 'utf8');
+const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
+const manifest = await readUserscriptManifest(root);
+const file = 'authoritative DownloadConversation source modules';
+const text = await readDownloadConversationSource(root, manifest);
 
 function splitTopLevel(value) {
   const parts = [];

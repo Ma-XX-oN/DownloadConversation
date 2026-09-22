@@ -2,38 +2,98 @@ name: CI
 
 on:
   push:
+    branches:
+      - '**'
   pull_request:
 
 jobs:
-  test:
+  prepare-test-cycle:
+    if: github.event_name == 'push' && startsWith(github.ref, 'refs/heads/')
     runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    outputs:
+      tested_sha: ${{ steps.prepare.outputs.tested_sha }}
     steps:
       - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.ref_name }}
+          fetch-depth: 0
       - uses: actions/setup-node@v4
         with:
           node-version: 22
+      - name: Configure artifact-commit identity
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+      - name: Prepare and commit deterministic test-cycle artifact
+        id: prepare
+        run: |
+          node scripts/test-cycle-artifact.mjs prepare --branch "${GITHUB_REF_NAME}" --push
+          echo "tested_sha=$(git rev-parse HEAD)" >> "$GITHUB_OUTPUT"
+
+  test:
+    needs: prepare-test-cycle
+    if: always() && (github.event_name == 'pull_request' || needs.prepare-test-cycle.result == 'success')
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ needs.prepare-test-cycle.outputs.tested_sha || github.sha }}
+          fetch-depth: 0
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - name: Verify committed test-cycle artifact before tests
+        run: node scripts/test-cycle-artifact.mjs verify
+      - name: Modular userscript build regression
+        id: modular_userscript_build
+        shell: bash
+        run: |
+          set -o pipefail
+          node --test tests/modular-userscript-build.test.mjs tests/development-version-source.test.mjs 2>&1 | tee modular-userscript-build.log
+      - name: Upload modular userscript failure log
+        if: always() && steps.modular_userscript_build.outcome == 'failure'
+        uses: actions/upload-artifact@v4
+        with:
+          name: modular-userscript-build-failure
+          path: modular-userscript-build.log
+      - name: Development branch/version identity
+        run: node scripts/check-development-version.mjs
       - name: Production JSDoc coverage
         run: node scripts/check-jsdoc.mjs
       - name: JavaScript syntax
         run: node --check chatgpt-conversation-markdown-export.user.js
       - name: Version identity regression
         run: node --test tests/version-identity.test.mjs
+      - name: Development version guard regression
+        run: node --test tests/development-version-guard.test.mjs
+      - name: Development version setter regression
+        run: node --test tests/set-development-version.test.mjs
+      - name: Test-cycle artifact publication regression
+        run: node --test tests/test-cycle-artifact-publication.test.mjs
+      - name: Integration test-cycle preparation regression
+        run: node --test tests/prepare-integration-test-cycle.test.mjs
+      - name: Release tagging regression
+        run: node --test tests/release-tagging.test.mjs
       - name: Single-snapshot export regression
         run: node --test tests/export-single-snapshot.test.mjs
       - name: Agent completion sound regression
-        run: node --test tests/agent-completion-sounds.test.mjs
+        run: node --test tests/agent-completion-sounds.test.mjs tests/agent-completion-sound-pending.test.mjs
       - name: Agent terminal shared dispatch regression
-        run: node --test tests/agent-terminal-dispatch.test.mjs
+        run: node --test tests/agent-terminal-dispatch.test.mjs tests/agent-terminal-dry-contract.test.mjs tests/agent-terminal-conversation-turn-complete.test.mjs
       - name: Agent turn stopwatch regression
         run: node --test tests/agent-turn-stopwatch.test.mjs
       - name: Agent turn stopwatch stream integration
-        run: node --test tests/agent-turn-stopwatch-stream.test.mjs
+        run: node --test tests/agent-resume-metadata-patch.test.mjs tests/agent-turn-stopwatch-stream.test.mjs
       - name: Agent turn stopwatch live total
         run: node --test tests/agent-turn-stopwatch-live-total.test.mjs
       - name: Agent turn stopwatch reload restoration
         run: node --test tests/agent-turn-stopwatch-reload.test.mjs
+      - name: Agent favicon state regression
+        run: node --test tests/agent-favicon-state.test.mjs tests/agent-favicon-browser-selection.test.mjs
       - name: Agent terminal polling-timeout regression
-        run: node --test tests/agent-terminal-polling-timeout.test.mjs
+        run: node --test tests/agent-terminal-polling-timeout.test.mjs tests/agent-terminal-polling-timeout-observer.test.mjs
       - name: Communication log file controls regression
         run: node --test tests/communication-log-file-controls.test.mjs tests/communication-log-layout-contract.test.mjs tests/dry-contract.test.mjs
       - name: Tail consistency regression
@@ -56,10 +116,20 @@ jobs:
         run: node --test tests/recorder-panel-ui.test.mjs tests/modal-focus-retention.test.mjs tests/heading-metadata-controls.test.mjs
 
   cross-consumer-final-render:
+    needs: prepare-test-cycle
+    if: always() && (github.event_name == 'pull_request' || needs.prepare-test-cycle.result == 'success')
     runs-on: ubuntu-latest
     steps:
       - name: Check out DownloadConversation
         uses: actions/checkout@v4
+        with:
+          ref: ${{ needs.prepare-test-cycle.outputs.tested_sha || github.sha }}
+          fetch-depth: 0
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - name: Verify committed test-cycle artifact before tests
+        run: node scripts/test-cycle-artifact.mjs verify
       - name: Check out pinned DownloadConversation AIConversationCore
         uses: actions/checkout@v4
         with:
@@ -78,9 +148,6 @@ jobs:
           repository: Ma-XX-oN/AIConversationCore
           ref: 4b1bebe6fd7d82d8bbb15f4ad5c1a59cfd03132a
           path: .phase7-aigm-core
-      - uses: actions/setup-node@v4
-        with:
-          node-version: 22
       - uses: actions/setup-python@v5
         with:
           python-version: '3.13'
@@ -107,3 +174,43 @@ jobs:
           PHASE7_AIGM_ROOT: ${{ github.workspace }}/.phase7-aigm
           PHASE7_AIGM_CORE_ROOT: ${{ github.workspace }}/.phase7-aigm-core
         run: node tests/phase7-cross-consumer-adversarial.mjs
+
+  publish-test-cycle:
+    if: github.event_name == 'push' && needs.prepare-test-cycle.result == 'success'
+    needs:
+      - prepare-test-cycle
+      - test
+      - cross-consumer-final-render
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ needs.prepare-test-cycle.outputs.tested_sha }}
+          fetch-depth: 0
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - name: Configure annotated-tag identity
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+      - name: Publish tested artifact commit and version tag
+        run: node scripts/test-cycle-artifact.mjs publish --branch "${GITHUB_REF_NAME}"
+
+  verify-release-tag:
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    needs: publish-test-cycle
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: main
+          fetch-depth: 0
+      - name: Verify published stable release tag
+        run: |
+          git fetch --force --tags
+          node scripts/check-release-tag.mjs --branch main

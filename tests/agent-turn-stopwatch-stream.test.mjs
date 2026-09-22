@@ -8,6 +8,10 @@ const capturedFixture = await readFile(
   new URL('./fixtures/agent-turn-stopwatch-real-sse.txt', import.meta.url),
   'utf8'
 );
+const reloadResumeFixture = await readFile(
+  new URL('./fixtures/agent-reload-resume-success-sse.txt', import.meta.url),
+  'utf8'
+);
 
 function streamHarness() {
   let now = 0;
@@ -70,6 +74,8 @@ function streamHarness() {
     ${productionFunctionSource('agentStopwatchObserveSteerTurn')}
     ${productionFunctionSource('agentStopwatchObserveInputMessage')}
     ${productionFunctionSource('agentTerminalIsPollingTimeout')}
+    ${productionFunctionSource('agentTerminalHasFinishedAssistant')}
+    ${productionFunctionSource('agentTerminalIsConversationTurnComplete')}
     ${productionFunctionSource('agentTerminalSuccessfulFinal')}
     ${productionFunctionSource('agentTerminalExchangeId')}
     ${productionFunctionSource('agentTerminalKey')}
@@ -219,6 +225,34 @@ test('captured production SSE fixture reaches final completion through the real 
   const state = harness.api.state();
   assert.equal(state.active, false);
   assert.equal(state.exchange_id, 'bb0909f8-df1a-43a7-9bda-ebee076f6e09');
+  assert.equal(state.total_ms, 30000);
+  assert.deepEqual(Array.from(state.laps_ms), [30000]);
+});
+
+test('captured reload resume SSE can terminate an already-active matching exchange through the shared parser', () => {
+  const harness = streamHarness();
+  const exchange = 'd224d5a7-3ba9-4fd9-beb7-7d4c234e9b4d';
+
+  harness.setNow(1000);
+  const initial = requestCapture(
+    harness,
+    '31d021ea-4720-4a1c-88bf-8d84d5e66f2b',
+    1000
+  );
+  harness.api.consume(initial, inputMessageSse(
+    '31d021ea-4720-4a1c-88bf-8d84d5e66f2b',
+    exchange
+  ));
+  assert.equal(harness.api.state().active, true);
+  assert.equal(harness.api.state().exchange_id, exchange);
+
+  harness.setNow(31000);
+  const resumed = harness.api.create('6aae0d5c-7cbc-83e9-ac16-fbf6c7d5e82d');
+  harness.api.consume(resumed, reloadResumeFixture, true, false);
+
+  const state = harness.api.state();
+  assert.equal(state.active, false);
+  assert.equal(state.exchange_id, exchange);
   assert.equal(state.total_ms, 30000);
   assert.deepEqual(Array.from(state.laps_ms), [30000]);
 });

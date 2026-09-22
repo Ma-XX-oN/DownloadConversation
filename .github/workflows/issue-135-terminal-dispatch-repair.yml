@@ -1,0 +1,86 @@
+name: Issue 135 Terminal Dispatch Repair
+
+on:
+  push:
+    branches:
+      - issue-135-agent-completion-sounds
+
+permissions:
+  contents: write
+
+jobs:
+  apply-and-verify:
+    if: "github.event.head_commit.message == 'chore(#135): apply terminal dispatch repair'"
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - name: Repair shared terminal dispatch ownership
+        shell: pwsh
+        run: |
+          @'
+          import fs from 'node:fs';
+          const path = 'chatgpt-conversation-markdown-export.user.js';
+          let text = fs.readFileSync(path, 'utf8');
+          const oldText = [
+            '        conversation_id: capture?.conversation_id ?? null,',
+            '        terminal_key: agentSoundTerminalKey(capture)'
+          ].join('\n');
+          const newText = '        conversation_id: capture?.conversation_id ?? null';
+          const count = text.split(oldText).length - 1;
+          if (count !== 1) throw new Error(`Expected one stale terminal-key derivation, found ${count}.`);
+          text = text.replace(oldText, newText);
+
+          const retiredCalls = [
+            'agentSoundTerminalKey(',
+            'agentSoundClassifyTerminal(',
+            'agentSoundObserveTerminal(',
+            'agentStopwatchSuccessfulFinal(',
+            'agentStopwatchObserveTerminal('
+          ];
+          for (const retired of retiredCalls) {
+            if (text.includes(retired)) throw new Error(`Retired terminal helper remains callable: ${retired}`);
+          }
+          const sharedKeyReferences = text.match(/\bagentTerminalKey\s*\(/g) ?? [];
+          if (sharedKeyReferences.length !== 2) {
+            throw new Error(`Expected agentTerminalKey only in its declaration and shared normalizer; found ${sharedKeyReferences.length} references.`);
+          }
+          fs.writeFileSync(path, text, 'utf8');
+          '@ | node --input-type=module
+      - name: Verify issue/version identity
+        run: node scripts/check-development-version.mjs --branch issue-135-agent-completion-sounds
+      - name: Verify JSDoc coverage
+        run: node scripts/check-jsdoc.mjs
+      - name: Verify userscript syntax
+        run: node --check chatgpt-conversation-markdown-export.user.js
+      - name: Verify terminal error causal chain and DRY contract
+        run: >-
+          node --test
+          tests/agent-terminal-dry-contract.test.mjs
+          tests/agent-terminal-polling-timeout-integration.test.mjs
+          tests/agent-terminal-polling-timeout-observer.test.mjs
+          tests/agent-terminal-polling-timeout.test.mjs
+          tests/agent-terminal-dispatch.test.mjs
+          tests/agent-turn-stopwatch-stream.test.mjs
+          tests/agent-favicon-state.test.mjs
+          tests/agent-completion-sounds.test.mjs
+      - name: Verify only production userscript changed
+        shell: pwsh
+        run: |
+          git diff --check
+          $changed = @(git diff --name-only)
+          if ($changed.Count -ne 1 -or $changed[0] -ne 'chatgpt-conversation-markdown-export.user.js') {
+            throw "Unexpected changed paths: $($changed -join ', ')"
+          }
+      - name: Commit verified production correction
+        shell: pwsh
+        run: |
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add chatgpt-conversation-markdown-export.user.js
+          git commit -m 'fix(#135): restore polling-timeout terminal dispatch'
+          git push origin HEAD:issue-135-agent-completion-sounds

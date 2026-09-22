@@ -1,0 +1,2 @@
+# The generated production userscript is intentionally tracked and committed.
+# Build it with node scripts/build-userscript.mjs; never hand-edit the artifact.

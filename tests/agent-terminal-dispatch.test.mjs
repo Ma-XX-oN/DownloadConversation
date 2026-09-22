@@ -27,10 +27,12 @@ function successfulCapture() {
   };
 }
 
-test('successful final is normalized once with the structured final exchange identity', () => {
+function terminalHarness() {
   const context = { performance: { now: () => 45000 } };
   vm.runInNewContext(`
     ${productionFunctionSource('agentTerminalIsPollingTimeout')}
+    ${productionFunctionSource('agentTerminalHasFinishedAssistant')}
+    ${productionFunctionSource('agentTerminalIsConversationTurnComplete')}
     ${productionFunctionSource('agentTerminalSuccessfulFinal')}
     ${productionFunctionSource('agentTerminalExchangeId')}
     ${productionFunctionSource('agentTerminalKey')}
@@ -38,12 +40,30 @@ test('successful final is normalized once with the structured final exchange ide
     ${productionFunctionSource('agentTerminalNormalize')}
     this.normalize = agentTerminalNormalize;
   `, context);
+  return context;
+}
 
+test('successful final is normalized once with the structured final exchange identity', () => {
+  const context = terminalHarness();
   const terminal = context.normalize(successfulCapture(), null);
   assert.equal(terminal.kind, 'success');
   assert.equal(terminal.exchange_id, 'exchange-A');
   assert.equal(terminal.terminal_key, 'conversation-1:exchange-A');
   assert.equal(terminal.completed_at_ms, 45000);
+});
+
+test('top-level provider error_code is normalized as the shared terminal error kind', () => {
+  const context = terminalHarness();
+  const terminal = context.normalize(successfulCapture(), {
+    message: null,
+    conversation_id: 'conversation-1',
+    error: 'You have reached the maximum length for this conversation.',
+    error_code: 'conversation_too_large'
+  });
+
+  assert.equal(terminal.kind, 'error');
+  assert.equal(terminal.exchange_id, 'exchange-A');
+  assert.equal(terminal.terminal_key, 'conversation-1:exchange-A');
 });
 
 test('one normalized terminal object drives both sound and stopwatch', () => {
@@ -56,6 +76,7 @@ test('one normalized terminal object drives both sound and stopwatch', () => {
   vm.runInNewContext(`
     let agentSoundVolume = 10;
     let agentSoundAudioContext = { state: 'running' };
+    let agentSoundPendingTerminal = null;
     const AGENT_SOUND_TERMINAL_KEY_LIMIT = 128;
     const agentSoundTerminalKeys = new Set();
     let agentStopwatchState = {
@@ -79,7 +100,12 @@ test('one normalized terminal object drives both sound and stopwatch', () => {
     function agentStopwatchStopTimer() { stopped = true; }
     function agentStopwatchRender() { rendered = true; }
     ${productionFunctionSource('agentSoundRememberTerminalKey')}
+    ${productionFunctionSource('agentSoundRememberPendingTerminal')}
+    ${productionFunctionSource('agentSoundClearPendingTerminal')}
+    ${productionFunctionSource('agentSoundRetryPendingTerminal')}
     ${productionFunctionSource('agentTerminalIsPollingTimeout')}
+    ${productionFunctionSource('agentTerminalHasFinishedAssistant')}
+    ${productionFunctionSource('agentTerminalIsConversationTurnComplete')}
     ${productionFunctionSource('agentTerminalSuccessfulFinal')}
     ${productionFunctionSource('agentTerminalExchangeId')}
     ${productionFunctionSource('agentTerminalKey')}

@@ -1,0 +1,10724 @@
+// ==UserScript==
+// @name         ChatGPT Conversation Markdown Recorder
+// @namespace    https://chatgpt.com/
+// @version      1.5.0-issue.135.3
+// @description  Exports the current ChatGPT conversation directly from the Conversation API as Markdown or JSONL.
+// @match        https://chatgpt.com/*
+// @match        https://chat.openai.com/*
+// @require      https://raw.githubusercontent.com/Ma-XX-oN/AIConversationCore/cf34d9374f51ac525acfb90cfd6b247006a7bf6e/dist/aiconversationcore.chatgpt.browser.js
+// @run-at       document-start
+// ==/UserScript==
+
+(() => {
+  'use strict';
+
+  /** Installed userscript version reported in diagnostics and runtime metadata. */
+  const VERSION = (typeof GM_info !== 'undefined' && GM_info?.script?.version) || 'unknown';
+  /** Loaded AIConversationCore semantic version derived from the pinned dependency. */
+  const CORE_VERSION = canonicalCore().getVersion();
+  /** DOM id of the recorder panel so UI lookups share one stable selector. */
+  const PANEL_ID = 'tm-conversation-recorder';
+  /** DOM id of the floating launcher button that opens the recorder panel. */
+  const LAUNCHER_ID = 'tm-conversation-recorder-launcher';
+  /** Enables invasive launcher topology/call-stack diagnostics when manually set true. */
+  const DEEP_LAUNCHER_DIAGNOSTICS = false;
+  /** Numeric severity ordering used to decide which diagnostic entries are emitted. */
+  const DIAGNOSTIC_LEVELS = Object.freeze({ errors: 0, warnings: 1, debug: 2, verbose: 3 });
+  /** Default diagnostic threshold when the user has not stored a preference. */
+  const DEFAULT_DIAGNOSTICS = 'warnings';
+  /** Conversation API page size requested while walking backward through history. */
+  const PAGE_TURNS = 100;
+  /** Safety cap that prevents malformed pagination from running without bound. */
+  const MAX_PAGES = 10000;
+  /** Local-storage key for the keep-screen-on capture preference. */
+  const SCREEN_ON_STORAGE_KEY = 'tm-conversation-recorder-screen-on-when-capturing';
+  /** Local-storage key for Markdown heading timestamp visibility. */
+  const SHOW_TIMESTAMPS_STORAGE_KEY = 'tm-conversation-recorder-show-timestamps';
+  /** Local-storage key for Markdown JSONL record-number visibility. */
+  const SHOW_RECORD_NUMBERS_STORAGE_KEY = 'tm-conversation-recorder-show-record-numbers';
+  /** Local-storage key for Markdown source/provider turn-ID visibility. */
+  const SHOW_TURN_IDS_STORAGE_KEY = 'tm-conversation-recorder-show-turn-ids';
+  /** Local-storage key for Markdown Core debug-provenance visibility. */
+  const SHOW_DEBUG_PROVENANCE_STORAGE_KEY = 'tm-conversation-recorder-show-debug-provenance';
+  /** Local-storage key for the current integer agent terminal-sound volume. */
+  const AGENT_SOUND_VOLUME_STORAGE_KEY = 'tm-conversation-recorder-agent-sound-volume';
+  /** Legacy boolean sound preference retained only for deterministic migration. */
+  const LEGACY_AGENT_SOUNDS_STORAGE_KEY = 'tm-conversation-recorder-agent-sounds';
+  /** Yellow RGB used while Agent processing is observed. */
+  const AGENT_FAVICON_PROCESSING_RGB = Object.freeze([255, 255, 0]);
+  /** Light-green RGB used after a current-page successful completion. */
+  const AGENT_FAVICON_COMPLETED_RGB = Object.freeze([144, 238, 144]);
+  /** Red RGB used after a normalized Agent terminal error. */
+  const AGENT_FAVICON_ERROR_RGB = Object.freeze([255, 0, 0]);
+  /** DOM id of the fixed agent-turn stopwatch display. */
+  const AGENT_STOPWATCH_ID = 'tm-agent-turn-stopwatch';
+  /** Refresh cadence for the live agent-turn stopwatch display. */
+  const AGENT_STOPWATCH_REFRESH_MS = 250;
+  /** Local-storage key for continued console mirroring after the status panel first appears. */
+  const CONSOLE_DIAGNOSTICS_STORAGE_KEY = 'tm-conversation-recorder-console-diagnostics';
+  /** Session-storage key for the retained recorder diagnostic log. */
+  const DIAGNOSTIC_LOG_STORAGE_KEY = 'tm-conversation-recorder-diagnostic-log';
+  /** Maximum number of diagnostic entries retained in memory and session storage. */
+  const MAX_DIAGNOSTIC_LOG_ITEMS = 10000;
+  /** Maximum retained diagnostic entries persisted across a page reload. */
+  const MAX_PERSISTED_DIAGNOSTIC_LOG_ITEMS = 5000;
+  /** Debounce used to keep high-volume debug diagnostics from serializing the full log on every event. */
+  const DIAGNOSTIC_PERSIST_DELAY_MS = 1000;
+  /** Maximum number of legitimate forward tail markers retained for export consistency checks. */
+  const LIVE_TAIL_MARKER_LIMIT = 10;
+  /** Maximum normalized visible characters retained per live tail marker for bounded comparison. */
+  const LIVE_TAIL_TEXT_LIMIT = 8192;
+  /** Session-storage key for the newest exact streamed conversation-turn capture. */
+  const STREAM_TAIL_STORAGE_KEY = 'tm-conversation-recorder-stream-tail';
+  /** Maximum source records retained from one live streamed conversation turn. */
+  const STREAM_TAIL_RECORD_LIMIT = 512;
+  /** Maximum message identities retained in one stock-network body summary. */
+  const STOCK_NETWORK_ID_LIMIT = 64;
+  /** Maximum response-body bytes inspected for stock-network identity diagnostics. */
+  const STOCK_NETWORK_JSON_BYTE_LIMIT = 1024 * 1024;
+  /** IndexedDB database retaining the user-authorized communication-log directory handle. */
+  const COMMUNICATION_LOG_DB_NAME = 'downloadconversation-communication-log';
+  /** IndexedDB object store containing File System Access handles. */
+  const COMMUNICATION_LOG_DB_STORE = 'handles';
+  /** Stable IndexedDB key for the communication-log directory handle. */
+  const COMMUNICATION_LOG_HANDLE_KEY = 'communication-directory';
+  /** Prefix used to retain the last known conversation title for immediate reload logging. */
+  const COMMUNICATION_LOG_TITLE_STORAGE_PREFIX = 'tm-downloadconversation-communication-title:';
+  /** Maximum decoded text retained before one communication body chunk is flushed to disk. */
+  const COMMUNICATION_LOG_BODY_CHUNK_CHARS = 256 * 1024;
+  /** Maximum wait for startup directory restoration before a cloned network body is abandoned. */
+  const COMMUNICATION_LOG_READY_WAIT_MS = 2000;
+  /** Bounded retry count for Chromium stale File System Access interface state. */
+  const COMMUNICATION_LOG_WRITE_RETRY_LIMIT = 3;
+  /** Byte comparison chunk size used to verify ambiguous append outcomes. */
+  const COMMUNICATION_LOG_COMPARE_CHUNK_BYTES = 256 * 1024;
+
+  /** Unwrapped page-realm fetch implementation captured before installing interception. */
+  let originalPageFetch = null;
+  /** Latest captured Conversation API authorization/header context for direct requests. */
+  let apiRequestContext = null;
+  /** Guards network interception so page hooks are installed only once. */
+  let captureInstalled = false;
+  /** Currently selected diagnostic threshold, restored from local storage at startup. */
+  let diagnosticsLevel = localStorage.getItem('tm-conversation-recorder-diagnostics') || DEFAULT_DIAGNOSTICS;
+  /** Saved opt-in for console output after startup; independent of panel diagnostic verbosity. */
+  let consoleDiagnostics = localStorage.getItem(CONSOLE_DIAGNOSTICS_STORAGE_KEY) === 'true';
+  /** One-way startup boundary: hiding or reopening the panel does not restore automatic console output. */
+  let generalStatusShown = false;
+  /** Whether active exports should request a screen wake lock. */
+  let screenOnWhenCapturing = localStorage.getItem(SCREEN_ON_STORAGE_KEY) !== 'false';
+  /** Whether Markdown headings should include local-time source timestamps. */
+  let showTimestamps = localStorage.getItem(SHOW_TIMESTAMPS_STORAGE_KEY) === 'true';
+  /** Whether Markdown headings should include one-based JSONL record numbers. */
+  let showRecordNumbers = localStorage.getItem(SHOW_RECORD_NUMBERS_STORAGE_KEY) === 'true';
+  /** Whether Markdown headings should include source/provider turn IDs. */
+  let showTurnIds = localStorage.getItem(SHOW_TURN_IDS_STORAGE_KEY) === 'true';
+  /** Whether Markdown headings should include Core-derived source debug provenance. */
+  let showDebugProvenance = localStorage.getItem(SHOW_DEBUG_PROVENANCE_STORAGE_KEY) === 'true';
+  /**
+   * Loads the persisted 0-10 terminal-sound volume, including the legacy checkbox migration.
+   *
+   * @returns {number} Integer terminal-sound volume from 0 through 10.
+   */
+  function loadAgentSoundVolume() {
+    const stored = localStorage.getItem(AGENT_SOUND_VOLUME_STORAGE_KEY);
+    if (stored !== null) {
+      const parsed = Number.parseInt(stored, 10);
+      return Number.isFinite(parsed) ? Math.max(0, Math.min(10, parsed)) : 0;
+    }
+    const legacy = localStorage.getItem(LEGACY_AGENT_SOUNDS_STORAGE_KEY);
+    if (legacy === 'true') return 10;
+    if (legacy === 'false') return 0;
+    return 0;
+  }
+
+  /** Persisted integer terminal-sound volume; zero is the only disabled state. */
+  let agentSoundVolume = loadAgentSoundVolume();
+  /** AudioContext unlocked by a user gesture when terminal sounds are enabled. */
+  let agentSoundAudioContext = null;
+  /** Bounded stable turn identities that have already emitted a terminal sound. */
+  const agentSoundTerminalKeys = new Set();
+  /** Maximum number of emitted terminal turn identities retained for de-duplication. */
+  const AGENT_SOUND_TERMINAL_KEY_LIMIT = 128;
+  /** Original source href retained per stock favicon link before DownloadConversation recolors it. */
+  const agentFaviconOriginalSources = new Map();
+  /** Monotonic render generation preventing stale asynchronous favicon writes. */
+  let agentFaviconRenderGeneration = 0;
+  /** Whether processing has been observed in this loaded page and may transition to green. */
+  let agentFaviconProcessingObserved = false;
+  /** Current agent-turn stopwatch session, including completed lap durations. */
+  let agentStopwatchState = null;
+  /** Interval handle refreshing the live agent-turn stopwatch, or null while stopped. */
+  let agentStopwatchTimer = null;
+  /** Active screen wake-lock handle, or null when no lock is held. */
+  let wakeLockSentinel = null;
+  /** Serializes export work so overlapping extraction runs cannot start. */
+  let exportInProgress = false;
+  /** Format of the active export, used by shared status/progress rendering. */
+  let exportKind = null;
+  /** Persistent status message shown when no structured progress state is active. */
+  let statusText = 'Ready.';
+  /** Interval handle used to refresh elapsed time and ETA while work is active. */
+  let statusTimer = null;
+  /** Structured state for the active fetch/render progress display. */
+  let progressState = null;
+  /** Guards the built-in test runner against overlapping operations. */
+  let testInProgress = false;
+  /** Guards turn-jump navigation against overlapping operations. */
+  let jumpInProgress = false;
+  /** Monotonic identifier assigned to click-correlation diagnostic observations. */
+  let clickDiagnosticSequence = 0;
+  /** Click observation currently collecting correlated network/resource evidence. */
+  let activeClickDiagnostic = null;
+  /** In-memory diagnostic history mirrored to session storage for the panel. */
+  let diagnosticLog = [];
+  /** Pending debounced diagnostic-log persistence timer, or null when no write is scheduled. */
+  let diagnosticPersistTimer = null;
+  /** Whether the recorder panel currently shows the expanded diagnostic history. */
+  let diagnosticLogExpanded = false;
+  /** Element to refocus after the active recorder modal closes. */
+  let lastModalOpener = null;
+  /** Conversation id whose live high-water tail is currently retained. */
+  let liveTailConversationId = null;
+  /** Newest legitimate forward-progression markers retained as a bounded high-water history. */
+  let liveTailMarkers = [];
+  /** Whether current materialization is historical navigation and therefore cannot advance the high-water tail. */
+  let liveTailHistoricalNavigation = false;
+  /** Whether an explicit prompt submission currently authorizes User then Assistant tail advancement. */
+  let liveTailPromptAdvancePending = false;
+  /** Guards live-tail DOM/event tracking so observers are installed only once. */
+  let liveTailTrackingInstalled = false;
+  /** Coalesces high-volume DOM mutations into one live-tail scan per task. */
+  let liveTailScanScheduled = false;
+  /** Last observed conversation-scroll position used only to detect upward historical navigation. */
+  let liveTailLastScrollTop = null;
+  /** Thread element currently carrying mounted virtual-window conversation turns. */
+  let liveTailObservedThread = null;
+  /** Mutation observer scoped to the current conversation thread. */
+  let liveTailThreadObserver = null;
+  /** Lightweight root observer used only to detect host replacement of the conversation thread. */
+  let liveTailRootObserver = null;
+  /** Scroll root currently supplying direction evidence for live-tail tracking. */
+  let liveTailObservedScrollRoot = null;
+  /** Newest passive /f/conversation streamed-turn capture observed in this page lifetime. */
+  let streamTailCapture = null;
+  /** Monotonic sequence assigned to stock page fetch/XHR diagnostics in this page lifetime. */
+  let stockNetworkSequence = 0;
+  /** Persisted user-authorized directory used for the disk communication recorder. */
+  let communicationLogDirectoryHandle = null;
+  /** Whether the next trusted page gesture is reserved for native directory chooser launch. */
+  let communicationLogDirectoryGestureArmed = false;
+  /** Whether a native directory chooser promise is currently outstanding. */
+  let communicationLogDirectoryPickerOpening = false;
+  /** Active `DownloadConversation_<conversation>.jsonl` file name. */
+  let communicationLogFileName = null;
+  /** Serializes append operations so independent network observers cannot overlap file writes. */
+  let communicationLogWriteChain = Promise.resolve();
+  /** Whether the disk recorder has a writable directory and resolved conversation file name. */
+  let communicationLogReady = false;
+  /** Guards the required-directory prompt against duplicate page UI. */
+  let communicationLogPromptShown = false;
+  /** Monotonic sequence assigned to JSONL communication records within this page session. */
+  let communicationLogSequence = 0;
+  /** Startup restoration promise shared by early intercepted network clones. */
+  let communicationLogInitializationPromise = null;
+  /** Count of communication records intentionally skipped before disk logging became available. */
+  let communicationLogDroppedBeforeReady = 0;
+  /** Last newest-Assistant lifecycle signature written to disk, preventing mutation-scan duplicates. */
+  let communicationLogLastAssistantLifecycleKey = null;
+  /** Guards page/session lifecycle listeners against duplicate installation after reauthorization. */
+  let communicationLogLifecycleInstalled = false;
+  /** Whether one communication-log file-management action is currently updating panel state. */
+  let communicationLogUiActionInProgress = false;
+  /** Unique identity correlating all communication records produced by this page lifetime. */
+  const communicationLogSessionId = crypto.randomUUID();
+  try {
+    const storedDiagnosticLog = JSON.parse(sessionStorage.getItem(DIAGNOSTIC_LOG_STORAGE_KEY) || '[]');
+    if (Array.isArray(storedDiagnosticLog)) diagnosticLog = storedDiagnosticLog.slice(-MAX_DIAGNOSTIC_LOG_ITEMS);
+  } catch {}
+
+  logConsoleDiagnostic('debug', `[DownloadConversation v${VERSION} | AIConversationCore v${CORE_VERSION}] version identity`);
+
+  /**
+   * Handles assert.
+   *
+   * @param {Object} condition - The condition that must be true.
+   * @param {string} message - The assertion failure message.
+   * @returns {void} No value is returned.
+   */
+  function assert(condition, message) {
+    if (!condition) throw new Error(message);
+  }
+
+  /**
+   * Normalizes one thrown value to readable diagnostic text.
+   *
+   * @param {unknown} error - Thrown value to describe.
+   * @returns {string} Readable error text.
+   */
+  function errorMessage(error) {
+    if (error instanceof Error) return error.message;
+    if (error && typeof error === 'object' && typeof error.message === 'string') return error.message;
+    return String(error);
+  }
+
+  /**
+   * Clones one Request/Response-like object without allowing a clone failure to escape.
+   *
+   * @param {Object|null} value - Cloneable object, when available.
+   * @returns {Object|null} Independent clone, or null when cloning is unavailable or fails.
+   */
+  function cloneSafely(value) {
+    try {
+      return typeof value?.clone === 'function' ? value.clone() : null;
+    } catch {
+      return null;
+    }
+  }
+
+  /**
+   * Releases one stream-reader lock without allowing cleanup failure to replace the primary outcome.
+   *
+   * @param {Object|null} reader - Reader whose lock should be released.
+   * @returns {void} No value is returned.
+   */
+  function releaseReaderLockQuietly(reader) {
+    try { reader?.releaseLock?.(); } catch {}
+  }
+
+  /**
+   * Aborts one writable stream without allowing cleanup failure to replace the primary outcome.
+   *
+   * @param {Object|null} writable - Writable stream to abort when present.
+   * @returns {Promise<void>} Resolves after best-effort abort cleanup.
+   */
+  async function abortWritableQuietly(writable) {
+    try { await writable?.abort?.(); } catch {}
+  }
+
+  /**
+   * Cancels one readable body without allowing cleanup failure to replace the primary outcome.
+   *
+   * @param {Object|null} body - Readable stream body to cancel when present.
+   * @returns {Promise<void>} Resolves after best-effort cancellation.
+   */
+  async function cancelReadableBodyQuietly(body) {
+    try { await body?.cancel?.(); } catch {}
+  }
+
+  /**
+   * Formats duration.
+   *
+   * @param {Object} milliseconds - The duration in milliseconds.
+   * @returns {string} The string produced by `formatDuration`.
+   */
+  function formatDuration(milliseconds) {
+    const totalSeconds = Math.max(0, Math.round(milliseconds / 1000));
+    if (totalSeconds < 60) return `${totalSeconds}s`;
+    const totalMinutes = Math.floor(totalSeconds / 60);
+    const seconds = totalSeconds % 60;
+    if (totalMinutes < 60) return seconds ? `${totalMinutes}m ${seconds}s` : `${totalMinutes}m`;
+    const hours = Math.floor(totalMinutes / 60);
+    const minutes = totalMinutes % 60;
+    return minutes ? `${hours}h ${minutes}m` : `${hours}h`;
+  }
+
+  /**
+   * Handles escape HTML text.
+   *
+   * @param {string} text - The text to process.
+   * @returns {string} The string produced by `escapeHtmlText`.
+   */
+  function escapeHtmlText(text) {
+    return String(text ?? '')
+      .replace(/&/g, '&amp;')
+      .replace(/</g, '&lt;')
+      .replace(/>/g, '&gt;');
+  }
+
+  /**
+   * Handles escape HTML attribute.
+   *
+   * @param {string} text - The text to process.
+   * @returns {string} The string produced by `escapeHtmlAttribute`.
+   */
+  function escapeHtmlAttribute(text) {
+    return String(text ?? '')
+      .replace(/&/g, '&amp;')
+      .replace(/"/g, '&quot;')
+      .replace(/</g, '&lt;')
+      .replace(/>/g, '&gt;');
+  }
+
+  /**
+   * Quotes literal message text as the transcript blockquote representation while preserving line order.
+   *
+   * @param {string} markdown - The Markdown text to process.
+   * @returns {string} The string produced by `quoteMarkdown`.
+   */
+  function quoteMarkdown(markdown) {
+    const text = String(markdown ?? '').replace(/\s+$/, '');
+    if (!text) return '>';
+    return text.split('\n').map(line => line.length ? `> ${line}` : '>').join('\n');
+  }
+
+  /**
+   * Handles conversation title.
+   *
+   * @returns {string} The string produced by `conversationTitle`.
+   */
+  function conversationTitle() {
+    const heading = document.querySelector('h1')?.textContent?.trim();
+    const title = heading || document.title || 'ChatGPT conversation';
+    return title.replace(/\s*[-–—]\s*ChatGPT\s*$/i, '').trim() || 'ChatGPT conversation';
+  }
+
+  /**
+   * Sanitizes file name.
+   *
+   * @param {string} name - The name to process.
+   * @returns {string} The string produced by `sanitizeFileName`.
+   */
+  function sanitizeFileName(name) {
+    return String(name || 'ChatGPT conversation')
+      .replace(/[<>:"/\\|?*\x00-\x1f]/g, '_')
+      .replace(/[. ]+$/g, '')
+      .trim() || 'ChatGPT conversation';
+  }
+
+  /**
+   * Handles current conversation ID.
+   *
+   * @returns {null} The value produced by `currentConversationId`, or `null` when unavailable.
+   */
+  function currentConversationId() {
+    return location.pathname.match(/\/c\/([^/?#]+)/)?.[1] ?? null;
+  }
+
+  /**
+   * Checks whether conversation API URL.
+   *
+   * @param {string} url - The URL to process.
+   * @returns {boolean} `true` when `isConversationApiUrl` succeeds or its predicate is satisfied; otherwise `false`.
+   */
+  function isConversationApiUrl(url) {
+    try {
+      const parsed = new URL(url, location.href);
+      if (parsed.origin !== location.origin) return false;
+      return /^\/backend-api\/conversations\/[^/]+(?:\/messages)?$/.test(parsed.pathname);
+    } catch {
+      return false;
+    }
+  }
+
+  /**
+   * Handles raw headers to object.
+   *
+   * @param {Object} headers - The HTTP header values to inspect.
+   * @returns {Object} The Object value produced by `rawHeadersToObject`.
+   */
+  function rawHeadersToObject(headers) {
+    const result = {};
+    /**
+     * Handles put.
+     *
+     * @param {string} name - The name to process.
+     * @param {string} value - The value to process.
+     * @returns {void} No value is returned.
+     */
+    const put = (name, value) => {
+      if (name == null || value == null) return;
+      const key = String(name).toLowerCase();
+      result[key] = result[key] ? `${result[key]}, ${value}` : String(value);
+    };
+    try {
+      if (typeof headers?.forEach === 'function') {
+        headers.forEach((value, key) => put(key, value));
+      } else if (Array.isArray(headers)) {
+        for (const entry of headers) {
+          if (Array.isArray(entry) && entry.length >= 2) put(entry[0], entry[1]);
+        }
+      } else if (headers && typeof headers === 'object') {
+        for (const [key, value] of Object.entries(headers)) put(key, value);
+      }
+    } catch {}
+    return result;
+  }
+
+  // BEGIN Issue #123 stock network diagnostics
+  /**
+   * Produces a bounded URL safe for stock-network diagnostics.
+   *
+   * Same-origin ChatGPT URLs retain routing query parameters while known secret
+   * values are redacted. Cross-origin URLs retain only origin and path.
+   *
+   * @param {string} value - Request or response URL to sanitize.
+   * @returns {string} Sanitized diagnostic URL.
+   */
+  function stockNetworkSafeUrl(value) {
+    try {
+      const parsed = new URL(String(value ?? ''), location.href);
+      if (parsed.origin !== location.origin) return `${parsed.origin}${parsed.pathname}`;
+      const relative = `${parsed.pathname}${parsed.search}`;
+      return boundedDiagnosticText(
+        redactDiagnosticSignedTokens(relative)
+          .replace(/([?&](?:access_token|token|key|secret|auth|session|jwt)=)[^&#\s]*/gi, '$1[redacted]'),
+        4000
+      );
+    } catch {
+      return boundedDiagnosticText(String(value ?? ''), 4000);
+    }
+  }
+
+  /**
+   * Extracts only explicitly safe cache/correlation response headers.
+   *
+   * @param {Object} headers - Headers-like object exposing get(name).
+   * @returns {Object} Safe response-header diagnostic projection.
+   */
+  function stockNetworkSafeResponseHeaders(headers) {
+    const result = {};
+    const allowed = [
+      ['date', 'date'],
+      ['age', 'age'],
+      ['cache-control', 'cache_control'],
+      ['etag', 'etag'],
+      ['last-modified', 'last_modified'],
+      ['expires', 'expires'],
+      ['pragma', 'pragma'],
+      ['vary', 'vary'],
+      ['cf-cache-status', 'cf_cache_status'],
+      ['x-cache', 'x_cache'],
+      ['x-cache-hits', 'x_cache_hits'],
+      ['x-served-by', 'x_served_by'],
+      ['x-timer', 'x_timer'],
+      ['server-timing', 'server_timing'],
+      ['x-request-id', 'x_request_id'],
+      ['x-openai-request-id', 'x_openai_request_id'],
+      ['cf-ray', 'cf_ray']
+    ];
+    for (const [headerName, outputName] of allowed) {
+      let value = null;
+      try { value = headers?.get?.(headerName) ?? null; } catch {}
+      if (value) result[outputName] = boundedDiagnosticText(value, 1000);
+    }
+    return result;
+  }
+
+  /**
+   * Extracts bounded message identity/status metadata from arbitrary JSON data.
+   *
+   * The traversal intentionally records no message content.
+   *
+   * @param {Object} payload - Parsed stock response JSON.
+   * @returns {Object} Bounded identity-only summary.
+   */
+  function stockNetworkJsonIdentitySummary(payload) {
+    const messageIds = [];
+    const tailMessages = [];
+    const seenMessageIds = new Set();
+    const visited = new WeakSet();
+    let visitedNodes = 0;
+
+    /**
+     * Retains one message-like object without retaining its content.
+     *
+     * @param {Object} candidate - Potential provider message object.
+     * @returns {void} No value is returned.
+     */
+    function retainMessage(candidate) {
+      if (!candidate || typeof candidate !== 'object') return;
+      const id = typeof candidate.id === 'string' ? candidate.id : null;
+      const role = typeof candidate?.author?.role === 'string'
+        ? candidate.author.role
+        : (typeof candidate.role === 'string' ? candidate.role : null);
+      if (!id || !role || seenMessageIds.has(id)) return;
+      seenMessageIds.add(id);
+      messageIds.push(id);
+      tailMessages.push({
+        id,
+        role,
+        status: typeof candidate.status === 'string' ? candidate.status : null,
+        end_turn: typeof candidate.end_turn === 'boolean' ? candidate.end_turn : null,
+        channel: typeof candidate.channel === 'string' ? candidate.channel : null
+      });
+      if (messageIds.length > STOCK_NETWORK_ID_LIMIT) messageIds.shift();
+      if (tailMessages.length > STOCK_NETWORK_ID_LIMIT) tailMessages.shift();
+    }
+
+    /**
+     * Walks bounded JSON structure looking only for message-like identity objects.
+     *
+     * @param {Object} value - Current JSON value.
+     * @param {number} depth - Current traversal depth.
+     * @returns {void} No value is returned.
+     */
+    function visit(value, depth) {
+      if (!value || typeof value !== 'object' || depth > 16 || visitedNodes >= 20000) return;
+      if (visited.has(value)) return;
+      visited.add(value);
+      visitedNodes += 1;
+      if (Array.isArray(value)) {
+        for (const item of value) visit(item, depth + 1);
+        return;
+      }
+      retainMessage(value);
+      if (value.message && typeof value.message === 'object') retainMessage(value.message);
+      for (const nested of Object.values(value)) visit(nested, depth + 1);
+    }
+
+    visit(payload, 0);
+    const currentNode = typeof payload?.current_node === 'string'
+      ? payload.current_node
+      : (typeof payload?.conversation?.current_node === 'string' ? payload.conversation.current_node : null);
+    const conversationId = typeof payload?.conversation_id === 'string'
+      ? payload.conversation_id
+      : (typeof payload?.id === 'string' && !seenMessageIds.has(payload.id) ? payload.id : null);
+    return {
+      current_node: currentNode,
+      conversation_id: conversationId,
+      message_ids: messageIds,
+      tail_messages: tailMessages,
+      visited_nodes: visitedNodes
+    };
+  }
+
+  /**
+   * Extracts bounded candidate UUID identities from non-JSON text responses.
+   *
+   * @param {string} text - Bounded response text.
+   * @returns {Object} Identity-only text summary.
+   */
+  function stockNetworkTextIdentitySummary(text) {
+    const candidateIds = [];
+    const seen = new Set();
+    const uuidPattern = /\b[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}\b/gi;
+    for (const match of String(text ?? '').matchAll(uuidPattern)) {
+      const id = match[0].toLowerCase();
+      if (seen.has(id)) continue;
+      seen.add(id);
+      candidateIds.push(id);
+      if (candidateIds.length > STOCK_NETWORK_ID_LIMIT) candidateIds.shift();
+    }
+    return {
+      candidate_uuid_ids: candidateIds,
+      message_terms_present: /(?:current_node|message_id|\"message\"|\"author\"|\"role\")/i.test(String(text ?? ''))
+    };
+  }
+
+  /**
+   * Classifies one bounded stock-network text body into JSON identity or text identity evidence.
+   *
+   * @param {string} text - Bounded response text.
+   * @param {string} contentType - Response content type used as JSON evidence.
+   * @returns {Object} Exactly one JSON-identity or text-identity projection.
+   */
+  function stockNetworkBodyIdentity(text, contentType) {
+    const value = String(text ?? '');
+    if (/json/i.test(contentType) || /^[\s\r\n]*[\[{]/.test(value)) {
+      try {
+        return { json_identity: stockNetworkJsonIdentitySummary(JSON.parse(value)) };
+      } catch {}
+    }
+    return { text_identity: stockNetworkTextIdentitySummary(value) };
+  }
+
+  /**
+   * Projects request headers without retaining authentication or other secret values.
+   *
+   * @param {Object} headers - Headers-like request headers.
+   * @returns {Object} Safe request-header metadata.
+   */
+  function stockNetworkRequestHeaderSummary(headers) {
+    const raw = rawHeadersToObject(headers);
+    const headerNames = Object.keys(raw).slice(0, 100);
+    const selected = {};
+    for (const name of ['cache-control', 'pragma', 'if-none-match', 'if-modified-since', 'x-openai-target-path']) {
+      if (!raw[name]) continue;
+      selected[name.replace(/-/g, '_')] = boundedDiagnosticText(redactDiagnosticSignedTokens(raw[name]), 1000);
+    }
+    return { header_names: headerNames, selected };
+  }
+
+  /**
+   * Starts one stock page fetch diagnostic observation.
+   *
+   * @param {Request|null} request - Page Request when construction succeeded.
+   * @param {string} requestUrl - Effective request URL.
+   * @returns {Object} Correlation state for the response.
+   */
+  function stockNetworkTraceFetchStart(request, requestUrl) {
+    const sequence = ++stockNetworkSequence;
+    const startedAt = performance.now();
+    let sameOrigin = false;
+    try { sameOrigin = new URL(requestUrl, location.href).origin === location.origin; } catch {}
+    const trace = {
+      sequence,
+      started_at: startedAt,
+      method: String(request?.method ?? 'GET').toUpperCase(),
+      url: stockNetworkSafeUrl(requestUrl),
+      same_origin: sameOrigin
+    };
+    logDiagnostic('debug', 'stock-network-fetch-start', {
+      network_sequence: sequence,
+      method: trace.method,
+      url: trace.url,
+      cache_mode: request?.cache ?? null,
+      request_mode: request?.mode ?? null,
+      credentials: request?.credentials ?? null,
+      destination: request?.destination ?? null,
+      redirect: request?.redirect ?? null,
+      headers: stockNetworkRequestHeaderSummary(request?.headers)
+    });
+    return trace;
+  }
+
+  /**
+   * Reads at most the configured diagnostic byte limit from a cloned response.
+   *
+   * @param {Response} response - Cloned page response.
+   * @returns {Promise<Object>} Bounded text plus byte/truncation metadata.
+   */
+  async function stockNetworkReadBoundedText(response) {
+    if (!response?.body) return { text: '', byte_count: 0, truncated: false };
+    const reader = response.body.getReader();
+    const decoder = new TextDecoder();
+    let text = '';
+    let byteCount = 0;
+    let truncated = false;
+    try {
+      for (;;) {
+        const { done, value } = await reader.read();
+        if (done) break;
+        if (!value?.byteLength) continue;
+        const remaining = STOCK_NETWORK_JSON_BYTE_LIMIT - byteCount;
+        if (remaining <= 0) {
+          truncated = true;
+          try { await reader.cancel(); } catch {}
+          break;
+        }
+        const accepted = value.byteLength <= remaining ? value : value.slice(0, remaining);
+        text += decoder.decode(accepted, { stream: true });
+        byteCount += accepted.byteLength;
+        if (accepted.byteLength < value.byteLength) {
+          truncated = true;
+          try { await reader.cancel(); } catch {}
+          break;
+        }
+      }
+      text += decoder.decode();
+    } finally {
+      releaseReaderLockQuietly(reader);
+    }
+    return { text, byte_count: byteCount, truncated };
+  }
+
+  /**
+   * Inspects one cloned stock fetch body without retaining its raw content.
+   *
+   * @param {Response} response - Cloned page response.
+   * @param {Object} trace - Request/response correlation state.
+   * @returns {Promise<void>} Resolves after bounded body inspection.
+   */
+  async function stockNetworkInspectFetchBody(response, trace) {
+    try {
+      const bounded = await stockNetworkReadBoundedText(response);
+      const contentType = response.headers?.get?.('content-type') ?? '';
+      const identity = stockNetworkBodyIdentity(bounded.text, contentType);
+      logDiagnostic('debug', 'stock-network-fetch-body-summary', {
+        network_sequence: trace.sequence,
+        url: trace.url,
+        content_type: boundedDiagnosticText(contentType, 500),
+        byte_count: bounded.byte_count,
+        truncated: bounded.truncated,
+        json_identity: identity.json_identity ?? null,
+        text_identity: identity.text_identity ?? null
+      });
+    } catch (error) {
+      logDiagnostic('debug', 'stock-network-fetch-body-summary-failed', {
+        network_sequence: trace.sequence,
+        url: trace.url,
+        error: boundedDiagnosticText(errorMessage(error), 1000)
+      });
+    }
+  }
+
+  /**
+   * Records stock fetch response metadata and starts bounded identity inspection.
+   *
+   * @param {Response} response - Original page response, left untouched for ChatGPT.
+   * @param {Object} trace - Request/response correlation state.
+   * @returns {void} No value is returned.
+   */
+  function stockNetworkTraceFetchResponse(response, trace) {
+    const contentType = response?.headers?.get?.('content-type') ?? '';
+    logDiagnostic('debug', 'stock-network-fetch-response', {
+      network_sequence: trace.sequence,
+      method: trace.method,
+      url: trace.url,
+      response_url: stockNetworkSafeUrl(response?.url ?? ''),
+      status: response?.status ?? null,
+      ok: response?.ok === true,
+      type: response?.type ?? null,
+      redirected: response?.redirected === true,
+      duration_ms: Math.round(performance.now() - trace.started_at),
+      content_type: boundedDiagnosticText(contentType, 500),
+      response_headers: stockNetworkSafeResponseHeaders(response?.headers)
+    });
+    const inspectable = trace.same_origin && (
+      /(?:json|text|event-stream|x-component|javascript)/i.test(contentType) ||
+      /\/backend-api\/(?:conversation|conversations|f\/conversation)(?:\/|\?|$)/.test(trace.url)
+    );
+    if (!inspectable) return;
+    const cloned = cloneSafely(response);
+    if (cloned) void stockNetworkInspectFetchBody(cloned, trace);
+  }
+
+  /**
+   * Starts one stock page XHR diagnostic observation.
+   *
+   * @param {XMLHttpRequest} xhr - Page XHR instance.
+   * @param {Object} info - Captured XHR method/URL/header metadata.
+   * @returns {Object} Correlation state for loadend.
+   */
+  function stockNetworkTraceXhrStart(xhr, info) {
+    const sequence = ++stockNetworkSequence;
+    const trace = {
+      sequence,
+      started_at: performance.now(),
+      method: String(info?.method ?? 'GET').toUpperCase(),
+      url: stockNetworkSafeUrl(info?.url ?? '')
+    };
+    logDiagnostic('debug', 'stock-network-xhr-start', {
+      network_sequence: sequence,
+      method: trace.method,
+      url: trace.url,
+      response_type: xhr?.responseType || null,
+      headers: stockNetworkRequestHeaderSummary(info?.headers)
+    });
+    return trace;
+  }
+
+  /**
+   * Parses XHR raw response headers into a Headers-like safe lookup object.
+   *
+   * @param {XMLHttpRequest} xhr - Completed page XHR instance.
+   * @returns {Object} Headers-like object with get(name).
+   */
+  function stockNetworkXhrHeaderLookup(xhr) {
+    const values = {};
+    try {
+      for (const line of String(xhr?.getAllResponseHeaders?.() ?? '').split(/\r?\n/)) {
+        const split = line.indexOf(':');
+        if (split <= 0) continue;
+        values[line.slice(0, split).trim().toLowerCase()] = line.slice(split + 1).trim();
+      }
+    } catch {}
+    return { get: name => values[String(name).toLowerCase()] ?? null };
+  }
+
+  /**
+   * Records completed stock XHR response metadata and bounded identity information.
+   *
+   * @param {XMLHttpRequest} xhr - Completed page XHR instance.
+   * @param {Object} trace - Request/response correlation state.
+   * @returns {void} No value is returned.
+   */
+  function stockNetworkTraceXhrResponse(xhr, trace) {
+    const headerLookup = stockNetworkXhrHeaderLookup(xhr);
+    const contentType = headerLookup.get('content-type') ?? '';
+    let bodyIdentity = null;
+    try {
+      if (xhr.responseType === 'json' && xhr.response && typeof xhr.response === 'object') {
+        bodyIdentity = { json_identity: stockNetworkJsonIdentitySummary(xhr.response) };
+      } else if (!xhr.responseType || xhr.responseType === 'text') {
+        const rawText = String(xhr.responseText ?? '');
+        const boundedText = rawText.slice(0, STOCK_NETWORK_JSON_BYTE_LIMIT);
+        bodyIdentity = {
+          ...stockNetworkBodyIdentity(boundedText, contentType),
+          truncated: rawText.length > boundedText.length
+        };
+      }
+    } catch {}
+    logDiagnostic('debug', 'stock-network-xhr-response', {
+      network_sequence: trace.sequence,
+      method: trace.method,
+      url: trace.url,
+      response_url: stockNetworkSafeUrl(xhr?.responseURL ?? ''),
+      status: Number.isFinite(xhr?.status) ? xhr.status : null,
+      duration_ms: Math.round(performance.now() - trace.started_at),
+      content_type: boundedDiagnosticText(contentType, 500),
+      response_headers: stockNetworkSafeResponseHeaders(headerLookup),
+      body_identity: bodyIdentity
+    });
+  }
+  // END Issue #123 stock network diagnostics
+
+
+  // BEGIN Issue #123 disk communication recorder
+  /** Interval between dirty communication-log checkpoints. */
+  const COMMUNICATION_LOG_CHECKPOINT_MS = 30 * 1000;
+  /** Long-lived writable stream used by normal communication-log appends. */
+  let communicationLogWritable = null;
+  /** Whether the current long-lived writable contains bytes not yet checkpointed. */
+  let communicationLogWriterDirty = false;
+  /** Periodic checkpoint timer installed once communication logging becomes active. */
+  let communicationLogCheckpointTimer = null;
+  /**
+   * Opens the IndexedDB database that retains the authorized directory handle.
+   *
+   * @returns {Promise<IDBDatabase>} Open handle database.
+   */
+  function communicationLogOpenDb() {
+    return new Promise((resolve, reject) => {
+      const request = indexedDB.open(COMMUNICATION_LOG_DB_NAME, 1);
+      request.onupgradeneeded = () => {
+        const db = request.result;
+        if (!db.objectStoreNames.contains(COMMUNICATION_LOG_DB_STORE)) {
+          db.createObjectStore(COMMUNICATION_LOG_DB_STORE);
+        }
+      };
+      request.onsuccess = () => resolve(request.result);
+      request.onerror = () => reject(request.error ?? new Error('Could not open communication-log handle database.'));
+    });
+  }
+
+  /**
+   * Loads the previously selected communication-log directory handle.
+   *
+   * @returns {Promise<Object|null>} Persisted directory handle, or null when none exists.
+   */
+  async function communicationLogLoadDirectoryHandle() {
+    const db = await communicationLogOpenDb();
+    try {
+      return await new Promise((resolve, reject) => {
+        const request = db.transaction(COMMUNICATION_LOG_DB_STORE, 'readonly')
+          .objectStore(COMMUNICATION_LOG_DB_STORE)
+          .get(COMMUNICATION_LOG_HANDLE_KEY);
+        request.onsuccess = () => resolve(request.result ?? null);
+        request.onerror = () => reject(request.error ?? new Error('Could not load communication-log directory handle.'));
+      });
+    } finally {
+      db.close();
+    }
+  }
+
+  /**
+   * Persists one authorized communication-log directory handle for later reloads.
+   *
+   * @param {Object} handle - FileSystemDirectoryHandle selected by the user.
+   * @returns {Promise<void>} Resolves after IndexedDB stores the handle.
+   */
+  async function communicationLogStoreDirectoryHandle(handle) {
+    const db = await communicationLogOpenDb();
+    try {
+      await new Promise((resolve, reject) => {
+        const request = db.transaction(COMMUNICATION_LOG_DB_STORE, 'readwrite')
+          .objectStore(COMMUNICATION_LOG_DB_STORE)
+          .put(handle, 'communication-directory');
+        request.onsuccess = () => resolve();
+        request.onerror = () => reject(request.error ?? new Error('Could not store communication-log directory handle.'));
+      });
+    } finally {
+      db.close();
+    }
+  }
+
+  /**
+   * Reads current read/write permission for one File System Access directory handle.
+   *
+   * @param {Object|null} handle - Candidate FileSystemDirectoryHandle.
+   * @returns {Promise<string>} Browser permission state.
+   */
+  async function communicationLogPermissionState(handle) {
+    if (!handle || typeof handle.queryPermission !== 'function') return 'denied';
+    return handle.queryPermission({ mode: 'readwrite' });
+  }
+
+  /**
+   * Returns the current conversation title, preferring a previously retained title during early reload startup.
+   *
+   * @returns {string|null} Sanitized conversation name, or null before a usable title is known.
+   */
+  function communicationLogConversationName() {
+    const conversationId = currentConversationId();
+    const storageKey = `${COMMUNICATION_LOG_TITLE_STORAGE_PREFIX}${conversationId ?? 'unknown'}`;
+    const current = sanitizeFileName(conversationTitle());
+    const currentUsable = !/^(?:ChatGPT|ChatGPT conversation)$/i.test(current);
+    if (currentUsable) {
+      try { localStorage.setItem(storageKey, current); } catch {}
+      return current;
+    }
+    try {
+      const stored = localStorage.getItem(storageKey);
+      return stored ? sanitizeFileName(stored) : null;
+    } catch {
+      return null;
+    }
+  }
+
+  /**
+   * Waits briefly for the conversation title needed by the required disk-log filename.
+   *
+   * @returns {Promise<string|null>} Sanitized title when available, otherwise null.
+   */
+  async function communicationLogWaitForConversationName() {
+    for (let attempt = 0; attempt < 50; attempt += 1) {
+      const name = communicationLogConversationName();
+      if (name) return name;
+      await new Promise(resolve => setTimeout(resolve, 100));
+    }
+    return null;
+  }
+
+  /**
+   * Commits queued communication-log state at a hard document-departure boundary.
+   *
+   * Browser lifecycle events start this operation on a best-effort basis because
+   * the browser does not promise to await arbitrary asynchronous unload work.
+   * DownloadConversation-initiated full-document navigation must await this same
+   * function before changing location.
+   *
+   * @param {string} reason - Lifecycle boundary identifying why the document is departing.
+   * @returns {Promise<boolean>} True when dirty writer bytes were checkpointed.
+   */
+  function communicationLogCheckpointForDocumentDeparture(reason) {
+    return communicationLogCheckpoint(reason);
+  }
+
+  /**
+   * Installs page/session lifecycle records after the disk recorder becomes writable.
+   *
+   * @returns {void} No value is returned.
+   */
+  function communicationLogInstallLifecycleObservers() {
+    if (communicationLogLifecycleInstalled) return;
+    communicationLogLifecycleInstalled = true;
+    communicationLogCheckpointTimer = setInterval(() => void communicationLogCheckpoint('periodic'), COMMUNICATION_LOG_CHECKPOINT_MS);
+    window.addEventListener('beforeunload', () => {
+      void communicationLogCheckpointForDocumentDeparture('beforeunload');
+    });
+    window.addEventListener('pagehide', event => {
+      void communicationLogRecord('communication_pagehide', {
+        persisted: event.persisted === true,
+        visibility_state: document.visibilityState
+      });
+      void communicationLogCheckpointForDocumentDeparture('pagehide');
+    });
+    document.addEventListener('visibilitychange', () => {
+      void communicationLogRecord('communication_visibility_change', {
+        visibility_state: document.visibilityState
+      });
+      if (document.visibilityState === 'hidden') {
+        void communicationLogCheckpoint('visibility-hidden');
+      }
+    });
+  }
+
+  /**
+   * Activates disk logging for one granted directory and the current conversation.
+   *
+   * @param {Object} handle - Granted FileSystemDirectoryHandle.
+   * @returns {Promise<boolean>} True when logging becomes ready.
+   */
+  async function communicationLogActivateDirectory(handle) {
+    const conversationName = await communicationLogWaitForConversationName();
+    if (!conversationName) {
+      communicationLogShowDirectoryPrompt('Conversation title is not available yet.');
+      return false;
+    }
+    communicationLogDirectoryHandle = handle;
+    communicationLogFileName = `DownloadConversation_${sanitizeFileName(conversationTitle())}.jsonl`;
+    if (/^DownloadConversation_(?:ChatGPT|ChatGPT conversation)\.jsonl$/i.test(communicationLogFileName)) {
+      communicationLogFileName = `DownloadConversation_${conversationName}.jsonl`;
+    }
+    await communicationLogRecoverSwapFiles();
+    communicationLogReady = true;
+    communicationLogDisarmDirectoryGesture();
+    document.getElementById('tm-communication-directory-required')?.remove();
+    communicationLogPromptShown = false;
+    communicationLogInstallLifecycleObservers();
+    const navigation = performance.getEntriesByType?.('navigation')?.[0] ?? null;
+    await communicationLogRecord('communication_session_start', {
+      script_version: VERSION,
+      core_version: CORE_VERSION,
+      conversation_id: currentConversationId(),
+      conversation_name: conversationName,
+      file_name: communicationLogFileName,
+      page_url: stockNetworkSafeUrl(location.href),
+      navigation_type: navigation?.type ?? null,
+      time_origin: performance.timeOrigin,
+      dropped_before_ready: communicationLogDroppedBeforeReady
+    });
+    communicationLogDroppedBeforeReady = 0;
+    return true;
+  }
+
+  /**
+   * Displays a user-gesture directory authorization prompt required by File System Access.
+   *
+   * @param {string} reason - Why directory authorization is required.
+   * @returns {void} No value is returned.
+   */
+  /**
+   * Removes the trusted-gesture listeners once directory authorization succeeds.
+   *
+   * @returns {void} No value is returned.
+   */
+  function communicationLogDisarmDirectoryGesture() {
+    if (!communicationLogDirectoryGestureArmed) return;
+    communicationLogDirectoryGestureArmed = false;
+    window.removeEventListener('click', communicationLogHandleDirectoryGesture, true);
+    window.removeEventListener('keydown', communicationLogHandleDirectoryGesture, true);
+  }
+
+  /**
+   * Uses the first trusted page interaction to launch the native directory chooser directly.
+   *
+   * The File System Access picker call must remain synchronous with this trusted event; no
+   * awaited work may occur before `showDirectoryPicker()` or Chromium will discard transient
+   * user activation.
+   *
+   * @param {Event} event - Trusted click or keydown reserved for directory authorization.
+   * @returns {void} No value is returned.
+   */
+  function communicationLogHandleDirectoryGesture(event) {
+    if (!communicationLogDirectoryGestureArmed || communicationLogDirectoryPickerOpening) return;
+    if (event.isTrusted !== true) return;
+
+    event.preventDefault();
+    event.stopImmediatePropagation();
+
+    const pickerWindow = typeof unsafeWindow !== 'undefined' ? unsafeWindow : window;
+    if (typeof pickerWindow.showDirectoryPicker !== 'function') {
+      communicationLogReportFailure(
+        'directory-authorization',
+        new Error('This browser does not expose showDirectoryPicker().')
+      );
+      return;
+    }
+
+    let pickerPromise;
+    try {
+      communicationLogDirectoryPickerOpening = true;
+      pickerPromise = pickerWindow.showDirectoryPicker({ mode: 'readwrite' });
+    } catch (error) {
+      communicationLogDirectoryPickerOpening = false;
+      communicationLogReportFailure('directory-authorization', error);
+      return;
+    }
+
+    Promise.resolve(pickerPromise)
+      .then(async handle => {
+        const permission = await communicationLogPermissionState(handle);
+        if (permission !== 'granted') {
+          throw new Error('The selected folder did not grant read/write permission.');
+        }
+        await communicationLogStoreDirectoryHandle(handle);
+        await communicationLogActivateDirectory(handle);
+      })
+      .catch(error => {
+        if (error?.name === 'AbortError') {
+          logDiagnostic('debug', 'communication-directory-picker-cancelled', {});
+        } else {
+          communicationLogReportFailure('directory-authorization', error);
+        }
+      })
+      .finally(() => {
+        communicationLogDirectoryPickerOpening = false;
+      });
+  }
+
+  /**
+   * Blocks page interaction until the next trusted click or key press can open the native chooser.
+   *
+   * @param {string} reason - Why directory authorization is required.
+   * @returns {void} No value is returned.
+   */
+  function communicationLogShowDirectoryPrompt(reason) {
+    logDiagnostic('warnings', 'communication-directory-required', { reason });
+    if (!communicationLogDirectoryGestureArmed) {
+      communicationLogDirectoryGestureArmed = true;
+      window.addEventListener('click', communicationLogHandleDirectoryGesture, { capture: true });
+      window.addEventListener('keydown', communicationLogHandleDirectoryGesture, { capture: true });
+    }
+    if (communicationLogPromptShown) return;
+    communicationLogPromptShown = true;
+
+    /**
+     * Mounts the blocking explanation after the document body exists.
+     *
+     * @returns {void} No value is returned.
+     */
+    const mount = () => {
+      if (!document.body) {
+        requestAnimationFrame(mount);
+        return;
+      }
+      if (document.getElementById('tm-communication-directory-required')) return;
+      const prompt = document.createElement('div');
+      prompt.id = 'tm-communication-directory-required';
+      prompt.tabIndex = -1;
+      prompt.style.cssText = 'position:fixed;inset:0;z-index:2147483647;display:grid;place-items:center;background:#000a;color:#fff;font:14px/1.5 system-ui,sans-serif;cursor:pointer';
+      const card = document.createElement('div');
+      card.style.cssText = 'max-width:520px;padding:18px;border:1px solid #888;border-radius:10px;background:#202123;box-shadow:0 6px 24px #000a';
+      card.textContent = `DownloadConversation needs a writable folder for the communication log. Click or press any key to open the native folder chooser. ${reason}`;
+      prompt.append(card);
+      document.body.append(prompt);
+      try { prompt.focus({ preventScroll: true }); } catch {}
+    };
+    mount();
+  }
+
+  /**
+   * Restores the persisted communication-log directory and starts disk logging when permission permits.
+   *
+   * @returns {Promise<boolean>} True when a saved writable directory was activated.
+   */
+  async function initializeCommunicationDiskRecorder() {
+    try {
+      const handle = await communicationLogLoadDirectoryHandle();
+      if (!handle) {
+        communicationLogShowDirectoryPrompt('No log folder has been authorized for this browser profile.');
+        return false;
+      }
+      const permission = await communicationLogPermissionState(handle);
+      if (permission !== 'granted') {
+        communicationLogShowDirectoryPrompt('The saved log folder is no longer authorized; choose it again.');
+        return false;
+      }
+      return communicationLogActivateDirectory(handle);
+    } catch (error) {
+      communicationLogReportFailure('startup', error);
+      communicationLogShowDirectoryPrompt('The saved log folder could not be restored.');
+      return false;
+    }
+  }
+
+  /**
+   * Redacts credential-bearing headers while retaining ordinary protocol/cache/routing metadata.
+   *
+   * @param {Object} headers - Headers-like or plain header collection.
+   * @returns {Object} Header map safe to persist to the communication log.
+   */
+  function communicationLogSafeHeaders(headers) {
+    const raw = rawHeadersToObject(headers);
+    const safe = {};
+    for (const [name, value] of Object.entries(raw).slice(0, 200)) {
+      if (/(?:^|[-_])(?:authorization|cookie|set-cookie|proxy-authorization|access-token|refresh-token|api-key|csrf|xsrf|session|jwt|secret)(?:$|[-_])/i.test(name)) {
+        safe[name] = '[redacted]';
+      } else {
+        safe[name] = boundedDiagnosticText(communicationLogRedactText(value), 4000);
+      }
+    }
+    return safe;
+  }
+
+  /**
+   * Finds the earliest sensitive-value prefix in uncommitted communication text.
+   *
+   * @param {string} text - Uncommitted text held by the streaming redactor.
+   * @returns {Object|null} Trigger descriptor, or null when no complete prefix is present.
+   */
+  function communicationLogFindSecretTrigger(text) {
+    const candidates = [];
+    const query = /[?&](?:sig|signature|access_token|refresh_token|token|key|secret|auth|authorization|session|jwt|api_key)=/i.exec(text);
+    if (query) candidates.push({ index: query.index, prefix: query[0], kind: 'query', terminator: null });
+    const bearer = /\bBearer\s+/i.exec(text);
+    if (bearer) candidates.push({ index: bearer.index, prefix: bearer[0], kind: 'bearer', terminator: null });
+    const quoted = /(?:\"|')?(?:access_token|refresh_token|authorization|cookie|session|jwt|api[_-]?key|secret)(?:\"|')?\s*:\s*(\"|')/i.exec(text);
+    if (quoted) candidates.push({ index: quoted.index, prefix: quoted[0], kind: 'quoted', terminator: quoted[1] });
+    if (!candidates.length) return null;
+    candidates.sort((left, right) => left.index - right.index || right.prefix.length - left.prefix.length);
+    return candidates[0];
+  }
+
+  /**
+   * Creates independent state for one request/response body redaction stream.
+   *
+   * @returns {Object} Mutable streaming-redaction state.
+   */
+  function communicationLogCreateRedactionState() {
+    return {
+      pending: '',
+      mode: null,
+      terminator: null,
+      escaped: false
+    };
+  }
+
+  /**
+   * Redacts sensitive values while preserving arbitrary input chunk boundaries.
+   *
+   * Possible secret prefixes are withheld until they can be classified. Once a secret
+   * prefix is recognized, every value character is suppressed until its protocol
+   * delimiter arrives; the secret therefore cannot leak merely because it is longer
+   * than an input or output chunk.
+   *
+   * @param {Object} state - State returned by `communicationLogCreateRedactionState`.
+   * @param {string} text - Next decoded textual body fragment.
+   * @param {boolean} flush - Whether no more source text will arrive.
+   * @returns {string} Safe text that can be committed immediately.
+   */
+  function communicationLogRedactStreamFeed(state, text, flush) {
+    state.pending += String(text ?? '');
+    let output = '';
+    for (;;) {
+      if (state.mode === 'quoted') {
+        let closeIndex = -1;
+        let escaped = state.escaped;
+        for (let index = 0; index < state.pending.length; index += 1) {
+          const character = state.pending[index];
+          if (escaped) {
+            escaped = false;
+            continue;
+          }
+          if (character === '\\') {
+            escaped = true;
+            continue;
+          }
+          if (character === state.terminator) {
+            closeIndex = index;
+            break;
+          }
+        }
+        if (closeIndex < 0) {
+          state.escaped = escaped;
+          state.pending = '';
+          if (flush) {
+            state.mode = null;
+            state.terminator = null;
+            state.escaped = false;
+          }
+          return output;
+        }
+        output += state.terminator;
+        state.pending = state.pending.slice(closeIndex + 1);
+        state.mode = null;
+        state.terminator = null;
+        state.escaped = false;
+        continue;
+      }
+
+      if (state.mode === 'query' || state.mode === 'bearer') {
+        const delimiter = state.mode === 'query'
+          ? /[&#\s\"'<>]/.exec(state.pending)
+          : /[^A-Za-z0-9._~+\/-=]/.exec(state.pending);
+        if (!delimiter) {
+          state.pending = '';
+          if (flush) state.mode = null;
+          return output;
+        }
+        output += delimiter[0];
+        state.pending = state.pending.slice(delimiter.index + delimiter[0].length);
+        state.mode = null;
+        continue;
+      }
+
+      const trigger = communicationLogFindSecretTrigger(state.pending);
+      if (trigger) {
+        output += state.pending.slice(0, trigger.index);
+        output += `${trigger.prefix}[redacted]`;
+        state.pending = state.pending.slice(trigger.index + trigger.prefix.length);
+        state.mode = trigger.kind;
+        state.terminator = trigger.terminator;
+        state.escaped = false;
+        continue;
+      }
+
+      if (flush) {
+        output += state.pending;
+        state.pending = '';
+        return output;
+      }
+
+      // Sensitive prefixes are short; retaining 128 trailing characters prevents a
+      // prefix split across source chunks from being committed before classification.
+      if (state.pending.length <= 128) return output;
+      const safeLength = state.pending.length - 128;
+      output += state.pending.slice(0, safeLength);
+      state.pending = state.pending.slice(safeLength);
+      return output;
+    }
+  }
+
+  /**
+   * Redacts common credential forms from one complete textual value.
+   *
+   * @param {string} value - Raw textual communication data.
+   * @returns {string} Redacted text suitable for disk persistence.
+   */
+  function communicationLogRedactText(value) {
+    const state = communicationLogCreateRedactionState();
+    return communicationLogRedactStreamFeed(state, String(value ?? ''), true);
+  }
+
+  /**
+   * Reports whether a content type represents textual communication worth persisting verbatim.
+   *
+   * @param {string} contentType - HTTP content type.
+   * @returns {boolean} True for text, JSON, SSE, JavaScript, XML, form, or component text.
+   */
+  function communicationLogIsTextContentType(contentType) {
+    return String(contentType ?? '').toLowerCase().startsWith('text/') ||
+      /(?:application\/json|event-stream|javascript|xml|x-www-form-urlencoded|x-component)/i.test(String(contentType ?? ''));
+  }
+
+  /**
+   * Reports whether the given URL/content type may persist a textual body.
+   *
+   * Cross-origin payloads remain metadata-only. Binary same-origin payloads also remain metadata-only.
+   *
+   * @param {string} url - Communication URL.
+   * @param {string} contentType - Declared content type.
+   * @returns {boolean} True when body text may be written to disk.
+   */
+  function communicationLogShouldCaptureBody(url, contentType) {
+    try {
+      const parsed = new URL(String(url ?? ''), location.href);
+      if (parsed.origin !== location.origin) return false;
+      const normalizedContentType = String(contentType ?? '').split(';', 1)[0].trim().toLowerCase();
+      if (communicationLogIsTextContentType(normalizedContentType)) return true;
+      if (normalizedContentType) return false;
+      return parsed.pathname.startsWith('/backend-api/');
+    } catch {
+      return false;
+    }
+  }
+
+  /**
+   * Compares bounded byte ranges without loading whole files into memory.
+   *
+   * @param {Blob} left - First file/blob.
+   * @param {Blob} right - Second file/blob.
+   * @param {number} leftOffset - First byte offset.
+   * @param {number} rightOffset - Second byte offset.
+   * @param {number} length - Number of bytes to compare.
+   * @returns {Promise<boolean>} True only when every compared byte matches.
+   */
+  async function communicationLogBlobsEqual(left, right, leftOffset, rightOffset, length) {
+    for (let offset = 0; offset < length; offset += COMMUNICATION_LOG_COMPARE_CHUNK_BYTES) {
+      const count = Math.min(COMMUNICATION_LOG_COMPARE_CHUNK_BYTES, length - offset);
+      const leftBytes = new Uint8Array(await left.slice(leftOffset + offset, leftOffset + offset + count).arrayBuffer());
+      const rightBytes = new Uint8Array(await right.slice(rightOffset + offset, rightOffset + offset + count).arrayBuffer());
+      if (leftBytes.length !== rightBytes.length) return false;
+      for (let index = 0; index < leftBytes.length; index += 1) {
+        if (leftBytes[index] !== rightBytes[index]) return false;
+      }
+    }
+    return true;
+  }
+
+  /**
+   * Reacquires the active log file from its parent directory and reads fresh on-disk state.
+   *
+   * @returns {Promise<Object>} Fresh file handle and File snapshot.
+   */
+  async function communicationLogRefreshedFileSnapshot() {
+    if (!communicationLogDirectoryHandle || !communicationLogFileName) {
+      throw new Error('Communication log directory/file is not ready.');
+    }
+    const handle = await communicationLogDirectoryHandle.getFileHandle(communicationLogFileName, { create: true });
+    const file = await handle.getFile();
+    return { handle, file };
+  }
+
+  /**
+   * Identifies Chromium's stale File System Access interface-state failure.
+   *
+   * @param {Object} error - Write failure.
+   * @returns {boolean} True only for the observed stale-state InvalidStateError class.
+   */
+  function communicationLogIsStaleFileStateError(error) {
+    return error?.name === 'InvalidStateError' || /state.*changed.*disk|cached.*interface object/i.test(String(error?.message ?? ''));
+  }
+
+  /**
+   * Appends bytes using fresh EOF state and verifies ambiguous stale-handle outcomes before retrying.
+   *
+   * This is the Issue-44 append invariant: reacquire from the directory, derive the append
+   * offset from the current file, open/seek/write/close, and never duplicate bytes when Chromium
+   * reports InvalidStateError after a write actually committed.
+   *
+   * @param {string|Blob} data - Bytes to append.
+   * @returns {Promise<number>} Byte offset at which the append committed.
+   */
+  async function communicationLogAppendData(data) {
+    const desired = data instanceof Blob ? data : new Blob([data]);
+    for (let attempt = 1; attempt <= COMMUNICATION_LOG_WRITE_RETRY_LIMIT; attempt += 1) {
+      const refreshed = await communicationLogRefreshedFileSnapshot();
+      const currentHandle = refreshed.handle;
+      const before = await currentHandle.getFile();
+      let writable = null;
+      try {
+        writable = await currentHandle.createWritable({ keepExistingData: true });
+        await writable.seek(before.size);
+        await writable.write(data);
+        await writable.close();
+        return before.size;
+      } catch (error) {
+        await abortWritableQuietly(writable);
+        if (!communicationLogIsStaleFileStateError(error) || attempt >= COMMUNICATION_LOG_WRITE_RETRY_LIMIT) throw error;
+        const afterSnapshot = await communicationLogRefreshedFileSnapshot();
+        const after = afterSnapshot.file;
+        if (after.size >= before.size + desired.size &&
+            await communicationLogBlobsEqual(after, desired, before.size, 0, desired.size)) {
+          return before.size;
+        }
+        const originalPrefixStillMatches = after.size >= before.size &&
+          await communicationLogBlobsEqual(after, before, 0, 0, before.size);
+        if (after.size !== before.size || !originalPrefixStillMatches) {
+          throw new Error(`'${communicationLogFileName}' changed on disk while the recorder was appending; the append was not retried.`);
+        }
+        await new Promise(resolve => setTimeout(resolve, 50 * attempt));
+      }
+    }
+    throw new Error(`Appending to '${communicationLogFileName}' exhausted the filesystem retry limit.`);
+  }
+
+  /**
+   * Recovers complete compatible JSONL bytes from Chromium communication-log swap files.
+   *
+   * Recovery treats the committed real file as authoritative, ignores only an incomplete
+   * final JSONL line in each candidate, and never merges a divergent candidate.
+   *
+   * @returns {Promise<void>} Resolves after compatible recovery and swap cleanup complete.
+   */
+  async function communicationLogRecoverSwapFiles() {
+    if (!communicationLogDirectoryHandle || !communicationLogFileName) {
+      throw new Error('Communication log directory/file is not ready for swap recovery.');
+    }
+    const baselineSnapshot = await communicationLogRefreshedFileSnapshot();
+    const baseline = baselineSnapshot.file;
+    // Escape the literal log filename before recognizing Chromium sibling swap names.
+    const escapedLogName = communicationLogFileName.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+    const swapPattern = new RegExp(`^${escapedLogName}(?:\\.\\d+)?\\.crswap$`);
+    // Retain candidate file snapshots so selection and cleanup use one observed swap state.
+    const candidates = [];
+
+    for await (const [name, entry] of communicationLogDirectoryHandle.entries()) {
+      if (entry?.kind !== 'file' || !swapPattern.test(name)) continue;
+      try {
+        const file = await entry.getFile();
+        let completeLength = file.size;
+        if (file.size > 0) {
+          const finalByte = new Uint8Array(await file.slice(file.size - 1, file.size).arrayBuffer())[0];
+          if (finalByte !== 10) {
+            completeLength = 0;
+            for (let end = file.size; end > 0 && completeLength === 0;) {
+              const start = Math.max(0, end - COMMUNICATION_LOG_COMPARE_CHUNK_BYTES);
+              const bytes = new Uint8Array(await file.slice(start, end).arrayBuffer());
+              const newlineIndex = bytes.lastIndexOf(10);
+              if (newlineIndex >= 0) completeLength = start + newlineIndex + 1;
+              else end = start;
+            }
+          }
+        }
+        const prefixLength = Math.min(baseline.size, completeLength);
+        const compatible = prefixLength === 0 ||
+          await communicationLogBlobsEqual(baseline, file, 0, 0, prefixLength);
+        if (!compatible) {
+          logDiagnostic('warnings', 'communication-log-swap-incompatible', {
+            file_name: name,
+            committed_size: baseline.size,
+            recoverable_size: completeLength,
+            swap_size: file.size
+          });
+          continue;
+        }
+        candidates.push({
+          name,
+          file,
+          complete_length: completeLength,
+          last_modified: Number(file.lastModified) || 0
+        });
+      } catch (error) {
+        communicationLogReportFailure(`swap-inspect:${name}`, error);
+      }
+    }
+
+    const extensions = candidates
+      .filter(candidate => candidate.complete_length > baseline.size)
+      .sort((left, right) =>
+        right.complete_length - left.complete_length || right.last_modified - left.last_modified);
+    const selected = extensions[0] ?? null;
+    if (selected) {
+      const suffix = selected.file.slice(baseline.size, selected.complete_length);
+      await communicationLogAppendData(suffix);
+      logDiagnostic('debug', 'communication-log-swap-recovered', {
+        file_name: selected.name,
+        committed_size: baseline.size,
+        recovered_size: selected.complete_length,
+        appended_bytes: selected.complete_length - baseline.size
+      });
+    }
+
+    const recovered = (await communicationLogRefreshedFileSnapshot()).file;
+    for (const candidate of candidates) {
+      try {
+        const removable = candidate.complete_length <= recovered.size &&
+          (candidate.complete_length === 0 || await communicationLogBlobsEqual(
+            recovered,
+            candidate.file,
+            0,
+            0,
+            candidate.complete_length
+          ));
+        if (!removable) {
+          logDiagnostic('warnings', 'communication-log-swap-incompatible', {
+            file_name: candidate.name,
+            committed_size: recovered.size,
+            recoverable_size: candidate.complete_length,
+            reason: 'candidate diverges from recovered committed log'
+          });
+          continue;
+        }
+        await communicationLogDirectoryHandle.removeEntry(candidate.name);
+      } catch (error) {
+        communicationLogReportFailure(`swap-cleanup:${candidate.name}`, error);
+      }
+    }
+  }
+
+  /**
+   * Opens the normal long-lived communication writer at a freshly observed committed EOF.
+   *
+   * @returns {Promise<Object>} Active FileSystemWritableFileStream.
+   */
+  async function communicationLogOpenWriter() {
+    if (communicationLogWritable) return communicationLogWritable;
+    const refreshed = await communicationLogRefreshedFileSnapshot();
+    let writable = null;
+    try {
+      writable = await refreshed.handle.createWritable({ keepExistingData: true });
+      await writable.seek(refreshed.file.size);
+      communicationLogWritable = writable;
+      communicationLogWriterDirty = false;
+      return communicationLogWritable;
+    } catch (error) {
+      await abortWritableQuietly(writable);
+      throw error;
+    }
+  }
+
+  /**
+   * Commits pending long-lived writer bytes and leaves the next append to reopen lazily.
+   *
+   * @param {string} reason - Checkpoint trigger used for failure diagnostics.
+   * @returns {Promise<boolean>} True when dirty bytes were checkpointed.
+   */
+  function communicationLogCheckpoint(reason) {
+    const queued = communicationLogEnqueue(`checkpoint:${reason}`, async () => {
+      if (!communicationLogWritable || !communicationLogWriterDirty) return false;
+      try {
+        await communicationLogWritable.close();
+        communicationLogWritable = null;
+        communicationLogWriterDirty = false;
+        return true;
+      } catch (error) {
+        communicationLogWritable = null;
+        if (!communicationLogIsStaleFileStateError(error)) {
+          communicationLogReady = false;
+          throw error;
+        }
+        try {
+          await communicationLogRecoverSwapFiles();
+          communicationLogWriterDirty = false;
+          return true;
+        } catch (recoveryError) {
+          communicationLogReady = false;
+          throw recoveryError;
+        }
+      }
+    }, false);
+    return queued.chain;
+  }
+
+  /**
+   * Validates an exact communication-log filename without silently rewriting it.
+   *
+   * @param {string} fileName - Candidate basename in the authorized directory.
+   * @returns {string} The unchanged validated basename.
+   */
+  function communicationLogValidateFileName(fileName) {
+    if (typeof fileName !== 'string'
+        || fileName.length === 0
+        || fileName.trim() !== fileName
+        || fileName === '.'
+        || fileName === '..'
+        || /[<>:"/\\|?*\u0000-\u001F]/.test(fileName)
+        || /[. ]$/.test(fileName)) {
+      throw new Error('Invalid communication log filename.');
+    }
+    return fileName;
+  }
+
+  /**
+   * Builds the deterministic duplicate filename for one positive suffix number.
+   *
+   * @param {string} fileName - Original communication-log filename.
+   * @param {number} number - Positive duplicate suffix number.
+   * @returns {string} Filename with `(N)` inserted immediately before the extension.
+   */
+  function communicationLogDuplicateFileName(fileName, number) {
+    if (!Number.isInteger(number) || number < 1) {
+      throw new Error('Communication log duplicate number must be a positive integer.');
+    }
+    const extensionIndex = fileName.lastIndexOf('.');
+    const hasExtension = extensionIndex > 0;
+    const stem = hasExtension ? fileName.slice(0, extensionIndex) : fileName;
+    const extension = hasExtension ? fileName.slice(extensionIndex) : '';
+    return `${stem}(${number})${extension}`;
+  }
+
+  /**
+   * Checks whether a sibling file currently exists in the authorized directory.
+   *
+   * @param {string} fileName - Exact sibling filename.
+   * @returns {Promise<boolean>} True when the sibling exists.
+   */
+  async function communicationLogFileExists(fileName) {
+    if (!communicationLogDirectoryHandle) {
+      throw new Error('Communication log directory is not ready.');
+    }
+    try {
+      await communicationLogDirectoryHandle.getFileHandle(fileName, { create: false });
+      return true;
+    } catch (error) {
+      if (error?.name === 'NotFoundError') return false;
+      throw error;
+    }
+  }
+
+  /**
+   * Commits and releases the active long-lived writer before a file mutation.
+   *
+   * @returns {Promise<void>} Resolves after any active writer is closed.
+   */
+  async function communicationLogCloseActiveWriter() {
+    if (!communicationLogWritable) return;
+    try {
+      await communicationLogWritable.close();
+    } finally {
+      communicationLogWritable = null;
+      communicationLogWriterDirty = false;
+    }
+  }
+
+  /**
+   * Serializes one communication-log operation and recovers the shared write chain after failure.
+   *
+   * @param {string} stage - Diagnostic stage reported when the operation rejects.
+   * @param {Function} task - Deferred filesystem/recording operation executed behind prior work.
+   * @param {unknown} failureValue - Value used to recover the shared chain after failure.
+   * @returns {Object} Original operation promise plus the recovered shared-chain promise.
+   */
+  function communicationLogEnqueue(stage, task, failureValue = undefined) {
+    const operation = communicationLogWriteChain.then(task);
+    communicationLogWriteChain = operation.catch(communicationError => {
+      communicationLogReportFailure(stage, communicationError);
+      return failureValue;
+    });
+    return { operation, chain: communicationLogWriteChain };
+  }
+
+  /**
+   * Copies one committed source snapshot to a new sibling and verifies exact bytes.
+   *
+   * @param {Blob} sourceFile - Committed source file snapshot.
+   * @param {string} destinationName - New sibling filename that must not exist.
+   * @returns {Promise<void>} Resolves after the destination is committed and verified.
+   */
+  async function communicationLogCopySnapshot(sourceFile, destinationName) {
+    if (!communicationLogDirectoryHandle) {
+      throw new Error('Communication log directory is not ready.');
+    }
+    if (await communicationLogFileExists(destinationName)) {
+      throw new Error(`Communication log file already exists: ${destinationName}`);
+    }
+
+    let destinationCreated = false;
+    let writable = null;
+    try {
+      const destinationHandle = await communicationLogDirectoryHandle.getFileHandle(
+        destinationName,
+        { create: true }
+      );
+      destinationCreated = true;
+      writable = await destinationHandle.createWritable();
+      await writable.write(sourceFile);
+      await writable.close();
+      writable = null;
+
+      const copiedFile = await destinationHandle.getFile();
+      if (copiedFile.size !== sourceFile.size
+          || !(await communicationLogBlobsEqual(sourceFile, copiedFile))) {
+        throw new Error(`Communication log copy verification failed: ${destinationName}`);
+      }
+    } catch (error) {
+      await abortWritableQuietly(writable);
+      if (destinationCreated) {
+        try { await communicationLogDirectoryHandle.removeEntry(destinationName); } catch {}
+      }
+      throw error;
+    }
+  }
+
+  /**
+   * Renames the active communication log by verified copy-then-delete.
+   *
+   * The operation is serialized behind pending communication writes. The original
+   * is deleted only after the new sibling is byte-for-byte verified, and the active
+   * filename is switched only after that delete succeeds.
+   *
+   * @param {string} newFileName - Exact new basename in the authorized directory.
+   * @returns {Promise<string>} The new active filename.
+   */
+  function communicationLogRename(newFileName) {
+    const queued = communicationLogEnqueue('rename', async () => {
+      const validatedName = communicationLogValidateFileName(newFileName);
+      if (!communicationLogReady || !communicationLogDirectoryHandle || !communicationLogFileName) {
+        throw new Error('Communication log directory/file is not ready.');
+      }
+      if (validatedName === communicationLogFileName) return communicationLogFileName;
+      if (await communicationLogFileExists(validatedName)) {
+        throw new Error(`Communication log file already exists: ${validatedName}`);
+      }
+
+      await communicationLogCloseActiveWriter();
+      const sourceName = communicationLogFileName;
+      const sourceSnapshot = await communicationLogRefreshedFileSnapshot();
+      await communicationLogCopySnapshot(sourceSnapshot.file, validatedName);
+
+      try {
+        await communicationLogDirectoryHandle.removeEntry(sourceName);
+      } catch (error) {
+        try { await communicationLogDirectoryHandle.removeEntry(validatedName); } catch {}
+        throw error;
+      }
+
+      communicationLogFileName = validatedName;
+      return validatedName;
+    });
+    return queued.operation;
+  }
+
+  /**
+   * Creates a committed point-in-time duplicate of the active communication log.
+   *
+   * The lowest unused positive `(N)` suffix is inserted immediately before the
+   * extension with no intervening space. The active filename never changes.
+   *
+   * @returns {Promise<string>} The created duplicate filename.
+   */
+  function communicationLogDuplicate() {
+    const queued = communicationLogEnqueue('duplicate', async () => {
+      if (!communicationLogReady || !communicationLogDirectoryHandle || !communicationLogFileName) {
+        throw new Error('Communication log directory/file is not ready.');
+      }
+
+      await communicationLogCloseActiveWriter();
+      const sourceSnapshot = await communicationLogRefreshedFileSnapshot();
+      let duplicateNumber = 1;
+      let duplicateName = communicationLogDuplicateFileName(
+        communicationLogFileName,
+        duplicateNumber
+      );
+      while (await communicationLogFileExists(duplicateName)) {
+        duplicateNumber += 1;
+        duplicateName = communicationLogDuplicateFileName(
+          communicationLogFileName,
+          duplicateNumber
+        );
+      }
+
+      await communicationLogCopySnapshot(sourceSnapshot.file, duplicateName);
+      return duplicateName;
+    });
+    return queued.operation;
+  }
+
+  /**
+   * Truncates the active communication log to a verified zero-byte committed file.
+   *
+   * The reset is serialized with normal communication writes. The authorized
+   * directory and active filename remain unchanged, and the next record lazily
+   * reopens the normal long-lived writer at the new EOF.
+   *
+   * @returns {Promise<void>} Resolves after the empty file is committed and verified.
+   */
+  function communicationLogReset() {
+    const queued = communicationLogEnqueue('reset', async () => {
+      await communicationLogCloseActiveWriter();
+      const refreshed = await communicationLogRefreshedFileSnapshot();
+      let writable = null;
+      try {
+        writable = await refreshed.handle.createWritable({ keepExistingData: true });
+        await writable.truncate(0);
+        await writable.close();
+        writable = null;
+        communicationLogWriterDirty = false;
+        const verified = await communicationLogRefreshedFileSnapshot();
+        if (verified.file.size !== 0) {
+          throw new Error(`Communication log reset verification failed: expected 0 bytes, found ${verified.file.size}.`);
+        }
+      } catch (error) {
+        await abortWritableQuietly(writable);
+        throw error;
+      }
+    });
+    return queued.operation;
+  }
+
+  /**
+   * Serializes one JSONL append through the active long-lived communication writer.
+   *
+   * @param {string} line - Complete newline-terminated JSONL record.
+   * @returns {Promise<void>} Resolves after the bytes are accepted by the active writer.
+   */
+  function communicationLogAppendLine(line) {
+    const queued = communicationLogEnqueue('append', async () => {
+      await communicationLogOpenWriter();
+      await communicationLogWritable.write(line);
+      communicationLogWriterDirty = true;
+    });
+    return queued.operation;
+  }
+
+  /**
+   * Reports disk-recorder failures through existing diagnostics without throwing into page networking.
+   *
+   * @param {string} stage - Recorder stage that failed.
+   * @param {Object} error - Failure value.
+   * @returns {void} No value is returned.
+   */
+  function communicationLogReportFailure(stage, error) {
+    logDiagnostic('warnings', 'communication-log-write-failure', {
+      stage,
+      file_name: communicationLogFileName,
+      message: boundedDiagnosticText(errorMessage(error), 2000)
+    });
+  }
+
+  /**
+   * Writes one structured communication event to the active append-only JSONL file.
+   *
+   * @param {string} type - Stable record type.
+   * @param {Object} data - Event-specific JSON-compatible fields.
+   * @returns {Promise<boolean>} True when the record committed to disk.
+   */
+  async function communicationLogRecord(type, data = {}) {
+    if (!communicationLogReady) {
+      communicationLogDroppedBeforeReady += 1;
+      return false;
+    }
+    const record = {
+      timestamp: new Date().toISOString(),
+      monotonic_ms: Math.round(performance.now() * 1000) / 1000,
+      time_origin: performance.timeOrigin,
+      session_id: communicationLogSessionId,
+      sequence: ++communicationLogSequence,
+      type,
+      ...data
+    };
+    await communicationLogAppendLine(`${JSON.stringify(record)}\n`);
+    return true;
+  }
+
+  /**
+   * Waits briefly for asynchronous IndexedDB handle restoration used by document-start interception.
+   *
+   * @returns {Promise<boolean>} True when the disk recorder becomes ready within the bounded wait.
+   */
+  async function communicationLogAwaitReady() {
+    if (communicationLogReady) return true;
+    if (!communicationLogInitializationPromise) return false;
+    await Promise.race([
+      communicationLogInitializationPromise.catch(() => false),
+      new Promise(resolve => setTimeout(resolve, COMMUNICATION_LOG_READY_WAIT_MS))
+    ]);
+    return communicationLogReady;
+  }
+
+  /**
+   * Waits for recorder readiness and records one intentional pre-ready drop when unavailable.
+   *
+   * @param {Object|null} body - Optional cloned body to cancel when the recorder remains unavailable.
+   * @returns {Promise<boolean>} True when recording may continue; otherwise false after drop cleanup.
+   */
+  async function communicationLogAwaitReadyOrDrop(body = null) {
+    if (await communicationLogAwaitReady()) return true;
+    communicationLogDroppedBeforeReady += 1;
+    await cancelReadableBodyQuietly(body);
+    return false;
+  }
+
+  /**
+   * Persists one textual body stream in bounded JSONL chunks without accumulating the whole body.
+   *
+   * @param {ReadableStream|null} body - Cloned Request/Response body stream.
+   * @param {string} recordType - JSONL chunk record type.
+   * @param {Object} context - Correlation metadata repeated on each chunk.
+   * @returns {Promise<Object>} Persisted byte/chunk counts, plus incomplete-stream metadata when reading aborts.
+   */
+  async function communicationLogStreamBody(body, recordType, context) {
+    if (!body) return { byte_count: 0, chunk_count: 0 };
+    const reader = body.getReader();
+    const decoder = new TextDecoder();
+    const redactionState = communicationLogCreateRedactionState();
+    let safePending = '';
+    let byteCount = 0;
+    let chunkCount = 0;
+    // Terminal cloned-body read error; null means the reader reached clean EOF.
+    let streamErrorMessage = null;
+    try {
+      for (;;) {
+        let result = null;
+        try {
+          result = await reader.read();
+        } catch (error) {
+          streamErrorMessage = errorMessage(error);
+          break;
+        }
+        if (result.done) break;
+        if (!result.value?.byteLength) continue;
+        byteCount += result.value.byteLength;
+        safePending += communicationLogRedactStreamFeed(
+          redactionState,
+          decoder.decode(result.value, { stream: true }),
+          false
+        );
+        while (safePending.length >= COMMUNICATION_LOG_BODY_CHUNK_CHARS) {
+          const chunk = safePending.slice(0, COMMUNICATION_LOG_BODY_CHUNK_CHARS);
+          safePending = safePending.slice(COMMUNICATION_LOG_BODY_CHUNK_CHARS);
+          chunkCount += 1;
+          await communicationLogRecord(recordType, {
+            ...context,
+            chunk_ordinal: chunkCount,
+            data: chunk
+          });
+        }
+      }
+      safePending += communicationLogRedactStreamFeed(redactionState, decoder.decode(), true);
+      while (safePending.length >= COMMUNICATION_LOG_BODY_CHUNK_CHARS) {
+        const chunk = safePending.slice(0, COMMUNICATION_LOG_BODY_CHUNK_CHARS);
+        safePending = safePending.slice(COMMUNICATION_LOG_BODY_CHUNK_CHARS);
+        chunkCount += 1;
+        await communicationLogRecord(recordType, {
+          ...context,
+          chunk_ordinal: chunkCount,
+          data: chunk
+        });
+      }
+      if (safePending) {
+        chunkCount += 1;
+        await communicationLogRecord(recordType, {
+          ...context,
+          chunk_ordinal: chunkCount,
+          data: safePending
+        });
+      }
+      const summary = { byte_count: byteCount, chunk_count: chunkCount };
+      if (streamErrorMessage !== null) {
+        summary.body_incomplete = true;
+        summary.error_message = streamErrorMessage;
+      }
+      return summary;
+    } finally {
+      releaseReaderLockQuietly(reader);
+    }
+  }
+
+  /**
+   * Persists one already-materialized textual body in bounded chunks.
+   *
+   * @param {string} text - Raw body text already held by XHR/WebSocket/page code.
+   * @param {string} recordType - JSONL chunk record type.
+   * @param {Object} context - Correlation metadata repeated on each chunk.
+   * @returns {Promise<Object>} Persisted character/chunk counts.
+   */
+  async function communicationLogTextBody(text, recordType, context) {
+    const value = String(text ?? '');
+    const redactionState = communicationLogCreateRedactionState();
+    let safePending = '';
+    let chunkCount = 0;
+    for (let offset = 0; offset < value.length; offset += COMMUNICATION_LOG_BODY_CHUNK_CHARS) {
+      safePending += communicationLogRedactStreamFeed(
+        redactionState,
+        value.slice(offset, offset + COMMUNICATION_LOG_BODY_CHUNK_CHARS),
+        false
+      );
+      while (safePending.length >= COMMUNICATION_LOG_BODY_CHUNK_CHARS) {
+        const chunk = safePending.slice(0, COMMUNICATION_LOG_BODY_CHUNK_CHARS);
+        safePending = safePending.slice(COMMUNICATION_LOG_BODY_CHUNK_CHARS);
+        chunkCount += 1;
+        await communicationLogRecord(recordType, {
+          ...context,
+          chunk_ordinal: chunkCount,
+          data: chunk
+        });
+      }
+    }
+    safePending += communicationLogRedactStreamFeed(redactionState, '', true);
+    while (safePending.length >= COMMUNICATION_LOG_BODY_CHUNK_CHARS) {
+      const chunk = safePending.slice(0, COMMUNICATION_LOG_BODY_CHUNK_CHARS);
+      safePending = safePending.slice(COMMUNICATION_LOG_BODY_CHUNK_CHARS);
+      chunkCount += 1;
+      await communicationLogRecord(recordType, {
+        ...context,
+        chunk_ordinal: chunkCount,
+        data: chunk
+      });
+    }
+    if (safePending) {
+      chunkCount += 1;
+      await communicationLogRecord(recordType, {
+        ...context,
+        chunk_ordinal: chunkCount,
+        data: safePending
+      });
+    }
+    return { character_count: value.length, chunk_count: chunkCount };
+  }
+
+  /**
+   * Captures one stock fetch Request clone and its textual body without consuming the page Request.
+   *
+   * @param {Request|null} request - Page Request object.
+   * @param {Object} trace - Stock-network correlation state.
+   * @returns {Promise<void>} Resolves after request data is persisted or deliberately omitted.
+   */
+  async function communicationLogFetchRequest(request, trace) {
+    const cloned = cloneSafely(request);
+    if (!(await communicationLogAwaitReadyOrDrop(cloned?.body ?? null))) return;
+    const contentType = request?.headers?.get?.('content-type') ?? '';
+    await communicationLogRecord('communication_fetch_request', {
+      origin: trace?.origin ?? 'stock-chatgpt',
+      network_sequence: trace?.sequence ?? null,
+      method: String(request?.method ?? trace?.method ?? 'GET').toUpperCase(),
+      url: stockNetworkSafeUrl(request?.url ?? trace?.url ?? ''),
+      cache_mode: request?.cache ?? null,
+      request_mode: request?.mode ?? null,
+      credentials_mode: request?.credentials ?? null,
+      destination: request?.destination ?? null,
+      redirect_mode: request?.redirect ?? null,
+      content_type: contentType,
+      headers: communicationLogSafeHeaders(request?.headers)
+    });
+    if (cloned?.body && communicationLogShouldCaptureBody(request?.url ?? trace?.url ?? '', contentType)) {
+      const summary = await communicationLogStreamBody(cloned.body, 'communication_request_chunk', {
+        transport: 'fetch',
+        network_sequence: trace?.sequence ?? null
+      });
+      await communicationLogRecord('communication_fetch_request_body_end', {
+        network_sequence: trace?.sequence ?? null,
+        ...summary
+      });
+    } else if (cloned?.body) {
+      await communicationLogRecord('communication_fetch_request_body_end', {
+        network_sequence: trace?.sequence ?? null,
+        binary_body_omitted: true,
+        body_omitted: 'binary'
+      });
+      await cancelReadableBodyQuietly(cloned.body);
+    }
+  }
+
+  /**
+   * Captures one stock fetch Response clone, including full textual API/SSE content in bounded chunks.
+   *
+   * @param {Response} response - Original page response; only a clone is read.
+   * @param {Object} trace - Stock-network correlation state.
+   * @returns {Promise<void>} Resolves after response data is persisted or deliberately omitted.
+   */
+  async function communicationLogFetchResponse(response, trace) {
+    const cloned = cloneSafely(response);
+    if (!(await communicationLogAwaitReadyOrDrop(cloned?.body ?? null))) return;
+    const contentType = response?.headers?.get?.('content-type') ?? '';
+    const responseUrl = response?.url ?? trace?.url ?? '';
+    await communicationLogRecord('communication_fetch_response', {
+      origin: trace?.origin ?? 'stock-chatgpt',
+      network_sequence: trace?.sequence ?? null,
+      method: trace?.method ?? null,
+      request_url: trace?.url ?? null,
+      response_url: stockNetworkSafeUrl(responseUrl),
+      status: response?.status ?? null,
+      ok: response?.ok === true,
+      redirected: response?.redirected === true,
+      response_type: response?.type ?? null,
+      duration_ms: trace?.started_at == null ? null : Math.round(performance.now() - trace.started_at),
+      content_type: contentType,
+      headers: communicationLogSafeHeaders(response?.headers)
+    });
+    if (cloned?.body && communicationLogShouldCaptureBody(responseUrl, contentType)) {
+      const summary = await communicationLogStreamBody(cloned.body, 'communication_response_chunk', {
+        transport: 'fetch',
+        network_sequence: trace?.sequence ?? null
+      });
+      await communicationLogRecord('communication_fetch_response_body_end', {
+        network_sequence: trace?.sequence ?? null,
+        ...summary
+      });
+      if (summary.body_incomplete) {
+        logDiagnostic('warnings', 'communication-log-response-body-incomplete', {
+          network_sequence: trace?.sequence ?? null,
+          response_url: stockNetworkSafeUrl(responseUrl),
+          byte_count: summary.byte_count,
+          chunk_count: summary.chunk_count,
+          message: summary.error_message
+        });
+      }
+    } else if (cloned?.body) {
+      await communicationLogRecord('communication_fetch_response_body_end', {
+        network_sequence: trace?.sequence ?? null,
+        binary_body_omitted: true,
+        body_omitted: 'binary'
+      });
+      await cancelReadableBodyQuietly(cloned.body);
+    }
+    try {
+      if (new URL(responseUrl, location.href).pathname === '/backend-api/f/conversation') {
+        await communicationLogCheckpoint('generation-response-complete');
+      }
+    } catch {}
+  }
+
+  /**
+   * Captures one XHR request and any directly available textual request body.
+   *
+   * @param {Object} info - Captured XHR method/URL/header metadata.
+   * @param {Object|null} body - XHR send() body.
+   * @param {Object} trace - Stock-network correlation state.
+   * @returns {Promise<void>} Resolves after request data is persisted.
+   */
+  async function communicationLogXhrRequest(info, body, trace) {
+    if (!(await communicationLogAwaitReadyOrDrop())) return;
+    const contentType = info?.headers?.['content-type'] ?? '';
+    await communicationLogRecord('communication_xhr_request', {
+      network_sequence: trace?.sequence ?? null,
+      method: String(info?.method ?? 'GET').toUpperCase(),
+      url: stockNetworkSafeUrl(info?.url ?? ''),
+      content_type: contentType,
+      headers: communicationLogSafeHeaders(info?.headers)
+    });
+    if (typeof body === 'string' || body instanceof URLSearchParams) {
+      await communicationLogTextBody(String(body), 'communication_request_chunk', {
+        transport: 'xmlhttprequest',
+        network_sequence: trace?.sequence ?? null
+      });
+    } else if (body != null) {
+      await communicationLogRecord('communication_xhr_request_body_end', {
+        network_sequence: trace?.sequence ?? null,
+        binary_body_omitted: true,
+        body_omitted: 'binary'
+      });
+    }
+  }
+
+  /**
+   * Captures one completed XHR response without changing its responseType or page-visible data.
+   *
+   * @param {XMLHttpRequest} xhr - Completed page XHR instance.
+   * @param {Object} trace - Stock-network correlation state.
+   * @returns {Promise<void>} Resolves after response data is persisted.
+   */
+  async function communicationLogXhrResponse(xhr, trace) {
+    if (!(await communicationLogAwaitReadyOrDrop())) return;
+    const responseHeaders = {};
+    try {
+      for (const line of String(xhr?.getAllResponseHeaders?.() ?? '').split(/\r?\n/)) {
+        const split = line.indexOf(':');
+        if (split <= 0) continue;
+        responseHeaders[line.slice(0, split).trim().toLowerCase()] = line.slice(split + 1).trim();
+      }
+    } catch {}
+    const contentType = responseHeaders['content-type'] ?? '';
+    const responseUrl = xhr?.responseURL ?? trace?.url ?? '';
+    await communicationLogRecord('communication_xhr_response', {
+      network_sequence: trace?.sequence ?? null,
+      method: trace?.method ?? null,
+      request_url: trace?.url ?? null,
+      response_url: stockNetworkSafeUrl(responseUrl),
+      status: Number.isFinite(xhr?.status) ? xhr.status : null,
+      response_type: xhr?.responseType || 'text',
+      duration_ms: trace?.started_at == null ? null : Math.round(performance.now() - trace.started_at),
+      content_type: contentType,
+      headers: communicationLogSafeHeaders(responseHeaders)
+    });
+    if (!communicationLogShouldCaptureBody(responseUrl, contentType)) {
+      await communicationLogRecord('communication_xhr_response_body_end', {
+        network_sequence: trace?.sequence ?? null,
+        binary_body_omitted: true,
+        body_omitted: 'binary'
+      });
+      return;
+    }
+    let text = null;
+    try {
+      if (!xhr.responseType || xhr.responseType === 'text') text = xhr.responseText;
+      else if (xhr.responseType === 'json') text = JSON.stringify(xhr.response);
+    } catch {}
+    if (typeof text === 'string') {
+      const summary = await communicationLogTextBody(text, 'communication_response_chunk', {
+        transport: 'xmlhttprequest',
+        network_sequence: trace?.sequence ?? null
+      });
+      await communicationLogRecord('communication_xhr_response_body_end', {
+        network_sequence: trace?.sequence ?? null,
+        ...summary
+      });
+    } else {
+      await communicationLogRecord('communication_xhr_response_body_end', {
+        network_sequence: trace?.sequence ?? null,
+        binary_body_omitted: true,
+        body_omitted: 'binary'
+      });
+    }
+  }
+
+  /**
+   * Persists one outgoing WebSocket frame while leaving socket.send behavior unchanged.
+   *
+   * @param {string} url - WebSocket URL.
+   * @param {Object} data - Frame data supplied to send().
+   * @returns {Promise<void>} Resolves after frame metadata/content is persisted.
+   */
+  async function communicationLogWebSocketSend(url, data) {
+    if (!(await communicationLogAwaitReadyOrDrop())) return;
+    await communicationLogRecord('communication_websocket_send', {
+      url: stockNetworkSafeUrl(url),
+      data_type: typeof data === 'string' ? 'text' : Object.prototype.toString.call(data)
+    });
+    if (typeof data === 'string') {
+      await communicationLogTextBody(data, 'communication_request_chunk', { transport: 'websocket' });
+    } else {
+      await communicationLogRecord('communication_websocket_send_body_end', {
+        binary_body_omitted: true,
+        body_omitted: 'binary'
+      });
+    }
+  }
+
+  /**
+   * Persists one incoming WebSocket frame while the existing streamed-tail consumer sees the original data.
+   *
+   * @param {string} url - WebSocket URL.
+   * @param {Object} data - Incoming MessageEvent data.
+   * @returns {Promise<void>} Resolves after frame metadata/content is persisted.
+   */
+  async function communicationLogWebSocketMessage(url, data) {
+    if (!(await communicationLogAwaitReadyOrDrop())) return;
+    await communicationLogRecord('communication_websocket_message', {
+      url: stockNetworkSafeUrl(url),
+      data_type: typeof data === 'string' ? 'text' : Object.prototype.toString.call(data)
+    });
+    if (typeof data === 'string') {
+      await communicationLogTextBody(data, 'communication_response_chunk', { transport: 'websocket' });
+    } else {
+      await communicationLogRecord('communication_websocket_message_body_end', {
+        binary_body_omitted: true,
+        body_omitted: 'binary'
+      });
+    }
+  }
+
+  /**
+   * Persists transitions of the newest visible Assistant placeholder/error/thinking/hydrated state.
+   *
+   * @param {Object|null} marker - Newest mounted Assistant live-tail marker.
+   * @param {string} reason - Live-tail scan reason.
+   * @returns {void} No value is returned.
+   */
+  function communicationLogAssistantLifecycle(marker, reason) {
+    if (!marker || marker.role !== 'assistant') return;
+    const text = String(marker.comparison_text ?? '').trim();
+    let state = marker.message_id ? 'hydrated' : 'placeholder';
+    if (/message delivery timed out|timed out\. please try again/i.test(text)) state = 'timeout';
+    else if (text.length <= 300 && /something went wrong|please try again|\bretry\b|connection interrupted/i.test(text)) state = 'retry';
+    else if (!marker.message_id && text.length <= 100 && /^thinking(?:…|\.\.\.|\s*)$/i.test(text)) state = 'thinking';
+    const lifecycleKey = [state, marker.message_id ?? '', marker.dom_turn_id ?? '', marker.content_fingerprint ?? ''].join('|');
+    if (lifecycleKey === communicationLogLastAssistantLifecycleKey) return;
+    communicationLogLastAssistantLifecycleKey = lifecycleKey;
+    void communicationLogRecord('communication_assistant_lifecycle', {
+      state,
+      reason,
+      conversation_id: currentConversationId(),
+      message_id: marker.message_id ?? null,
+      dom_turn_id: marker.dom_turn_id ?? null,
+      container_id: marker.container_id ?? null,
+      content_length: marker.content_length ?? null,
+      content_fingerprint: marker.content_fingerprint ?? null
+    }).catch(communicationError => communicationLogReportFailure('assistant-lifecycle', communicationError));
+  }
+  // END Issue #123 disk communication recorder
+
+  /**
+   * Handles remember API request context.
+   *
+   * @param {string} url - The URL to process.
+   * @param {Array<Object>} headerCandidates - The HTTP header values to inspect.
+   * @returns {void} No value is returned.
+   */
+  function rememberApiRequestContext(url, ...headerCandidates) {
+    if (!isConversationApiUrl(url)) return;
+    try {
+      const parsed = new URL(url, location.href);
+      const match = parsed.pathname.match(/^\/backend-api\/conversations\/([^/]+)/);
+      if (!match) return;
+      const headers = {};
+      for (const candidate of headerCandidates) {
+        for (const [key, value] of Object.entries(rawHeadersToObject(candidate))) {
+          if (!(key in headers)) headers[key] = value;
+        }
+      }
+      if (!headers.authorization) return;
+      apiRequestContext = {
+        conversation_id: match[1],
+        headers,
+        captured_at: new Date().toISOString()
+      };
+    } catch {}
+  }
+
+  /**
+   * Handles click diagnostic element snapshot.
+   *
+   * @param {Element} element - The DOM element to inspect or update.
+   * @returns {Object|null} The value produced by `clickDiagnosticElementSnapshot`, or `null` when unavailable.
+   */
+  function clickDiagnosticElementSnapshot(element) {
+    if (!(element instanceof Element)) return null;
+    const attributes = {};
+    for (const attribute of [...element.attributes].slice(0, 40)) {
+      if (attribute.name.startsWith('data-') ||
+          ['href', 'src', 'aria-label', 'title', 'alt', 'download', 'target', 'role'].includes(attribute.name)) {
+        attributes[attribute.name] = boundedDiagnosticText(attribute.value, 1000);
+      }
+    }
+    return {
+      tag: element.tagName.toLowerCase(),
+      attributes,
+      href_property: element instanceof HTMLAnchorElement ? element.href || null : null,
+      src_property: element instanceof HTMLImageElement ? element.src || null : null,
+      current_src: element instanceof HTMLImageElement ? element.currentSrc || null : null,
+      text: boundedDiagnosticText(element.textContent?.trim() || '', 500) || null
+    };
+  }
+
+  /**
+   * Handles click diagnostic turn context.
+   *
+   * @param {EventTarget|null} target - The target element or resolved jump target.
+   * @returns {Object|null} The value produced by `clickDiagnosticTurnContext`, or `null` when no value is available.
+   */
+  function clickDiagnosticTurnContext(target) {
+    const section = target instanceof Element ? target.closest('section[data-turn-id]') : null;
+    if (!(section instanceof HTMLElement)) return null;
+    const message = section.querySelector('[data-message-id]');
+    const clickedImage = target.closest('img');
+    // One-based image ordinal used to correlate a click with the matching source image.
+    let imageOrdinal = null;
+    if (clickedImage instanceof HTMLImageElement) {
+      const images = [...section.querySelectorAll(
+        'button[aria-label^="Open image:"] img, [class~="group/message-image"] img'
+      )];
+      const index = images.indexOf(clickedImage);
+      if (index >= 0) imageOrdinal = index + 1;
+    }
+    return {
+      turn_id: section.getAttribute('data-turn-id') || null,
+      message_id: message?.getAttribute('data-message-id') || null,
+      role: section.getAttribute('data-turn') || null,
+      image_ordinal: imageOrdinal
+    };
+  }
+
+  /**
+   * Handles record click diagnostic network request.
+   *
+   * @param {string} url - The URL to process.
+   * @param {Object} initiatorType - The initiatorType value required by this function.
+   * @returns {void} No value is returned.
+   */
+  function recordClickDiagnosticNetworkRequest(url, initiatorType) {
+    // Snapshot the observation so this request is attributed to one click consistently.
+    const active = activeClickDiagnostic;
+    if (!active || performance.now() > active.deadline) return;
+    const value = typeof url === 'string' ? url : String(url ?? '');
+    if (!value) return;
+    const item = {
+      url: boundedDiagnosticText(value, 2000),
+      initiator_type: initiatorType,
+      elapsed_ms: Math.round(performance.now() - active.started_at)
+    };
+    active.network_requests.push(item);
+    if (active.network_requests.length > 50) active.network_requests.shift();
+    logDiagnostic('debug', 'conversation-click-network-request', {
+      click_sequence: active.sequence,
+      ...item
+    });
+  }
+
+  /**
+   * Handles finish conversation click diagnostic.
+   *
+   * @param {Object} observation - The observation value required by this function.
+   * @param {string} reason - The reason the operation is being completed.
+   * @returns {void} No value is returned.
+   */
+  function finishConversationClickDiagnostic(observation, reason = 'timer') {
+    if (!observation || observation.finished) return;
+    observation.finished = true;
+    if (activeClickDiagnostic === observation) activeClickDiagnostic = null;
+    const endedAt = performance.now();
+    const resources = performance.getEntriesByType('resource')
+      .filter(entry => entry instanceof PerformanceResourceTiming &&
+        entry.startTime >= observation.started_at - 1 && entry.startTime <= endedAt + 1)
+      .slice(-100)
+      .map(entry => ({
+        url: boundedDiagnosticText(entry.name, 2000),
+        initiator_type: entry.initiatorType || null,
+        response_status: Number.isFinite(entry.responseStatus) ? entry.responseStatus : null,
+        transfer_size: Number.isFinite(entry.transferSize) ? entry.transferSize : null,
+        decoded_body_size: Number.isFinite(entry.decodedBodySize) ? entry.decodedBodySize : null,
+        start_offset_ms: Math.round(entry.startTime - observation.started_at),
+        duration_ms: Math.round(entry.duration)
+      }));
+    logDiagnostic('debug', 'conversation-click-resolution-result', {
+      click_sequence: observation.sequence,
+      finish_reason: reason,
+      observation_ms: Math.round(endedAt - observation.started_at),
+      is_trusted: observation.is_trusted,
+      pointer_type: observation.pointer_type,
+      button: observation.button,
+      turn: observation.turn,
+      clicked: observation.clicked,
+      closest_anchor: observation.closest_anchor,
+      closest_button: observation.closest_button,
+      closest_image: observation.closest_image,
+      network_requests: observation.network_requests,
+      new_performance_resources: resources
+    });
+  }
+
+  /**
+   * Handles capture conversation click diagnostic.
+   *
+   * @param {Event|Object} event - The event or event-like object being handled.
+   * @returns {void} No value is returned.
+   */
+  function captureConversationClickDiagnostic(event) {
+    const target = event.target instanceof Element ? event.target : null;
+    if (!target || !target.closest('#thread')) return;
+    const turn = clickDiagnosticTurnContext(target);
+    if (!turn) return;
+    if (activeClickDiagnostic) finishConversationClickDiagnostic(activeClickDiagnostic, 'superseded-by-next-click');
+    const startedAt = performance.now();
+    const observation = {
+      sequence: ++clickDiagnosticSequence,
+      started_at: startedAt,
+      deadline: startedAt + 2500,
+      is_trusted: event.isTrusted === true,
+      pointer_type: typeof event.pointerType === 'string' && event.pointerType ? event.pointerType : null,
+      button: Number.isInteger(event.button) ? event.button : null,
+      turn,
+      clicked: clickDiagnosticElementSnapshot(target),
+      closest_anchor: clickDiagnosticElementSnapshot(target.closest('a[href]')),
+      closest_button: clickDiagnosticElementSnapshot(target.closest('button')),
+      closest_image: clickDiagnosticElementSnapshot(target.closest('img')),
+      network_requests: [],
+      finished: false
+    };
+    activeClickDiagnostic = observation;
+    logDiagnostic('debug', 'conversation-click-resolution-start', {
+      click_sequence: observation.sequence,
+      is_trusted: observation.is_trusted,
+      pointer_type: observation.pointer_type,
+      button: observation.button,
+      turn: observation.turn,
+      clicked: observation.clicked,
+      closest_anchor: observation.closest_anchor,
+      closest_button: observation.closest_button,
+      closest_image: observation.closest_image
+    });
+    setTimeout(() => finishConversationClickDiagnostic(observation, 'timer'), 2500);
+  }
+
+
+  /**
+   * Unlocks the browser Web Audio context from a user gesture when sounds are enabled.
+   *
+   * @returns {Promise<boolean>} True when the audio context is ready to play.
+   */
+  async function unlockAgentSoundAudio() {
+    const volume = agentSoundVolume;
+    const beforeState = agentSoundAudioContext?.state ?? 'absent';
+    if (volume <= 0) {
+      logDiagnostic('debug', 'agent-sound-audio-unlock', {
+        volume,
+        before_state: beforeState,
+        after_state: beforeState,
+        resume_attempted: false,
+        ready: false,
+        reason: 'volume-zero'
+      });
+      return false;
+    }
+    let resumeAttempted = false;
+    try {
+      const AudioContextClass = window.AudioContext || window.webkitAudioContext;
+      if (typeof AudioContextClass !== 'function') {
+        logDiagnostic('warnings', 'agent-sound-audio-unlock', {
+          volume,
+          before_state: beforeState,
+          after_state: 'unavailable',
+          resume_attempted: false,
+          ready: false,
+          reason: 'audio-context-unavailable'
+        });
+        return false;
+      }
+      if (!agentSoundAudioContext) agentSoundAudioContext = new AudioContextClass();
+      if (agentSoundAudioContext.state === 'suspended') {
+        resumeAttempted = true;
+        await agentSoundAudioContext.resume();
+      }
+      const afterState = agentSoundAudioContext.state;
+      const ready = afterState === 'running';
+      logDiagnostic('debug', 'agent-sound-audio-unlock', {
+        volume,
+        before_state: beforeState,
+        after_state: afterState,
+        resume_attempted: resumeAttempted,
+        ready
+      });
+      return ready;
+    } catch (error) {
+      logDiagnostic('warnings', 'agent-sound-audio-unlock', {
+        volume,
+        before_state: beforeState,
+        after_state: agentSoundAudioContext?.state ?? 'absent',
+        resume_attempted: resumeAttempted,
+        ready: false,
+        message: errorMessage(error)
+      });
+      return false;
+    }
+  }
+
+  /**
+   * Handles a trusted browser gesture that can unlock persisted terminal sounds after reload.
+   *
+   * @returns {void} No value is returned.
+   */
+  function agentSoundHandleUserGesture() {
+    if (agentSoundVolume > 0) void unlockAgentSoundAudio();
+  }
+
+  /**
+   * Plays one short browser-generated terminal-state cue.
+   *
+   * @param {string} kind - `success` for the ding or `error` for the buzz.
+   * @returns {void} No value is returned.
+   */
+  function playAgentSound(kind) {
+    const volume = agentSoundVolume;
+    const audio = agentSoundAudioContext;
+    const audioContextState = audio?.state ?? 'absent';
+    logDiagnostic('debug', 'agent-sound-playback-attempt', {
+      kind,
+      volume,
+      audio_context_state: audioContextState
+    });
+    if (volume <= 0 || (kind !== 'success' && kind !== 'error')) return false;
+    if (!audio || audio.state !== 'running') {
+      logDiagnostic('warnings', 'agent-sound-playback-unavailable', {
+        kind,
+        volume,
+        audio_context_state: audioContextState
+      });
+      return false;
+    }
+    try {
+      const oscillator = audio.createOscillator();
+      const gain = audio.createGain();
+      const start = audio.currentTime;
+      const volumeScale = Math.max(0, Math.min(10, volume)) / 10;
+      oscillator.connect(gain);
+      gain.connect(audio.destination);
+      gain.gain.setValueAtTime(0.0001, start);
+      if (kind === 'success') {
+        oscillator.type = 'sine';
+        oscillator.frequency.setValueAtTime(740, start);
+        oscillator.frequency.linearRampToValueAtTime(988, start + 0.16);
+        gain.gain.exponentialRampToValueAtTime(volumeScale, start + 0.025);
+        gain.gain.exponentialRampToValueAtTime(0.0001, start + 0.32);
+        oscillator.start(start);
+        oscillator.stop(start + 0.34);
+      } else {
+        oscillator.type = 'sawtooth';
+        oscillator.frequency.setValueAtTime(210, start);
+        oscillator.frequency.linearRampToValueAtTime(150, start + 0.32);
+        gain.gain.exponentialRampToValueAtTime(volumeScale, start + 0.02);
+        gain.gain.exponentialRampToValueAtTime(0.0001, start + 0.42);
+        oscillator.start(start);
+        oscillator.stop(start + 0.44);
+      }
+      logDiagnostic('debug', 'agent-sound-playback-started', {
+        kind,
+        volume,
+        peak_gain: volumeScale,
+        audio_context_state: audio.state
+      });
+      return true;
+    } catch (error) {
+      logDiagnostic('warnings', 'agent-sound-playback-failure', {
+        kind,
+        volume,
+        audio_context_state: audio?.state ?? 'absent',
+        message: errorMessage(error)
+      });
+      return false;
+    }
+  }
+
+  /**
+   * Returns one stable terminal identity from the shared normalized exchange identity.
+   *
+   * @param {Object} capture - Mutable streamed-turn capture.
+   * @param {string|null} exchangeId - Shared structured exchange identity, when available.
+   * @param {Object|null} finalMessage - Structured successful final Assistant message, when available.
+   * @returns {string|null} Stable conversation/turn key, or null when no structured identity exists.
+   */
+  function agentTerminalKey(capture, exchangeId = null, finalMessage = null) {
+    const request = [...(capture?.request_messages ?? [])]
+      .reverse()
+      .find(message => typeof message?.id === 'string' && message.id);
+    const finalMetadata = finalMessage?.metadata ?? {};
+    const requestMetadata = request?.metadata ?? {};
+    const turnIdentity = exchangeId || finalMetadata.request_id || requestMetadata.request_id ||
+      request?.id || capture?.parent_message_id || null;
+    if (!turnIdentity) return null;
+    return `${capture?.conversation_id ?? 'new'}:${turnIdentity}`;
+  }
+
+  /**
+   * Retains one terminal sound-event identity in a bounded insertion-ordered set.
+   *
+   * @param {string} key - Stable terminal sound-event key.
+   * @returns {void} No value is returned.
+   */
+  function agentSoundRememberTerminalKey(key) {
+    if (!key || agentSoundTerminalKeys.has(key)) return;
+    while (agentSoundTerminalKeys.size >= AGENT_SOUND_TERMINAL_KEY_LIMIT) {
+      const oldest = agentSoundTerminalKeys.values().next().value;
+      if (oldest === undefined) break;
+      agentSoundTerminalKeys.delete(oldest);
+    }
+    agentSoundTerminalKeys.add(key);
+  }
+
+  /**
+   * Returns whether one normalized client terminal event is the evidenced polling timeout.
+   *
+   * @param {Object|null} event - Normalized client terminal event.
+   * @returns {boolean} True only for the exact structured polling-timeout state.
+   */
+  function agentTerminalIsPollingTimeout(event) {
+    return event?.type === 'client_terminal_error' &&
+      event?.code === 'network_error' &&
+      event?.source === 'completion_stream_polling_fallback' &&
+      event?.reason === 'polling_timeout';
+  }
+
+  /**
+   * Normalizes the exact stock ChatGPT stats counter emitted for polling timeout.
+   *
+   * @param {Object|null} payload - Parsed `/ces/statsc/flush` request payload.
+   * @returns {Object|null} Normalized terminal event, or null for unrelated stats.
+   */
+  function agentTerminalFailureFromStatsPayload(payload) {
+    const counters = Array.isArray(payload?.counters) ? payload.counters : [];
+    const matched = counters.find(counter =>
+      counter?.namespace === 'default' &&
+      counter?.metric === 'chatgpt_web_message_delivery_failure_shown' &&
+      counter?.tags?.source === 'completion_stream_polling_fallback' &&
+      counter?.tags?.error_code === 'network_error' &&
+      counter?.tags?.failure_reason === 'polling_timeout' &&
+      Number(counter?.value) > 0
+    );
+    if (!matched) return null;
+    return {
+      type: 'client_terminal_error',
+      code: 'network_error',
+      source: 'completion_stream_polling_fallback',
+      reason: 'polling_timeout'
+    };
+  }
+
+  /**
+   * Returns whether a URL is the exact same-origin ChatGPT stats-flush endpoint.
+   *
+   * @param {string} url - Candidate request URL.
+   * @returns {boolean} True only for `/ces/statsc/flush` on the current origin.
+   */
+  function isAgentTerminalStatsUrl(url) {
+    try {
+      const parsed = new URL(String(url ?? ''), location.href);
+      return parsed.origin === location.origin && parsed.pathname === '/ces/statsc/flush';
+    } catch {
+      return false;
+    }
+  }
+
+  /**
+   * Observes one stock stats-flush request for the exact structured polling-timeout terminal state.
+   *
+   * @param {Request} request - Original page request; only a clone is consumed.
+   * @param {string} requestUrl - Resolved request URL.
+   * @param {string} requestMethod - Uppercase HTTP method.
+   * @returns {Promise<void>} Resolves after relevant structured terminal evidence is handled.
+   */
+  async function agentTerminalObserveStatsRequest(request, requestUrl, requestMethod) {
+    if (requestMethod !== 'POST' || !isAgentTerminalStatsUrl(requestUrl)) return;
+    const cloned = cloneSafely(request);
+    if (!cloned) return;
+    try {
+      const payload = JSON.parse(await cloned.text());
+      const event = agentTerminalFailureFromStatsPayload(payload);
+      if (!event) return;
+      const capture = streamTailCapture;
+      if (!capture) {
+        logDiagnostic('warnings', 'agent-terminal-polling-timeout-without-capture', {});
+        return;
+      }
+      logDiagnostic('debug', 'agent-terminal-polling-timeout-observed', {
+        conversation_id: capture?.conversation_id ?? null,
+        terminal_key: agentSoundTerminalKey(capture)
+      });
+      agentTerminalObserve(capture, event);
+    } catch (error) {
+      logDiagnostic('debug', 'agent-terminal-stats-request-parse-failed', {
+        error: boundedDiagnosticText(errorMessage(error), 1000)
+      });
+    }
+  }
+
+  /**
+   * Classifies one structured agent terminal observation without deriving consumer-specific state.
+   *
+   * @param {Object} capture - Mutable streamed-turn capture.
+   * @param {Object|null} event - Most recently parsed structured SSE/v1 event, when any.
+   * @returns {string|null} `success`, `error`, or null when the turn is not terminal.
+   */
+  function agentTerminalClassifyKind(capture, event) {
+    const structured = [];
+    if (event && typeof event === 'object' && !Array.isArray(event)) structured.push(event);
+    if (event?.v && typeof event.v === 'object' && !Array.isArray(event.v)) structured.push(event.v);
+    for (const candidate of structured) {
+      if (agentTerminalIsPollingTimeout(candidate)) return 'error';
+      const providerCode = candidate.error_code ?? candidate.code ?? candidate?.error?.code ?? null;
+      if (providerCode === 'conversation_too_large' &&
+          (candidate.type === 'error' || candidate.error_code === 'conversation_too_large')) return 'error';
+      if (candidate.result === 'error' &&
+          candidate?.error?.reason === 'request_failed' &&
+          Number(candidate?.error?.status_code) >= 400) {
+        return 'error';
+      }
+    }
+    return agentTerminalSuccessfulFinal(capture) ? 'success' : null;
+  }
+
+
+  /**
+   * Returns current stock favicon candidates and captures each candidate's original source once.
+   *
+   * The browser may choose among multiple rel=icon links using media/type/sizes.
+   * DownloadConversation therefore projects one state onto every current stock candidate.
+   *
+   * @returns {Array<Object>} Current favicon candidates paired with their original source hrefs.
+   */
+  function agentFaviconCurrentCandidates() {
+    const links = [...document.querySelectorAll('link[rel~="icon"]')]
+      .filter(link => typeof link?.href === 'string' && link.href);
+    return links.map(link => {
+      if (!agentFaviconOriginalSources.has(link)) {
+        agentFaviconOriginalSources.set(link, link.href);
+      }
+      return {
+        link,
+        original_href: agentFaviconOriginalSources.get(link),
+        media: typeof link.media === 'string' ? link.media : '',
+        type: typeof link.type === 'string' ? link.type : '',
+        sizes: typeof link.sizes?.value === 'string' ? link.sizes.value : ''
+      };
+    });
+  }
+
+  /**
+   * Recolors visible near-white favicon pixels while preserving all other pixels and alpha values.
+   *
+   * @param {Uint8ClampedArray} data - Mutable RGBA pixel buffer.
+   * @param {Array<number>} targetRgb - Three target RGB channel values.
+   * @returns {number} Number of recolored visible pixels.
+   */
+  function agentFaviconRecolorPixels(data, targetRgb) {
+    if (!data || typeof data.length !== 'number') {
+      throw new TypeError('Agent favicon recoloring requires an RGBA pixel buffer.');
+    }
+    if (!Array.isArray(targetRgb) || targetRgb.length !== 3) {
+      throw new TypeError('Agent favicon recoloring requires three target RGB channels.');
+    }
+    let changed = 0;
+    for (let index = 0; index + 3 < data.length; index += 4) {
+      const red = data[index];
+      const green = data[index + 1];
+      const blue = data[index + 2];
+      const alpha = data[index + 3];
+      if (alpha === 0) continue;
+      const minimum = Math.min(red, green, blue);
+      const maximum = Math.max(red, green, blue);
+      if (minimum < 240 || maximum - minimum > 16) continue;
+      const intensity = (red + green + blue) / (3 * 255);
+      data[index] = Math.round(targetRgb[0] * intensity);
+      data[index + 1] = Math.round(targetRgb[1] * intensity);
+      data[index + 2] = Math.round(targetRgb[2] * intensity);
+      changed += 1;
+    }
+    return changed;
+  }
+
+  /**
+   * Renders one colored state for one stock favicon candidate from its captured original source.
+   *
+   * @param {Object} candidate - Current stock favicon link and its captured original source.
+   * @param {Array<number>} targetRgb - Three target RGB channel values.
+   * @param {string} state - Agent favicon state being rendered.
+   * @param {number} generation - Monotonic favicon render generation.
+   * @param {number} ordinal - One-based candidate ordinal for diagnostics.
+   * @param {number} total - Total current favicon candidate count.
+   * @returns {Promise<Object>} Candidate render result for aggregate state diagnostics.
+   */
+  function agentFaviconRenderCandidate(candidate, targetRgb, state, generation, ordinal, total) {
+    return new Promise(resolve => {
+      const image = new Image();
+      image.onload = () => {
+        try {
+          const width = image.naturalWidth;
+          const height = image.naturalHeight;
+          if (!width || !height) {
+            logDiagnostic('warnings', 'agent-favicon-image-empty', {
+              state,
+              candidate_ordinal: ordinal,
+              candidate_count: total,
+              original_href: candidate.original_href
+            });
+            resolve({ applied: false, recolored_pixels: 0, width, height });
+            return;
+          }
+          const canvas = document.createElement('canvas');
+          canvas.width = width;
+          canvas.height = height;
+          const context = canvas.getContext('2d');
+          if (!context) {
+            logDiagnostic('warnings', 'agent-favicon-canvas-unavailable', {
+              state,
+              candidate_ordinal: ordinal,
+              candidate_count: total
+            });
+            resolve({ applied: false, recolored_pixels: 0, width, height });
+            return;
+          }
+          context.drawImage(image, 0, 0, width, height);
+          const pixels = context.getImageData(0, 0, width, height);
+          const changed = agentFaviconRecolorPixels(pixels.data, targetRgb);
+          context.putImageData(pixels, 0, 0);
+          if (generation !== agentFaviconRenderGeneration) {
+            resolve({ applied: false, stale: true, recolored_pixels: changed, width, height });
+            return;
+          }
+          candidate.link.href = canvas.toDataURL('image/png');
+          logDiagnostic('debug', 'agent-favicon-candidate-rendered', {
+            state,
+            candidate_ordinal: ordinal,
+            candidate_count: total,
+            recolored_pixels: changed,
+            width,
+            height,
+            media: candidate.media || null,
+            type: candidate.type || null,
+            sizes: candidate.sizes || null
+          });
+          resolve({ applied: true, recolored_pixels: changed, width, height });
+        } catch (error) {
+          logDiagnostic('warnings', 'agent-favicon-render-failed', {
+            state,
+            candidate_ordinal: ordinal,
+            candidate_count: total,
+            message: errorMessage(error)
+          });
+          resolve({ applied: false, recolored_pixels: 0, width: null, height: null });
+        }
+      };
+      image.onerror = () => {
+        logDiagnostic('warnings', 'agent-favicon-image-load-failed', {
+          state,
+          candidate_ordinal: ordinal,
+          candidate_count: total,
+          original_href: candidate.original_href
+        });
+        resolve({ applied: false, recolored_pixels: 0, width: null, height: null });
+      };
+      image.src = candidate.original_href;
+    });
+  }
+
+  /**
+   * Renders one Agent favicon state across every stock favicon candidate the browser may select.
+   *
+   * @param {string} state - `processing`, `completed`, `error`, or `original`.
+   * @returns {Promise<boolean>} True only when the requested state is applied to every current candidate.
+   */
+  function agentFaviconRenderState(state) {
+    const generation = ++agentFaviconRenderGeneration;
+    const candidates = agentFaviconCurrentCandidates();
+    if (!candidates.length) {
+      logDiagnostic('warnings', 'agent-favicon-original-missing', { state });
+      return Promise.resolve(false);
+    }
+    if (state === 'original') {
+      for (const candidate of candidates) candidate.link.href = candidate.original_href;
+      logDiagnostic('debug', 'agent-favicon-state-rendered', {
+        state,
+        candidate_count: candidates.length,
+        applied_candidate_count: candidates.length,
+        recolored_pixels: 0
+      });
+      return Promise.resolve(true);
+    }
+    const targetRgb = state === 'processing'
+      ? AGENT_FAVICON_PROCESSING_RGB
+      : state === 'completed'
+        ? AGENT_FAVICON_COMPLETED_RGB
+        : state === 'error'
+          ? AGENT_FAVICON_ERROR_RGB
+          : null;
+    if (!targetRgb) return Promise.resolve(false);
+    return Promise.all(candidates.map((candidate, index) =>
+      agentFaviconRenderCandidate(
+        candidate,
+        targetRgb,
+        state,
+        generation,
+        index + 1,
+        candidates.length
+      )
+    )).then(results => {
+      if (generation !== agentFaviconRenderGeneration) return false;
+      const applied = results.filter(result => result.applied).length;
+      const recoloredPixels = results.reduce(
+        (total, result) => total + (Number(result.recolored_pixels) || 0),
+        0
+      );
+      logDiagnostic(applied === candidates.length ? 'debug' : 'warnings', 'agent-favicon-state-rendered', {
+        state,
+        candidate_count: candidates.length,
+        applied_candidate_count: applied,
+        recolored_pixels: recoloredPixels
+      });
+      return applied === candidates.length;
+    });
+  }
+
+  /**
+   * Records that Agent processing was observed in this page and renders the yellow favicon.
+   *
+   * @returns {void} No value is returned.
+   */
+  function agentFaviconObserveProcessing() {
+    agentFaviconProcessingObserved = true;
+    void agentFaviconRenderState('processing');
+  }
+
+  /**
+   * Projects the already-fetched reload stream status into favicon processing state.
+   *
+   * @param {Object|null} streamStatus - Structured provider stream-status payload.
+   * @returns {void} No value is returned.
+   */
+  function agentFaviconObserveStreamStatus(streamStatus) {
+    if (agentStopwatchStreamIsActive(streamStatus)) agentFaviconObserveProcessing();
+  }
+
+  /**
+   * Handles one shared normalized terminal event for favicon completion state.
+   *
+   * @param {Object} terminal - Shared normalized terminal event.
+   * @returns {void} No value is returned.
+   */
+  function agentFaviconHandleTerminal(terminal) {
+    if (terminal?.kind === 'error') {
+      agentFaviconProcessingObserved = false;
+      void agentFaviconRenderState('error');
+      return;
+    }
+    if (terminal?.kind !== 'success' || !agentFaviconProcessingObserved) return;
+    agentFaviconProcessingObserved = false;
+    void agentFaviconRenderState('completed');
+  }
+
+  /**
+   * Handles one already-normalized terminal event for browser audio only.
+   *
+   * @param {Object} terminal - Shared normalized terminal event.
+   * @returns {void} No value is returned.
+   */
+  function agentSoundHandleTerminal(terminal) {
+    const kind = terminal?.kind ?? null;
+    const key = terminal?.terminal_key ?? null;
+    const soundKey = key && kind ? `${key}:${kind}` : null;
+    if (!kind) return;
+    logDiagnostic('debug', 'agent-sound-terminal-classified', {
+      kind,
+      terminal_key: key,
+      exchange_id: terminal?.exchange_id ?? null,
+      volume: agentSoundVolume,
+      audio_context_state: agentSoundAudioContext?.state ?? 'absent'
+    });
+    if (!soundKey) return;
+    if (agentSoundTerminalKeys.has(soundKey)) {
+      logDiagnostic('debug', 'agent-sound-duplicate-suppressed', {
+        kind,
+        terminal_key: key,
+        volume: agentSoundVolume
+      });
+      return;
+    }
+    if (agentSoundVolume <= 0) {
+      logDiagnostic('debug', 'agent-sound-volume-zero-suppressed', {
+        kind,
+        terminal_key: key,
+        volume: agentSoundVolume
+      });
+      return;
+    }
+    if (playAgentSound(kind)) agentSoundRememberTerminalKey(soundKey);
+  }
+
+  document.addEventListener('pointerdown', agentSoundHandleUserGesture, true);
+  document.addEventListener('keydown', agentSoundHandleUserGesture, true);
+
+
+  /**
+   * Formats one non-negative stopwatch duration as whole minutes and seconds.
+   *
+   * @param {number} milliseconds - Monotonic elapsed milliseconds.
+   * @returns {string} Human-readable `X m Y s` duration.
+   */
+  function agentStopwatchFormatDuration(milliseconds) {
+    assert(Number.isFinite(milliseconds) && milliseconds >= 0,
+      'Agent stopwatch duration must be finite and non-negative.');
+    const seconds = Math.floor(milliseconds / 1000);
+    return `${Math.floor(seconds / 60)} m ${seconds % 60} s`;
+  }
+
+  /**
+   * Returns the provider working-exchange identity carried by one message.
+   *
+   * @param {Object|null} message - Structured provider message.
+   * @returns {string|null} Stable exchange id, or null when the message has none.
+   */
+  function agentStopwatchExchangeId(message) {
+    const metadata = message?.metadata ?? {};
+    return metadata.turn_exchange_id || metadata.working_turn_id || null;
+  }
+
+  /**
+   * Returns the fixed viewport control used to display agent-turn stopwatch state.
+   *
+   * @returns {HTMLElement} Existing or newly created stopwatch element.
+   */
+  function ensureAgentStopwatchControl() {
+    let control = document.getElementById(AGENT_STOPWATCH_ID);
+    if (control) return control;
+    control = document.createElement('div');
+    control.id = AGENT_STOPWATCH_ID;
+    control.style.position = 'fixed';
+    control.style.top = '56px';
+    control.style.right = '16px';
+    control.style.zIndex = '2147483646';
+    control.style.padding = '8px 10px';
+    control.style.border = '1px solid rgba(127, 127, 127, 0.35)';
+    control.style.borderRadius = '8px';
+    control.style.background = 'rgba(32, 32, 32, 0.92)';
+    control.style.color = '#f5f5f5';
+    control.style.font = '12px/1.45 ui-monospace, SFMono-Regular, Menlo, Consolas, monospace';
+    control.style.whiteSpace = 'pre';
+    control.style.pointerEvents = 'none';
+    control.style.boxShadow = '0 2px 8px rgba(0, 0, 0, 0.25)';
+    (document.body || document.documentElement).append(control);
+    return control;
+  }
+
+  /**
+   * Renders the current completed and live lap state into the fixed stopwatch control.
+   *
+   * @param {number} nowMs - Current monotonic timestamp.
+   * @returns {void} No value is returned.
+   */
+  function agentStopwatchRender(nowMs = performance.now()) {
+    if (!agentStopwatchState) return;
+    assert(Number.isFinite(nowMs), 'Agent stopwatch render timestamp must be finite.');
+    const representedLapCount = agentStopwatchState.laps_ms.length +
+      (agentStopwatchState.active ? 1 : 0);
+    const showLapLines = representedLapCount > 1;
+    const lines = showLapLines
+      ? agentStopwatchState.laps_ms.map((duration, index) =>
+        `Lap ${index + 1}: ${agentStopwatchFormatDuration(duration)}`
+      )
+      : [];
+    let totalMs;
+    if (agentStopwatchState.active) {
+      assert(Number.isFinite(agentStopwatchState.lap_started_at_ms),
+        'Active agent stopwatch must have a lap start timestamp.');
+      assert(Number.isFinite(agentStopwatchState.started_at_ms),
+        'Active agent stopwatch must have an overall start timestamp.');
+      const current = Math.max(0, nowMs - agentStopwatchState.lap_started_at_ms);
+      if (showLapLines) {
+        lines.push(`Lap ${agentStopwatchState.laps_ms.length + 1}: ${agentStopwatchFormatDuration(current)}`);
+      }
+      totalMs = Math.max(0, nowMs - agentStopwatchState.started_at_ms);
+    } else {
+      assert(Number.isFinite(agentStopwatchState.total_ms),
+        'Completed agent stopwatch must have a total duration.');
+      totalMs = agentStopwatchState.total_ms;
+    }
+    lines.push(`Total: ${agentStopwatchFormatDuration(totalMs)}`);
+    ensureAgentStopwatchControl().textContent = lines.join('\n');
+  }
+
+  /**
+   * Starts periodic live rendering for the active agent-turn stopwatch.
+   *
+   * @returns {void} No value is returned.
+   */
+  function agentStopwatchStartTimer() {
+    if (agentStopwatchTimer !== null) return;
+    agentStopwatchTimer = setInterval(
+      () => agentStopwatchRender(performance.now()),
+      AGENT_STOPWATCH_REFRESH_MS
+    );
+  }
+
+  /**
+   * Stops periodic stopwatch rendering while preserving the completed display.
+   *
+   * @returns {void} No value is returned.
+   */
+  function agentStopwatchStopTimer() {
+    if (agentStopwatchTimer === null) return;
+    clearInterval(agentStopwatchTimer);
+    agentStopwatchTimer = null;
+  }
+
+  /**
+   * Starts a fresh agent-turn stopwatch at one local user-submission boundary.
+   *
+   * @param {number} submittedAtMs - Monotonic timestamp captured before request transmission.
+   * @returns {void} No value is returned.
+   */
+  function agentStopwatchStartNew(submittedAtMs) {
+    assert(Number.isFinite(submittedAtMs), 'Agent stopwatch submission timestamp must be finite.');
+    agentStopwatchStopTimer();
+    agentStopwatchState = {
+      active: true,
+      started_at_ms: submittedAtMs,
+      lap_started_at_ms: submittedAtMs,
+      laps_ms: [],
+      total_ms: null,
+      exchange_id: null,
+      pending_submission_at_ms: null,
+      pending_message_id: null
+    };
+    agentStopwatchRender(submittedAtMs);
+    agentStopwatchStartTimer();
+  }
+
+  /**
+   * Freezes the current lap at an exact local user-submission or final-completion boundary.
+   *
+   * @param {number} boundaryMs - Monotonic boundary timestamp.
+   * @returns {void} No value is returned.
+   */
+  function agentStopwatchRecordLap(boundaryMs) {
+    assert(agentStopwatchState?.active, 'Cannot record a lap without an active agent stopwatch.');
+    assert(Number.isFinite(boundaryMs) && boundaryMs >= agentStopwatchState.lap_started_at_ms,
+      'Agent stopwatch lap boundary precedes the active lap.');
+    agentStopwatchState.laps_ms.push(boundaryMs - agentStopwatchState.lap_started_at_ms);
+    agentStopwatchState.lap_started_at_ms = boundaryMs;
+  }
+
+  /**
+   * Registers one local ChatGPT generation submission before enriched stream metadata arrives.
+   *
+   * @param {Object} capture - Mutable streamed-turn capture for the submitted request.
+   * @returns {void} No value is returned.
+   */
+  function agentStopwatchObserveRequest(capture) {
+    const submittedAtMs = capture?.stopwatch_submitted_at_ms;
+    if (!Number.isFinite(submittedAtMs)) return;
+    const userMessage = [...(capture?.request_messages ?? [])]
+      .reverse()
+      .find(message => message?.author?.role === 'user' && typeof message?.id === 'string');
+    if (!agentStopwatchState?.active) agentStopwatchStartNew(submittedAtMs);
+    agentStopwatchState.pending_submission_at_ms = submittedAtMs;
+    agentStopwatchState.pending_message_id = userMessage?.id ?? null;
+    agentStopwatchRender(performance.now());
+  }
+
+  /**
+   * Records a User follow-up submitted through ChatGPT's same-turn steering endpoint.
+   *
+   * `/backend-api/f/steer_turn` is the submission boundary for a User follow-up while the
+   * current working exchange remains active. Record the lap at the pre-transmission local
+   * timestamp; later streamed User metadata must not create a second lap for this submission.
+   *
+   * @param {number} submittedAtMs - Monotonic timestamp captured before request transmission.
+   * @returns {void} No value is returned.
+   */
+  function agentStopwatchObserveSteerTurn(submittedAtMs) {
+    if (!agentStopwatchState?.active || !Number.isFinite(submittedAtMs)) return;
+    agentStopwatchRecordLap(submittedAtMs);
+    agentStopwatchState.pending_submission_at_ms = null;
+    agentStopwatchState.pending_message_id = null;
+    agentStopwatchRender(performance.now());
+  }
+
+  /**
+   * Classifies one enriched streamed User input as the initial prompt, a same-exchange follow-up,
+   * or a new exchange.
+   *
+   * The live provider `input_message` carries the working exchange identity but does not reliably
+   * carry `message_type`. A pending local User submission in the same working exchange is therefore
+   * the follow-up boundary; a different working exchange starts a fresh stopwatch session.
+   *
+   * @param {Object} capture - Mutable streamed-turn capture associated with the input.
+   * @param {Object} message - Enriched provider User input_message.
+   * @returns {void} No value is returned.
+   */
+  function agentStopwatchObserveInputMessage(capture, message) {
+    if (message?.author?.role !== 'user' || !agentStopwatchState?.active) return;
+    const pendingId = agentStopwatchState.pending_message_id;
+    if (pendingId && message?.id && message.id !== pendingId) return;
+    const submittedAtMs = agentStopwatchState.pending_submission_at_ms;
+    if (!Number.isFinite(submittedAtMs)) return;
+    const exchangeId = agentStopwatchExchangeId(message);
+    if (!exchangeId) return;
+    capture.stopwatch_exchange_id = exchangeId;
+    if (!agentStopwatchState.exchange_id) {
+      agentStopwatchState.exchange_id = exchangeId;
+    } else if (exchangeId !== agentStopwatchState.exchange_id) {
+      agentStopwatchStartNew(submittedAtMs);
+      agentStopwatchState.exchange_id = exchangeId;
+    } else {
+      agentStopwatchRecordLap(submittedAtMs);
+    }
+    agentStopwatchState.pending_submission_at_ms = null;
+    agentStopwatchState.pending_message_id = null;
+    agentStopwatchRender(performance.now());
+  }
+
+  /**
+   * Scans chronological Conversation API messages for the newest User-started
+   * working exchange and reports whether its true start boundary is proven.
+   *
+   * @param {Array<Object>} messages - Chronological de-duplicated API messages.
+   * @param {boolean} hasPreviousPage - Whether still-older API history exists.
+   * @returns {Object} Recovery candidate and boundary-completeness state.
+   */
+  function agentStopwatchRecoveryScan(messages, hasPreviousPage) {
+    const source = Array.isArray(messages) ? messages : [];
+    const latestUser = [...source].reverse().find(message =>
+      message?.author?.role === 'user' && agentStopwatchExchangeId(message)
+    );
+    if (!latestUser) {
+      return {
+        ready: !hasPreviousPage,
+        exchange_id: null,
+        user_messages: [],
+        final_message: null
+      };
+    }
+
+    const exchangeId = agentStopwatchExchangeId(latestUser);
+    const userMessages = source.filter(message =>
+      message?.author?.role === 'user' && agentStopwatchExchangeId(message) === exchangeId
+    );
+    const firstUser = userMessages[0] ?? null;
+    const firstUserIndex = firstUser ? source.indexOf(firstUser) : -1;
+    const olderBoundary = firstUserIndex > 0 && source.slice(0, firstUserIndex).some(message => {
+      const olderExchangeId = agentStopwatchExchangeId(message);
+      return olderExchangeId && olderExchangeId !== exchangeId;
+    });
+    const ready = olderBoundary || !hasPreviousPage;
+    const finalMessage = [...source].reverse().find(message =>
+      message?.author?.role === 'assistant' &&
+      agentStopwatchExchangeId(message) === exchangeId &&
+      message?.channel === 'final' &&
+      message?.status === 'finished_successfully' &&
+      message?.end_turn === true
+    ) ?? null;
+
+    return {
+      ready,
+      exchange_id: exchangeId,
+      user_messages: userMessages,
+      final_message: finalMessage
+    };
+  }
+
+  /**
+   * Pages backward only until the newest stopwatch exchange's true starting
+   * User prompt has been proven.
+   *
+   * @param {Object} initialPage - Stock initial Conversation API response.
+   * @param {Function} fetchOlderPage - Fetches one older page by start cursor.
+   * @param {Function} buildSpine - Builds chronological de-duplicated messages.
+   * @returns {Promise<Object>} Proven recovery candidate, or an empty candidate.
+   */
+  async function agentStopwatchCollectRecovery(initialPage, fetchOlderPage, buildSpine) {
+    assert(initialPage && typeof initialPage === 'object',
+      'Agent stopwatch recovery requires an initial Conversation API page.');
+    assert(typeof fetchOlderPage === 'function',
+      'Agent stopwatch recovery requires an older-page fetcher.');
+    assert(typeof buildSpine === 'function',
+      'Agent stopwatch recovery requires a conversation-spine builder.');
+
+    const pages = [initialPage];
+    const seenCursors = new Set();
+    while (true) {
+      const oldestPage = pages[pages.length - 1];
+      const hasPreviousPage = oldestPage?.page_info?.has_previous_page === true;
+      const spine = buildSpine(pages);
+      const recovery = agentStopwatchRecoveryScan(spine?.messages ?? [], hasPreviousPage);
+      if (recovery.ready || !hasPreviousPage) return recovery;
+
+      const cursor = oldestPage?.page_info?.start_cursor ?? null;
+      assert(cursor, 'Agent stopwatch recovery page is missing start_cursor.');
+      assert(!seenCursors.has(cursor),
+        `Agent stopwatch recovery repeated start_cursor ${cursor}.`);
+      seenCursors.add(cursor);
+      const olderPage = await fetchOlderPage(cursor);
+      assert(olderPage && typeof olderPage === 'object',
+        'Agent stopwatch recovery older-page fetch returned no page.');
+      pages.push(olderPage);
+    }
+  }
+
+  /**
+   * Tests the exact provider stream-status state that means the recovered
+   * stopwatch should continue advancing.
+   *
+   * @param {Object|null} payload - Parsed stream-status response.
+   * @returns {boolean} True only for the exact `IS_STREAMING` state.
+   */
+  function agentStopwatchStreamIsActive(payload) {
+    return payload?.status === 'IS_STREAMING';
+  }
+
+  /**
+   * Restores stopwatch state from persisted provider timestamps and bridges an
+   * active exchange into the current page's monotonic performance clock.
+   *
+   * @param {Object} recovery - Proven recovery candidate.
+   * @param {boolean} isStreaming - Whether the provider says work is streaming.
+   * @param {number} wallNowMs - Current wall-clock epoch milliseconds.
+   * @param {number} monotonicNowMs - Current page monotonic milliseconds.
+   * @returns {void} No value is returned.
+   */
+  function agentStopwatchApplyRecovery(recovery, isStreaming, wallNowMs, monotonicNowMs) {
+    if (!recovery?.ready || !recovery?.exchange_id || !recovery?.user_messages?.length) return;
+    assert(Number.isFinite(wallNowMs), 'Agent stopwatch recovery wall timestamp must be finite.');
+    assert(Number.isFinite(monotonicNowMs),
+      'Agent stopwatch recovery monotonic timestamp must be finite.');
+
+    const userTimesMs = recovery.user_messages.map(message => Number(message?.create_time) * 1000);
+    assert(userTimesMs.every(Number.isFinite),
+      'Agent stopwatch recovery User timestamps must be finite.');
+    for (let index = 1; index < userTimesMs.length; index += 1) {
+      assert(userTimesMs[index] >= userTimesMs[index - 1],
+        'Agent stopwatch recovery User timestamps must be chronological.');
+    }
+
+    const completedLaps = [];
+    for (let index = 1; index < userTimesMs.length; index += 1) {
+      completedLaps.push(userTimesMs[index] - userTimesMs[index - 1]);
+    }
+
+    const firstWallMs = userTimesMs[0];
+    const currentLapWallMs = userTimesMs[userTimesMs.length - 1];
+    agentStopwatchStopTimer();
+    if (isStreaming) {
+      agentStopwatchState = {
+        active: true,
+        started_at_ms: monotonicNowMs - Math.max(0, wallNowMs - firstWallMs),
+        lap_started_at_ms: monotonicNowMs - Math.max(0, wallNowMs - currentLapWallMs),
+        laps_ms: completedLaps,
+        total_ms: null,
+        exchange_id: recovery.exchange_id,
+        pending_submission_at_ms: null,
+        pending_message_id: null
+      };
+      agentStopwatchRender(monotonicNowMs);
+      agentStopwatchStartTimer();
+      return;
+    }
+
+    const finalMessage = recovery.final_message;
+    const finalSeconds = Number.isFinite(Number(finalMessage?.update_time))
+      ? Number(finalMessage.update_time)
+      : Number(finalMessage?.create_time);
+    const completedWallMs = finalSeconds * 1000;
+    assert(Number.isFinite(completedWallMs) && completedWallMs >= currentLapWallMs,
+      'Completed agent stopwatch recovery requires a terminal provider timestamp.');
+    completedLaps.push(completedWallMs - currentLapWallMs);
+    agentStopwatchState = {
+      active: false,
+      started_at_ms: monotonicNowMs - Math.max(0, wallNowMs - firstWallMs),
+      lap_started_at_ms: null,
+      laps_ms: completedLaps,
+      total_ms: completedWallMs - firstWallMs,
+      exchange_id: recovery.exchange_id,
+      pending_submission_at_ms: null,
+      pending_message_id: null
+    };
+    agentStopwatchRender(monotonicNowMs);
+  }
+
+  /**
+   * Tests whether one request URL is the stock initial Conversation API history
+   * endpoint whose response can restore stopwatch state after reload.
+   *
+   * @param {string} url - Candidate request URL.
+   * @returns {boolean} True only for `/backend-api/conversations/<id>`.
+   */
+  function agentStopwatchIsInitialConversationUrl(url) {
+    try {
+      const parsed = new URL(String(url ?? ''), location.href);
+      return parsed.origin === location.origin &&
+        /^\/backend-api\/conversations\/[^/]+$/.test(parsed.pathname);
+    } catch {
+      return false;
+    }
+  }
+
+  /**
+   * Fetches the provider stream status for one recovered conversation using the
+   * already captured authenticated Conversation API request context.
+   *
+   * @param {string} conversationId - Stable provider conversation id.
+   * @returns {Promise<Object>} Parsed stream-status payload.
+   */
+  async function agentStopwatchFetchStreamStatus(conversationId) {
+    const url = `${location.origin}/backend-api/conversation/${encodeURIComponent(conversationId)}/stream_status`;
+    const response = await apiFetch(url);
+    if (!response?.ok) {
+      throw new Error(`Agent stopwatch stream-status request failed with HTTP ${response?.status ?? 'unknown'}.`);
+    }
+    return response.json();
+  }
+
+  /**
+   * Reconstructs the newest stopwatch exchange from one cloned stock reload
+   * history response, paging backward only when the true prompt predates it.
+   *
+   * @param {Response} response - Independently owned stock history response clone.
+   * @returns {Promise<void>} Resolves after restoration is applied or skipped.
+   */
+  async function agentStopwatchObserveConversationResponse(response) {
+    if (agentStopwatchState) return;
+    if (!response?.ok) return;
+    const initialPage = await response.json();
+    const conversationId = initialPage?.conversation_id || currentConversationId();
+    if (!conversationId) return;
+
+    const recovery = await agentStopwatchCollectRecovery(
+      initialPage,
+      cursor => fetchOneConversationPage(
+        pageUrl(conversationId, cursor),
+        'Agent stopwatch recovery pagination request',
+        { request_kind: 'stopwatch-recovery', cursor }
+      ),
+      conversationSpineFromPages
+    );
+    if (!recovery.ready || agentStopwatchState) return;
+
+    const streamStatus = await agentStopwatchFetchStreamStatus(conversationId);
+    agentFaviconObserveStreamStatus(streamStatus);
+    if (agentStopwatchState) return;
+    agentStopwatchApplyRecovery(
+      recovery,
+      agentStopwatchStreamIsActive(streamStatus),
+      Date.now(),
+      performance.now()
+    );
+  }
+
+  /**
+   * Returns the exact structured successful final Assistant message for one capture.
+   *
+   * @param {Object} capture - Mutable streamed-turn capture.
+   * @returns {Object|null} Successful final Assistant message, or null when not terminal-success.
+   */
+  function agentTerminalSuccessfulFinal(capture) {
+    return [...(capture?.stream_messages ?? [])].reverse().find(message =>
+      message?.author?.role === 'assistant' &&
+      message?.channel === 'final' &&
+      message?.status === 'finished_successfully' &&
+      message?.end_turn === true
+    ) ?? null;
+  }
+
+  /**
+   * Derives the shared structured exchange identity for one terminal observation.
+   *
+   * @param {Object} capture - Mutable streamed-turn capture.
+   * @param {Object|null} finalMessage - Structured successful final Assistant message, when available.
+   * @returns {string|null} Turn exchange identity shared by all terminal consumers, or null.
+   */
+  function agentTerminalExchangeId(capture, finalMessage = null) {
+    const finalMetadata = finalMessage?.metadata ?? {};
+    const request = [...(capture?.request_messages ?? [])]
+      .reverse()
+      .find(message => typeof message?.id === 'string' && message.id);
+    const requestMetadata = request?.metadata ?? {};
+    return finalMetadata.turn_exchange_id || finalMetadata.working_turn_id ||
+      capture?.stopwatch_exchange_id || requestMetadata.turn_exchange_id ||
+      requestMetadata.working_turn_id || null;
+  }
+
+  /**
+   * Normalizes one structured terminal observation exactly once before fan-out to consumers.
+   *
+   * @param {Object} capture - Mutable streamed-turn capture.
+   * @param {Object|null} event - Most recently parsed structured SSE/v1 event, when any.
+   * @returns {Object|null} Shared immutable terminal event, or null when not terminal.
+   */
+  function agentTerminalNormalize(capture, event = null) {
+    const kind = agentTerminalClassifyKind(capture, event);
+    if (!kind) return null;
+    const finalMessage = agentTerminalSuccessfulFinal(capture);
+    const exchangeId = agentTerminalExchangeId(capture, finalMessage);
+    return Object.freeze({
+      kind,
+      conversation_id: capture?.conversation_id ?? null,
+      exchange_id: exchangeId,
+      terminal_key: agentTerminalKey(capture, exchangeId, finalMessage),
+      completed_at_ms: performance.now()
+    });
+  }
+
+  /**
+   * Handles one already-normalized terminal event for the active stopwatch only.
+   *
+   * @param {Object} terminal - Shared normalized terminal event.
+   * @returns {void} No value is returned.
+   */
+  function agentStopwatchHandleTerminal(terminal) {
+    if (!agentStopwatchState?.active) return;
+    const exchangeId = terminal?.exchange_id ?? null;
+    if (!exchangeId || exchangeId !== agentStopwatchState.exchange_id) return;
+    const completedAtMs = terminal.completed_at_ms;
+    if (!Number.isFinite(completedAtMs)) return;
+    agentStopwatchRecordLap(completedAtMs);
+    agentStopwatchState.active = false;
+    agentStopwatchState.total_ms = completedAtMs - agentStopwatchState.started_at_ms;
+    agentStopwatchState.pending_submission_at_ms = null;
+    agentStopwatchState.pending_message_id = null;
+    agentStopwatchStopTimer();
+    agentStopwatchRender(completedAtMs);
+  }
+
+  /** Ordered consumers of one shared normalized terminal event. */
+  const agentTerminalHandlers = Object.freeze([
+    agentSoundHandleTerminal,
+    agentStopwatchHandleTerminal,
+    agentFaviconHandleTerminal
+  ]);
+
+  /**
+   * Normalizes one structured terminal observation once and fans it out to all terminal consumers.
+   *
+   * @param {Object} capture - Mutable streamed-turn capture.
+   * @param {Object|null} event - Most recently parsed structured SSE/v1 event, when any.
+   * @returns {void} No value is returned.
+   */
+  function agentTerminalObserve(capture, event = null) {
+    const terminal = agentTerminalNormalize(capture, event);
+    if (!terminal) return;
+    logDiagnostic('debug', 'agent-terminal-normalized', {
+      kind: terminal.kind,
+      conversation_id: terminal.conversation_id,
+      exchange_id: terminal.exchange_id,
+      terminal_key: terminal.terminal_key
+    });
+    for (const handler of agentTerminalHandlers) handler(terminal);
+  }
+
+  /**
+   * Observes structured stream events that affect stopwatch submission/lap state before terminal fan-out.
+   *
+   * @param {Object} capture - Mutable streamed-turn capture.
+   * @param {Object} event - Parsed provider stream event.
+   * @returns {void} No value is returned.
+   */
+  function agentStopwatchObserveStreamEvent(capture, event) {
+    if (event && event.type === 'input_message' && event.input_message?.author?.role === 'user') {
+      agentStopwatchObserveInputMessage(capture, event.input_message);
+    }
+  }
+
+  // BEGIN Issue #123 streamed-tail recovery
+  /**
+   * Tests whether a URL is the stock streaming conversation-generation endpoint.
+   *
+   * @param {string} url - Candidate request URL.
+   * @returns {boolean} True only for this origin's exact /backend-api/f/conversation path.
+   */
+  function isGenerationStreamUrl(url) {
+    try {
+      const parsed = new URL(url, `${location.origin}/`);
+      return parsed.origin === location.origin && parsed.pathname === '/backend-api/f/conversation';
+    } catch {
+      return false;
+    }
+  }
+
+
+  /**
+   * Tests whether a URL is the stock conversation-resume stream endpoint used after reload.
+   *
+   * @param {string} url - Candidate request URL.
+   * @returns {boolean} True only for this origin's exact /backend-api/f/conversation/resume path.
+   */
+  function isConversationResumeUrl(url) {
+    try {
+      const parsed = new URL(url, `${location.origin}/`);
+      return parsed.origin === location.origin &&
+        parsed.pathname === '/backend-api/f/conversation/resume';
+    } catch {
+      return false;
+    }
+  }
+
+  /**
+   * Tests whether a URL is the stock same-turn User steering endpoint.
+   *
+   * @param {string} url - Candidate request URL.
+   * @returns {boolean} True only for this origin's exact /backend-api/f/steer_turn path.
+   */
+  function isSteerTurnUrl(url) {
+    try {
+      const parsed = new URL(url, `${location.origin}/`);
+      return parsed.origin === location.origin && parsed.pathname === '/backend-api/f/steer_turn';
+    } catch {
+      return false;
+    }
+  }
+
+  /**
+   * Creates mutable state for one passively observed streamed conversation turn.
+   *
+   * @param {string|null} conversationId - Conversation identity known at request time, when any.
+   * @returns {Object} Mutable capture state for the streamed turn.
+   */
+  function createStreamTailCapture(conversationId = null) {
+    return {
+      schema_version: 1,
+      conversation_id: typeof conversationId === 'string' && conversationId ? conversationId : null,
+      parent_message_id: null,
+      request_messages: [],
+      stream_messages: [],
+      message_index_by_id: new Map(),
+      current_envelope: null,
+      sse_buffer: '',
+      done_received: false,
+      handoff_done_received: false,
+      message_stream_complete: false,
+      handed_off: false,
+      handoff_topic_id: null,
+      overflow: false,
+      complete: false,
+      updated_at: Date.now()
+    };
+  }
+
+  /**
+   * Clones one provider record without retaining references into page-owned objects.
+   *
+   * @param {Object} value - JSON-compatible provider value.
+   * @returns {Object} Independent copy of the provider value.
+   */
+  function streamTailClone(value) {
+    return structuredClone(value);
+  }
+
+  /**
+   * Adds or refreshes one exact streamed provider message by stable message id.
+   *
+   * @param {Object} capture - Mutable streamed-turn capture.
+   * @param {Object} message - Provider message object received from the stream.
+   * @returns {boolean} True when the capture retained or refreshed the message.
+   */
+  function streamTailUpsertMessage(capture, message) {
+    const id = typeof message?.id === 'string' ? message.id : '';
+    if (!id || capture?.overflow) return false;
+    const existing = capture.message_index_by_id.get(id);
+    const copy = streamTailClone(message);
+    if (existing !== undefined) {
+      capture.stream_messages[existing] = copy;
+      capture.updated_at = Date.now();
+      return true;
+    }
+    if (capture.stream_messages.length >= STREAM_TAIL_RECORD_LIMIT) {
+      capture.overflow = true;
+      capture.complete = false;
+      return false;
+    }
+    capture.message_index_by_id.set(id, capture.stream_messages.length);
+    capture.stream_messages.push(copy);
+    capture.updated_at = Date.now();
+    return true;
+  }
+
+  /**
+   * Records the exact User request records and parent identity submitted to /f/conversation.
+   *
+   * @param {Object} capture - Mutable streamed-turn capture.
+   * @param {Object} requestBody - Parsed stock /f/conversation request body.
+   * @returns {void} No value is returned.
+   */
+  function streamTailCaptureRequest(capture, requestBody) {
+    if (!capture || !requestBody || typeof requestBody !== 'object') return;
+    if (typeof requestBody.conversation_id === 'string' && requestBody.conversation_id) {
+      capture.conversation_id = requestBody.conversation_id;
+    }
+    capture.parent_message_id = typeof requestBody.parent_message_id === 'string'
+      ? requestBody.parent_message_id
+      : null;
+    const messages = Array.isArray(requestBody.messages) ? requestBody.messages : [];
+    capture.request_messages = messages
+      .filter(message => typeof message?.id === 'string' && message.id)
+      .slice(-STREAM_TAIL_RECORD_LIMIT)
+      .map(streamTailClone);
+    capture.updated_at = Date.now();
+  }
+
+  /**
+   * Decodes one JSON Pointer path segment.
+   *
+   * @param {string} segment - Encoded JSON Pointer segment.
+   * @returns {string} Decoded property name.
+   */
+  function streamTailPointerSegment(segment) {
+    return segment.replace(/~1/g, '/').replace(/~0/g, '~');
+  }
+
+  /**
+   * Applies one v1 patch operation to the current streamed root envelope.
+   *
+   * @param {Object} capture - Mutable streamed-turn capture.
+   * @param {string} path - JSON Pointer path within the current root envelope.
+   * @param {string} operation - v1 patch operation.
+   * @param {Object} value - Patch value.
+   * @returns {void} No value is returned.
+   */
+  function streamTailApplyPathPatch(capture, path, operation, value) {
+    if (!capture?.current_envelope || typeof capture.current_envelope !== 'object') return;
+    const effectivePath = path || '/message/content/parts/0';
+    const segments = effectivePath.split('/').slice(1).map(streamTailPointerSegment);
+    if (!segments.length) return;
+    let target = capture.current_envelope;
+    for (let index = 0; index < segments.length - 1; index += 1) {
+      const key = segments[index];
+      if (!target || typeof target !== 'object' || !(key in target)) return;
+      target = target[key];
+    }
+    if (!target || typeof target !== 'object') return;
+    const key = segments.at(-1);
+    const op = String(operation || 'append');
+    if (op === 'append' || op === 'a') {
+      if (typeof target[key] === 'string' && typeof value === 'string') target[key] += value;
+      else if (Array.isArray(target[key])) target[key].push(streamTailClone(value));
+      else if (target[key] && typeof target[key] === 'object' && !Array.isArray(target[key]) &&
+               value && typeof value === 'object' && !Array.isArray(value)) {
+        Object.assign(target[key], streamTailClone(value));
+      } else target[key] = streamTailClone(value);
+    } else if (op === 'replace' || op === 'r' || op === 'add') {
+      target[key] = streamTailClone(value);
+    } else {
+      return;
+    }
+    if (capture.current_envelope.message) {
+      streamTailUpsertMessage(capture, capture.current_envelope.message);
+    }
+  }
+
+  /**
+   * Applies one parsed v1 stream event to the captured provider state.
+   *
+   * @param {Object} capture - Mutable streamed-turn capture.
+   * @param {Object} event - Parsed SSE event object.
+   * @returns {void} No value is returned.
+   */
+  function streamTailApplyEvent(capture, event) {
+    if (!capture || !event || typeof event !== 'object' || Array.isArray(event)) return;
+    if (typeof event.conversation_id === 'string' && event.conversation_id) {
+      capture.conversation_id = event.conversation_id;
+    }
+    if (event.type === 'stream_handoff') {
+      const options = Array.isArray(event.options) ? event.options : [];
+      const option = options.find(item => item?.type === 'subscribe_ws_topic') ??
+        options.find(item => item?.type === 'resume_sse_endpoint');
+      capture.handed_off = true;
+      capture.handoff_topic_id = typeof option?.topic_id === 'string' ? option.topic_id : null;
+      capture.complete = false;
+      capture.updated_at = Date.now();
+      return;
+    }
+    if (event.type === 'message_stream_complete') {
+      capture.message_stream_complete = true;
+      if (!capture.overflow) capture.complete = true;
+      capture.updated_at = Date.now();
+      return;
+    }
+    if (event.message && typeof event.message === 'object') {
+      streamTailUpsertMessage(capture, event.message);
+      return;
+    }
+    if (!('v' in event)) return;
+    const rootPath = event.p === undefined || event.p === '';
+    if (Array.isArray(event.v) && rootPath) {
+      for (const patch of event.v) {
+        if (patch && typeof patch === 'object') streamTailApplyEvent(capture, patch);
+      }
+      return;
+    }
+    if (event.v && typeof event.v === 'object' && !Array.isArray(event.v) && rootPath) {
+      capture.current_envelope = streamTailClone(event.v);
+      if (typeof capture.current_envelope.conversation_id === 'string') {
+        capture.conversation_id = capture.current_envelope.conversation_id;
+      }
+      if (capture.current_envelope.message) {
+        streamTailUpsertMessage(capture, capture.current_envelope.message);
+      }
+      return;
+    }
+    streamTailApplyPathPatch(
+      capture,
+      typeof event.p === 'string' ? event.p : '',
+      typeof event.o === 'string' ? event.o : 'append',
+      event.v
+    );
+  }
+
+  /**
+   * Reports whether the capture contains a finished final Assistant record.
+   *
+   * @param {Object} capture - Mutable or frozen streamed-turn capture.
+   * @returns {boolean} True when a final Assistant record is complete.
+   */
+  function streamTailHasCompletedAssistant(capture) {
+    return (capture?.stream_messages ?? []).some(message =>
+      message?.author?.role === 'assistant' &&
+      (message?.channel === 'final' || message?.end_turn === true) &&
+      (message?.status === 'finished_successfully' || message?.end_turn === true)
+    );
+  }
+
+  /**
+   * Consumes one text chunk from either the bootstrap SSE or its WebSocket handoff leg.
+   *
+   * @param {Object} capture - Mutable streamed-turn capture.
+   * @param {string} chunk - Raw SSE bytes decoded as text.
+   * @param {boolean} finalChunk - Whether no more bytes remain in this leg.
+   * @param {boolean} fromHandoff - Whether the chunk came from the subscribed WebSocket topic.
+   * @returns {void} No value is returned.
+   */
+  function consumeStreamTailSseChunk(capture, chunk, finalChunk = false, fromHandoff = false) {
+    if (!capture) return;
+    capture.sse_buffer += String(chunk ?? '').replace(/\r\n/g, '\n');
+    const events = [];
+    for (;;) {
+      const boundary = capture.sse_buffer.indexOf('\n\n');
+      if (boundary < 0) break;
+      events.push(capture.sse_buffer.slice(0, boundary));
+      capture.sse_buffer = capture.sse_buffer.slice(boundary + 2);
+    }
+    if (finalChunk && capture.sse_buffer.trim()) {
+      events.push(capture.sse_buffer);
+      capture.sse_buffer = '';
+    }
+    for (const rawEvent of events) {
+      const data = rawEvent.split('\n')
+        .filter(line => line.startsWith('data:'))
+        .map(line => line.slice(5).trim())
+        .join('\n');
+      if (!data) continue;
+      if (data === '[DONE]') {
+        if (fromHandoff) capture.handoff_done_received = true;
+        else capture.done_received = true;
+        if (!capture.overflow &&
+            (fromHandoff || !capture.handed_off) &&
+            streamTailHasCompletedAssistant(capture)) {
+          capture.complete = true;
+        }
+        capture.updated_at = Date.now();
+        agentTerminalObserve(capture, null);
+        continue;
+      }
+      let parsed;
+      try { parsed = JSON.parse(data); } catch { continue; }
+      if (typeof parsed === 'string') continue;
+      streamTailApplyEvent(capture, parsed);
+      agentStopwatchObserveStreamEvent(capture, parsed);
+      agentTerminalObserve(capture, parsed);
+    }
+    if (capture.complete) streamTailPersistCapture(capture);
+  }
+
+  /**
+   * Produces a serializable exact snapshot of one streamed-turn capture.
+   *
+   * @param {Object|null} capture - Mutable capture to freeze.
+   * @returns {Object|null} Serializable snapshot, or null when unavailable.
+   */
+  function streamTailCaptureSnapshot(capture) {
+    if (!capture) return null;
+    return {
+      schema_version: 1,
+      conversation_id: capture.conversation_id ?? null,
+      parent_message_id: capture.parent_message_id ?? null,
+      request_messages: (capture.request_messages ?? []).map(streamTailClone),
+      stream_messages: (capture.stream_messages ?? []).map(streamTailClone),
+      done_received: Boolean(capture.done_received),
+      handoff_done_received: Boolean(capture.handoff_done_received),
+      message_stream_complete: Boolean(capture.message_stream_complete),
+      handed_off: Boolean(capture.handed_off),
+      handoff_topic_id: capture.handoff_topic_id ?? null,
+      overflow: Boolean(capture.overflow),
+      complete: Boolean(capture.complete),
+      updated_at: Number(capture.updated_at) || Date.now()
+    };
+  }
+
+  /**
+   * Persists the exact bounded streamed-turn snapshot across a same-tab hard reload.
+   *
+   * @param {Object} capture - Capture to persist.
+   * @returns {boolean} True when session storage accepted the snapshot.
+   */
+  function streamTailPersistCapture(capture) {
+    try {
+      const snapshot = streamTailCaptureSnapshot(capture);
+      if (!snapshot) return false;
+      sessionStorage.setItem(STREAM_TAIL_STORAGE_KEY, JSON.stringify(snapshot));
+      return true;
+    } catch {
+      return false;
+    }
+  }
+
+  /**
+   * Restores the newest matching streamed-turn snapshot from same-tab session storage.
+   *
+   * @param {string} conversationId - Current conversation identity.
+   * @returns {Object|null} Restored mutable capture, or null when no matching snapshot exists.
+   */
+  function streamTailRestoreCapture(conversationId) {
+    try {
+      const parsed = JSON.parse(sessionStorage.getItem(STREAM_TAIL_STORAGE_KEY) || 'null');
+      if (!parsed || parsed.schema_version !== 1 || parsed.conversation_id !== conversationId) return null;
+      const capture = createStreamTailCapture(parsed.conversation_id);
+      capture.parent_message_id = parsed.parent_message_id ?? null;
+      capture.request_messages = Array.isArray(parsed.request_messages)
+        ? parsed.request_messages.map(streamTailClone)
+        : [];
+      capture.stream_messages = Array.isArray(parsed.stream_messages)
+        ? parsed.stream_messages.map(streamTailClone)
+        : [];
+      capture.message_index_by_id = new Map(
+        capture.stream_messages.map((message, index) => [message.id, index])
+      );
+      capture.done_received = Boolean(parsed.done_received);
+      capture.handoff_done_received = Boolean(parsed.handoff_done_received);
+      capture.message_stream_complete = Boolean(parsed.message_stream_complete);
+      capture.handed_off = Boolean(parsed.handed_off);
+      capture.handoff_topic_id = parsed.handoff_topic_id ?? null;
+      capture.overflow = Boolean(parsed.overflow);
+      capture.complete = Boolean(parsed.complete);
+      capture.updated_at = Number(parsed.updated_at) || Date.now();
+      return capture;
+    } catch {
+      return null;
+    }
+  }
+
+  /**
+   * Returns one de-duplicated provider-message sequence for the submitted and streamed turn.
+   *
+   * @param {Object} capture - Frozen streamed-turn snapshot.
+   * @returns {Array<Object>} Ordered exact provider messages for the turn.
+   */
+  function streamTailCapturedSequence(capture) {
+    const sequence = [];
+    const indexById = new Map();
+    for (const message of [
+      ...(capture?.request_messages ?? []),
+      ...(capture?.stream_messages ?? [])
+    ]) {
+      const id = typeof message?.id === 'string' ? message.id : '';
+      if (!id) continue;
+      const existing = indexById.get(id);
+      if (existing !== undefined) sequence[existing] = streamTailClone(message);
+      else {
+        indexById.set(id, sequence.length);
+        sequence.push(streamTailClone(message));
+      }
+    }
+    return sequence;
+  }
+
+  /**
+   * Reconciles one complete streamed turn only when history ends at an exact prefix of that turn.
+   *
+   * Existing history remains authoritative before the captured parent anchor. Matching captured
+   * tail records replace stale same-ID copies in place, and only the remaining contiguous captured
+   * suffix is appended. Any identity gap or non-suffix divergence is rejected.
+   *
+   * @param {Object} spine - History-API conversation spine.
+   * @param {Object|null} capture - Frozen complete streamed-turn snapshot.
+   * @returns {Object} Merge result containing the authoritative reconciled spine.
+   */
+  function mergeStreamTailCaptureIntoSpine(spine, capture) {
+    if (!capture) return { merged: false, reason: 'no-capture', spine, appended_count: 0, replaced_count: 0 };
+    if (!capture.complete || capture.overflow) {
+      return { merged: false, reason: capture.overflow ? 'capture-overflow' : 'capture-incomplete', spine, appended_count: 0, replaced_count: 0 };
+    }
+    const sequence = streamTailCapturedSequence(capture);
+    if (!sequence.length) return { merged: false, reason: 'capture-empty', spine, appended_count: 0, replaced_count: 0 };
+    const history = (spine?.records ?? []).map(record => record?.message).filter(Boolean);
+    const parentId = capture.parent_message_id;
+    const parentIndex = typeof parentId === 'string'
+      ? history.findIndex(message => message?.id === parentId)
+      : -1;
+    let sequenceStart = 0;
+    let anchorIndex = parentIndex;
+    let anchorId = parentIndex >= 0 ? parentId : null;
+    if (parentIndex < 0) {
+      const firstOverlap = sequence.findIndex(message =>
+        history.some(existing => existing?.id === message.id)
+      );
+      if (firstOverlap < 0) {
+        return { merged: false, reason: 'no-overlap-anchor', spine, appended_count: 0, replaced_count: 0 };
+      }
+      const overlapId = sequence[firstOverlap].id;
+      anchorIndex = history.findIndex(message => message?.id === overlapId);
+      anchorId = overlapId;
+      sequenceStart = firstOverlap + 1;
+    }
+    const historyTail = history.slice(anchorIndex + 1);
+    const expected = sequence.slice(sequenceStart);
+    if (historyTail.length > expected.length) {
+      return { merged: false, reason: 'non-suffix-gap', spine, appended_count: 0, replaced_count: 0 };
+    }
+    for (let index = 0; index < historyTail.length; index += 1) {
+      if (historyTail[index]?.id !== expected[index]?.id) {
+        return { merged: false, reason: 'non-suffix-gap', spine, appended_count: 0, replaced_count: 0 };
+      }
+    }
+    if (historyTail.length) anchorId = historyTail.at(-1)?.id ?? anchorId;
+    // Only records actually observed in the completed response stream can supersede same-ID history.
+    const streamedMessageIds = new Set(
+      (capture.stream_messages ?? [])
+        .map(message => typeof message?.id === 'string' ? message.id : '')
+        .filter(Boolean)
+    );
+    const mergedMessages = history.slice(0, anchorIndex + 1);
+    let replacedCount = 0;
+    for (let index = 0; index < historyTail.length; index += 1) {
+      const replacement = expected[index];
+      if (streamedMessageIds.has(replacement.id)) {
+        if (JSON.stringify(historyTail[index]) !== JSON.stringify(replacement)) replacedCount += 1;
+        mergedMessages.push(streamTailClone(replacement));
+      } else {
+        mergedMessages.push(streamTailClone(historyTail[index]));
+      }
+    }
+    const appended = expected.slice(historyTail.length);
+    mergedMessages.push(...appended.map(streamTailClone));
+    if (!replacedCount && !appended.length) {
+      return { merged: false, reason: 'up-to-date', spine, appended_count: 0, replaced_count: 0, anchor_message_id: anchorId };
+    }
+    const rebuilt = conversationSpineFromPages([
+      { messages: mergedMessages, page_info: { has_previous_page: false, has_next_page: false } }
+    ]);
+    rebuilt.pages = Array.isArray(spine?.pages) ? [...spine.pages] : rebuilt.pages;
+    return {
+      merged: true,
+      reason: 'streamed-tail-recovered',
+      spine: rebuilt,
+      appended_count: appended.length,
+      replaced_count: replacedCount,
+      anchor_message_id: anchorId
+    };
+  }
+
+  /**
+   * Parses the stock /f/conversation request clone into a new passive capture.
+   *
+   * @param {Request} request - Page-owned request cloned before transmission.
+   * @param {number} submittedAtMs - Monotonic timestamp captured before request transmission.
+   * @returns {Promise<Object|null>} Capture associated with this request, or null when unreadable.
+   */
+  async function captureGenerationStreamRequest(request, submittedAtMs) {
+    try {
+      const body = JSON.parse(await request.clone().text());
+      const conversationId = typeof body?.conversation_id === 'string'
+        ? body.conversation_id
+        : currentConversationId();
+      const capture = createStreamTailCapture(conversationId);
+      streamTailCaptureRequest(capture, body);
+      capture.stopwatch_submitted_at_ms = submittedAtMs;
+      agentStopwatchObserveRequest(capture);
+      streamTailCapture = capture;
+      streamTailPersistCapture(capture);
+      return capture;
+    } catch (error) {
+      logDiagnostic('warnings', 'conversation-stream-tail-request-capture-failure', {
+        message: errorMessage(error)
+      });
+      return null;
+    }
+  }
+
+  /**
+   * Consumes one independently owned ChatGPT conversation SSE response through the canonical
+   * stream parser and terminal dispatcher.
+   *
+   * @param {Response} response - Independently owned stock response clone.
+   * @param {Object} capture - Mutable parser state for this observed stream.
+   * @param {Object} options2 - Stream-consumption options.
+   * @param {boolean} options2.persistCapture - Whether this stream is authoritative tail-recovery state.
+   * @param {string} options2.source - Diagnostic source label.
+   * @returns {Promise<void>} Resolves after the cloned response stream ends.
+   */
+  async function consumeObservedConversationStreamResponse(
+    response,
+    capture,
+    { persistCapture, source }
+  ) {
+    if (!capture || !response?.body) return;
+    const reader = response.body.getReader();
+    const decoder = new TextDecoder();
+    try {
+      for (;;) {
+        const { value, done } = await reader.read();
+        if (done) break;
+        consumeStreamTailSseChunk(capture, decoder.decode(value, { stream: true }), false, false);
+      }
+      consumeStreamTailSseChunk(capture, decoder.decode(), true, false);
+      if (persistCapture) streamTailPersistCapture(capture);
+      logDiagnostic('debug', 'conversation-stream-response-observed', {
+        source,
+        conversation_id: capture.conversation_id,
+        stream_record_count: capture.stream_messages.length,
+        handed_off: capture.handed_off,
+        handoff_topic_id: capture.handoff_topic_id,
+        complete: capture.complete
+      });
+    } catch (error) {
+      capture.complete = false;
+      if (persistCapture) streamTailPersistCapture(capture);
+      logDiagnostic('warnings', 'conversation-stream-response-observation-failure', {
+        source,
+        conversation_id: capture.conversation_id,
+        message: errorMessage(error)
+      });
+    } finally {
+      releaseReaderLockQuietly(reader);
+    }
+  }
+
+  /**
+   * Reads a cloned /f/conversation response without consuming or delaying the stock page response.
+   *
+   * @param {Response} response - Cloned stock response.
+   * @param {Object} capture - Capture associated with the request.
+   * @returns {Promise<void>} Resolves after the cloned response stream ends.
+   */
+  async function captureGenerationStreamResponse(response, capture) {
+    await consumeObservedConversationStreamResponse(response, capture, {
+      persistCapture: true,
+      source: 'generation'
+    });
+  }
+
+  /**
+   * Observes a cloned /f/conversation/resume response through the same canonical stream parser.
+   *
+   * The resume stream is lifecycle evidence only here; it must not replace the authoritative
+   * tail-recovery snapshot captured from the original generation request.
+   *
+   * @param {Response} response - Independently owned resume response clone.
+   * @param {Request} request - Independently owned resume request clone.
+   * @returns {Promise<void>} Resolves after the cloned resume stream ends.
+   */
+  async function captureConversationResumeStreamResponse(response, request) {
+    if (!response?.body || !request) return;
+    try {
+      const body = JSON.parse(await request.text());
+      const conversationId = typeof body?.conversation_id === 'string' && body.conversation_id
+        ? body.conversation_id
+        : null;
+      if (!conversationId) {
+        throw new Error('Conversation resume request did not contain conversation_id.');
+      }
+      const capture = createStreamTailCapture(conversationId);
+      await consumeObservedConversationStreamResponse(response, capture, {
+        persistCapture: false,
+        source: 'resume'
+      });
+    } catch (error) {
+      logDiagnostic('warnings', 'conversation-resume-stream-observation-failure', {
+        message: errorMessage(error)
+      });
+    }
+  }
+
+  /**
+   * Extracts encoded SSE items from one matching ChatGPT WebSocket topic frame.
+   *
+   * @param {Object} capture - Active streamed-turn capture.
+   * @param {Object} message - Parsed WebSocket message/catchup frame.
+   * @returns {void} No value is returned.
+   */
+  function streamTailConsumeWebSocketMessage(capture, message) {
+    if (!capture?.handoff_topic_id || !message || typeof message !== 'object') return;
+    if (message.topic_id !== capture.handoff_topic_id) return;
+    const encoded = message?.payload?.payload?.encoded_item;
+    if (typeof encoded !== 'string' || !encoded) return;
+    consumeStreamTailSseChunk(capture, encoded, false, true);
+    if (capture.complete) streamTailPersistCapture(capture);
+  }
+
+  /**
+   * Passively observes one page WebSocket frame and consumes only the active handoff topic.
+   *
+   * @param {Object} data - WebSocket message data.
+   * @returns {void} No value is returned.
+   */
+  function captureGenerationWebSocketFrame(data) {
+    const capture = streamTailCapture;
+    if (!capture?.handed_off || !capture.handoff_topic_id) return;
+    if (typeof data !== 'string') return;
+    let parsed;
+    try { parsed = JSON.parse(data); } catch { return; }
+    const frames = Array.isArray(parsed) ? parsed : [parsed];
+    for (const frame of frames) {
+      if (!frame || typeof frame !== 'object') continue;
+      if (frame.type === 'message') {
+        streamTailConsumeWebSocketMessage(capture, frame);
+      } else if (frame.type === 'reply' && frame.reply?.topic_id === capture.handoff_topic_id) {
+        for (const catchup of Array.isArray(frame.reply.catchups) ? frame.reply.catchups : []) {
+          streamTailConsumeWebSocketMessage(capture, catchup);
+        }
+      }
+    }
+  }
+  // END Issue #123 streamed-tail recovery
+
+
+  /**
+   * Handles install network capture.
+   *
+   * @returns {void} No value is returned.
+   */
+  function installNetworkCapture() {
+    if (captureInstalled) return;
+    // Use the page realm rather than the userscript sandbox when intercepting page networking.
+    const pageWindow = typeof unsafeWindow !== 'undefined' ? unsafeWindow : window;
+
+    if (typeof pageWindow.fetch === 'function') {
+      const originalFetch = pageWindow.fetch;
+      originalPageFetch = originalFetch;
+      pageWindow.fetch = function(...args) {
+        const input = args[0];
+        const init = args[1] || {};
+        let request = null;
+        try {
+          const PageRequest = pageWindow.Request || Request;
+          request = input instanceof PageRequest ? input : new PageRequest(input, init);
+        } catch {}
+        const requestUrl = request?.url ?? String(input);
+        const stockTrace = stockNetworkTraceFetchStart(request, requestUrl);
+        void communicationLogFetchRequest(request, stockTrace)
+          .catch(communicationError => communicationLogReportFailure('fetch-request', communicationError));
+        rememberApiRequestContext(requestUrl, request?.headers, init.headers);
+        recordClickDiagnosticNetworkRequest(requestUrl, 'fetch');
+        const requestMethod = String(request?.method ?? init.method ?? 'GET').toUpperCase();
+        if (request) void agentTerminalObserveStatsRequest(request, requestUrl, requestMethod);
+        const stopwatchConversationRequest =
+          requestMethod === 'GET' && agentStopwatchIsInitialConversationUrl(requestUrl);
+        const generationRequest = isGenerationStreamUrl(requestUrl) && requestMethod === 'POST';
+        const resumeRequest = isConversationResumeUrl(requestUrl) && requestMethod === 'POST';
+        const steerTurnRequest = isSteerTurnUrl(requestUrl) && requestMethod === 'POST';
+        const generationSubmittedAtMs = generationRequest ? performance.now() : null;
+        if (generationRequest) agentFaviconObserveProcessing();
+        if (steerTurnRequest) agentStopwatchObserveSteerTurn(performance.now());
+        const capturePromise = generationRequest && request
+          ? captureGenerationStreamRequest(request, generationSubmittedAtMs)
+          : null;
+        const resumeRequestClone = resumeRequest && request ? cloneSafely(request) : null;
+        const responsePromise = originalFetch.apply(this, args);
+        return responsePromise.then(response => {
+          const generationResponse = capturePromise ? cloneSafely(response) : null;
+          const resumeResponse = resumeRequest ? cloneSafely(response) : null;
+          const stopwatchConversationResponse = stopwatchConversationRequest
+            ? cloneSafely(response)
+            : null;
+          stockNetworkTraceFetchResponse(response, stockTrace);
+          void communicationLogFetchResponse(response, stockTrace)
+            .catch(communicationError => communicationLogReportFailure('fetch-response', communicationError));
+          if (stopwatchConversationRequest && !stopwatchConversationResponse) {
+            logDiagnostic('warnings', 'agent-stopwatch-recovery-response-clone-failure', {
+              url: boundedDiagnosticText(response?.url ?? requestUrl, 320)
+            });
+          }
+          if (stopwatchConversationResponse) {
+            void agentStopwatchObserveConversationResponse(stopwatchConversationResponse)
+              .catch(error => logDiagnostic('warnings', 'agent-stopwatch-recovery-failed', {
+                message: boundedDiagnosticText(errorMessage(error), 1000)
+              }));
+          }
+          if (resumeRequest && !resumeRequestClone) {
+            logDiagnostic('warnings', 'conversation-resume-request-clone-failure', {
+              url: boundedDiagnosticText(requestUrl, 320)
+            });
+          }
+          if (resumeRequest && !resumeResponse) {
+            logDiagnostic('warnings', 'conversation-resume-response-clone-failure', {
+              url: boundedDiagnosticText(response?.url ?? requestUrl, 320)
+            });
+          }
+          if (resumeRequestClone && resumeResponse) {
+            void captureConversationResumeStreamResponse(resumeResponse, resumeRequestClone);
+          }
+          if (capturePromise && !generationResponse) {
+            logDiagnostic('warnings', 'conversation-stream-tail-response-clone-failure', {
+              url: boundedDiagnosticText(response?.url ?? requestUrl, 320)
+            });
+          }
+          if (capturePromise && generationResponse) {
+            void capturePromise.then(capture => {
+              if (!capture) {
+                const cancelPromise = generationResponse.body?.cancel?.();
+                if (cancelPromise && typeof cancelPromise.catch === 'function') {
+                  void cancelPromise.catch(() => {});
+                }
+                return;
+              }
+              void captureGenerationStreamResponse(generationResponse, capture);
+            });
+          }
+          return response;
+        }, error => {
+          logDiagnostic('debug', 'stock-network-fetch-failed', {
+            network_sequence: stockTrace.sequence,
+            method: stockTrace.method,
+            url: stockTrace.url,
+            duration_ms: Math.round(performance.now() - stockTrace.started_at),
+            error: boundedDiagnosticText(errorMessage(error), 1000)
+          });
+          throw error;
+        });
+      };
+    }
+
+    // Retain the page-realm XHR constructor whose prototype is patched for capture.
+    const XHR = pageWindow.XMLHttpRequest;
+    if (XHR?.prototype) {
+      const originalOpen = XHR.prototype.open;
+      const originalSend = XHR.prototype.send;
+      const originalSetRequestHeader = XHR.prototype.setRequestHeader;
+      XHR.prototype.open = function(method, url, ...rest) {
+        this.__tmApiRequest = { method: String(method), url: String(url), headers: {} };
+        return originalOpen.call(this, method, url, ...rest);
+      };
+      XHR.prototype.setRequestHeader = function(name, value) {
+        if (this.__tmApiRequest) {
+          const key = String(name).toLowerCase();
+          const prior = this.__tmApiRequest.headers[key];
+          this.__tmApiRequest.headers[key] = prior ? `${prior}, ${value}` : String(value);
+        }
+        return originalSetRequestHeader.call(this, name, value);
+      };
+      XHR.prototype.send = function(body) {
+        const info = this.__tmApiRequest || { method: 'GET', url: '', headers: {} };
+        const stockTrace = stockNetworkTraceXhrStart(this, info);
+        void communicationLogXhrRequest(info, body, stockTrace)
+          .catch(communicationError => communicationLogReportFailure('xhr-request', communicationError));
+        this.addEventListener('loadend', () => {
+          stockNetworkTraceXhrResponse(this, stockTrace);
+          void communicationLogXhrResponse(this, stockTrace)
+            .catch(communicationError => communicationLogReportFailure('xhr-response', communicationError));
+        }, { once: true });
+        rememberApiRequestContext(info.url, info.headers);
+        recordClickDiagnosticNetworkRequest(info.url, 'xmlhttprequest');
+        return originalSend.call(this, body);
+      };
+    }
+
+    if (typeof pageWindow.WebSocket === 'function') {
+      const NativeWebSocket = pageWindow.WebSocket;
+      pageWindow.WebSocket = new Proxy(NativeWebSocket, {
+        construct(target, args) {
+          const socket = Reflect.construct(target, args, target);
+          const socketUrl = String(args[0] ?? '');
+          const nativeSend = socket.send;
+          socket.send = function(data) {
+            void communicationLogWebSocketSend(socketUrl, data)
+              .catch(communicationError => communicationLogReportFailure('websocket-send', communicationError));
+            return nativeSend.call(this, data);
+          };
+          socket.addEventListener('open', () => {
+            void communicationLogRecord('communication_websocket_open', { url: stockNetworkSafeUrl(socketUrl) });
+          });
+          socket.addEventListener('message', event => {
+            captureGenerationWebSocketFrame(event.data);
+            void communicationLogWebSocketMessage(socketUrl, event.data)
+              .catch(communicationError => communicationLogReportFailure('websocket-message', communicationError));
+          });
+          socket.addEventListener('close', event => {
+            void communicationLogRecord('communication_websocket_close', {
+              url: stockNetworkSafeUrl(socketUrl),
+              code: event.code,
+              was_clean: event.wasClean === true
+            });
+          });
+          socket.addEventListener('error', () => {
+            void communicationLogRecord('communication_websocket_error', { url: stockNetworkSafeUrl(socketUrl) });
+          });
+          return socket;
+        }
+      });
+    }
+
+    if (typeof pageWindow.open === 'function') {
+      const originalOpen = pageWindow.open;
+      pageWindow.open = function(url, ...rest) {
+        recordClickDiagnosticNetworkRequest(url, 'window.open');
+        return originalOpen.call(this, url, ...rest);
+      };
+    }
+
+    captureInstalled = true;
+  }
+
+  /**
+   * Handles API fetch.
+   *
+   * @param {string} url - The URL to process.
+   * @returns {Promise<Object|boolean|string|number|null>} A promise that resolves to the Object|boolean|string|number|null result produced by `apiFetch`.
+   */
+  async function apiFetch(url) {
+    const conversationId = currentConversationId();
+    // Snapshot the captured request context used to authorize this direct API request.
+    const context = apiRequestContext;
+    if (!context?.headers?.authorization || context.conversation_id !== conversationId) {
+      throw new Error('No authenticated Conversation API context is available. Reload this conversation, then try again.');
+    }
+    // Use the page realm rather than the userscript sandbox when intercepting page networking.
+    const pageWindow = typeof unsafeWindow !== 'undefined' ? unsafeWindow : window;
+    // Prefer the pre-interception fetch implementation to avoid recursively capturing ourselves.
+    const fetchFn = originalPageFetch || pageWindow.fetch;
+    const requestInit = {
+      method: 'GET',
+      headers: { ...context.headers },
+      credentials: 'include'
+    };
+    const trace = {
+      sequence: ++stockNetworkSequence,
+      started_at: performance.now(),
+      method: 'GET',
+      url: stockNetworkSafeUrl(url),
+      same_origin: true,
+      origin: 'downloadconversation'
+    };
+    let loggingRequest = null;
+    try {
+      const PageRequest = pageWindow.Request || Request;
+      loggingRequest = new PageRequest(url, requestInit);
+    } catch {}
+    void communicationLogFetchRequest(loggingRequest, trace)
+      .catch(communicationError => communicationLogReportFailure('direct-api-request', communicationError));
+    const response = await fetchFn.call(pageWindow, url, requestInit);
+    void communicationLogFetchResponse(response, trace)
+      .catch(communicationError => communicationLogReportFailure('direct-api-response', communicationError));
+    return response;
+  }
+
+  /**
+   * Handles conversation schema ok.
+   *
+   * @param {Object} data - The data value required by this function.
+   * @returns {boolean} `true` when `conversationSchemaOk` succeeds or its predicate is satisfied; otherwise `false`.
+   */
+  function conversationSchemaOk(data) {
+    return !!data && typeof data === 'object' && Array.isArray(data.messages) &&
+      !!data.page_info && typeof data.page_info === 'object';
+  }
+
+  /**
+   * Handles page URL.
+   *
+   * @param {string} conversationId - The Conversation API conversation identifier.
+   * @param {Object|null} cursor - The pagination cursor, or null for the first page.
+   * @returns {string} The string produced by `pageUrl`.
+   */
+  function pageUrl(conversationId, cursor = null) {
+    if (cursor === null) {
+      return `${location.origin}/backend-api/conversations/${encodeURIComponent(conversationId)}?include_has_versions=true&num_turns=${PAGE_TURNS}`;
+    }
+    return `${location.origin}/backend-api/conversations/${encodeURIComponent(conversationId)}/messages?before=${encodeURIComponent(cursor)}&include_has_versions=true&num_turns=${PAGE_TURNS}`;
+  }
+
+  /**
+   * Handles bounded diagnostic text.
+   *
+   * @param {string} text - The text to process.
+   * @param {number} maxChars - The maximum number of characters to retain.
+   * @returns {string} The string produced by `boundedDiagnosticText`.
+   */
+  function boundedDiagnosticText(text, maxChars = 2000) {
+    const value = typeof text === 'string' ? text : String(text ?? '');
+    if (value.length <= maxChars) return value;
+    return `${value.slice(0, maxChars)}… [truncated ${value.length - maxChars} chars]`;
+  }
+
+
+  /**
+   * Handles diagnostic request path.
+   *
+   * @param {string} url - The URL to process.
+   * @returns {string} The string produced by `diagnosticRequestPath`.
+   */
+  function diagnosticRequestPath(url) {
+    try {
+      const parsed = new URL(url, location.href);
+      return `${parsed.pathname}${parsed.search}`;
+    } catch {
+      return String(url);
+    }
+  }
+
+  /**
+   * Fetches one conversation page.
+   *
+   * @param {string} url - The URL to process.
+   * @param {Object} description - The description value required by this function.
+   * @param {Object} requestInfo - The requestInfo value required by this function.
+   * @returns {Promise<Object|boolean|string|number|null>} A promise that resolves to the Object|boolean|string|number|null result produced by `fetchOneConversationPage`.
+   */
+  async function fetchOneConversationPage(url, description, requestInfo = {}) {
+    const startedAt = performance.now();
+    const requestDetails = {
+      page_number: requestInfo.page_number ?? null,
+      request_kind: requestInfo.request_kind ?? 'unknown',
+      cursor: requestInfo.cursor ?? null,
+      request_path: diagnosticRequestPath(url),
+      previous_page_info: requestInfo.previous_page_info ?? null
+    };
+
+    logDiagnostic('verbose', 'conversation-api-page-request-start', requestDetails);
+
+    let response;
+    try {
+      response = await apiFetch(url);
+    } catch (error) {
+      logDiagnostic('errors', 'conversation-api-page-network-failure', {
+        ...requestDetails,
+        elapsed_ms: Math.round(performance.now() - startedAt),
+        message: errorMessage(error)
+      });
+      throw error;
+    }
+
+    const responseDetails = {
+      ...requestDetails,
+      elapsed_ms: Math.round(performance.now() - startedAt),
+      status: response.status,
+      status_text: response.statusText,
+      content_type: response.headers.get('content-type') || ''
+    };
+
+    if (!response.ok) {
+      let bodyPreview = '';
+      try {
+        bodyPreview = boundedDiagnosticText(await response.clone().text());
+      } catch (error) {
+        bodyPreview = `[response body unavailable: ${errorMessage(error)}]`;
+      }
+      logDiagnostic('errors', 'conversation-api-page-http-failure', {
+        ...responseDetails,
+        response_body_preview: bodyPreview
+      });
+      throw new Error(`${description} returned HTTP ${response.status}.`);
+    }
+
+    let data;
+    try {
+      data = await response.json();
+    } catch (error) {
+      logDiagnostic('errors', 'conversation-api-page-json-failure', {
+        ...responseDetails,
+        message: errorMessage(error)
+      });
+      throw error;
+    }
+
+    if (!conversationSchemaOk(data)) {
+      logDiagnostic('errors', 'conversation-api-page-schema-failure', {
+        ...responseDetails,
+        top_level_keys: data && typeof data === 'object' ? Object.keys(data) : [],
+        messages_is_array: Array.isArray(data?.messages),
+        page_info_type: data?.page_info === null ? 'null' : typeof data?.page_info
+      });
+      throw new Error(`${description} did not contain messages[] and page_info.`);
+    }
+
+    logDiagnostic('debug', 'conversation-api-page-success', {
+      ...responseDetails,
+      record_count: data.messages.length,
+      page_info: {
+        start_cursor: data.page_info.start_cursor ?? null,
+        end_cursor: data.page_info.end_cursor ?? null,
+        has_previous_page: data.page_info.has_previous_page ?? null,
+        has_next_page: data.page_info.has_next_page ?? null
+      }
+    });
+    return data;
+  }
+
+  /**
+   * Collects conversation pages.
+   *
+   * @param {Object} fetchPage - The callback used to fetch one Conversation API page.
+   * @param {Object} onProgress - The callback invoked with progress updates.
+   * @returns {Promise<Object>} A promise that resolves to the Object result produced by `collectConversationPages`.
+   */
+  async function collectConversationPages(fetchPage, onProgress) {
+    // Pages are accumulated newest-to-oldest as the API previous-page cursor is followed.
+    const pages = [];
+    // Tracks pagination cursors already consumed so a server loop is detected immediately.
+    const seenCursors = new Set();
+    // Running count of source records fetched across all Conversation API pages.
+    let rawRecordCount = 0;
+    // Null requests the newest page; later values request progressively older pages.
+    let cursor = null;
+
+    for (;;) {
+      if (pages.length >= MAX_PAGES) {
+        throw new Error(`Conversation pagination exceeded the ${MAX_PAGES}-page safety limit.`);
+      }
+      const previousPageInfo = pages.length ? pages[pages.length - 1].page_info : null;
+      const pageNumber = pages.length + 1;
+      const pageStartedAt = performance.now();
+      onProgress?.({
+        stage: 'fetching',
+        phase: 'request-start',
+        page_count: pages.length,
+        raw_record_count: rawRecordCount,
+        page_number: pageNumber,
+        page_started_at: pageStartedAt
+      });
+      const data = await fetchPage(cursor, pageNumber, previousPageInfo);
+      if (!conversationSchemaOk(data)) {
+        throw new Error('Conversation API page did not contain messages[] and page_info.');
+      }
+      if (pages.length === 0 && data.page_info.has_next_page === true) {
+        throw new Error('Initial Conversation API page reports has_next_page=true; newest boundary is not established.');
+      }
+
+      pages.push(data);
+      rawRecordCount += data.messages.length;
+      onProgress?.({
+        stage: 'fetching',
+        phase: 'request-complete',
+        page_count: pages.length,
+        raw_record_count: rawRecordCount,
+        page_number: pageNumber,
+        page_started_at: 0
+      });
+
+      if (data.page_info.has_previous_page !== true) break;
+      cursor = data.page_info.start_cursor;
+      if (!cursor) {
+        throw new Error('Conversation API reports a previous page but supplied no start_cursor.');
+      }
+      if (seenCursors.has(cursor)) {
+        throw new Error(`Conversation pagination repeated start_cursor ${cursor}.`);
+      }
+      seenCursors.add(cursor);
+    }
+
+    return { pages, raw_record_count: rawRecordCount };
+  }
+
+  /**
+   * Fetches conversation pages.
+   *
+   * @param {string} conversationId - The Conversation API conversation identifier.
+   * @param {Object} onProgress - The callback invoked with progress updates.
+   * @returns {Promise<Array<unknown>>} A promise that resolves to the Array<unknown> result produced by `fetchConversationPages`.
+   */
+  async function fetchConversationPages(conversationId, onProgress) {
+    return collectConversationPages(
+      (cursor, pageNumber, previousPageInfo) => fetchOneConversationPage(
+        pageUrl(conversationId, cursor),
+        cursor === null ? 'Initial Conversation API request' : 'Conversation pagination request',
+        {
+          page_number: pageNumber,
+          request_kind: cursor === null ? 'initial' : 'pagination',
+          cursor,
+          previous_page_info: previousPageInfo ? {
+            start_cursor: previousPageInfo.start_cursor ?? null,
+            end_cursor: previousPageInfo.end_cursor ?? null,
+            has_previous_page: previousPageInfo.has_previous_page ?? null,
+            has_next_page: previousPageInfo.has_next_page ?? null
+          } : null
+        }
+      ),
+      onProgress
+    );
+  }
+
+  /**
+   * Handles conversation spine from pages.
+   *
+   * @param {Object} pages - The ordered Conversation API pages.
+   * @returns {Object} The Object value produced by `conversationSpineFromPages`.
+   */
+  function conversationSpineFromPages(pages) {
+    // Maps each stable message id to its slot so duplicate page overlap can be replaced in place.
+    const messageIndexById = new Map();
+    // De-duplicated Conversation API messages in chronological source order.
+    const messages = [];
+    // Counts page-overlap records whose stable message id was already present.
+    let duplicateMessageIds = 0;
+    for (const page of [...pages].reverse()) {
+      for (const message of page?.messages ?? []) {
+        const id = typeof message?.id === 'string' ? message.id : '';
+        if (!id) throw new Error('Conversation API message is missing a stable id.');
+        const existingIndex = messageIndexById.get(id);
+        if (existingIndex !== undefined) {
+          duplicateMessageIds += 1;
+          messages[existingIndex] = message;
+          continue;
+        }
+        messageIndexById.set(id, messages.length);
+        messages.push(message);
+      }
+    }
+
+    /**
+     * Handles records.
+     */
+    const records = messages.map((message, ordinal) => {
+      const metadata = message?.metadata && typeof message.metadata === 'object'
+        ? message.metadata
+        : {};
+      return {
+        ordinal,
+        message_id: message.id,
+        role: typeof message?.author?.role === 'string' ? message.author.role : null,
+        channel: typeof message?.channel === 'string' ? message.channel : null,
+        content_type: typeof message?.content?.content_type === 'string'
+          ? message.content.content_type
+          : null,
+        turn_exchange_id: typeof metadata.turn_exchange_id === 'string'
+          ? metadata.turn_exchange_id
+          : null,
+        working_turn_id: typeof metadata.working_turn_id === 'string'
+          ? metadata.working_turn_id
+          : null,
+        message
+      };
+    });
+
+    // User records become chronological UAP anchors for associating following activity.
+    const uapAnchors = [];
+    for (const record of records) {
+      if (record.role !== 'user') continue;
+      uapAnchors.push({
+        ordinal: uapAnchors.length,
+        user_message_id: record.message_id,
+        user_record_ordinal: record.ordinal,
+        turn_exchange_id: record.turn_exchange_id,
+        working_turn_id: record.working_turn_id
+      });
+    }
+
+    return {
+      pages: [...pages],
+      messages,
+      records,
+      uap_anchors: uapAnchors,
+      duplicate_message_ids: duplicateMessageIds
+    };
+  }
+
+  /**
+   * Handles API linkage key is identifier like.
+   *
+   * @param {string} key - The lookup key to process.
+   * @returns {boolean} `true` when the api linkage key is identifier like condition is satisfied; otherwise `false`.
+   */
+  function apiLinkageKeyIsIdentifierLike(key) {
+    return /(?:^id$|_id$|_ids$|call|parent|source|reference|tool|exchange|working|request|response)/i
+      .test(String(key ?? ''));
+  }
+
+  /**
+   * Handles API linkage scalar is safe.
+   *
+   * @param {string} key - The lookup key to process.
+   * @param {string} value - The value to process.
+   * @returns {boolean} `true` when `apiLinkageScalarIsSafe` succeeds or its predicate is satisfied; otherwise `false`.
+   */
+  function apiLinkageScalarIsSafe(key, value) {
+    if (value === null || value === undefined) return false;
+    if (!['string', 'number'].includes(typeof value)) return false;
+    if (/(?:authorization|cookie|token|secret|password)/i.test(String(key ?? ''))) return false;
+    if (typeof value === 'string' && value.length > 256) return false;
+    return true;
+  }
+
+  /**
+   * Handles API record identifier scalars.
+   *
+   * @param {Object} record - The provider/source record to process.
+   * @returns {Array<unknown>} The ordered values produced by `apiRecordIdentifierScalars`.
+   */
+  function apiRecordIdentifierScalars(record) {
+    const raw = record?.message && typeof record.message === 'object' ? record.message : {};
+    const result = [];
+    const seen = new Set();
+    // Content-bearing fields are excluded from identifier linkage scanning to avoid false matches.
+    const freeformKeys = new Set([
+      'text', 'parts', 'thinking', 'summary', 'message', 'prompt', 'output', 'input', 'content'
+    ]);
+    /**
+     * Handles walk.
+     *
+     * @param {string} value - The value to process.
+     * @param {string} path - The property path being traversed.
+     * @param {Object} depth - The current traversal depth.
+     * @returns {void} No value is returned.
+     */
+    const walk = (value, path, depth) => {
+      if (depth > 8 || value === null || value === undefined) return;
+      if (Array.isArray(value)) {
+        for (let i = 0; i < Math.min(value.length, 12); i += 1) {
+          walk(value[i], `${path}[${i}]`, depth + 1);
+        }
+        return;
+      }
+      if (typeof value !== 'object' || seen.has(value)) return;
+      seen.add(value);
+      for (const [key, child] of Object.entries(value)) {
+        const childPath = path ? `${path}.${key}` : key;
+        if (child && typeof child === 'object') {
+          if (!freeformKeys.has(key)) walk(child, childPath, depth + 1);
+          continue;
+        }
+        if (freeformKeys.has(key)) continue;
+        if (apiLinkageKeyIsIdentifierLike(key) && apiLinkageScalarIsSafe(key, child)) {
+          result.push({ path: childPath, key, value: child });
+        }
+      }
+    };
+    walk(raw, '', 0);
+    return result;
+  }
+
+  /**
+   * Handles API conversation UAP grouping.
+   *
+   * @param {Object} spine - The ordered Conversation API source-record spine.
+   * @returns {Object} The Object value produced by `apiConversationUapGrouping`.
+   */
+  function apiConversationUapGrouping(spine) {
+    const anchors = spine?.uap_anchors ?? [];
+    const records = spine?.records ?? [];
+    // Maps each exact turn-exchange id to the UAP anchor ordinals that carry it.
+    const exchangeToAnchors = new Map();
+    // Maps each exact working-turn id to the UAP anchor ordinals that carry it.
+    const workingToAnchors = new Map();
+    /**
+     * Handles add.
+     *
+     * @param {Map<unknown, unknown>} map - The map value required by this function.
+     * @param {string} key - The lookup key to process.
+     * @param {number} ordinal - The ordinal position to process.
+     * @returns {void} No value is returned.
+     */
+    const add = (map, key, ordinal) => {
+      if (!key) return;
+      const values = map.get(key) ?? [];
+      values.push(ordinal);
+      map.set(key, values);
+    };
+    for (const anchor of anchors) {
+      add(exchangeToAnchors, anchor.turn_exchange_id, anchor.ordinal);
+      add(workingToAnchors, anchor.working_turn_id, anchor.ordinal);
+    }
+
+    /**
+     * Handles groups.
+     */
+    const groups = anchors.map(anchor => ({
+      ordinal: anchor.ordinal,
+      user_message_id: anchor.user_message_id,
+      user_record_ordinal: anchor.user_record_ordinal,
+      record_ordinals: [],
+      exact_record_ordinals: []
+    }));
+    // Stores one association classification for every source record in spine order.
+    const classifications = [];
+    // Summarizes association evidence without affecting the grouping decisions themselves.
+    const counts = { exact: 0, fallback: 0, ungrouped: 0, conflict: 0 };
+
+    /**
+     * Handles chronological anchor.
+     *
+     * @param {number} recordOrdinal - The zero-based record ordinal.
+     * @returns {null} The value produced by `chronologicalAnchor`, or `null` when unavailable.
+     */
+    const chronologicalAnchor = recordOrdinal => {
+      let candidate = null;
+      for (const anchor of anchors) {
+        if (anchor.user_record_ordinal > recordOrdinal) break;
+        candidate = anchor.ordinal;
+      }
+      return candidate;
+    };
+
+    for (const record of records) {
+      const exchangeCandidates = record.turn_exchange_id
+        ? (exchangeToAnchors.get(record.turn_exchange_id) ?? [])
+        : [];
+      const workingCandidates = record.working_turn_id
+        ? (workingToAnchors.get(record.working_turn_id) ?? [])
+        : [];
+      const exactCandidates = [...new Set([...exchangeCandidates, ...workingCandidates])];
+      const disagreement = exchangeCandidates.length === 1 && workingCandidates.length === 1 &&
+        exchangeCandidates[0] !== workingCandidates[0];
+      let classification;
+      let uapOrdinal = null;
+      let basis = null;
+      if (disagreement || exactCandidates.length > 1) {
+        classification = 'conflict';
+      } else if (exactCandidates.length === 1) {
+        classification = 'exact';
+        uapOrdinal = exactCandidates[0];
+        basis = exchangeCandidates.length === 1 && workingCandidates.length === 1
+          ? 'turn_exchange_id+working_turn_id'
+          : exchangeCandidates.length === 1 ? 'turn_exchange_id' : 'working_turn_id';
+        groups[uapOrdinal].exact_record_ordinals.push(record.ordinal);
+      } else {
+        uapOrdinal = chronologicalAnchor(record.ordinal);
+        if (uapOrdinal === null) classification = 'ungrouped';
+        else {
+          classification = 'fallback';
+          basis = 'chronological-window';
+        }
+      }
+      counts[classification] += 1;
+      classifications.push({
+        record_ordinal: record.ordinal,
+        message_id: record.message_id,
+        role: record.role,
+        classification,
+        uap_ordinal: uapOrdinal,
+        basis
+      });
+    }
+    return { groups, classifications, counts };
+  }
+
+  /**
+   * Handles API unresolved UAP linkage analysis.
+   *
+   * @param {Object} spine - The ordered Conversation API source-record spine.
+   * @param {Object} primary - The primary value required by this function.
+   * @returns {Object} The Object value produced by `apiUnresolvedUapLinkageAnalysis`.
+   */
+  function apiUnresolvedUapLinkageAnalysis(spine, primary) {
+    const records = spine?.records ?? [];
+    // Reverse lookup from exactly-associated message ids to their proven UAP ordinal.
+    const exactMessageToUap = new Map();
+    // Reverse lookup from identifier-like source values to UAPs established by exact records.
+    const exactIdentifierToUaps = new Map();
+    /**
+     * Handles key for.
+     *
+     * @param {string} value - The value to process.
+     * @returns {void} No value is returned.
+     */
+    const keyFor = value => `${typeof value}:${String(value)}`;
+    /**
+     * Handles add ref.
+     *
+     * @param {Map<unknown, unknown>} map - The map value required by this function.
+     * @param {string} value - The value to process.
+     * @param {number} uapOrdinal - The zero-based uap ordinal.
+     * @returns {void} No value is returned.
+     */
+    const addRef = (map, value, uapOrdinal) => {
+      const key = keyFor(value);
+      const values = map.get(key) ?? new Set();
+      values.add(uapOrdinal);
+      map.set(key, values);
+    };
+
+    for (const item of primary.classifications) {
+      if (item.classification !== 'exact') continue;
+      const record = records[item.record_ordinal];
+      exactMessageToUap.set(record.message_id, item.uap_ordinal);
+      for (const scalar of apiRecordIdentifierScalars(record)) {
+        addRef(exactIdentifierToUaps, scalar.value, item.uap_ordinal);
+      }
+    }
+
+    /**
+     * Handles exact before after.
+     *
+     * @param {number} ordinal - The ordinal position to process.
+     * @returns {Object} The Object value produced by `exactBeforeAfter`.
+     */
+    const exactBeforeAfter = ordinal => {
+      let before = null;
+      let after = null;
+      for (let i = ordinal - 1; i >= 0; i -= 1) {
+        const item = primary.classifications[i];
+        if (item?.classification === 'exact') {
+          before = item;
+          break;
+        }
+      }
+      for (let i = ordinal + 1; i < primary.classifications.length; i += 1) {
+        const item = primary.classifications[i];
+        if (item?.classification === 'exact') {
+          after = item;
+          break;
+        }
+      }
+      return { before, after };
+    };
+
+    const unresolved = [];
+    for (const item of primary.classifications) {
+      if (!['fallback', 'ungrouped'].includes(item.classification)) continue;
+      const record = records[item.record_ordinal];
+      const refs = new Set();
+      for (const scalar of apiRecordIdentifierScalars(record)) {
+        const exactUap = exactMessageToUap.get(String(scalar.value));
+        if (exactUap !== undefined) refs.add(exactUap);
+      }
+      for (const uap of exactIdentifierToUaps.get(keyFor(record.message_id)) ?? []) refs.add(uap);
+      const { before, after } = exactBeforeAfter(item.record_ordinal);
+      const sameUapBounded = before && after && before.uap_ordinal === after.uap_ordinal;
+      unresolved.push({
+        record_ordinal: item.record_ordinal,
+        referenced_uap_ordinals: [...refs].sort((a, b) => a - b),
+        same_uap_bounded: Boolean(sameUapBounded),
+        bounded_uap_ordinal: sameUapBounded ? before.uap_ordinal : null
+      });
+    }
+    return { unresolved };
+  }
+
+  /**
+   * Handles API conversation UAP final grouping.
+   *
+   * @param {Object} spine - The ordered Conversation API source-record spine.
+   * @returns {Object} The Object value produced by `apiConversationUapFinalGrouping`.
+   */
+  function apiConversationUapFinalGrouping(spine) {
+    const primary = apiConversationUapGrouping(spine);
+    const linkage = apiUnresolvedUapLinkageAnalysis(spine, primary);
+    // Indexes unresolved-linkage analysis by source ordinal for the refinement pass.
+    const linkageByOrdinal = new Map(
+      linkage.unresolved.map(item => [item.record_ordinal, item])
+    );
+    const records = spine?.records ?? [];
+    /**
+     * Handles groups.
+     */
+    const groups = (spine?.uap_anchors ?? []).map(anchor => ({
+      ordinal: anchor.ordinal,
+      user_message_id: anchor.user_message_id,
+      record_ordinals: []
+    }));
+    // Stores one association classification for every source record in spine order.
+    const classifications = [];
+    const counts = { exact: 0, linked: 0, bounded: 0, global: 0, conflict: 0, unresolved: 0 };
+
+    for (const item of primary.classifications) {
+      const record = records[item.record_ordinal];
+      let classification = item.classification;
+      let uapOrdinal = item.uap_ordinal;
+      let basis = item.basis;
+      if (classification === 'fallback' || classification === 'ungrouped') {
+        const evidence = linkageByOrdinal.get(item.record_ordinal);
+        const refs = evidence?.referenced_uap_ordinals ?? [];
+        const boundedOrdinal = evidence?.same_uap_bounded
+          ? evidence.bounded_uap_ordinal
+          : null;
+        if (refs.length > 1 ||
+            (refs.length === 1 && boundedOrdinal !== null && refs[0] !== boundedOrdinal)) {
+          classification = 'conflict';
+          uapOrdinal = null;
+          basis = 'unresolved-evidence-conflict';
+        } else if (refs.length === 1) {
+          classification = 'linked';
+          uapOrdinal = refs[0];
+          basis = 'identifier-linkage';
+        } else if (boundedOrdinal !== null && record?.role !== 'system') {
+          classification = 'bounded';
+          uapOrdinal = boundedOrdinal;
+          basis = 'exact-neighbour-containment';
+        } else if (record?.role === 'system' &&
+                   record?.message?.metadata?.is_visually_hidden_from_conversation === true) {
+          classification = 'global';
+          uapOrdinal = null;
+          basis = 'hidden-system-outside-exchange';
+        } else {
+          classification = 'unresolved';
+          uapOrdinal = null;
+          basis = 'insufficient-evidence';
+        }
+      }
+      if (classification === 'conflict') uapOrdinal = null;
+      counts[classification] = (counts[classification] ?? 0) + 1;
+      if (uapOrdinal !== null && groups[uapOrdinal]) {
+        groups[uapOrdinal].record_ordinals.push(item.record_ordinal);
+      }
+      classifications.push({ ...item, classification, uap_ordinal: uapOrdinal, basis });
+    }
+
+    return {
+      groups,
+      classifications,
+      exact_record_count: counts.exact,
+      linked_record_count: counts.linked,
+      bounded_record_count: counts.bounded,
+      global_record_count: counts.global,
+      conflicting_record_count: counts.conflict,
+      unresolved_record_count: counts.unresolved
+    };
+  }
+
+  /**
+   * Handles fallback is hidden.
+   *
+   * @param {Object} record - The provider/source record to process.
+   * @returns {boolean} `true` when `cgIsHidden` succeeds or its predicate is satisfied; otherwise `false`.
+   */
+  function cgIsHidden(record) {
+    return Boolean(record?.metadata?.is_visually_hidden_from_conversation);
+  }
+
+  /**
+   * Handles fallback text parts.
+   *
+   * @param {Array<unknown>} parts - The ordered parts values to process.
+   * @returns {Array<unknown>} The ordered values produced by `cgTextParts`.
+   */
+  function cgTextParts(parts) {
+    const texts = [];
+    if (!Array.isArray(parts)) return texts;
+    for (const part of parts) {
+      if (typeof part === 'string') {
+        if (part.trim()) texts.push(part);
+      } else if (part && typeof part === 'object') {
+        for (const key of ['text', 'content']) {
+          const value = part[key];
+          if (typeof value === 'string' && value.trim()) texts.push(value);
+        }
+      }
+    }
+    return texts;
+  }
+
+  /**
+   * Handles fallback citation root.
+   *
+   * @param {string} url - The URL to process.
+   * @returns {string} The string produced by `cgCitationRoot`.
+   */
+  function cgCitationRoot(url) {
+    try {
+      const parsed = new URL(url);
+      return parsed.host ? `${parsed.protocol}//${parsed.host}` : '';
+    } catch {
+      return '';
+    }
+  }
+
+  /**
+   * Handles fallback citation hostname.
+   *
+   * @param {string} url - The URL to process.
+   * @returns {string} The string produced by `cgCitationHostname`.
+   */
+  function cgCitationHostname(url) {
+    try {
+      return new URL(url).hostname.toLowerCase().replace(/^www\./, '');
+    } catch {
+      return '';
+    }
+  }
+
+  /**
+   * Handles fallback normalize citation URL.
+   *
+   * @param {string} url - The URL to process.
+   * @returns {string} The string produced by `cgNormalizeCitationUrl`.
+   */
+  function cgNormalizeCitationUrl(url) {
+    if (typeof url !== 'string' || !url.trim()) return '';
+    const raw = url.trim();
+    try {
+      const parsed = new URL(raw);
+      parsed.hash = '';
+      parsed.protocol = parsed.protocol.toLowerCase();
+      parsed.hostname = parsed.hostname.toLowerCase();
+      parsed.searchParams.delete('utm_source');
+      return parsed.toString();
+    } catch {
+      return raw;
+    }
+  }
+
+  /**
+   * Handles fallback search result URL index.
+   *
+   * @param {Object} record - The provider/source record to process.
+   * @returns {Map<unknown, unknown>} The lookup map produced by `cgSearchResultUrlIndex`.
+   */
+  function cgSearchResultUrlIndex(record) {
+    const metadata = record?.metadata;
+    const groups = metadata && typeof metadata === 'object' ? metadata.search_result_groups : null;
+    if (!Array.isArray(groups)) return new Map();
+    const result = new Map();
+    for (const group of groups) {
+      if (!group || typeof group !== 'object' || !Array.isArray(group.entries)) continue;
+      for (const entry of group.entries) {
+        if (!entry || typeof entry !== 'object') continue;
+        const key = cgNormalizeCitationUrl(entry.url);
+        if (!key) continue;
+        const merged = result.get(key) ?? { title: '', snippet: '', attribution: '' };
+        for (const field of ['title', 'snippet', 'attribution']) {
+          const value = entry[field];
+          if (!merged[field] && typeof value === 'string' && value.trim()) {
+            merged[field] = value.trim();
+          }
+        }
+        result.set(key, merged);
+      }
+    }
+    return result;
+  }
+
+  /**
+   * Handles fallback shorten inline text.
+   *
+   * @param {string} text - The text to process.
+   * @param {number} maxChars - The maximum number of characters to retain.
+   * @returns {string} The string produced by `cgShortenInlineText`.
+   */
+  function cgShortenInlineText(text, maxChars = 200) {
+    const clean = String(text ?? '').replace(/\s+/g, ' ').trim();
+    if (clean.length <= maxChars) return clean;
+    let clipped = clean.slice(0, maxChars - 1).trimEnd();
+    if (clipped.includes(' ')) clipped = clipped.slice(0, clipped.lastIndexOf(' '));
+    return `${clipped.replace(/[ ,;:-]+$/g, '')}…`;
+  }
+
+  /**
+   * Handles fallback wrap tooltip block.
+   *
+   * @param {string} text - The text to process.
+   * @param {number} width - The maximum wrapped line width in characters.
+   * @param {number} maxChars - The maximum number of characters to retain.
+   * @returns {string} The string produced by `cgWrapTooltipBlock`.
+   */
+  function cgWrapTooltipBlock(text, width = 78, maxChars = 520) {
+    const shortened = cgShortenInlineText(text, maxChars);
+    if (!shortened) return '';
+    const words = shortened.split(/\s+/);
+    const lines = [];
+    let line = '';
+    for (const word of words) {
+      if (!line) line = word;
+      else if (`${line} ${word}`.length <= width) line += ` ${word}`;
+      else {
+        lines.push(line);
+        line = word;
+      }
+    }
+    if (line) lines.push(line);
+    return lines.join('\n');
+  }
+
+  /**
+   * Handles fallback clean citation blurb.
+   *
+   * @param {string} text - The text to process.
+   * @returns {Array<unknown>} The ordered values produced by `cgCleanCitationBlurb`.
+   */
+  function cgCleanCitationBlurb(text) {
+    if (typeof text !== 'string' || !text.trim()) return [];
+    const clean = text.replace(/\s+/g, ' ').trim()
+      .replace(/\s*Read more\.?$/i, '')
+      .replace(/^Abstract\b[:.]?\s*/i, '')
+      .replace(/\.\s*\./g, '.')
+      .replace(/\s+\./g, '.');
+    let meta = '';
+    let body = clean;
+    const dash = clean.indexOf('—');
+    if (dash >= 0) {
+      const head = clean.slice(0, dash).trim().replace(/^[- ]+|[- ]+$/g, '');
+      const tail = clean.slice(dash + 1).trim();
+      if (tail && (
+        head.toLowerCase().startsWith('by ') ||
+        head.toLowerCase().includes('cited by') ||
+        /^[A-Z][a-z]{2,8}\.? \d{1,2}, \d{4}$/.test(head)
+      )) {
+        meta = head;
+        body = tail;
+      }
+    }
+    body = body.replace(/\s*[•·]\s*/g, ' • ');
+    const blocks = [];
+    if (meta) blocks.push(cgWrapTooltipBlock(meta, 78, 180));
+    const wrappedBody = cgWrapTooltipBlock(body, 78, 520);
+    if (wrappedBody) blocks.push(wrappedBody);
+    return blocks;
+  }
+
+  /**
+   * Handles fallback citation tooltip.
+   *
+   * @param {Node} node - The node to process.
+   * @param {Object} urlInfo - The urlInfo value required by this function.
+   * @param {string} fallback - The fallback value required by this function.
+   * @returns {string} The string produced by `cgCitationTooltip`.
+   */
+  function cgCitationTooltip(node, urlInfo = {}, fallback = '') {
+    let title = typeof node?.title === 'string' ? node.title.trim() : '';
+    if (!title) title = typeof urlInfo?.title === 'string' ? urlInfo.title.trim() : '';
+    let snippet = typeof node?.snippet === 'string' ? node.snippet.trim() : '';
+    if (!snippet) snippet = typeof urlInfo?.snippet === 'string' ? urlInfo.snippet.trim() : '';
+    const parts = [];
+    if (title) {
+      const wrapped = cgWrapTooltipBlock(title, 78, 220);
+      if (wrapped) parts.push(wrapped);
+    }
+    if (snippet) {
+      for (const block of cgCleanCitationBlurb(snippet)) {
+        if (block && !parts.includes(block)) parts.push(block);
+      }
+    }
+    if (parts.length) return parts.join('\n\n');
+    return cgWrapTooltipBlock(fallback, 78, 220);
+  }
+
+  /**
+   * Handles fallback citation favicon.
+   *
+   * @param {string} url - The URL to process.
+   * @returns {string} The string produced by `cgCitationFavicon`.
+   */
+  function cgCitationFavicon(url) {
+    const root = cgCitationRoot(url);
+    return root ? `https://www.google.com/s2/favicons?domain=${root}&sz=32` : '';
+  }
+
+  /**
+   * Handles fallback collect web citation sources.
+   *
+   * @param {Object} reference - The provider reference object to process.
+   * @param {Map<unknown, unknown>} urlIndex - The zero-based url index.
+   * @returns {Array<unknown>} The ordered values produced by `cgCollectWebCitationSources`.
+   */
+  function cgCollectWebCitationSources(reference, urlIndex = new Map()) {
+    const sources = [];
+    const seen = new Set();
+    /**
+     * Handles append.
+     *
+     * @param {string} url - The URL to process.
+     * @param {string} label - The label value required by this function.
+     * @param {Object} tooltip - The tooltip value required by this function.
+     * @returns {void} No value is returned.
+     */
+    const append = (url, label, tooltip) => {
+      if (typeof url !== 'string' || !url.trim() || seen.has(url.trim())) return;
+      const clean = url.trim();
+      seen.add(clean);
+      const shown = typeof label === 'string' && label.trim()
+        ? label.trim()
+        : (cgCitationHostname(clean) || 'source');
+      sources.push({
+        url: clean,
+        label: shown,
+        tooltip: typeof tooltip === 'string' ? tooltip.trim() : ''
+      });
+    };
+    /**
+     * Handles visit.
+     *
+     * @param {Node} node - The node to process.
+     * @param {string} inheritedTooltip - The inheritedTooltip value required by this function.
+     * @returns {void} No value is returned.
+     */
+    const visit = (node, inheritedTooltip = '') => {
+      if (!node || typeof node !== 'object') return;
+      const url = node.url;
+      if (typeof url === 'string' && url.trim()) {
+        const urlInfo = urlIndex.get(cgNormalizeCitationUrl(url)) ?? {};
+        let label = typeof node.attribution === 'string' ? node.attribution.trim() : '';
+        if (!label && typeof urlInfo.attribution === 'string') label = urlInfo.attribution.trim();
+        if (!label) label = cgCitationHostname(url);
+        const tooltip = cgCitationTooltip(node, urlInfo, inheritedTooltip || label);
+        append(url, label, tooltip);
+        inheritedTooltip = tooltip;
+      }
+      for (const key of ['items', 'supporting_websites', 'webpages', 'sources']) {
+        if (Array.isArray(node[key])) {
+          for (const item of node[key]) visit(item, inheritedTooltip);
+        }
+      }
+    };
+    visit(reference);
+    if (!sources.length && Array.isArray(reference?.safe_urls)) {
+      for (const url of reference.safe_urls) append(url, cgCitationHostname(url), '');
+    }
+    return sources;
+  }
+
+  /**
+   * Handles fallback render web citation.
+   *
+   * @param {Object} reference - The provider reference object to process.
+   * @param {Map<unknown, unknown>} urlIndex - The zero-based url index.
+   * @returns {string} The string produced by `cgRenderWebCitation`.
+   */
+  function cgRenderWebCitation(reference, urlIndex = new Map()) {
+    const links = [];
+    for (const source of cgCollectWebCitationSources(reference, urlIndex)) {
+      const titleAttribute = source.tooltip
+        ? ` title="${escapeHtmlAttribute(source.tooltip).replace(/\n/g, '&#10;')}"`
+        : '';
+      const favicon = cgCitationFavicon(source.url);
+      const icon = favicon
+        ? `<img alt="" src="${escapeHtmlAttribute(favicon)}" width="15" height="15"${titleAttribute} style="width:0.97em;height:0.97em;vertical-align:-0.13em;margin-right:0.22em;border-radius:2px;">`
+        : '';
+      links.push(
+        `<a href="${escapeHtmlAttribute(source.url)}"${titleAttribute} style="display:inline-block;white-space:nowrap;">${icon}${escapeHtmlText(source.label)}</a>`
+      );
+    }
+    return links.length ? `**(cite: ${links.join(', ')})**` : '';
+  }
+
+  /** Private-use marker that begins a fallback inline-reference token. */
+  const CG_INLINE_TOKEN_START = '\ue200';
+  /** Private-use marker that terminates a fallback inline-reference token. */
+  const CG_INLINE_TOKEN_END = '\ue201';
+  /** Private-use separator between fields inside a fallback inline-reference token. */
+  const CG_INLINE_TOKEN_SEP = '\ue202';
+  /** Matcher for complete fallback inline-reference tokens embedded in source text. */
+  const CG_INLINE_TOKEN_RX = /\ue200[^\ue201]*\ue201/g;
+
+  /**
+   * Handles fallback inline token segments.
+   *
+   * @param {Object} token - The inline token to parse or render.
+   * @returns {Array<unknown>} The ordered values produced by `cgInlineTokenSegments`.
+   */
+  function cgInlineTokenSegments(token) {
+    if (typeof token !== 'string' ||
+        !token.startsWith(CG_INLINE_TOKEN_START) ||
+        !token.endsWith(CG_INLINE_TOKEN_END)) return [];
+    return token.slice(1, -1).split(CG_INLINE_TOKEN_SEP);
+  }
+
+  /**
+   * Handles fallback strip inline tokens.
+   *
+   * @param {string} text - The text to process.
+   * @returns {string} The string produced by `cgStripInlineTokens`.
+   */
+  function cgStripInlineTokens(text) {
+    return typeof text === 'string' ? text.replace(CG_INLINE_TOKEN_RX, '') : '';
+  }
+
+  /**
+   * Handles fallback file token spec.
+   *
+   * @param {Object} token - The inline token to parse or render.
+   * @returns {Object} The Object value produced by `cgFileTokenSpec`.
+   */
+  function cgFileTokenSpec(token) {
+    const segments = cgInlineTokenSegments(token);
+    if (segments.length < 2 || segments[0] !== 'filecite') return { key: null, lineRef: '' };
+    const match = /^turn(\d+)file(\d+)$/.exec(segments[1]);
+    if (!match) return { key: null, lineRef: '' };
+    return {
+      key: `${Number(match[1])}:${Number(match[2])}`,
+      lineRef: segments.length > 2 ? segments[2].trim() : ''
+    };
+  }
+
+  /**
+   * Handles fallback register file reference.
+   *
+   * @param {number} index - The zero-based index to process.
+   * @param {Object} record - The provider/source record to process.
+   * @returns {void} No value is returned.
+   */
+  function cgRegisterFileReference(index, record) {
+    if (!(index instanceof Map) || !record?.metadata || typeof record.metadata !== 'object') return;
+    const metadata = record.metadata;
+    const citation = metadata.citation_metadata;
+    if (!citation || typeof citation !== 'object') return;
+    const turnNumber = Number(metadata.retrieval_turn_number);
+    const fileIndex = Number(metadata.retrieval_file_index);
+    if (!Number.isInteger(turnNumber) || !Number.isInteger(fileIndex)) return;
+    const title = typeof citation.title === 'string' ? citation.title.trim() : '';
+    const url = typeof citation.url === 'string' ? citation.url.trim() : '';
+    if (!title && !url) return;
+    index.set(`${turnNumber}:${fileIndex}`, citation);
+  }
+
+  /**
+   * Handles fallback build file reference index.
+   *
+   * @param {Array<Object>} records - The ordered provider/source records to process.
+   * @returns {Map<unknown, unknown>} The lookup map produced by `cgBuildFileReferenceIndex`.
+   */
+  function cgBuildFileReferenceIndex(records) {
+    const index = new Map();
+    for (const record of records ?? []) cgRegisterFileReference(index, record);
+    return index;
+  }
+
+  /**
+   * Handles fallback collect memory citation sources.
+   *
+   * @param {Object} record - The provider/source record to process.
+   * @returns {Array<unknown>} The ordered values produced by `cgCollectMemoryCitationSources`.
+   */
+  function cgCollectMemoryCitationSources(record) {
+    const entries = Array.isArray(record?.metadata?.conversation_context_citation_metadata)
+      ? record.metadata.conversation_context_citation_metadata
+      : [];
+    const sources = [];
+    const seen = new Set();
+    for (const entry of entries) {
+      const citation = entry?.citation;
+      if (!citation || typeof citation !== 'object') continue;
+      const url = typeof citation.url === 'string' ? citation.url.trim() : '';
+      let label = typeof citation.title === 'string' ? citation.title.trim() : '';
+      if (!label && typeof citation.attribution === 'string') label = citation.attribution.trim();
+      if (!label) label = cgCitationHostname(url) || 'memory';
+      if (!url && !label) continue;
+      const dedupe = `${url}\u0000${label}`;
+      if (seen.has(dedupe)) continue;
+      seen.add(dedupe);
+      sources.push({ url, label, tooltip: cgCitationTooltip(citation, {}, label) });
+    }
+    return sources;
+  }
+
+  /**
+   * Handles fallback render source citation.
+   *
+   * @param {Object} kind - The export kind to execute.
+   * @param {Object} sources - The sources value required by this function.
+   * @returns {string} The string produced by `cgRenderSourceCitation`.
+   */
+  function cgRenderSourceCitation(kind, sources) {
+    const links = [];
+    for (const source of sources ?? []) {
+      const titleAttribute = source.tooltip
+        ? ` title="${escapeHtmlAttribute(source.tooltip).replace(/\n/g, '&#10;')}"`
+        : '';
+      const favicon = source.url ? cgCitationFavicon(source.url) : '';
+      const icon = favicon
+        ? `<img alt="" src="${escapeHtmlAttribute(favicon)}" width="15" height="15"${titleAttribute} style="width:0.97em;height:0.97em;vertical-align:-0.13em;margin-right:0.22em;border-radius:2px;">`
+        : '';
+      if (source.url) {
+        links.push(`<a href="${escapeHtmlAttribute(source.url)}"${titleAttribute} style="display:inline-block;white-space:nowrap;">${icon}${escapeHtmlText(source.label)}</a>`);
+      } else {
+        links.push(`<span${titleAttribute} style="display:inline-block;white-space:nowrap;">${icon}${escapeHtmlText(source.label)}</span>`);
+      }
+    }
+    return links.length ? `**(${kind}: ${links.join(', ')})**` : '';
+  }
+
+  /**
+   * Handles fallback render memory citation.
+   *
+   * @param {Object} record - The provider/source record to process.
+   * @returns {string} The string produced by `cgRenderMemoryCitation`.
+   */
+  function cgRenderMemoryCitation(record) {
+    const sources = cgCollectMemoryCitationSources(record);
+    return sources.length ? cgRenderSourceCitation('memory', sources) : '**(memory context)**';
+  }
+
+  /**
+   * Handles fallback display file URL.
+   *
+   * @param {string} url - The URL to process.
+   * @returns {string} The string produced by `cgDisplayFileUrl`.
+   */
+  function cgDisplayFileUrl(url) {
+    if (typeof url !== 'string' || !url.trim()) return '';
+    const cleaned = url.trim();
+    try {
+      const parsed = new URL(cleaned);
+      if (parsed.hostname.toLowerCase() !== 'api.github.com') return cleaned;
+      const segments = parsed.pathname.split('/').filter(Boolean);
+      if (segments.length < 4 || segments[0] !== 'repos' || segments[3] !== 'contents') return cleaned;
+      const owner = segments[1];
+      const repo = segments[2];
+      const relative = segments.slice(4).map(decodeURIComponent);
+      const ref = parsed.searchParams.get('ref') || 'main';
+      if (!relative.length) return `https://github.com/${owner}/${repo}/tree/${encodeURIComponent(ref)}`;
+      const target = relative[relative.length - 1].includes('.') ? 'blob' : 'tree';
+      /**
+       * Handles rel.
+       */
+      const rel = relative.map(segment => encodeURIComponent(segment)).join('/');
+      return `https://github.com/${owner}/${repo}/${target}/${encodeURIComponent(ref)}/${rel}`;
+    } catch {
+      return cleaned;
+    }
+  }
+
+  /**
+   * Handles fallback display file label.
+   *
+   * @param {string} name - The name to process.
+   * @param {string} url - The URL to process.
+   * @returns {string} The string produced by `cgDisplayFileLabel`.
+   */
+  function cgDisplayFileLabel(name, url) {
+    let shown = typeof name === 'string' ? name.trim().replace(/`/g, '') : '';
+    const displayUrl = cgDisplayFileUrl(url);
+    let parsed = null;
+    try { parsed = displayUrl ? new URL(displayUrl) : null; } catch {}
+    const segments = parsed ? parsed.pathname.split('/').filter(Boolean) : [];
+    const generic = new Set(['', 'file', 'content', 'contents']);
+    if (generic.has(shown.toLowerCase())) {
+      if (parsed?.hostname.toLowerCase() === 'github.com') {
+        if (segments.length >= 4 && segments[2] === 'tree' && segments.length === 4) {
+          shown = `${segments[1]} contents`;
+        } else if (segments.length >= 5 && ['blob', 'tree'].includes(segments[2])) {
+          shown = decodeURIComponent(segments[segments.length - 1] || '');
+        } else if (segments.length) shown = decodeURIComponent(segments[segments.length - 1]);
+      } else if (segments.length) shown = decodeURIComponent(segments[segments.length - 1]);
+    }
+    return shown || 'file';
+  }
+
+  /**
+   * Handles fallback render named file reference.
+   *
+   * @param {string} name - The name to process.
+   * @param {string} matchedText - The matchedText value required by this function.
+   * @param {string} url - The URL to process.
+   * @returns {string} The string produced by `cgRenderNamedFileReference`.
+   */
+  function cgRenderNamedFileReference(name, matchedText = '', url = '') {
+    const shown = cgDisplayFileLabel(name, url);
+    const { lineRef } = cgFileTokenSpec(matchedText);
+    const label = `${shown}${lineRef ? ` ${lineRef}` : ''}`;
+    const displayUrl = cgDisplayFileUrl(url);
+    if (displayUrl) return `<a href="${escapeHtmlAttribute(displayUrl)}">${escapeHtmlText(label)}</a>`;
+    return lineRef ? `\`${shown}\` ${lineRef}` : `\`${shown}\``;
+  }
+
+  /**
+   * Handles fallback hidden file reference.
+   *
+   * @param {Object} reference - The provider reference object to process.
+   * @param {Object} record - The provider/source record to process.
+   * @param {number} fileRefIndex - The zero-based file ref index.
+   * @returns {string} The string produced by `cgHiddenFileReference`.
+   */
+  function cgHiddenFileReference(reference, record, fileRefIndex) {
+    const token = reference?.matched_text ?? '';
+    const { key } = cgFileTokenSpec(token);
+    if (!key) return '';
+    let citation = null;
+    const metadata = record?.metadata;
+    if (metadata && typeof metadata === 'object') {
+      const currentTurn = Number(metadata.retrieval_turn_number);
+      const currentFile = Number(metadata.retrieval_file_index);
+      if (Number.isInteger(currentTurn) && Number.isInteger(currentFile) &&
+          `${currentTurn}:${currentFile}` === key && metadata.citation_metadata &&
+          typeof metadata.citation_metadata === 'object') citation = metadata.citation_metadata;
+    }
+    if (!citation && fileRefIndex instanceof Map) citation = fileRefIndex.get(key) ?? null;
+    return cgRenderNamedFileReference(citation?.title ?? '', token, citation?.url ?? '');
+  }
+
+  /**
+   * Renders one provider-native inline content reference on the legacy/fallback Markdown path.
+   *
+   * Source -> output transformation: grouped web, alt-text, file, memory, and retrieved-file references are converted to their established visible Markdown/HTML representation; unsupported reference kinds render no replacement.
+   *
+   * @param {Object} reference - The provider reference object to process.
+   * @param {Object} record - The provider/source record to process.
+   * @param {Map<unknown, unknown>} urlIndex - The zero-based url index.
+   * @param {Map<unknown, unknown>} fileRefIndex - The zero-based file ref index.
+   * @returns {string} The string produced by `cgRenderInlineReference`.
+   */
+  function cgRenderInlineReference(reference, record, urlIndex = new Map(), fileRefIndex = new Map()) {
+    if (reference?.type === 'grouped_webpages') return cgRenderWebCitation(reference, urlIndex);
+    if (reference?.type === 'alt_text') {
+      for (const key of ['alt', 'prompt_text']) {
+        const value = reference[key];
+        if (typeof value === 'string' && value.trim()) return value.trim();
+      }
+      return '';
+    }
+    if (reference?.type === 'file') {
+      return cgRenderNamedFileReference(reference.name ?? '', reference.matched_text ?? '', reference.url ?? '');
+    }
+    if (reference?.type === 'hidden') {
+      const segments = cgInlineTokenSegments(reference.matched_text ?? '');
+      if (!segments.length) return '';
+      if (segments[0] === 'memcite') return cgRenderMemoryCitation(record);
+      if (segments[0] === 'filecite') return cgHiddenFileReference(reference, record, fileRefIndex);
+    }
+    return '';
+  }
+
+  /**
+   * Handles fallback render unstructured inline token.
+   *
+   * @param {Object} token - The inline token to parse or render.
+   * @param {Object} record - The provider/source record to process.
+   * @param {number} fileRefIndex - The zero-based file ref index.
+   * @returns {string} The string produced by `cgRenderUnstructuredInlineToken`.
+   */
+  function cgRenderUnstructuredInlineToken(token, record, fileRefIndex) {
+    const segments = cgInlineTokenSegments(token);
+    if (!segments.length) return '';
+    if (segments[0] === 'memcite') return cgRenderMemoryCitation(record);
+    if (segments[0] === 'filecite') return cgHiddenFileReference({ type: 'hidden', matched_text: token }, record, fileRefIndex);
+    return '';
+  }
+
+  /**
+   * Handles fallback generated sandbox download URL.
+   *
+   * @param {Object} source - The source value to inspect.
+   * @param {Object} record - The provider/source record to process.
+   * @returns {string|null} The string produced by `cgGeneratedSandboxDownloadUrl`, or `null` when no value is available.
+   */
+  function cgGeneratedSandboxDownloadUrl(source, record) {
+    if (record?.author?.role !== 'assistant') return null;
+    const value = String(source ?? '').trim();
+    const match = value.match(/^sandbox:(\/\/)?(\/mnt\/data\/.*)$/i);
+    if (!match) return null;
+    const conversationId = currentConversationId();
+    const messageId = record?.id;
+    if (!conversationId || !messageId) return null;
+    const sandboxPath = match[2];
+    return `${location.origin}/backend-api/conversation/${encodeURIComponent(conversationId)}` +
+      `/interpreter/download?message_id=${encodeURIComponent(messageId)}` +
+      `&sandbox_path=${encodeURIComponent(sandboxPath)}&download_intent=true`;
+  }
+
+  /**
+   * Handles fallback rewrite generated sandbox links.
+   *
+   * @param {string} text - The text to process.
+   * @param {Object} record - The provider/source record to process.
+   * @returns {string} The string produced by `cgRewriteGeneratedSandboxLinks`.
+   */
+  function cgRewriteGeneratedSandboxLinks(text, record) {
+    if (!text || record?.author?.role !== 'assistant') return text;
+    const value = String(text);
+    // Accumulates rewritten Markdown while cursor tracks the next unread source character.
+    let rendered = '';
+    // Offset of the next source character not yet copied into the rewritten Markdown.
+    let cursor = 0;
+    while (cursor < value.length) {
+      const destinationPrefix = value.indexOf('](', cursor);
+      if (destinationPrefix < 0) break;
+      const sourceStart = destinationPrefix + 2;
+      const remainder = value.slice(sourceStart);
+      const sandboxPrefix = remainder.match(/^sandbox:(?:\/\/)?\/mnt\/data\//i)?.[0];
+      if (!sandboxPrefix) {
+        rendered += value.slice(cursor, sourceStart);
+        cursor = sourceStart;
+        continue;
+      }
+
+      // Tracks parentheses nested inside the Markdown link destination being scanned.
+      let nestedParentheses = 0;
+      // Index of the closing parenthesis for the current sandbox link destination.
+      let sourceEnd = -1;
+      for (let index = sourceStart; index < value.length; index += 1) {
+        const character = value[index];
+        if (character === '\\') {
+          index += 1;
+          continue;
+        }
+        if (character === '(') {
+          nestedParentheses += 1;
+          continue;
+        }
+        if (character !== ')') continue;
+        if (nestedParentheses > 0) {
+          nestedParentheses -= 1;
+          continue;
+        }
+        sourceEnd = index;
+        break;
+      }
+      if (sourceEnd < 0) break;
+
+      const source = value.slice(sourceStart, sourceEnd);
+      const url = cgGeneratedSandboxDownloadUrl(source, record);
+      if (!url) {
+        rendered += value.slice(cursor, sourceEnd + 1);
+        cursor = sourceEnd + 1;
+        continue;
+      }
+      rendered += `${value.slice(cursor, sourceStart)}${url})`;
+      cursor = sourceEnd + 1;
+    }
+    return rendered + value.slice(cursor);
+  }
+
+  /**
+   * Handles fallback render inline references.
+   *
+   * @param {string} text - The text to process.
+   * @param {Object} record - The provider/source record to process.
+   * @param {Map<unknown, unknown>} fileRefIndex - The zero-based file ref index.
+   * @returns {string} The string produced by `cgRenderInlineReferences`.
+   */
+  function cgRenderInlineReferences(text, record, fileRefIndex = new Map()) {
+    if (!text) return text;
+    const references = Array.isArray(record?.metadata?.content_references)
+      ? record.metadata.content_references
+      : [];
+    const urlIndex = cgSearchResultUrlIndex(record);
+    let rendered = text;
+    for (const reference of references) {
+      const matched = reference?.matched_text;
+      if (typeof matched !== 'string' || !matched || !rendered.includes(matched)) continue;
+      const replacement = cgRenderInlineReference(reference, record, urlIndex, fileRefIndex);
+      if (replacement) rendered = rendered.split(matched).join(replacement);
+    }
+    for (const token of rendered.match(CG_INLINE_TOKEN_RX) ?? []) {
+      const fallback = cgRenderUnstructuredInlineToken(token, record, fileRefIndex);
+      if (fallback) rendered = rendered.split(token).join(fallback);
+    }
+    return rendered;
+  }
+
+  /**
+   * Handles fallback image pointer source.
+   *
+   * @param {Object} part - The provider content part to process.
+   * @returns {string} The string produced by `cgImagePointerSource`.
+   */
+  function cgImagePointerSource(part) {
+    if (!part || typeof part !== 'object') return '';
+    const metadata = part.metadata && typeof part.metadata === 'object' ? part.metadata : {};
+    for (const value of [metadata.asset_pointer_link, part.asset_pointer_link, part.asset_pointer]) {
+      if (typeof value === 'string' && value.trim()) return value.trim();
+    }
+    return '';
+  }
+
+  /**
+   * Handles fallback image unavailable Markdown.
+   *
+   * @param {Object} source - The source value to inspect.
+   * @returns {string} The string produced by `cgImageUnavailableMarkdown`.
+   */
+  function cgImageUnavailableMarkdown(source) {
+    const clean = typeof source === 'string' ? source.trim() : '';
+    return clean ? `[image not available](${clean})` : '[image not available]';
+  }
+
+  /**
+   * Handles fallback image failure Markdown.
+   *
+   * @param {Object} source - The source value to inspect.
+   * @param {Object|null} httpStatus - The httpStatus value required by this function.
+   * @returns {string} The string produced by `cgImageFailureMarkdown`.
+   */
+  function cgImageFailureMarkdown(source, httpStatus = null) {
+    if (httpStatus === 404 || httpStatus === 410) return '[image missing]';
+    return cgImageUnavailableMarkdown(source);
+  }
+
+  /**
+   * Returns canonical conversation-image resources for one source record keyed by provider part index.
+   *
+   * Provider/source -> canonical transformation is delegated to the pinned AIConversationCore adapter; DownloadConversation does not reconstruct provider pointer mappings itself.
+   *
+   * @param {Object} record - The provider/source record containing image parts.
+   * @returns {Map<number, Object>} Canonical conversation-image resources keyed by original source part index.
+   */
+  function canonicalImageResourcesByRecordAndPart(records) {
+    assert(Array.isArray(records), 'Canonical image-resource lookup requires the ordered source record set.');
+    const events = canonicalCore().adaptChatGPTRecords(records);
+    const byRecord = new Map();
+    for (const event of events) {
+      const recordId = event?.source_record_id;
+      if (typeof recordId !== 'string' || !recordId) continue;
+      const resources = Array.isArray(event?.resources) ? event.resources : [];
+      let byPart = byRecord.get(recordId);
+      for (const resource of resources) {
+        if (resource?.type !== 'image' || resource?.resource_kind !== 'conversation_image') continue;
+        const partIndex = resource?.source?.part_index;
+        if (!Number.isInteger(partIndex)) continue;
+        if (!byPart) {
+          byPart = new Map();
+          byRecord.set(recordId, byPart);
+        }
+        assert(!byPart.has(partIndex), `Duplicate canonical image resource for ${recordId}:${partIndex}.`);
+        byPart.set(partIndex, resource);
+      }
+    }
+    return byRecord;
+  }
+
+  /**
+   * Fetches image bytes through a canonical Core-supplied authenticated transport URL.
+   *
+   * The first request resolves provider identity to transient access data. The returned signed URL is used only for the immediate image fetch and is never persisted in diagnostics or canonical state.
+   *
+   * @param {string} resolverUrl - Deterministic authenticated transport URL supplied by AIConversationCore.
+   * @param {Object|null} timing - Mutable timing/result object populated without retaining signed URLs or image payload data.
+   * @returns {Promise<string>} A promise resolving to the fetched image as a data URL.
+   */
+  async function fetchCanonicalResolvedImageDataUrl(resolverUrl, timing = null) {
+    const startedAt = performance.now();
+    try {
+      if (timing) {
+        timing.stage = 'resolver';
+        timing.source_scheme = 'core-resolver';
+        timing.resolver_status = null;
+        timing.resolver_ms = null;
+      }
+      const resolverResponse = await apiFetch(resolverUrl);
+      const resolverAt = performance.now();
+      if (timing) {
+        timing.resolver_status = resolverResponse.status;
+        timing.resolver_ms = Math.round(resolverAt - startedAt);
+      }
+      if (!resolverResponse.ok) {
+        const error = new Error(`Conversational image resolver returned HTTP ${resolverResponse.status}.`);
+        error.httpStatus = resolverResponse.status;
+        if (timing) timing.outcome = 'resolver-http-error';
+        throw error;
+      }
+      const resolverPayload = await resolverResponse.json();
+      const resolvedSource = typeof resolverPayload?.download_url === 'string'
+        ? resolverPayload.download_url.trim()
+        : '';
+      if (!resolvedSource) {
+        if (timing) timing.outcome = 'resolver-response-error';
+        throw new Error('Conversational image resolver response did not contain download_url.');
+      }
+      const dataUrl = await fetchImageDataUrl(resolvedSource, timing);
+      if (timing) {
+        timing.resolver_status = resolverResponse.status;
+        timing.resolver_ms = Math.round(resolverAt - startedAt);
+        timing.total_ms = Math.round(performance.now() - startedAt);
+      }
+      return dataUrl;
+    } catch (error) {
+      if (timing) {
+        timing.total_ms = Math.round(performance.now() - startedAt);
+        if (!timing.outcome) timing.outcome = `${timing.stage || 'resolver'}-error`;
+      }
+      throw error;
+    }
+  }
+
+  /**
+   * Resolves one provider image pointer into Markdown while optionally recording timing metrics.
+   *
+   * AIConversationCore owns provider-pointer interpretation. DownloadConversation consumes canonical `data_url` or `download_url` fields and performs only the credential-bound browser retrieval step.
+   *
+   * @param {Object} part - The provider content part to process.
+   * @param {Object|null} resource - Canonical conversation-image resource for this source part.
+   * @param {string} recordId - The provider/source record identifier.
+   * @param {number} imageOrdinal - The one-based image ordinal within the source record.
+   * @param {Object|null} timing - Mutable timing/result object populated without retaining image payload data.
+   * @returns {Promise<string>} A promise that resolves to image Markdown or the established unavailable-image fallback.
+   */
+  async function cgResolveImagePointerMarkdown(part, resource, recordId, imageOrdinal, timing = null) {
+    const startedAt = performance.now();
+    const source = typeof resource?.source_pointer === 'string' && resource.source_pointer.trim()
+      ? resource.source_pointer.trim()
+      : cgImagePointerSource(part);
+    if (!source) {
+      if (timing) {
+        timing.stage = 'complete';
+        timing.outcome = 'missing-pointer';
+        timing.source_scheme = null;
+        timing.total_ms = Math.round(performance.now() - startedAt);
+      }
+      return '[image missing]';
+    }
+    try {
+      let dataUrl = '';
+      if (typeof resource?.data_url === 'string' && resource.data_url.startsWith('data:image/')) {
+        dataUrl = resource.data_url;
+        if (timing) {
+          timing.stage = 'complete';
+          timing.outcome = 'data-url';
+          timing.source_scheme = 'canonical-data-url';
+          timing.fetch_ms = 0;
+          timing.body_ms = 0;
+          timing.encode_ms = 0;
+          timing.data_url_chars = dataUrl.length;
+          timing.total_ms = Math.round(performance.now() - startedAt);
+        }
+      } else if (typeof resource?.download_url === 'string' && resource.download_url.trim()) {
+        dataUrl = await fetchCanonicalResolvedImageDataUrl(resource.download_url.trim(), timing);
+      } else {
+        let parsed = null;
+        try { parsed = new URL(source, location.href); } catch {}
+        if (!parsed || !['http:', 'https:'].includes(parsed.protocol)) {
+          if (timing) {
+            timing.stage = 'complete';
+            timing.outcome = 'unresolved-pointer';
+            timing.source_scheme = parsed?.protocol ?? null;
+            timing.total_ms = Math.round(performance.now() - startedAt);
+          }
+          return cgImageUnavailableMarkdown(source);
+        }
+        dataUrl = await fetchImageDataUrl(source, timing);
+      }
+      return dataUrl ? `![image-${recordId}-${imageOrdinal}](${dataUrl})` : cgImageUnavailableMarkdown(source);
+    } catch (error) {
+      const status = Number(error?.httpStatus);
+      return cgImageFailureMarkdown(source, Number.isFinite(status) ? status : null);
+    }
+  }
+
+  /**
+   * Handles fallback image pointer fallback.
+   *
+   * @param {Object} part - The provider content part to process.
+   * @returns {string} The string produced by `cgImagePointerFallback`.
+   */
+  function cgImagePointerFallback(part) {
+    const source = cgImagePointerSource(part);
+    return source ? cgImageUnavailableMarkdown(source) : '[image missing]';
+  }
+
+  /**
+   * Handles fallback content text parts.
+   *
+   * @param {Object} record - The provider/source record to process.
+   * @param {Map<unknown, unknown>} fileRefIndex - The zero-based file ref index.
+   * @param {Array<unknown>} recoveredImages - The recovered image state used while rendering.
+   * @returns {Array<unknown>} The ordered values produced by `cgContentTextParts`.
+   */
+  function cgContentTextParts(record, fileRefIndex = new Map(), recoveredImages = []) {
+    const content = record?.content ?? {};
+    const parts = content.parts;
+    const role = record?.author?.role ?? '';
+    const type = content.content_type ?? '';
+    const cleaned = [];
+    let imageOrdinal = 0;
+    if (!Array.isArray(parts)) return cleaned;
+    for (const part of parts) {
+      const texts = [];
+      if (typeof part === 'string') {
+        if (part.trim()) texts.push(part);
+      } else if (part && typeof part === 'object') {
+        if (part.content_type === 'image_asset_pointer') {
+          cleaned.push(recoveredImages[imageOrdinal] || cgImagePointerFallback(part));
+          imageOrdinal += 1;
+          continue;
+        }
+        for (const key of ['text', 'content']) {
+          const value = part[key];
+          if (typeof value === 'string' && value.trim()) texts.push(value);
+        }
+      }
+      for (const value of texts) {
+        const stripped = value.trim();
+        if (role === 'tool' && type === 'multimodal_text' &&
+            stripped.startsWith('Make sure to include ') && stripped.includes('cite this file')) continue;
+        const rendered = cgRewriteGeneratedSandboxLinks(
+          cgStripInlineTokens(cgRenderInlineReferences(value, record, fileRefIndex)), record
+        ).trim();
+        if (rendered) cleaned.push(rendered);
+      }
+    }
+    return cleaned;
+  }
+
+  /**
+   * Handles fallback visible user text.
+   *
+   * @param {Object} record - The provider/source record to process.
+   * @param {Map<unknown, unknown>} fileRefIndex - The zero-based file ref index.
+   * @param {Array<unknown>} recoveredImages - The recovered image state used while rendering.
+   * @returns {string} The string produced by `cgVisibleUserText`.
+   */
+  function cgVisibleUserText(record, fileRefIndex = new Map(), recoveredImages = []) {
+    if (cgIsHidden(record) || record?.author?.role !== 'user' ||
+        !['text', 'multimodal_text'].includes(record?.content?.content_type)) return '';
+    return cgContentTextParts(record, fileRefIndex, recoveredImages).join('\n\n').trim();
+  }
+
+  /**
+   * Handles fallback visible assistant text.
+   *
+   * @param {Object} record - The provider/source record to process.
+   * @param {Map<unknown, unknown>} fileRefIndex - The zero-based file ref index.
+   * @param {Array<unknown>} recoveredImages - The recovered image state used while rendering.
+   * @returns {string} The string produced by `cgVisibleAssistantText`.
+   */
+  function cgVisibleAssistantText(record, fileRefIndex = new Map(), recoveredImages = []) {
+    if (cgIsHidden(record) || record?.author?.role !== 'assistant' ||
+        !['text', 'multimodal_text'].includes(record?.content?.content_type)) return '';
+    return cgContentTextParts(record, fileRefIndex, recoveredImages).join('\n\n').trim();
+  }
+
+  /**
+   * Handles fallback visible assistant markdown.
+   *
+   * @param {Object} record - The provider/source record to process.
+   * @param {Map<unknown, unknown>} fileRefIndex - The zero-based file ref index.
+   * @param {Array<unknown>} recoveredImages - The recovered image state used while rendering.
+   * @returns {string} The string produced by `cgVisibleAssistantMarkdown`.
+   */
+  function cgVisibleAssistantMarkdown(record, fileRefIndex = new Map(), recoveredImages = []) {
+    return cgVisibleAssistantText(record, fileRefIndex, recoveredImages);
+  }
+
+  /**
+   * Handles fallback record search texts.
+   *
+   * @param {Object} record - The provider/source record to process.
+   * @param {Map<unknown, unknown>} fileRefIndex - The zero-based file ref index.
+   * @returns {Array<unknown>} The ordered values produced by `cgRecordSearchTexts`.
+   */
+  function cgRecordSearchTexts(record, fileRefIndex = new Map()) {
+    if (cgIsHidden(record) || record?.author?.role === 'system') return [];
+    const content = record?.content ?? {};
+    const type = content.content_type ?? '';
+    const texts = [];
+    if (type === 'text' || type === 'multimodal_text') {
+      texts.push(...cgContentTextParts(record, fileRefIndex));
+    } else if (type === 'thoughts' && Array.isArray(content.thoughts)) {
+      for (const thought of content.thoughts) {
+        if (!thought || typeof thought !== 'object') continue;
+        if (typeof thought.summary === 'string' && thought.summary.trim()) texts.push(thought.summary);
+        if (typeof thought.content === 'string' && thought.content.trim()) texts.push(thought.content);
+        else if (Array.isArray(thought.chunks)) {
+          for (const chunk of thought.chunks) if (typeof chunk === 'string' && chunk.trim()) texts.push(chunk);
+        }
+      }
+    } else if (type === 'code' || type === 'execution_output') {
+      for (const key of ['text', 'content']) if (typeof content[key] === 'string' && content[key].trim()) texts.push(content[key]);
+    } else if (type === 'reasoning_recap') {
+      if (typeof content.content === 'string' && content.content.trim()) texts.push(content.content);
+    } else if (type === 'model_editable_context') {
+      for (const key of ['model_set_context', 'repo_summary']) if (typeof content[key] === 'string' && content[key].trim()) texts.push(content[key]);
+    } else if (type === 'tether_browsing_display') {
+      for (const key of ['summary', 'result']) if (typeof content[key] === 'string' && content[key].trim()) texts.push(content[key]);
+      const assets = Array.isArray(content.assets) ? content.assets : [content.assets];
+      for (const asset of assets) {
+        if (!asset || typeof asset !== 'object') continue;
+        for (const key of ['title', 'text', 'alt', 'caption', 'url']) if (typeof asset[key] === 'string' && asset[key].trim()) texts.push(asset[key]);
+      }
+    }
+    return texts;
+  }
+
+  /**
+   * Wraps opaque source/tool payload text in a collision-safe Markdown code fence.
+   *
+   * Source -> output transformation: scans the literal payload for its longest run of backtick characters, then emits an outer fence one character longer (minimum three). The payload itself is not rewritten.
+   *
+   * @param {string} text - The text to process.
+   * @param {string} language - The code-fence language identifier.
+   * @returns {string} The string produced by `cgCodeFence`.
+   */
+  function cgCodeFence(text, language = '') {
+    const body = String(text ?? '').replace(/\s+$/, '');
+    const runs = body.match(/`+/g) ?? [];
+    /**
+     * Handles longest.
+     */
+    const longest = runs.reduce((max, run) => Math.max(max, run.length), 0);
+    const fence = '`'.repeat(Math.max(3, longest + 1));
+    return `${fence}${language || ''}\n${body}\n${fence}`;
+  }
+
+  /**
+   * Wraps a summary and opaque body in the HTML `details` structure used by fallback Markdown output.
+   *
+   * @param {Object} summary - The summary label to render.
+   * @param {Object} body - The body content to render.
+   * @returns {string} The string produced by `cgRenderDetail`.
+   */
+  function cgRenderDetail(summary, body) {
+    return body ? `<details>\n<summary>${summary}</summary>\n\n${body}\n\n</details>` : '';
+  }
+
+  /**
+   * Infers a Markdown fence language only for the legacy/fallback renderer when no stronger canonical language is available.
+   *
+   * Source -> output transformation: explicit source language wins; otherwise provider metadata/recipient and limited code-prefix evidence may map to a fence language such as `python` or `bash`. This fallback does not alter payload text.
+   *
+   * @param {Object} record - The provider/source record to process.
+   * @param {Object} code - The source code to classify.
+   * @param {string} explicitLanguage - The provider-supplied language label, when available.
+   * @returns {string} The string produced by `cgInferCodeLanguage`.
+   */
+  function cgInferCodeLanguage(record, code, explicitLanguage = '') {
+    if (typeof explicitLanguage === 'string' && explicitLanguage.trim()) return explicitLanguage.trim();
+    const language = record?.metadata?.language;
+    if (typeof language === 'string' && language.trim()) return language.trim();
+    const recipient = String(record?.recipient ?? '').toLowerCase();
+    if (recipient.includes('python')) return 'python';
+    if (recipient.includes('shell') || recipient.includes('bash') || recipient.includes('terminal')) return 'bash';
+    const trimmed = String(code ?? '').trimStart();
+    if (/^(?:import |from \w+ import |def |class )/.test(trimmed)) return 'python';
+    return '';
+  }
+
+  /**
+   * Handles fallback render thought item.
+   *
+   * @param {Object} record - The provider/source record to process.
+   * @param {Map<unknown, unknown>} fileRefIndex - The zero-based file ref index.
+   * @returns {string} The string produced by `cgRenderThoughtItem`.
+   */
+  function cgRenderThoughtItem(record, fileRefIndex = new Map()) {
+    if (cgIsHidden(record)) return '';
+    const role = record?.author?.role ?? '';
+    const content = record?.content ?? {};
+    const type = content.content_type ?? '';
+    if (role === 'assistant' && type === 'thoughts') {
+      const blocks = [];
+      for (const thought of Array.isArray(content.thoughts) ? content.thoughts : []) {
+        if (!thought || typeof thought !== 'object') continue;
+        const summary = typeof thought.summary === 'string' ? thought.summary.trim() : '';
+        const body = typeof thought.content === 'string' ? thought.content.trim() : '';
+        if (body) blocks.push(summary ? `**${summary}**\n\n${body}` : body);
+        else if (summary) blocks.push(summary);
+        else if (Array.isArray(thought.chunks)) {
+          /**
+           * Handles chunk text.
+           */
+          const chunkText = thought.chunks.filter(chunk => typeof chunk === 'string' && chunk.trim()).join('\n\n');
+          if (chunkText) blocks.push(chunkText);
+        }
+      }
+      return blocks.join('\n\n');
+    }
+    if (role === 'assistant' && type === 'reasoning_recap') return typeof content.content === 'string' ? content.content.trim() : '';
+    if (role === 'assistant' && type === 'code') {
+      const code = typeof content.text === 'string' ? content.text : '';
+      if (!code.trim()) return '';
+      return cgRenderDetail(`${record?.recipient || 'tool'} code`, cgCodeFence(code, cgInferCodeLanguage(record, code, content.language ?? '')));
+    }
+    if (role === 'assistant' && type === 'model_editable_context') {
+      const texts = cgRecordSearchTexts(record, fileRefIndex);
+      return texts.length ? cgRenderDetail('editable context', quoteMarkdown(texts.join('\n\n'))) : '';
+    }
+    if (role === 'tool') {
+      const texts = cgRecordSearchTexts(record, fileRefIndex);
+      if (!texts.length) return '';
+      return cgRenderDetail(`${record?.author?.name || record?.recipient || 'tool'} output`, cgCodeFence(texts.join('\n\n')));
+    }
+    return '';
+  }
+
+  /**
+   * Handles fallback render thought block.
+   *
+   * @param {Array<Object>} items - The ordered items values to process.
+   * @param {Map<unknown, unknown>} fileRefIndex - The zero-based file ref index.
+   * @returns {string} The string produced by `cgRenderThoughtBlock`.
+   */
+  function cgRenderThoughtBlock(items, fileRefIndex = new Map()) {
+    const rendered = [];
+    for (const record of items) {
+      const body = cgRenderThoughtItem(record, fileRefIndex);
+      if (body) rendered.push(body);
+    }
+    return rendered.length ? `<details>\n<summary>Thoughts</summary>\n\n${rendered.join('\n\n')}\n\n</details>` : '';
+  }
+
+  // BEGIN AIConversationCore Phase 5 integration
+  /**
+   * Returns the loaded AIConversationCore browser API after asserting the required adapter and renderer entry points are available.
+   *
+   * @returns {boolean} `true` when `canonicalCore` succeeds or its predicate is satisfied; otherwise `false`.
+   */
+  function canonicalCore() {
+    const core = globalThis.AIConversationCore;
+    assert(core && typeof core === 'object', 'AIConversationCore browser bundle is not loaded.');
+    assert(typeof core.getVersion === 'function', 'AIConversationCore version API is unavailable.');
+    assert(typeof core.adaptChatGPTRecords === 'function', 'AIConversationCore ChatGPT adapter is unavailable.');
+    assert(typeof core.renderCanonicalMarkdown === 'function', 'AIConversationCore Markdown renderer is unavailable.');
+    return core;
+  }
+
+  /**
+   * Converts DownloadConversation recovery Markdown for one image into canonical image-resource state.
+   *
+   * Source -> canonical transformation: recovered data-image Markdown becomes `status: available` plus `data_url`; missing/unavailable placeholders become the corresponding canonical status and optional source pointer.
+   *
+   * @param {string} markdown - The Markdown text to process.
+   * @returns {Object|null} The value produced by `canonicalRecoveredImageState`, or `null` when no value is available.
+   */
+  function canonicalRecoveredImageState(markdown) {
+    const value = String(markdown ?? '').trim();
+    if (!value) return null;
+    if (value === '[image missing]') return { status: 'missing' };
+    const data = value.match(/^!\[[^\]]*\]\((data:image\/[^)]+)\)$/s);
+    if (data) return { status: 'available', data_url: data[1] };
+    if (value === '[image not available]') return { status: 'unavailable' };
+    const unavailable = value.match(/^\[image not available\]\((.*)\)$/s);
+    if (unavailable) return { status: 'unavailable', source_pointer: unavailable[1] };
+    return null;
+  }
+
+  /**
+   * Enriches canonical conversation-image resources with host-recovered image state without changing canonical event order.
+   *
+   * Source -> canonical transformation: the already-normalized image resource remains the identity-bearing object; recovery Markdown contributes only availability/data/source-pointer fields at the matching source image ordinal.
+   *
+   * @param {Event|Object} event - The event or event-like object being handled.
+   * @param {Array<unknown>} recoveredImages - The recovered image state used while rendering.
+   * @returns {Object} The Object value produced by `canonicalEnrichRecoveredImages`.
+   */
+  function canonicalEnrichRecoveredImages(event, recoveredImages = []) {
+    if (!event || !Array.isArray(recoveredImages) || !recoveredImages.length) return event;
+    // Advances only across canonical conversation-image resources to preserve source ordinals.
+    let imageIndex = 0;
+    /**
+     * Handles resources.
+     */
+    const resources = (event.resources ?? []).map(resource => {
+      if (resource?.type !== 'image' || resource?.resource_kind !== 'conversation_image') return resource;
+      const recovered = canonicalRecoveredImageState(recoveredImages[imageIndex]);
+      imageIndex += 1;
+      if (!recovered) return resource;
+      const enriched = { ...resource, ...recovered };
+      if (recovered.data_url) enriched.data_url = recovered.data_url;
+      if (recovered.source_pointer) enriched.source_pointer = recovered.source_pointer;
+      return enriched;
+    });
+    return { ...event, resources };
+  }
+
+  /**
+   * Handles canonical events by source record.
+   *
+   * @param {Array<Object>} records - The ordered provider/source records to process.
+   * @param {Map<unknown, unknown>} recoveredImageMap - The recovered-image lookup keyed by source record.
+   * @returns {Map<unknown, unknown>} The lookup map produced by `canonicalEventsBySourceRecord`.
+   */
+  function canonicalEventsBySourceRecord(records, recoveredImageMap = new Map()) {
+    const conversationId = typeof currentConversationId === 'function' ? currentConversationId() : null;
+    /**
+     * Handles has metadata.
+     */
+    const hasMetadata = records.some(record => record?.record_type === 'chatgpt_conversation_metadata');
+    const adapterRecords = conversationId && !hasMetadata
+      ? [{
+          record_type: 'chatgpt_conversation_metadata',
+          schema_version: 1,
+          conversation_id: conversationId
+        }, ...records]
+      : records;
+    const events = canonicalCore().adaptChatGPTRecords(adapterRecords);
+    assert(Array.isArray(events), 'AIConversationCore ChatGPT adapter did not return canonical events.');
+    // Maps stable source record ids back to their adapted canonical events.
+    const bySourceRecord = new Map();
+    for (const event of events) {
+      const sourceIndex = event?.source_index;
+      const sourceRecordId = event?.source_record_id;
+      if (!Number.isInteger(sourceIndex) || typeof sourceRecordId !== 'string' || !sourceRecordId) continue;
+      const original = adapterRecords[sourceIndex];
+      if (!original) continue;
+      assert(original?.id === sourceRecordId,
+        `AIConversationCore source record mismatch at JSONL index ${sourceIndex}.`);
+      assert(event?.source?.record_id === sourceRecordId,
+        `AIConversationCore did not preserve source record ID ${sourceRecordId}.`);
+      assert(event?.source?.record_index === sourceIndex,
+        `AIConversationCore did not preserve source record index ${sourceIndex}.`);
+      assert(event?.source?.turn_id === sourceRecordId,
+        `AIConversationCore source turn identity differs from record ${sourceRecordId}.`);
+      assert(event?.source?.create_time === (original?.create_time ?? null),
+        `AIConversationCore did not preserve create_time for ${sourceRecordId}.`);
+      assert(event?.source?.update_time === (original?.update_time ?? null),
+        `AIConversationCore did not preserve update_time for ${sourceRecordId}.`);
+      const enrichedEvent = canonicalEnrichRecoveredImages(
+        event, recoveredImageMap.get(sourceRecordId) ?? []);
+      bySourceRecord.set(sourceRecordId, enrichedEvent);
+    }
+    return bySourceRecord;
+  }
+
+  /**
+   * Handles canonical rendered has unresolved inline tokens.
+   *
+   * @param {Object} rendered - The rendered value required by this function.
+   * @returns {boolean} `true` when the canonical rendered has unresolved inline tokens condition is satisfied; otherwise `false`.
+   */
+  function canonicalRenderedHasUnresolvedInlineTokens(rendered) {
+    return String(rendered ?? '').includes(CG_INLINE_TOKEN_START);
+  }
+
+  /**
+   * Determines whether one source User/Assistant record and its canonical event can be rendered by the shared canonical Markdown renderer.
+   *
+   * Source/canonical -> routing transformation: returns only an eligibility decision. It never rewrites the source record or canonical event; unsupported shapes remain on the legacy fallback path.
+   *
+   * @param {Object} record - The provider/source record to process.
+   * @param {Event|Object} event - The event or event-like object being handled.
+   * @returns {boolean} `true` when the canonical message record eligible condition is satisfied; otherwise `false`.
+   */
+  function canonicalMessageRecordEligible(record, event) {
+    if (!event || cgIsHidden(record) || event?.visibility === 'hidden') return false;
+    const role = record?.author?.role;
+    if (!['user', 'assistant'].includes(role)) return false;
+    if (role === 'user' && event.kind !== 'message') return false;
+    if (role === 'assistant' && !['message', 'commentary'].includes(event.kind)) return false;
+    if (!['text', 'multimodal_text'].includes(record?.content?.content_type)) return false;
+    if (!(event.blocks ?? []).some(block => block?.type === 'text' || block?.type === 'image')) return false;
+    const sourceText = Array.isArray(record?.content?.parts)
+      ? record.content.parts.filter(part => typeof part === 'string').join('')
+      : '';
+    if (role === 'user' && /sandbox:\/\/?/i.test(sourceText)) return false;
+    const rendered = canonicalCore().renderCanonicalMarkdown([event]);
+    return Boolean(rendered.trim()) && !canonicalRenderedHasUnresolvedInlineTokens(rendered);
+  }
+
+  /**
+   * Returns the current AIConversationCore heading-presentation policy.
+   *
+   * DownloadConversation selects visibility only. Timestamp values, JSONL record
+   * numbers, and source turn IDs are derived by Core from canonical provenance.
+   *
+   * @returns {Object} AIConversationCore Markdown projection options.
+   */
+  function canonicalHeadingOptions() {
+    return {
+      heading: {
+        timestamp: showTimestamps,
+        recordNumber: showRecordNumbers,
+        turnId: showTurnIds,
+        debugProvenance: showDebugProvenance
+      }
+    };
+  }
+
+  /**
+   * Renders one eligible canonical message event through AIConversationCore.
+   *
+   * Source/canonical -> output transformation: DownloadConversation supplies only
+   * heading visibility policy. Core derives timestamp, JSONL record number, and
+   * provider/source turn identity from canonical source provenance.
+   *
+   * @param {Object} record - The provider/source record to process.
+   * @param {Event|Object} event - The canonical event associated with the source record.
+   * @returns {string} Canonical Markdown for the source record.
+   */
+  function canonicalRecordBlock(record, event) {
+    assert(canonicalMessageRecordEligible(record, event),
+      `AIConversationCore message record ${record?.id ?? 'unknown'} is not eligible for canonical rendering.`);
+    return canonicalCore().renderCanonicalMarkdown([event], canonicalHeadingOptions()).trimEnd();
+  }
+
+  /**
+   * Determines whether one non-message canonical Assistant activity event is supported by the shared canonical Markdown renderer.
+   *
+   * Canonical -> routing transformation: reasoning summaries, tool calls, and tool results are eligible; the event payload is not modified.
+   *
+   * @param {Object} record - The provider/source record to process.
+   * @param {Event|Object} event - The event or event-like object being handled.
+   * @returns {boolean} `true` when `canonicalThoughtRecordEligible` succeeds or its predicate is satisfied; otherwise `false`.
+   */
+  function canonicalThoughtRecordEligible(record, event) {
+    if (!event || cgIsHidden(record) || event?.visibility === 'hidden') return false;
+    return ['reasoning_summary', 'tool_call', 'tool_result'].includes(event.kind);
+  }
+
+  /**
+   * Determines whether an ordered Assistant activity segment can be rendered wholly by AIConversationCore without changing its source association.
+   *
+   * Source/canonical -> routing transformation: validates semantic event combinations and returns a Boolean; it does not regroup, reorder, or rewrite records.
+   *
+   * @param {Array<Object>} records - The ordered provider/source records to process.
+   * @param {Array<Object>} events - The canonical events associated with the source records.
+   * @returns {boolean} `true` when the canonical assistant segment eligible condition is satisfied; otherwise `false`.
+   */
+  function canonicalAssistantSegmentEligible(records, events) {
+    if (!Array.isArray(records) || !records.length || !Array.isArray(events) || events.length !== records.length) {
+      return false;
+    }
+    // Tracks the one ordinary final Assistant message allowed in a canonical response segment.
+    let finalMessageIndex = -1;
+    let hasAssistantSource = false;
+    for (let index = 0; index < records.length; index += 1) {
+      const record = records[index];
+      const event = events[index];
+      if (record?.author?.role === 'assistant') hasAssistantSource = true;
+      if (canonicalMessageRecordEligible(record, event)) {
+        if (record?.author?.role !== 'assistant') return false;
+        if (event?.kind === 'commentary') continue;
+        if (event?.kind !== 'message' || finalMessageIndex >= 0) return false;
+        finalMessageIndex = index;
+        continue;
+      }
+      if (!canonicalThoughtRecordEligible(record, event)) return false;
+    }
+    if (!hasAssistantSource) return false;
+    if (finalMessageIndex >= 0 && finalMessageIndex !== records.length - 1) return false;
+    const rendered = canonicalCore().renderCanonicalMarkdown(events);
+    // Tool payloads are opaque literal data and may legitimately contain ChatGPT
+    // inline-token character sequences. Message/commentary records were already
+    // checked individually above, so do not reject the whole segment by scanning
+    // rendered tool payload text.
+    return Boolean(rendered.trim());
+  }
+
+  /**
+   * Renders one eligible canonical Assistant activity segment through AIConversationCore.
+   *
+   * Source/canonical -> output transformation: DownloadConversation preserves the
+   * ordered canonical segment and supplies only heading visibility policy. Core owns
+   * all semantic heading values for the response and Commentary descendants.
+   *
+   * @param {Array<Object>} records - The ordered provider/source records to process.
+   * @param {Array<Object>} events - The canonical events associated with the source records.
+   * @returns {string} Canonical Markdown for the Assistant segment.
+   */
+  function canonicalAssistantSegmentBlock(records, events) {
+    assert(canonicalAssistantSegmentEligible(records, events),
+      'AIConversationCore Assistant segment contains an unsupported record.');
+    /** Final ordinary Assistant message retained only for compact diagnostics. */
+    const messageRecord = [...records].reverse().find((record, indexFromEnd) => {
+      const index = records.length - 1 - indexFromEnd;
+      return canonicalMessageRecordEligible(record, events[index]);
+    }) ?? null;
+    const rendered = canonicalCore().renderCanonicalMarkdown(events, canonicalHeadingOptions()).trimEnd();
+    if (diagnosticEnabled('debug')) {
+      logDiagnostic('debug', 'canonical-assistant-segment-rendered', {
+        source_record_ids: records.map(record => record?.id ?? null),
+        final_source_record_id: messageRecord?.id ?? null,
+        event_kinds: events.map(event => event?.kind ?? null),
+        rendered_length: rendered.length
+      });
+    }
+    return rendered;
+  }
+
+  // Compatibility helpers retained for the already-established #93/#97 regressions.
+  /**
+   * Handles canonical plain record eligible.
+   *
+   * @param {Object} record - The provider/source record to process.
+   * @returns {boolean} `true` when `canonicalPlainRecordEligible` succeeds or its predicate is satisfied; otherwise `false`.
+   */
+  function canonicalPlainRecordEligible(record) {
+    if (cgIsHidden(record)) return false;
+    if (!['user', 'assistant'].includes(record?.author?.role)) return false;
+    if (record?.content?.content_type !== 'text') return false;
+    const parts = record?.content?.parts;
+    if (!Array.isArray(parts) || !parts.length || parts.some(part => typeof part !== 'string')) return false;
+    if (!parts.some(part => part.trim())) return false;
+    const metadata = record?.metadata && typeof record.metadata === 'object' ? record.metadata : {};
+    if (Array.isArray(metadata.content_references) && metadata.content_references.length) return false;
+    if (Array.isArray(metadata.citations) && metadata.citations.length) return false;
+    const text = parts.join('');
+    if (text.includes(CG_INLINE_TOKEN_START)) return false;
+    if (/sandbox:\/\/?/i.test(text)) return false;
+    return true;
+  }
+
+  /**
+   * Handles canonical plain record block.
+   *
+   * @param {Object} record - The provider/source record to process.
+   * @param {Event|Object} event - The canonical event associated with the source record.
+   * @returns {string} Canonical Markdown for the plain record.
+   */
+  function canonicalPlainRecordBlock(record, event) {
+    return canonicalRecordBlock(record, event);
+  }
+
+  /**
+   * Handles canonical plain assistant segment eligible.
+   *
+   * @param {Array<Object>} records - The ordered provider/source records to process.
+   * @returns {boolean} `true` when `canonicalPlainAssistantSegmentEligible` succeeds or its predicate is satisfied; otherwise `false`.
+   */
+  function canonicalPlainAssistantSegmentEligible(records) {
+    if (!Array.isArray(records) || records.length < 2) return false;
+    let hasAssistantMessage = false;
+    for (const record of records) {
+      if (cgIsHidden(record)) return false;
+      if (record?.author?.role !== 'assistant') return false;
+      const type = record?.content?.content_type;
+      if (type === 'thoughts') continue;
+      if (type !== 'text' || !canonicalPlainRecordEligible(record)) return false;
+      hasAssistantMessage = true;
+    }
+    return hasAssistantMessage;
+  }
+
+  /**
+   * Handles canonical plain assistant segment block.
+   *
+   * @param {Array<Object>} records - The ordered provider/source records to process.
+   * @param {Array<Object>} events - The canonical events associated with the source records.
+   * @returns {boolean} `true` when `canonicalPlainAssistantSegmentBlock` succeeds or its predicate is satisfied; otherwise `false`.
+   */
+  function canonicalPlainAssistantSegmentBlock(records, events) {
+    assert(canonicalPlainAssistantSegmentEligible(records),
+      'AIConversationCore Assistant segment requires only plain visible Assistant records.');
+    return canonicalAssistantSegmentBlock(records, events);
+  }
+  // END AIConversationCore Phase 5 integration
+
+  /**
+   * Returns the Core-rendered heading for a fallback-rendered source record.
+   *
+   * The fallback body remains host-rendered, but heading metadata is serialized by
+   * AIConversationCore from the same canonical event and visibility policy used by
+   * canonical bodies. If no canonical event exists, the established plain speaker
+   * heading is preserved without inventing metadata.
+   *
+   * @param {Object} record - The provider/source record whose speaker heading is required.
+   * @param {Event|Object|null} event - The canonical event supplying source provenance, when available.
+   * @returns {string} Core-rendered transcript heading or the existing plain speaker heading.
+   */
+  function transcriptHeading(record, event = null) {
+    if (event) {
+      const rendered = canonicalCore().renderCanonicalMarkdown([event], canonicalHeadingOptions()).trimEnd();
+      const lines = rendered.split('\n');
+      if (record?.author?.role === 'assistant' && record?.channel === 'commentary') {
+        const commentary = lines.find(line => /^### ChatGPT Commentary(?: |$)/.test(line));
+        if (commentary) return commentary.replace(/^### /, '## ');
+      }
+      const topLevel = lines.find(line => /^## (?:User|ChatGPT)(?: |$)/.test(line));
+      if (topLevel) return topLevel;
+    }
+    if (record?.author?.role === 'user') return '## User';
+    if (record?.author?.role === 'assistant' && record?.channel === 'commentary') return '## ChatGPT Commentary';
+    if (record?.author?.role === 'assistant') return '## ChatGPT';
+    return '';
+  }
+
+  /**
+   * Renders conversation markdown.
+   *
+   * @param {Object} spine - The ordered Conversation API source-record spine.
+   * @param {Object} onProgress - The callback invoked with progress updates.
+   * @param {Map<unknown, unknown>} recoveredImageMap - The recovered-image lookup keyed by source record.
+   * @returns {string} The string produced by `renderConversationMarkdown`.
+   */
+  function renderConversationMarkdown(spine, onProgress, recoveredImageMap = new Map()) {
+    assert(Array.isArray(spine?.records), 'Conversation API Markdown export requires spine records.');
+    /**
+     * Handles records.
+     */
+    const records = spine.records.map(item => item.message).filter(Boolean);
+    const output = [];
+    // Fallback citation lookup keyed by ChatGPT retrieval turn/file coordinates.
+    const fileRefIndex = cgBuildFileReferenceIndex(records);
+    // Canonical-event lookup kept in source-record identity space for order-preserving rendering.
+    const canonicalEventBySourceRecord = canonicalEventsBySourceRecord(records, recoveredImageMap);
+    // Buffers Assistant reasoning/tool activity until its complete output segment can be rendered.
+    let pendingThoughts = [];
+
+    /**
+     * Handles flush assistant block.
+     *
+     * @param {string} body - The body content to render.
+     * @param {Object|null} record - The provider/source record to process.
+     * @returns {void} No value is returned.
+     */
+    const flushAssistantBlock = (body = '', record = null) => {
+      if (!body && !pendingThoughts.length) return;
+      const headingRecord = record ?? pendingThoughts[0];
+      const parts = [transcriptHeading(headingRecord, canonicalEventBySourceRecord.get(headingRecord?.id) ?? null)];
+      const thoughts = cgRenderThoughtBlock(pendingThoughts, fileRefIndex);
+      if (thoughts) parts.push(thoughts);
+      if (body) parts.push(quoteMarkdown(body));
+      output.push(parts.join('\n\n'));
+      pendingThoughts = [];
+    };
+
+    /**
+     * Handles flush pending assistant.
+     *
+     * @returns {void} No value is returned.
+     */
+    const flushPendingAssistant = () => {
+      if (!pendingThoughts.length) return;
+      const events = pendingThoughts
+        .map(record => canonicalEventBySourceRecord.get(record.id) ?? null)
+        .filter(Boolean);
+      if (events.length === pendingThoughts.length &&
+          canonicalAssistantSegmentEligible(pendingThoughts, events)) {
+        output.push(canonicalAssistantSegmentBlock(pendingThoughts, events));
+        pendingThoughts = [];
+        return;
+      }
+      flushAssistantBlock();
+    };
+
+    for (let i = 0; i < records.length; i += 1) {
+      const record = records[i];
+      onProgress?.({
+        stage: 'rendering',
+        record_number: i + 1,
+        record_count: records.length
+      });
+      const recoveredImages = recoveredImageMap.get(record.id) ?? [];
+      const canonicalEvent = canonicalEventBySourceRecord.get(record.id) ?? null;
+
+      if (canonicalEvent && canonicalMessageRecordEligible(record, canonicalEvent)) {
+        if (record?.author?.role === 'user') {
+          flushPendingAssistant();
+          output.push(canonicalRecordBlock(record, canonicalEvent));
+          continue;
+        }
+        if (record?.author?.role === 'assistant' && canonicalEvent?.kind === 'commentary') {
+          pendingThoughts.push(record);
+          continue;
+        }
+        if (record?.author?.role === 'assistant' && pendingThoughts.length > 0) {
+          const segmentRecords = [...pendingThoughts, record];
+          const segmentEvents = segmentRecords
+            .map(item => canonicalEventBySourceRecord.get(item.id) ?? null)
+            .filter(Boolean);
+          const canonicalSegmentComplete = segmentEvents.length === segmentRecords.length;
+          const canonicalSegmentEligible = canonicalSegmentComplete &&
+            canonicalAssistantSegmentEligible(segmentRecords, segmentEvents);
+          if (diagnosticEnabled('debug') && segmentRecords.some(item =>
+              item?.content?.content_type === 'code' || item?.author?.role === 'tool')) {
+            logDiagnostic('debug', 'canonical-tool-segment-routing', {
+              complete: canonicalSegmentComplete,
+              eligible: canonicalSegmentEligible,
+              rejection_reason: canonicalSegmentEligible
+                ? null
+                : (!canonicalSegmentComplete ? 'missing-canonical-events' : 'unsupported-canonical-segment'),
+              records: segmentRecords.map((item, index) => ({
+                source_record_id: item?.id ?? null,
+                source_role: item?.author?.role ?? null,
+                source_recipient: item?.recipient ?? null,
+                source_channel: item?.channel ?? null,
+                source_content_type: item?.content?.content_type ?? null,
+                source_language: item?.content?.language ?? null,
+                event_kind: segmentEvents[index]?.kind ?? null,
+                event_role: segmentEvents[index]?.role ?? null,
+                event_blocks: Array.isArray(segmentEvents[index]?.blocks)
+                  ? segmentEvents[index].blocks.map(block => ({
+                    type: block?.type ?? null,
+                    name: block?.name ?? null,
+                    input_format: block?.input_format ?? null,
+                    language: block?.language ?? null,
+                    source_language: block?.source_language ?? null
+                  }))
+                  : []
+              }))
+            });
+          }
+          if (canonicalSegmentEligible) {
+            logDiagnostic('debug', 'conversation-markdown-segment-render-request', {
+              source_record_ids: segmentRecords.map(item => item?.id ?? null),
+              final_source_record_id: record?.id ?? null,
+              event_kinds: segmentEvents.map(event => event?.kind ?? null),
+              output_index_before_append: output.length
+            });
+            const renderedSegment = canonicalAssistantSegmentBlock(segmentRecords, segmentEvents);
+            output.push(renderedSegment);
+            if (diagnosticEnabled('debug')) {
+              logDiagnostic('debug', 'conversation-markdown-block-appended', {
+                route: 'canonical-assistant-segment',
+                output_index: output.length - 1,
+                source_record_ids: segmentRecords.map(item => item?.id ?? null),
+                final_source_record_id: record?.id ?? null,
+                block_length: renderedSegment.length
+              });
+            }
+            pendingThoughts = [];
+            continue;
+          }
+        }
+        if (record?.author?.role === 'assistant' && pendingThoughts.length === 0) {
+          output.push(canonicalRecordBlock(record, canonicalEvent));
+          continue;
+        }
+      }
+
+      if (canonicalEvent && canonicalThoughtRecordEligible(record, canonicalEvent)) {
+        pendingThoughts.push(record);
+        continue;
+      }
+
+      const userText = cgVisibleUserText(record, fileRefIndex, recoveredImages);
+      if (userText) {
+        flushPendingAssistant();
+        output.push(`${transcriptHeading(record, canonicalEvent)}\n\n${quoteMarkdown(userText)}`);
+        continue;
+      }
+      const assistantText = cgVisibleAssistantMarkdown(record, fileRefIndex, recoveredImages);
+      if (assistantText) {
+        flushAssistantBlock(assistantText, record);
+        continue;
+      }
+      const fallbackThought = cgRenderThoughtItem(record, fileRefIndex);
+      if (fallbackThought) {
+        pendingThoughts.push(record);
+        continue;
+      }
+      if (diagnosticEnabled('debug') && i >= Math.max(0, records.length - 32)) {
+        logDiagnostic('debug', 'conversation-markdown-record-excluded', {
+          source_index: i,
+          source_record_id: record?.id ?? null,
+          source_role: record?.author?.role ?? null,
+          source_recipient: record?.recipient ?? null,
+          source_channel: record?.channel ?? null,
+          source_content_type: record?.content?.content_type ?? null,
+          event_kind: canonicalEvent?.kind ?? null,
+          event_visibility: canonicalEvent?.visibility ?? null,
+          reason: 'no-canonical-or-fallback-renderer-produced-output'
+        });
+      }
+    }
+    flushPendingAssistant();
+    const markdown = `${output.join('\n\n')}\n`;
+    if (diagnosticEnabled('debug')) {
+      logDiagnostic('debug', 'conversation-markdown-assembled', {
+        source_record_count: records.length,
+        output_block_count: output.length,
+        markdown_length: markdown.length,
+        source_tail: records.slice(-32).map((record, offset) => ({
+          source_index: records.length - Math.min(32, records.length) + offset,
+          source_record_id: record?.id ?? null,
+          source_role: record?.author?.role ?? null,
+          source_recipient: record?.recipient ?? null,
+          source_channel: record?.channel ?? null,
+          source_content_type: record?.content?.content_type ?? null
+        }))
+      });
+    }
+    return markdown;
+  }
+
+  /**
+   * Builds the DownloadConversation metadata record prepended to a JSONL export.
+   *
+   * @param {string} conversationId - The Conversation API conversation identifier.
+   * @returns {Object} The Object value produced by `conversationMetadataJsonlRecord`.
+   */
+  function conversationMetadataJsonlRecord(conversationId) {
+    assert(typeof conversationId === 'string' && conversationId.trim(), 'Conversation ID is required for JSONL export metadata.');
+    return {
+      record_type: 'chatgpt_conversation_metadata',
+      schema_version: 1,
+      conversation_id: conversationId.trim()
+    };
+  }
+
+  /**
+   * Handles api records jsonl.
+   *
+   * @param {Object} spine - The ordered Conversation API source-record spine.
+   * @param {string} conversationId - The Conversation API conversation identifier.
+   * @returns {string} The string produced by `apiRecordsJsonl`.
+   */
+  function apiRecordsJsonl(spine, conversationId = currentConversationId()) {
+    const metadata = conversationMetadataJsonlRecord(conversationId);
+    /**
+     * Handles records.
+     */
+    const records = [metadata, ...spine.records.map(record => record.message)];
+    return `${records.map(record => JSON.stringify(record)).join('\n')}\n`;
+  }
+
+  /**
+   * Handles progress status.
+   *
+   * @param {Object} prefix - The status text prefix.
+   * @returns {string} The string produced by `progressStatus`.
+   */
+  function progressStatus(prefix) {
+    if (!progressState) return statusText;
+    const now = performance.now();
+    const elapsed = now - progressState.started_at;
+    const stage = progressState.stage;
+
+    if (stage === 'fetching') {
+      const pageNumber = Number(progressState.fetch_page_number) || (Number(progressState.page_count) || 0) + 1;
+      const pageElapsed = progressState.fetch_page_started_at > 0
+        ? Math.max(0, now - progressState.fetch_page_started_at)
+        : 0;
+      return `${prefix}: fetching API page ${pageNumber}…\
+Completed: ${progressState.page_count} page(s), ${progressState.raw_record_count} raw record(s)\
+Page elapsed: ${formatDuration(pageElapsed)} — Total elapsed: ${formatDuration(elapsed)}`;
+    }
+    if (stage === 'recovering-images') {
+      const imageCount = Number(progressState.image_count) || 0;
+      const imageNumber = Number(progressState.image_number) || 0;
+      const imageCompleted = Number(progressState.image_completed) || 0;
+      const imageElapsed = progressState.image_started_at > 0
+        ? Math.max(0, now - progressState.image_started_at)
+        : 0;
+      const path = progressState.image_path ? ` (${progressState.image_path})` : '';
+      return `${prefix}: recovering image ${imageNumber}/${imageCount}${path}…\
+Image elapsed: ${formatDuration(imageElapsed)} — Completed: ${imageCompleted}/${imageCount} — Total elapsed: ${formatDuration(elapsed)}`;
+    }
+    if (stage === 'rendering') {
+      let eta = 'calculating…';
+      if (progressState.record_number > 0 && progressState.record_count > progressState.record_number) {
+        const renderElapsed = Math.max(0, now - progressState.render_started_at);
+        eta = formatDuration(
+          (renderElapsed / progressState.record_number) *
+          (progressState.record_count - progressState.record_number)
+        );
+      } else if (progressState.record_number === progressState.record_count) {
+        eta = '0s';
+      }
+      return `${prefix}: rendering API record ${progressState.record_number}/${progressState.record_count}…\nElapsed: ${formatDuration(elapsed)} — ETA: ${eta}`;
+    }
+    return statusText;
+  }
+
+  /**
+   * Returns the communication-log controls from the static recorder panel DOM.
+   *
+   * @param {Element|null} panel - Recorder panel root, or null to look it up by stable id.
+   * @returns {Object} Current filename viewport/text and file-action button elements.
+   */
+  function communicationLogPanelControls(panel = document.getElementById(PANEL_ID)) {
+    const root = panel instanceof Element ? panel : null;
+    return {
+      communicationLogNameViewport: root?.querySelector('[data-role="communication-log-name-viewport"]') ?? null,
+      communicationLogNameText: root?.querySelector('[data-role="communication-log-name"]') ?? null,
+      renameCommunicationLogButton: root?.querySelector('[data-role="rename-communication-log"]') ?? null,
+      duplicateCommunicationLogButton: root?.querySelector('[data-role="duplicate-communication-log"]') ?? null,
+      resetCommunicationLogButton: root?.querySelector('[data-role="reset-communication-log"]') ?? null
+    };
+  }
+
+  /**
+   * Runs one communication-log panel action with shared busy, accessibility, and failure handling.
+   *
+   * @param {HTMLButtonElement|null} button - Action button that owns busy presentation.
+   * @param {Object} options - Labels, operation callback, success callback, and failure prefix.
+   * @returns {Promise<void>} Resolves after the action and shared UI state are complete.
+   */
+  async function runCommunicationLogPanelAction(button, options) {
+    if (!(button instanceof HTMLButtonElement) || button.disabled || communicationLogUiActionInProgress) return;
+    communicationLogUiActionInProgress = true;
+    button.setAttribute('aria-label', options.busyLabel);
+    button.title = options.busyTitle;
+    refreshStatus();
+    try {
+      const result = await options.operation();
+      if (typeof options.onSuccess === 'function') await options.onSuccess(result);
+    } catch (error) {
+      setStatus(`⚠ ${options.failurePrefix}: ${errorMessage(error)}`);
+    } finally {
+      communicationLogUiActionInProgress = false;
+      button.setAttribute('aria-label', options.idleLabel);
+      button.title = options.idleTitle ?? options.idleLabel;
+      refreshStatus();
+    }
+  }
+
+  /**
+   * Measures the active communication-log filename and sets its hover-scroll distance.
+   *
+   * @returns {void} No value is returned.
+   */
+  function refreshCommunicationLogNameOverflow() {
+    const { communicationLogNameViewport, communicationLogNameText } = communicationLogPanelControls();
+    if (!communicationLogNameViewport || !communicationLogNameText) return;
+    const overflow = Math.max(0, communicationLogNameText.scrollWidth - communicationLogNameViewport.clientWidth);
+    communicationLogNameText.style.setProperty('--tm-log-name-overflow', `${overflow}px`);
+    communicationLogNameText.style.setProperty('--tm-log-name-duration', overflow > 0 ? `${Math.max(1.5, overflow / 40)}s` : '0s');
+  }
+
+  /**
+   * Refreshes status.
+   *
+   * @returns {void} No value is returned.
+   */
+  function refreshStatus() {
+    const status = document.querySelector(`#${PANEL_ID} [data-role="status"]`);
+    if (!status) return;
+    const {
+      communicationLogNameViewport,
+      communicationLogNameText,
+      renameCommunicationLogButton,
+      duplicateCommunicationLogButton,
+      resetCommunicationLogButton
+    } = communicationLogPanelControls();
+    const communicationLogAvailable = Boolean(communicationLogReady && communicationLogFileName);
+    const communicationLogDisplayName = communicationLogAvailable ? communicationLogFileName : 'Not configured';
+    if (communicationLogNameText) communicationLogNameText.textContent = communicationLogDisplayName;
+    if (communicationLogNameViewport) {
+      communicationLogNameViewport.title = communicationLogDisplayName;
+      communicationLogNameViewport.setAttribute(
+        'aria-label',
+        communicationLogAvailable
+          ? `Current communication log filename: ${communicationLogFileName}`
+          : 'Current communication log filename: not configured'
+      );
+      requestAnimationFrame(refreshCommunicationLogNameOverflow);
+    }
+    if (renameCommunicationLogButton) {
+      renameCommunicationLogButton.disabled = !communicationLogAvailable || communicationLogUiActionInProgress;
+    }
+    if (duplicateCommunicationLogButton) {
+      duplicateCommunicationLogButton.disabled = !communicationLogAvailable || communicationLogUiActionInProgress;
+    }
+    if (resetCommunicationLogButton) resetCommunicationLogButton.disabled = communicationLogUiActionInProgress;
+    if (progressState) {
+      status.textContent = progressStatus(exportKind === 'md' ? 'Extract MD' : 'Extract JSONL');
+    } else {
+      status.textContent = statusText;
+    }
+  }
+
+  /**
+   * Sets status.
+   *
+   * @param {string} text - The text to process.
+   * @returns {void} No value is returned.
+   */
+  function setStatus(text) {
+    statusText = text;
+    refreshStatus();
+  }
+
+  /**
+   * Handles start status timer.
+   *
+   * @returns {void} No value is returned.
+   */
+  function startStatusTimer() {
+    if (statusTimer !== null) clearInterval(statusTimer);
+    statusTimer = setInterval(refreshStatus, 1000);
+  }
+
+  /**
+   * Handles stop status timer.
+   *
+   * @returns {void} No value is returned.
+   */
+  function stopStatusTimer() {
+    if (statusTimer !== null) clearInterval(statusTimer);
+    statusTimer = null;
+  }
+
+  /**
+   * Handles acquire wake lock.
+   *
+   * @returns {void} No value is returned.
+   */
+  async function acquireWakeLock() {
+    if (!screenOnWhenCapturing || !exportInProgress ||
+        document.visibilityState !== 'visible' || !navigator.wakeLock?.request) return;
+    if (wakeLockSentinel) return;
+    try {
+      wakeLockSentinel = await navigator.wakeLock.request('screen');
+      wakeLockSentinel.addEventListener('release', () => {
+        wakeLockSentinel = null;
+      }, { once: true });
+    } catch {}
+  }
+
+  /**
+   * Handles release wake lock.
+   *
+   * @returns {void} No value is returned.
+   */
+  async function releaseWakeLock() {
+    // Detach the current wake-lock handle before awaiting release to avoid stale global state.
+    const sentinel = wakeLockSentinel;
+    wakeLockSentinel = null;
+    if (sentinel) {
+      try {
+        await sentinel.release();
+      } catch {}
+    }
+  }
+
+  /**
+   * Handles download blob.
+   *
+   * @param {Blob} blob - The Blob to download.
+   * @param {Object} filename - The filename to use for the download.
+   * @returns {void} No value is returned.
+   */
+  function downloadBlob(blob, filename) {
+    logDiagnostic('debug', 'conversation-download-triggered', {
+      filename: String(filename ?? ''),
+      blob_size: Number.isFinite(blob?.size) ? blob.size : null,
+      blob_type: typeof blob?.type === 'string' ? blob.type : null
+    });
+    const url = URL.createObjectURL(blob);
+    const anchor = document.createElement('a');
+    anchor.href = url;
+    anchor.download = filename;
+    document.body.append(anchor);
+    anchor.click();
+    anchor.remove();
+    setTimeout(() => URL.revokeObjectURL(url), 1000);
+  }
+
+  /**
+   * Handles conversation jump user records.
+   *
+   * @param {Object} spine - The ordered Conversation API source-record spine.
+   * @returns {Array<unknown>} The ordered values produced by `jumpUserRecords`.
+   */
+  function jumpUserRecords(spine) {
+    return (spine?.records ?? []).filter(record => record?.role === 'user');
+  }
+
+  /**
+   * Resolves jump identifier.
+   *
+   * @param {Object} spine - The ordered Conversation API source-record spine.
+   * @param {Object} identifier - The identifier value required by this function.
+   * @returns {Object} The Object value produced by `resolveJumpIdentifier`.
+   */
+  function resolveJumpIdentifier(spine, identifier) {
+    const value = String(identifier ?? '').trim();
+    assert(value, 'A User/Assistant turn ID or numeric UAP index is required.');
+    const records = spine?.records ?? [];
+    const users = jumpUserRecords(spine);
+    assert(users.length > 0, 'The conversation contains no User turns.');
+
+    if (/^-?\d+$/.test(value)) {
+      const requested = Number(value);
+      assert(Number.isSafeInteger(requested), `UAP index ${value} is not a safe integer.`);
+      const index = requested >= 0 ? requested : users.length + requested;
+      assert(index >= 0 && index < users.length,
+        `UAP index ${requested} is out of range for ${users.length} UAPs.`);
+      return { uap_index: index, role: 'user', message_id: users[index].message_id };
+    }
+
+    /**
+     * Handles record.
+     */
+    const record = records.find(item => item?.message_id === value);
+    assert(record, `Turn ID ${value} was not found in the Conversation API.`);
+    assert(record.role === 'user' || record.role === 'assistant',
+      `Turn ID ${value} belongs to role ${record.role ?? 'unknown'}, not User or Assistant.`);
+    // Tracks the latest User anchor at or before the requested source record.
+    let uapIndex = -1;
+    for (let index = 0; index < users.length; index += 1) {
+      if (users[index].ordinal > record.ordinal) break;
+      uapIndex = index;
+    }
+    assert(uapIndex >= 0, `Turn ID ${value} appears before the first User turn.`);
+    return { uap_index: uapIndex, role: record.role, message_id: record.message_id };
+  }
+
+  /**
+   * Returns mounted turn section.
+   *
+   * @param {string} messageId - The provider/source message identifier.
+   * @param {Object|null} role - The message role to match.
+   * @returns {null} The null value produced by `mountedTurnSection`.
+   */
+  function mountedTurnSection(messageId, role = null) {
+    for (const section of document.querySelectorAll('section[data-turn-id]')) {
+      if (role && section.getAttribute('data-turn') !== role) continue;
+      if (section.getAttribute('data-turn-id') === messageId) return section;
+      const message = section.querySelector('[data-message-id]');
+      if (message?.getAttribute('data-message-id') === messageId) return section;
+    }
+    return null;
+  }
+
+  /**
+   * Handles conversation scroll root.
+   *
+   * @returns {Element} The Element value produced by `conversationScrollRoot`.
+   */
+  function conversationScrollRoot() {
+    const thread = document.querySelector('#thread');
+    for (let node = thread?.parentElement; node instanceof HTMLElement; node = node.parentElement) {
+      const style = getComputedStyle(node);
+      if ((style.overflowY === 'auto' || style.overflowY === 'scroll') &&
+          node.scrollHeight > node.clientHeight + 1) return node;
+    }
+    return document.scrollingElement instanceof HTMLElement ? document.scrollingElement : document.documentElement;
+  }
+
+  // BEGIN Issue #123 live-tail consistency
+  /**
+   * Normalizes visible text for bounded live/API tail comparison without changing export content.
+   *
+   * @param {Object} value - Text-like value to normalize.
+   * @returns {string} Whitespace-normalized comparison text.
+   */
+  function normalizeLiveTailText(value) {
+    return String(value ?? '').replace(/\s+/g, ' ').trim();
+  }
+
+  /**
+   * Produces a compact deterministic fingerprint for diagnostics-only live-tail evidence.
+   *
+   * @param {string} text - Normalized text to fingerprint.
+   * @returns {string} Eight-character hexadecimal FNV-1a fingerprint.
+   */
+  function liveTailFingerprint(text) {
+    let hash = 2166136261;
+    for (let index = 0; index < text.length; index += 1) {
+      hash ^= text.charCodeAt(index);
+      hash = Math.imul(hash, 16777619);
+    }
+    return (hash >>> 0).toString(16).padStart(8, '0');
+  }
+
+  /**
+   * Resets live-tail state when entering a different conversation or starting a fresh tracking lifetime.
+   *
+   * @param {string|null} conversationId - Conversation identity associated with the new tracking state.
+   * @returns {void} No value is returned.
+   */
+  function resetLiveTailTrackingState(conversationId = null) {
+    liveTailConversationId = conversationId;
+    liveTailMarkers = [];
+    liveTailHistoricalNavigation = false;
+    liveTailPromptAdvancePending = false;
+    liveTailLastScrollTop = null;
+  }
+
+  /**
+   * Tests whether two live-tail markers describe the same mounted/source message identity.
+   *
+   * @param {Object|null} left - First marker.
+   * @param {Object|null} right - Second marker.
+   * @returns {boolean} True when a stable message or DOM turn identity matches.
+   */
+  function liveTailMarkerIdentityMatches(left, right) {
+    if (!left || !right) return false;
+    if (left.message_id && right.message_id && left.message_id === right.message_id) return true;
+    return Boolean(left.dom_turn_id && right.dom_turn_id && left.dom_turn_id === right.dom_turn_id);
+  }
+
+  /**
+   * Captures one mounted User/Assistant section as independent DOM/source identity evidence.
+   *
+   * @param {Element} section - Mounted `section[data-turn-id]` element.
+   * @returns {Object|null} Bounded live-tail marker, or null for unsupported sections.
+   */
+  function liveTailSectionMarker(section) {
+    if (!(section instanceof Element)) return null;
+    const role = section.getAttribute('data-turn');
+    if (role !== 'user' && role !== 'assistant') return null;
+    const messageNodes = [...section.querySelectorAll('[data-message-id]')];
+    const message = messageNodes.at(-1) ?? null;
+    const domTurnId = section.getAttribute('data-turn-id') || null;
+    const messageId = message?.getAttribute('data-message-id') || null;
+    if (!domTurnId && !messageId) return null;
+    const normalized = normalizeLiveTailText((message ?? section).textContent || '');
+    /** Bounded visible text retained for comparison/fingerprinting; full normalized length remains diagnostic metadata. */
+    const comparisonText = normalized.slice(0, LIVE_TAIL_TEXT_LIMIT);
+    return {
+      role,
+      message_id: messageId,
+      dom_turn_id: domTurnId,
+      container_id: section.getAttribute('data-testid') || null,
+      comparison_text: comparisonText,
+      content_length: normalized.length,
+      content_fingerprint: liveTailFingerprint(comparisonText),
+      observed_at: Date.now()
+    };
+  }
+
+  /**
+   * Adds or refreshes one live high-water marker while preserving monotonic history.
+   *
+   * A remount/stream update of the current newest identity may refresh in place even when advancement is disabled. A different identity is appended only when the caller has established legitimate forward progression.
+   *
+   * @param {Object|null} marker - Candidate live-tail marker.
+   * @param {boolean} allowAdvance - Whether a new identity may advance the high-water history.
+   * @returns {boolean} True when retained marker state changed.
+   */
+  function recordLiveTailMarker(marker, allowAdvance) {
+    if (!marker || !['user', 'assistant'].includes(marker.role)) return false;
+    if (!marker.message_id && !marker.dom_turn_id) return false;
+    const newest = liveTailMarkers.at(-1) ?? null;
+    if (liveTailMarkerIdentityMatches(newest, marker)) {
+      liveTailMarkers[liveTailMarkers.length - 1] = { ...newest, ...marker };
+      return true;
+    }
+    if (liveTailMarkers.some(existing => liveTailMarkerIdentityMatches(existing, marker))) return false;
+    if (!allowAdvance) return false;
+    liveTailMarkers.push({ ...marker });
+    if (liveTailMarkers.length > LIVE_TAIL_MARKER_LIMIT) {
+      liveTailMarkers.splice(0, liveTailMarkers.length - LIVE_TAIL_MARKER_LIMIT);
+    }
+    return true;
+  }
+
+  /**
+   * Marks current virtual-window movement as historical navigation so mounted older turns cannot advance the tail.
+   *
+   * @param {string} reason - Diagnostic reason for entering historical-navigation mode.
+   * @returns {void} No value is returned.
+   */
+  function markLiveTailHistoricalNavigation(reason) {
+    liveTailHistoricalNavigation = true;
+    logDiagnostic('debug', 'conversation-live-tail-historical-navigation', {
+      reason,
+      marker_count: liveTailMarkers.length,
+      newest_message_id: liveTailMarkers.at(-1)?.message_id ?? null,
+      newest_dom_turn_id: liveTailMarkers.at(-1)?.dom_turn_id ?? null
+    });
+  }
+
+  /**
+   * Marks an explicit User prompt submission as legitimate forward conversation progression.
+   *
+   * @returns {void} No value is returned.
+   */
+  function markLiveTailPromptSubmission() {
+    liveTailHistoricalNavigation = false;
+    liveTailPromptAdvancePending = true;
+    logDiagnostic('debug', 'conversation-live-tail-prompt-submission', {
+      marker_count: liveTailMarkers.length,
+      newest_message_id: liveTailMarkers.at(-1)?.message_id ?? null
+    });
+  }
+
+  /**
+   * Reports whether the conversation scroll root is at its current physical bottom boundary.
+   *
+   * Physical-bottom evidence alone never overrides historical-navigation mode.
+   *
+   * @param {Element|Object} scrollRoot - Conversation scroll container.
+   * @returns {boolean} True when the current viewport is within the bottom tolerance.
+   */
+  function liveTailAtPhysicalBottom(scrollRoot) {
+    const scrollTop = Number(scrollRoot?.scrollTop) || 0;
+    const clientHeight = Number(scrollRoot?.clientHeight) || 0;
+    const scrollHeight = Number(scrollRoot?.scrollHeight) || 0;
+    const tolerance = Math.max(24, Math.floor(clientHeight * 0.04));
+    return scrollTop + clientHeight >= scrollHeight - tolerance;
+  }
+
+  /**
+   * Applies one ordered mounted-window observation to the monotonic live high-water history.
+   *
+   * Initial bottom observation seeds up to ten mounted markers. Historical navigation cannot advance until the prior high-water marker is re-encountered; once re-encountered, only later mounted markers may advance the history.
+   *
+   * @param {Array<Object>} mounted - Ordered mounted User/Assistant markers.
+   * @param {boolean} atBottom - Whether the observed scroll root is at its current physical bottom.
+   * @param {string} reason - Diagnostic reason for the observation.
+   * @returns {number} Number of retained marker entries added or refreshed.
+   */
+  function applyMountedLiveTailMarkers(mounted, atBottom, reason = 'scan') {
+    const candidates = Array.isArray(mounted) ? mounted.filter(Boolean) : [];
+    if (!candidates.length) return 0;
+    let changed = 0;
+    let advanced = 0;
+    const beforeNewest = liveTailMarkers.at(-1) ?? null;
+    if (!liveTailMarkers.length) {
+      if (!atBottom && !liveTailPromptAdvancePending) return 0;
+      for (const marker of candidates.slice(-LIVE_TAIL_MARKER_LIMIT)) {
+        if (recordLiveTailMarker(marker, true)) {
+          changed += 1;
+          advanced += 1;
+        }
+      }
+    } else if (liveTailHistoricalNavigation) {
+      const highWater = liveTailMarkers.at(-1);
+      const anchorIndex = candidates.findIndex(marker => liveTailMarkerIdentityMatches(marker, highWater));
+      if (anchorIndex < 0) return 0;
+      if (recordLiveTailMarker(candidates[anchorIndex], false)) changed += 1;
+      liveTailHistoricalNavigation = false;
+      logDiagnostic('debug', 'conversation-live-tail-high-water-reencountered', {
+        reason,
+        newest_message_id: highWater?.message_id ?? null,
+        newest_dom_turn_id: highWater?.dom_turn_id ?? null
+      });
+      for (let index = anchorIndex + 1; index < candidates.length; index += 1) {
+        if (recordLiveTailMarker(candidates[index], true)) {
+          changed += 1;
+          advanced += 1;
+        }
+      }
+    } else {
+      const highWater = liveTailMarkers.at(-1);
+      const anchorIndex = candidates.findIndex(marker => liveTailMarkerIdentityMatches(marker, highWater));
+      if (anchorIndex >= 0) {
+        if (recordLiveTailMarker(candidates[anchorIndex], false)) changed += 1;
+        for (let index = anchorIndex + 1; index < candidates.length; index += 1) {
+          if (recordLiveTailMarker(candidates[index], true)) {
+            changed += 1;
+            advanced += 1;
+          }
+        }
+      } else if ((atBottom || liveTailPromptAdvancePending) && candidates.length) {
+        if (recordLiveTailMarker(candidates.at(-1), true)) {
+          changed += 1;
+          advanced += 1;
+        }
+      }
+    }
+    const afterNewest = liveTailMarkers.at(-1) ?? null;
+    if (advanced > 0 && afterNewest?.role === 'assistant' && liveTailPromptAdvancePending) {
+      liveTailPromptAdvancePending = false;
+    }
+    if (advanced > 0 && !liveTailMarkerIdentityMatches(beforeNewest, afterNewest)) {
+      logDiagnostic('debug', 'conversation-live-tail-advanced', {
+        reason,
+        advanced_count: advanced,
+        marker_count: liveTailMarkers.length,
+        role: afterNewest?.role ?? null,
+        message_id: afterNewest?.message_id ?? null,
+        dom_turn_id: afterNewest?.dom_turn_id ?? null,
+        container_id: afterNewest?.container_id ?? null,
+        content_length: afterNewest?.content_length ?? null,
+        content_fingerprint: afterNewest?.content_fingerprint ?? null
+      });
+    }
+    return changed;
+  }
+
+  /**
+   * Scans the mounted virtual window and applies it to the retained monotonic high-water history.
+   *
+   * @param {string} reason - Diagnostic reason for the scan.
+   * @returns {void} No value is returned.
+   */
+  function scanLiveTailMarkers(reason = 'scan') {
+    const conversationId = currentConversationId();
+    if (!conversationId) return;
+    if (liveTailConversationId !== conversationId) resetLiveTailTrackingState(conversationId);
+    const mounted = [...document.querySelectorAll('section[data-turn-id]')]
+      .map(liveTailSectionMarker)
+      .filter(Boolean);
+    if (!mounted.length) return;
+    const scrollRoot = liveTailObservedScrollRoot || conversationScrollRoot();
+    const atPhysicalBottom = liveTailAtPhysicalBottom(scrollRoot);
+    applyMountedLiveTailMarkers(mounted, atPhysicalBottom, reason);
+    if (atPhysicalBottom) {
+      const newestAssistant = [...mounted].reverse().find(marker => marker.role === 'assistant') ?? null;
+      communicationLogAssistantLifecycle(newestAssistant, reason);
+    }
+  }
+
+  /**
+   * Coalesces a requested live-tail scan into one queued microtask.
+   *
+   * @param {string} reason - Diagnostic reason retained for the queued scan.
+   * @returns {void} No value is returned.
+   */
+  function scheduleLiveTailScan(reason) {
+    if (liveTailScanScheduled) return;
+    liveTailScanScheduled = true;
+    queueMicrotask(() => {
+      liveTailScanScheduled = false;
+      scanLiveTailMarkers(reason);
+    });
+  }
+
+  /**
+   * Handles conversation scrolling for high-water tracking without treating upward navigation as new content.
+   *
+   * @returns {void} No value is returned.
+   */
+  function handleLiveTailScroll() {
+    const scrollRoot = liveTailObservedScrollRoot || conversationScrollRoot();
+    const current = Number(scrollRoot?.scrollTop) || 0;
+    if (liveTailLastScrollTop !== null && current < liveTailLastScrollTop - 4) {
+      markLiveTailHistoricalNavigation('scroll-up');
+    }
+    liveTailLastScrollTop = current;
+    scheduleLiveTailScan('scroll');
+  }
+
+  /**
+   * Handles index-bar/send-button clicks for live-tail navigation/progression state.
+   *
+   * @param {Event|Object} event - Click event.
+   * @returns {void} No value is returned.
+   */
+  function handleLiveTailClick(event) {
+    const target = event.target instanceof Element ? event.target : null;
+    if (!target) return;
+    if (target.closest('button[data-toc-item-index]')) {
+      markLiveTailHistoricalNavigation('prompt-index');
+      return;
+    }
+    if (target.closest('button[data-testid="send-button"]')) markLiveTailPromptSubmission();
+  }
+
+  /**
+   * Handles prompt-form submission as explicit forward conversation progression.
+   *
+   * @param {Event|Object} event - Submit event.
+   * @returns {void} No value is returned.
+   */
+  function handleLiveTailSubmit(event) {
+    const form = event.target instanceof Element ? event.target : null;
+    if (form?.querySelector?.('#prompt-textarea')) markLiveTailPromptSubmission();
+  }
+
+  /**
+   * Handles Enter in the ChatGPT prompt editor when it represents a send rather than a newline.
+   *
+   * @param {KeyboardEvent|Object} event - Keyboard event.
+   * @returns {void} No value is returned.
+   */
+  function handleLiveTailPromptKeydown(event) {
+    const target = event.target instanceof Element ? event.target : null;
+    if (!target?.closest?.('#prompt-textarea')) return;
+    if (event.key === 'Enter' && !event.shiftKey && !event.isComposing) markLiveTailPromptSubmission();
+  }
+
+  /**
+   * Binds live-tail mutation and scroll observation to the current stock conversation thread.
+   *
+   * @returns {void} No value is returned.
+   */
+  function bindLiveTailThread() {
+    const thread = document.querySelector('#thread');
+    if (thread === liveTailObservedThread) return;
+    liveTailThreadObserver?.disconnect();
+    liveTailThreadObserver = null;
+    liveTailObservedScrollRoot?.removeEventListener?.('scroll', handleLiveTailScroll);
+    liveTailObservedThread = thread;
+    liveTailObservedScrollRoot = null;
+    liveTailLastScrollTop = null;
+    if (!(thread instanceof Element)) return;
+    liveTailObservedScrollRoot = conversationScrollRoot();
+    liveTailLastScrollTop = Number(liveTailObservedScrollRoot?.scrollTop) || 0;
+    liveTailObservedScrollRoot?.addEventListener?.('scroll', handleLiveTailScroll, { passive: true });
+    liveTailThreadObserver = new MutationObserver(() => scheduleLiveTailScan('thread-mutation'));
+    liveTailThreadObserver.observe(thread, { childList: true, subtree: true, characterData: true });
+    scheduleLiveTailScan('thread-bound');
+  }
+
+  /**
+   * Installs the passive bounded high-water tracker used only for export consistency evidence.
+   *
+   * @returns {void} No value is returned.
+   */
+  function installLiveTailTracking() {
+    if (liveTailTrackingInstalled) return;
+    liveTailTrackingInstalled = true;
+    document.addEventListener('click', handleLiveTailClick, true);
+    document.addEventListener('submit', handleLiveTailSubmit, true);
+    document.addEventListener('keydown', handleLiveTailPromptKeydown, true);
+    liveTailRootObserver = new MutationObserver(() => {
+      if (document.querySelector('#thread') !== liveTailObservedThread) bindLiveTailThread();
+    });
+    if (document.documentElement) {
+      liveTailRootObserver.observe(document.documentElement, { childList: true, subtree: true });
+    }
+    bindLiveTailThread();
+  }
+
+  /**
+   * Freezes the currently retained live high-water history for one export operation.
+   *
+   * @returns {Array<Object>} Independent marker copies ordered oldest to newest.
+   */
+  function snapshotLiveTailMarkers() {
+    return liveTailMarkers.map(marker => ({ ...marker }));
+  }
+
+  /**
+   * Extracts provider text suitable only for detecting a materially older/incomplete representation of the same message.
+   *
+   * @param {Object} message - Raw Conversation API message.
+   * @returns {string} Normalized visible comparison text, or an empty string when the record is not a visible User/final-Assistant candidate.
+   */
+  function liveTailVisibleApiText(message) {
+    if (!message || message?.metadata?.is_visually_hidden_from_conversation === true) return '';
+    const role = message?.author?.role;
+    if (role !== 'user' && role !== 'assistant') return '';
+    const type = message?.content?.content_type;
+    if (type !== 'text' && type !== 'multimodal_text') return '';
+    if (role === 'assistant' && message?.channel && message.channel !== 'final' && message?.end_turn !== true) return '';
+    const texts = [];
+    for (const part of Array.isArray(message?.content?.parts) ? message.content.parts : []) {
+      if (typeof part === 'string') texts.push(part);
+      else if (part && typeof part === 'object') {
+        for (const key of ['text', 'content']) {
+          if (typeof part[key] === 'string') texts.push(part[key]);
+        }
+      }
+    }
+    return normalizeLiveTailText(texts.join(' '));
+  }
+
+  /**
+   * Finds the API source record corresponding to one live marker by stable nested message identity only.
+   *
+   * DOM section turn ids and virtual-window ids are retained as independent diagnostics and are never assumed to be provider message ids.
+   *
+   * @param {Object} marker - Frozen live-tail marker.
+   * @param {Object} spine - Authoritative Conversation API spine.
+   * @returns {Object|null} Matching source record and match basis, or null when absent.
+   */
+  function liveTailFindRecordForMarker(marker, spine) {
+    const messageId = marker?.message_id;
+    if (!messageId) return null;
+    const record = (spine?.records ?? []).find(item => item?.message_id === messageId);
+    if (!record || !liveTailVisibleApiText(record.message)) return null;
+    return { record, basis: 'message_id' };
+  }
+
+  /**
+   * Compares frozen live high-water markers with the single authoritative Conversation API snapshot.
+   *
+   * @param {Array<Object>} markers - Frozen live-tail markers.
+   * @param {Object} spine - Authoritative Conversation API spine.
+   * @returns {Object} Safe diagnostic counts/identities; raw user text is never returned.
+   */
+  function compareLiveTailMarkersToSpine(markers, spine) {
+    const visibleRecords = (spine?.records ?? []).filter(item => Boolean(liveTailVisibleApiText(item?.message)));
+    const comparisons = [];
+    let stalePrefixCount = 0;
+    let roleMismatchCount = 0;
+    for (const marker of markers ?? []) {
+      const verifiable = Boolean(marker?.message_id);
+      if (!verifiable) {
+        comparisons.push({
+          matched: false,
+          verifiable: false,
+          message_id: null,
+          dom_turn_id: marker?.dom_turn_id ?? null
+        });
+        continue;
+      }
+      const found = liveTailFindRecordForMarker(marker, spine);
+      if (!found) {
+        comparisons.push({
+          matched: false,
+          verifiable: true,
+          message_id: marker?.message_id ?? null,
+          dom_turn_id: marker?.dom_turn_id ?? null
+        });
+        continue;
+      }
+      const apiText = liveTailVisibleApiText(found.record.message);
+      const liveText = normalizeLiveTailText(marker?.comparison_text ?? '');
+      const roleMismatch = Boolean(marker?.role && found.record.role && marker.role !== found.record.role);
+      if (roleMismatch) roleMismatchCount += 1;
+      const stalePrefix = marker?.role !== 'user' && found.record.role !== 'user' &&
+        found.basis === 'message_id' && apiText.length >= 20 &&
+        liveText.length >= apiText.length + 12 && liveText.startsWith(apiText);
+      if (stalePrefix) stalePrefixCount += 1;
+      comparisons.push({
+        matched: true,
+        verifiable: true,
+        message_id: marker?.message_id ?? null,
+        dom_turn_id: marker?.dom_turn_id ?? null,
+        matched_source_id: found.record.message_id,
+        match_basis: found.basis,
+        role_mismatch: roleMismatch,
+        stale_prefix: stalePrefix,
+        live_content_length: Number(marker?.content_length) || liveText.length,
+        api_content_length: apiText.length,
+        api_record_ordinal: found.record.ordinal
+      });
+    }
+    const verifiableCount = comparisons.filter(item => item.verifiable).length;
+    const unverifiableCount = comparisons.length - verifiableCount;
+    const matchedCount = comparisons.filter(item => item.matched).length;
+    const missingCount = comparisons.filter(item => item.verifiable && !item.matched).length;
+    let missingSuffixCount = 0;
+    for (let index = comparisons.length - 1; index >= 0; index -= 1) {
+      const comparison = comparisons[index];
+      if (!comparison.verifiable || comparison.matched) break;
+      missingSuffixCount += 1;
+    }
+    const newestMarker = markers?.at?.(-1) ?? null;
+    const newestComparison = comparisons.at(-1) ?? null;
+    const newestApiVisibleId = visibleRecords.at(-1)?.message_id ?? null;
+    const newestVerifiable = Boolean(newestMarker?.message_id);
+    const newestConsistent = Boolean(newestVerifiable && newestComparison?.matched &&
+      newestComparison.matched_source_id === newestApiVisibleId &&
+      !newestComparison.role_mismatch && !newestComparison.stale_prefix);
+    const warning = comparisons.length === 0 ||
+      missingCount > 0 || stalePrefixCount > 0 || roleMismatchCount > 0 || !newestConsistent;
+    return {
+      marker_count: comparisons.length,
+      verifiable_count: verifiableCount,
+      unverifiable_count: unverifiableCount,
+      matched_count: matchedCount,
+      missing_count: missingCount,
+      missing_suffix_count: missingSuffixCount,
+      stale_prefix_count: stalePrefixCount,
+      role_mismatch_count: roleMismatchCount,
+      newest_live_message_id: newestMarker?.message_id ?? null,
+      newest_live_dom_turn_id: newestMarker?.dom_turn_id ?? null,
+      newest_api_visible_id: newestApiVisibleId,
+      newest_verifiable: newestVerifiable,
+      newest_consistent: newestConsistent,
+      warning,
+      comparisons
+    };
+  }
+
+  /**
+   * Compares the authoritative API source records against the generated JSONL to detect serialization loss/mutation.
+   *
+   * @param {Array<Object>} markers - Frozen live-tail markers.
+   * @param {Object} spine - Authoritative Conversation API spine.
+   * @param {string} jsonl - Generated JSONL text.
+   * @returns {Object} Safe serialization-consistency summary.
+   */
+  function compareLiveTailMarkersToJsonl(markers, spine, jsonl) {
+    const parsed = [];
+    for (const line of String(jsonl ?? '').split('\n')) {
+      if (!line.trim()) continue;
+      try {
+        const value = JSON.parse(line);
+        if (value?.record_type !== 'chatgpt_conversation_metadata') parsed.push(value);
+      } catch {
+        return { marker_count: markers?.length ?? 0, matched_count: 0, missing_from_jsonl_count: markers?.length ?? 0, changed_count: 0, newest_jsonl_visible_id: null, warning: true, parse_error: true };
+      }
+    }
+    const jsonlById = new Map(parsed.filter(item => typeof item?.id === 'string').map(item => [item.id, item]));
+    let matchedCount = 0;
+    let missingCount = 0;
+    let changedCount = 0;
+    for (const marker of markers ?? []) {
+      const found = liveTailFindRecordForMarker(marker, spine);
+      if (!found) continue;
+      const serialized = jsonlById.get(found.record.message_id);
+      if (!serialized) {
+        missingCount += 1;
+        continue;
+      }
+      matchedCount += 1;
+      if (JSON.stringify(serialized) !== JSON.stringify(found.record.message)) changedCount += 1;
+    }
+    const newestJsonlVisible = parsed.filter(message => Boolean(liveTailVisibleApiText(message))).at(-1)?.id ?? null;
+    const newestApiVisible = (spine?.records ?? []).filter(item => Boolean(liveTailVisibleApiText(item?.message))).at(-1)?.message_id ?? null;
+    const warning = missingCount > 0 || changedCount > 0 || newestJsonlVisible !== newestApiVisible;
+    return {
+      marker_count: markers?.length ?? 0,
+      matched_count: matchedCount,
+      missing_from_jsonl_count: missingCount,
+      changed_count: changedCount,
+      newest_jsonl_visible_id: newestJsonlVisible,
+      newest_api_visible_id: newestApiVisible,
+      warning,
+      parse_error: false
+    };
+  }
+
+  /**
+   * Formats a compact live/API consistency warning for the recorder status display.
+   *
+   * @param {Object} result - Live/API comparison result.
+   * @returns {string} Warning summary, or an empty string when consistent/unverified.
+   */
+  function liveApiTailWarningText(result) {
+    if (!result?.warning) return '';
+    if (result.marker_count === 0) {
+      return 'live/API freshness could not be verified because no live tail markers were retained';
+    }
+    if (result.newest_verifiable === false) {
+      return 'live/API freshness could not be verified because the newest live marker has no API message identity' +
+        `${result.unverifiable_count > 1 ? `; unverifiable markers ${result.unverifiable_count}` : ''}`;
+    }
+    return `live/API matched ${result.matched_count}/${result.verifiable_count}; missing ${result.missing_count}` +
+      `${result.unverifiable_count ? `; unverifiable ${result.unverifiable_count}` : ''}` +
+      `${result.missing_suffix_count ? ` (newest suffix ${result.missing_suffix_count})` : ''}` +
+      `${result.stale_prefix_count ? `; stale-content ${result.stale_prefix_count}` : ''}` +
+      `${result.role_mismatch_count ? `; role-mismatch ${result.role_mismatch_count}` : ''}`;
+  }
+
+  /**
+   * Formats a compact API/JSONL consistency warning for the recorder status display.
+   *
+   * @param {Object} result - API/JSONL comparison result.
+   * @returns {string} Warning summary, or an empty string when consistent.
+   */
+  function jsonlTailWarningText(result) {
+    if (!result?.warning) return '';
+    return `API/JSONL missing ${result.missing_from_jsonl_count}; changed ${result.changed_count}` +
+      `${result.parse_error ? '; JSONL parse error' : ''}`;
+  }
+  // END Issue #123 live-tail consistency
+
+  /**
+   * Waits for for jump target.
+   *
+   * @param {EventTarget|null} target - The target element or resolved jump target.
+   * @param {number} timeoutMs - The timeout duration in milliseconds.
+   * @returns {Promise<null>} A promise that resolves to the null result produced by `waitForJumpTarget`.
+   */
+  async function waitForJumpTarget(target, timeoutMs = 12000) {
+    const deadline = performance.now() + timeoutMs;
+    const scrollRoot = conversationScrollRoot();
+    while (performance.now() < deadline) {
+      const section = mountedTurnSection(target.message_id, target.role);
+      if (section instanceof HTMLElement) return section;
+      if (target.role === 'assistant') {
+        scrollRoot.scrollBy({ top: Math.max(140, Math.floor(scrollRoot.clientHeight * 0.45)), behavior: 'auto' });
+      }
+      await new Promise(resolve => setTimeout(resolve, 100));
+    }
+    return null;
+  }
+
+  /**
+   * Handles conversation jump TOC index control.
+   *
+   * @param {number} uapIndex - The zero-based uap index.
+   * @returns {Element|null} The value produced by `jumpTocIndexControl`, or `null` when no value is available.
+   */
+  function jumpTocIndexControl(uapIndex) {
+    return document.querySelector(`button[data-toc-item-index="${uapIndex}"]`);
+  }
+
+  /**
+   * Handles populate jump TOC index.
+   *
+   * @param {number} uapIndex - The zero-based uap index.
+   * @param {number} timeoutMs - The timeout duration in milliseconds.
+   * @returns {Promise<null>} A promise resolving to the value produced by `populateJumpTocIndex`.
+   */
+  async function populateJumpTocIndex(uapIndex, timeoutMs = 60000) {
+    let toc = jumpTocIndexControl(uapIndex);
+    if (toc instanceof HTMLElement) return toc;
+
+    const scrollRoot = conversationScrollRoot();
+    // Preserve the caller scroll position so image recovery can restore the page exactly.
+    const originalScrollTop = scrollRoot.scrollTop;
+    const deadline = performance.now() + timeoutMs;
+    let steps = 0;
+    let stagnantSteps = 0;
+    logDiagnostic('debug', 'conversation-jump-toc-autopopulate-start', {
+      uap_index: uapIndex,
+      original_scroll_top: originalScrollTop,
+      scroll_height: scrollRoot.scrollHeight,
+      client_height: scrollRoot.clientHeight
+    });
+
+    scrollRoot.scrollTo({ top: 0, behavior: 'auto' });
+    await new Promise(resolve => setTimeout(resolve, 100));
+
+    while (performance.now() < deadline) {
+      toc = jumpTocIndexControl(uapIndex);
+      if (toc instanceof HTMLElement) {
+        logDiagnostic('debug', 'conversation-jump-toc-autopopulate-complete', {
+          uap_index: uapIndex,
+          found: true,
+          steps,
+          scroll_top: scrollRoot.scrollTop
+        });
+        return toc;
+      }
+
+      const maxScrollTop = Math.max(0, scrollRoot.scrollHeight - scrollRoot.clientHeight);
+      if (scrollRoot.scrollTop >= maxScrollTop - 2) break;
+      const before = scrollRoot.scrollTop;
+      scrollRoot.scrollBy({
+        top: Math.max(100, Math.floor(scrollRoot.clientHeight * 0.5)),
+        behavior: 'auto'
+      });
+      await new Promise(resolve => setTimeout(resolve, 100));
+      steps += 1;
+      if (Math.abs(scrollRoot.scrollTop - before) < 1) stagnantSteps += 1;
+      else stagnantSteps = 0;
+      if (steps % 20 === 0) {
+        logDiagnostic('debug', 'conversation-jump-toc-autopopulate-progress', {
+          uap_index: uapIndex,
+          steps,
+          scroll_top: scrollRoot.scrollTop,
+          scroll_height: scrollRoot.scrollHeight,
+          target_available: jumpTocIndexControl(uapIndex) instanceof HTMLElement
+        });
+      }
+      if (stagnantSteps >= 5) break;
+    }
+
+    toc = jumpTocIndexControl(uapIndex);
+    if (!(toc instanceof HTMLElement)) scrollRoot.scrollTo({ top: originalScrollTop, behavior: 'auto' });
+    logDiagnostic('debug', 'conversation-jump-toc-autopopulate-complete', {
+      uap_index: uapIndex,
+      found: toc instanceof HTMLElement,
+      steps,
+      scroll_top: scrollRoot.scrollTop
+    });
+    return toc instanceof HTMLElement ? toc : null;
+  }
+
+  /**
+   * Handles conversation jump to resolved target.
+   *
+   * @param {EventTarget|null} target - The target element or resolved jump target.
+   * @returns {Promise<Object|boolean|string|number|null>} A promise that resolves to the Object|boolean|string|number|null result produced by `jumpToResolvedTarget`.
+   */
+  async function jumpToResolvedTarget(target) {
+    let section = mountedTurnSection(target.message_id, target.role);
+    logDiagnostic('debug', 'conversation-jump-materialization-step', {
+      message_id: target.message_id,
+      role: target.role,
+      uap_index: target.uap_index,
+      step: 'initial-mounted-check',
+      mounted: section instanceof HTMLElement
+    });
+    if (!(section instanceof HTMLElement)) {
+      let toc = jumpTocIndexControl(target.uap_index);
+      logDiagnostic('debug', 'conversation-jump-materialization-step', {
+        message_id: target.message_id,
+        role: target.role,
+        uap_index: target.uap_index,
+        step: 'toc-index-control-lookup',
+        available: toc instanceof HTMLElement
+      });
+      if (!(toc instanceof HTMLElement)) {
+        toc = await populateJumpTocIndex(target.uap_index);
+        logDiagnostic('debug', 'conversation-jump-materialization-step', {
+          message_id: target.message_id,
+          role: target.role,
+          uap_index: target.uap_index,
+          step: 'toc-index-control-after-autopopulate',
+          available: toc instanceof HTMLElement
+        });
+      }
+      assert(toc instanceof HTMLElement,
+        `Turn ${target.message_id} is not mounted and the conversation did not expose a UAP index control for ${target.uap_index} after automatic index population.`);
+      logDiagnostic('debug', 'conversation-jump-materialization-step', {
+        message_id: target.message_id,
+        role: target.role,
+        uap_index: target.uap_index,
+        step: 'toc-index-control-click'
+      });
+      toc.click();
+      if (target.role === 'assistant') {
+        const userMessageId = jumpUserRecords(target.spine)[target.uap_index]?.message_id;
+        if (userMessageId) {
+          const userSection = await waitForJumpTarget({
+            uap_index: target.uap_index,
+            role: 'user',
+            message_id: userMessageId
+          }, 6000);
+          logDiagnostic('debug', 'conversation-jump-materialization-step', {
+            message_id: target.message_id,
+            role: target.role,
+            uap_index: target.uap_index,
+            step: 'assistant-user-anchor-wait',
+            user_message_id: userMessageId,
+            mounted: userSection instanceof HTMLElement
+          });
+          userSection?.scrollIntoView({ block: 'center', behavior: 'auto' });
+        }
+      }
+      section = await waitForJumpTarget(target);
+      logDiagnostic('debug', 'conversation-jump-materialization-step', {
+        message_id: target.message_id,
+        role: target.role,
+        uap_index: target.uap_index,
+        step: 'target-wait-complete',
+        mounted: section instanceof HTMLElement
+      });
+    }
+    assert(section instanceof HTMLElement, `${target.role === 'assistant' ? 'Assistant' : 'User'} turn ${target.message_id} did not materialize.`);
+    section.scrollIntoView({ block: 'center', behavior: 'smooth' });
+    logDiagnostic('debug', 'conversation-jump-materialization-complete', {
+      message_id: target.message_id,
+      role: target.role,
+      uap_index: target.uap_index,
+      turn_id: section.getAttribute('data-turn-id') || null,
+      data_turn: section.getAttribute('data-turn') || null
+    });
+    return section;
+  }
+
+  /**
+   * Handles run jump.
+   *
+   * @returns {void} No value is returned.
+   */
+  async function runJump() {
+    if (exportInProgress || testInProgress || jumpInProgress) return;
+    const requested = window.prompt('Enter a User or Assistant turn_id, or numeric UAP index (0 = first, -1 = last):');
+    if (requested === null) return;
+    const identifier = requested.trim();
+    if (!identifier) {
+      setStatus('No User/Assistant turn ID or UAP index was entered.');
+      return;
+    }
+    const conversationId = currentConversationId();
+    assert(conversationId, 'Current page is not a ChatGPT conversation.');
+    markLiveTailHistoricalNavigation('downloadconversation-jump');
+    logDiagnostic('debug', 'conversation-jump-request', {
+      raw_requested_identifier: boundedDiagnosticText(requested, 500),
+      identifier,
+      conversation_id: conversationId
+    });
+    jumpInProgress = true;
+    updateUi();
+    let resolvedTarget = null;
+    try {
+      setStatus('Resolving Jump target…');
+      const fetched = await fetchConversationPages(conversationId);
+      const spine = conversationSpineFromPages(fetched.pages);
+      const target = resolveJumpIdentifier(spine, identifier);
+      resolvedTarget = {
+        uap_index: target.uap_index,
+        role: target.role,
+        message_id: target.message_id
+      };
+      logDiagnostic('debug', 'conversation-jump-target-resolved', {
+        identifier,
+        ...resolvedTarget
+      });
+      target.spine = spine;
+      setStatus(`Jumping to ${target.role === 'assistant' ? 'Assistant' : 'User'} turn…`);
+      const section = await jumpToResolvedTarget(target);
+      if (target.role === 'user') {
+        /**
+         * Handles target record.
+         */
+        const targetRecord = spine.records.find(item => item?.message_id === target.message_id)?.message;
+        if (targetRecord && userImagePointerCount(targetRecord) > 0) {
+          logInternalImagePointerEvidence(targetRecord, section, mountedUserConversationImages(section));
+        }
+      }
+      logDiagnostic('debug', 'conversation-jump-success', {
+        identifier,
+        ...resolvedTarget
+      });
+      setStatus(`Jumped to ${target.role === 'assistant' ? 'Assistant' : 'User'} turn ${target.message_id}.`);
+    } catch (error) {
+      const message = errorMessage(error);
+      logDiagnostic('warnings', 'conversation-jump-failure', {
+        raw_requested_identifier: boundedDiagnosticText(requested, 500),
+        identifier,
+        conversation_id: conversationId,
+        resolved_target: resolvedTarget,
+        message
+      });
+      setStatus(`Jump failed: ${message}`);
+    } finally {
+      jumpInProgress = false;
+      updateUi();
+    }
+  }
+
+  /**
+   * Handles user image pointer count.
+   *
+   * @param {Object} record - The provider/source record to process.
+   * @returns {number} The numeric value produced by `userImagePointerCount`.
+   */
+  function userImagePointerCount(record) {
+    if (record?.author?.role !== 'user' || !Array.isArray(record?.content?.parts)) return 0;
+    return record.content.parts.filter(part =>
+      part && typeof part === 'object' && part.content_type === 'image_asset_pointer'
+    ).length;
+  }
+
+  /**
+   * Returns mounted user conversation images.
+   *
+   * @param {HTMLElement} section - The mounted conversation-turn section.
+   * @returns {Array<unknown>} The ordered values produced by `mountedUserConversationImages`.
+   */
+  function mountedUserConversationImages(section) {
+    if (!(section instanceof HTMLElement) || section.getAttribute('data-turn') !== 'user') return [];
+    const images = [];
+    const seen = new Set();
+    for (const image of section.querySelectorAll(
+      'button[aria-label^="Open image:"] img, [class~="group/message-image"] img'
+    )) {
+      if (!(image instanceof HTMLImageElement) || seen.has(image)) continue;
+      const src = image.currentSrc || image.getAttribute('src') || '';
+      if (!src) continue;
+      seen.add(image);
+      images.push(image);
+    }
+    return images;
+  }
+
+  /**
+   * Handles internal image pointer protocol.
+   *
+   * @param {Object} source - The source value to inspect.
+   * @returns {string|null} The string produced by `internalImagePointerProtocol`, or `null` when no value is available.
+   */
+  function internalImagePointerProtocol(source) {
+    const value = String(source ?? '').trim().toLowerCase();
+    if (value.startsWith('sandbox://')) return 'sandbox';
+    if (value.startsWith('sediment://')) return 'sediment';
+    return null;
+  }
+
+  /**
+   * Handles internal image pointer asset key.
+   *
+   * @param {Object} source - The source value to inspect.
+   * @returns {string} The string produced by `internalImagePointerAssetKey`.
+   */
+  function internalImagePointerAssetKey(source) {
+    const value = String(source ?? '').trim();
+    const protocol = internalImagePointerProtocol(value);
+    if (!protocol) return '';
+    return value
+      .replace(/^[a-z]+:\/\//i, '')
+      .split(/[?#]/, 1)[0]
+      .split('/')
+      .filter(Boolean)
+      .pop() ?? '';
+  }
+
+  /**
+   * Handles image pointer DOM candidate.
+   *
+   * @param {Object} image - The image element to inspect.
+   * @param {number} ordinal - The ordinal position to process.
+   * @returns {Object|null} The value produced by `imagePointerDomCandidate`, or `null` when no value is available.
+   */
+  function imagePointerDomCandidate(image, ordinal) {
+    if (!(image instanceof HTMLImageElement)) return null;
+    const button = image.closest('button');
+    const anchor = image.closest('a[href]');
+    return {
+      ordinal,
+      src: image.getAttribute('src') || null,
+      current_src: image.currentSrc || null,
+      alt: image.getAttribute('alt') || null,
+      title: image.getAttribute('title') || null,
+      button_aria_label: button?.getAttribute('aria-label') || null,
+      anchor_href: anchor?.getAttribute('href') || null
+    };
+  }
+
+  /**
+   * Handles image pointer resource evidence.
+   *
+   * @param {Object} source - The source value to inspect.
+   * @param {Object} domCandidate - The domCandidate value required by this function.
+   * @returns {Object} The Object value produced by `imagePointerResourceEvidence`.
+   */
+  function imagePointerResourceEvidence(source, domCandidate) {
+    const assetKey = internalImagePointerAssetKey(source);
+    // DOM-derived URLs are exact evidence candidates before broader resource heuristics are tried.
+    const exactUrls = new Set([
+      domCandidate?.src,
+      domCandidate?.current_src,
+      domCandidate?.anchor_href
+    ].filter(Boolean));
+    const exact = [];
+    const heuristic = [];
+    const entries = performance.getEntriesByType('resource').slice(-500);
+    for (const entry of entries) {
+      if (!(entry instanceof PerformanceResourceTiming)) continue;
+      const name = String(entry.name || '');
+      const record = {
+        url: name,
+        initiator_type: entry.initiatorType || null,
+        response_status: Number.isFinite(entry.responseStatus) ? entry.responseStatus : null,
+        transfer_size: Number.isFinite(entry.transferSize) ? entry.transferSize : null,
+        decoded_body_size: Number.isFinite(entry.decodedBodySize) ? entry.decodedBodySize : null
+      };
+      if (exactUrls.has(name)) {
+        exact.push({ ...record, basis: 'dom-url-match' });
+        continue;
+      }
+      if (assetKey && (name.includes(assetKey) || name.includes(encodeURIComponent(assetKey)))) {
+        exact.push({ ...record, basis: 'asset-token-match' });
+        continue;
+      }
+      if (['img', 'fetch', 'xmlhttprequest'].includes(entry.initiatorType) && /(?:image|file|asset|download|backend-api)/i.test(name)) {
+        heuristic.push({ ...record, basis: 'recent-image-like-resource' });
+      }
+    }
+    return {
+      asset_key: assetKey || null,
+      exact: exact.slice(-20),
+      heuristic: heuristic.slice(-30)
+    };
+  }
+
+  /**
+   * Logs internal image pointer evidence.
+   *
+   * @param {Object} record - The provider/source record to process.
+   * @param {HTMLElement} section - The mounted conversation-turn section.
+   * @param {boolean} candidates - Whether candidates is enabled.
+   * @returns {void} No value is returned.
+   */
+  function logInternalImagePointerEvidence(record, section, candidates) {
+    const parts = Array.isArray(record?.content?.parts) ? record.content.parts : [];
+    let imageOrdinal = 0;
+    for (const part of parts) {
+      if (!part || typeof part !== 'object' || part.content_type !== 'image_asset_pointer') continue;
+      imageOrdinal += 1;
+      const source = cgImagePointerSource(part);
+      const protocol = internalImagePointerProtocol(source);
+      if (!protocol) continue;
+      const image = candidates[imageOrdinal - 1] ?? null;
+      const domCandidate = imagePointerDomCandidate(image, imageOrdinal);
+      logDiagnostic('debug', 'conversation-image-pointer-resolution-evidence', {
+        message_id: record.id ?? null,
+        turn_id: section?.getAttribute?.('data-turn-id') ?? null,
+        image_ordinal: imageOrdinal,
+        pointer_protocol: protocol,
+        pointer_source: source,
+        dom_match_basis: domCandidate ? 'same-turn-image-ordinal' : null,
+        dom_candidate: domCandidate,
+        mounted_image_count: candidates.length,
+        resource_candidates: imagePointerResourceEvidence(source, domCandidate)
+      });
+    }
+  }
+
+  /**
+   * Fetches one conversational image source and converts its bytes to a data URL.
+   *
+   * @param {string} source - Browser-resolvable image source URL or existing data URL.
+   * @param {Object|null} timing - Mutable timing/result object populated without storing image payload data.
+   * @returns {Promise<string>} A promise resolving to the image data URL.
+   */
+  async function fetchImageDataUrl(source, timing = null) {
+    const startedAt = performance.now();
+    const src = String(source ?? '');
+    assert(src, 'Conversational image has no source URL.');
+    if (timing) {
+      timing.stage = 'source';
+      timing.outcome = null;
+      timing.source_scheme = null;
+      timing.http_status = null;
+      timing.fetch_ms = null;
+      timing.body_ms = null;
+      timing.encode_ms = null;
+      timing.blob_bytes = null;
+      timing.data_url_chars = null;
+      timing.total_ms = null;
+      try { timing.source_scheme = new URL(src, location.href).protocol; } catch {}
+    }
+    if (src.startsWith('data:')) {
+      if (timing) {
+        timing.stage = 'complete';
+        timing.outcome = 'data-url';
+        timing.fetch_ms = 0;
+        timing.body_ms = 0;
+        timing.encode_ms = 0;
+        timing.data_url_chars = src.length;
+        timing.total_ms = Math.round(performance.now() - startedAt);
+      }
+      return src;
+    }
+    try {
+      if (timing) timing.stage = 'fetch';
+      const response = await fetch(src, { credentials: 'include' });
+      const headersAt = performance.now();
+      if (timing) {
+        timing.fetch_ms = Math.round(headersAt - startedAt);
+        timing.http_status = response.status;
+      }
+      if (!response.ok) {
+        const error = new Error(`Conversational image request returned HTTP ${response.status}.`);
+        error.httpStatus = response.status;
+        if (timing) timing.outcome = 'http-error';
+        throw error;
+      }
+      if (timing) timing.stage = 'body';
+      const blob = await response.blob();
+      const bodyAt = performance.now();
+      if (timing) {
+        timing.body_ms = Math.round(bodyAt - headersAt);
+        timing.blob_bytes = blob.size;
+        timing.stage = 'encode';
+      }
+      const dataUrl = await new Promise((resolve, reject) => {
+        const reader = new FileReader();
+        reader.onload = () => resolve(String(reader.result || ''));
+        reader.onerror = () => reject(reader.error || new Error('Could not read conversational image blob.'));
+        reader.readAsDataURL(blob);
+      });
+      const finishedAt = performance.now();
+      if (timing) {
+        timing.encode_ms = Math.round(finishedAt - bodyAt);
+        timing.data_url_chars = dataUrl.length;
+        timing.total_ms = Math.round(finishedAt - startedAt);
+        timing.outcome = 'success';
+        timing.stage = 'complete';
+      }
+      return dataUrl;
+    } catch (error) {
+      if (timing) {
+        timing.total_ms = Math.round(performance.now() - startedAt);
+        if (!timing.outcome) timing.outcome = `${timing.stage || 'unknown'}-error`;
+      }
+      throw error;
+    }
+  }
+
+  /**
+   * Converts a mounted conversation image element to a data URL while optionally recording timing metrics.
+   *
+   * @param {HTMLImageElement} image - Mounted conversation image element whose current source is recovered.
+   * @param {Object|null} timing - Mutable timing/result object populated by `fetchImageDataUrl`.
+   * @returns {Promise<string>} A promise resolving to the image data URL.
+   */
+  async function imageElementDataUrl(image, timing = null) {
+    const src = image.currentSrc || image.getAttribute('src') || '';
+    return fetchImageDataUrl(src, timing);
+  }
+
+  /**
+   * Recovers user images while exposing compact per-image and whole-phase timing diagnostics.
+   *
+   * Existing recovery order and fallback behavior are preserved: images are still
+   * recovered serially, mounted DOM candidates are preferred, and provider pointers
+   * are used only where the established path already used them.
+   *
+   * @param {Object} spine - The ordered Conversation API source-record spine.
+   * @returns {Promise<Map<unknown, unknown>>} A promise resolving to recovered image Markdown keyed by source message id.
+   */
+  async function recoverUserImages(spine) {
+    // Recovered image Markdown is keyed by source message id for later canonical enrichment.
+    const recovered = new Map();
+    const scrollRoot = conversationScrollRoot();
+    // Preserve the caller scroll position so image recovery can restore the page exactly.
+    const originalScrollTop = scrollRoot.scrollTop;
+    /** Exact ordered Conversation API message set used as the single Core adaptation input. */
+    const sourceRecords = (spine?.records ?? []).map(item => item?.message).filter(Boolean);
+    /** Canonical Core image resources keyed by source record identity and original part index. */
+    const canonicalResourcesByRecord = canonicalImageResourcesByRecordAndPart(sourceRecords);
+    /** Ordered source records that contain one or more user image pointers. */
+    const records = (spine?.records ?? []).filter(record => userImagePointerCount(record?.message) > 0);
+    /** Total unique image pointers expected across the source records. */
+    const totalImages = records.reduce((total, item) => total + userImagePointerCount(item?.message), 0);
+    /** Highest unique image ordinal completed during this recovery phase. */
+    let recoveredImages = 0;
+    /** Number of mounted-image recovery operations that threw an error. */
+    let failedImages = 0;
+    /** Number of pointer resolutions that completed with an unavailable/missing outcome. */
+    let unavailableImages = 0;
+    /** Sum of downloaded Blob byte sizes observed by timed image operations. */
+    let totalBlobBytes = 0;
+    /** Sum of resulting data-URL character lengths observed by timed image operations. */
+    let totalDataUrlChars = 0;
+    /** Zero-based count of unique image pointers preceding the current source record. */
+    let imageBase = 0;
+    /** Monotonic start time for the complete image-recovery phase. */
+    const recoveryStartedAt = performance.now();
+    /** Whether the whole recovery phase reached the normal loop completion point. */
+    let recoveryCompleted = false;
+
+    if (progressState) {
+      progressState.stage = 'recovering-images';
+      progressState.image_number = 0;
+      progressState.image_count = totalImages;
+      progressState.image_completed = 0;
+      progressState.image_path = null;
+      progressState.image_started_at = 0;
+    }
+    logDiagnostic('debug', 'conversation-image-recovery-start', {
+      script_version: VERSION,
+      source_message_count: records.length,
+      total_images: totalImages,
+      diagnostic_log_capacity: MAX_DIAGNOSTIC_LOG_ITEMS
+    });
+    refreshStatus();
+
+    /**
+     * Runs one existing image-recovery operation while recording compact timing/progress state.
+     *
+     * @param {Function} loader - Async image loader that accepts one mutable timing object.
+     * @param {Object} context - Stable source/image correlation fields for the operation.
+     * @returns {Promise<string>} A promise resolving to the existing image recovery result.
+     */
+    const recoverOne = async (loader, context) => {
+      /** Mutable timing fields populated by the underlying image loader. */
+      const timing = {};
+      /** Monotonic start time for this one image recovery operation. */
+      const startedAt = performance.now();
+      if (progressState) {
+        progressState.stage = 'recovering-images';
+        progressState.image_number = context.image_number;
+        progressState.image_count = totalImages;
+        progressState.image_path = context.path;
+        progressState.image_started_at = startedAt;
+        progressState.image_message_id = context.message_id;
+        progressState.image_ordinal = context.image_ordinal;
+      }
+      refreshStatus();
+      logDiagnostic('debug', 'conversation-image-recovery-item-start', {
+        script_version: VERSION,
+        image_number: context.image_number,
+        total_images: totalImages,
+        message_id: context.message_id,
+        image_ordinal: context.image_ordinal,
+        path: context.path
+      });
+      try {
+        const value = await loader(timing);
+        const outcome = timing.outcome ?? 'success';
+        if (!['success', 'data-url'].includes(outcome)) unavailableImages += 1;
+        logDiagnostic('debug', 'conversation-image-recovery-item-complete', {
+          script_version: VERSION,
+          image_number: context.image_number,
+          total_images: totalImages,
+          message_id: context.message_id,
+          image_ordinal: context.image_ordinal,
+          path: context.path,
+          outcome,
+          source_scheme: timing.source_scheme ?? null,
+          resolver_status: timing.resolver_status ?? null,
+          resolver_ms: timing.resolver_ms ?? null,
+          http_status: timing.http_status ?? null,
+          fetch_ms: timing.fetch_ms ?? null,
+          body_ms: timing.body_ms ?? null,
+          encode_ms: timing.encode_ms ?? null,
+          blob_bytes: timing.blob_bytes ?? null,
+          data_url_chars: timing.data_url_chars ?? null,
+          elapsed_ms: timing.total_ms ?? Math.round(performance.now() - startedAt)
+        });
+        return value;
+      } catch (error) {
+        failedImages += 1;
+        logDiagnostic('debug', 'conversation-image-recovery-item-failure', {
+          script_version: VERSION,
+          image_number: context.image_number,
+          total_images: totalImages,
+          message_id: context.message_id,
+          image_ordinal: context.image_ordinal,
+          path: context.path,
+          outcome: timing.outcome ?? 'error',
+          last_stage: timing.stage ?? null,
+          source_scheme: timing.source_scheme ?? null,
+          resolver_status: timing.resolver_status ?? null,
+          resolver_ms: timing.resolver_ms ?? null,
+          http_status: (timing.http_status ?? Number(error?.httpStatus)) || null,
+          fetch_ms: timing.fetch_ms ?? null,
+          body_ms: timing.body_ms ?? null,
+          encode_ms: timing.encode_ms ?? null,
+          blob_bytes: timing.blob_bytes ?? null,
+          data_url_chars: timing.data_url_chars ?? null,
+          elapsed_ms: timing.total_ms ?? Math.round(performance.now() - startedAt),
+          message: errorMessage(error)
+        });
+        throw error;
+      } finally {
+        if (Number.isFinite(timing.blob_bytes)) totalBlobBytes += timing.blob_bytes;
+        if (Number.isFinite(timing.data_url_chars)) totalDataUrlChars += timing.data_url_chars;
+        recoveredImages = Math.max(recoveredImages, context.image_number);
+        if (progressState) {
+          progressState.image_completed = recoveredImages;
+          progressState.image_started_at = 0;
+        }
+        refreshStatus();
+      }
+    };
+
+    try {
+      for (const item of records) {
+        const record = item.message;
+        /** Provider image-pointer parts expected for this source record. */
+        const expectedParts = record.content.parts.filter(part =>
+          part && typeof part === 'object' && part.content_type === 'image_asset_pointer'
+        );
+        /** Number of expected image pointers in this source record. */
+        const expected = expectedParts.length;
+        /** Existing fallback Markdown for each expected image pointer. */
+        const images = expectedParts.map(part => cgImagePointerFallback(part));
+        /** Canonical Core image resources keyed by their original provider part index. */
+        const canonicalResources = canonicalResourcesByRecord.get(record.id) ?? new Map();
+        /** Original provider part index for each image ordinal in this source record. */
+        const imagePartIndexes = record.content.parts
+          .map((part, partIndex) => ({ part, partIndex }))
+          .filter(item => item.part && typeof item.part === 'object' && item.part.content_type === 'image_asset_pointer')
+          .map(item => item.partIndex);
+        /** Global image-number offset for this source record. */
+        const recordImageBase = imageBase;
+        const section = mountedTurnSection(record.id, 'user');
+        const candidates = section instanceof HTMLElement ? mountedUserConversationImages(section) : [];
+        if (section instanceof HTMLElement) logInternalImagePointerEvidence(record, section, candidates);
+        for (let index = 0; index < expected; index += 1) {
+          const partIndex = imagePartIndexes[index];
+          const resource = canonicalResources.get(partIndex) ?? null;
+          const sourcePointer = cgImagePointerSource(expectedParts[index]);
+          const isSediment = internalImagePointerProtocol(sourcePointer) === 'sediment';
+          const hasCanonicalTransport = typeof resource?.download_url === 'string' && resource.download_url.trim();
+          const hasCanonicalData = typeof resource?.data_url === 'string' && resource.data_url.startsWith('data:image/');
+          if (isSediment && !hasCanonicalTransport && !hasCanonicalData) {
+            logDiagnostic('errors', 'conversation-image-core-resource-missing', {
+              script_version: VERSION,
+              message_id: record.id,
+              image_ordinal: index + 1,
+              part_index: partIndex,
+              resource_present: Boolean(resource),
+              source_scheme: 'sediment:'
+            });
+            throw new Error(
+              `AIConversationCore did not provide a download_url or data_url for sediment image ${record.id}:${index + 1}.`
+            );
+          }
+          if (hasCanonicalTransport || hasCanonicalData) {
+            images[index] = await recoverOne(
+              timing => cgResolveImagePointerMarkdown(expectedParts[index], resource, record.id, index + 1, timing),
+              {
+                image_number: recordImageBase + index + 1,
+                message_id: record.id,
+                image_ordinal: index + 1,
+                path: hasCanonicalData ? 'core-data' : 'core-download'
+              }
+            );
+            continue;
+          }
+          if (candidates[index] instanceof HTMLImageElement) {
+            try {
+              const dataUrl = await recoverOne(
+                timing => imageElementDataUrl(candidates[index], timing),
+                {
+                  image_number: recordImageBase + index + 1,
+                  message_id: record.id,
+                  image_ordinal: index + 1,
+                  path: 'dom'
+                }
+              );
+              if (dataUrl) images[index] = `![image-${record.id}-${index + 1}](${dataUrl})`;
+              continue;
+            } catch (error) {
+              const status = Number(error?.httpStatus);
+              const source = candidates[index]?.currentSrc || candidates[index]?.getAttribute('src') ||
+                cgImagePointerSource(expectedParts[index]);
+              images[index] = cgImageFailureMarkdown(source, status);
+              logDiagnostic('warnings', 'conversation-image-recovery-failure', {
+                message_id: record.id,
+                image_ordinal: index + 1,
+                http_status: Number.isFinite(status) ? status : null,
+                fallback: images[index],
+                message: errorMessage(error)
+              });
+              continue;
+            }
+          }
+          images[index] = await recoverOne(
+            timing => cgResolveImagePointerMarkdown(expectedParts[index], resource, record.id, index + 1, timing),
+            {
+              image_number: recordImageBase + index + 1,
+              message_id: record.id,
+              image_ordinal: index + 1,
+              path: 'pointer'
+            }
+          );
+        }
+        recovered.set(record.id, images);
+        imageBase += expected;
+        recoveredImages = Math.max(recoveredImages, imageBase);
+        if (progressState) progressState.image_completed = recoveredImages;
+        refreshStatus();
+      }
+      recoveryCompleted = true;
+    } finally {
+      scrollRoot.scrollTop = originalScrollTop;
+      logDiagnostic('debug', 'conversation-image-recovery-complete', {
+        script_version: VERSION,
+        outcome: recoveryCompleted ? 'complete' : 'aborted',
+        source_message_count: records.length,
+        total_images: totalImages,
+        completed_images: recoveredImages,
+        failed_images: failedImages,
+        unavailable_images: unavailableImages,
+        blob_bytes: totalBlobBytes,
+        data_url_chars: totalDataUrlChars,
+        elapsed_ms: Math.round(performance.now() - recoveryStartedAt)
+      });
+    }
+    return recovered;
+  }
+
+  /**
+   * Acquires one Conversation API snapshot and generates every selected export from that same spine.
+   *
+   * @param {Array<'jsonl'|'md'>} kinds - Selected output formats; JSONL is generated before Markdown when both are selected.
+   * @returns {Promise<void>} Resolves after selected exports finish or their failure is reported and export state is released.
+   */
+  async function runExport(kinds) {
+    if (exportInProgress || testInProgress || jumpInProgress) return;
+    assert(Array.isArray(kinds) && kinds.length > 0, 'At least one export format must be selected.');
+    /** Deduplicated output formats executed from one authoritative Conversation API snapshot. */
+    const requestedKinds = [...new Set(kinds)];
+    assert(requestedKinds.every(kind => kind === 'jsonl' || kind === 'md'), 'Unsupported export format selected.');
+    /** Format currently being serialized, used by shared status and failure reporting. */
+    let activeKind = requestedKinds[0];
+    const conversationId = currentConversationId();
+    assert(conversationId, 'Current page is not a ChatGPT conversation.');
+    scanLiveTailMarkers('export-freeze');
+    /** Frozen high-water evidence for this export; later UI activity cannot change its oracle. */
+    const frozenLiveTailMarkers = snapshotLiveTailMarkers();
+    /** Tail-consistency warnings accumulated without changing the authoritative export source. */
+    const tailConsistencyWarnings = [];
+    exportInProgress = true;
+    exportKind = activeKind;
+    progressState = {
+      started_at: performance.now(),
+      stage: 'fetching',
+      page_count: 0,
+      raw_record_count: 0,
+      record_number: 0,
+      record_count: 0,
+      render_started_at: 0
+    };
+    startStatusTimer();
+    updateUi();
+    await acquireWakeLock();
+    try {
+      /**
+       * Fetches ed.
+       */
+      const fetched = await fetchConversationPages(conversationId, progress => {
+        progressState.stage = 'fetching';
+        progressState.page_count = progress.page_count;
+        progressState.raw_record_count = progress.raw_record_count;
+        progressState.fetch_page_number = progress.page_number;
+        progressState.fetch_page_started_at = progress.page_started_at;
+        refreshStatus();
+      });
+      const historySpine = conversationSpineFromPages(fetched.pages);
+      const currentStreamCapture = streamTailCapture?.conversation_id === conversationId
+        ? streamTailCapture
+        : streamTailRestoreCapture(conversationId);
+      const streamMerge = mergeStreamTailCaptureIntoSpine(
+        historySpine, streamTailCaptureSnapshot(currentStreamCapture)
+      );
+      const spine = streamMerge.spine;
+      logDiagnostic(streamMerge.merged ? 'debug' : 'verbose',
+        'conversation-stream-tail-reconciliation', {
+          reason: streamMerge.reason,
+          merged: streamMerge.merged,
+          appended_count: streamMerge.appended_count,
+          replaced_count: streamMerge.replaced_count,
+          anchor_message_id: streamMerge.anchor_message_id ?? null,
+          history_record_count: historySpine.records.length,
+          reconciled_record_count: spine.records.length
+        });
+      const liveApiTailComparison = compareLiveTailMarkersToSpine(frozenLiveTailMarkers, spine);
+      logDiagnostic(liveApiTailComparison.warning ? 'warnings' : 'debug',
+        'conversation-tail-live-api-consistency', liveApiTailComparison);
+      const liveApiWarning = liveApiTailWarningText(liveApiTailComparison);
+      if (liveApiWarning) tailConsistencyWarnings.push(liveApiWarning);
+      if (requestedKinds.includes('jsonl')) {
+        activeKind = 'jsonl';
+        exportKind = activeKind;
+        const filename = `${sanitizeFileName(conversationTitle())}.jsonl`;
+        const jsonl = apiRecordsJsonl(spine, conversationId);
+        const jsonlTailComparison = compareLiveTailMarkersToJsonl(frozenLiveTailMarkers, spine, jsonl);
+        logDiagnostic(jsonlTailComparison.warning ? 'warnings' : 'debug',
+          'conversation-tail-api-jsonl-consistency', jsonlTailComparison);
+        const jsonlWarning = jsonlTailWarningText(jsonlTailComparison);
+        if (jsonlWarning) tailConsistencyWarnings.push(jsonlWarning);
+        downloadBlob(
+          new Blob([jsonl], { type: 'application/x-ndjson;charset=utf-8' }),
+          filename
+        );
+        setStatus(`Extracted ${spine.records.length} API records from ${fetched.pages.length} API page(s) to ${filename}.`);
+      }
+      if (requestedKinds.includes('md')) {
+        activeKind = 'md';
+        exportKind = activeKind;
+        progressState.stage = 'recovering-images';
+        const recoveredImageMap = await recoverUserImages(spine);
+        progressState.stage = 'rendering';
+        progressState.render_started_at = performance.now();
+        progressState.record_number = 0;
+        progressState.record_count = spine.records.length;
+        refreshStatus();
+        // Yield once so the completed image state is painted before synchronous rendering begins.
+        await new Promise(resolve => setTimeout(resolve, 0));
+        /**
+         * Handles markdown.
+         */
+        /** Monotonic start time for synchronous Markdown rendering/final assembly. */
+        const renderStartedAt = performance.now();
+        logDiagnostic('debug', 'conversation-export-phase-start', {
+          phase: 'markdown-render',
+          source_record_count: spine.records.length
+        });
+        const markdown = renderConversationMarkdown(spine, progress => {
+          progressState.stage = 'rendering';
+          progressState.record_number = progress.record_number;
+          progressState.record_count = progress.record_count;
+          refreshStatus();
+        }, recoveredImageMap);
+        const filename = `${sanitizeFileName(conversationTitle())}.md`;
+        logDiagnostic('debug', 'conversation-export-phase-complete', {
+          phase: 'markdown-render',
+          elapsed_ms: Math.round(performance.now() - renderStartedAt),
+          markdown_length: markdown.length
+        });
+        if (diagnosticEnabled('debug')) {
+          const sourceTail = spine.records.slice(-32).map(item => ({
+            source_record_id: item?.message_id ?? item?.message?.id ?? null,
+            source_role: item?.role ?? item?.message?.author?.role ?? null,
+            source_channel: item?.channel ?? item?.message?.channel ?? null,
+            source_content_type: item?.content_type ?? item?.message?.content?.content_type ?? null
+          }));
+          logDiagnostic('debug', 'conversation-export-markdown-ready', {
+            filename,
+            source_record_count: spine.records.length,
+            source_tail: sourceTail,
+            markdown_length: markdown.length
+          });
+        }
+        const blobStartedAt = performance.now();
+        logDiagnostic('debug', 'conversation-export-phase-start', {
+          phase: 'blob-create',
+          markdown_length: markdown.length
+        });
+        const markdownBlob = new Blob([markdown], { type: 'text/markdown;charset=utf-8' });
+        logDiagnostic('debug', 'conversation-export-phase-complete', {
+          phase: 'blob-create',
+          elapsed_ms: Math.round(performance.now() - blobStartedAt),
+          blob_size: markdownBlob.size
+        });
+        if (diagnosticEnabled('debug')) {
+          logDiagnostic('debug', 'conversation-export-blob-created', {
+            filename,
+            markdown_length: markdown.length,
+            blob_size: markdownBlob.size,
+            blob_type: markdownBlob.type
+          });
+        }
+        const downloadStartedAt = performance.now();
+        logDiagnostic('debug', 'conversation-export-phase-start', {
+          phase: 'download-trigger',
+          blob_size: markdownBlob.size
+        });
+        downloadBlob(markdownBlob, filename);
+        logDiagnostic('debug', 'conversation-export-phase-complete', {
+          phase: 'download-trigger',
+          elapsed_ms: Math.round(performance.now() - downloadStartedAt),
+          blob_size: markdownBlob.size
+        });
+        setStatus(`Extracted ${spine.records.length} API records from ${fetched.pages.length} API page(s) to ${filename}.`);
+      }
+      if (tailConsistencyWarnings.length) {
+        setStatus(`⚠ Export completed with tail consistency warning: ${tailConsistencyWarnings.join(' | ')}`);
+      }
+    } catch (error) {
+      const message = errorMessage(error);
+      logDiagnostic('errors', 'conversation-export-failure', {
+        kind: activeKind,
+        stage: progressState?.stage ?? null,
+        record_number: progressState?.record_number ?? null,
+        record_count: progressState?.record_count ?? null,
+        message
+      });
+      setStatus(
+        `${activeKind === 'md' ? 'Markdown' : 'JSONL'} extraction failed: ${message}`
+      );
+    } finally {
+      progressState = null;
+      exportInProgress = false;
+      exportKind = null;
+      stopStatusTimer();
+      await releaseWakeLock();
+      updateUi();
+      refreshStatus();
+    }
+  }
+
+  /**
+   * Tests API pagination logic.
+   *
+   * @returns {void} No value is returned.
+   */
+  async function testApiPaginationLogic() {
+    const calls = [];
+    const pagesByCursor = new Map([
+      [null, {
+        messages: [{ id: 'newest' }],
+        page_info: { has_next_page: false, has_previous_page: true, start_cursor: 'cursor-2' }
+      }],
+      ['cursor-2', {
+        messages: [{ id: 'middle' }],
+        page_info: { has_next_page: true, has_previous_page: true, start_cursor: 'cursor-3' }
+      }],
+      ['cursor-3', {
+        messages: [{ id: 'oldest' }],
+        page_info: { has_next_page: true, has_previous_page: false, start_cursor: null }
+      }]
+    ]);
+    /**
+     * Collects ed.
+     */
+    const collected = await collectConversationPages(async cursor => {
+      calls.push(cursor);
+      assert(pagesByCursor.has(cursor), `Unexpected test cursor ${cursor}.`);
+      return pagesByCursor.get(cursor);
+    });
+    assert(collected.pages.length === 3, 'Pagination test did not collect all three pages.');
+    assert(calls.length === 3, 'Pagination test fetched a page more than once.');
+    assert(calls[0] === null && calls[1] === 'cursor-2' && calls[2] === 'cursor-3',
+      'Pagination test followed cursors in the wrong order.');
+
+    let repeatedCursorRejected = false;
+    try {
+      await collectConversationPages(async cursor => ({
+        messages: [{ id: String(cursor ?? 'first') }],
+        page_info: { has_next_page: cursor !== null, has_previous_page: true, start_cursor: 'loop' }
+      }));
+    } catch (error) {
+      repeatedCursorRejected = /repeated start_cursor/.test(errorMessage(error));
+    }
+    assert(repeatedCursorRejected, 'Pagination test did not reject a repeated cursor.');
+  }
+
+  /**
+   * Tests stable message ids.
+   *
+   * @returns {void} No value is returned.
+   */
+  function testStableMessageIds() {
+    const pages = [
+      { messages: [{ id: 'b', marker: 'new-b' }, { id: 'c' }], page_info: {} },
+      { messages: [{ id: 'a' }, { id: 'b', marker: 'old-b' }], page_info: {} }
+    ];
+    const spine = conversationSpineFromPages(pages);
+    assert(spine.messages.length === 3, 'Stable-ID test did not deduplicate overlapping pages.');
+    assert(spine.messages.map(message => message.id).join(',') === 'a,b,c',
+      'Stable-ID test did not preserve oldest-to-newest order.');
+    assert(spine.messages.find(message => message.id === 'b')?.marker === 'new-b',
+      'Stable-ID test did not retain the newer duplicate record.');
+
+    let missingIdRejected = false;
+    try {
+      conversationSpineFromPages([{ messages: [{}], page_info: {} }]);
+    } catch (error) {
+      missingIdRejected = /missing a stable id/.test(errorMessage(error));
+    }
+    assert(missingIdRejected, 'Stable-ID test did not reject a message without an id.');
+  }
+
+  /**
+   * Tests conversation API access and schema.
+   *
+   * @returns {void} No value is returned.
+   */
+  async function testConversationApiAccessAndSchema() {
+    const conversationId = currentConversationId();
+    assert(conversationId, 'Current page is not a ChatGPT conversation.');
+    const data = await fetchOneConversationPage(
+      pageUrl(conversationId),
+      'Conversation API test request',
+      { page_number: 1, request_kind: 'test', cursor: null, previous_page_info: null }
+    );
+    assert(conversationSchemaOk(data), 'Conversation API test response schema is unsupported.');
+    for (const message of data.messages) {
+      assert(typeof message?.id === 'string' && message.id.length > 0,
+        'Conversation API test page contains a message without a stable id.');
+    }
+  }
+
+  /**
+   * Tests multimodal user and chronological order.
+   *
+   * @returns {void} No value is returned.
+   */
+  async function testMultimodalUserAndChronologicalOrder() {
+    /**
+     * Handles record.
+     *
+     * @param {string} id - The id value required by this function.
+     * @param {Object} role - The message role to match.
+     * @param {string} contentType - The contentType value required by this function.
+     * @param {Array<unknown>} parts - The ordered parts values to process.
+     * @returns {void} No value is returned.
+     */
+    const record = (id, role, contentType, parts) => ({
+      id,
+      author: { role },
+      content: { content_type: contentType, parts },
+      metadata: {}
+    });
+    const spine = {
+      records: [
+        { ordinal: 0, message: record('u1', 'user', 'multimodal_text', [
+          { content_type: 'image_asset_pointer', asset_pointer: 'sediment://fixture-image' },
+          { content_type: 'image_asset_pointer' },
+          'First User'
+        ]) },
+        { ordinal: 1, message: record('a1', 'assistant', 'text', ['First Assistant']) },
+        { ordinal: 2, message: record('u2', 'user', 'text', ['Second User']) },
+        { ordinal: 3, message: record('a2', 'assistant', 'text', ['Second Assistant']) }
+      ]
+    };
+    const fallbackMarkdown = renderConversationMarkdown(spine);
+    const unavailableToken = '[image not available](sediment://fixture-image)';
+    const missingToken = '[image missing]';
+    assert(fallbackMarkdown.includes(unavailableToken), 'protected image pointer did not render as linked image-not-available.');
+    assert(fallbackMarkdown.includes(missingToken), 'image pointer without a source did not render as image missing.');
+    assert(fallbackMarkdown.indexOf(unavailableToken) < fallbackMarkdown.indexOf(missingToken) &&
+      fallbackMarkdown.indexOf(missingToken) < fallbackMarkdown.indexOf('First User'),
+      'image placeholders did not preserve source order before adjacent User text.');
+    assert(cgImageFailureMarkdown('https://example.test/missing.png', 404) === '[image missing]',
+      'HTTP 404 image was not classified as missing.');
+    assert(cgImageFailureMarkdown('https://example.test/private.png', 403) ===
+      '[image not available](https://example.test/private.png)',
+      'HTTP 403 image was not classified as linked image-not-available.');
+    const recoveredToken = '![image-u1-1](data:image/png;base64,AAAA)';
+    const markdown = renderConversationMarkdown(spine, undefined, new Map([['u1', [recoveredToken, missingToken]]]));
+    assert(markdown.includes('First User'), 'multimodal_text User content was not rendered.');
+    assert(markdown.includes(recoveredToken), 'recovered multimodal image was not rendered at its API image pointer.');
+    assert(markdown.indexOf(recoveredToken) < markdown.indexOf(missingToken) &&
+      markdown.indexOf(missingToken) < markdown.indexOf('First User'),
+      'recovered/missing image tokens did not remain in source order.');
+    const u1 = markdown.indexOf('First User');
+    const a1 = markdown.indexOf('First Assistant');
+    const u2 = markdown.indexOf('Second User');
+    const a2 = markdown.indexOf('Second Assistant');
+    assert(u1 >= 0 && a1 >= 0 && u2 >= 0 && a2 >= 0,
+      'chronological rendering test did not emit all expected source content.');
+    assert(u1 < a1 && a1 < u2 && u2 < a2,
+      'Conversation API Markdown rendering did not preserve chronological record order.');
+}
+
+  /**
+   * Tests renderer parity features.
+   *
+   * @returns {void} No value is returned.
+   */
+  function testRendererParityFeatures() {
+    const fileToken = `${CG_INLINE_TOKEN_START}filecite${CG_INLINE_TOKEN_SEP}turn7file2${CG_INLINE_TOKEN_SEP}L1-L2${CG_INLINE_TOKEN_END}`;
+    const citeToken = `${CG_INLINE_TOKEN_START}cite${CG_INLINE_TOKEN_SEP}web${CG_INLINE_TOKEN_END}`;
+    const memoryToken = `${CG_INLINE_TOKEN_START}memcite${CG_INLINE_TOKEN_END}`;
+    const records = [
+      { id: 'file-meta', author: { role: 'tool' }, content: { content_type: 'text', parts: [] }, metadata: { is_visually_hidden_from_conversation: true, retrieval_turn_number: 7, retrieval_file_index: 2, citation_metadata: { title: 'notes.txt', url: 'https://example.com/notes.txt' } } },
+      { id: 'u1', author: { role: 'user' }, content: { content_type: 'multimodal_text', parts: ['Question', { content_type: 'image_asset_pointer', asset_pointer: 'file-service://image' }] }, metadata: {} },
+      { id: 'tool1', author: { role: 'tool', name: 'tether_browsing_display' }, content: { content_type: 'tether_browsing_display', summary: 'Waiting for sources.' }, metadata: {} },
+      { id: 'a1', author: { role: 'assistant' }, channel: 'final', content: { content_type: 'multimodal_text', parts: [`File ${fileToken}\n\nWeb ${citeToken}\n\nMemory ${memoryToken}`] }, metadata: { content_references: [ { type: 'hidden', matched_text: fileToken }, { type: 'grouped_webpages', matched_text: citeToken, items: [{ url: 'https://example.com/web', attribution: 'Example', title: 'Example source' }] }, { type: 'hidden', matched_text: memoryToken } ], conversation_context_citation_metadata: [{ citation: { url: 'https://example.com/memory', title: 'Prior note' } }] } }
+    ];
+    /**
+     * Handles spine.
+     */
+    const spine = { records: records.map((message, ordinal) => ({ ordinal, message })) };
+    const recoveredToken = '![image-u1-1](data:image/png;base64,AAAA)';
+    const markdown = renderConversationMarkdown(spine, undefined, new Map([['u1', [recoveredToken]]]));
+    assert(markdown.includes(recoveredToken), 'recovered image_asset_pointer was not rendered.');
+    assert(markdown.indexOf(recoveredToken) < markdown.indexOf('Question'),
+      'recovered image_asset_pointer did not preserve its position before User text.');
+    assert(markdown.includes('<a href="https://example.com/notes.txt">notes.txt L1-L2</a>'), 'hidden file citation was not resolved to its link.');
+    assert(markdown.includes('**(cite:'), 'web citation was not rendered.');
+    assert(markdown.includes('**(memory:'), 'memory citation was not rendered.');
+    assert(markdown.includes('Waiting for sources.'), 'tether browsing content was not preserved.');
+    assert(!markdown.includes(CG_INLINE_TOKEN_START), 'raw ChatGPT inline reference tokens leaked into Markdown.');
+  }
+
+  /**
+   * Tests jump identifier resolution.
+   *
+   * @returns {void} No value is returned.
+   */
+  function testJumpIdentifierResolution() {
+    const records = [
+      { ordinal: 0, message_id: 'u1', role: 'user' },
+      { ordinal: 1, message_id: 'a1', role: 'assistant' },
+      { ordinal: 2, message_id: 'u2', role: 'user' },
+      { ordinal: 3, message_id: 'a2', role: 'assistant' },
+      { ordinal: 4, message_id: 'u3', role: 'user' },
+      { ordinal: 5, message_id: 'a3', role: 'assistant' }
+    ];
+    const spine = { records };
+    const cases = [
+      ['0', 0, 'user', 'u1'],
+      ['1', 1, 'user', 'u2'],
+      ['-1', 2, 'user', 'u3'],
+      ['-2', 1, 'user', 'u2'],
+      ['u2', 1, 'user', 'u2'],
+      ['a2', 1, 'assistant', 'a2']
+    ];
+    for (const [input, index, role, id] of cases) {
+      const resolved = resolveJumpIdentifier(spine, input);
+      assert(resolved.uap_index === index && resolved.role === role && resolved.message_id === id,
+        `Jump resolver failed for ${input}: ${JSON.stringify(resolved)}.`);
+    }
+    for (const input of ['3', '-4']) {
+      let rejected = false;
+      try { resolveJumpIdentifier(spine, input); } catch { rejected = true; }
+      assert(rejected, `Jump resolver did not reject out-of-range index ${input}.`);
+    }
+  }
+
+  /**
+   * Tests generated sandbox download link.
+   *
+   * @returns {void} No value is returned.
+   */
+  function testGeneratedSandboxDownloadLink() {
+    const conversationId = currentConversationId();
+    assert(conversationId, 'Sandbox-link test requires a ChatGPT conversation page.');
+    const record = { id: 'assistant-test-id', author: { role: 'assistant' } };
+    const source = 'sandbox:/mnt/data/work107/chatgpt-conversation-markdown-export.user.js';
+    const url = cgGeneratedSandboxDownloadUrl(source, record);
+    assert(url && url.includes(`/backend-api/conversation/${encodeURIComponent(conversationId)}/interpreter/download?`),
+      'sandbox file link did not use the observed interpreter/download route.');
+    assert(url.includes('message_id=assistant-test-id'), 'sandbox file link omitted Assistant message_id.');
+    assert(url.includes('sandbox_path=%2Fmnt%2Fdata%2Fwork107%2Fchatgpt-conversation-markdown-export.user.js'),
+      'sandbox file link did not preserve/encode sandbox_path.');
+    assert(url.endsWith('&download_intent=true'), 'sandbox file link did not force download_intent=true.');
+    const markdown = cgRewriteGeneratedSandboxLinks(`[Download userscript](${source})`, record);
+    assert(markdown === `[Download userscript](${url})`, 'sandbox Markdown link rewrite changed label or URL unexpectedly.');
+    const parenthesizedSource = 'sandbox:/mnt/data/work/fixture(phase2).txt';
+    const parenthesizedUrl = cgGeneratedSandboxDownloadUrl(parenthesizedSource, record);
+    const parenthesizedMarkdown = cgRewriteGeneratedSandboxLinks(
+      `[Download fixture](${parenthesizedSource})`, record
+    );
+    assert(parenthesizedMarkdown === `[Download fixture](${parenthesizedUrl})`,
+      'sandbox Markdown link rewrite truncated a filename containing parentheses.');
+    const nestedSource = 'sandbox:/mnt/data/work/fixture((phase2)).txt';
+    const nestedUrl = cgGeneratedSandboxDownloadUrl(nestedSource, record);
+    assert(cgRewriteGeneratedSandboxLinks(`[Nested](${nestedSource})`, record) === `[Nested](${nestedUrl})`,
+      'sandbox Markdown link rewrite did not preserve nested parentheses.');
+    const twoLinks = cgRewriteGeneratedSandboxLinks(
+      `[One](${parenthesizedSource}) and [Two](${source})`, record
+    );
+    assert(twoLinks === `[One](${parenthesizedUrl}) and [Two](${url})`,
+      'sandbox Markdown link rewrite did not preserve multiple links.');
+    const userRecord = { id: 'user-test-id', author: { role: 'user' } };
+    assert(cgRewriteGeneratedSandboxLinks(`[x](${source})`, userRecord) === `[x](${source})`,
+      'sandbox link rewrite should not apply to User records.');
+    assert(cgRewriteGeneratedSandboxLinks('[x](sediment://file_123)', record) === '[x](sediment://file_123)',
+      'sandbox link rewrite must not rewrite sediment pointers.');
+  }
+
+  /** DOM id of the built-in test matrix overlay. */
+  const TEST_MATRIX_ID = `${PANEL_ID}-test-matrix`;
+  /** Local-storage key for the previous built-in test outcomes. */
+  const TEST_RESULT_HISTORY_KEY = 'tm-conversation-recorder-test-result-history';
+  /** Last persisted PASS/FAIL result for each built-in test. */
+  let testMatrixPreviousResults = new Map();
+  /** Results produced during the current built-in test session. */
+  let testMatrixCurrentResults = new Map();
+
+  /**
+   * Handles built in tests.
+   *
+   * @returns {Array<unknown>} The ordered values produced by `builtInTests`.
+   */
+  function builtInTests() {
+    return [
+      ['API pagination', testApiPaginationLogic],
+      ['Stable API message IDs', testStableMessageIds],
+      ['Multimodal User + chronological order', testMultimodalUserAndChronologicalOrder],
+      ['AI-transcript renderer parity', testRendererParityFeatures],
+      ['Generated sandbox download link', testGeneratedSandboxDownloadLink],
+      ['Jump identifier resolution', testJumpIdentifierResolution],
+      ['Conversation API access/schema', testConversationApiAccessAndSchema]
+    ];
+  }
+
+  /**
+   * Loads test result history.
+   *
+   * @returns {Map<unknown, unknown>} The lookup map produced by `loadTestResultHistory`.
+   */
+  function loadTestResultHistory() {
+    try {
+      const parsed = JSON.parse(localStorage.getItem(TEST_RESULT_HISTORY_KEY) || '{}');
+      if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) return new Map();
+      return new Map(Object.entries(parsed).filter(([, value]) => value === 'PASS' || value === 'FAIL'));
+    } catch {
+      return new Map();
+    }
+  }
+
+  /**
+   * Saves test result history.
+   *
+   * @returns {void} No value is returned.
+   */
+  function saveTestResultHistory() {
+    try {
+      const history = loadTestResultHistory();
+      for (const [name, result] of testMatrixCurrentResults) history.set(name, result.status);
+      localStorage.setItem(TEST_RESULT_HISTORY_KEY, JSON.stringify(Object.fromEntries(history)));
+    } catch {}
+  }
+
+  /**
+   * Tests matrix result text.
+   *
+   * @param {Object} result - The test result to format.
+   * @returns {string} The string produced by `testMatrixResultText`.
+   */
+  function testMatrixResultText(result) {
+    return result?.status || '—';
+  }
+
+  /**
+   * Refreshes test matrix.
+   *
+   * @returns {void} No value is returned.
+   */
+  function refreshTestMatrix() {
+    const matrix = document.getElementById(TEST_MATRIX_ID);
+    if (!matrix) return;
+    for (const row of matrix.querySelectorAll('[data-test-name]')) {
+      const name = row.getAttribute('data-test-name');
+      const previous = row.querySelector('[data-role="previous-result"]');
+      const current = row.querySelector('[data-role="current-result"]');
+      const run = row.querySelector('[data-role="run-test"]');
+      if (previous) previous.textContent = testMatrixPreviousResults.get(name) || '—';
+      if (current) current.textContent = testMatrixResultText(testMatrixCurrentResults.get(name));
+      if (run instanceof HTMLButtonElement) run.disabled = testInProgress || exportInProgress || jumpInProgress;
+    }
+    const runAll = matrix.querySelector('[data-role="run-all-tests"]');
+    if (runAll instanceof HTMLButtonElement) runAll.disabled = testInProgress || exportInProgress || jumpInProgress;
+  }
+
+  /**
+   * Handles execute built in test.
+   *
+   * @param {string} name - The name to process.
+   * @param {Function} fn - The test function to execute.
+   * @returns {Promise<string>} A promise that resolves to the string result produced by `executeBuiltInTest`.
+   */
+  async function executeBuiltInTest(name, fn) {
+    try {
+      await fn();
+      testMatrixCurrentResults.set(name, { status: 'PASS', detail: '' });
+      return `✅ ${name}`;
+    } catch (error) {
+      const detail = errorMessage(error);
+      testMatrixCurrentResults.set(name, { status: 'FAIL', detail });
+      return `❌ ${name}: ${detail}`;
+    } finally {
+      saveTestResultHistory();
+      refreshTestMatrix();
+    }
+  }
+
+  /**
+   * Handles current test status lines.
+   *
+   * @returns {Array<unknown>} The ordered values produced by `currentTestStatusLines`.
+   */
+  function currentTestStatusLines() {
+    return builtInTests()
+      .filter(([name]) => testMatrixCurrentResults.has(name))
+      .map(([name]) => {
+        const result = testMatrixCurrentResults.get(name);
+        return result.status === 'PASS' ? `✅ ${name}` : `❌ ${name}: ${result.detail}`;
+      });
+  }
+
+  /**
+   * Handles run one test.
+   *
+   * @param {string} name - The name to process.
+   * @param {Function} fn - The test function to execute.
+   * @returns {void} No value is returned.
+   */
+  async function runOneTest(name, fn) {
+    if (exportInProgress || testInProgress || jumpInProgress) return;
+    testInProgress = true;
+    updateUi();
+    refreshTestMatrix();
+    try {
+      await executeBuiltInTest(name, fn);
+    } finally {
+      testInProgress = false;
+      updateUi();
+      refreshTestMatrix();
+    }
+  }
+
+  /**
+   * Handles run tests.
+   *
+   * @returns {void} No value is returned.
+   */
+  async function runTests() {
+    if (exportInProgress || testInProgress || jumpInProgress) return;
+    testInProgress = true;
+    updateUi();
+    refreshTestMatrix();
+    try {
+      for (const [name, fn] of builtInTests()) {
+        await executeBuiltInTest(name, fn);
+      }
+    } finally {
+      testInProgress = false;
+      updateUi();
+      refreshTestMatrix();
+    }
+  }
+
+  /**
+   * Handles modal focusable elements.
+   *
+   * @param {HTMLElement} dialog - The dialog element whose focusable controls are requested.
+   * @returns {Array<unknown>} The ordered values produced by `modalFocusableElements`.
+   */
+  function modalFocusableElements(dialog) {
+    return [...dialog.querySelectorAll(
+      'button:not([disabled]), input:not([disabled]), select:not([disabled]), textarea:not([disabled]), [tabindex]:not([tabindex="-1"])'
+    )].filter(element => element instanceof HTMLElement && !element.hidden && element.offsetParent !== null);
+  }
+
+  /**
+   * Handles install modal contract.
+   *
+   * @param {Object} overlay - The modal overlay element.
+   * @param {Object} options2 - The destructured options object used by this operation.
+   * @param {Object} options2.defaultButton - The defaultButton value required by this function.
+   * @param {Object} options2.null - The null value required by this function.
+   * @param {Object} options2.onClose - The onClose value required by this function.
+   * @param {Object} options2.null - The null value required by this function.
+   * @param {Object} options2.opener - The element that opened the modal.
+   * @param {Object} options2.null - The null value required by this function.
+   * @returns {void} No value is returned.
+   */
+  function installModalContract(overlay, { defaultButton = null, onClose = null, opener = null } = {}) {
+    lastModalOpener = opener instanceof HTMLElement ? opener : document.activeElement instanceof HTMLElement ? document.activeElement : null;
+    const dialog = overlay.querySelector('[role="dialog"]');
+    if (!(dialog instanceof HTMLElement)) return;
+    /**
+     * Handles focusables.
+     *
+     * @returns {void} No value is returned.
+     */
+    const focusables = () => modalFocusableElements(dialog);
+    // Most recent focusable modal control; static-content clicks restore this keyboard anchor.
+    let lastModalFocusedControl = null;
+    dialog.addEventListener('focusin', event => {
+      const target = event.target instanceof HTMLElement ? event.target : null;
+      if (target && focusables().includes(target)) lastModalFocusedControl = target;
+    });
+    dialog.addEventListener('click', event => {
+      const target = event.target instanceof HTMLElement ? event.target : null;
+      if (!target) return;
+      const clickedControl = target.closest(
+        'button, input, select, textarea, a[href], label, summary, [tabindex]:not([tabindex="-1"]), [contenteditable="true"]'
+      );
+      if (clickedControl) return;
+      if (lastModalFocusedControl?.isConnected && dialog.contains(lastModalFocusedControl)) {
+        lastModalFocusedControl.focus({ preventScroll: true });
+      }
+    });
+    /**
+     * Handles close.
+     *
+     * @returns {void} No value is returned.
+     */
+    const close = () => {
+      if (typeof onClose === 'function') onClose();
+      const restore = lastModalOpener;
+      lastModalOpener = null;
+      if (restore?.isConnected) restore.focus({ preventScroll: true });
+    };
+    overlay.addEventListener('keydown', event => {
+      if (event.key === 'Escape') {
+        if (testInProgress) return;
+        event.preventDefault();
+        close();
+        return;
+      }
+      if (event.key === 'Tab') {
+        const items = focusables();
+        if (!items.length) {
+          event.preventDefault();
+          return;
+        }
+        const current = document.activeElement;
+        const index = items.indexOf(current);
+        const next = event.shiftKey
+          ? (index <= 0 ? items.length - 1 : index - 1)
+          : (index < 0 || index === items.length - 1 ? 0 : index + 1);
+        event.preventDefault();
+        items[next].focus();
+        return;
+      }
+      if (event.key === 'Enter') {
+        if (document.activeElement instanceof HTMLTextAreaElement) return;
+        const active = document.activeElement;
+        if (active instanceof HTMLButtonElement) return;
+        const button = typeof defaultButton === 'function' ? defaultButton() : defaultButton;
+        if (button instanceof HTMLButtonElement && !button.disabled) {
+          event.preventDefault();
+          button.click();
+        }
+      }
+    });
+    const initial = typeof defaultButton === 'function' ? defaultButton() : defaultButton;
+    (initial instanceof HTMLElement ? initial : focusables()[0])?.focus({ preventScroll: true });
+  }
+
+  /**
+   * Closes test matrix.
+   *
+   * @returns {void} No value is returned.
+   */
+  function closeTestMatrix() {
+    document.getElementById(TEST_MATRIX_ID)?.remove();
+  }
+
+  /**
+   * Opens test matrix.
+   *
+   * @param {Object|null} opener - The element that opened the modal.
+   * @returns {void} No value is returned.
+   */
+  function openTestMatrix(opener = null) {
+    if (document.getElementById(TEST_MATRIX_ID)) return;
+    testMatrixPreviousResults = loadTestResultHistory();
+    testMatrixCurrentResults = new Map();
+    const tests = builtInTests();
+    const overlay = document.createElement('div');
+    overlay.id = TEST_MATRIX_ID;
+    overlay.innerHTML = `
+      <div class="tm-test-dialog" role="dialog" aria-modal="true" aria-labelledby="${TEST_MATRIX_ID}-title">
+        <div class="tm-test-dialog-head">
+          <strong id="${TEST_MATRIX_ID}-title">Built-in tests</strong>
+          <button type="button" data-role="close-test-matrix" aria-label="Close tests">×</button>
+        </div>
+        <div class="tm-test-table-wrap">
+          <table class="tm-test-table">
+            <thead><tr><th>Test</th><th>Type</th><th>Previous Result</th><th>Current Result</th><th></th></tr></thead>
+            <tbody>
+              ${tests.map(([name]) => `
+                <tr data-test-name="${escapeHtmlAttribute(name)}">
+                  <td>${escapeHtmlText(name)}</td>
+                  <td>Automatic</td>
+                  <td data-role="previous-result">—</td>
+                  <td data-role="current-result">—</td>
+                  <td><button type="button" data-role="run-test">Run</button></td>
+                </tr>`).join('')}
+            </tbody>
+          </table>
+        </div>
+        <div class="tm-test-actions">
+          <button type="button" data-role="run-all-tests">Run All</button>
+          <button type="button" data-role="close-test-matrix">Close</button>
+        </div>
+      </div>`;
+    overlay.addEventListener('click', event => {
+      const target = event.target instanceof Element ? event.target : null;
+      if (!target) return;
+      if (target === overlay || target.closest('[data-role="close-test-matrix"]')) {
+        if (!testInProgress) { closeTestMatrix(); if (opener?.isConnected) opener.focus({ preventScroll: true }); }
+        return;
+      }
+      const row = target.closest('tr[data-test-name]');
+      if (target.closest('[data-role="run-test"]') && row) {
+        const name = row.getAttribute('data-test-name');
+        /**
+         * Handles test.
+         */
+        const test = tests.find(([candidate]) => candidate === name);
+        if (test) void runOneTest(test[0], test[1]);
+        return;
+      }
+      if (target.closest('[data-role="run-all-tests"]')) void runTests();
+    });
+    document.body.append(overlay);
+    refreshTestMatrix();
+    installModalContract(overlay, {
+      defaultButton: () => overlay.querySelector('[data-role="run-all-tests"]'),
+      onClose: closeTestMatrix,
+      opener
+    });
+  }
+
+  /**
+   * Handles diagnostic enabled.
+   *
+   * @param {Object} level - The diagnostics severity level.
+   * @returns {boolean} `true` when `diagnosticEnabled` succeeds or its predicate is satisfied; otherwise `false`.
+   */
+  function diagnosticEnabled(level) {
+    return (DIAGNOSTIC_LEVELS[level] ?? 0) <= (DIAGNOSTIC_LEVELS[diagnosticsLevel] ?? 0);
+  }
+
+  /**
+   * Persists the bounded tail of the diagnostic log to session storage.
+   *
+   * The larger in-memory capacity is retained for same-page live captures, while the
+   * persisted tail is separately bounded to avoid making every browser session write
+   * proportional to the full instrumentation history.
+   *
+   * @returns {void} No value is returned.
+   */
+  function persistDiagnosticLog() {
+    try {
+      sessionStorage.setItem(
+        DIAGNOSTIC_LOG_STORAGE_KEY,
+        JSON.stringify(diagnosticLog.slice(-MAX_PERSISTED_DIAGNOSTIC_LOG_ITEMS))
+      );
+    } catch {}
+  }
+
+  /**
+   * Schedules a bounded diagnostic-log persistence write.
+   *
+   * @returns {void} No value is returned.
+   */
+  function schedulePersistDiagnosticLog() {
+    if (diagnosticPersistTimer !== null) return;
+    diagnosticPersistTimer = setTimeout(() => {
+      diagnosticPersistTimer = null;
+      persistDiagnosticLog();
+    }, DIAGNOSTIC_PERSIST_DELAY_MS);
+  }
+
+  /**
+   * Handles diagnostic log line.
+   *
+   * @param {Object} entry - The diagnostics entry to format.
+   * @returns {string} The string produced by `diagnosticLogLine`.
+   */
+  function diagnosticLogLine(entry) {
+    const suffix = entry.data === null || entry.data === undefined
+      ? ''
+      : ` ${JSON.stringify(entry.data)}`;
+    return `${entry.timestamp} [${entry.level}] ${entry.message}${suffix}`;
+  }
+
+  /**
+   * Handles copy icon markup.
+   *
+   * @returns {string} The string produced by `copyIconMarkup`.
+   */
+  function copyIconMarkup() {
+    return '<svg viewBox="0 0 24 24" aria-hidden="true"><rect x="9" y="9" width="10" height="10" rx="2"></rect><path d="M15 7V5a2 2 0 0 0-2-2H5a2 2 0 0 0-2 2v8a2 2 0 0 0 2 2h2"></path></svg>';
+  }
+
+  /**
+   * Handles check icon markup.
+   *
+   * @returns {string} The string produced by `checkIconMarkup`.
+   */
+  function checkIconMarkup() {
+    return '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M5 12.5l4 4L19 7"></path></svg>';
+  }
+
+  /**
+   * Returns the shared pencil/edit action icon.
+   *
+   * @returns {string} Inline SVG markup for the Rename button.
+   */
+  function renameIconMarkup() {
+    return '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 20h4L19 9l-4-4L4 16v4z"></path><path d="m13.5 6.5 4 4"></path></svg>';
+  }
+
+  /**
+   * Returns the approved branching Duplicate action icon.
+   *
+   * @returns {string} Inline SVG markup for the Duplicate button.
+   */
+  function duplicateIconMarkup() {
+    return '<svg viewBox="0 0 24 24" aria-hidden="true"><rect x="1.5" y="8" width="6" height="8" rx="1.5"></rect><rect x="16.5" y="2" width="6" height="7" rx="1.5"></rect><rect x="16.5" y="15" width="6" height="7" rx="1.5"></rect><path d="M7.5 12h3c2.8 0 2.8-6.5 6-6.5"></path><path d="M7.5 12h3c2.8 0 2.8 6.5 6 6.5"></path><path d="m14.5 4 2 1.5-2 1.5"></path><path d="m14.5 17 2 1.5-2 1.5"></path></svg>';
+  }
+
+  /**
+   * Returns the AgentPanelSpeaker config-reset icon using its exact PNG bytes.
+   *
+   * @returns {string} Inline image markup for the Reset button.
+   */
+  function resetIconMarkup() {
+    return '<img src="data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAC8AAAAvCAYAAABzJ5OsAAAF9ElEQVR4nO1YTahdVxX+1t7n3HPuuzGx1rY4SAYiJoPGpP5gUVSkA1EnOggiOCm06EScSEHEiRMH4kARBBEcOIsFQYigo+hElJumtNWWpzRpS7V59Nn37tl/59y99+cg56T3Je8l970mvie8DzZczvnO2t9ae629177AIfYHshsySQVAAeAwRIT3Qtgy2JX4ZUFStrF91x1dSjxJJSLZWvutuq4fCiFc0lr/fW1t7eqJEyd8L1b19tJOInueBpB7zr1ftSGSxpgX2cM516WUXjXGfHcb/rEQwkljzFljzNkQwgdJvnsbnu5t7wnFMsJFhLPZ7AEA72vbNsYYQVIppY6LyDpJ1bbt50XkcyQ/6r1/P8n3lmWpASDGmEII686550Xk2ZzzryeTyV9EJA1ODL/vKkhqAJjNZp9KKdEYk621tNZm731njPmx9/5PXdcNi8K2bemcozGG1loaY1II4cZ7Y4zvum5qjHl8dXW1WpxnN7jjkpEsRCQ2TfPNI0eO/MRaG0WkePs1WxEBybmIjElqpZTknJOIaAAQEeSc2T+PIiJlWeoYI4qieD6l9O3xePyHfjdburDVsl5qrc/s4LxWStUAJkqpQkRmJC+LyBWlVBaRTPIlEbkG4I2yLAutte66bp5zbouiOD0ajX7vnPueiGQAsmwdLCN+yMXTACAiWwyLSJFz3gBwNef82sAfjUYfqOta1XWttNanABiS6ySbGONfRaTRWlfOuei9z+Px+Pve+1/txoHbEoZi3djYeE9RFC+XZXlsPp/zZgdINgDGAHJRFKOUUgbwFaXUfwBIznmC61vkJ3LOX9Naj0i+AOBUXdcPeu+ziMSVlZWRc+7nk8nk6++4iM+fP68BwFr7aIxxsVi3jBACnXNDkeb5fJ6bpjm9nc22bR8OIfwyhBC6rmPTNFe89/Te0xgTSHI2mz3VB+W2RXzbtDl37twQ4Ue01sDbKbQFKSWQBEkASEVRiIh8hKReXV2t+v1ck1RVVb1Q1/XjKaWvzufzi2VZguTrOec1rfUohBDruv7B5ubmoyKSbufAHfd5ABCRh3POt+wAvK52cQwOFiRP9pPL4vKTVJcuXdKTyeQ33vvLInIRwFs553lRFPd3XSdVVamiKH5E8jMA8jsSn1LaUEoJgNhHFwCU1lqVZSn9qmyxqZQ6Pui9KRAZQJ5Op+V4PL66sbHxWFVVl6qqqpRSWilF59xMa33GOfeFyWTy2z3lP0lFUpxzJ0II/+ICcs601gZr7VVr7R+dc79wzj0VQvgSyQ9tbm7efyf70+m0BIDZbPZESqlrmubPzrk3vfe+bdsrTdM8PejY7vtlDikREa6vrx8/evTokzHGGsBLWut/lmX5CoA3RKTdVVS22i8AZGPMT0ej0WMxRqu1PpVzfl1rTQBfrqrqb0NzuJcJ7rSlKpJFP/SwYkvaVgDQtu3ZEMI/nHMvOuectTb1rcR3FpzcgmULlgsXkRvzDmPI42VsbWM796v7rLV2tSiKz8YYKxFh13VvicjJnnqL/aXbAxHJIhIXRuqf3Y2eXPUOXCyKYk7yFVzv+QsAHydZDk7uSfy9hogwpfQMyQ7AqwBijPEIgIeccw8MtMVvDox4ACAZReQ+EfkwyVHOmWVZ3kfywe34S+X8/woiUvZ7/btI3mild+IfqMhrrducc04pOZJpuAPsxD9Q4nPOx0huAngOQKeU4nw+3xCRN7fjHxTxAgBKqUcAvCwiI6XUSGu9DuDfKysraz1vSwodlJxPJJVz7pMkT4nIKOcMrfUKgOdEpNvuhN33yPeiaK09q5RaizE+rZTyALqyLCcicrmn3qL1QER+Op2WIvINAGdItgBGIjILIbQppQs9bU8n+D3D0NdYaz/mvX/Nez/13m8aY9qu61zTNL9b5N2MfU2b4ci/cOHCMwCeEBGp6/qoUmozxriulPrZQN1PnUvh2rVrR9q2/WF/V5iSlJ2ifqCweFcNIXxxNpt9un9+8MUD1+8Ne/nb70BhuNDst45DHOIQhzjEIQ7xf4f/AvHrLnXbKeMKAAAAAElFTkSuQmCC" alt="" aria-hidden="true">';
+  }
+
+  /**
+   * Refreshes diagnostic log.
+   *
+   * Collapsed logs update only their count and controls. Thousands of hidden row
+   * elements are not rebuilt on every diagnostic event during an instrumented export.
+   *
+   * @returns {void} No value is returned.
+   */
+  function refreshDiagnosticLog() {
+    const panel = document.getElementById(PANEL_ID);
+    if (!panel) return;
+    const count = panel.querySelector('[data-role="log-count"]');
+    const output = panel.querySelector('[data-role="log-output"]');
+    const toggle = panel.querySelector('[data-role="toggle-log"]');
+    if (count) count.textContent = `Log: ${diagnosticLog.length} item${diagnosticLog.length === 1 ? '' : 's'}`;
+    if (output && diagnosticLogExpanded) {
+      output.replaceChildren(...diagnosticLog.map(entry => {
+        const row = document.createElement('div');
+        row.className = 'tm-log-row';
+        row.textContent = diagnosticLogLine(entry);
+        return row;
+      }));
+      output.scrollTop = output.scrollHeight;
+    }
+    if (output) output.hidden = !diagnosticLogExpanded;
+    if (toggle instanceof HTMLButtonElement) {
+      toggle.textContent = diagnosticLogExpanded ? '−' : '+';
+      toggle.setAttribute('aria-expanded', String(diagnosticLogExpanded));
+      toggle.setAttribute('aria-label', diagnosticLogExpanded ? 'Hide diagnostic log' : 'Show diagnostic log');
+      toggle.title = diagnosticLogExpanded ? 'Hide log' : 'Show log';
+    }
+  }
+
+  /**
+   * Handles copy diagnostic log.
+   *
+   * @returns {void} No value is returned.
+   */
+  async function copyDiagnosticLog() {
+    const text = diagnosticLog.map(diagnosticLogLine).join('\n');
+    if (!text) return;
+    await navigator.clipboard.writeText(text);
+    const button = document.querySelector(`#${PANEL_ID} [data-role="copy-log"]`);
+    if (!(button instanceof HTMLButtonElement)) return;
+    button.innerHTML = checkIconMarkup();
+    button.classList.add('tm-copy-confirmed');
+    button.setAttribute('aria-label', 'Copied');
+    setTimeout(() => {
+      if (!button.isConnected) return;
+      button.classList.add('tm-copy-fade');
+      setTimeout(() => {
+        if (!button.isConnected) return;
+        button.classList.remove('tm-copy-confirmed');
+        button.innerHTML = copyIconMarkup();
+        button.setAttribute('aria-label', 'Copy diagnostic log');
+        requestAnimationFrame(() => button.classList.remove('tm-copy-fade'));
+      }, 200);
+    }, 800);
+  }
+
+  /**
+   * Redacts transient signed URL tokens from diagnostic payloads without mutating callers.
+   *
+   * @param {Object} value - The diagnostic value to sanitize.
+   * @returns {Object} The sanitized diagnostic value.
+   */
+  function redactDiagnosticSignedTokens(value) {
+    if (typeof value === 'string') {
+      return value.replace(/([?&](?:sig|signature)=)[^&#\s]*/gi, '$1[redacted]');
+    }
+    if (Array.isArray(value)) return value.map(redactDiagnosticSignedTokens);
+    if (value && typeof value === 'object' &&
+        (Object.getPrototypeOf(value) === Object.prototype || Object.getPrototypeOf(value) === null)) {
+      return Object.fromEntries(
+        Object.entries(value).map(([key, item]) => [key, redactDiagnosticSignedTokens(item)])
+      );
+    }
+    return value;
+  }
+
+  /**
+   * Writes recorder diagnostics to DevTools during startup or when continued console output is enabled.
+   *
+   * This gate is independent of the panel's severity filter and covers direct lifecycle messages too.
+   *
+   * @param {'errors'|'warnings'|'debug'|'verbose'} level - Severity selecting the DevTools console method.
+   * @param {string} message - Console message, including its recorder prefix.
+   * @param {Object|null} data - Diagnostic payload redacted before console output.
+   * @returns {void} No value is returned.
+   */
+  function logConsoleDiagnostic(level, message, data = null) {
+    if (generalStatusShown && !consoleDiagnostics) return;
+    const args = [redactDiagnosticSignedTokens(message)];
+    if (data !== null) args.push(redactDiagnosticSignedTokens(data));
+    (level === 'errors' ? console.error : level === 'warnings' ? console.warn : console.log)(...args);
+  }
+
+  /**
+   * Mirrors diagnostics through the console gate, then retains entries accepted by the panel filter.
+   *
+   * @param {Object} level - The diagnostics severity level.
+   * @param {string} message - The assertion failure message.
+   * @param {Object|null} data - The data value required by this function.
+   * @returns {void} No value is returned.
+   */
+  function logDiagnostic(level, message, data = null) {
+    logConsoleDiagnostic(level, `[ChatGPT Recorder ${level}] ${message}`, data);
+    if (!diagnosticEnabled(level)) return;
+    const safeData = redactDiagnosticSignedTokens(data);
+    const entry = {
+      timestamp: new Date().toISOString(),
+      level,
+      message,
+      data: safeData
+    };
+    diagnosticLog.push(entry);
+    if (diagnosticLog.length > MAX_DIAGNOSTIC_LOG_ITEMS) {
+      diagnosticLog.splice(0, diagnosticLog.length - MAX_DIAGNOSTIC_LOG_ITEMS);
+    }
+    schedulePersistDiagnosticLog();
+    refreshDiagnosticLog();
+  }
+
+  /**
+   * Handles inject styles.
+   *
+   * @returns {void} No value is returned.
+   */
+  function injectStyles() {
+    if (document.getElementById(`${PANEL_ID}-style`)) return;
+    const style = document.createElement('style');
+    style.id = `${PANEL_ID}-style`;
+    style.textContent = `
+      #${LAUNCHER_ID}{position:fixed;right:16px;bottom:16px;z-index:2147483647;width:36px;height:32px;box-sizing:border-box;border:1px solid #777;border-radius:9px;background:#242424;color:#fff;padding:0;display:grid;place-items:center;box-shadow:0 1px 3px rgba(0,0,0,.35);cursor:pointer}
+      #${LAUNCHER_ID}::before{content:'';width:16px;height:16px;border-radius:50%;background:#d0d0d0;display:block}
+      #${PANEL_ID}{position:fixed;right:16px;bottom:54px;z-index:2147483647;width:300px;box-sizing:border-box;padding:12px;border:1px solid rgba(127,127,127,.55);border-radius:12px;background:rgba(24,24,24,.97);color:#f2f2f2;box-shadow:0 6px 24px rgba(0,0,0,.35);font:13px/1.35 system-ui,sans-serif}
+      #${PANEL_ID} .tm-title{font-size:16px;margin:0 28px 8px 0}
+      #${PANEL_ID} .tm-close{position:absolute;right:9px;top:7px;border:0;background:transparent;color:#fff;font-size:24px;cursor:pointer}
+      #${PANEL_ID} .tm-status{white-space:pre-wrap;margin:10px 0 12px;min-height:24px}
+      #${PANEL_ID} .tm-row{display:flex;gap:10px;align-items:center;flex-wrap:wrap;margin-top:10px}
+      #${PANEL_ID} .tm-sound-control-row{position:relative}
+      #${PANEL_ID} .tm-sound-control{min-width:92px}
+      #${PANEL_ID} .tm-sound-popup[hidden]{display:none}
+      #${PANEL_ID} .tm-sound-popup{position:absolute;left:0;top:calc(100% + 6px);z-index:3;display:flex;flex-direction:column;align-items:center;gap:6px;padding:9px;border:1px solid rgba(127,127,127,.55);border-radius:9px;background:rgba(24,24,24,.99);box-shadow:0 4px 14px rgba(0,0,0,.4)}
+      #${PANEL_ID} .tm-sound-volume-slider{writing-mode:vertical-lr;direction:rtl;width:24px;height:120px}
+      #${PANEL_ID} .tm-sound-volume-value{min-width:2ch;text-align:center;font-variant-numeric:tabular-nums}
+      #${PANEL_ID} .tm-communication-log-row{flex-wrap:nowrap}
+      #${PANEL_ID} .tm-log-name-viewport{flex:1 1 auto;min-width:0;overflow:hidden;color:#fff;box-sizing:border-box}
+      #${PANEL_ID} .tm-log-name-text{display:block;width:max-content;min-width:100%;box-sizing:border-box;padding:7px 0;white-space:nowrap;transform:translateX(0);transition:transform var(--tm-log-name-duration,1.5s) linear .35s}
+      #${PANEL_ID} .tm-log-name-viewport:hover .tm-log-name-text{transform:translateX(calc(-1 * var(--tm-log-name-overflow,0px)))}
+      #${PANEL_ID} .tm-communication-log-row button{flex:0 0 auto}
+      #${PANEL_ID} select,#${PANEL_ID} button,#${TEST_MATRIX_ID} button{border:1px solid #666;background:#292929;color:#fff;font:inherit}
+      #${PANEL_ID} select,#${PANEL_ID} button{border-radius:9px;padding:9px 12px}
+      #${PANEL_ID} select{flex:1;min-width:150px}
+      #${PANEL_ID} button,#${TEST_MATRIX_ID} button{cursor:pointer}
+      #${PANEL_ID} button:disabled,#${TEST_MATRIX_ID} button:disabled{opacity:.45;cursor:not-allowed}
+      #${PANEL_ID} .tm-label{color:#ddd}
+      #${TEST_MATRIX_ID}{position:fixed;inset:0;z-index:2147483647;background:rgba(0,0,0,.58);display:grid;place-items:center;padding:24px;box-sizing:border-box}
+      #${TEST_MATRIX_ID} .tm-test-dialog{width:min(920px,96vw);max-height:88vh;overflow:hidden;display:flex;flex-direction:column;border:1px solid #666;border-radius:12px;background:#202020;color:#f2f2f2;box-shadow:0 10px 40px rgba(0,0,0,.5);font:13px/1.35 system-ui,sans-serif}
+      #${TEST_MATRIX_ID} .tm-test-dialog-head,#${TEST_MATRIX_ID} .tm-test-actions{display:flex;align-items:center;gap:10px;padding:10px 12px}
+      #${TEST_MATRIX_ID} .tm-test-dialog-head{justify-content:space-between;border-bottom:1px solid #555}
+      #${TEST_MATRIX_ID} .tm-test-dialog-head strong{font-size:16px}
+      #${TEST_MATRIX_ID} .tm-test-table-wrap{overflow:auto}
+      #${TEST_MATRIX_ID} .tm-test-table{width:100%;border-collapse:collapse}
+      #${TEST_MATRIX_ID} .tm-test-table th,#${TEST_MATRIX_ID} .tm-test-table td{padding:8px 10px;border-bottom:1px solid #444;text-align:left;vertical-align:top}
+      #${TEST_MATRIX_ID} .tm-test-table th{position:sticky;top:0;background:#292929;z-index:1}
+      #${TEST_MATRIX_ID} .tm-test-table td:nth-child(2),#${TEST_MATRIX_ID} .tm-test-table td:nth-child(3),#${TEST_MATRIX_ID} .tm-test-table td:nth-child(4){white-space:nowrap}
+      #${TEST_MATRIX_ID} button{border-radius:8px;padding:7px 10px}
+      #${TEST_MATRIX_ID} .tm-test-actions{justify-content:flex-end;border-top:1px solid #555}
+      #${PANEL_ID} .tm-log-head{display:flex;align-items:center;gap:6px;margin-top:4px}
+      #${PANEL_ID} .tm-log-head [data-role="log-count"]{margin-right:auto}
+      #${PANEL_ID} .tm-icon-button{box-sizing:border-box;width:30px;height:28px;padding:4px;display:grid;place-items:center;transition:opacity .2s ease}
+      #${PANEL_ID} .tm-icon-button svg{width:16px;height:16px;fill:none;stroke:currentColor;stroke-width:2;stroke-linecap:round;stroke-linejoin:round}
+      #${PANEL_ID} .tm-icon-button img{width:16px;height:16px;display:block;object-fit:contain}
+      #${PANEL_ID} .tm-copy-fade{opacity:0}
+      #${PANEL_ID} .tm-log-output{margin:6px 0 10px;max-height:190px;overflow:auto;border:1px solid #555;border-radius:8px;background:#111;font:11px/1.35 ui-monospace,SFMono-Regular,Consolas,monospace;color:#ddd}
+      #${PANEL_ID} .tm-log-row{padding:6px 8px;white-space:pre-wrap;overflow-wrap:anywhere}
+      #${PANEL_ID} .tm-log-row:nth-child(even){background:rgba(255,255,255,.055)}
+      #${PANEL_ID} .tm-switch{margin-left:auto;width:42px;height:24px;padding:2px;border-radius:999px;position:relative}
+      #${PANEL_ID} .tm-switch-thumb{display:block;width:18px;height:18px;border-radius:50%;background:#aaa;transform:translateX(0);transition:transform .16s ease,background .16s ease}
+      #${PANEL_ID} .tm-switch[aria-checked="true"] .tm-switch-thumb{transform:translateX(16px);background:#fff}
+      #${PANEL_ID} .tm-extract-formats{display:grid;grid-template-columns:auto auto auto;gap:6px 12px;align-items:center}
+      #${PANEL_ID} .tm-extract-formats label{display:flex;gap:5px;align-items:center}
+    `;
+    (document.head || document.documentElement).append(style);
+  }
+
+  /**
+   * Updates UI.
+   *
+   * @returns {void} No value is returned.
+   */
+  function updateUi() {
+    const panel = document.getElementById(PANEL_ID);
+    if (!panel) return;
+    const title = panel.querySelector('[data-role="title"]');
+    if (title) title.textContent = `ChatGPT Recorder v${VERSION}`;
+    const extract = panel.querySelector('[data-role="extract"]');
+    const jsonl = panel.querySelector('[data-role="format-jsonl"]');
+    const md = panel.querySelector('[data-role="format-md"]');
+    const timestamps = panel.querySelector('[data-role="show-timestamps"]');
+    const recordNumbers = panel.querySelector('[data-role="show-record-numbers"]');
+    const turnIds = panel.querySelector('[data-role="show-turn-ids"]');
+    const debugProvenance = panel.querySelector('[data-role="show-debug-provenance"]');
+    const test = panel.querySelector('[data-role="test"]');
+    const jump = panel.querySelector('[data-role="jump"]');
+    const formatsSelected = Boolean(jsonl?.checked || md?.checked);
+    if (extract) {
+      extract.disabled = exportInProgress || testInProgress || jumpInProgress || !formatsSelected;
+      extract.textContent = exportInProgress ? 'Extracting…' : 'Extract';
+    }
+    if (jsonl) jsonl.disabled = exportInProgress || testInProgress || jumpInProgress;
+    if (md) md.disabled = exportInProgress || testInProgress || jumpInProgress;
+    const metadataDisabled = exportInProgress || testInProgress || jumpInProgress || !md?.checked;
+    if (timestamps) timestamps.disabled = metadataDisabled;
+    if (recordNumbers) recordNumbers.disabled = metadataDisabled;
+    if (turnIds) turnIds.disabled = metadataDisabled;
+    if (debugProvenance) debugProvenance.disabled = metadataDisabled;
+    if (test) {
+      test.disabled = exportInProgress || testInProgress || jumpInProgress;
+      test.textContent = testInProgress ? 'Testing…' : 'Test';
+    }
+    if (jump) {
+      jump.disabled = exportInProgress || testInProgress || jumpInProgress;
+      jump.textContent = jumpInProgress ? 'Jumping…' : 'Jump';
+    }
+    const screen = panel.querySelector('[data-role="screen-on"]');
+    if (screen) screen.setAttribute('aria-checked', String(screenOnWhenCapturing));
+    refreshStatus();
+  }
+
+  /**
+   * Summarizes one DOM node for launcher-lifecycle console diagnostics.
+   *
+   * @param {Node|null} node - The DOM node to summarize.
+   * @returns {Object|null} A compact node summary, or null when unavailable.
+   */
+  function launcherNodeSummary(node) {
+    if (!(node instanceof Node)) return null;
+    if (!(node instanceof Element)) return { node_name: node.nodeName };
+    return {
+      node_name: node.nodeName,
+      id: node.id || null,
+      class_name: typeof node.className === 'string' ? node.className : null
+    };
+  }
+
+  /**
+   * Returns the current launcher lifecycle state for console diagnostics.
+   *
+   * @param {HTMLElement} launcher - The launcher element being observed.
+   * @returns {Object} A compact lifecycle snapshot.
+   */
+  function launcherLifecycleState(launcher) {
+    const style = launcher.isConnected ? getComputedStyle(launcher) : null;
+    const rect = launcher.isConnected ? launcher.getBoundingClientRect() : null;
+    return {
+      connected: launcher.isConnected,
+      parent: launcherNodeSummary(launcher.parentNode),
+      document_body: launcherNodeSummary(document.body),
+      display: style?.display ?? null,
+      visibility: style?.visibility ?? null,
+      opacity: style?.opacity ?? null,
+      width: rect ? Math.round(rect.width) : null,
+      height: rect ? Math.round(rect.height) : null
+    };
+  }
+
+  /**
+   * Summarizes one DOM mutation for launcher-lifecycle console diagnostics.
+   *
+   * @param {MutationRecord} record - The mutation record to summarize.
+   * @param {HTMLElement} launcher - The launcher element being observed.
+   * @param {HTMLElement} originalBody - The body that originally contained the launcher.
+   * @returns {Object} A serializable mutation summary.
+   */
+  function launcherMutationSummary(record, launcher, originalBody) {
+    const removedNodes = [...record.removedNodes];
+    const addedNodes = [...record.addedNodes];
+    return {
+      type: record.type,
+      target: launcherNodeSummary(record.target),
+      attribute_name: record.attributeName || null,
+      removed_nodes: removedNodes.map(launcherNodeSummary),
+      added_nodes: addedNodes.map(launcherNodeSummary),
+      removes_launcher: removedNodes.some(node =>
+        node === launcher || (node instanceof Element && node.contains(launcher))),
+      removes_original_body: removedNodes.some(node =>
+        node === originalBody || (node instanceof Element && node.contains(originalBody))),
+      target_is_original_body: record.target === originalBody
+    };
+  }
+
+  /**
+   * Watches one launcher instance until it disconnects or the startup observation window ends.
+   *
+   * @param {HTMLElement} launcher - The launcher element being observed.
+   * @returns {void} No value is returned.
+   */
+  function watchLauncherLifecycle(launcher) {
+    const originalBody = document.body;
+    let previous = launcherLifecycleState(launcher);
+    let mutationCount = 0;
+    let disconnectedLogged = false;
+    let timer = null;
+    const relevantMutations = [];
+    const recentMutations = [];
+    logConsoleDiagnostic('debug', `[DownloadConversation v${VERSION}] launcher appended`, previous);
+
+    /**
+     * Emits one complete, copyable JSON diagnostic when the launcher disconnects.
+     *
+     * @param {string} source - The detector that observed the disconnection.
+     * @param {Object} current - The launcher state at disconnection.
+     * @returns {void} No value is returned.
+     */
+    const logDisconnected = (source, current) => {
+      if (disconnectedLogged) return;
+      disconnectedLogged = true;
+      if (timer !== null) {
+        clearInterval(timer);
+        timer = null;
+      }
+      const payload = {
+        version: VERSION,
+        source,
+        mutation_count: mutationCount,
+        original_body_is_current_body: originalBody === document.body,
+        previous,
+        current,
+        relevant_mutations: relevantMutations,
+        recent_mutations: recentMutations
+      };
+      logConsoleDiagnostic('warnings',
+        `[DownloadConversation v${VERSION}] launcher disconnected JSON\n${JSON.stringify(payload, null, 2)}`
+      );
+    };
+
+    const observer = new MutationObserver(records => {
+      mutationCount += records.length;
+      for (const record of records) {
+        const summary = launcherMutationSummary(record, launcher, originalBody);
+        recentMutations.push(summary);
+        if (recentMutations.length > 20) recentMutations.shift();
+        if (summary.removes_launcher || summary.removes_original_body)
+          relevantMutations.push(summary);
+      }
+
+      const current = launcherLifecycleState(launcher);
+      const changed = current.connected !== previous.connected ||
+        current.parent?.node_name !== previous.parent?.node_name ||
+        current.parent?.id !== previous.parent?.id ||
+        current.display !== previous.display ||
+        current.visibility !== previous.visibility ||
+        current.opacity !== previous.opacity ||
+        current.width !== previous.width ||
+        current.height !== previous.height;
+      if (!changed) return;
+
+      if (!current.connected) {
+        logDisconnected('mutation-observer', current);
+        previous = current;
+        observer.disconnect();
+        return;
+      }
+
+      logConsoleDiagnostic('warnings', `[DownloadConversation v${VERSION}] launcher lifecycle changed`, {
+        previous,
+        current
+      });
+      previous = current;
+    });
+    observer.observe(document.documentElement, {
+      childList: true,
+      subtree: true,
+      attributes: true,
+      attributeFilter: ['style', 'class', 'hidden']
+    });
+
+    const startedAt = performance.now();
+    timer = setInterval(() => {
+      const current = launcherLifecycleState(launcher);
+      if (!current.connected) {
+        logDisconnected('poll', current);
+        observer.disconnect();
+        previous = current;
+        return;
+      }
+      if (current.parent?.node_name !== previous.parent?.node_name ||
+          current.parent?.id !== previous.parent?.id ||
+          current.display !== previous.display ||
+          current.visibility !== previous.visibility ||
+          current.opacity !== previous.opacity ||
+          current.width !== previous.width ||
+          current.height !== previous.height) {
+        logConsoleDiagnostic('warnings', `[DownloadConversation v${VERSION}] launcher lifecycle poll changed`, {
+          previous,
+          current
+        });
+        previous = current;
+      }
+      if (performance.now() - startedAt >= 15000) {
+        clearInterval(timer);
+        observer.disconnect();
+        logConsoleDiagnostic('debug', `[DownloadConversation v${VERSION}] launcher lifecycle watch ended`, current);
+      }
+    }, 100);
+  }
+
+  /** Stable page-local identities assigned to nodes observed by topology diagnostics. */
+  const launcherTopologyNodeIds = new WeakMap();
+  /** Initial direct-BODY index for each node present when topology observation begins. */
+  const launcherTopologyInitialBodyIndexes = new WeakMap();
+  /** Mutation and lifetime counters for direct-BODY children considered as mount candidates. */
+  const launcherTopologyCandidateStats = new WeakMap();
+  /** Next page-local node identity number assigned by topology diagnostics. */
+  let launcherTopologyNextNodeId = 1;
+  /** Performance timestamp when topology observation began. */
+  let launcherTopologyStartedAt = performance.now();
+  /** Performance timestamp of the most recent direct-BODY child mutation. */
+  let launcherTopologyLastBodyMutationAt = launcherTopologyStartedAt;
+  /** Pending timer that reports a 500 ms direct-BODY structural quiet interval. */
+  let launcherTopologyQuietTimer = null;
+
+  /**
+   * Returns a stable diagnostics-only identity for a DOM node during this page lifetime.
+   *
+   * @param {Node|null} node - Node whose diagnostic identity is requested.
+   * @returns {string|null} Stable page-local node identity, or null when unavailable.
+   */
+  function launcherTopologyNodeId(node) {
+    if (!(node instanceof Node)) return null;
+    let id = launcherTopologyNodeIds.get(node);
+    if (!id) {
+      id = `N${launcherTopologyNextNodeId++}`;
+      launcherTopologyNodeIds.set(node, id);
+    }
+    return id;
+  }
+
+  /**
+   * Returns one direct-BODY child description with stable identity and initial position.
+   *
+   * @param {Node} node - BODY child to summarize.
+   * @param {number} index - Current direct-BODY child index.
+   * @returns {Object} Serializable topology entry.
+   */
+  function launcherTopologyChildSummary(node, index) {
+    return {
+      index,
+      node_id: launcherTopologyNodeId(node),
+      initial_body_index: launcherTopologyInitialBodyIndexes.has(node)
+        ? launcherTopologyInitialBodyIndexes.get(node)
+        : null,
+      node: launcherNodeSummary(node)
+    };
+  }
+
+  /**
+   * Captures current BODY topology and candidate-parent stability.
+   *
+   * @returns {Object} Serializable topology snapshot.
+   */
+  function launcherTopologyContext() {
+    const body = document.body;
+    const children = body ? [...body.childNodes] : [];
+    return {
+      elapsed_ms: Math.round(performance.now() - launcherTopologyStartedAt),
+      ready_state: document.readyState,
+      location: location.href,
+      body_node_id: launcherTopologyNodeId(body),
+      body_child_count: children.length,
+      body_children: children.map(launcherTopologyChildSummary),
+      quiet_for_ms: Math.round(performance.now() - launcherTopologyLastBodyMutationAt),
+      candidates: children.map(node => {
+        const stats = launcherTopologyCandidateStats.get(node);
+        return {
+          node_id: launcherTopologyNodeId(node),
+          node: launcherNodeSummary(node),
+          connected: node.isConnected,
+          child_count: node.childNodes?.length ?? null,
+          first_seen_ms: stats?.first_seen_ms ?? null,
+          direct_child_mutations: stats?.direct_child_mutations ?? 0,
+          removed_from_body_ms: stats?.removed_from_body_ms ?? null
+        };
+      })
+    };
+  }
+
+  /**
+   * Emits one copyable topology snapshot.
+   *
+   * @param {string} reason - Event that caused the snapshot.
+   * @param {Object} [details={}] - Event-specific details.
+   * @returns {void} No value is returned.
+   */
+  function logLauncherTopology(reason, details = {}) {
+    const payload = {
+      version: VERSION,
+      reason,
+      details,
+      topology: launcherTopologyContext()
+    };
+    logConsoleDiagnostic('debug',
+      `[DownloadConversation v${VERSION}] launcher topology JSON\n${JSON.stringify(payload, null, 2)}`
+    );
+  }
+
+  /**
+   * Starts passive BODY topology, candidate-parent, and startup-timing diagnostics.
+   *
+   * No probe nodes are inserted and no removed nodes are restored. Stable WeakMap identities
+   * allow one original server-DOM node to be followed even when its BODY index changes.
+   *
+   * @returns {void} No value is returned.
+   */
+  function installLauncherTopologyDiagnostics() {
+    launcherTopologyStartedAt = performance.now();
+    launcherTopologyLastBodyMutationAt = launcherTopologyStartedAt;
+
+    /**
+     * Begins topology observation for the BODY instance that exists during startup.
+     *
+     * @param {HTMLBodyElement} body - BODY element whose direct children are tracked.
+     * @returns {void} No value is returned.
+     */
+    const startForBody = body => {
+      const initialChildren = [...body.childNodes];
+      initialChildren.forEach((node, index) => {
+        launcherTopologyInitialBodyIndexes.set(node, index);
+        launcherTopologyCandidateStats.set(node, {
+          first_seen_ms: Math.round(performance.now() - launcherTopologyStartedAt),
+          direct_child_mutations: 0,
+          removed_from_body_ms: null
+        });
+        launcherTopologyNodeId(node);
+      });
+      launcherTopologyNodeId(body);
+      logLauncherTopology('initial-body');
+
+      const observer = new MutationObserver(records => {
+        let bodyChanged = false;
+        const bodyEvents = [];
+        for (const record of records) {
+          if (record.type !== 'childList') continue;
+          if (record.target === body) {
+            bodyChanged = true;
+            launcherTopologyLastBodyMutationAt = performance.now();
+            for (const node of record.addedNodes) {
+              if (!launcherTopologyCandidateStats.has(node)) {
+                launcherTopologyCandidateStats.set(node, {
+                  first_seen_ms: Math.round(performance.now() - launcherTopologyStartedAt),
+                  direct_child_mutations: 0,
+                  removed_from_body_ms: null
+                });
+              }
+            }
+            for (const node of record.removedNodes) {
+              const stats = launcherTopologyCandidateStats.get(node);
+              if (stats) stats.removed_from_body_ms = Math.round(performance.now() - launcherTopologyStartedAt);
+            }
+            bodyEvents.push({
+              removed: [...record.removedNodes].map(node => ({
+                node_id: launcherTopologyNodeId(node),
+                node: launcherNodeSummary(node),
+                initial_body_index: launcherTopologyInitialBodyIndexes.has(node)
+                  ? launcherTopologyInitialBodyIndexes.get(node)
+                  : null
+              })),
+              added: [...record.addedNodes].map(node => ({
+                node_id: launcherTopologyNodeId(node),
+                node: launcherNodeSummary(node),
+                initial_body_index: launcherTopologyInitialBodyIndexes.has(node)
+                  ? launcherTopologyInitialBodyIndexes.get(node)
+                  : null
+              }))
+            });
+          }
+
+          const target = record.target;
+          if (target instanceof Node && target.parentNode === body) {
+            const stats = launcherTopologyCandidateStats.get(target);
+            if (stats) stats.direct_child_mutations += 1;
+          }
+        }
+        if (!bodyChanged) return;
+        logLauncherTopology('body-child-mutation', { events: bodyEvents });
+        if (launcherTopologyQuietTimer !== null) clearTimeout(launcherTopologyQuietTimer);
+        launcherTopologyQuietTimer = setTimeout(() => {
+          launcherTopologyQuietTimer = null;
+          logLauncherTopology('body-quiet-500ms');
+        }, 500);
+      });
+      observer.observe(body, { childList: true, subtree: true });
+    };
+
+    if (document.body) startForBody(document.body);
+    else {
+      new MutationObserver((_, observer) => {
+        if (!document.body) return;
+        observer.disconnect();
+        startForBody(document.body);
+      }).observe(document.documentElement, { childList: true, subtree: true });
+    }
+
+    document.addEventListener('DOMContentLoaded', () => logLauncherTopology('DOMContentLoaded'), { once: true });
+    window.addEventListener('load', () => logLauncherTopology('load'), { once: true });
+    window.addEventListener('pageshow', () => logLauncherTopology('pageshow'));
+    window.addEventListener('popstate', () => logLauncherTopology('popstate'));
+    window.addEventListener('hashchange', () => logLauncherTopology('hashchange'));
+
+    for (const delay of [2000, 5000, 10000, 15000]) {
+      setTimeout(() => logLauncherTopology(`startup-${delay}ms`), delay);
+    }
+
+    for (const method of ['pushState', 'replaceState']) {
+      const original = history[method];
+      history[method] = function(...args) {
+        const result = Reflect.apply(original, this, args);
+        queueMicrotask(() => logLauncherTopology(`history.${method}`));
+        return result;
+      };
+    }
+  }
+
+  /**
+   * Logs a DOM operation that is about to remove or replace the launcher.
+   *
+   * This is diagnostic-only.  It never restores, moves, or otherwise changes the launcher.
+   * The stack is captured before the native DOM operation so the caller that initiated the
+   * removal remains visible in DevTools.
+   *
+   * @param {string} operation - DOM operation being performed.
+   * @param {Node|null} affectedNode - Node whose removal/replacement would affect the launcher.
+   * @param {Object} [details={}] - Operation-specific diagnostic details.
+   * @returns {void} No value is returned.
+   */
+  function logLauncherRemovalOperation(operation, affectedNode, details = {}) {
+    const launcher = document.getElementById(LAUNCHER_ID);
+    if (!(launcher instanceof HTMLElement) || !(affectedNode instanceof Node)) return;
+    if (affectedNode !== launcher && !affectedNode.contains(launcher)) return;
+    const body = document.body;
+    const bodyChildren = body ? [...body.childNodes] : [];
+    const bodyChildIndex = launcher.parentNode === body ? bodyChildren.indexOf(launcher) : -1;
+    const payload = {
+      version: VERSION,
+      operation,
+      stack: new Error(`launcher removal via ${operation}`).stack || null,
+      affected_node: launcherNodeSummary(affectedNode),
+      details,
+      launcher: launcherLifecycleState(launcher),
+      body_child_index: bodyChildIndex,
+      body_child_count: bodyChildren.length,
+      previous_body_sibling: bodyChildIndex > 0 ? launcherNodeSummary(bodyChildren[bodyChildIndex - 1]) : null,
+      next_body_sibling: bodyChildIndex >= 0 && bodyChildIndex + 1 < bodyChildren.length
+        ? launcherNodeSummary(bodyChildren[bodyChildIndex + 1])
+        : null,
+      topology: launcherTopologyContext()
+    };
+    logConsoleDiagnostic('warnings',
+      `[DownloadConversation v${VERSION}] launcher removal operation JSON\n${JSON.stringify(payload, null, 2)}`
+    );
+  }
+
+  /**
+   * Installs targeted DOM-operation wrappers used to identify who removes the launcher.
+   *
+   * Wrappers preserve the native return values and exceptions.  They only log when the exact
+   * operation would remove the launcher or an ancestor that contains it.  No recovery behavior
+   * is installed here.
+   *
+   * @returns {void} No value is returned.
+   */
+  function installLauncherRemovalDiagnostics() {
+    const originalRemoveChild = Node.prototype.removeChild;
+    Node.prototype.removeChild = function(child) {
+      logLauncherRemovalOperation('Node.removeChild', child, {
+        parent: launcherNodeSummary(this),
+        child_index: child instanceof Node ? [...this.childNodes].indexOf(child) : -1
+      });
+      return Reflect.apply(originalRemoveChild, this, [child]);
+    };
+
+    const originalReplaceChild = Node.prototype.replaceChild;
+    Node.prototype.replaceChild = function(newChild, oldChild) {
+      logLauncherRemovalOperation('Node.replaceChild', oldChild, {
+        parent: launcherNodeSummary(this),
+        old_child_index: oldChild instanceof Node ? [...this.childNodes].indexOf(oldChild) : -1,
+        new_child: launcherNodeSummary(newChild)
+      });
+      return Reflect.apply(originalReplaceChild, this, [newChild, oldChild]);
+    };
+
+    const originalRemove = Element.prototype.remove;
+    Element.prototype.remove = function() {
+      logLauncherRemovalOperation('Element.remove', this, {
+        parent: launcherNodeSummary(this.parentNode)
+      });
+      return Reflect.apply(originalRemove, this, []);
+    };
+
+    const originalReplaceWith = Element.prototype.replaceWith;
+    Element.prototype.replaceWith = function(...nodes) {
+      logLauncherRemovalOperation('Element.replaceWith', this, {
+        parent: launcherNodeSummary(this.parentNode),
+        replacement_count: nodes.length
+      });
+      return Reflect.apply(originalReplaceWith, this, nodes);
+    };
+
+    const originalReplaceChildren = Element.prototype.replaceChildren;
+    Element.prototype.replaceChildren = function(...nodes) {
+      logLauncherRemovalOperation('Element.replaceChildren', this, {
+        replacement_count: nodes.length
+      });
+      return Reflect.apply(originalReplaceChildren, this, nodes);
+    };
+
+    const innerHtml = Object.getOwnPropertyDescriptor(Element.prototype, 'innerHTML');
+    if (innerHtml?.set) {
+      Object.defineProperty(Element.prototype, 'innerHTML', {
+        ...innerHtml,
+        set(value) {
+          logLauncherRemovalOperation('Element.innerHTML=', this, {
+            replacement_length: typeof value === 'string' ? value.length : null
+          });
+          return Reflect.apply(innerHtml.set, this, [value]);
+        }
+      });
+    }
+
+    const textContent = Object.getOwnPropertyDescriptor(Node.prototype, 'textContent');
+    if (textContent?.set) {
+      Object.defineProperty(Node.prototype, 'textContent', {
+        ...textContent,
+        set(value) {
+          logLauncherRemovalOperation('Node.textContent=', this, {
+            replacement_length: typeof value === 'string' ? value.length : null
+          });
+          return Reflect.apply(textContent.set, this, [value]);
+        }
+      });
+    }
+
+    const outerHtml = Object.getOwnPropertyDescriptor(Element.prototype, 'outerHTML');
+    if (outerHtml?.set) {
+      Object.defineProperty(Element.prototype, 'outerHTML', {
+        ...outerHtml,
+        set(value) {
+          logLauncherRemovalOperation('Element.outerHTML=', this, {
+            replacement_length: typeof value === 'string' ? value.length : null
+          });
+          return Reflect.apply(outerHtml.set, this, [value]);
+        }
+      });
+    }
+  }
+
+  /**
+   * Handles make launcher.
+   *
+   * @returns {void} No value is returned.
+   */
+  function makeLauncher() {
+    const existing = document.getElementById(LAUNCHER_ID);
+    if (existing || !document.body) {
+      logConsoleDiagnostic('debug', `[DownloadConversation v${VERSION}] makeLauncher skipped`, {
+        existing: launcherNodeSummary(existing),
+        has_body: Boolean(document.body)
+      });
+      return;
+    }
+    injectStyles();
+    /** Floating button that remains available to open the recorder panel. */
+    const launcher = document.createElement('button');
+    launcher.id = LAUNCHER_ID;
+    launcher.type = 'button';
+    /**
+     * Opens recorder popup.
+     *
+     * @returns {void} No value is returned.
+     */
+    const openRecorderPopup = () => {
+      makePanel();
+      const panel = document.getElementById(PANEL_ID);
+      if (panel) panel.style.display = 'block';
+      updateUi();
+      if (panel && !generalStatusShown) {
+        logDiagnostic('debug', 'general-status-shown', { script_version: VERSION, console_enabled: consoleDiagnostics });
+        generalStatusShown = true;
+      }
+    };
+    launcher.addEventListener('click', openRecorderPopup);
+    launcher.addEventListener('mouseenter', openRecorderPopup);
+    launcher.addEventListener('focus', openRecorderPopup);
+    document.body.append(launcher);
+    if (DEEP_LAUNCHER_DIAGNOSTICS) watchLauncherLifecycle(launcher);
+  }
+
+  /**
+   * Binds one persistent checkbox to a state setter and the shared recorder UI refresh.
+   *
+   * @param {Element} panel - Recorder panel containing the checkbox.
+   * @param {string} role - Stable data-role value identifying the checkbox.
+   * @param {string} storageKey - Local-storage key retaining the preference.
+   * @param {boolean} initialValue - Current preference value applied at panel creation.
+   * @param {Function} applyValue - Callback that updates the corresponding in-memory state.
+   * @returns {void} No value is returned.
+   */
+  function bindStoredCheckbox(panel, role, storageKey, initialValue, applyValue) {
+    const checkbox = panel.querySelector(`[data-role="${role}"]`);
+    if (!(checkbox instanceof HTMLInputElement)) return;
+    checkbox.checked = initialValue;
+    checkbox.addEventListener('change', () => {
+      applyValue(checkbox.checked);
+      localStorage.setItem(storageKey, String(checkbox.checked));
+      updateUi();
+    });
+  }
+
+  /**
+   * Handles make panel.
+   *
+   * @returns {void} No value is returned.
+   */
+  function makePanel() {
+    if (document.getElementById(PANEL_ID) || !document.body) return;
+    logDiagnostic('debug', 'recorder-panel-create-start', { script_version: VERSION });
+    injectStyles();
+    const panel = document.createElement('div');
+    panel.id = PANEL_ID;
+    panel.style.display = 'none';
+    panel.innerHTML = `
+      <button class="tm-close" type="button" aria-label="Close">×</button>
+      <div class="tm-title" data-role="title"></div>
+      <div class="tm-log-head"><span class="tm-label" data-role="log-count">Log: 0 items</span><button class="tm-icon-button" data-role="copy-log" type="button" aria-label="Copy diagnostic log" title="Copy log"></button><button class="tm-icon-button" data-role="toggle-log" type="button" aria-label="Show diagnostic log" aria-expanded="false" title="Show log">+</button></div>
+      <div class="tm-log-output" data-role="log-output" hidden></div>
+      <div class="tm-status" data-role="status"></div>
+      <div class="tm-row"><span class="tm-label">Diagnostics</span><select data-role="diagnostics"><option value="errors">Errors</option><option value="warnings">Warnings</option><option value="debug">Debug</option><option value="verbose">Verbose</option></select><label><input data-role="console-diagnostics" type="checkbox"> console</label><button data-role="test" type="button">Test</button></div>
+      <div class="tm-row"><span class="tm-label">Communication log</span></div>
+      <div class="tm-row tm-communication-log-row"><div class="tm-log-name-viewport" data-role="communication-log-name-viewport" role="textbox" aria-readonly="true" aria-label="Current communication log filename" title="Current communication log filename"><span class="tm-log-name-text" data-role="communication-log-name"></span></div><button class="tm-icon-button" data-role="rename-communication-log" type="button" aria-label="Rename communication log" title="Rename communication log"></button><button class="tm-icon-button" data-role="duplicate-communication-log" type="button" aria-label="Duplicate communication log" title="Duplicate communication log"></button><button class="tm-icon-button" data-role="reset-communication-log" type="button" aria-label="Reset communication log" title="Reset communication log"></button></div>
+      <div class="tm-row"><span class="tm-label">Screen on when extracting</span><button class="tm-switch" data-role="screen-on" type="button" role="switch" aria-checked="false" aria-label="Keep screen on while extracting"><span class="tm-switch-thumb"></span></button></div>
+      <div class="tm-row tm-sound-control-row"><button class="tm-sound-control" data-role="agent-sound-control" type="button" aria-haspopup="dialog" aria-expanded="false">Sound <span data-role="agent-sound-control-value"></span></button><div class="tm-sound-popup" data-role="agent-sound-popup" hidden role="dialog" aria-label="Agent sound volume"><input class="tm-sound-volume-slider" data-role="agent-sound-volume" type="range" min="0" max="10" step="1" aria-label="Agent sound volume"><output class="tm-sound-volume-value" data-role="agent-sound-volume-value"></output></div></div>
+      <div class="tm-row"><button data-role="jump" type="button">Jump</button></div>
+      <div class="tm-row tm-extract-formats"><button data-role="extract" type="button">Extract</button><label><input data-role="format-jsonl" type="checkbox"> JSONL</label><label><input data-role="format-md" type="checkbox" checked> MD</label></div>
+      <div class="tm-row tm-md-metadata"><span class="tm-label">MD headings</span><label><input data-role="show-timestamps" type="checkbox"> Timestamp</label><label><input data-role="show-record-numbers" type="checkbox"> Record #</label><label><input data-role="show-turn-ids" type="checkbox"> Turn ID</label><label><input data-role="show-debug-provenance" type="checkbox"> provenance</label></div>
+    `;
+    panel.querySelector('.tm-close').addEventListener('click', () => {
+      panel.style.display = 'none';
+      const launcher = document.getElementById(LAUNCHER_ID);
+      if (launcher) launcher.style.display = '';
+    });
+    const diagnostics = panel.querySelector('[data-role="diagnostics"]');
+    diagnostics.value = diagnosticsLevel;
+    diagnostics.addEventListener('change', () => {
+      diagnosticsLevel = diagnostics.value;
+      localStorage.setItem('tm-conversation-recorder-diagnostics', diagnosticsLevel);
+      logDiagnostic('debug', 'diagnostics-level-changed', { diagnostics_level: diagnosticsLevel });
+      refreshDiagnosticLog();
+    });
+    const consoleOutput = panel.querySelector('[data-role="console-diagnostics"]');
+    consoleOutput.checked = consoleDiagnostics;
+    consoleOutput.addEventListener('change', () => {
+      consoleDiagnostics = consoleOutput.checked;
+      localStorage.setItem(CONSOLE_DIAGNOSTICS_STORAGE_KEY, String(consoleDiagnostics));
+      logDiagnostic('debug', 'console-diagnostics-changed', { enabled: consoleDiagnostics });
+    });
+    const copyLogButton = panel.querySelector('[data-role="copy-log"]');
+    if (copyLogButton) copyLogButton.innerHTML = copyIconMarkup();
+    panel.querySelector('[data-role="toggle-log"]').addEventListener('click', () => {
+      diagnosticLogExpanded = !diagnosticLogExpanded;
+      refreshDiagnosticLog();
+    });
+    panel.querySelector('[data-role="copy-log"]').addEventListener('click', () => {
+      void copyDiagnosticLog().catch(error => {
+        logDiagnostic('errors', 'diagnostic-log-copy-failure', {
+          message: errorMessage(error)
+        });
+      });
+    });
+    panel.querySelector('[data-role="test"]').addEventListener('click', event => openTestMatrix(event.currentTarget));
+    panel.querySelector('[data-role="jump"]').addEventListener('click', () => void runJump());
+    const {
+      communicationLogNameViewport,
+      renameCommunicationLogButton,
+      duplicateCommunicationLogButton,
+      resetCommunicationLogButton
+    } = communicationLogPanelControls(panel);
+    if (renameCommunicationLogButton) renameCommunicationLogButton.innerHTML = renameIconMarkup();
+    if (duplicateCommunicationLogButton) duplicateCommunicationLogButton.innerHTML = duplicateIconMarkup();
+    if (resetCommunicationLogButton) resetCommunicationLogButton.innerHTML = resetIconMarkup();
+    communicationLogNameViewport?.addEventListener('pointerenter', refreshCommunicationLogNameOverflow);
+    renameCommunicationLogButton?.addEventListener('click', () => {
+      if (renameCommunicationLogButton.disabled || communicationLogUiActionInProgress || !communicationLogFileName) return;
+      const requestedName = window.prompt('Rename communication log', communicationLogFileName);
+      if (requestedName === null || requestedName === communicationLogFileName) return;
+      void runCommunicationLogPanelAction(renameCommunicationLogButton, {
+        idleLabel: 'Rename communication log',
+        busyLabel: 'Renaming communication log',
+        busyTitle: 'Renaming…',
+        operation: () => communicationLogRename(requestedName),
+        onSuccess: newFileName => setStatus(`Communication log renamed to ${newFileName}.`),
+        failurePrefix: 'Communication log rename failed'
+      });
+    });
+    duplicateCommunicationLogButton?.addEventListener('click', () => {
+      if (duplicateCommunicationLogButton.disabled || communicationLogUiActionInProgress || !communicationLogFileName) return;
+      void runCommunicationLogPanelAction(duplicateCommunicationLogButton, {
+        idleLabel: 'Duplicate communication log',
+        busyLabel: 'Duplicating communication log',
+        busyTitle: 'Duplicating…',
+        operation: communicationLogDuplicate,
+        onSuccess: duplicateName => setStatus(`Communication log duplicated as ${duplicateName}.`),
+        failurePrefix: 'Communication log duplicate failed'
+      });
+    });
+    resetCommunicationLogButton?.addEventListener('click', () => {
+      if (resetCommunicationLogButton.disabled || communicationLogUiActionInProgress) return;
+      void runCommunicationLogPanelAction(resetCommunicationLogButton, {
+        idleLabel: 'Reset communication log',
+        busyLabel: 'Resetting communication log',
+        busyTitle: 'Resetting…',
+        operation: communicationLogReset,
+        onSuccess: () => {
+          logDiagnostic('debug', 'communication-log-reset-complete', {
+            file_name: communicationLogFileName
+          });
+          setStatus('Communication log reset to empty.');
+        },
+        failurePrefix: 'Communication log reset failed'
+      });
+    });
+    panel.querySelector('[data-role="screen-on"]').addEventListener('click', () => {
+      screenOnWhenCapturing = !screenOnWhenCapturing;
+      localStorage.setItem(SCREEN_ON_STORAGE_KEY, String(screenOnWhenCapturing));
+      if (screenOnWhenCapturing) void acquireWakeLock();
+      else void releaseWakeLock();
+      updateUi();
+    });
+    bindStoredCheckbox(panel, 'show-timestamps', SHOW_TIMESTAMPS_STORAGE_KEY, showTimestamps, value => {
+      showTimestamps = value;
+    });
+    bindStoredCheckbox(panel, 'show-record-numbers', SHOW_RECORD_NUMBERS_STORAGE_KEY, showRecordNumbers, value => {
+      showRecordNumbers = value;
+    });
+    bindStoredCheckbox(panel, 'show-turn-ids', SHOW_TURN_IDS_STORAGE_KEY, showTurnIds, value => {
+      showTurnIds = value;
+    });
+    bindStoredCheckbox(panel, 'show-debug-provenance', SHOW_DEBUG_PROVENANCE_STORAGE_KEY, showDebugProvenance, value => {
+      showDebugProvenance = value;
+    });
+    const soundControl = panel.querySelector('[data-role="agent-sound-control"]');
+    const soundPopup = panel.querySelector('[data-role="agent-sound-popup"]');
+    const soundVolumeInput = panel.querySelector('[data-role="agent-sound-volume"]');
+    const soundVolumeValue = panel.querySelector('[data-role="agent-sound-volume-value"]');
+    const soundControlValue = panel.querySelector('[data-role="agent-sound-control-value"]');
+    /**
+     * Renders the current integer sound volume into the popup and control label.
+     *
+     * @returns {void} No value is returned.
+     */
+    const renderSoundVolume = () => {
+      const value = String(agentSoundVolume);
+      if (soundVolumeInput instanceof HTMLInputElement) soundVolumeInput.value = value;
+      if (soundVolumeValue) soundVolumeValue.textContent = value;
+      if (soundControlValue) soundControlValue.textContent = value;
+    };
+    /**
+     * Opens or closes the sound-volume popup and mirrors the expanded state for accessibility.
+     *
+     * @param {boolean} open - True to show the volume popup.
+     * @returns {void} No value is returned.
+     */
+    const setSoundPopupOpen = open => {
+      if (!soundPopup || !soundControl) return;
+      soundPopup.hidden = !open;
+      soundControl.setAttribute('aria-expanded', String(open));
+    };
+    renderSoundVolume();
+    soundControl?.addEventListener('click', event => {
+      event.stopPropagation();
+      const open = Boolean(soundPopup?.hidden);
+      setSoundPopupOpen(open);
+      if (open && agentSoundVolume > 0) void unlockAgentSoundAudio();
+    });
+    soundPopup?.addEventListener('click', event => event.stopPropagation());
+    soundVolumeInput?.addEventListener('input', () => {
+      const parsed = Number.parseInt(soundVolumeInput.value, 10);
+      agentSoundVolume = Number.isFinite(parsed) ? Math.max(0, Math.min(10, parsed)) : 0;
+      localStorage.setItem(AGENT_SOUND_VOLUME_STORAGE_KEY, String(agentSoundVolume));
+      renderSoundVolume();
+      logDiagnostic('debug', 'agent-sound-volume-changed', { volume: agentSoundVolume });
+      if (agentSoundVolume > 0) void unlockAgentSoundAudio();
+    });
+    document.addEventListener('click', event => {
+      if (!soundPopup || soundPopup.hidden) return;
+      if (event.target instanceof Node && panel.querySelector('.tm-sound-control-row')?.contains(event.target)) return;
+      setSoundPopupOpen(false);
+    });
+    /**
+     * Handles run selected exports.
+     *
+     * @returns {void} No value is returned.
+     */
+    const runSelectedExports = async () => {
+      const jsonl = panel.querySelector('[data-role="format-jsonl"]');
+      const md = panel.querySelector('[data-role="format-md"]');
+      /** Selected output formats generated from the same acquired Conversation API snapshot. */
+      const kinds = [];
+      if (jsonl?.checked) kinds.push('jsonl');
+      if (md?.checked) kinds.push('md');
+      if (kinds.length) await runExport(kinds);
+    };
+    panel.querySelector('[data-role="extract"]').addEventListener('click', () => void runSelectedExports());
+    panel.querySelector('[data-role="format-jsonl"]').addEventListener('change', updateUi);
+    panel.querySelector('[data-role="format-md"]').addEventListener('change', updateUi);
+    panel.addEventListener('mouseleave', () => {
+      if (!panel.matches(':focus-within') && !exportInProgress && !testInProgress) {
+        panel.style.display = 'none';
+      }
+    });
+    document.body.append(panel);
+    updateUi();
+    refreshDiagnosticLog();
+    logDiagnostic('debug', 'recorder-panel-created', {
+      script_version: VERSION,
+      core_version: CORE_VERSION
+    });
+  }
+
+  /**
+   * Mounts the launcher only after the host has loaded and direct BODY reconciliation is quiet.
+   *
+   * Lifecycle console output follows the startup/saved-option gate.  Expensive topology and DOM-method
+   * instrumentation remains available behind `DEEP_LAUNCHER_DIAGNOSTICS` for future regressions.
+   *
+   * @returns {void} No value is returned.
+   */
+  function bootstrapUi() {
+    logConsoleDiagnostic('debug', `[DownloadConversation v${VERSION} | AIConversationCore v${CORE_VERSION}] bootstrap`, {
+      ready_state: document.readyState,
+      has_body: Boolean(document.body)
+    });
+
+    const quietMs = 1000;
+    let loadReady = document.readyState === 'complete';
+    let bodyObserver = null;
+    let quietTimer = null;
+    let launcherMountCount = 0;
+    let launcherRemovalReported = false;
+
+    /**
+     * Schedules one launcher mount after the current direct-BODY quiet interval.
+     *
+     * @returns {void} No value is returned.
+     */
+    const scheduleLauncherMount = () => {
+      if (!loadReady || !document.body) return;
+      if (quietTimer !== null) clearTimeout(quietTimer);
+      quietTimer = setTimeout(() => {
+        quietTimer = null;
+        if (!document.body || document.getElementById(LAUNCHER_ID)) return;
+        const reason = launcherMountCount === 0 ? 'initial' : 'remount-after-body-reconciliation';
+        makeLauncher();
+        const launcher = document.getElementById(LAUNCHER_ID);
+        if (!(launcher instanceof HTMLElement)) return;
+        launcherMountCount += 1;
+        launcherRemovalReported = false;
+        const children = [...document.body.childNodes];
+        logConsoleDiagnostic('debug', `[DownloadConversation v${VERSION}] launcher mounted`, {
+          reason,
+          ready_state: document.readyState,
+          quiet_ms: quietMs,
+          body_child_count: children.length,
+          body_child_index: children.indexOf(launcher)
+        });
+      }, quietMs);
+    };
+
+    /**
+     * Observes the current BODY so host reconciliation resets the launcher quiet interval.
+     *
+     * @param {HTMLBodyElement} body - Current BODY whose direct children are observed.
+     * @returns {void} No value is returned.
+     */
+    const observeBody = body => {
+      bodyObserver?.disconnect();
+      bodyObserver = new MutationObserver(records => {
+        if (!records.some(record => record.type === 'childList' && record.target === body)) return;
+        if (launcherMountCount > 0 && !document.getElementById(LAUNCHER_ID) && !launcherRemovalReported) {
+          launcherRemovalReported = true;
+          logConsoleDiagnostic('warnings', `[DownloadConversation v${VERSION}] launcher disconnected; waiting for BODY quiet`, {
+            ready_state: document.readyState,
+            body_child_count: body.childNodes.length,
+            quiet_ms: quietMs
+          });
+        }
+        scheduleLauncherMount();
+      });
+      bodyObserver.observe(body, { childList: true });
+      scheduleLauncherMount();
+    };
+
+    if (document.body) observeBody(document.body);
+    else {
+      new MutationObserver((_, observer) => {
+        if (!document.body) return;
+        observer.disconnect();
+        logConsoleDiagnostic('debug', `[DownloadConversation v${VERSION}] BODY appeared`, {
+          ready_state: document.readyState
+        });
+        observeBody(document.body);
+      }).observe(document.documentElement, { childList: true, subtree: true });
+    }
+
+    if (!loadReady) {
+      window.addEventListener('load', () => {
+        loadReady = true;
+        logConsoleDiagnostic('debug', `[DownloadConversation v${VERSION}] load complete; waiting for BODY quiet`, {
+          quiet_ms: quietMs
+        });
+        scheduleLauncherMount();
+      }, { once: true });
+    }
+  }
+
+  document.addEventListener('visibilitychange', () => {
+    if (document.visibilityState === 'visible') void acquireWakeLock();
+    else void releaseWakeLock();
+  });
+
+  document.addEventListener('click', captureConversationClickDiagnostic, true);
+  window.addEventListener('pagehide', () => {
+    finishConversationClickDiagnostic(activeClickDiagnostic, 'pagehide');
+    if (diagnosticPersistTimer !== null) {
+      clearTimeout(diagnosticPersistTimer);
+      diagnosticPersistTimer = null;
+    }
+    persistDiagnosticLog();
+  });
+  if (DEEP_LAUNCHER_DIAGNOSTICS) {
+    installLauncherRemovalDiagnostics();
+    installLauncherTopologyDiagnostics();
+  }
+  communicationLogInitializationPromise = initializeCommunicationDiskRecorder();
+  installLiveTailTracking();
+  installNetworkCapture();
+  bootstrapUi();
+})();
