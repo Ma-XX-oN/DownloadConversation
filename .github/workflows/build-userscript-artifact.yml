@@ -11,6 +11,10 @@ on:
       - '.github/workflows/build-userscript-artifact.yml'
   workflow_dispatch:
 
+concurrency:
+  group: userscript-artifact-${{ github.ref }}
+  cancel-in-progress: true
+
 permissions:
   contents: write
 
