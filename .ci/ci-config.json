@@ -1,0 +1,8 @@
+{
+  "version": {
+    "kind": "regex",
+    "path": "src/userscript-header.js",
+    "pattern": "^//\\s*@version\\s+(\\S+)\\s*$"
+  },
+  "matrixPath": ".ci/test-matrix.json"
+}
