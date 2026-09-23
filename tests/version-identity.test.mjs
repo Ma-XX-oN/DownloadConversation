@@ -1,3 +1,4 @@
+import { coreBundle } from './helpers/core-bundle.mjs';
 import { coreDependency, coreUrl } from './helpers/core-pin.mjs';
 import { downloadConversationSource, userscript } from './helpers/userscript-source.mjs';
 import assert from 'node:assert/strict';
@@ -5,7 +6,7 @@ import { readFile } from 'node:fs/promises';
 import test from 'node:test';
 import vm from 'node:vm';
 
-const ci = await readFile(new URL('../.github/workflows/ci.yml', import.meta.url), 'utf8');
+const ciEnvironment = await readFile(new URL('../scripts/ci-environment.mjs', import.meta.url), 'utf8');
 const coreIntegration = await readFile(new URL('./core-integration.test.mjs', import.meta.url), 'utf8');
 const phase5Integration = await readFile(new URL('./phase5-rich-core-integration.test.mjs', import.meta.url), 'utf8');
 const sedimentResolver = await readFile(new URL('./sediment-resolver.test.mjs', import.meta.url), 'utf8');
@@ -40,7 +41,7 @@ test('build manifest is the Core pin authority and generated userscript embeds t
   );
 
   const pinnedConsumers = [
-    ['CI', ci],
+    ['CI environment', ciEnvironment],
     ['core integration', coreIntegration],
     ['phase 5 integration', phase5Integration],
     ['sediment resolver', sedimentResolver]
@@ -51,10 +52,8 @@ test('build manifest is the Core pin authority and generated userscript embeds t
   }
 });
 
-test('the manifest-pinned browser bundle reports Core 1.0.0', async () => {
-  const response = await fetch(coreUrl);
-  assert.equal(response.status, 200, `Could not load pinned AIConversationCore bundle: HTTP ${response.status}`);
-  const bundle = await response.text();
+test('the committed manifest-pinned browser bundle reports Core 1.0.0', () => {
+  const bundle = coreBundle;
   const context = { URL };
   context.globalThis = context;
   vm.runInNewContext(bundle, context, { filename: 'aiconversationcore.chatgpt.browser.js' });
