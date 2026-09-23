@@ -7,7 +7,7 @@ import { fileURLToPath } from 'node:url';
 import test from 'node:test';
 
 const guardPath = fileURLToPath(new URL('../scripts/check-development-version.mjs', import.meta.url));
-const ci = await readFile(new URL('../.github/workflows/ci.yml', import.meta.url), 'utf8');
+const ciEnvironment = await readFile(new URL('../scripts/ci-environment.mjs', import.meta.url), 'utf8');
 
 async function runGuard({ branch, source, env = {} }) {
   const directory = await mkdtemp(join(tmpdir(), 'downloadconversation-version-guard-'));
@@ -116,15 +116,15 @@ test('derives pull-request source branch from GITHUB_HEAD_REF when --branch is o
   assert.match(result.stdout, /issue 149 matches version 1\.5\.0-issue\.149\.1/);
 });
 
-test('ordinary CI runs the branch/version guard before feature-specific verification', () => {
-  const guardIndex = ci.indexOf('node scripts/check-development-version.mjs');
-  const jsdocIndex = ci.indexOf('- name: Production JSDoc coverage');
-  const regressionIndex = ci.indexOf('node --test tests/development-version-guard.test.mjs');
+test('repository-owned CI runs the branch/version guard before feature-specific verification', () => {
+  const guardIndex = ciEnvironment.indexOf("['Development branch/version identity'");
+  const jsdocIndex = ciEnvironment.indexOf("['Production JSDoc coverage'");
+  const regressionIndex = ciEnvironment.indexOf("'tests/development-version-guard.test.mjs'");
 
-  assert.ok(guardIndex >= 0, 'Ordinary CI must invoke the development version guard.');
-  assert.ok(jsdocIndex >= 0, 'Could not locate the first production verification step.');
+  assert.ok(guardIndex >= 0, 'Repository-owned CI must invoke the development version guard.');
+  assert.ok(jsdocIndex >= 0, 'Could not locate the first production verification stage.');
   assert.ok(guardIndex < jsdocIndex,
     'Branch/version identity must be checked before feature-specific verification.');
   assert.ok(regressionIndex >= 0,
-    'Ordinary CI must retain the fixed development-version guard regression suite.');
+    'Repository-owned CI must retain the fixed development-version guard regression suite.');
 });
