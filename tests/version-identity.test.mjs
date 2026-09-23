@@ -1,5 +1,5 @@
 import { coreBundle } from './helpers/core-bundle.mjs';
-import { coreDependency, coreUrl } from './helpers/core-pin.mjs';
+import { coreDependency, coreSourceUrl } from './helpers/core-pin.mjs';
 import { downloadConversationSource, userscript } from './helpers/userscript-source.mjs';
 import assert from 'node:assert/strict';
 import { readFile } from 'node:fs/promises';
@@ -30,8 +30,8 @@ test('DownloadConversation keeps one caller-version authority in userscript meta
 test('build manifest is the Core pin authority and generated userscript embeds that exact dependency without @require', () => {
   assert.equal(coreDependency.commit, CORE_COMMIT);
   assert.equal(coreDependency.git_blob_sha1, CORE_BLOB_SHA1);
-  assert.equal(coreUrl, coreDependency.url);
-  assert.equal(coreUrl.includes(`/${CORE_COMMIT}/dist/aiconversationcore.chatgpt.browser.js`), true);
+  assert.equal(coreSourceUrl, coreDependency.url);
+  assert.equal(coreSourceUrl.includes(`/${CORE_COMMIT}/dist/aiconversationcore.chatgpt.browser.js`), true);
   assert.doesNotMatch(userscript, /^\/\/ @require\s+/m,
     'Generated userscript must not load AIConversationCore through runtime @require.');
   assert.match(
