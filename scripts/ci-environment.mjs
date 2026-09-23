@@ -18,6 +18,7 @@ const pythonCommand = process.env.PYTHON ?? 'python';
 
 const ordinaryStages = [
   ['Modular userscript build regression', nodeCommand, ['--test', 'tests/modular-userscript-build.test.mjs', 'tests/development-version-source.test.mjs']],
+  ['CI test inventory regression', nodeCommand, ['--test', 'tests/ci-test-inventory.test.mjs']],
   ['Development branch/version identity', nodeCommand, ['scripts/check-development-version.mjs']],
   ['Production JSDoc coverage', nodeCommand, ['scripts/check-jsdoc.mjs']],
   ['JavaScript syntax', nodeCommand, ['--check', 'chatgpt-conversation-markdown-export.user.js']],
@@ -35,8 +36,8 @@ const ordinaryStages = [
   ['Agent turn stopwatch live total', nodeCommand, ['--test', 'tests/agent-turn-stopwatch-live-total.test.mjs']],
   ['Agent turn stopwatch reload restoration', nodeCommand, ['--test', 'tests/agent-turn-stopwatch-reload.test.mjs']],
   ['Agent favicon state regression', nodeCommand, ['--test', 'tests/agent-favicon-state.test.mjs', 'tests/agent-favicon-browser-selection.test.mjs']],
-  ['Agent terminal polling-timeout regression', nodeCommand, ['--test', 'tests/agent-terminal-polling-timeout.test.mjs', 'tests/agent-terminal-polling-timeout-observer.test.mjs']],
-  ['Communication log file controls regression', nodeCommand, ['--test', 'tests/communication-log-file-controls.test.mjs', 'tests/communication-log-layout-contract.test.mjs', 'tests/dry-contract.test.mjs']],
+  ['Agent terminal polling-timeout regression', nodeCommand, ['--test', 'tests/agent-terminal-polling-timeout.test.mjs', 'tests/agent-terminal-polling-timeout-observer.test.mjs', 'tests/agent-terminal-polling-timeout-integration.test.mjs']],
+  ['Communication log file controls regression', nodeCommand, ['--test', 'tests/communication-log-file-controls.test.mjs', 'tests/communication-log-layout-contract.test.mjs', 'tests/communication-log-reset.test.mjs', 'tests/dry-contract.test.mjs']],
   ['Tail consistency regression', nodeCommand, ['--test', 'tests/tail-consistency.test.mjs']],
   ['Stream tail recovery regression', nodeCommand, ['--test', 'tests/stream-tail-recovery.test.mjs', 'tests/generation-response-clone-timing.test.mjs']],
   ['Stock network diagnostics regression', nodeCommand, ['--test', 'tests/stock-network-diagnostics.test.mjs']],
