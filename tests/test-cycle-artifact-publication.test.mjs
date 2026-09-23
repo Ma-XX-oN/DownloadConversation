@@ -136,6 +136,19 @@ test('verify fails closed when the committed artifact is stale', async () => {
   });
 });
 
+test('verify preserves builder infrastructure exit 2 for CI classification', async () => {
+  await withFixture(async fixtureRoot => {
+    const prepared = runCycle(fixtureRoot, 'prepare');
+    assert.equal(prepared.status, 0, prepared.stderr || prepared.stdout);
+
+    const builder = path.join(fixtureRoot, 'scripts', 'build-userscript.mjs');
+    await writeFile(builder, "console.error('simulated network outage');\nprocess.exitCode = 2;\n");
+    const result = runCycle(fixtureRoot, 'verify');
+    assert.equal(result.status, 2, `${result.stdout}\n${result.stderr}`);
+    assert.match(`${result.stdout}\n${result.stderr}`, /dependency|network|reach/i);
+  });
+});
+
 test('publish creates immutable version tag on the exact tested artifact commit', async () => {
   await withFixture(async (fixtureRoot, remoteRoot) => {
     assert.equal(runCycle(fixtureRoot, 'prepare').status, 0);
