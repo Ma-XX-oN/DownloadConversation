@@ -7,7 +7,20 @@ on:
   pull_request:
 
 jobs:
+  actions-policy:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - name: Enforce permanent Actions policy
+        run: node --test tests/actions-policy.test.mjs
+
   prepare-test-cycle:
+    needs: actions-policy
     if: github.event_name == 'push' && startsWith(github.ref, 'refs/heads/')
     runs-on: ubuntu-latest
     permissions:
