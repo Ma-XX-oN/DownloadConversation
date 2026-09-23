@@ -99,6 +99,25 @@ For DownloadConversation, `scripts/test-cycle-artifact.mjs` is the repository
 owner of this invariant and the userscript `@version` supplies the immutable
 `v<version>` test-cycle tag identity.
 
+### GitHub Actions repository-write policy
+
+GitHub Actions must never be used as a general mechanism for editing,
+patching, migrating, repairing, or committing authoritative source or
+project documentation.  Development changes must be made through the GitHub
+repository API/connector or a normal checked-out working tree.
+
+Only the permanent workflows documented in `docs/GITHUB-ACTIONS-POLICY.md` are
+allowed on active repository lines.  Repository-write permission is limited to
+the deterministic generated-artifact/test-cycle publication mechanism owned by
+`scripts/test-cycle-artifact.mjs`; direct `git add`, `git commit`, `git push`,
+general mutating API calls, issue-specific patch scripts, and one-shot editing
+workflows are prohibited.
+
+`scripts/check-actions-policy.mjs` and `tests/actions-policy.test.mjs` enforce
+this policy.  Any legitimate change to the permanent workflow set or write path
+must update the policy document, checker, and tests together.  Do not weaken the
+checker to accommodate temporary source-editing automation.
+
 ### Rename/removal call-path audit
 
 Before removing or renaming any production function, helper, constant, or
