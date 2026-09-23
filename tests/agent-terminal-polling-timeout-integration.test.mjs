@@ -43,6 +43,7 @@ test('captured polling timeout drives the real shared terminal consumers', async
     let agentSoundAudioContext = { state: 'running' };
     const AGENT_SOUND_TERMINAL_KEY_LIMIT = 128;
     const agentSoundTerminalKeys = new Set();
+    let agentSoundPendingTerminal = null;
     let agentStopwatchState = {
       active: true,
       exchange_id: 'exchange-A',
@@ -84,6 +85,8 @@ test('captured polling timeout drives the real shared terminal consumers', async
     ${productionFunctionSource('agentTerminalClassifyKind')}
     ${productionFunctionSource('agentTerminalNormalize')}
     ${productionFunctionSource('agentSoundRememberTerminalKey')}
+    ${productionFunctionSource('agentSoundRememberPendingTerminal')}
+    ${productionFunctionSource('agentSoundClearPendingTerminal')}
     ${productionFunctionSource('agentSoundHandleTerminal')}
     ${productionFunctionSource('agentStopwatchHandleTerminal')}
     ${productionFunctionSource('agentFaviconHandleTerminal')}
