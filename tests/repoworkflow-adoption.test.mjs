@@ -6,7 +6,7 @@ import test from 'node:test';
 import { fileURLToPath } from 'node:url';
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
-const repoWorkflowSha = 'fd55b2b4bd4cf81d457624b01320074ffaa99d42';
+const repoWorkflowSha = '262a3a214a252d5cf7d20aea280576ab3cf423b5';
 
 async function readText(relativePath) {
   return readFile(path.join(root, relativePath), 'utf8');
@@ -26,7 +26,7 @@ function git(...args) {
   return result.stdout.trim();
 }
 
-test('RepoWorkflow is a canonical submodule pinned to the verified issue-1.3 commit', async () => {
+test('RepoWorkflow is a canonical submodule pinned to the verified issue-1.4 commit', async () => {
   const modules = await readText('.gitmodules');
   assert.match(modules, /\[submodule "RepoWorkflow"\]/);
   assert.match(modules, /path = RepoWorkflow/);
@@ -71,7 +71,8 @@ test('GitHub runner projection and branch ancestry are repository facts', async 
     prepareRunner: 'ubuntu-latest',
     runners: {
       'ubuntu-node22-python313': 'ubuntu-latest'
-    }
+    },
+    migrationWorkflows: ['build-userscript-artifact.yml']
   });
   assert.deepEqual(await readJson('.ci/branch-policy.json'), {
     schema: 1,
