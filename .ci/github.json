@@ -1,0 +1,8 @@
+{
+  "schema": 1,
+  "prepareRunner": "ubuntu-latest",
+  "runners": {
+    "ubuntu-node22-python313": "ubuntu-latest"
+  },
+  "migrationWorkflows": ["build-userscript-artifact.yml"]
+}
