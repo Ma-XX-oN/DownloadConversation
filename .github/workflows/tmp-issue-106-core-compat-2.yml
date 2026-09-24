@@ -1,0 +1,132 @@
+name: Temporary #106 DownloadConversation Core compatibility corrected
+
+on:
+  push:
+    branches:
+      - tmp/issue-106-core-compat-2
+
+permissions:
+  contents: read
+
+env:
+  DC_SHA: d5818e346e46541b567ae879b7be42df16c99b6b
+  OLD_CORE_SHA: cf34d9374f51ac525acfb90cfd6b247006a7bf6e
+  CORE_SHA: 6269168cee1f0b49f8d535d4e71ba0acbd232547
+  OLD_CORE_BLOB: 5a999c8c02f127b4fc03b923a40496961c9cacc0
+  CORE_BLOB: 9c38fc5dbd5e51dc15ce377a904095c8c8f69217
+  CORE_BYTES: '264705'
+  CORE_VERSION: 1.0.0-issue.106.1
+
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out immutable DownloadConversation baseline
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ env.DC_SHA }}
+          fetch-depth: 0
+          submodules: recursive
+
+      - name: Assert immutable baseline
+        shell: bash
+        run: test "$(git rev-parse HEAD)" = "$DC_SHA"
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.13'
+
+      - name: Project exact Core dependency without mutating historical provenance
+        shell: python
+        run: |
+          from pathlib import Path
+          import json
+          import subprocess
+
+          old_sha = '${{ env.OLD_CORE_SHA }}'
+          new_sha = '${{ env.CORE_SHA }}'
+          old_blob = '${{ env.OLD_CORE_BLOB }}'
+          new_blob = '${{ env.CORE_BLOB }}'
+
+          manifest_path = Path('src/userscript-manifest.json')
+          manifest = json.loads(manifest_path.read_text(encoding='utf-8'))
+          historical_fixture = manifest['migration_source']['path']
+
+          files = set()
+          for needle in (old_sha, old_blob):
+            proc = subprocess.run(
+              ['git', 'grep', '-l', '-F', needle],
+              text=True, capture_output=True, check=False)
+            if proc.returncode not in (0, 1):
+              raise SystemExit(proc.stderr)
+            files.update(line for line in proc.stdout.splitlines() if line)
+
+          for name in sorted(files):
+            if name == historical_fixture:
+              continue
+            path = Path(name)
+            text = path.read_text(encoding='utf-8')
+            text = text.replace(old_sha, new_sha).replace(old_blob, new_blob)
+            path.write_text(text, encoding='utf-8', newline='')
+
+          text = manifest_path.read_text(encoding='utf-8')
+          if '"byte_length": 264693' not in text:
+            raise SystemExit('Expected old Core byte length is missing from manifest.')
+          manifest_path.write_text(
+            text.replace('"byte_length": 264693', '"byte_length": 264705'),
+            encoding='utf-8', newline='')
+
+          modular = Path('tests/modular-userscript-build.test.mjs')
+          text = modular.read_text(encoding='utf-8')
+          expected = 'assert.equal(dependency.byte_length, 264693);'
+          if expected not in text:
+            raise SystemExit('Expected old dependency byte-length oracle is missing.')
+          modular.write_text(
+            text.replace(expected, 'assert.equal(dependency.byte_length, 264705);'),
+            encoding='utf-8', newline='')
+
+          version_test = Path('tests/version-identity.test.mjs')
+          text = version_test.read_text(encoding='utf-8')
+          expected = "assert.equal(context.AIConversationCore.getVersion(), '1.0.0');"
+          if expected not in text:
+            raise SystemExit('Expected stable Core version oracle is missing.')
+          version_test.write_text(
+            text.replace(expected, "assert.equal(context.AIConversationCore.getVersion(), '1.0.0-issue.106.1');"),
+            encoding='utf-8', newline='')
+
+      - name: Prove historical migration fixture is unchanged
+        shell: bash
+        run: |
+          test "$(git hash-object tests/fixtures/legacy-userscript-issue-135.3.user.js)" = "44a4ab373a6515caed5527aeb19cbdff7ce91e07"
+
+      - name: Regenerate userscript through authoritative builder
+        run: node scripts/build-userscript.mjs
+
+      - name: Assert exact projected dependency identity
+        shell: bash
+        run: |
+          grep -F "\"commit\": \"$CORE_SHA\"" src/userscript-manifest.json
+          grep -F "\"git_blob_sha1\": \"$CORE_BLOB\"" src/userscript-manifest.json
+          grep -F "\"byte_length\": $CORE_BYTES" src/userscript-manifest.json
+          grep -F "BEGIN bundled AIConversationCore commit=$CORE_SHA blob=$CORE_BLOB" chatgpt-conversation-markdown-export.user.js
+          if git grep -n -F "$OLD_CORE_SHA" -- ':!*.md' ':!tests/fixtures/legacy-userscript-issue-135.3.user.js'; then
+            echo 'Stale Core commit remains outside the immutable historical fixture.' >&2
+            exit 1
+          fi
+          if git grep -n -F "$OLD_CORE_BLOB" -- ':!*.md' ':!tests/fixtures/legacy-userscript-issue-135.3.user.js'; then
+            echo 'Stale Core blob remains outside the immutable historical fixture.' >&2
+            exit 1
+          fi
+
+      - name: Verify generated userscript independently
+        run: node scripts/verify-userscript-artifact.mjs
+
+      - name: Run authoritative repository validation entry point
+        run: python scripts/repoworkflow-validate.py
+
+      - name: Validate projected workspace hygiene
+        run: git diff --check
