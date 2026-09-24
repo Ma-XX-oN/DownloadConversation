@@ -121,3 +121,11 @@ test('legacy artifact workflow remains until causal equivalence is demonstrated'
   await access(path.join(root, 'scripts/ci_contract.py'));
   await access(path.join(root, 'tests/test_ci_contract.py'));
 });
+
+test('Phase 7 cross-consumer scratch fixture cannot dirty the repository root', async () => {
+  const source = await readText('tests/phase7-cross-consumer-markdown-shape.mjs');
+  assert.doesNotMatch(source, /path\.join\(root, ['"]\.phase7-h1-filtered\.jsonl['"]\)/);
+  assert.match(source, /mkdtemp/);
+  assert.match(source, /tmpdir/);
+  assert.match(source, /rm\([^)]*recursive:\s*true[^)]*force:\s*true/s);
+});
