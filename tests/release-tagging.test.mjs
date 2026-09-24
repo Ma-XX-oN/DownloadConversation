@@ -17,7 +17,7 @@ const artifactPath = 'chatgpt-conversation-markdown-export.user.js';
 const versioningDocUrl = new URL('../docs/DEVELOPMENT-VERSIONING.md', import.meta.url);
 const ciDocUrl = new URL('../CI.md', import.meta.url);
 const ciWorkflowUrl = new URL('../.github/workflows/ci.yml', import.meta.url);
-const artifactWorkflowUrl = new URL('../.github/workflows/build-userscript-artifact.yml', import.meta.url);
+const repoWorkflowConfigUrl = new URL('../.ci/repoworkflow.json', import.meta.url);
 const requestAdapterUrl = new URL('../RepoWorkflow/repo_workflow/github_adapter.py', import.meta.url);
 const releaseScriptUrl = new URL('../scripts/release.mjs', import.meta.url);
 const runCiScriptUrl = new URL('../scripts/run-ci.mjs', import.meta.url);
@@ -76,11 +76,12 @@ test('legacy stable release plan remains main-only and atomic', () => {
   );
 });
 
-test('generated userscript remains tracked and legacy artifact publication stays available during migration', async () => {
-  const [gitignore, cycleScript, artifactWorkflow] = await Promise.all([
+test('generated userscript stays tracked while RepoWorkflow owns issue-development artifact handling', async () => {
+  const [gitignore, cycleScript, workflow, repoWorkflowConfig] = await Promise.all([
     readFile(gitignoreUrl, 'utf8'),
     readFile(cycleScriptUrl, 'utf8'),
-    readFile(artifactWorkflowUrl, 'utf8')
+    readFile(ciWorkflowUrl, 'utf8'),
+    readFile(repoWorkflowConfigUrl, 'utf8')
   ]);
 
   assert.doesNotMatch(gitignore, /^\/chatgpt-conversation-markdown-export\.user\.js$/m);
@@ -93,10 +94,11 @@ test('generated userscript remains tracked and legacy artifact publication stays
 
   assert.match(cycleScript, /build-userscript\.mjs/);
   assert.match(cycleScript, /git[\s\S]*commit[\s\S]*build\(test-cycle\): materialize/);
-  assert.match(artifactWorkflow, /test-cycle-artifact\.mjs prepare[\s\S]*--push/);
-  assert.match(artifactWorkflow, /chatgpt-conversation-markdown-export\.user\.js/);
-  assert.match(artifactWorkflow, /contents: write/);
-  assert.match(artifactWorkflow, /cancel-in-progress: true/);
+  assert.match(repoWorkflowConfig, /"generatorCommand"\s*:\s*\["node", "scripts\/build-userscript\.mjs"\]/);
+  assert.match(repoWorkflowConfig, /"verifierCommand"\s*:\s*\["node", "scripts\/verify-userscript-artifact\.mjs"\]/);
+  assert.match(repoWorkflowConfig, /"outputs"\s*:\s*\["chatgpt-conversation-markdown-export\.user\.js"\]/);
+  assert.match(workflow, /RepoWorkflow\/repo_workflow\.py materialize-artifacts/);
+  assert.match(workflow, /Configure generated-artifact commit identity/);
 });
 
 test('issue-development CI delegates request gating and finalizer owns result tags', async () => {
@@ -149,6 +151,7 @@ test('durable documentation records request, PASS, CI-FAIL, INCOMPLETE and immut
     assert.match(documentation, /INCOMPLETE/);
     assert.match(documentation, /immutable/i);
     assert.match(documentation, /complete|required.*matrix|matrix.*required/is);
+    assert.match(documentation, /RepoWorkflow\/repo_workflow\.py/);
   }
   assert.match(versioning, /generated.*tracked|tracked.*generated/is);
   assert.match(versioning, /node scripts\/release\.mjs <version>/);

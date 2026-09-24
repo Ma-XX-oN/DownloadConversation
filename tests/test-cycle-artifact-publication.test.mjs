@@ -11,7 +11,7 @@ const cycleScript = path.join(root, 'scripts', 'test-cycle-artifact.mjs');
 const runCiPath = path.join(root, 'scripts', 'run-ci.mjs');
 const environmentPath = path.join(root, 'scripts', 'ci-environment.mjs');
 const workflowPath = path.join(root, '.github', 'workflows', 'ci.yml');
-const artifactWorkflowPath = path.join(root, '.github', 'workflows', 'build-userscript-artifact.yml');
+const repoWorkflowConfigPath = path.join(root, '.ci', 'repoworkflow.json');
 const requestAdapterPath = path.join(root, 'RepoWorkflow', 'repo_workflow', 'github_adapter.py');
 const versioningDocPath = path.join(root, 'docs', 'DEVELOPMENT-VERSIONING.md');
 const ciDocPath = path.join(root, 'CI.md');
@@ -182,12 +182,12 @@ test('publish refuses to move an existing version tag to a later commit', async 
   });
 });
 
-test('artifact preparation and validation remain separate while legacy publication is retained', async () => {
-  const [runCi, environment, workflow, artifactWorkflow, requestAdapter] = await Promise.all([
+test('stable artifact path remains separate while RepoWorkflow owns issue-development lifecycle', async () => {
+  const [runCi, environment, workflow, repoWorkflowConfig, requestAdapter] = await Promise.all([
     readFile(runCiPath, 'utf8'),
     readFile(environmentPath, 'utf8'),
     readFile(workflowPath, 'utf8'),
-    readFile(artifactWorkflowPath, 'utf8'),
+    readFile(repoWorkflowConfigPath, 'utf8'),
     readFile(requestAdapterPath, 'utf8')
   ]);
 
@@ -200,6 +200,9 @@ test('artifact preparation and validation remain separate while legacy publicati
   assert.match(environment, /process\.exitCode = 2/);
   assert.match(environment, /process\.exitCode = 1/);
 
+  assert.match(repoWorkflowConfig, /"validationCommand"\s*:\s*\["python", "scripts\/repoworkflow-validate\.py"\]/);
+  assert.match(repoWorkflowConfig, /"generatorCommand"\s*:\s*\["node", "scripts\/build-userscript\.mjs"\]/);
+  assert.match(repoWorkflowConfig, /"verifierCommand"\s*:\s*\["node", "scripts\/verify-userscript-artifact\.mjs"\]/);
   assert.match(workflow, /RepoWorkflow\/repo_workflow\.py github-request/);
   assert.match(workflow, /needs\.policy\.outputs\.run_ci == 'true'/);
   assert.match(workflow, /RepoWorkflow\/repo_workflow\.py materialize-artifacts/);
@@ -208,10 +211,6 @@ test('artifact preparation and validation remain separate while legacy publicati
   assert.doesNotMatch(workflow, /ci_contract\.py/);
   assert.doesNotMatch(workflow, /test-cycle-artifact\.mjs prepare/);
   assert.doesNotMatch(workflow, /test-cycle-artifact\.mjs publish/);
-
-  assert.match(artifactWorkflow, /test-cycle-artifact\.mjs prepare[\s\S]*--push/);
-  assert.match(artifactWorkflow, /chatgpt-conversation-markdown-export\.user\.js/);
-  assert.match(artifactWorkflow, /cancel-in-progress: true/);
 });
 
 test('durable documentation requires generated artifact first and complete-matrix tagging second', async () => {
@@ -224,7 +223,9 @@ test('durable documentation requires generated artifact first and complete-matri
   assert.match(versioning, /\.ci\/run-ci-request/);
   assert.match(versioning, /CI-FAIL/);
   assert.match(versioning, /INCOMPLETE/);
+  assert.match(versioning, /RepoWorkflow\/repo_workflow\.py/);
   assert.match(ciDoc, /generated.*artifact/is);
-  assert.match(ciDoc, /required.*matrix|matrix.*required/is);
+  assert.match(ciDoc, /required.*environment|required.*matrix|matrix.*required/is);
   assert.match(ciDoc, /--tag/);
+  assert.match(ciDoc, /RepoWorkflow\/repo_workflow\.py/);
 });

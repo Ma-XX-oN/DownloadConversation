@@ -1,60 +1,83 @@
 # CI request and result contract
 
-This repository uses an explicit CI request instead of running expensive validation on every development push.
+DownloadConversation uses RepoWorkflow as the authoritative issue-development workflow engine. GitHub Actions is a thin adapter around the same repository contract that can run locally.
 
 ## Development cycle
 
 1. Work on an issue branch using `x.y.z-issue.<issue>.<iteration>`.
-2. Make ordinary source/documentation commits without requesting CI.
-3. Run focused/local checks while developing.
-4. Allow the deterministic userscript-artifact workflow to materialize and commit the generated userscript when authoritative userscript inputs change.
-5. When the exact candidate is ready, set `.ci/run-ci-request` to the authoritative development version and push that request commit.
-6. GitHub Actions validates that exact requested commit.
+2. Make ordinary source/documentation commits without requesting expensive CI.
+3. Run focused checks while developing.
+4. Keep `chatgpt-conversation-markdown-export.user.js` synchronized with the authoritative userscript sources and verify it independently.
+5. When the exact candidate is ready, set `.ci/run-ci-request` to the authoritative development version and commit that request.
+6. Run RepoWorkflow locally or push the request so the canonical GitHub adapter validates the exact candidate.
 
 Authoritative development version source: `src/userscript-header.js`.
 
-The CI request must be made only after `chatgpt-conversation-markdown-export.user.js` is current and committed. The generated-artifact workflow is the only Actions workflow allowed to write repository source-tree content, and it may change only the generated userscript artifact.
+Repository-specific workflow facts are declared in `.ci/repoworkflow.json`; GitHub runner projection is declared in `.ci/github.json`; branch ancestry is declared in `.ci/branch-policy.json`.
 
-## Local validation
+## Generated userscript artifact
 
-The same repository-owned contract used by Actions is available locally:
-
-```text
-python scripts/ci_contract.py preflight
-python scripts/ci_contract.py matrix
-python scripts/ci_contract.py run --environment <environment-id> --result <outside-repo-result.json>
-```
-
-The working tree must be a clean checkout before validation starts. Store result JSON outside the repository so finalization can also assert a clean checkout. Results record the exact commit/version plus actual OS/runtime probes.
-
-Required environment: `ubuntu-node22-python313` (Ubuntu, Node 22, Python 3.13). The committed declaration is `.ci/test-matrix.json`; every required entry must report for the same commit/version before any result tag is permitted.
-
-The validation engine is `scripts/ci-environment.mjs`. It owns the existing ordinary DownloadConversation regressions plus the pinned cross-consumer final-render parity checks. GitHub Actions invokes it through `scripts/ci_contract.py`; it is not reimplemented in workflow YAML.
-
-To aggregate result files collected from required machines/VMs/runners:
+`chatgpt-conversation-markdown-export.user.js` is a tracked deterministic generated artifact. Its generator and verifier are separate repository-owned commands:
 
 ```text
-python scripts/ci_contract.py finalize --results-dir <results-directory>
+node scripts/build-userscript.mjs
+node scripts/verify-userscript-artifact.mjs
 ```
 
-Adding `--tag` authorizes tag creation only after matrix completeness is proven. It never bypasses a missing required environment. `--push` additionally publishes that tag and requires `--tag`.
+RepoWorkflow independently enforces the declared generated-output boundary from `.ci/repoworkflow.json`. During authoritative preparation it may materialize only declared committed generated outputs; unrelated repository mutation is rejected. There is no standalone artifact-publisher workflow after RepoWorkflow adoption.
+
+## Local authoritative validation
+
+The full shared lifecycle is locally runnable:
+
+```text
+python RepoWorkflow/repo_workflow.py verify
+```
+
+This enforces repository and branch policy, the universal request/version/candidate guard, declared artifact generation plus independent verification, every locally addressable required environment, clean-checkout invariants, and PASS/FAIL/INCOMPLETE aggregation.
+
+For lower-level inspection or distributed execution, RepoWorkflow also exposes:
+
+```text
+python RepoWorkflow/repo_workflow.py preflight
+python RepoWorkflow/repo_workflow.py matrix
+python RepoWorkflow/repo_workflow.py run \
+  --environment <environment-id> \
+  --result <outside-repo-result.json>
+python RepoWorkflow/repo_workflow.py finalize \
+  --results-dir <results-directory>
+```
+
+The required DownloadConversation environment is `ubuntu-node22-python313`: Linux with Node 22 and Python 3.13. The environment and capability contract lives in `.ci/repoworkflow.json`; `.ci/github.json` maps it to `ubuntu-latest` for GitHub Actions.
+
+The repository-owned validation entry point is `scripts/repoworkflow-validate.py`. It runs DownloadConversation's validation engine in `scripts/ci-environment.mjs` plus wrapper-specific regression coverage. RepoWorkflow owns request guards, matrix lifecycle, result classification, exact-candidate mutation checks, aggregation, and terminal-tag rules.
 
 ## Result semantics
 
-- **PASS**: every required environment reported and all required validation passed. With `--tag`, create `v<version>`.
-- **FAIL**: every required environment reported, at least one genuine validation gate failed, and no required gate was incomplete. With `--tag`, create `v<version>-CI-FAIL`.
-- **INCOMPLETE**: a required environment/result is absent or a prerequisite such as network, credentials, package availability, or platform/runtime availability prevented valid execution. Emit warnings and create no tag.
+- **PASS**: every required environment reported and all required validation passed. With tagging enabled, create `v<version>`.
+- **FAIL**: every required environment reported, at least one genuine executed validation gate failed, and no required gate was incomplete. With tagging enabled, create `v<version>-CI-FAIL`.
+- **INCOMPLETE**: a required environment/result is absent or infrastructure, credentials, network/package availability, runner/platform/runtime availability, or another prerequisite prevented valid execution. Create no terminal result tag.
 
 PASS and CI-FAIL tags are immutable result landmarks. Once either result tag exists for an issue iteration, the opposite result tag cannot be created and source changes require the next issue iteration.
 
-A GitHub runner/service failure is not a source CI failure. Re-run the existing workflow/jobs against the same commit; do not bump the issue iteration merely to retry infrastructure.
+A GitHub runner/service failure is not a source CI failure. Retry the same commit rather than consuming a new issue iteration merely for infrastructure failure.
 
-## Gate behaviour
+## GitHub adapter
 
-Independent validation gates continue after another independent gate fails, so one RED does not hide the remaining initial failure surface. Cross-consumer network/runtime setup that cannot execute is INCOMPLETE and skips only gates that depend on that setup.
+`.github/workflows/ci.yml` must remain byte-for-byte equal to the pinned RepoWorkflow canonical GitHub adapter. Ordinary pushes run only the cheap policy/request-detection phase. Updating `.ci/run-ci-request` to the current development version explicitly enables preparation, required environment validation, result collection, and finalization.
 
-GitHub workflows are orchestration only: checkout, runtime setup, invoking repository scripts, collecting result artifacts, and final result tagging. Validation jobs have read-only repository permission; only finalization may write tags. The deterministic generated userscript publisher is the narrowly allow-listed repository-write exception.
+Validation jobs are read-only. Finalization alone has tag-write permission. The only repository-content write boundary is explicitly declared committed generated artifacts during preparation; RepoWorkflow rejects unrelated changes.
+
+## Result tagging
+
+The canonical finalizer aggregates structured result records for the exact tested commit/version. `--tag` authorizes terminal-tag creation only after completeness is established, and `--push` additionally publishes that tag.
+
+```text
+PASS          -> v<version>
+FAIL          -> v<version>-CI-FAIL
+INCOMPLETE    -> no tag
+```
 
 ## Stable releases
 
-Stable release publication remains separate from issue-development CI. `node scripts/run-ci.mjs` validates locally without publication. `node scripts/run-ci.mjs --tag` explicitly authorizes stable test-cycle publication, and `scripts/release.mjs` passes that flag only after stable-main release eligibility has been verified.
+Stable release publication remains separate from issue-development RepoWorkflow adoption. `node scripts/run-ci.mjs` is the local stable-release-oriented wrapper. It prepares the test-cycle artifact and runs repository validation without publication by default; `node scripts/run-ci.mjs --tag` explicitly authorizes stable test-cycle publication. `scripts/release.mjs` invokes that stable path only after stable-main release eligibility has been verified.
