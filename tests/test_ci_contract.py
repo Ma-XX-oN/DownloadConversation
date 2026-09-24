@@ -9,10 +9,19 @@ import unittest
 
 ROOT = Path(__file__).resolve().parents[1]
 SCRIPT = ROOT / "scripts" / "ci_contract.py"
+VALIDATOR = ROOT / "scripts" / "repoworkflow-validate.py"
 
 
 def load_module():
   spec = importlib.util.spec_from_file_location("ci_contract", SCRIPT)
+  module = importlib.util.module_from_spec(spec)
+  assert spec.loader is not None
+  spec.loader.exec_module(module)
+  return module
+
+
+def load_validator():
+  spec = importlib.util.spec_from_file_location("repoworkflow_validate", VALIDATOR)
   module = importlib.util.module_from_spec(spec)
   assert spec.loader is not None
   spec.loader.exec_module(module)
@@ -62,8 +71,8 @@ class CiContractTests(unittest.TestCase):
     incomplete, tag, _ = self.ci.evaluate_results(
       config,
       [
-        {"schema": 1, "environment": "linux", "version": "1.0.0-issue.7.1", "commit": "abc", "status": "PASS"},
-        {"schema": 1, "environment": "windows", "version": "1.0.0-issue.7.1", "commit": "abc", "status": "INCOMPLETE"},
+        {"schema": 1, "environment": "linux", "required": True, "version": "1.0.0-issue.7.1", "commit": "abc", "status": "PASS"},
+        {"schema": 1, "environment": "windows", "required": True, "version": "1.0.0-issue.7.1", "commit": "abc", "status": "INCOMPLETE"},
       ],
       "1.0.0-issue.7.1",
       "abc",
@@ -127,6 +136,16 @@ class CiContractTests(unittest.TestCase):
       self.ci.create_tag(root, version, f"v{version}-CI-FAIL", sha, False)
       with self.assertRaises(self.ci.CiContractError):
         self.ci.create_tag(root, version, f"v{version}", sha, False)
+
+  def test_repoworkflow_validation_does_not_write_python_bytecode(self):
+    validator = load_validator()
+    with tempfile.TemporaryDirectory() as td:
+      root = Path(td)
+      (root / "probe.py").write_text("VALUE = 1\n", encoding="utf-8")
+      validator.ROOT = root
+      rc = validator.run([sys.executable, "-c", "import probe"])
+      self.assertEqual(0, rc)
+      self.assertFalse((root / "__pycache__").exists())
 
   def test_workflow_delegates_request_gating_to_pinned_repoworkflow(self):
     workflow = (ROOT / ".github" / "workflows" / "ci.yml").read_text(encoding="utf-8")
