@@ -104,7 +104,13 @@ test('version and validation hooks are repository-owned and present', async () =
     stdio: 'pipe'
   });
   assert.equal(result.status, 0, result.stderr || result.stdout);
-  assert.equal(result.stdout.trim(), '1.5.0-issue.165.3');
+
+  const header = await readText('src/userscript-header.js');
+  const versions = [...header.matchAll(/^\/\/\s*@version\s+(\S+)\s*$/gm)]
+    .map(match => match[1]);
+  assert.equal(versions.length, 1);
+  assert.match(versions[0], /^\d+\.\d+\.\d+-issue\.\d+\.\d+$/);
+  assert.equal(result.stdout.trim(), versions[0]);
 });
 
 test('generated userscript has an independent repository-owned verifier', async () => {
