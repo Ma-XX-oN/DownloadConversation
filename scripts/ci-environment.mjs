@@ -19,6 +19,7 @@ const pythonCommand = process.env.PYTHON ?? 'python';
 const ordinaryStages = [
   ['Modular userscript build regression', nodeCommand, ['--test', 'tests/modular-userscript-build.test.mjs', 'tests/development-version-source.test.mjs']],
   ['CI test inventory regression', nodeCommand, ['--test', 'tests/ci-test-inventory.test.mjs']],
+  ['RepoWorkflow adoption contract', nodeCommand, ['--test', 'tests/repoworkflow-adoption.test.mjs']],
   ['Development branch/version identity', nodeCommand, ['scripts/check-development-version.mjs']],
   ['Production JSDoc coverage', nodeCommand, ['scripts/check-jsdoc.mjs']],
   ['JavaScript syntax', nodeCommand, ['--check', 'chatgpt-conversation-markdown-export.user.js']],
