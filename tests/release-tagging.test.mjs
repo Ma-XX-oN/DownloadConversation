@@ -18,6 +18,7 @@ const versioningDocUrl = new URL('../docs/DEVELOPMENT-VERSIONING.md', import.met
 const ciDocUrl = new URL('../CI.md', import.meta.url);
 const ciWorkflowUrl = new URL('../.github/workflows/ci.yml', import.meta.url);
 const artifactWorkflowUrl = new URL('../.github/workflows/build-userscript-artifact.yml', import.meta.url);
+const requestAdapterUrl = new URL('../RepoWorkflow/repo_workflow/github_adapter.py', import.meta.url);
 const releaseScriptUrl = new URL('../scripts/release.mjs', import.meta.url);
 const runCiScriptUrl = new URL('../scripts/run-ci.mjs', import.meta.url);
 const cycleScriptUrl = new URL('../scripts/test-cycle-artifact.mjs', import.meta.url);
@@ -75,7 +76,7 @@ test('legacy stable release plan remains main-only and atomic', () => {
   );
 });
 
-test('generated userscript remains tracked and only the artifact workflow may publish its bytes', async () => {
+test('generated userscript remains tracked and legacy artifact publication stays available during migration', async () => {
   const [gitignore, cycleScript, artifactWorkflow] = await Promise.all([
     readFile(gitignoreUrl, 'utf8'),
     readFile(cycleScriptUrl, 'utf8'),
@@ -98,14 +99,20 @@ test('generated userscript remains tracked and only the artifact workflow may pu
   assert.match(artifactWorkflow, /cancel-in-progress: true/);
 });
 
-test('issue-development CI is request-gated and finalizer owns result tags', async () => {
-  const workflow = await readFile(ciWorkflowUrl, 'utf8');
-  assert.match(workflow, /paths:\s*\n\s*- '\.ci\/run-ci-request'/);
-  assert.doesNotMatch(workflow, /pull_request:/);
+test('issue-development CI delegates request gating and finalizer owns result tags', async () => {
+  const [workflow, requestAdapter] = await Promise.all([
+    readFile(ciWorkflowUrl, 'utf8'),
+    readFile(requestAdapterUrl, 'utf8')
+  ]);
+  assert.match(workflow, /pull_request:/);
+  assert.match(workflow, /RepoWorkflow\/repo_workflow\.py github-request/);
+  assert.match(workflow, /needs\.policy\.outputs\.run_ci == 'true'/);
+  assert.match(requestAdapter, /\.ci\/run-ci-request/);
   assert.match(workflow, /fail-fast: false/);
-  assert.match(workflow, /python scripts\/ci_contract\.py preflight/);
-  assert.match(workflow, /python scripts\/ci_contract\.py run/);
-  assert.match(workflow, /python scripts\/ci_contract\.py finalize/);
+  assert.match(workflow, /RepoWorkflow\/repo_workflow\.py preflight/);
+  assert.match(workflow, /RepoWorkflow\/repo_workflow\.py run/);
+  assert.match(workflow, /RepoWorkflow\/repo_workflow\.py finalize/);
+  assert.doesNotMatch(workflow, /ci_contract\.py/);
   assert.match(workflow, /--tag --push/);
   assert.match(workflow, /finalize:[\s\S]*permissions:[\s\S]*contents: write/);
   assert.doesNotMatch(workflow, /prepare-test-cycle:/);
