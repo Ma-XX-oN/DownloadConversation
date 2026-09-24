@@ -12,6 +12,7 @@ const runCiPath = path.join(root, 'scripts', 'run-ci.mjs');
 const environmentPath = path.join(root, 'scripts', 'ci-environment.mjs');
 const workflowPath = path.join(root, '.github', 'workflows', 'ci.yml');
 const artifactWorkflowPath = path.join(root, '.github', 'workflows', 'build-userscript-artifact.yml');
+const requestAdapterPath = path.join(root, 'RepoWorkflow', 'repo_workflow', 'github_adapter.py');
 const versioningDocPath = path.join(root, 'docs', 'DEVELOPMENT-VERSIONING.md');
 const ciDocPath = path.join(root, 'CI.md');
 const artifactPath = 'chatgpt-conversation-markdown-export.user.js';
@@ -181,12 +182,13 @@ test('publish refuses to move an existing version tag to a later commit', async 
   });
 });
 
-test('artifact publication and validation are separate repository-owned paths', async () => {
-  const [runCi, environment, workflow, artifactWorkflow] = await Promise.all([
+test('artifact preparation and validation remain separate while legacy publication is retained', async () => {
+  const [runCi, environment, workflow, artifactWorkflow, requestAdapter] = await Promise.all([
     readFile(runCiPath, 'utf8'),
     readFile(environmentPath, 'utf8'),
     readFile(workflowPath, 'utf8'),
-    readFile(artifactWorkflowPath, 'utf8')
+    readFile(artifactWorkflowPath, 'utf8'),
+    readFile(requestAdapterPath, 'utf8')
   ]);
 
   assert.match(runCi, /test-cycle-artifact\.mjs', 'prepare'/);
@@ -198,8 +200,12 @@ test('artifact publication and validation are separate repository-owned paths', 
   assert.match(environment, /process\.exitCode = 2/);
   assert.match(environment, /process\.exitCode = 1/);
 
-  assert.match(workflow, /\.ci\/run-ci-request/);
-  assert.match(workflow, /ci_contract\.py run/);
+  assert.match(workflow, /RepoWorkflow\/repo_workflow\.py github-request/);
+  assert.match(workflow, /needs\.policy\.outputs\.run_ci == 'true'/);
+  assert.match(workflow, /RepoWorkflow\/repo_workflow\.py materialize-artifacts/);
+  assert.match(workflow, /RepoWorkflow\/repo_workflow\.py run/);
+  assert.match(requestAdapter, /\.ci\/run-ci-request/);
+  assert.doesNotMatch(workflow, /ci_contract\.py/);
   assert.doesNotMatch(workflow, /test-cycle-artifact\.mjs prepare/);
   assert.doesNotMatch(workflow, /test-cycle-artifact\.mjs publish/);
 
