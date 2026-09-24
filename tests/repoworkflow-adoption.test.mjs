@@ -6,7 +6,7 @@ import test from 'node:test';
 import { fileURLToPath } from 'node:url';
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
-const repoWorkflowSha = '262a3a214a252d5cf7d20aea280576ab3cf423b5';
+const repoWorkflowSha = '120600d5cb9fed9afcd6b89365af4860bc67efc7';
 
 async function readText(relativePath) {
   return readFile(path.join(root, relativePath), 'utf8');
@@ -26,7 +26,7 @@ function git(...args) {
   return result.stdout.trim();
 }
 
-test('RepoWorkflow is a canonical submodule pinned to the verified issue-1.4 commit', async () => {
+test('RepoWorkflow is a canonical submodule pinned to the verified issue-1.5 commit', async () => {
   const modules = await readText('.gitmodules');
   assert.match(modules, /\[submodule "RepoWorkflow"\]/);
   assert.match(modules, /path = RepoWorkflow/);
@@ -101,7 +101,7 @@ test('version and validation hooks are repository-owned and present', async () =
     stdio: 'pipe'
   });
   assert.equal(result.status, 0, result.stderr || result.stdout);
-  assert.equal(result.stdout.trim(), '1.5.0-issue.165.1');
+  assert.equal(result.stdout.trim(), '1.5.0-issue.165.2');
 });
 
 test('generated userscript has an independent repository-owned verifier', async () => {

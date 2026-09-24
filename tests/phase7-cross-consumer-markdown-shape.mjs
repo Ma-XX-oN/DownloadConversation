@@ -1,5 +1,6 @@
 import assert from 'node:assert/strict';
-import { readFile, writeFile } from 'node:fs/promises';
+import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import { spawnSync } from 'node:child_process';
@@ -81,23 +82,28 @@ async function directCoreMarkdown() {
 }
 
 async function aiTranscriptMarkdown() {
-  const fixturePath = path.join(root, '.phase7-h1-filtered.jsonl');
-  await writeFile(fixturePath, `${records.map(record => JSON.stringify(record)).join('\n')}\n`, 'utf8');
-  const script = path.join(aigmRoot, 'scripts', 'AI-transcript.py');
-  const result = spawnSync(
-    process.env.PYTHON ?? 'python',
-    [script, '--file', fixturePath, '--color', 'never'],
-    {
-      cwd: aigmRoot,
-      env: { ...process.env, AI_CONVERSATION_CORE: aigmCoreRoot },
-      encoding: 'utf8'
-    }
-  );
-  assert.equal(result.status, 0, `AI-transcript.py failed: ${result.stderr}`);
-  const stdout = restorePythonLogicalStdout(result.stdout);
-  const start = stdout.indexOf('## ');
-  assert.ok(start >= 0, 'AI-transcript.py output contains no transcript heading.');
-  return stdout.slice(start);
+  const temporaryRoot = await mkdtemp(path.join(tmpdir(), 'downloadconversation-phase7-h1-'));
+  try {
+    const fixturePath = path.join(temporaryRoot, 'filtered.jsonl');
+    await writeFile(fixturePath, `${records.map(record => JSON.stringify(record)).join('\n')}\n`, 'utf8');
+    const script = path.join(aigmRoot, 'scripts', 'AI-transcript.py');
+    const result = spawnSync(
+      process.env.PYTHON ?? 'python',
+      [script, '--file', fixturePath, '--color', 'never'],
+      {
+        cwd: aigmRoot,
+        env: { ...process.env, AI_CONVERSATION_CORE: aigmCoreRoot },
+        encoding: 'utf8'
+      }
+    );
+    assert.equal(result.status, 0, `AI-transcript.py failed: ${result.stderr}`);
+    const stdout = restorePythonLogicalStdout(result.stdout);
+    const start = stdout.indexOf('## ');
+    assert.ok(start >= 0, 'AI-transcript.py output contains no transcript heading.');
+    return stdout.slice(start);
+  } finally {
+    await rm(temporaryRoot, { recursive: true, force: true });
+  }
 }
 
 async function downloadConversationMarkdown() {

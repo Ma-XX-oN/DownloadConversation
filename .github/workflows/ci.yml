@@ -177,6 +177,11 @@ jobs:
           pattern: repoworkflow-result-*
           path: ${{ runner.temp }}/repoworkflow-results
           merge-multiple: true
+      - name: Configure result-tag identity
+        shell: bash
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
       - name: Finalize authoritative result
         run: >-
           python RepoWorkflow/repo_workflow.py finalize
