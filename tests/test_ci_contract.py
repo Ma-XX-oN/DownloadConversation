@@ -128,10 +128,16 @@ class CiContractTests(unittest.TestCase):
       with self.assertRaises(self.ci.CiContractError):
         self.ci.create_tag(root, version, f"v{version}", sha, False)
 
-  def test_workflow_is_gated_by_request_file(self):
+  def test_workflow_delegates_request_gating_to_pinned_repoworkflow(self):
     workflow = (ROOT / ".github" / "workflows" / "ci.yml").read_text(encoding="utf-8")
-    self.assertIn(".ci/run-ci-request", workflow)
-    self.assertNotIn("pull_request:", workflow)
+    adapter = (
+      ROOT / "RepoWorkflow" / "repo_workflow" / "github_adapter.py"
+    ).read_text(encoding="utf-8")
+    self.assertIn("RepoWorkflow/repo_workflow.py github-request", workflow)
+    self.assertIn("pull_request:", workflow)
+    self.assertIn("needs.policy.outputs.run_ci == 'true'", workflow)
+    self.assertIn(".ci/run-ci-request", adapter)
+    self.assertNotIn("scripts/ci_contract.py", workflow)
 
 
 if __name__ == "__main__":
