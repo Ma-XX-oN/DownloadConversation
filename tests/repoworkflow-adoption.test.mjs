@@ -16,6 +16,10 @@ async function readJson(relativePath) {
   return JSON.parse(await readText(relativePath));
 }
 
+async function assertMissing(relativePath) {
+  await assert.rejects(access(path.join(root, relativePath)));
+}
+
 function git(...args) {
   const result = spawnSync('git', args, {
     cwd: root,
@@ -71,8 +75,7 @@ test('GitHub runner projection and branch ancestry are repository facts', async 
     prepareRunner: 'ubuntu-latest',
     runners: {
       'ubuntu-node22-python313': 'ubuntu-latest'
-    },
-    migrationWorkflows: ['build-userscript-artifact.yml']
+    }
   });
   assert.deepEqual(await readJson('.ci/branch-policy.json'), {
     schema: 1,
@@ -101,7 +104,7 @@ test('version and validation hooks are repository-owned and present', async () =
     stdio: 'pipe'
   });
   assert.equal(result.status, 0, result.stderr || result.stdout);
-  assert.equal(result.stdout.trim(), '1.5.0-issue.165.2');
+  assert.equal(result.stdout.trim(), '1.5.0-issue.165.3');
 });
 
 test('generated userscript has an independent repository-owned verifier', async () => {
@@ -116,10 +119,23 @@ test('GitHub CI is the canonical RepoWorkflow adapter byte for byte', async () =
   assert.equal(actual, canonical);
 });
 
-test('legacy artifact workflow remains until causal equivalence is demonstrated', async () => {
-  await access(path.join(root, '.github/workflows/build-userscript-artifact.yml'));
-  await access(path.join(root, 'scripts/ci_contract.py'));
-  await access(path.join(root, 'tests/test_ci_contract.py'));
+test('superseded standalone issue-development workflow engine is absent after equivalence', async () => {
+  for (const relativePath of [
+    '.github/workflows/build-userscript-artifact.yml',
+    '.ci/ci-config.json',
+    '.ci/test-matrix.json',
+    'scripts/ci_contract.py',
+    'tests/test_ci_contract.py'
+  ]) {
+    await assertMissing(relativePath);
+  }
+
+  const ciDoc = await readText('CI.md');
+  assert.match(ciDoc, /RepoWorkflow\/repo_workflow\.py/);
+  assert.match(ciDoc, /\.ci\/repoworkflow\.json/);
+  assert.doesNotMatch(ciDoc, /scripts\/ci_contract\.py/);
+  assert.doesNotMatch(ciDoc, /\.ci\/test-matrix\.json/);
+  assert.doesNotMatch(ciDoc, /build-userscript-artifact\.yml/);
 });
 
 test('Phase 7 cross-consumer scratch fixture cannot dirty the repository root', async () => {
