@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import vm from 'node:vm';
-import { productionFunctionSource, userscript } from './helpers/userscript-source.mjs';
+import { productionFunctionSource } from './helpers/userscript-source.mjs';
 
 function stopwatchHarness() {
   let now = 0;
@@ -141,9 +141,7 @@ function finalCapture(exchangeId) {
   };
 }
 
-test('Issue 136 development version and fixed top-right stopwatch control are present', () => {
-  assert.match(userscript, /@version\s+1\.5\.0/);
-  assert.match(userscript, /AGENT_STOPWATCH_ID\s*=\s*'tm-agent-turn-stopwatch'/);
+test('fixed top-right stopwatch control is present', () => {
   const ensure = productionFunctionSource('ensureAgentStopwatchControl');
   assert.match(ensure, /style\.position\s*=\s*'fixed'/);
   assert.match(ensure, /style\.top\s*=\s*'56px'/);

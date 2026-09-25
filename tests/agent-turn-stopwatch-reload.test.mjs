@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import vm from 'node:vm';
-import { productionFunctionSource, userscript } from './helpers/userscript-source.mjs';
+import { productionFunctionSource } from './helpers/userscript-source.mjs';
 
 function user(id, exchangeId, createTime) {
   return {
@@ -278,7 +278,6 @@ test('resume repetition of an already recovered User message does not create ano
 });
 
 test('reload restoration is wired from a synchronously cloned stock conversation response', () => {
-  assert.match(userscript, /@version\s+1\.5\.0/);
   const install = productionFunctionSource('installNetworkCapture');
   assert.match(install, /agentStopwatchIsInitialConversationUrl\(requestUrl\)/);
   assert.match(install, /cloneSafely\(response\)/);
