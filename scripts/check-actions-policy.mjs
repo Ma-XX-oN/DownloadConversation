@@ -18,7 +18,10 @@ const allowedWorkflows = new Set([
 
 const approvedExternalActions = new Set([
   'actions/checkout@v4',
+  'actions/setup-python@v5',
+  'actions/setup-dotnet@v4',
   'actions/setup-node@v4',
+  'actions/download-artifact@v4',
 ]);
 
 const approvedWriteScripts = new Set([
@@ -28,9 +31,11 @@ const approvedWriteScripts = new Set([
 const approvedWriteCommands = [
   /node\s+scripts\/test-cycle-artifact\.mjs\s+prepare\b[^\n]*\s--push\b/,
   /node\s+scripts\/test-cycle-artifact\.mjs\s+publish\b/,
+  /python\s+RepoWorkflow\/repo_workflow\.py\s+materialize-artifacts\b/,
+  /python\s+RepoWorkflow\/repo_workflow\.py\s+(?:stable-)?finalize\b[\s\S]*--tag\s+--push\b/,
 ];
 
-const forbiddenDirectMutations = [
+const directMutationPatterns = [
   /\bgit\s+(?:add|commit|push)\b/,
   /\bgh\s+api\b[^\n]*(?:--method|-X)\s+(?:POST|PUT|PATCH|DELETE)\b/i,
   /\bcurl\b[^\n]*(?:-X|--request)\s+(?:POST|PUT|PATCH|DELETE)\b/i,
@@ -85,10 +90,26 @@ function jobContentsWrite(lines) {
   return false;
 }
 
+function approvedDirectMutation(line, jobText) {
+  const trimmed = line.trim();
+  return /^git push origin "HEAD:\$\{GITHUB_REF_NAME\}"$/.test(trimmed)
+    && /python\s+RepoWorkflow\/repo_workflow\.py\s+materialize-artifacts\b/.test(jobText);
+}
+
+function approvedPushArgument(line, jobText) {
+  if (/node\s+scripts\/test-cycle-artifact\.mjs\s+prepare\b[^\n]*\s--push\b/.test(line)) {
+    return true;
+  }
+  return /--tag\s+--push\b/.test(line)
+    && /python\s+RepoWorkflow\/repo_workflow\.py\s+(?:stable-)?finalize\b/.test(jobText);
+}
+
 function validateWriteJob(relativePath, jobName, jobText) {
-  for (const pattern of forbiddenDirectMutations) {
-    if (pattern.test(jobText)) {
-      fail(`${relativePath} job ${jobName} contains direct repository mutation command ${pattern}`);
+  for (const line of jobText.split(/\r?\n/)) {
+    for (const pattern of directMutationPatterns) {
+      if (pattern.test(line) && !approvedDirectMutation(line, jobText)) {
+        fail(`${relativePath} job ${jobName} contains direct repository mutation command ${pattern}`);
+      }
     }
   }
 
@@ -110,7 +131,7 @@ function validateWriteJob(relativePath, jobName, jobText) {
 
   const pushLines = jobText.split(/\r?\n/).filter((line) => /\s--push\b/.test(line));
   for (const line of pushLines) {
-    if (!approvedWriteCommands[0].test(line)) {
+    if (!approvedPushArgument(line, jobText)) {
       fail(`${relativePath} job ${jobName} contains an unapproved --push command: ${line.trim()}`);
     }
   }

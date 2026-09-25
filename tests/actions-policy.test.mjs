@@ -31,6 +31,22 @@ test('accepts permanent CI using only the approved deterministic write path', ()
   assert.equal(result.status, 0, result.stderr);
 });
 
+test('accepts canonical RepoWorkflow artifact publication boundary', () => {
+  const root = makeRoot({
+    'ci.yml': `name: CI\njobs:\n  prepare:\n    permissions:\n      contents: write\n    steps:\n      - uses: actions/checkout@v4\n      - uses: actions/setup-python@v5\n      - uses: actions/setup-dotnet@v4\n      - uses: actions/setup-node@v4\n      - run: |\n          python RepoWorkflow/repo_workflow.py materialize-artifacts --commit --result result.json\n          git push origin "HEAD:\${GITHUB_REF_NAME}"\n`,
+  });
+  const result = run(root);
+  assert.equal(result.status, 0, result.stderr);
+});
+
+test('accepts canonical RepoWorkflow terminal-tag publication boundary', () => {
+  const root = makeRoot({
+    'ci.yml': `name: CI\njobs:\n  finalize:\n    permissions:\n      contents: write\n    steps:\n      - uses: actions/checkout@v4\n      - uses: actions/setup-python@v5\n      - uses: actions/download-artifact@v4\n      - run: python RepoWorkflow/repo_workflow.py finalize --results-dir results --expected-sha abc --tag --push\n`,
+  });
+  const result = run(root);
+  assert.equal(result.status, 0, result.stderr);
+});
+
 test('accepts the dedicated generated-artifact workflow with top-level write permission', () => {
   const root = makeRoot({
     'ci.yml': 'name: CI\njobs:\n  test:\n    steps: []\n',
@@ -60,6 +76,15 @@ test('rejects any additional workflow even if it is read-only', () => {
 test('rejects direct git push from a write-capable permanent job', () => {
   const root = makeRoot({
     'ci.yml': `name: CI\njobs:\n  prepare:\n    permissions:\n      contents: write\n    steps:\n      - uses: actions/checkout@v4\n      - run: node scripts/test-cycle-artifact.mjs prepare --branch x --push\n      - run: git push origin HEAD\n`,
+  });
+  const result = run(root);
+  assert.notEqual(result.status, 0);
+  assert.match(result.stderr, /direct repository mutation command/);
+});
+
+test('rejects canonical-looking branch push without RepoWorkflow materialization', () => {
+  const root = makeRoot({
+    'ci.yml': `name: CI\njobs:\n  prepare:\n    permissions:\n      contents: write\n    steps:\n      - uses: actions/checkout@v4\n      - run: node scripts/test-cycle-artifact.mjs publish\n      - run: git push origin "HEAD:\${GITHUB_REF_NAME}"\n`,
   });
   const result = run(root);
   assert.notEqual(result.status, 0);
