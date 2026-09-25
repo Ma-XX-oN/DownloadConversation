@@ -182,7 +182,7 @@ test('publish refuses to move an existing version tag to a later commit', async 
   });
 });
 
-test('stable artifact path remains separate while RepoWorkflow owns issue-development lifecycle', async () => {
+test('stable artifact path remains separate while RepoWorkflow owns shared lifecycle', async () => {
   const [runCi, environment, workflow, repoWorkflowConfig, requestAdapter] = await Promise.all([
     readFile(runCiPath, 'utf8'),
     readFile(environmentPath, 'utf8'),
@@ -203,10 +203,14 @@ test('stable artifact path remains separate while RepoWorkflow owns issue-develo
   assert.match(repoWorkflowConfig, /"validationCommand"\s*:\s*\["python", "scripts\/repoworkflow-validate\.py"\]/);
   assert.match(repoWorkflowConfig, /"generatorCommand"\s*:\s*\["node", "scripts\/build-userscript\.mjs"\]/);
   assert.match(repoWorkflowConfig, /"verifierCommand"\s*:\s*\["node", "scripts\/verify-userscript-artifact\.mjs"\]/);
-  assert.match(workflow, /RepoWorkflow\/repo_workflow\.py github-request/);
-  assert.match(workflow, /needs\.policy\.outputs\.run_ci == 'true'/);
+  assert.match(workflow, /RepoWorkflow\/repo_workflow\.py github-mode/);
+  assert.match(workflow, /needs\.policy\.outputs\.mode != 'none'/);
   assert.match(workflow, /RepoWorkflow\/repo_workflow\.py materialize-artifacts/);
+  assert.match(workflow, /materialize-artifacts --stable/);
+  assert.match(workflow, /RepoWorkflow\/repo_workflow\.py stable-run/);
   assert.match(workflow, /RepoWorkflow\/repo_workflow\.py run/);
+  assert.match(workflow, /RepoWorkflow\/repo_workflow\.py stable-finalize/);
+  assert.match(workflow, /RepoWorkflow\/repo_workflow\.py finalize/);
   assert.match(requestAdapter, /\.ci\/run-ci-request/);
   assert.doesNotMatch(workflow, /ci_contract\.py/);
   assert.doesNotMatch(workflow, /test-cycle-artifact\.mjs prepare/);
