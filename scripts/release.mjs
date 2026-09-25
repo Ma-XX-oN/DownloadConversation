@@ -39,11 +39,11 @@ async function requestedStableVersion(releaseArgument) {
 }
 
 /**
- * Runs the unified test-cycle path for stable main and independently verifies its tag.
+ * Runs the repository-owned stable validation path and explicitly publishes its tag.
  *
- * `scripts/run-ci.mjs` owns generated-artifact materialization, the complete test
- * cycle, and post-success publication of the exact tested commit under `v<version>`.
- * This wrapper adds only stable-main eligibility and the independent stable-tag guard.
+ * Issue-development CI uses `scripts/ci_contract.py` and complete-matrix result
+ * finalization. Stable main releases retain this wrapper, but publication now
+ * requires the explicit `--tag` authorization passed to `scripts/run-ci.mjs`.
  *
  * @param {string} version - Validated plain stable semantic version.
  * @returns {Promise<void>}
@@ -54,10 +54,10 @@ async function publishStableRelease(version) {
     throw new Error(`Stable release publication requires branch main, got ${branch || '<detached>'}.`);
   }
 
-  run(process.execPath, ['scripts/run-ci.mjs']);
+  run(process.execPath, ['scripts/run-ci.mjs', '--tag']);
   git(['fetch', '--force', '--tags']);
   run(process.execPath, ['scripts/check-release-tag.mjs', '--branch', 'main']);
-  console.log(`Verified stable release v${version} through the unified test-cycle publisher.`);
+  console.log(`Verified stable release v${version} through the repository-owned test path.`);
 }
 
 /** Release version argument supplied explicitly or derived from authoritative stable source. */

@@ -11,6 +11,8 @@ import {
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 
+class InfrastructureError extends Error {}
+
 function parseArguments(argv) {
   let check = false;
   let output = null;
@@ -32,7 +34,15 @@ function parseArguments(argv) {
 }
 
 async function fetchPinnedDependency(dependency) {
-  const response = await fetch(dependency.url, { redirect: 'follow' });
+  let response;
+  try {
+    response = await fetch(dependency.url, { redirect: 'follow' });
+  } catch (error) {
+    const detail = error instanceof Error ? error.message : String(error);
+    throw new InfrastructureError(
+      `Could not reach pinned ${dependency.name} dependency: ${detail}`
+    );
+  }
   if (!response.ok) {
     throw new Error(
       `Could not fetch pinned ${dependency.name} dependency: HTTP ${response.status} ${response.statusText}.`
@@ -43,35 +53,44 @@ async function fetchPinnedDependency(dependency) {
   return { manifest: dependency, content };
 }
 
-const args = parseArguments(process.argv.slice(2));
-const manifest = await readUserscriptManifest(root);
-const outputPath = path.resolve(root, args.output ?? manifest.generated_artifact);
-const header = await readUserscriptHeader(root, manifest);
-const source = await readDownloadConversationSource(root, manifest);
-const dependencies = [];
-for (const dependency of manifest.dependencies) {
-  dependencies.push(await fetchPinnedDependency(dependency));
-}
-const built = assembleUserscript(header, dependencies, source);
+async function main() {
+  const args = parseArguments(process.argv.slice(2));
+  const manifest = await readUserscriptManifest(root);
+  const outputPath = path.resolve(root, args.output ?? manifest.generated_artifact);
+  const header = await readUserscriptHeader(root, manifest);
+  const source = await readDownloadConversationSource(root, manifest);
+  const dependencies = [];
+  for (const dependency of manifest.dependencies) {
+    dependencies.push(await fetchPinnedDependency(dependency));
+  }
+  const built = assembleUserscript(header, dependencies, source);
 
-if (args.check) {
-  let existing;
-  try {
-    existing = await readFile(outputPath, 'utf8');
-  } catch (error) {
-    if (error?.code === 'ENOENT') {
-      throw new Error(`Generated userscript is missing: ${path.relative(root, outputPath)}`);
+  if (args.check) {
+    let existing;
+    try {
+      existing = await readFile(outputPath, 'utf8');
+    } catch (error) {
+      if (error?.code === 'ENOENT') {
+        throw new Error(`Generated userscript is missing: ${path.relative(root, outputPath)}`);
+      }
+      throw error;
     }
-    throw error;
+    if (existing !== built) {
+      throw new Error(
+        `Generated userscript is stale: ${path.relative(root, outputPath)}. Run node scripts/build-userscript.mjs.`
+      );
+    }
+    console.log(`Generated userscript is current: ${path.relative(root, outputPath)}`);
+  } else {
+    await mkdir(path.dirname(outputPath), { recursive: true });
+    await writeFile(outputPath, built, 'utf8');
+    console.log(`Built ${path.relative(root, outputPath)} (${Buffer.byteLength(built, 'utf8')} bytes).`);
   }
-  if (existing !== built) {
-    throw new Error(
-      `Generated userscript is stale: ${path.relative(root, outputPath)}. Run node scripts/build-userscript.mjs.`
-    );
-  }
-  console.log(`Generated userscript is current: ${path.relative(root, outputPath)}`);
-} else {
-  await mkdir(path.dirname(outputPath), { recursive: true });
-  await writeFile(outputPath, built, 'utf8');
-  console.log(`Built ${path.relative(root, outputPath)} (${Buffer.byteLength(built, 'utf8')} bytes).`);
+}
+
+try {
+  await main();
+} catch (error) {
+  console.error(error instanceof Error ? error.message : String(error));
+  process.exitCode = error instanceof InfrastructureError ? 2 : 1;
 }

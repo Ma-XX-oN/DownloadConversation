@@ -12,6 +12,8 @@ const VERSION_PATTERN = /^(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)(?:-issue\.([1
 /** Unique userscript metadata version-line matcher. */
 const VERSION_LINE_PATTERN = /^\/\/\s*@version\s+(\S+)\s*$/gm;
 
+class InfrastructureError extends Error {}
+
 /**
  * Runs one child process from the repository working directory.
  *
@@ -174,7 +176,14 @@ async function artifactVersion() {
  * @returns {void}
  */
 function runBuild(check) {
-  run(process.execPath, check ? [BUILD_SCRIPT, '--check'] : [BUILD_SCRIPT]);
+  const args = check ? [BUILD_SCRIPT, '--check'] : [BUILD_SCRIPT];
+  const result = commandResult(process.execPath, args);
+  if (result.status === 2) {
+    throw new InfrastructureError('Pinned dependency could not be reached while building the userscript.');
+  }
+  if (result.status !== 0) {
+    throw new Error(`${process.execPath} ${args.join(' ')} failed with exit ${result.status}.`);
+  }
 }
 
 /**
@@ -421,5 +430,5 @@ try {
   }
 } catch (error) {
   console.error(error instanceof Error ? error.message : String(error));
-  process.exitCode = 1;
+  process.exitCode = error instanceof InfrastructureError ? 2 : 1;
 }

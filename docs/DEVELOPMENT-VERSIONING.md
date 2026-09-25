@@ -10,199 +10,128 @@ The issue number identifies the branch that owns the work. The iteration starts 
 
 ## Version first
 
-For a newly established issue branch, the correct issue-qualified version is the first branch change before feature, production, test, documentation, or integration work.
+For a newly established issue branch, establish the correct issue-qualified version before feature, production, test, documentation, or integration work. After integrating a dependency branch whose version belongs to another issue, restore or advance the receiving branch's own issue-qualified version before further work.
 
-After integrating a dependency branch whose version belongs to another issue, restore or advance the receiving branch's own issue-qualified version immediately, before any further work.
+The authoritative production version is the single `@version` in `src/userscript-header.js`.
 
-Do not defer version correction until cleanup, CI completion, live testing, or release preparation.
-
-## Read-only guard
-
-Run:
+Use the read-only guard:
 
 ```bash
 node scripts/check-development-version.mjs
 ```
 
-The guard derives the current branch when possible. An explicit branch may be supplied:
-
-```bash
-node scripts/check-development-version.mjs \
-  --branch issue-135-agent-completion-sounds
-```
-
-On an `issue-<number>-...` branch the userscript must contain exactly one `@version`, it must use the issue-qualified development form, its issue must match the branch owner, and its iteration must be positive. The guard never edits files.
-
-## Explicit setter
-
-When an issue branch must establish or restore its owning version, run the explicit setter with the intended iteration:
+When an issue branch needs an explicit version change, use:
 
 ```bash
 node scripts/set-development-version.mjs \
-  --branch issue-135-agent-completion-sounds \
-  --iteration 3
+  --branch issue-165-repoworkflow-adoption \
+  --iteration 4
 ```
 
-For the default authoritative production header, the setter:
+The setter requires an issue-owned branch and an explicit positive iteration, preserves the current release target unless `--release` is supplied, changes only the header version token, regenerates the tracked userscript artifact, and restores the previous state if regeneration or validation fails.
 
-- requires an issue-owned branch;
-- requires an explicit positive iteration rather than guessing one;
-- preserves the current `x.y.z` release target by default;
-- changes only the single `@version` token in `src/userscript-header.js` and preserves every other header byte;
-- immediately regenerates the tracked `chatgpt-conversation-markdown-export.user.js` from the authoritative source and pinned Core artifact;
-- runs the read-only guard after regeneration;
-- restores the previous header and generated artifact if regeneration or validation fails rather than leaving a half-applied version change.
+## Generated userscript artifact
 
-To intentionally change the release target at the same time, supply it explicitly:
+`src/userscript-header.js`, `src/userscript-manifest.json`, and the ordered files under `src/userscript/` are authoritative source. `chatgpt-conversation-markdown-export.user.js` is the deterministic generated Tampermonkey distribution artifact.
+
+The generated userscript is tracked and committed. It is generated-only and must never be hand-edited. The generator and independent verifier are:
 
 ```bash
-node scripts/set-development-version.mjs \
-  --branch issue-149-version-identity-guard \
-  --iteration 2 \
-  --release 1.6.0
+node scripts/build-userscript.mjs
+node scripts/verify-userscript-artifact.mjs
 ```
 
-A different userscript path may be supplied with `--file` for tests or tooling. Custom-file mode mutates only that supplied fixture/file and does not rebuild the repository production artifact.
+RepoWorkflow declares that artifact in `.ci/repoworkflow.json`. Its artifact lifecycle snapshots repository state, allows only declared generated outputs to change, and runs the independent verifier before accepting the result. The canonical GitHub adapter may publish only those explicitly declared committed generated outputs during preparation; general source/documentation editing is forbidden.
 
-## Generated userscript artifact contract
+`scripts/test-cycle-artifact.mjs` remains for the separate stable-release/test-cycle path. It is no longer the issue-development workflow engine.
 
-`src/userscript-header.js`, `src/userscript-manifest.json`, and the ordered files under `src/userscript/` are authoritative DownloadConversation source. `chatgpt-conversation-markdown-export.user.js` is the deterministic generated single-file Tampermonkey distribution artifact.
+## Explicit issue-development CI request
 
-The generated userscript is intentionally **tracked and committed** at the repository root. It is generated-only and must never be hand-edited. A clean checkout of a tested revision must therefore already contain the installable userscript.
+Expensive issue-development CI is not run on ordinary source/documentation pushes.
 
-The repository owner of test-cycle artifact materialization, verification, and publication is:
-
-```bash
-node scripts/test-cycle-artifact.mjs <prepare|verify|publish>
-```
-
-A test cycle is not complete merely because an artifact existed in a local working tree. The exact artifact bytes exercised by the test cycle must be committed and, after the cycle passes, tagged in the repository.
-
-## Test-cycle commit and tag invariant
-
-Every test cycle uses the userscript `@version` as an immutable repository identity. The tag is always:
+When the candidate is ready for authoritative verification, set:
 
 ```text
-v<version>
+.ci/run-ci-request
 ```
 
-Examples:
+to the exact authoritative development version, for example:
 
 ```text
-v1.5.0-issue.150.9
-v1.6.0
+1.5.0-issue.165.3
 ```
 
-Equivalently, development cycles use `vX.Y.Z-issue.<issue>.<iteration>` and stable cycles use `vX.Y.Z`.
+The request value must exactly match `src/userscript-header.js`. A terminal PASS or CI-FAIL tag consumes that iteration; any subsequent source/test/documentation change requires the next iteration.
 
-The invariant is:
+## RepoWorkflow authoritative path
 
-1. **Prepare before tests.** `test-cycle-artifact.mjs prepare` runs the deterministic userscript build. If generated bytes differ, it stages and commits only `chatgpt-conversation-markdown-export.user.js`. All authoritative source changes must already be committed before this step.
-2. **Test the prepared commit.** The committed artifact must pass `build-userscript.mjs --check`, must contain the same `@version` as the authoritative header, and must be the artifact used by the test suites.
-3. **Publish only after success.** `test-cycle-artifact.mjs publish` creates the annotated `v<version>` tag on the exact tested commit and atomically publishes the branch and tag.
-4. **Never tag failure.** A failed test cycle remains untagged.
-5. **Never move a test-cycle tag.** If `v<version>` already points to a different commit, publication fails. The issue iteration/version must advance before a different commit can become another test-cycle identity.
-6. **No remembered follow-up step.** Normal test entry points invoke this mechanism automatically; a person or AI must not have to remember to commit or tag the artifact after tests.
+RepoWorkflow is pinned as the `RepoWorkflow` Git submodule. Repository-specific environment, capability, artifact, branch, and runner facts live under `.ci/`.
 
-The generated artifact is therefore both reproducible from authoritative source and durably retrievable from the exact branch/tag that was tested.
-
-## Integration preparation recovery
-
-Normal hosted integration preparation is automatic. If GitHub Actions cannot start a runner and an integration staging branch must be prepared from a local checkout, use the repository-owned one-command recovery wrapper:
+The full local authoritative lifecycle is:
 
 ```bash
-node scripts/prepare-integration-test-cycle.mjs \
-  --branch issue-135-integration-150
+python RepoWorkflow/repo_workflow.py verify
 ```
 
-The wrapper performs the entire preparation operation rather than requiring remembered `git fetch`, branch switching, reset, version checks, artifact preparation, push, and post-check commands. It:
+Lower-level commands are available when individual lifecycle stages must be inspected or distributed across machines:
 
-- requires tracked working-tree and index content to be clean before switching branches; untracked diagnostic files are allowed and are not part of the artifact identity;
-- fetches `origin` and resolves the exact remote integration branch;
-- refuses to overwrite or reset a divergent local integration branch;
-- switches to the exact remote branch safely;
-- verifies the branch/version ownership contract before preparation;
-- invokes `test-cycle-artifact.mjs prepare --push`;
-- re-runs branch/version and committed-artifact verification afterward;
-- verifies that local and remote integration branch HEADs are identical;
-- verifies that source and generated artifact versions match;
-- reports the prepared version and commit;
-- deliberately does **not** create a version tag.
+```bash
+python RepoWorkflow/repo_workflow.py preflight
+python RepoWorkflow/repo_workflow.py matrix
+python RepoWorkflow/repo_workflow.py run \
+  --environment <environment-id> \
+  --result <outside-repo-result.json>
+python RepoWorkflow/repo_workflow.py finalize \
+  --results-dir <results-directory>
+```
 
-This wrapper is a recovery path for infrastructure failure, not a replacement for normal CI. Its own regression is part of both local and hosted CI so the recovery mechanism cannot silently drift.
+The working tree/candidate must be exact and clean at validation boundaries. GitHub Actions uses the byte-identical canonical adapter in `.github/workflows/ci.yml`; it does not reimplement request, matrix, result, artifact, or tagging semantics.
 
-## Local full test cycle
+## Complete-matrix result tagging
 
-The normal local full gate remains:
+Required platforms/capabilities are declared in `.ci/repoworkflow.json`. `.ci/github.json` maps each environment to its GitHub runner and provisions declared runtimes. Every required environment must report for the same exact commit and version before tagging is allowed.
+
+The result identities are:
+
+```text
+PASS          -> v<version>
+FAIL          -> v<version>-CI-FAIL
+INCOMPLETE    -> no tag
+```
+
+A genuine `FAIL` means required validation actually executed and found incorrect source/build/test behaviour. `INCOMPLETE` means a required result could not be established because of infrastructure, credentials, network/package availability, runner/platform/runtime availability, or another prerequisite failure.
+
+Both PASS and CI-FAIL tags are immutable landmarks. Once either exists for an issue iteration, the opposite result tag cannot be created and a changed candidate must advance to the next issue iteration.
+
+A GitHub Actions infrastructure failure is not a source CI failure. Retry the same commit rather than creating another source commit or consuming another issue iteration.
+
+## Gate behaviour
+
+Independent validation gates continue after another independent validation gate fails so the initial RED surface is not hidden by the first failure. A prerequisite failure skips only dependent work and makes the required environment INCOMPLETE.
+
+DownloadConversation's ordinary regression list and cross-consumer parity list live in `scripts/ci-environment.mjs`. RepoWorkflow invokes the repository-owned `scripts/repoworkflow-validate.py` environment entry point locally and in hosted CI.
+
+## Local stable publication
+
+Stable release publication remains a separate repository-specific path. `scripts/run-ci.mjs` remains the local stable-release-oriented wrapper:
 
 ```bash
 node scripts/run-ci.mjs
 ```
 
-`run-ci.mjs` automatically:
+It prepares the committed test-cycle artifact and runs the repository-owned validation engine, but it does not publish a stable tag by default.
 
-1. invokes `test-cycle-artifact.mjs prepare` before any ordinary project tests;
-2. runs ordinary and cross-consumer verification against that prepared commit;
-3. invokes `test-cycle-artifact.mjs publish` only when every required stage passed;
-4. reports success only after the tested artifact commit and its immutable `v<version>` tag have been published.
+Stable publication requires explicit authorization:
 
-Untracked diagnostic output such as a locally tee'd test log is not part of the artifact identity. Tracked source/index changes are not allowed when the cycle begins.
+```bash
+node scripts/run-ci.mjs --tag
+```
 
-## GitHub CI test cycle
-
-A branch push uses the same contract without allowing two independent jobs to create different generated commits.
-
-The workflow order is:
-
-1. `prepare-test-cycle` checks out the branch, invokes:
-
-   ```bash
-   node scripts/test-cycle-artifact.mjs prepare --branch "$GITHUB_REF_NAME" --push
-   ```
-
-   and exposes the exact prepared commit SHA. An automatically created artifact-only commit carries `[skip ci]` so its push does not start a recursive second workflow.
-2. `test` and `cross-consumer-final-render` both check out that same prepared SHA.
-3. The first project-specific operation in each test job is:
-
-   ```bash
-   node scripts/test-cycle-artifact.mjs verify
-   ```
-
-   so CI fails closed if the committed artifact is missing or stale.
-4. Only after both jobs pass does `publish-test-cycle` invoke:
-
-   ```bash
-   node scripts/test-cycle-artifact.mjs publish --branch "$GITHUB_REF_NAME"
-   ```
-
-5. The tag push does not recursively start the branch-push workflow.
-
-This makes hosted CI and local CI identify the same kind of object: a prepared commit containing the exact tested generated artifact, followed by an immutable version-derived tag only after successful verification.
+Only a complete validation PASS reaches `test-cycle-artifact.mjs publish`. INCOMPLETE or FAIL creates no stable tag.
 
 ## Stable release contract
 
-Stable DownloadConversation releases use a plain `x.y.z` userscript version. Stable publication does not have a second artifact/tag mechanism; it uses the same test-cycle invariant and therefore produces the same `v<version>` form, e.g. `v1.6.0`.
-
-The stable release order is:
-
-1. finish and verify the issue-owned development branch;
-2. merge the accepted source to `main` and promote `src/userscript-header.js` to the intended plain stable version;
-3. allow the normal `main` push workflow to prepare one committed deterministic artifact before test fan-out;
-4. run ordinary and cross-consumer tests against that exact prepared commit;
-5. let `publish-test-cycle` publish the exact tested `main` commit and annotated `vX.Y.Z` tag;
-6. run the independent stable tag guard afterward.
-
-A stable `main` source version must be a plain semantic version. The stable guard is:
-
-```bash
-node scripts/check-release-tag.mjs --branch main
-```
-
-It verifies that the authoritative stable version has the exact matching `vX.Y.Z` tag at `main` HEAD.
-
-## Manual stable recovery wrapper
-
-For deliberate local recovery or diagnosis, `scripts/release.mjs` remains available:
+Stable DownloadConversation releases use a plain `x.y.z` userscript version. Stable publication remains main-only. The recovery/release wrapper is:
 
 ```bash
 node scripts/release.mjs --from-source
@@ -214,6 +143,10 @@ or:
 node scripts/release.mjs <version>
 ```
 
-The wrapper requires `main` and a plain stable source version. It does **not** implement a separate tag creator. It delegates the full gate and artifact publication to `scripts/run-ci.mjs`, then independently runs the stable tag guard. An explicit `<version>` is only an assertion that must match the authoritative source.
+The wrapper requires `main` and a plain stable source version, invokes `scripts/run-ci.mjs --tag`, then independently verifies the published `vX.Y.Z` tag with:
 
-Do not manually create or move test-cycle/release tags, do not leave a successful test cycle with only an uncommitted local build artifact, and do not substitute remembered `git add`, `git commit`, or tag commands for the repository-enforced prepare/verify/publish path.
+```bash
+node scripts/check-release-tag.mjs --branch main
+```
+
+Do not manually create or move CI/release result tags, hand-edit the generated userscript, or substitute remembered Git commands for the repository-enforced artifact/CI paths.

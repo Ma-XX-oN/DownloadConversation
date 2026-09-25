@@ -1,0 +1,18 @@
+{
+  "schema": 1,
+  "integrationBranch": "main",
+  "branches": {
+    "issue-165-repoworkflow-adoption": {
+      "parent": "issue-162-ci-request-gating",
+      "allowedDependencies": [],
+      "integrationTarget": "main"
+    }
+  },
+  "patterns": [
+    {
+      "pattern": "issue-*",
+      "parent": "main",
+      "allowedDependencies": []
+    }
+  ]
+}

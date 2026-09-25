@@ -1,4 +1,5 @@
-import { coreDependency, coreUrl } from './helpers/core-pin.mjs';
+import { coreBundle } from './helpers/core-bundle.mjs';
+import { coreDependency } from './helpers/core-pin.mjs';
 import { userscript } from './helpers/userscript-source.mjs';
 import assert from 'node:assert/strict';
 import test from 'node:test';
@@ -7,9 +8,7 @@ import vm from 'node:vm';
 assert.equal(coreDependency.commit, 'cf34d9374f51ac525acfb90cfd6b247006a7bf6e');
 assert.equal(coreDependency.git_blob_sha1, '5a999c8c02f127b4fc03b923a40496961c9cacc0');
 
-const response = await fetch(coreUrl);
-assert.equal(response.status, 200, `Could not load pinned AIConversationCore bundle: HTTP ${response.status}`);
-const bundle = await response.text();
+const bundle = coreBundle;
 const context = {};
 context.globalThis = context;
 vm.runInNewContext(bundle, context, { filename: 'aiconversationcore.chatgpt.browser.js' });
