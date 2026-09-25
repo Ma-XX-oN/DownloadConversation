@@ -52,7 +52,7 @@ const ordinaryStages = [
 ];
 
 const crossConsumerRepositories = [
-  ['Ma-XX-oN/AIConversationCore', 'cf34d9374f51ac525acfb90cfd6b247006a7bf6e', 'phase7-core'],
+  ['Ma-XX-oN/AIConversationCore', '259376c1f16a3c67cc13ab05cc5f50c22fe3f060', 'phase7-core'],
   ['Ma-XX-oN/AI-General-Memory', 'b2cc257cb586bd944ebca352e316780841217cc1', 'phase7-aigm'],
   ['Ma-XX-oN/AIConversationCore', '4b1bebe6fd7d82d8bbb15f4ad5c1a59cfd03132a', 'phase7-aigm-core']
 ];

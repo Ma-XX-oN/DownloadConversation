@@ -15,8 +15,8 @@ import {
 } from '../scripts/userscript-build-lib.mjs';
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
-const CORE_COMMIT = 'cf34d9374f51ac525acfb90cfd6b247006a7bf6e';
-const CORE_BLOB = '5a999c8c02f127b4fc03b923a40496961c9cacc0';
+const CORE_COMMIT = '259376c1f16a3c67cc13ab05cc5f50c22fe3f060';
+const CORE_BLOB = '84a1fcf72a8da76f837a791a142c1c95ed37d607';
 const LEGACY_BLOB = '44a4ab373a6515caed5527aeb19cbdff7ce91e07';
 const MIGRATION_SNAPSHOT_COMMIT = '62571e15af8f7f3e4472258e7a18bb2f2d48cef5';
 const USER_SCRIPT_HEADER_END = '// ==/UserScript==\n';
@@ -73,7 +73,7 @@ test('AIConversationCore build dependency is pinned by commit, byte length, and 
   assert.equal(dependency.name, 'AIConversationCore');
   assert.equal(dependency.commit, CORE_COMMIT);
   assert.equal(dependency.git_blob_sha1, CORE_BLOB);
-  assert.equal(dependency.byte_length, 264693);
+  assert.equal(dependency.byte_length, 265877);
   assert.equal(dependency.repository, 'Ma-XX-oN/AIConversationCore');
   assert.equal(dependency.path, 'dist/aiconversationcore.chatgpt.browser.js');
   assert.ok(dependency.url.includes(`/${CORE_COMMIT}/`));

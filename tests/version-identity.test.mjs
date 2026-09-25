@@ -12,8 +12,8 @@ const phase5Integration = await readFile(new URL('./phase5-rich-core-integration
 const sedimentResolver = await readFile(new URL('./sediment-resolver.test.mjs', import.meta.url), 'utf8');
 
 const OLD_CORE_COMMIT = 'd6d76b54db3d48baf3f5e3a76099be1732d32785';
-const CORE_COMMIT = 'cf34d9374f51ac525acfb90cfd6b247006a7bf6e';
-const CORE_BLOB_SHA1 = '5a999c8c02f127b4fc03b923a40496961c9cacc0';
+const CORE_COMMIT = '259376c1f16a3c67cc13ab05cc5f50c22fe3f060';
+const CORE_BLOB_SHA1 = '84a1fcf72a8da76f837a791a142c1c95ed37d607';
 
 test('DownloadConversation keeps one caller-version authority in userscript metadata and shows it at the top of general status', () => {
   const metadataVersion = userscript.match(/^\/\/ @version\s+(\S+)$/m);
