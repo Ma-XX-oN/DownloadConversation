@@ -56,11 +56,11 @@ test('manifest groups ordered small source segments under logical subsystem modu
   }
 });
 
-test('authoritative header preserves development version and document-start execution without runtime @require', async () => {
+test('authoritative header preserves supported semantic version and document-start execution without runtime @require', async () => {
   const manifest = await readUserscriptManifest(root);
   const header = await readUserscriptHeader(root, manifest);
   assert.match(header, /^\/\/ ==UserScript==\n/);
-  assert.match(header, /^\/\/ @version\s+\d+\.\d+\.\d+-issue\.\d+\.\d+$/m);
+  assert.match(header, /^\/\/ @version\s+\d+\.\d+\.\d+(?:-issue\.\d+\.\d+)?$/m);
   assert.match(header, /^\/\/ @run-at\s+document-start$/m);
   assert.doesNotMatch(header, /^\/\/ @require\b/m);
   assert.match(header, /\/\/ ==\/UserScript==\n$/);

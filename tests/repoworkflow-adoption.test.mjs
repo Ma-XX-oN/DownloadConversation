@@ -109,7 +109,7 @@ test('version and validation hooks are repository-owned and present', async () =
   const versions = [...header.matchAll(/^\/\/\s*@version\s+(\S+)\s*$/gm)]
     .map(match => match[1]);
   assert.equal(versions.length, 1);
-  assert.match(versions[0], /^\d+\.\d+\.\d+-issue\.\d+\.\d+$/);
+  assert.match(versions[0], /^\d+\.\d+\.\d+(?:-issue\.\d+\.\d+)?$/);
   assert.equal(result.stdout.trim(), versions[0]);
 });
 
