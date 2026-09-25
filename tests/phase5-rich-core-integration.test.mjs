@@ -4,7 +4,7 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 import vm from 'node:vm';
 
-assert.equal(coreDependency.commit, '259376c1f16a3c67cc13ab05cc5f50c22fe3f060');
+assert.equal(coreDependency.commit, '1b531a1c92adfa1695db8c644159054e013f0a72');
 assert.equal(coreDependency.git_blob_sha1, '84a1fcf72a8da76f837a791a142c1c95ed37d607');
 assert.doesNotMatch(userscript, /^\/\/ @require\s+/m,
   'Generated userscript must not use runtime @require for AIConversationCore.');

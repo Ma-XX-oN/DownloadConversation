@@ -15,7 +15,7 @@ import {
 } from '../scripts/userscript-build-lib.mjs';
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
-const CORE_COMMIT = '259376c1f16a3c67cc13ab05cc5f50c22fe3f060';
+const CORE_COMMIT = '1b531a1c92adfa1695db8c644159054e013f0a72';
 const CORE_BLOB = '84a1fcf72a8da76f837a791a142c1c95ed37d607';
 const LEGACY_BLOB = '44a4ab373a6515caed5527aeb19cbdff7ce91e07';
 const MIGRATION_SNAPSHOT_COMMIT = '62571e15af8f7f3e4472258e7a18bb2f2d48cef5';
