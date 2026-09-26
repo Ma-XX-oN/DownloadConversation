@@ -18,9 +18,9 @@
   let workStackRecoveryTimer = null;
 
   /**
-   * Extracts one explicit WorkStack lane token from the supplied first-User text.
+   * Extracts one explicit WorkStack lane token from the supplied User text.
    *
-   * @param {string} text - Text of the first User turn only.
+   * @param {string} text - Visible text of one User turn.
    * @returns {string|null} Lane identifier without the `WS:` prefix, or null when absent.
    */
   function workStackLaneFromUserText(text) {
