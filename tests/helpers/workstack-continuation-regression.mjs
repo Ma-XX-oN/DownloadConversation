@@ -58,10 +58,27 @@ test('WorkStack lane binding reads only the first visible User turn and keeps re
   assert.equal(fetching.status, 'fetching');
   assert.equal(fetching.lane, null);
 
-  const unbound = workStackResolveLaneFromSpine({ records: [
+  const laterBound = workStackResolveLaneFromSpine({ records: [
     { role: 'system', message: { content: { parts: ['system'] } } },
     { role: 'user', message: { content: { parts: ['first prompt has no token'] }, metadata: {} } },
-    { role: 'user', message: { content: { parts: ['later WS:WRONG-999'] }, metadata: {} } }
+    { role: 'assistant', message: { content: { parts: ['WS:ASSISTANT-MUST-NOT-BIND'] }, metadata: {} } },
+    { role: 'user', message: { content: { parts: ['later prose WS:WRONG-999'] }, metadata: {} } },
+    { role: 'user', message: { content: { parts: ['  WS:WS-002\\nBind this conversation.'] }, metadata: {} } },
+    { role: 'user', message: { content: { parts: ['WS:LATER-MUST-NOT-REBIND'] }, metadata: {} } }
+  ] });
+  assert.equal(laterBound.status, 'bound');
+  assert.equal(laterBound.lane, 'WS-002');
+
+  const laterContinueBound = workStackResolveLaneFromSpine({ records: [
+    { role: 'user', message: { content: { parts: ['started before WorkStack binding'] }, metadata: {} } },
+    { role: 'user', message: { content: { parts: ['\\nContinue WS:DC-166\\nresume'] }, metadata: {} } }
+  ] });
+  assert.equal(laterContinueBound.status, 'bound');
+  assert.equal(laterContinueBound.lane, 'DC-166');
+
+  const unbound = workStackResolveLaneFromSpine({ records: [
+    { role: 'user', message: { content: { parts: ['first prompt has no token'] }, metadata: {} } },
+    { role: 'user', message: { content: { parts: ['later prose WS:WRONG-999'] }, metadata: {} } }
   ] });
   assert.equal(unbound.status, 'unbound');
   assert.equal(unbound.lane, null);
