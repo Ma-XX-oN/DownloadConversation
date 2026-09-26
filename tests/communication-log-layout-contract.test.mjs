@@ -76,3 +76,16 @@ test('Issue 166 owns the communication segment target in one named symbol', () =
     1,
     'The segment target must have exactly one authoritative declaration.');
 });
+
+
+test('Issue 166 records through the segmented storage interface, not the legacy raw append interface', () => {
+  assert.match(userscript,
+    /await communicationLogStorage\.appendRecord\(record\);/,
+    'Communication records must enter the Issue 166 storage abstraction.');
+  assert.doesNotMatch(userscript,
+    /function communicationLogAppendLine\(/,
+    'The legacy raw JSONL append interface must be removed rather than left on the execution path.');
+  assert.doesNotMatch(userscript,
+    /await communicationLogAppendLine\(/,
+    'No recorder call site may continue through the legacy raw append interface.');
+});
