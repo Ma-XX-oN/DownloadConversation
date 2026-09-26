@@ -194,7 +194,7 @@
         idleLabel: 'Duplicate communication log',
         busyLabel: 'Duplicating communication log',
         busyTitle: 'Duplicating…',
-        operation: communicationLogDuplicate,
+        operation: communicationLogArchiveDuplicate,
         onSuccess: duplicateName => setStatus(`Communication log duplicated as ${duplicateName}.`),
         failurePrefix: 'Communication log duplicate failed'
       });
