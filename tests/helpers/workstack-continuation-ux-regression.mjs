@@ -157,10 +157,14 @@ test('brand-new picker opens WorkStack without cross-site fetch', () => {
     'The userscript must use the browser GitHub session.'
   );
   assert.match(control, /WS:\s*PICK LANE/);
-  assert.match(control, /workstack-picker/);
   assert.match(
     control,
-    /review available lanes|available lane/i,
+    /workStackOpenLanePicker/,
+    'The picker button must invoke the WorkStack browser opener.'
+  );
+  assert.match(
+    productionFunctionSource('workStackRender'),
+    /review available lanes|available lanes/i,
     'The lane picker needs an explanatory tooltip.'
   );
 });

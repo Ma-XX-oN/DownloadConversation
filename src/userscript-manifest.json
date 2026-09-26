@@ -88,7 +88,8 @@
       "files": [
         "src/userscript/06-workstack-continuation/01-state.js",
         "src/userscript/06-workstack-continuation/02-dom-extraction.js",
-        "src/userscript/06-workstack-continuation/03-ui-transaction.js"
+        "src/userscript/06-workstack-continuation/03-ui-control.js",
+        "src/userscript/06-workstack-continuation/04-handoff-transaction.js"
       ]
     },
     {
