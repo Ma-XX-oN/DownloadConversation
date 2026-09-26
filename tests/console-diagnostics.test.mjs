@@ -116,3 +116,9 @@ test('Issue 166 diagnostic Save has explicit empty and busy behaviour', () => {
   assert.match(save, /finally/);
   assert.match(save, /disabled\s*=\s*false/);
 });
+
+
+test('Issue 166 diagnostic Save archive dependency is implemented, not a dangling call', () => {
+  assert.match(downloadConversationSource, /(?:async\s+)?function create7zArchive\s*\(/,
+    'create7zArchive must be an implemented narrow archive interface before Save can ship.');
+});
