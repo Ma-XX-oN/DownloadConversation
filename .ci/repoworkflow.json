@@ -1,9 +1,6 @@
 {
   "schema": 1,
-  "versionCommand": [
-    "python",
-    "scripts/workflow-version.py"
-  ],
+  "versionCommand": ["python", "scripts/workflow-version.py"],
   "repository": {
     "integrationBranch": "main",
     "authoritativeRemote": "origin"
@@ -13,36 +10,19 @@
       "id": "ubuntu-node22-python313",
       "required": true,
       "platform": "linux",
-      "capabilities": [
-        "node-22",
-        "python-3.13",
-        "emscripten"
-      ],
-      "validationCommand": [
-        "python",
-        "scripts/repoworkflow-validate.py"
-      ]
+      "capabilities": ["node-22", "python-3.13", "emscripten"],
+      "validationCommand": ["python", "scripts/repoworkflow-validate.py"]
     }
   ],
   "artifacts": [
     {
       "id": "userscript",
-      "generatorCommand": [
-        "node",
-        "scripts/build-userscript.mjs"
-      ],
-      "verifierCommand": [
-        "node",
-        "scripts/verify-userscript-artifact.mjs"
-      ],
-      "outputs": [
-        "chatgpt-conversation-markdown-export.user.js"
-      ],
+      "generatorCommand": ["node", "scripts/build-userscript.mjs"],
+      "verifierCommand": ["node", "scripts/verify-userscript-artifact.mjs"],
+      "outputs": ["chatgpt-conversation-markdown-export.user.js"],
       "committed": true,
       "platform": "linux",
-      "capabilities": [
-        "node-22"
-      ]
+      "capabilities": ["node-22"]
     }
   ]
 }
