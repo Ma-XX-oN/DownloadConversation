@@ -84,6 +84,14 @@
       ]
     },
     {
+      "name": "workstack-continuation",
+      "files": [
+        "src/userscript/06-workstack-continuation/01-state.js",
+        "src/userscript/06-workstack-continuation/02-dom-extraction.js",
+        "src/userscript/06-workstack-continuation/03-ui-transaction.js"
+      ]
+    },
+    {
       "name": "panel-launcher",
       "files": [
         "src/userscript/07-panel-launcher/00-checkbox-appearance.js",

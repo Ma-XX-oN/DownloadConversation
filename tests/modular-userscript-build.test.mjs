@@ -41,11 +41,18 @@ test('manifest groups ordered small source segments under logical subsystem modu
       'conversation-rendering',
       'live-navigation',
       'image-export-tests',
+      'workstack-continuation',
       'panel-launcher'
     ]
   );
+  const workStackModule = manifest.modules.find(module => module.name === 'workstack-continuation');
+  assert.deepEqual(workStackModule?.files, [
+    'src/userscript/06-workstack-continuation/01-state.js',
+    'src/userscript/06-workstack-continuation/02-dom-extraction.js',
+    'src/userscript/06-workstack-continuation/03-ui-transaction.js'
+  ]);
   const sourcePaths = orderedSourcePaths(manifest);
-  assert.equal(sourcePaths.length, 45);
+  assert.equal(sourcePaths.length, 48);
   assert.equal(new Set(sourcePaths).size, sourcePaths.length);
   assert.ok(sourcePaths.every(sourcePath => sourcePath.startsWith('src/userscript/')));
   assert.ok(sourcePaths.every(sourcePath => !sourcePath.includes('/userscript-body/part-')));
