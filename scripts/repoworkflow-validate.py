@@ -1,8 +1,6 @@
 #!/usr/bin/env python3
 from pathlib import Path
 import os
-import shutil
-import tempfile
 import subprocess
 import sys
 
@@ -25,17 +23,9 @@ def run(command: list[str]) -> int:
     return 2
 
 
-def validate_seven_zip_dependency() -> int:
-  source = ROOT / "7z-js-benchmark" / "prototype" / "7zip-direct"
-  with tempfile.TemporaryDirectory(prefix="dc-stream7z-") as temporary:
-    work = Path(temporary) / "7zip-direct"
-    shutil.copytree(source, work, ignore=shutil.ignore_patterns(".build", "build"))
-    return run(["bash", str(work / "build.sh")])
-
-
 def main() -> int:
   results = [
-    validate_seven_zip_dependency(),
+    run(["node", "--test", "7z-js-benchmark/test/direct-browser-dist.test.mjs"]),
     run(["node", "scripts/ci-environment.mjs"]),
     run([sys.executable, "-m", "unittest", "tests/test_repoworkflow_validation.py"]),
   ]
