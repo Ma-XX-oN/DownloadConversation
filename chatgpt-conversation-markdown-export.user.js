@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         ChatGPT Conversation Markdown Recorder
 // @namespace    https://chatgpt.com/
-// @version      1.7.2-issue.166.23
+// @version      1.7.2-issue.166.24
 // @description  Exports the current ChatGPT conversation directly from the Conversation API as Markdown or JSONL.
 // @match        https://chatgpt.com/*
 // @match        https://chat.openai.com/*
@@ -12849,7 +12849,7 @@ const STREAM7Z_WASM_GZIP_BASE64 = 'H4sICLEtt2oCA3N0cmVhbTd6Lndhc20A7L0JmBzFmSiY9
    * @param {string} destinationName - New sibling filename that must not exist.
    * @returns {Promise<void>} Resolves after the destination is committed and verified.
    */
-  async function communicationLogCopySnapshot(sourceFile, destinationName) {
+  async function communicationLogCopyForRename(sourceFile, destinationName) {
     if (!communicationLogDirectoryHandle) {
       throw new Error('Communication log directory is not ready.');
     }
@@ -12908,7 +12908,7 @@ const STREAM7Z_WASM_GZIP_BASE64 = 'H4sICLEtt2oCA3N0cmVhbTd6Lndhc20A7L0JmBzFmSiY9
       await communicationLogCloseActiveWriter();
       const sourceName = communicationLogFileName;
       const sourceSnapshot = await communicationLogRefreshedFileSnapshot();
-      await communicationLogCopySnapshot(sourceSnapshot.file, validatedName);
+      await communicationLogCopyForRename(sourceSnapshot.file, validatedName);
 
       try {
         await communicationLogDirectoryHandle.removeEntry(sourceName);
@@ -12944,7 +12944,7 @@ const STREAM7Z_WASM_GZIP_BASE64 = 'H4sICLEtt2oCA3N0cmVhbTd6Lndhc20A7L0JmBzFmSiY9
    *
    * @returns {Promise<string>} The created duplicate filename.
    */
-  function communicationLogDuplicate() {
+  function communicationLogArchiveDuplicate() {
     const queued = communicationLogEnqueue('duplicate', async () => {
       if (!communicationLogReady || !communicationLogDirectoryHandle || !communicationLogFileName) {
         throw new Error('Communication log directory/file is not ready.');
@@ -22917,7 +22917,7 @@ Image elapsed: ${formatDuration(imageElapsed)} — Completed: ${imageCompleted}/
         idleLabel: 'Duplicate communication log',
         busyLabel: 'Duplicating communication log',
         busyTitle: 'Duplicating…',
-        operation: communicationLogDuplicate,
+        operation: communicationLogArchiveDuplicate,
         onSuccess: duplicateName => setStatus(`Communication log duplicated as ${duplicateName}.`),
         failurePrefix: 'Communication log duplicate failed'
       });
