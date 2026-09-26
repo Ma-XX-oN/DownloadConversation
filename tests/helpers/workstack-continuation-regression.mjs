@@ -27,7 +27,7 @@ function element(tag, attrs = {}, children = []) {
 
 function laneApi() {
   return productionApi([
-    'workStackLaneFromFirstUserText',
+    'workStackLaneFromUserText',
     'workStackVisibleMessageText',
     'workStackResolveLaneFromSpine'
   ]);
@@ -44,13 +44,13 @@ function missingApi(includeRecovery = false) {
   return productionApi(names);
 }
 
-test('WorkStack lane binding reads only the first visible User turn and keeps recovery explicit', () => {
-  const { workStackLaneFromFirstUserText, workStackResolveLaneFromSpine } = laneApi();
+test('WorkStack lane binding uses the earliest valid visible User turn and keeps recovery explicit', () => {
+  const { workStackLaneFromUserText, workStackResolveLaneFromSpine } = laneApi();
 
-  assert.equal(workStackLaneFromFirstUserText('Continue WS:RW-001\ncontext'), 'RW-001');
-  assert.equal(workStackLaneFromFirstUserText('prefix (WS:CORE_12.alpha-3), suffix'), null);
-  assert.equal(workStackLaneFromFirstUserText('prefixXWS:WRONG'), null);
-  assert.equal(workStackLaneFromFirstUserText('no lane here'), null);
+  assert.equal(workStackLaneFromUserText('Continue WS:RW-001\ncontext'), 'RW-001');
+  assert.equal(workStackLaneFromUserText('prefix (WS:CORE_12.alpha-3), suffix'), null);
+  assert.equal(workStackLaneFromUserText('prefixXWS:WRONG'), null);
+  assert.equal(workStackLaneFromUserText('no lane here'), null);
 
   const fetching = workStackResolveLaneFromSpine({
     records: [{ role: 'assistant', message: { content: { parts: ['not first user'] } } }]
@@ -312,7 +312,7 @@ test('WorkStack control and transaction preserve the superseding #163 contracts'
   const transaction = productionFunctionSource('handleWorkStackContinue');
   assert.match(transaction, /workStackState\.lane/,
     'CONTINUE must consume the already-bound lane state.');
-  assert.doesNotMatch(transaction, /workStackLaneFromFirstUserText|workStackResolveLaneFromSpine/,
+  assert.doesNotMatch(transaction, /workStackLaneFromUserText|workStackResolveLaneFromSpine/,
     'CONTINUE must not reparse the first User turn.');
   assert.match(transaction, /snapshotLiveTailMarkers\(\)/);
   assert.match(transaction, /workStackRecoveryAssistantMarkers/);
