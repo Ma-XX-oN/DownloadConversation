@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         ChatGPT Conversation Markdown Recorder
 // @namespace    https://chatgpt.com/
-// @version      1.6.3-issue.166.3
+// @version      1.6.3-issue.166.4
 // @description  Exports the current ChatGPT conversation directly from the Conversation API as Markdown or JSONL.
 // @match        https://chatgpt.com/*
 // @match        https://chat.openai.com/*
@@ -15768,70 +15768,6 @@ Image elapsed: ${formatDuration(imageElapsed)} — Completed: ${imageCompleted}/
     }
   }
 
-  /** Returns the diagnostic archive/save icon. */
-  function saveIconMarkup() {
-    return '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 3v12m0 0 4-4m-4 4-4-4M5 19h14"/></svg>';
-  }
-
-  /** Returns the one canonical diagnostic-log serialization used by Copy and Save. */
-  function diagnosticLogText() {
-    return diagnosticLog.map(diagnosticLogLine).join('\n');
-  }
-
-  /**
-   * Saves the current diagnostic log as one 7z archive through the browser download flow.
-   *
-   * @returns {Promise<void>} Resolves after the download has been triggered.
-   */
-  async function saveDiagnosticLog() {
-    const text = diagnosticLogText();
-    if (!text) return;
-    const button = document.querySelector(`#${PANEL_ID} [data-role="save-log"]`);
-    if (!(button instanceof HTMLButtonElement) || button.disabled) return;
-    button.disabled = true;
-    button.setAttribute('aria-busy', 'true');
-    button.title = 'Preparing diagnostic archive…';
-    const base = `DownloadConversation_${sanitizeFileName(conversationTitle())}_diagnostic-log`;
-    const memberName = `${base}.txt`;
-    const archiveName = `${base}.7z`;
-    try {
-      const archive = await create7zArchive(new TextEncoder().encode(text), memberName);
-      downloadBlob(new Blob([archive], { type: 'application/x-7z-compressed' }), archiveName);
-      setStatus(`Diagnostic log saved as ${archiveName}.`);
-    } finally {
-      button.disabled = false;
-      button.removeAttribute('aria-busy');
-      button.title = 'Save log';
-    }
-  }
-
-  /**
-   * Handles copy diagnostic log.
-   *
-   * @returns {void} No value is returned.
-   */
-  async function copyDiagnosticLog() {
-    const text = diagnosticLogText();
-    if (!text) return;
-    await navigator.clipboard.writeText(text);
-    const button = document.querySelector(`#${PANEL_ID} [data-role="copy-log"]`);
-    if (!(button instanceof HTMLButtonElement)) return;
-    button.innerHTML = checkIconMarkup();
-    button.classList.add('tm-copy-confirmed');
-    button.setAttribute('aria-label', 'Copied');
-    setTimeout(() => {
-      if (!button.isConnected) return;
-      button.classList.add('tm-copy-fade');
-      setTimeout(() => {
-        if (!button.isConnected) return;
-        button.classList.remove('tm-copy-confirmed');
-        button.innerHTML = copyIconMarkup();
-        button.setAttribute('aria-label', 'Copy diagnostic log');
-        requestAnimationFrame(() => button.classList.remove('tm-copy-fade'));
-      }, 200);
-    }, 800);
-  }
-
   /**
    * Redacts transient signed URL tokens from diagnostic payloads without mutating callers.
    *
@@ -16007,6 +15943,78 @@ Image elapsed: ${formatDuration(imageElapsed)} — Completed: ${imageCompleted}/
    * Summarizes one DOM node for launcher-lifecycle console diagnostics.
    *
    * @param {Node|null} node - The DOM node to summarize.
+
+  /**
+   * Returns the diagnostic archive/save icon.
+   *
+   * @returns {string} Inline SVG markup for the Save button.
+   */
+  function saveIconMarkup() {
+    return '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 3v12m0 0 4-4m-4 4-4-4M5 19h14"/></svg>';
+  }
+
+  /**
+   * Returns the one canonical diagnostic-log serialization used by Copy and Save.
+   *
+   * @returns {string} Canonical newline-delimited diagnostic text.
+   */
+  function diagnosticLogText() {
+    return diagnosticLog.map(diagnosticLogLine).join('\n');
+  }
+
+  /**
+   * Saves the current diagnostic log as one 7z archive through the browser download flow.
+   *
+   * @returns {Promise<void>} Resolves after the download has been triggered.
+   */
+  async function saveDiagnosticLog() {
+    const text = diagnosticLogText();
+    if (!text) return;
+    const button = document.querySelector(`#${PANEL_ID} [data-role="save-log"]`);
+    if (!(button instanceof HTMLButtonElement) || button.disabled) return;
+    button.disabled = true;
+    button.setAttribute('aria-busy', 'true');
+    button.title = 'Preparing diagnostic archive…';
+    const base = `DownloadConversation_${sanitizeFileName(conversationTitle())}_diagnostic-log`;
+    const memberName = `${base}.txt`;
+    const archiveName = `${base}.7z`;
+    try {
+      const archive = await create7zArchive(new TextEncoder().encode(text), memberName);
+      downloadBlob(new Blob([archive], { type: 'application/x-7z-compressed' }), archiveName);
+      setStatus(`Diagnostic log saved as ${archiveName}.`);
+    } finally {
+      button.disabled = false;
+      button.removeAttribute('aria-busy');
+      button.title = 'Save log';
+    }
+  }
+
+  /**
+   * Handles copy diagnostic log.
+   *
+   * @returns {Promise<void>} Resolves after clipboard feedback is scheduled.
+   */
+  async function copyDiagnosticLog() {
+    const text = diagnosticLogText();
+    if (!text) return;
+    await navigator.clipboard.writeText(text);
+    const button = document.querySelector(`#${PANEL_ID} [data-role="copy-log"]`);
+    if (!(button instanceof HTMLButtonElement)) return;
+    button.innerHTML = checkIconMarkup();
+    button.classList.add('tm-copy-confirmed');
+    button.setAttribute('aria-label', 'Copied');
+    setTimeout(() => {
+      if (!button.isConnected) return;
+      button.classList.add('tm-copy-fade');
+      setTimeout(() => {
+        if (!button.isConnected) return;
+        button.classList.remove('tm-copy-confirmed');
+        button.innerHTML = copyIconMarkup();
+        button.setAttribute('aria-label', 'Copy diagnostic log');
+        requestAnimationFrame(() => button.classList.remove('tm-copy-fade'));
+      }, 200);
+    }, 800);
+  }
    * @returns {Object|null} A compact node summary, or null when unavailable.
    */
   function launcherNodeSummary(node) {
