@@ -140,6 +140,10 @@
   /**
    * Handles remember API request context.
    *
+   * Only requests for the conversation currently represented by the page may
+   * replace the reusable direct-API authorization context. Collection routes and
+   * background requests for other conversations must leave that context intact.
+   *
    * @param {string} url - The URL to process.
    * @param {Array<Object>} headerCandidates - The HTTP header values to inspect.
    * @returns {void} No value is returned.
@@ -148,8 +152,9 @@
     if (!isConversationApiUrl(url)) return;
     try {
       const parsed = new URL(url, location.href);
-      const match = parsed.pathname.match(/^\/backend-api\/conversations\/([^/]+)/);
-      if (!match) return;
+      const match = parsed.pathname.match(/^\/backend-api\/conversations\/([^/]+)(?:\/messages)?$/);
+      const activeConversationId = currentConversationId();
+      if (!match || !activeConversationId || match[1] !== activeConversationId) return;
       const headers = {};
       for (const candidate of headerCandidates) {
         for (const [key, value] of Object.entries(rawHeadersToObject(candidate))) {
@@ -158,7 +163,7 @@
       }
       if (!headers.authorization) return;
       apiRequestContext = {
-        conversation_id: match[1],
+        conversation_id: activeConversationId,
         headers,
         captured_at: new Date().toISOString()
       };
