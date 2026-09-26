@@ -5,7 +5,11 @@
   const stream7zSources = new Map();
   const stream7zOutputs = new Map();
 
-  /** Decodes the build-materialized 7-Zip 26.03 Wasm payload. @returns {Uint8Array} Wasm bytes. */
+  /**
+   * Decodes the build-materialized 7-Zip 26.03 Wasm payload.
+   *
+   * @returns {Uint8Array} Wasm bytes.
+   */
   function stream7zWasmBytes() {
     const binary = atob(STREAM7Z_WASM_BASE64);
     const bytes = new Uint8Array(binary.length);
@@ -13,7 +17,11 @@
     return bytes;
   }
 
-  /** Returns the singleton direct 7-Zip module. @returns {Promise<Object>} Initialized module. */
+  /**
+   * Returns the singleton direct 7-Zip module.
+   *
+   * @returns {Promise<Object>} Initialized module.
+   */
   function stream7zModule() {
     if (!stream7zModulePromise) {
       stream7zModulePromise = Stream7zModule({
