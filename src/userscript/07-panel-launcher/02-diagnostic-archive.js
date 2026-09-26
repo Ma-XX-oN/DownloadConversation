@@ -31,12 +31,19 @@
     button.setAttribute('aria-busy', 'true');
     button.title = 'Preparing diagnostic archive…';
     const base = `DownloadConversation_${sanitizeFileName(conversationTitle())}_diagnostic-log`;
-    const memberName = `${base}.txt`;
+    // The direct 7-Zip bridge currently accepts ASCII member names only. Keep
+    // the visible archive title intact while using a deterministic safe member.
+    const memberName = 'diagnostic-log.txt';
     const archiveName = `${base}.7z`;
     try {
       const archive = await create7zArchive(new TextEncoder().encode(text), memberName);
       downloadBlob(new Blob([archive], { type: 'application/x-7z-compressed' }), archiveName);
       setStatus(`Diagnostic log saved as ${archiveName}.`);
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      logDiagnostic('errors', 'diagnostic-log-save-failed', { archive_name: archiveName, message });
+      setStatus(`Diagnostic log save failed: ${message}`);
+      throw error;
     } finally {
       button.disabled = false;
       button.removeAttribute('aria-busy');
