@@ -1,7 +1,6 @@
-import { cp, mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
-import { execFile } from 'node:child_process';
-import os from 'node:os';
-import { promisify } from 'node:util';
+import { createHash } from 'node:crypto';
+import { mkdir, readFile, writeFile } from 'node:fs/promises';
+import { gunzipSync } from 'node:zlib';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import {
@@ -12,7 +11,6 @@ import {
   validatePinnedDependency
 } from './userscript-build-lib.mjs';
 
-const execFileAsync = promisify(execFile);
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 
 class InfrastructureError extends Error {}
@@ -58,27 +56,31 @@ async function fetchPinnedDependency(dependency) {
 }
 
 async function buildStream7zPrelude() {
-  const temporary = await mkdtemp(path.join(os.tmpdir(), 'dc-stream7z-build-'));
-  const source = path.join(root, '7z-js-benchmark', 'prototype', '7zip-direct');
-  const work = path.join(temporary, '7zip-direct');
-  try {
-    await cp(source, work, { recursive: true, filter: item => !/[\\/](?:build|\.build)(?:[\\/]|$)/.test(item) });
-    await execFileAsync('bash', [path.join(work, 'build.sh')], { cwd: root });
-    const gluePath = path.join(work, 'build', 'stream7z.mjs');
-    const wasmPath = path.join(work, 'build', 'stream7z.wasm');
-    let glue = await readFile(gluePath, 'utf8');
-    if (!/export default Stream7zModule;\s*$/.test(glue)) {
-      throw new Error('Unexpected stream7z.mjs export shape.');
-    }
-    glue = glue.replace(/export default Stream7zModule;\s*$/, '');
-    const wasm = await readFile(wasmPath);
-    return '// BEGIN bundled stream7z 26.03 direct API\n'
-      + glue + '\n'
-      + `const STREAM7Z_WASM_BASE64 = '${wasm.toString('base64')}';\n`
-      + '// END bundled stream7z 26.03 direct API\n';
-  } finally {
-    await rm(temporary, { recursive: true, force: true });
+  const dist = path.join(root, '7z-js-benchmark', 'dist');
+  const manifest = JSON.parse(await readFile(path.join(dist, 'stream7z-26.03.json'), 'utf8'));
+  if (manifest?.schema !== 1 || manifest.version !== '26.03') {
+    throw new Error('Invalid pinned stream7z distribution manifest.');
   }
+  const readVerified = async name => {
+    const expected = manifest.files?.[name];
+    if (!expected) throw new Error(`Missing stream7z manifest entry: ${name}`);
+    const bytes = gunzipSync(await readFile(path.join(dist, expected.compressed)));
+    const digest = createHash('sha256').update(bytes).digest('hex');
+    if (bytes.length !== expected.bytes || digest !== expected.sha256) {
+      throw new Error(`Pinned stream7z payload mismatch: ${name}`);
+    }
+    return bytes;
+  };
+  let glue = (await readVerified('stream7z.mjs')).toString('utf8');
+  if (!/export default Stream7zModule;\s*$/.test(glue)) {
+    throw new Error('Unexpected stream7z.mjs export shape.');
+  }
+  glue = glue.replace(/export default Stream7zModule;\s*$/, '');
+  const wasm = await readVerified('stream7z.wasm');
+  return `// BEGIN bundled stream7z 26.03 direct API source=${manifest.source_commit}\n`
+    + glue + '\n'
+    + `const STREAM7Z_WASM_BASE64 = '${wasm.toString('base64')}';\n`
+    + '// END bundled stream7z 26.03 direct API\n';
 }
 
 async function main() {
