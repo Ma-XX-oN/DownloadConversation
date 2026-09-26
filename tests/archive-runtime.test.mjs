@@ -66,8 +66,8 @@ const sanitizeFileName = value => value;
 const conversationTitle = () => 'integration';
 let downloaded = null;
 let status = '';
-const downloadBlob = async (blob, name) => {
-  downloaded = { bytes: new Uint8Array(await blob.arrayBuffer()), name };
+const downloadBlob = (blob, name) => {
+  downloaded = { blob, name };
 };
 const setStatus = value => { status = value; };
 const logDiagnostic = () => {};
@@ -81,8 +81,9 @@ return async () => {
 
   const result = await run();
   assert.equal(result.downloaded.name, 'DownloadConversation_integration_diagnostic-log.7z');
+  const downloadedBytes = new Uint8Array(await result.downloaded.blob.arrayBuffer());
   assert.deepEqual(
-    Array.from(result.downloaded.bytes.subarray(0, 6)),
+    Array.from(downloadedBytes.subarray(0, 6)),
     [0x37, 0x7a, 0xbc, 0xaf, 0x27, 0x1c]
   );
   assert.match(result.status, /Diagnostic log saved as .*\.7z\./);
