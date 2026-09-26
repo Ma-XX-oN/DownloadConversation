@@ -79,6 +79,19 @@
   }
 
   /**
+   * Changes a duplicate JSONL member name to its sibling 7z archive name.
+   *
+   * @param {string} memberName - Duplicate member filename.
+   * @returns {string} Archive filename with the final extension replaced by .7z.
+   */
+  function communicationLogDuplicateArchiveFileName(memberName) {
+    const extensionIndex = memberName.lastIndexOf('.');
+    return extensionIndex > 0
+      ? `${memberName.slice(0, extensionIndex)}.7z`
+      : `${memberName}.7z`;
+  }
+
+  /**
    * Creates a committed point-in-time duplicate of the active communication log.
    *
    * The lowest unused positive `(N)` suffix is inserted immediately before the
@@ -107,8 +120,41 @@
         );
       }
 
-      await communicationLogCopySnapshot(sourceSnapshot.file, duplicateName);
-      return duplicateName;
+      const memberName = duplicateName;
+      const archiveName = communicationLogDuplicateArchiveFileName(duplicateName);
+      if (await communicationLogFileExists(archiveName)) {
+        throw new Error(`Communication log archive already exists: ${archiveName}`);
+      }
+      const archive = await create7zArchive(
+        new Uint8Array(await sourceSnapshot.file.arrayBuffer()),
+        memberName
+      );
+      let writable = null;
+      let archiveCreated = false;
+      try {
+        const archiveHandle = await communicationLogDirectoryHandle.getFileHandle(
+          archiveName,
+          { create: true }
+        );
+        archiveCreated = true;
+        writable = await archiveHandle.createWritable();
+        await writable.write(new Blob([archive], { type: 'application/x-7z-compressed' }));
+        await writable.close();
+        writable = null;
+        const verified = await archiveHandle.getFile();
+        if (verified.size !== archive.byteLength) {
+          throw new Error(
+            `Communication log archive verification failed: expected ${archive.byteLength} bytes, found ${verified.size}.`
+          );
+        }
+      } catch (error) {
+        await abortWritableQuietly(writable);
+        if (archiveCreated) {
+          try { await communicationLogDirectoryHandle.removeEntry(archiveName); } catch {}
+        }
+        throw error;
+      }
+      return archiveName;
     });
     return queued.operation;
   }
