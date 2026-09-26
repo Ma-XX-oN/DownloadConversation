@@ -130,8 +130,8 @@ async function main() {
   const preludeLength = artifact.length - offset - source.length;
   if (preludeLength <= 0) fail('Generated userscript is missing the stream7z runtime prelude.');
   const prelude = artifact.subarray(offset, offset + preludeLength).toString('utf8');
-  if (!prelude.startsWith('// BEGIN bundled stream7z 26.03 direct API\n')) {
-    fail('Generated userscript stream7z opening banner is missing.');
+  if (!/^\/\/ BEGIN bundled stream7z 26\.03 direct API source=[0-9a-f]{40}\n/.test(prelude)) {
+    fail('Generated userscript stream7z opening provenance banner is missing.');
   }
   if (!prelude.endsWith('// END bundled stream7z 26.03 direct API\n')) {
     fail('Generated userscript stream7z closing banner is missing.');
@@ -141,6 +141,14 @@ async function main() {
   }
   if (/export default Stream7zModule/.test(prelude)) {
     fail('Generated userscript must not retain the ES-module export statement.');
+  }
+  const glueStart = prelude.indexOf('\n') + 1;
+  const glueEnd = prelude.indexOf("const STREAM7Z_WASM_BASE64 = '");
+  if (glueEnd <= glueStart) fail('Generated userscript stream7z glue boundary is missing.');
+  const glue = Buffer.from(prelude.slice(glueStart, glueEnd), 'utf8');
+  const glueSha256 = createHash('sha256').update(glue).digest('hex');
+  if (glueSha256 !== 'ba804c0a35f753b6c5804ce6b1512d166038506422253ba4f72244ca83b7d1ba') {
+    fail(`Generated stream7z glue SHA-256 mismatch: ${glueSha256}.`);
   }
   const wasmMatch = prelude.match(/const STREAM7Z_WASM_BASE64 = '([A-Za-z0-9+/=]+)';/);
   if (!wasmMatch) fail('Generated userscript stream7z Wasm payload is missing.');
