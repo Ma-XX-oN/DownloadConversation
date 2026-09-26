@@ -114,3 +114,14 @@ test('recorder panel restores dialog/log/switch/extract UI contracts', () => {
   assert.doesNotMatch(bootstrapSource, /makePanel\(\);/,
     'Recorder panel must remain lazy and must not be inserted during host reconciliation.');
 });
+
+
+test('Issue 166 diagnostic Save is immediately left of Copy', () => {
+  const head = userscript.match(/<div class="tm-log-head">[^\n]+<\/div>/)?.[0] ?? '';
+  assert.match(head, /data-role="save-log"[^>]*aria-label="Save diagnostic log"[^>]*title="Save log"/);
+  const saveAt = head.indexOf('data-role="save-log"');
+  const copyAt = head.indexOf('data-role="copy-log"');
+  const toggleAt = head.indexOf('data-role="toggle-log"');
+  assert.ok(saveAt >= 0 && copyAt > saveAt && toggleAt > copyAt,
+    'Diagnostic controls must be ordered Save, Copy, Expand.');
+});
