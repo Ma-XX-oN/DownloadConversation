@@ -11,23 +11,23 @@ function productionApi(names) {
   return context.api;
 }
 
-test('WorkStack lane token is anchored at the first User message start', () => {
-  const { workStackLaneFromFirstUserText } = productionApi([
-    'workStackLaneFromFirstUserText'
+test('WorkStack lane token is anchored at a User message start', () => {
+  const { workStackLaneFromUserText } = productionApi([
+    'workStackLaneFromUserText'
   ]);
 
-  assert.equal(workStackLaneFromFirstUserText('WS:DC-166\ncontext'), 'DC-166');
+  assert.equal(workStackLaneFromUserText('WS:DC-166\ncontext'), 'DC-166');
   assert.equal(
-    workStackLaneFromFirstUserText('  \nContinue WS:CORE-034\ncontext'),
+    workStackLaneFromUserText('  \nContinue WS:CORE-034\ncontext'),
     'CORE-034'
   );
   assert.equal(
-    workStackLaneFromFirstUserText('prefix WS:DC-157'),
+    workStackLaneFromUserText('prefix WS:DC-157'),
     null,
     'A later WS token in prose must not bind the chat.'
   );
   assert.equal(
-    workStackLaneFromFirstUserText('prefix Continue WS:DC-157'),
+    workStackLaneFromUserText('prefix Continue WS:DC-157'),
     null,
     'Continue WS must also be at the beginning after whitespace.'
   );
