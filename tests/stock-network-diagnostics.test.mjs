@@ -69,11 +69,11 @@ function authContextHarness() {
   vm.createContext(context);
   vm.runInContext(`
     let apiRequestContext = null;
+    ${productionFunctionSource('currentConversationId')}
     ${productionFunctionSource('isConversationApiUrl')}
     ${productionFunctionSource('rawHeadersToObject')}
     ${productionFunctionSource('rememberApiRequestContext')}
     globalThis.__auth = {
-      isConversationApiUrl,
       rememberApiRequestContext,
       context: () => apiRequestContext
     };
@@ -191,20 +191,13 @@ test('click diagnostics explicitly distinguish trusted from synthetic input', ()
     'Click diagnostics must retain mouse/pointer button metadata.');
 });
 
-test('conversation collection routes cannot replace active extraction authorization context', () => {
+test('collection and background requests cannot replace active extraction authorization context', () => {
   const { activeId, api } = authContextHarness();
   const headers = {
     authorization: 'Bearer live-fixture-token',
     'chatgpt-account-id': 'account-fixture'
   };
   const activeUrl = `https://chatgpt.com/backend-api/conversations/${activeId}?num_turns=10&include_has_versions=true`;
-
-  assert.equal(api.isConversationApiUrl(activeUrl), true);
-  assert.equal(
-    api.isConversationApiUrl(`https://chatgpt.com/backend-api/conversations/${activeId}/messages?before=x`),
-    true
-  );
-  assert.equal(api.isConversationApiUrl('https://chatgpt.com/backend-api/conversations/batch'), false);
 
   api.rememberApiRequestContext(activeUrl, headers);
   assert.equal(api.context()?.conversation_id, activeId);
@@ -213,4 +206,11 @@ test('conversation collection routes cannot replace active extraction authorizat
   api.rememberApiRequestContext('https://chatgpt.com/backend-api/conversations/batch', headers);
   assert.equal(api.context()?.conversation_id, activeId,
     'An authorized collection request must not displace the active conversation context.');
+
+  api.rememberApiRequestContext(
+    'https://chatgpt.com/backend-api/conversations/aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee?num_turns=10',
+    headers
+  );
+  assert.equal(api.context()?.conversation_id, activeId,
+    'An authorized request for another conversation must not displace the active context.');
 });
