@@ -95,7 +95,7 @@ function dependencyBanner(dependency, content) {
   return `${provenance}${prefix}${content}${content.endsWith('\n') ? '' : '\n'}${suffix}`;
 }
 
-export function assembleUserscript(header, dependencies, source) {
+export function assembleUserscript(header, dependencies, source, prelude = '') {
   if (/^\/\/ @require\b/m.test(header)) {
     throw new Error('Authoritative userscript header must not contain runtime @require directives.');
   }
@@ -108,6 +108,7 @@ export function assembleUserscript(header, dependencies, source) {
     validatePinnedDependency(dependency, content);
     result += dependencyBanner(dependency, content);
   }
+  result += prelude;
   result += source;
   return result;
 }
