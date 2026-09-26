@@ -264,3 +264,15 @@ test('communication-log mutators share queue, writer-close, and panel action inf
   assert.match(userscript, /function runCommunicationLogPanelAction\(/);
   assert.match(userscript, /function communicationLogPanelControls\(/);
 });
+
+
+test('Issue 166 Duplicate creates a 7z archive instead of a raw JSONL sibling', () => {
+  assert.match(userscript, /communicationLogDuplicateArchiveFileName\(/);
+  assert.match(userscript, /await create7zArchive\(new Uint8Array\(await sourceSnapshot\.file\.arrayBuffer\(\)\), memberName\)/);
+  assert.match(userscript, /application\/x-7z-compressed/);
+  assert.doesNotMatch(
+    userscript,
+    /await communicationLogCopySnapshot\(sourceSnapshot\.file, duplicateName\);\s*return duplicateName;/,
+    'Duplicate must not retain the old raw JSONL copy path.'
+  );
+});
