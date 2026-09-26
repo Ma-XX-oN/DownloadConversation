@@ -82,6 +82,9 @@
    */
   async function create7zArchive(bytes, memberName) {
     if (!(bytes instanceof Uint8Array)) throw new TypeError('Archive input must be Uint8Array.');
+    if (!/^[\x20-\x7e]+$/.test(memberName)) {
+      throw new Error('Archive member name must contain ASCII characters only.');
+    }
     const module = await stream7zModule();
     const sourceId = stream7zNextSourceId++;
     const outputId = stream7zNextOutputId++;
