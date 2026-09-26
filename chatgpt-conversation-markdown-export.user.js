@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         ChatGPT Conversation Markdown Recorder
 // @namespace    https://chatgpt.com/
-// @version      1.6.2-issue.169.2
+// @version      1.6.2-issue.169.3
 // @description  Exports the current ChatGPT conversation directly from the Conversation API as Markdown or JSONL.
 // @match        https://chatgpt.com/*
 // @match        https://chat.openai.com/*
@@ -8272,6 +8272,10 @@ function projectCanonicalConversation(events) {
   /**
    * Handles remember API request context.
    *
+   * Only requests for the conversation currently represented by the page may
+   * replace the reusable direct-API authorization context. Collection routes and
+   * background requests for other conversations must leave that context intact.
+   *
    * @param {string} url - The URL to process.
    * @param {Array<Object>} headerCandidates - The HTTP header values to inspect.
    * @returns {void} No value is returned.
@@ -8280,8 +8284,9 @@ function projectCanonicalConversation(events) {
     if (!isConversationApiUrl(url)) return;
     try {
       const parsed = new URL(url, location.href);
-      const match = parsed.pathname.match(/^\/backend-api\/conversations\/([^/]+)/);
-      if (!match) return;
+      const match = parsed.pathname.match(/^\/backend-api\/conversations\/([^/]+)(?:\/messages)?$/);
+      const activeConversationId = currentConversationId();
+      if (!match || !activeConversationId || match[1] !== activeConversationId) return;
       const headers = {};
       for (const candidate of headerCandidates) {
         for (const [key, value] of Object.entries(rawHeadersToObject(candidate))) {
@@ -8290,7 +8295,7 @@ function projectCanonicalConversation(events) {
       }
       if (!headers.authorization) return;
       apiRequestContext = {
-        conversation_id: match[1],
+        conversation_id: activeConversationId,
         headers,
         captured_at: new Date().toISOString()
       };
@@ -15929,6 +15934,40 @@ Image elapsed: ${formatDuration(imageElapsed)} — Completed: ${imageCompleted}/
    * Summarizes one DOM node for launcher-lifecycle console diagnostics.
    *
    * @param {Node|null} node - The DOM node to summarize.
+
+  /**
+   * Installs a small host-isolation stylesheet for native recorder checkboxes.
+   *
+   * ChatGPT's page styles may restyle native form controls globally. The recorder
+   * owns these controls, so their basic native appearance and visibility must not
+   * depend on host CSS. State and accessibility remain native input behaviour.
+   *
+   * @returns {void} No value is returned.
+   */
+  function injectRecorderCheckboxStyles() {
+    const styleId = `${PANEL_ID}-checkbox-style`;
+    if (document.getElementById(styleId)) return;
+    const style = document.createElement('style');
+    style.id = styleId;
+    style.textContent = `
+      #${PANEL_ID} input[type="checkbox"]{
+        -webkit-appearance:checkbox!important;
+        appearance:auto!important;
+        display:inline-block!important;
+        position:static!important;
+        visibility:visible!important;
+        opacity:1!important;
+        box-sizing:border-box!important;
+        flex:0 0 auto!important;
+        width:13px!important;
+        height:13px!important;
+        margin:0!important
+      }
+    `;
+    (document.head || document.documentElement)?.append(style);
+  }
+
+  injectRecorderCheckboxStyles();
    * @returns {Object|null} A compact node summary, or null when unavailable.
    */
   function launcherNodeSummary(node) {
