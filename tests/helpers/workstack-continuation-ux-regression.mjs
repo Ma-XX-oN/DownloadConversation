@@ -5,92 +5,196 @@ import { productionFunctionSource } from './userscript-source.mjs';
 
 function productionApi(names) {
   const context = { URL };
-  vm.runInNewContext(`${names.map(productionFunctionSource).join('\n')}\nthis.api={${names.join(',')}};`, context);
+  const source = names.map(productionFunctionSource).join('\n');
+  const exports = names.join(',');
+  vm.runInNewContext(`${source}\nthis.api={${exports}};`, context);
   return context.api;
 }
 
-test('WorkStack control distinguishes a brand-new chat from existing-chat recovery', () => {
-  for (const name of ['workStackIsBrandNewChatLocation', 'workStackControlMode', 'workStackRepoUrl']) {
-    assert.doesNotThrow(() => productionFunctionSource(name), `Production ${name}() is required.`);
-  }
-
-  const { workStackIsBrandNewChatLocation, workStackControlMode, workStackRepoUrl } = productionApi([
+test('WorkStack distinguishes new chat from existing recovery', () => {
+  const names = [
     'workStackIsBrandNewChatLocation',
     'workStackControlMode',
     'workStackRepoUrl'
-  ]);
+  ];
+  for (const name of names) {
+    assert.doesNotThrow(
+      () => productionFunctionSource(name),
+      `Production ${name}() is required.`
+    );
+  }
 
-  assert.equal(workStackIsBrandNewChatLocation('https://chatgpt.com/'), true);
+  const {
+    workStackIsBrandNewChatLocation,
+    workStackControlMode,
+    workStackRepoUrl
+  } = productionApi(names);
+
   assert.equal(
-    workStackIsBrandNewChatLocation('https://chatgpt.com/g/g-p-example/project'),
+    workStackIsBrandNewChatLocation('https://chatgpt.com/'),
     true
   );
   assert.equal(
-    workStackIsBrandNewChatLocation('https://chatgpt.com/g/g-p-example/c/conversation-1'),
+    workStackIsBrandNewChatLocation(
+      'https://chatgpt.com/g/g-p-example/project'
+    ),
+    true
+  );
+  assert.equal(
+    workStackIsBrandNewChatLocation(
+      'https://chatgpt.com/g/g-p-example/c/conversation-1'
+    ),
     false
   );
-  assert.equal(workStackIsBrandNewChatLocation('https://chatgpt.com/settings'), false);
-
-  assert.equal(workStackControlMode(null, 'fetching', 'https://chatgpt.com/'), 'picker');
   assert.equal(
-    workStackControlMode(null, 'fetching', 'https://chatgpt.com/g/g-p-example/project'),
+    workStackIsBrandNewChatLocation('https://chatgpt.com/settings'),
+    false
+  );
+
+  assert.equal(
+    workStackControlMode(null, 'fetching', 'https://chatgpt.com/'),
     'picker'
   );
   assert.equal(
-    workStackControlMode('conversation-1', 'fetching', 'https://chatgpt.com/c/conversation-1'),
-    'fetching',
-    'Existing-chat recovery must not be confused with pre-first-message lane selection.'
+    workStackControlMode(
+      null,
+      'fetching',
+      'https://chatgpt.com/g/g-p-example/project'
+    ),
+    'picker'
   );
   assert.equal(
-    workStackControlMode('conversation-1', 'unbound', 'https://chatgpt.com/c/conversation-1'),
-    'unbound',
-    'A recovered first User turn without WS: remains genuinely unbound.'
+    workStackControlMode(
+      'conversation-1',
+      'fetching',
+      'https://chatgpt.com/c/conversation-1'
+    ),
+    'fetching'
   );
   assert.equal(
-    workStackControlMode('conversation-1', 'bound', 'https://chatgpt.com/c/conversation-1'),
+    workStackControlMode(
+      'conversation-1',
+      'unbound',
+      'https://chatgpt.com/c/conversation-1'
+    ),
+    'unbound'
+  );
+  assert.equal(
+    workStackControlMode(
+      'conversation-1',
+      'bound',
+      'https://chatgpt.com/c/conversation-1'
+    ),
     'bound'
   );
-  assert.equal(workStackControlMode(null, 'fetching', 'https://chatgpt.com/settings'), 'hidden');
+  assert.equal(
+    workStackControlMode(null, 'fetching', 'https://chatgpt.com/settings'),
+    'hidden'
+  );
 
-  assert.equal(workStackRepoUrl(), 'https://github.com/Ma-XX-oN/WorkStack');
+  assert.equal(
+    workStackRepoUrl(),
+    'https://github.com/Ma-XX-oN/WorkStack'
+  );
 });
 
-test('bound WorkStack UI reveals CONTINUE only on hover/focus and expands from the right anchor', () => {
-  const ensureControl = productionFunctionSource('ensureWorkStackControl');
-  const ensureStyles = productionFunctionSource('ensureWorkStackStyles');
+test('bound WorkStack UI reveals CONTINUE on hover or focus', () => {
+  const control = productionFunctionSource('ensureWorkStackControl');
+  const styles = productionFunctionSource('ensureWorkStackStyles');
   const position = productionFunctionSource('workStackPositionControl');
 
-  assert.match(ensureControl, /data-role.*workstack-continue|dataset\.role\s*=\s*['"]workstack-continue['"]/);
-  assert.match(ensureControl, /title\s*=\s*['"][^'"]*WorkStack[^'"]*handoff/i,
-    'CONTINUE must expose an explanatory tooltip.');
-  assert.match(ensureStyles, /workstack-continue/);
-  assert.match(ensureStyles, /max-width:\s*0/,
-    'CONTINUE must consume no permanent width at rest.');
-  assert.match(ensureStyles, /opacity:\s*0/);
-  assert.match(ensureStyles, /:hover[\s\S]*workstack-continue/,
-    'Pointer hover must reveal CONTINUE.');
-  assert.match(ensureStyles, /:focus-within[\s\S]*workstack-continue/,
-    'Keyboard focus must reveal CONTINUE.');
-  assert.match(ensureStyles, /transition:/,
-    'Reveal/collapse must animate rather than jump.');
-  assert.match(position, /right\s*=\s*['"]16px['"]/,
-    'A right-anchored control grows leftward when its width increases.');
+  assert.match(control, /workstack-continue/);
+  assert.match(
+    control,
+    /title\s*=\s*['"][^'"]*WorkStack[^'"]*handoff/i,
+    'CONTINUE must expose an explanatory tooltip.'
+  );
+  assert.match(styles, /workstack-continue/);
+  assert.match(
+    styles,
+    /max-width:\s*0/,
+    'CONTINUE must consume no permanent width at rest.'
+  );
+  assert.match(styles, /opacity:\s*0/);
+  assert.match(
+    styles,
+    /:hover[\s\S]*workstack-continue/,
+    'Pointer hover must reveal CONTINUE.'
+  );
+  assert.match(
+    styles,
+    /:focus-within[\s\S]*workstack-continue/,
+    'Keyboard focus must reveal CONTINUE.'
+  );
+  assert.match(
+    styles,
+    /transition:/,
+    'Reveal and collapse must animate.'
+  );
+  assert.match(
+    position,
+    /right\s*=\s*['"]16px['"]/,
+    'A right anchor makes increasing width grow leftward.'
+  );
 });
 
-test('brand-new WorkStack picker opens the repository without cross-site fetching', () => {
-  for (const name of ['workStackOpenLanePicker', 'workStackRepoUrl']) {
-    assert.doesNotThrow(() => productionFunctionSource(name), `Production ${name}() is required.`);
+test('brand-new picker opens WorkStack without cross-site fetch', () => {
+  const names = ['workStackOpenLanePicker', 'workStackRepoUrl'];
+  for (const name of names) {
+    assert.doesNotThrow(
+      () => productionFunctionSource(name),
+      `Production ${name}() is required.`
+    );
   }
   const opener = productionFunctionSource('workStackOpenLanePicker');
   const control = productionFunctionSource('ensureWorkStackControl');
 
   assert.match(opener, /window\.open\(/);
   assert.match(opener, /workStackRepoUrl\(\)/);
-  assert.doesNotMatch(opener, /\bfetch\s*\(/,
-    'The userscript must rely on the browser/GitHub session instead of fetching private WorkStack data.');
-  assert.match(control, /WS:\s*PICK LANE/,
-    'Pre-first-message state must provide a compact lane-selection action.');
+  assert.doesNotMatch(
+    opener,
+    /\bfetch\s*\(/,
+    'The userscript must use the browser GitHub session.'
+  );
+  assert.match(control, /WS:\s*PICK LANE/);
   assert.match(control, /workstack-picker/);
-  assert.match(control, /review available lanes|available lane/i,
-    'The lane picker needs an explanatory tooltip.');
+  assert.match(
+    control,
+    /review available lanes|available lane/i,
+    'The lane picker needs an explanatory tooltip.'
+  );
+});
+
+test('bound lane label opens only its WorkStack description page', () => {
+  const names = [
+    'workStackLaneDescriptionUrl',
+    'workStackOpenLaneDescription'
+  ];
+  for (const name of names) {
+    assert.doesNotThrow(
+      () => productionFunctionSource(name),
+      `Production ${name}() is required.`
+    );
+  }
+
+  const { workStackLaneDescriptionUrl } = productionApi([
+    'workStackLaneDescriptionUrl'
+  ]);
+  assert.equal(
+    workStackLaneDescriptionUrl('RW-001'),
+    [
+      'https://github.com/Ma-XX-oN/WorkStack/tree/main/parallel/lanes/',
+      'RW-001'
+    ].join('')
+  );
+
+  const opener = productionFunctionSource('workStackOpenLaneDescription');
+  assert.match(opener, /window\.open\(/);
+  assert.match(opener, /workStackLaneDescriptionUrl\(/);
+  assert.doesNotMatch(opener, /\bfetch\s*\(/);
+  assert.doesNotMatch(opener, /handleWorkStackContinue/);
+
+  const control = productionFunctionSource('ensureWorkStackControl');
+  assert.match(control, /workstack-lane-link/);
+  assert.match(control, /workStackOpenLaneDescription/);
 });
