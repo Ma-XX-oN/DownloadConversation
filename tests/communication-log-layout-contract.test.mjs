@@ -72,7 +72,7 @@ test('Issue 166 owns the communication segment target in one named symbol', () =
     /const COMMUNICATION_LOG_SEGMENT_TARGET_BYTES = 10 \* 1024 \* 1024;/,
     'The initial 10 MiB segment target must be one named, easily changed symbol.');
   assert.equal(
-    (userscript.match(/COMMUNICATION_LOG_SEGMENT_TARGET_BYTES/g) || []).length,
+    (userscript.match(/const COMMUNICATION_LOG_SEGMENT_TARGET_BYTES\s*=/g) || []).length,
     1,
-    'Until rotation consumes it, the segment target must have exactly one authoritative declaration.');
+    'The segment target must have exactly one authoritative declaration.');
 });
