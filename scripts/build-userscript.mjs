@@ -85,10 +85,14 @@ async function buildStream7zPrelude() {
   // Emscripten uses import.meta.url to establish its script location. DC
   // supplies wasmBinary directly, so no module-relative Wasm fetch is needed.
   glue = glue.replaceAll('import.meta.url', 'globalThis.location.href');
-  const wasm = await readVerified('stream7z.wasm');
-  return `// BEGIN bundled stream7z 26.03 direct API source=${manifest.source_commit}\n`
+  await readVerified('stream7z.wasm');
+  const wasmGzip = await readFile(path.join(
+    dist,
+    manifest.files['stream7z.wasm'].compressed
+  ));
+  return `// BEGIN bundled stream7z 26.03 direct API source=${manifest.source_commit}\\n`
     + glue + '\n'
-    + `const STREAM7Z_WASM_BASE64 = '${wasm.toString('base64')}';\n`
+    + `const STREAM7Z_WASM_GZIP_BASE64 = '${wasmGzip.toString('base64')}';\\n`
     + '// END bundled stream7z 26.03 direct API\n';
 }
 

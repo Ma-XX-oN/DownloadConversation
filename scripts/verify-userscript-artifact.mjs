@@ -1,5 +1,6 @@
 import { createHash } from 'node:crypto';
 import { readFile } from 'node:fs/promises';
+import { gunzipSync } from 'node:zlib';
 import vm from 'node:vm';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -150,12 +151,13 @@ async function main() {
     fail('Generated stream7z classic-script location replacement is missing.');
   }
   const glueStart = prelude.indexOf('\n') + 1;
-  const glueEnd = prelude.indexOf("const STREAM7Z_WASM_BASE64 = '");
+  const glueEnd = prelude.indexOf("const STREAM7Z_WASM_GZIP_BASE64 = '");
   if (glueEnd <= glueStart) fail('Generated userscript stream7z glue boundary is missing.');
   const glue = Buffer.from(prelude.slice(glueStart, glueEnd), 'utf8');
-  const wasmMatch = prelude.match(/const STREAM7Z_WASM_BASE64 = '([A-Za-z0-9+/=]+)';/);
-  if (!wasmMatch) fail('Generated userscript stream7z Wasm payload is missing.');
-  const wasm = Buffer.from(wasmMatch[1], 'base64');
+  const wasmMatch = prelude.match(/const STREAM7Z_WASM_GZIP_BASE64 = '([A-Za-z0-9+/=]+)';/);
+  if (!wasmMatch) fail('Generated userscript compressed stream7z Wasm payload is missing.');
+  const wasmGzip = Buffer.from(wasmMatch[1], 'base64');
+  const wasm = gunzipSync(wasmGzip);
   const wasmSha256 = createHash('sha256').update(wasm).digest('hex');
   if (wasmSha256 !== 'b238bf262f7077f039cfe548922311bb6ce0756aba5679d247b1dc4003fa5353') {
     fail(`Generated stream7z Wasm SHA-256 mismatch: ${wasmSha256}.`);
@@ -164,6 +166,9 @@ async function main() {
   consume('repository source', source);
   if (offset !== artifact.length) {
     fail(`Generated userscript has ${artifact.length - offset} unexpected trailing byte(s).`);
+  }
+  if (artifact.length >= 2 * 1024 * 1024) {
+    fail(`Generated userscript unexpectedly exceeds 2 MiB: ${artifact.length} bytes.`);
   }
   const artifactText = artifact.toString('utf8');
   if (/import\.meta/.test(artifactText)) {

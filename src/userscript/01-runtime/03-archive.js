@@ -15,11 +15,15 @@
    *
    * @returns {Uint8Array} Wasm bytes.
    */
-  function stream7zWasmBytes() {
-    const binary = atob(STREAM7Z_WASM_BASE64);
-    const bytes = new Uint8Array(binary.length);
-    for (let index = 0; index < binary.length; index += 1) bytes[index] = binary.charCodeAt(index);
-    return bytes;
+  async function stream7zWasmBytes() {
+    const binary = atob(STREAM7Z_WASM_GZIP_BASE64);
+    const compressed = new Uint8Array(binary.length);
+    for (let index = 0; index < binary.length; index += 1) {
+      compressed[index] = binary.charCodeAt(index);
+    }
+    const stream = new Blob([compressed]).stream()
+      .pipeThrough(new DecompressionStream('gzip'));
+    return new Uint8Array(await new Response(stream).arrayBuffer());
   }
 
   /**
@@ -29,8 +33,8 @@
    */
   function stream7zModule() {
     if (!stream7zModulePromise) {
-      stream7zModulePromise = Stream7zModule({
-        wasmBinary: stream7zWasmBytes(),
+      stream7zModulePromise = stream7zWasmBytes().then(wasmBinary => Stream7zModule({
+        wasmBinary,
         stream7zRead(id, target) {
           const source = stream7zSources.get(id);
           if (!source) return -1;
@@ -64,7 +68,7 @@
           output.size = size;
           return 0;
         }
-      });
+      }));
     }
     return stream7zModulePromise;
   }
