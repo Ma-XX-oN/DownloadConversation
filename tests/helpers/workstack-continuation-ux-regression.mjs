@@ -11,6 +11,28 @@ function productionApi(names) {
   return context.api;
 }
 
+test('WorkStack lane token is anchored at the first User message start', () => {
+  const { workStackLaneFromFirstUserText } = productionApi([
+    'workStackLaneFromFirstUserText'
+  ]);
+
+  assert.equal(workStackLaneFromFirstUserText('WS:DC-166\ncontext'), 'DC-166');
+  assert.equal(
+    workStackLaneFromFirstUserText('  \nContinue WS:CORE-034\ncontext'),
+    'CORE-034'
+  );
+  assert.equal(
+    workStackLaneFromFirstUserText('prefix WS:DC-157'),
+    null,
+    'A later WS token in prose must not bind the chat.'
+  );
+  assert.equal(
+    workStackLaneFromFirstUserText('prefix Continue WS:DC-157'),
+    null,
+    'Continue WS must also be at the beginning after whitespace.'
+  );
+});
+
 test('WorkStack distinguishes new chat from existing recovery', () => {
   const names = [
     'workStackIsBrandNewChatLocation',
@@ -94,7 +116,7 @@ test('WorkStack distinguishes new chat from existing recovery', () => {
 
   assert.equal(
     workStackRepoUrl(),
-    'https://github.com/Ma-XX-oN/WorkStack'
+    'https://github.com/Ma-XX-oN/WorkStack/blob/main/parallel/BOARD.md'
   );
 });
 
@@ -138,7 +160,7 @@ test('bound WorkStack UI reveals CONTINUE on hover or focus', () => {
   );
 });
 
-test('brand-new picker opens WorkStack without cross-site fetch', () => {
+test('brand-new picker opens WorkStack lane board without cross-site fetch', () => {
   const names = ['workStackOpenLanePicker', 'workStackRepoUrl'];
   for (const name of names) {
     assert.doesNotThrow(
