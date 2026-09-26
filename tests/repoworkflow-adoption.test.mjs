@@ -69,7 +69,7 @@ test('consumer configuration preserves the DownloadConversation validation envir
       id: 'ubuntu-node22-python313',
       required: true,
       platform: 'linux',
-      capabilities: ['node-22', 'python-3.13', 'emscripten'],
+      capabilities: ['node-22', 'python-3.13'],
       validationCommand: ['python', 'scripts/repoworkflow-validate.py']
     }],
     artifacts: [{
