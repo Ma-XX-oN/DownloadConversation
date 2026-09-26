@@ -12,6 +12,21 @@ function sourceBlock() {
   return userscript.slice(start, end + endMarker.length);
 }
 
+function productionFunctionSource(name) {
+  const starts = [
+    userscript.indexOf(`  async function ${name}(`),
+    userscript.indexOf(`  function ${name}(`)
+  ].filter(index => index >= 0);
+  assert.ok(starts.length > 0, `Production function ${name} is missing.`);
+  const start = Math.min(...starts);
+  const boundaries = [
+    userscript.indexOf('\n\n  /**', start + 3),
+    userscript.indexOf('\n  // END ', start + 3)
+  ].filter(index => index >= 0);
+  assert.ok(boundaries.length > 0, `Production function ${name} boundary is missing.`);
+  return userscript.slice(start, Math.min(...boundaries)).trimStart();
+}
+
 function harness() {
   const context = {
     URL,
@@ -38,6 +53,32 @@ function harness() {
     context
   );
   return context.__network;
+}
+
+function authContextHarness() {
+  const activeId = '6ab708a8-b568-83e9-b438-50c3e20e8c31';
+  const context = {
+    URL,
+    Date,
+    location: {
+      origin: 'https://chatgpt.com',
+      href: `https://chatgpt.com/c/${activeId}`,
+      pathname: `/c/${activeId}`
+    }
+  };
+  vm.createContext(context);
+  vm.runInContext(`
+    let apiRequestContext = null;
+    ${productionFunctionSource('isConversationApiUrl')}
+    ${productionFunctionSource('rawHeadersToObject')}
+    ${productionFunctionSource('rememberApiRequestContext')}
+    globalThis.__auth = {
+      isConversationApiUrl,
+      rememberApiRequestContext,
+      context: () => apiRequestContext
+    };
+  `, context);
+  return { activeId, api: context.__auth };
 }
 
 function message(id, role = 'assistant') {
@@ -148,4 +189,28 @@ test('click diagnostics explicitly distinguish trusted from synthetic input', ()
     'Click diagnostics must retain pointer type when supplied.');
   assert.match(userscript, /button:/,
     'Click diagnostics must retain mouse/pointer button metadata.');
+});
+
+test('conversation collection routes cannot replace active extraction authorization context', () => {
+  const { activeId, api } = authContextHarness();
+  const headers = {
+    authorization: 'Bearer live-fixture-token',
+    'chatgpt-account-id': 'account-fixture'
+  };
+  const activeUrl = `https://chatgpt.com/backend-api/conversations/${activeId}?num_turns=10&include_has_versions=true`;
+
+  assert.equal(api.isConversationApiUrl(activeUrl), true);
+  assert.equal(
+    api.isConversationApiUrl(`https://chatgpt.com/backend-api/conversations/${activeId}/messages?before=x`),
+    true
+  );
+  assert.equal(api.isConversationApiUrl('https://chatgpt.com/backend-api/conversations/batch'), false);
+
+  api.rememberApiRequestContext(activeUrl, headers);
+  assert.equal(api.context()?.conversation_id, activeId);
+
+  // Exact later route from the v1.6.1 live failure trace.
+  api.rememberApiRequestContext('https://chatgpt.com/backend-api/conversations/batch', headers);
+  assert.equal(api.context()?.conversation_id, activeId,
+    'An authorized collection request must not displace the active conversation context.');
 });
