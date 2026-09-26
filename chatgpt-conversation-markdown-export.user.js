@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         ChatGPT Conversation Markdown Recorder
 // @namespace    https://chatgpt.com/
-// @version      1.7.2-issue.171.1
+// @version      1.7.2-issue.171.2
 // @description  Exports the current ChatGPT conversation directly from the Conversation API as Markdown or JSONL.
 // @match        https://chatgpt.com/*
 // @match        https://chat.openai.com/*
@@ -15709,16 +15709,19 @@ Image elapsed: ${formatDuration(imageElapsed)} — Completed: ${imageCompleted}/
   let workStackRecoveryTimer = null;
 
   /**
-   * Extracts one explicit WorkStack lane token from the supplied User text.
+   * Extracts one explicit WorkStack binding command from supplied User text.
    *
    * @param {string} text - Visible text of one User turn.
-   * @returns {string|null} Lane identifier without the `WS:` prefix, or null when absent.
+   * @returns {Object|null} Binding action/lane pair, or null when no command is present.
    */
-  function workStackLaneFromUserText(text) {
+  function workStackBindingCommandFromUserText(text) {
     const match = String(text ?? '').match(
-      /^\s*(?:Continue\s+)?WS:([A-Za-z0-9][A-Za-z0-9._-]*)(?=$|[^A-Za-z0-9._-])/
+      /^\s*(Bind\s+to|Continue|Rebind\s+to)\s+WS:([A-Za-z0-9][A-Za-z0-9._-]*)(?=$|[^A-Za-z0-9._-])/i
     );
-    return match?.[1] ?? null;
+    if (!match) return null;
+    const verb = match[1].toLowerCase().replace(/\s+/g, ' ');
+    const action = verb === 'continue' ? 'continue' : verb === 'rebind to' ? 'rebind' : 'bind';
+    return { action, lane: match[2] };
   }
 
   /**
@@ -15749,11 +15752,19 @@ Image elapsed: ${formatDuration(imageElapsed)} — Completed: ${imageCompleted}/
       record?.message?.metadata?.is_visually_hidden_from_conversation !== true
     );
     if (!visibleUsers.length) return { status: 'fetching', lane: null };
+    let lane = null;
     for (const record of visibleUsers) {
-      const lane = workStackLaneFromUserText(workStackVisibleMessageText(record.message));
-      if (lane) return { status: 'bound', lane };
+      const command = workStackBindingCommandFromUserText(
+        workStackVisibleMessageText(record.message)
+      );
+      if (!command) continue;
+      if (command.action === 'rebind') {
+        if (lane) lane = command.lane;
+        continue;
+      }
+      if (!lane) lane = command.lane;
     }
-    return { status: 'unbound', lane: null };
+    return lane ? { status: 'bound', lane } : { status: 'unbound', lane: null };
   }
 
   /**
