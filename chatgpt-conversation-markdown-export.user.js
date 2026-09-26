@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         ChatGPT Conversation Markdown Recorder
 // @namespace    https://chatgpt.com/
-// @version      1.7.0-issue.163.5
+// @version      1.7.0-issue.163.6
 // @description  Exports the current ChatGPT conversation directly from the Conversation API as Markdown or JSONL.
 // @match        https://chatgpt.com/*
 // @match        https://chat.openai.com/*
@@ -16242,64 +16242,6 @@ Image elapsed: ${formatDuration(imageElapsed)} — Completed: ${imageCompleted}/
   }
 
   /**
-   * Captures frozen mounted Assistant DOM candidates using live-tail identity.
-   *
-   * Duplicate mounted copies collapse to the copy with the most content.
-   *
-   * @returns {Array<Object>} Mounted candidates in conversation order.
-   */
-  function workStackMountedAssistantCandidates() {
-    const orderedKeys = [];
-    const byKey = new Map();
-    const selector = 'section[data-turn-id]';
-    for (const section of [...document.querySelectorAll(selector)]) {
-      const marker = liveTailSectionMarker(section);
-      if (!marker || marker.role !== 'assistant') continue;
-      const key = marker.message_id
-        ? `message:${marker.message_id}`
-        : (marker.dom_turn_id
-            ? `turn:${marker.dom_turn_id}`
-            : `container:${marker.container_id ?? ''}`);
-      if (!byKey.has(key)) orderedKeys.push(key);
-      const existing = byKey.get(key) ?? null;
-      const nextLength = Number(marker.content_length);
-      const oldLength = Number(existing?.content_length);
-      if (!existing || nextLength >= oldLength) {
-        byKey.set(key, {
-          ...marker,
-          section: section.cloneNode(true)
-        });
-      }
-    }
-    return orderedKeys.map(key => byKey.get(key)).filter(Boolean);
-  }
-
-  /**
-   * Waits briefly for an active Agent turn to settle and refreshes tail data.
-   *
-   * @returns {Promise<void>} Resolves when inactive; rejects after the limit.
-   */
-  async function workStackAwaitTailSettled() {
-    const startedAt = performance.now();
-    while (
-      agentStopwatchState?.active &&
-      performance.now() - startedAt < WORKSTACK_SETTLE_WAIT_MS
-    ) {
-      scanLiveTailMarkers('workstack-await-settle');
-      await new Promise(resolve => {
-        setTimeout(resolve, AGENT_STOPWATCH_REFRESH_MS);
-      });
-    }
-    if (agentStopwatchState?.active) {
-      throw new Error(
-        'The current Assistant turn is still active; wait for it to finish ' +
-        'and retry CONTINUE.'
-      );
-    }
-    scanLiveTailMarkers('workstack-continue-freeze');
-  }
-
-  /**
    * Observes stopwatch geometry so WorkStack stays immediately below it.
    *
    * @param {HTMLElement} control - Mounted WorkStack control to reposition.
@@ -16510,6 +16452,65 @@ Image elapsed: ${formatDuration(imageElapsed)} — Completed: ${imageCompleted}/
       { childList: true, subtree: true }
     );
   }
+  // END Issue #163 WorkStack continuation UI/control
+  // BEGIN Issue #163 WorkStack handoff transaction
+  /**
+   * Captures frozen mounted Assistant DOM candidates using live-tail identity.
+   *
+   * Duplicate mounted copies collapse to the copy with the most content.
+   *
+   * @returns {Array<Object>} Mounted candidates in conversation order.
+   */
+  function workStackMountedAssistantCandidates() {
+    const orderedKeys = [];
+    const byKey = new Map();
+    const selector = 'section[data-turn-id]';
+    for (const section of [...document.querySelectorAll(selector)]) {
+      const marker = liveTailSectionMarker(section);
+      if (!marker || marker.role !== 'assistant') continue;
+      const key = marker.message_id
+        ? `message:${marker.message_id}`
+        : (marker.dom_turn_id
+            ? `turn:${marker.dom_turn_id}`
+            : `container:${marker.container_id ?? ''}`);
+      if (!byKey.has(key)) orderedKeys.push(key);
+      const existing = byKey.get(key) ?? null;
+      const nextLength = Number(marker.content_length);
+      const oldLength = Number(existing?.content_length);
+      if (!existing || nextLength >= oldLength) {
+        byKey.set(key, {
+          ...marker,
+          section: section.cloneNode(true)
+        });
+      }
+    }
+    return orderedKeys.map(key => byKey.get(key)).filter(Boolean);
+  }
+
+  /**
+   * Waits briefly for an active Agent turn to settle and refreshes tail data.
+   *
+   * @returns {Promise<void>} Resolves when inactive; rejects after the limit.
+   */
+  async function workStackAwaitTailSettled() {
+    const startedAt = performance.now();
+    while (
+      agentStopwatchState?.active &&
+      performance.now() - startedAt < WORKSTACK_SETTLE_WAIT_MS
+    ) {
+      scanLiveTailMarkers('workstack-await-settle');
+      await new Promise(resolve => {
+        setTimeout(resolve, AGENT_STOPWATCH_REFRESH_MS);
+      });
+    }
+    if (agentStopwatchState?.active) {
+      throw new Error(
+        'The current Assistant turn is still active; wait for it to finish ' +
+        'and retry CONTINUE.'
+      );
+    }
+    scanLiveTailMarkers('workstack-continue-freeze');
+  }
 
   /**
    * Performs one atomic WorkStack continuation handoff from a bound lane.
@@ -16649,7 +16650,7 @@ Image elapsed: ${formatDuration(imageElapsed)} — Completed: ${imageCompleted}/
   }
 
   installWorkStackContinuation();
-  // END Issue #163 WorkStack continuation UI/transaction
+  // END Issue #163 WorkStack handoff transaction
 
   /**
    * Installs host-isolation styling for native recorder checkboxes.
