@@ -192,19 +192,31 @@
   }
 
   /**
-   * Serializes one JSONL append through the active long-lived communication writer.
+   * Issue 166 communication-log storage boundary.
    *
-   * @param {string} line - Complete newline-terminated JSONL record.
-   * @returns {Promise<void>} Resolves after the bytes are accepted by the active writer.
+   * Producers submit complete structured records here. They do not know whether
+   * the current bytes live in an active raw segment, a sealed segment, or an
+   * archived historical segment. Segment rotation can therefore replace this
+   * implementation without leaving the legacy raw-file append API on the
+   * recorder execution path.
    */
-  function communicationLogAppendLine(line) {
-    const queued = communicationLogEnqueue('append', async () => {
-      await communicationLogOpenWriter();
-      await communicationLogWritable.write(line);
-      communicationLogWriterDirty = true;
-    });
-    return queued.operation;
-  }
+  const communicationLogStorage = Object.freeze({
+    /**
+     * Persists one complete communication record through the active storage layer.
+     *
+     * @param {Object} record - Complete JSON-compatible communication record.
+     * @returns {Promise<void>} Resolves after the record bytes are accepted.
+     */
+    appendRecord(record) {
+      const line = `${JSON.stringify(record)}\n`;
+      const queued = communicationLogEnqueue('storage-append', async () => {
+        await communicationLogOpenWriter();
+        await communicationLogWritable.write(line);
+        communicationLogWriterDirty = true;
+      });
+      return queued.operation;
+    }
+  });
 
   /**
    * Reports disk-recorder failures through existing diagnostics without throwing into page networking.
@@ -242,7 +254,7 @@
       type,
       ...data
     };
-    await communicationLogAppendLine(`${JSON.stringify(record)}\n`);
+    await communicationLogStorage.appendRecord(record);
     return true;
   }
 
