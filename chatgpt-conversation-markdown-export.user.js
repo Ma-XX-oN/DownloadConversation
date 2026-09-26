@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         ChatGPT Conversation Markdown Recorder
 // @namespace    https://chatgpt.com/
-// @version      1.6.3-issue.166.2
+// @version      1.6.3-issue.166.3
 // @description  Exports the current ChatGPT conversation directly from the Conversation API as Markdown or JSONL.
 // @match        https://chatgpt.com/*
 // @match        https://chat.openai.com/*
@@ -15768,13 +15768,50 @@ Image elapsed: ${formatDuration(imageElapsed)} — Completed: ${imageCompleted}/
     }
   }
 
+  /** Returns the diagnostic archive/save icon. */
+  function saveIconMarkup() {
+    return '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 3v12m0 0 4-4m-4 4-4-4M5 19h14"/></svg>';
+  }
+
+  /** Returns the one canonical diagnostic-log serialization used by Copy and Save. */
+  function diagnosticLogText() {
+    return diagnosticLog.map(diagnosticLogLine).join('\n');
+  }
+
+  /**
+   * Saves the current diagnostic log as one 7z archive through the browser download flow.
+   *
+   * @returns {Promise<void>} Resolves after the download has been triggered.
+   */
+  async function saveDiagnosticLog() {
+    const text = diagnosticLogText();
+    if (!text) return;
+    const button = document.querySelector(`#${PANEL_ID} [data-role="save-log"]`);
+    if (!(button instanceof HTMLButtonElement) || button.disabled) return;
+    button.disabled = true;
+    button.setAttribute('aria-busy', 'true');
+    button.title = 'Preparing diagnostic archive…';
+    const base = `DownloadConversation_${sanitizeFileName(conversationTitle())}_diagnostic-log`;
+    const memberName = `${base}.txt`;
+    const archiveName = `${base}.7z`;
+    try {
+      const archive = await create7zArchive(new TextEncoder().encode(text), memberName);
+      downloadBlob(new Blob([archive], { type: 'application/x-7z-compressed' }), archiveName);
+      setStatus(`Diagnostic log saved as ${archiveName}.`);
+    } finally {
+      button.disabled = false;
+      button.removeAttribute('aria-busy');
+      button.title = 'Save log';
+    }
+  }
+
   /**
    * Handles copy diagnostic log.
    *
    * @returns {void} No value is returned.
    */
   async function copyDiagnosticLog() {
-    const text = diagnosticLog.map(diagnosticLogLine).join('\n');
+    const text = diagnosticLogText();
     if (!text) return;
     await navigator.clipboard.writeText(text);
     const button = document.querySelector(`#${PANEL_ID} [data-role="copy-log"]`);
@@ -16570,7 +16607,7 @@ Image elapsed: ${formatDuration(imageElapsed)} — Completed: ${imageCompleted}/
     panel.innerHTML = `
       <button class="tm-close" type="button" aria-label="Close">×</button>
       <div class="tm-title" data-role="title"></div>
-      <div class="tm-log-head"><span class="tm-label" data-role="log-count">Log: 0 items</span><button class="tm-icon-button" data-role="copy-log" type="button" aria-label="Copy diagnostic log" title="Copy log"></button><button class="tm-icon-button" data-role="toggle-log" type="button" aria-label="Show diagnostic log" aria-expanded="false" title="Show log">+</button></div>
+      <div class="tm-log-head"><span class="tm-label" data-role="log-count">Log: 0 items</span><button class="tm-icon-button" data-role="save-log" type="button" aria-label="Save diagnostic log" title="Save log"></button><button class="tm-icon-button" data-role="copy-log" type="button" aria-label="Copy diagnostic log" title="Copy log"></button><button class="tm-icon-button" data-role="toggle-log" type="button" aria-label="Show diagnostic log" aria-expanded="false" title="Show log">+</button></div>
       <div class="tm-log-output" data-role="log-output" hidden></div>
       <div class="tm-status" data-role="status"></div>
       <div class="tm-row"><span class="tm-label">Diagnostics</span><select data-role="diagnostics"><option value="errors">Errors</option><option value="warnings">Warnings</option><option value="debug">Debug</option><option value="verbose">Verbose</option></select><label><input data-role="console-diagnostics" type="checkbox"> console</label><button data-role="test" type="button">Test</button></div>
@@ -16602,8 +16639,18 @@ Image elapsed: ${formatDuration(imageElapsed)} — Completed: ${imageCompleted}/
       localStorage.setItem(CONSOLE_DIAGNOSTICS_STORAGE_KEY, String(consoleDiagnostics));
       logDiagnostic('debug', 'console-diagnostics-changed', { enabled: consoleDiagnostics });
     });
+    const saveLogButton = panel.querySelector('[data-role="save-log"]');
+    if (saveLogButton) saveLogButton.innerHTML = saveIconMarkup();
     const copyLogButton = panel.querySelector('[data-role="copy-log"]');
     if (copyLogButton) copyLogButton.innerHTML = copyIconMarkup();
+    panel.querySelector('[data-role="save-log"]').addEventListener('click', () => {
+      void saveDiagnosticLog().catch(error => {
+        logDiagnostic('errors', 'diagnostic-log-save-failure', {
+          message: errorMessage(error)
+        });
+        setStatus(`Diagnostic log save failed: ${errorMessage(error)}`);
+      });
+    });
     panel.querySelector('[data-role="toggle-log"]').addEventListener('click', () => {
       diagnosticLogExpanded = !diagnosticLogExpanded;
       refreshDiagnosticLog();
