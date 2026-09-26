@@ -87,8 +87,8 @@
       "name": "panel-launcher",
       "files": [
         "src/userscript/07-panel-launcher/00-checkbox-appearance.js",
-        "src/userscript/07-panel-launcher/01-panel-diagnostics.js",
         "src/userscript/07-panel-launcher/02-diagnostic-archive.js",
+        "src/userscript/07-panel-launcher/01-panel-diagnostics.js",
         "src/userscript/07-panel-launcher/02-launcher-lifecycle.js",
         "src/userscript/07-panel-launcher/03-launcher-topology.js",
         "src/userscript/07-panel-launcher/04-launcher-removal.js",
