@@ -127,6 +127,29 @@ async function main() {
   if (!source.subarray(0, 9).equals(Buffer.from('\n(() => {', 'utf8'))) {
     fail('DownloadConversation source does not preserve the userscript IIFE boundary.');
   }
+  const preludeLength = artifact.length - offset - source.length;
+  if (preludeLength <= 0) fail('Generated userscript is missing the stream7z runtime prelude.');
+  const prelude = artifact.subarray(offset, offset + preludeLength).toString('utf8');
+  if (!prelude.startsWith('// BEGIN bundled stream7z 26.03 direct API\n')) {
+    fail('Generated userscript stream7z opening banner is missing.');
+  }
+  if (!prelude.endsWith('// END bundled stream7z 26.03 direct API\n')) {
+    fail('Generated userscript stream7z closing banner is missing.');
+  }
+  if (!/async function Stream7zModule\(moduleArg = \{\}\)/.test(prelude)) {
+    fail('Generated userscript stream7z module factory is missing.');
+  }
+  if (/export default Stream7zModule/.test(prelude)) {
+    fail('Generated userscript must not retain the ES-module export statement.');
+  }
+  const wasmMatch = prelude.match(/const STREAM7Z_WASM_BASE64 = '([A-Za-z0-9+/=]+)';/);
+  if (!wasmMatch) fail('Generated userscript stream7z Wasm payload is missing.');
+  const wasm = Buffer.from(wasmMatch[1], 'base64');
+  const wasmSha256 = createHash('sha256').update(wasm).digest('hex');
+  if (wasmSha256 !== 'b238bf262f7077f039cfe548922311bb6ce0756aba5679d247b1dc4003fa5353') {
+    fail(`Generated stream7z Wasm SHA-256 mismatch: ${wasmSha256}.`);
+  }
+  offset += preludeLength;
   consume('repository source', source);
   if (offset !== artifact.length) {
     fail(`Generated userscript has ${artifact.length - offset} unexpected trailing byte(s).`);
