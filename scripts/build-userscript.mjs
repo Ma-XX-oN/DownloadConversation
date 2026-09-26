@@ -76,6 +76,15 @@ async function buildStream7zPrelude() {
     throw new Error('Unexpected stream7z.mjs export shape.');
   }
   glue = glue.replace(/export default Stream7zModule;\s*$/, '');
+  const importMetaMatches = glue.match(/import\.meta\.url/g) ?? [];
+  if (importMetaMatches.length !== 1) {
+    throw new Error(
+      `Expected exactly one import.meta.url in stream7z glue; found ${importMetaMatches.length}.`
+    );
+  }
+  // Emscripten uses import.meta.url to establish its script location. DC
+  // supplies wasmBinary directly, so no module-relative Wasm fetch is needed.
+  glue = glue.replace('import.meta.url', 'globalThis.location.href');
   const wasm = await readVerified('stream7z.wasm');
   return `// BEGIN bundled stream7z 26.03 direct API source=${manifest.source_commit}\n`
     + glue + '\n'

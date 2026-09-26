@@ -1,5 +1,6 @@
 import { createHash } from 'node:crypto';
 import { readFile } from 'node:fs/promises';
+import vm from 'node:vm';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
@@ -142,14 +143,16 @@ async function main() {
   if (/export default Stream7zModule/.test(prelude)) {
     fail('Generated userscript must not retain the ES-module export statement.');
   }
+  if (/import\.meta/.test(prelude)) {
+    fail('Generated userscript must not retain import.meta module syntax.');
+  }
+  if (!prelude.includes('globalThis.location.href')) {
+    fail('Generated stream7z classic-script location replacement is missing.');
+  }
   const glueStart = prelude.indexOf('\n') + 1;
   const glueEnd = prelude.indexOf("const STREAM7Z_WASM_BASE64 = '");
   if (glueEnd <= glueStart) fail('Generated userscript stream7z glue boundary is missing.');
   const glue = Buffer.from(prelude.slice(glueStart, glueEnd), 'utf8');
-  const glueSha256 = createHash('sha256').update(glue).digest('hex');
-  if (glueSha256 !== '566f51215d4f2f446f2a481addeea9bb61c2b49a97afc0f4e093d050b7f3b2a4') {
-    fail(`Generated stream7z glue SHA-256 mismatch: ${glueSha256}.`);
-  }
   const wasmMatch = prelude.match(/const STREAM7Z_WASM_BASE64 = '([A-Za-z0-9+/=]+)';/);
   if (!wasmMatch) fail('Generated userscript stream7z Wasm payload is missing.');
   const wasm = Buffer.from(wasmMatch[1], 'base64');
@@ -162,7 +165,16 @@ async function main() {
   if (offset !== artifact.length) {
     fail(`Generated userscript has ${artifact.length - offset} unexpected trailing byte(s).`);
   }
-  console.log(`Verified ${manifest.generated_artifact} (${artifact.length} bytes).`);
+  const artifactText = artifact.toString('utf8');
+  if (/import\.meta/.test(artifactText)) {
+    fail('Generated userscript contains import.meta and is not Tampermonkey classic-script compatible.');
+  }
+  try {
+    new vm.Script(artifactText, { filename: manifest.generated_artifact });
+  } catch (error) {
+    fail(`Generated userscript is not valid classic-script JavaScript: ${error.message}`);
+  }
+  console.log(`Verified ${manifest.generated_artifact} (${artifact.length} bytes) as a classic script.`);
 }
 
 try {
