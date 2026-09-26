@@ -1,7 +1,7 @@
   // BEGIN Issue #163 WorkStack continuation state
   /** DOM id of the floating WorkStack continuation control. */
   const WORKSTACK_CONTROL_ID = 'tm-workstack-continuation';
-  /** Delay before retrying first-turn recovery while authenticated API context is unavailable. */
+  /** Delay before retrying lane recovery while authenticated API context is unavailable. */
   const WORKSTACK_RECOVERY_RETRY_MS = 750;
   /** Maximum time a CONTINUE action waits for an active Agent turn to settle. */
   const WORKSTACK_SETTLE_WAIT_MS = 15000;
@@ -14,7 +14,7 @@
     recovery_promise: null,
     handoff_in_progress: false
   };
-  /** Pending first-turn recovery retry timer, or null when no retry is scheduled. */
+  /** Pending lane recovery retry timer, or null when no retry is scheduled. */
   let workStackRecoveryTimer = null;
 
   /**
@@ -23,7 +23,7 @@
    * @param {string} text - Text of the first User turn only.
    * @returns {string|null} Lane identifier without the `WS:` prefix, or null when absent.
    */
-  function workStackLaneFromFirstUserText(text) {
+  function workStackLaneFromUserText(text) {
     const match = String(text ?? '').match(
       /^\s*(?:Continue\s+)?WS:([A-Za-z0-9][A-Za-z0-9._-]*)(?=$|[^A-Za-z0-9._-])/
     );
@@ -53,13 +53,16 @@
    * @returns {Object} Object with `status` (`fetching`, `bound`, or `unbound`) and lane value.
    */
   function workStackResolveLaneFromSpine(spine) {
-    const firstUser = (spine?.records ?? []).find(record =>
+    const visibleUsers = (spine?.records ?? []).filter(record =>
       record?.role === 'user' &&
       record?.message?.metadata?.is_visually_hidden_from_conversation !== true
-    ) ?? null;
-    if (!firstUser) return { status: 'fetching', lane: null };
-    const lane = workStackLaneFromFirstUserText(workStackVisibleMessageText(firstUser.message));
-    return lane ? { status: 'bound', lane } : { status: 'unbound', lane: null };
+    );
+    if (!visibleUsers.length) return { status: 'fetching', lane: null };
+    for (const record of visibleUsers) {
+      const lane = workStackLaneFromUserText(workStackVisibleMessageText(record.message));
+      if (lane) return { status: 'bound', lane };
+    }
+    return { status: 'unbound', lane: null };
   }
 
   /**
@@ -221,7 +224,7 @@
   }
 
   /**
-   * Schedules another first-turn recovery attempt without allowing duplicate retry timers.
+   * Schedules another lane recovery attempt without allowing duplicate retry timers.
    *
    * @param {number} delayMs - Delay in milliseconds before the retry.
    * @returns {void} No value is returned.
@@ -256,7 +259,7 @@
   }
 
   /**
-   * Recovers the first User turn from complete Conversation API history and updates authoritative lane state.
+   * Recovers the WorkStack lane from complete Conversation API history and updates authoritative lane state.
    *
    * @returns {Promise<void>} Resolves after the current recovery attempt completes or is deferred.
    */
