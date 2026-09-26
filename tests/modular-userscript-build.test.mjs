@@ -45,7 +45,7 @@ test('manifest groups ordered small source segments under logical subsystem modu
     ]
   );
   const sourcePaths = orderedSourcePaths(manifest);
-  assert.equal(sourcePaths.length, 44);
+  assert.equal(sourcePaths.length, 45);
   assert.equal(new Set(sourcePaths).size, sourcePaths.length);
   assert.ok(sourcePaths.every(sourcePath => sourcePath.startsWith('src/userscript/')));
   assert.ok(sourcePaths.every(sourcePath => !sourcePath.includes('/userscript-body/part-')));
