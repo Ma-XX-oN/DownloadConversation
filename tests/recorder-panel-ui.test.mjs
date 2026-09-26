@@ -146,8 +146,7 @@ test('Issue 166 archive runtime is assembled inside the DownloadConversation IIF
     'utf8'
   );
   assert.match(buildLib, /const scopedSource = prelude/);
-  assert.match(buildLib, /source\.replace\('\n\(\(\) => \{'/);
-  assert.match(buildLib, /\$\{prelude\}/);
+  assert.match(buildLib, /source\\.replace\\(/);\n  assert.match(buildLib, /\$\{prelude\}/);
   assert.doesNotMatch(
     buildLib,
     /result \+= prelude;\s*result \+= source;/,
