@@ -137,3 +137,21 @@ test('Issue 166 diagnostic Save uses a supported deterministic archive member an
   assert.match(userscript, /Archive member name must contain ASCII characters only/,
     'Archive bridge must reject unsupported member names before entering Wasm.');
 });
+
+
+test('Issue 166 archive runtime is assembled inside the DownloadConversation IIFE', async () => {
+  const buildLib = await readFile(
+    new URL('../scripts/userscript-build-lib.mjs', import.meta.url),
+    'utf8'
+  );
+  assert.match(
+    buildLib,
+    /source\.replace\('\n\(\(\) => \{', `\\n\(\(\) => \{\\n\$\{prelude\}`\)/,
+    'Archive prelude must be injected inside the userscript IIFE so create7zArchive is in DC lexical scope.'
+  );
+  assert.doesNotMatch(
+    buildLib,
+    /result \+= prelude;\s*result \+= source;/,
+    'Archive prelude must not be emitted outside the DownloadConversation IIFE.'
+  );
+});
