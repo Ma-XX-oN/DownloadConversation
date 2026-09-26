@@ -1,4 +1,7 @@
-import { mkdir, readFile, writeFile } from 'node:fs/promises';
+import { cp, mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
+import { execFile } from 'node:child_process';
+import os from 'node:os';
+import { promisify } from 'node:util';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import {
@@ -9,6 +12,7 @@ import {
   validatePinnedDependency
 } from './userscript-build-lib.mjs';
 
+const execFileAsync = promisify(execFile);
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 
 class InfrastructureError extends Error {}
@@ -53,6 +57,30 @@ async function fetchPinnedDependency(dependency) {
   return { manifest: dependency, content };
 }
 
+async function buildStream7zPrelude() {
+  const temporary = await mkdtemp(path.join(os.tmpdir(), 'dc-stream7z-build-'));
+  const source = path.join(root, '7z-js-benchmark', 'prototype', '7zip-direct');
+  const work = path.join(temporary, '7zip-direct');
+  try {
+    await cp(source, work, { recursive: true, filter: item => !/[\\/](?:build|\.build)(?:[\\/]|$)/.test(item) });
+    await execFileAsync('bash', [path.join(work, 'build.sh')], { cwd: root });
+    const gluePath = path.join(work, 'build', 'stream7z.mjs');
+    const wasmPath = path.join(work, 'build', 'stream7z.wasm');
+    let glue = await readFile(gluePath, 'utf8');
+    if (!/export default Stream7zModule;\s*$/.test(glue)) {
+      throw new Error('Unexpected stream7z.mjs export shape.');
+    }
+    glue = glue.replace(/export default Stream7zModule;\s*$/, '');
+    const wasm = await readFile(wasmPath);
+    return '// BEGIN bundled stream7z 26.03 direct API\n'
+      + glue + '\n'
+      + `const STREAM7Z_WASM_BASE64 = '${wasm.toString('base64')}';\n`
+      + '// END bundled stream7z 26.03 direct API\n';
+  } finally {
+    await rm(temporary, { recursive: true, force: true });
+  }
+}
+
 async function main() {
   const args = parseArguments(process.argv.slice(2));
   const manifest = await readUserscriptManifest(root);
@@ -63,7 +91,8 @@ async function main() {
   for (const dependency of manifest.dependencies) {
     dependencies.push(await fetchPinnedDependency(dependency));
   }
-  const built = assembleUserscript(header, dependencies, source);
+  const stream7zPrelude = await buildStream7zPrelude();
+  const built = assembleUserscript(header, dependencies, source, stream7zPrelude);
 
   if (args.check) {
     let existing;
