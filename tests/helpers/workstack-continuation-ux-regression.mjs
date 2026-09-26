@@ -11,26 +11,25 @@ function productionApi(names) {
   return context.api;
 }
 
-test('WorkStack lane token is anchored at a User message start', () => {
-  const { workStackLaneFromUserText } = productionApi([
-    'workStackLaneFromUserText'
+test('WorkStack binding commands are explicit and anchored at a User message start', () => {
+  const { workStackBindingCommandFromUserText } = productionApi([
+    'workStackBindingCommandFromUserText'
   ]);
 
-  assert.equal(workStackLaneFromUserText('WS:DC-166\ncontext'), 'DC-166');
-  assert.equal(
-    workStackLaneFromUserText('  \nContinue WS:CORE-034\ncontext'),
-    'CORE-034'
+  assert.deepEqual(
+    workStackBindingCommandFromUserText('Bind to WS:DC-166\ncontext'),
+    { action: 'bind', lane: 'DC-166' }
   );
-  assert.equal(
-    workStackLaneFromUserText('prefix WS:DC-157'),
-    null,
-    'A later WS token in prose must not bind the chat.'
+  assert.deepEqual(
+    workStackBindingCommandFromUserText('  \nContinue WS:CORE-034\ncontext'),
+    { action: 'continue', lane: 'CORE-034' }
   );
-  assert.equal(
-    workStackLaneFromUserText('prefix Continue WS:DC-157'),
-    null,
-    'Continue WS must also be at the beginning after whitespace.'
+  assert.deepEqual(
+    workStackBindingCommandFromUserText('Rebind to WS:DC-157'),
+    { action: 'rebind', lane: 'DC-157' }
   );
+  assert.equal(workStackBindingCommandFromUserText('WS:DC-166'), null);
+  assert.equal(workStackBindingCommandFromUserText('prefix Bind to WS:DC-157'), null);
 });
 
 test('WorkStack distinguishes new chat from existing recovery', () => {
