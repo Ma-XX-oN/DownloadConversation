@@ -1,3 +1,7 @@
 [submodule "RepoWorkflow"]
 	path = RepoWorkflow
 	url = https://github.com/Ma-XX-oN/RepoWorkflow.git
+
+[submodule "7z-js-benchmark"]
+	path = 7z-js-benchmark
+	url = https://github.com/Ma-XX-oN/7z-js-benchmark.git
