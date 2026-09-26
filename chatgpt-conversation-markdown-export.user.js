@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         ChatGPT Conversation Markdown Recorder
 // @namespace    https://chatgpt.com/
-// @version      1.7.1-issue.163.7
+// @version      1.7.1-issue.163.8
 // @description  Exports the current ChatGPT conversation directly from the Conversation API as Markdown or JSONL.
 // @match        https://chatgpt.com/*
 // @match        https://chat.openai.com/*
@@ -15716,7 +15716,7 @@ Image elapsed: ${formatDuration(imageElapsed)} — Completed: ${imageCompleted}/
    */
   function workStackLaneFromFirstUserText(text) {
     const match = String(text ?? '').match(
-      /(?:^|[^A-Za-z0-9._-])WS:([A-Za-z0-9][A-Za-z0-9._-]*)(?=$|[^A-Za-z0-9._-])/
+      /^\s*(?:Continue\s+)?WS:([A-Za-z0-9][A-Za-z0-9._-]*)(?=$|[^A-Za-z0-9._-])/
     );
     return match?.[1] ?? null;
   }
@@ -16105,12 +16105,12 @@ Image elapsed: ${formatDuration(imageElapsed)} — Completed: ${imageCompleted}/
   let workStackObservedStopwatch = null;
 
   /**
-   * Returns the WorkStack repository URL used by the lane picker.
+   * Returns the WorkStack lane-board URL used by the lane picker.
    *
-   * @returns {string} GitHub repository URL opened with browser credentials.
+   * @returns {string} GitHub board URL opened with browser credentials.
    */
   function workStackRepoUrl() {
-    return 'https://github.com/Ma-XX-oN/WorkStack';
+    return 'https://github.com/Ma-XX-oN/WorkStack/blob/main/parallel/BOARD.md';
   }
 
   /**
