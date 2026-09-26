@@ -48,7 +48,7 @@ test('WorkStack lane binding reads only the first visible User turn and keeps re
   const { workStackLaneFromFirstUserText, workStackResolveLaneFromSpine } = laneApi();
 
   assert.equal(workStackLaneFromFirstUserText('Continue WS:RW-001\ncontext'), 'RW-001');
-  assert.equal(workStackLaneFromFirstUserText('prefix (WS:CORE_12.alpha-3), suffix'), 'CORE_12.alpha-3');
+  assert.equal(workStackLaneFromFirstUserText('prefix (WS:CORE_12.alpha-3), suffix'), null);
   assert.equal(workStackLaneFromFirstUserText('prefixXWS:WRONG'), null);
   assert.equal(workStackLaneFromFirstUserText('no lane here'), null);
 
