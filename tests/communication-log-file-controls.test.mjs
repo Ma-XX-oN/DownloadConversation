@@ -76,6 +76,7 @@ function issue134Harness(initialFiles = {}) {
   const context = {
     Blob,
     TextDecoder,
+    TextEncoder,
     URL,
     location: {
       origin: 'https://chatgpt.com',
@@ -164,10 +165,10 @@ test('duplicate names use the lowest unused positive suffix with no space before
   assert.equal(api.duplicateName('archive.tar.gz', 4), 'archive.tar(4).gz');
   assert.equal(api.duplicateName('no-extension', 3), 'no-extension(3)');
 
-  await assert.rejects(directory.getFileHandle('DownloadConversation_test(3).jsonl'),
+  await assert.rejects(directory.getFileHandle('DownloadConversation_test(3).7z'),
     error => error?.name === 'NotFoundError');
   const duplicated = await api.duplicate();
-  assert.equal(duplicated, 'DownloadConversation_test(3).jsonl');
+  assert.equal(duplicated, 'DownloadConversation_test(3).7z');
 });
 
 test('duplicate waits for pending writes, snapshots exact committed bytes, and keeps the active filename', async () => {
@@ -189,16 +190,25 @@ test('duplicate waits for pending writes, snapshots exact committed bytes, and k
   releasePending();
   const duplicateName = await operation;
 
-  assert.equal(duplicateName, 'DownloadConversation_test(1).jsonl');
-  assert.equal(await blobText(files.get(duplicateName)), 'alpha\nbeta\n');
+  assert.equal(duplicateName, 'DownloadConversation_test(1).7z');
+  assert.equal(
+    await blobText(files.get(duplicateName)),
+    '7Z:DownloadConversation_test(1).jsonl:\nalpha\nbeta\n'
+  );
+  assert.ok(events.includes(
+    'archive:DownloadConversation_test(1).jsonl:alpha\nbeta\n'
+  ));
   assert.equal(api.state().fileName, 'DownloadConversation_test.jsonl');
   assert.equal(api.state().writable, null);
   assert.equal(api.state().dirty, false);
   assert.equal(events[0], 'active-close');
 
   files.set('DownloadConversation_test.jsonl', new Blob(['changed later']));
-  assert.equal(await blobText(files.get(duplicateName)), 'alpha\nbeta\n',
-    'Later writes to the active log must not mutate the duplicate snapshot.');
+  assert.equal(
+    await blobText(files.get(duplicateName)),
+    '7Z:DownloadConversation_test(1).jsonl:\nalpha\nbeta\n',
+    'Later writes to the active log must not mutate the archived duplicate snapshot.'
+  );
 });
 
 test('rename waits for pending writes, preserves exact bytes, removes the old name, and switches active filename', async () => {
@@ -251,7 +261,7 @@ test('communication-log mutators share queue, writer-close, and panel action inf
   for (const name of [
     'communicationLogCheckpoint',
     'communicationLogRename',
-    'communicationLogDuplicate',
+    'communicationLogArchiveDuplicate',
     'communicationLogReset',
     'communicationLogAppendLine'
   ]) {
@@ -272,7 +282,14 @@ test('Issue 166 Duplicate creates a 7z archive instead of a raw JSONL sibling', 
   assert.match(userscript, /application\/x-7z-compressed/);
   assert.doesNotMatch(
     userscript,
-    /await communicationLogCopySnapshot\(sourceSnapshot\.file, duplicateName\);\s*return duplicateName;/,
+    /await communicationLogCopyForRename\(sourceSnapshot\.file, duplicateName\);\s*return duplicateName;/,
     'Duplicate must not retain the old raw JSONL copy path.'
   );
+});
+
+
+test('Issue 166 panel duplicate control cannot call the legacy raw-copy interface', () => {
+  assert.match(userscript, /operation: communicationLogArchiveDuplicate/);
+  assert.doesNotMatch(userscript, /operation: communicationLogDuplicate\b/);
+  assert.doesNotMatch(userscript, /function communicationLogDuplicate\s*\(/);
 });
