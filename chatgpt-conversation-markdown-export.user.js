@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         ChatGPT Conversation Markdown Recorder
 // @namespace    https://chatgpt.com/
-// @version      1.6.2-issue.169.3
+// @version      1.6.2-issue.169.4
 // @description  Exports the current ChatGPT conversation directly from the Conversation API as Markdown or JSONL.
 // @match        https://chatgpt.com/*
 // @match        https://chat.openai.com/*
@@ -15691,6 +15691,40 @@ Image elapsed: ${formatDuration(imageElapsed)} — Completed: ${imageCompleted}/
   }
 
   /**
+   * Installs host-isolation styling for native recorder checkboxes.
+   *
+   * ChatGPT may style native form controls globally. Recorder-owned checkboxes
+   * retain native state and accessibility while explicitly restoring their basic
+   * appearance and visibility inside the recorder panel.
+   *
+   * @returns {void} No value is returned.
+   */
+  function injectRecorderCheckboxStyles() {
+    const styleId = `${PANEL_ID}-checkbox-style`;
+    if (document.getElementById(styleId)) return;
+    const style = document.createElement('style');
+    style.id = styleId;
+    style.textContent = `
+      #${PANEL_ID} input[type="checkbox"]{
+        -webkit-appearance:checkbox!important;
+        appearance:auto!important;
+        display:inline-block!important;
+        position:static!important;
+        visibility:visible!important;
+        opacity:1!important;
+        box-sizing:border-box!important;
+        flex:0 0 auto!important;
+        width:13px!important;
+        height:13px!important;
+        margin:0!important
+      }
+    `;
+    (document.head || document.documentElement)?.append(style);
+  }
+
+  injectRecorderCheckboxStyles();
+
+  /**
    * Returns the AgentPanelSpeaker config-reset icon using its exact PNG bytes.
    *
    * @returns {string} Inline image markup for the Reset button.
@@ -15934,40 +15968,6 @@ Image elapsed: ${formatDuration(imageElapsed)} — Completed: ${imageCompleted}/
    * Summarizes one DOM node for launcher-lifecycle console diagnostics.
    *
    * @param {Node|null} node - The DOM node to summarize.
-
-  /**
-   * Installs a small host-isolation stylesheet for native recorder checkboxes.
-   *
-   * ChatGPT's page styles may restyle native form controls globally. The recorder
-   * owns these controls, so their basic native appearance and visibility must not
-   * depend on host CSS. State and accessibility remain native input behaviour.
-   *
-   * @returns {void} No value is returned.
-   */
-  function injectRecorderCheckboxStyles() {
-    const styleId = `${PANEL_ID}-checkbox-style`;
-    if (document.getElementById(styleId)) return;
-    const style = document.createElement('style');
-    style.id = styleId;
-    style.textContent = `
-      #${PANEL_ID} input[type="checkbox"]{
-        -webkit-appearance:checkbox!important;
-        appearance:auto!important;
-        display:inline-block!important;
-        position:static!important;
-        visibility:visible!important;
-        opacity:1!important;
-        box-sizing:border-box!important;
-        flex:0 0 auto!important;
-        width:13px!important;
-        height:13px!important;
-        margin:0!important
-      }
-    `;
-    (document.head || document.documentElement)?.append(style);
-  }
-
-  injectRecorderCheckboxStyles();
    * @returns {Object|null} A compact node summary, or null when unavailable.
    */
   function launcherNodeSummary(node) {
