@@ -90,9 +90,9 @@ async function buildStream7zPrelude() {
     dist,
     manifest.files['stream7z.wasm'].compressed
   ));
-  return `// BEGIN bundled stream7z 26.03 direct API source=${manifest.source_commit}\\n`
+  return `// BEGIN bundled stream7z 26.03 direct API source=${manifest.source_commit}\n`
     + glue + '\n'
-    + `const STREAM7Z_WASM_GZIP_BASE64 = '${wasmGzip.toString('base64')}';\\n`
+    + `const STREAM7Z_WASM_GZIP_BASE64 = '${wasmGzip.toString('base64')}';\n`
     + '// END bundled stream7z 26.03 direct API\n';
 }
 
