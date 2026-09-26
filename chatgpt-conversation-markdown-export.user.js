@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         ChatGPT Conversation Markdown Recorder
 // @namespace    https://chatgpt.com/
-// @version      1.7.2-issue.166.9
+// @version      1.7.2-issue.166.11
 // @description  Exports the current ChatGPT conversation directly from the Conversation API as Markdown or JSONL.
 // @match        https://chatgpt.com/*
 // @match        https://chat.openai.com/*
@@ -6008,7 +6008,7 @@ if (ENVIRONMENT_IS_NODE) {
   // We need to use `createRequire()` to construct the require()` function.
   const { createRequire } = await import('node:module');
   /** @suppress{duplicate} */
-  var require = createRequire(import.meta.url);
+  var require = createRequire(globalThis.location.href);
 
 }
 
@@ -6022,7 +6022,7 @@ var quit_ = (status, toThrow) => {
   throw toThrow;
 };
 
-var _scriptName = import.meta.url;
+var _scriptName = globalThis.location.href;
 
 // `/` should be present at the end if `scriptDirectory` is not empty
 var scriptDirectory = '';
@@ -6488,8 +6488,8 @@ function findWasmBinary() {
     return locateFile('stream7z.wasm');
   }
 
-  // Use bundler-friendly `new URL(..., import.meta.url)` pattern; works in browsers too.
-  return new URL('stream7z.wasm', import.meta.url).href;
+  // Use bundler-friendly `new URL(..., globalThis.location.href)` pattern; works in browsers too.
+  return new URL('stream7z.wasm', globalThis.location.href).href;
 
 }
 
