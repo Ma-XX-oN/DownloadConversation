@@ -7,12 +7,12 @@
   let workStackObservedStopwatch = null;
 
   /**
-   * Returns the WorkStack repository URL used by the lane picker.
+   * Returns the WorkStack lane-board URL used by the lane picker.
    *
-   * @returns {string} GitHub repository URL opened with browser credentials.
+   * @returns {string} GitHub board URL opened with browser credentials.
    */
   function workStackRepoUrl() {
-    return 'https://github.com/Ma-XX-oN/WorkStack';
+    return 'https://github.com/Ma-XX-oN/WorkStack/blob/main/parallel/BOARD.md';
   }
 
   /**
