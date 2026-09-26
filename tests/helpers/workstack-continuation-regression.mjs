@@ -27,7 +27,7 @@ function element(tag, attrs = {}, children = []) {
 
 function laneApi() {
   return productionApi([
-    'workStackLaneFromUserText',
+    'workStackBindingCommandFromUserText',
     'workStackVisibleMessageText',
     'workStackResolveLaneFromSpine'
   ]);
@@ -44,61 +44,61 @@ function missingApi(includeRecovery = false) {
   return productionApi(names);
 }
 
-test('WorkStack lane binding uses the earliest valid visible User turn and keeps recovery explicit', () => {
-  const { workStackLaneFromUserText, workStackResolveLaneFromSpine } = laneApi();
+test('WorkStack binding commands are explicit and replay deterministically', () => {
+  const { workStackBindingCommandFromUserText, workStackResolveLaneFromSpine } = laneApi();
 
-  assert.equal(workStackLaneFromUserText('Continue WS:RW-001\ncontext'), 'RW-001');
-  assert.equal(workStackLaneFromUserText('prefix (WS:CORE_12.alpha-3), suffix'), null);
-  assert.equal(workStackLaneFromUserText('prefixXWS:WRONG'), null);
-  assert.equal(workStackLaneFromUserText('no lane here'), null);
+  assert.deepEqual(
+    workStackBindingCommandFromUserText('Bind to WS:RW-001\ncontext'),
+    { action: 'bind', lane: 'RW-001' }
+  );
+  assert.deepEqual(
+    workStackBindingCommandFromUserText('Continue WS:CORE-034\ncontext'),
+    { action: 'continue', lane: 'CORE-034' }
+  );
+  assert.deepEqual(
+    workStackBindingCommandFromUserText('Rebind to WS:DC-166\ncontext'),
+    { action: 'rebind', lane: 'DC-166' }
+  );
+  assert.equal(workStackBindingCommandFromUserText('WS:RW-001'), null);
+  assert.equal(workStackBindingCommandFromUserText('prefix Bind to WS:RW-001'), null);
 
   const fetching = workStackResolveLaneFromSpine({
-    records: [{ role: 'assistant', message: { content: { parts: ['not first user'] } } }]
+    records: [{ role: 'assistant', message: { content: { parts: ['Bind to WS:BAD'] } } }]
   });
   assert.equal(fetching.status, 'fetching');
   assert.equal(fetching.lane, null);
 
   const laterBound = workStackResolveLaneFromSpine({ records: [
-    { role: 'system', message: { content: { parts: ['system'] } } },
-    { role: 'user', message: { content: { parts: ['first prompt has no token'] }, metadata: {} } },
-    { role: 'assistant', message: { content: { parts: ['WS:ASSISTANT-MUST-NOT-BIND'] }, metadata: {} } },
-    { role: 'user', message: { content: { parts: ['later prose WS:WRONG-999'] }, metadata: {} } },
-    { role: 'user', message: { content: { parts: ['  WS:WS-002\\nBind this conversation.'] }, metadata: {} } },
-    { role: 'user', message: { content: { parts: ['WS:LATER-MUST-NOT-REBIND'] }, metadata: {} } }
+    { role: 'user', message: { content: { parts: ['first prompt has no command'] }, metadata: {} } },
+    { role: 'assistant', message: { content: { parts: ['Bind to WS:ASSISTANT-MUST-NOT-BIND'] }, metadata: {} } },
+    { role: 'user', message: { content: { parts: ['WS:BARE-MUST-NOT-BIND'] }, metadata: {} } },
+    { role: 'user', message: { content: { parts: ['  Bind to WS:WS-002\nBind this conversation.'] }, metadata: {} } },
+    { role: 'user', message: { content: { parts: ['Bind to WS:LATER-MUST-NOT-REBIND'] }, metadata: {} } }
   ] });
   assert.equal(laterBound.status, 'bound');
   assert.equal(laterBound.lane, 'WS-002');
 
-  const laterContinueBound = workStackResolveLaneFromSpine({ records: [
+  const rebound = workStackResolveLaneFromSpine({ records: [
+    { role: 'user', message: { content: { parts: ['Bind to WS:DC-166'] }, metadata: {} } },
+    { role: 'user', message: { content: { parts: ['Bind to WS:IGNORED-WHILE-BOUND'] }, metadata: {} } },
+    { role: 'user', message: { content: { parts: ['Rebind to WS:DC-157'] }, metadata: {} } },
+    { role: 'user', message: { content: { parts: ['Continue WS:IGNORED-WHILE-BOUND'] }, metadata: {} } }
+  ] });
+  assert.equal(rebound.status, 'bound');
+  assert.equal(rebound.lane, 'DC-157');
+
+  const continueBound = workStackResolveLaneFromSpine({ records: [
     { role: 'user', message: { content: { parts: ['started before WorkStack binding'] }, metadata: {} } },
-    { role: 'user', message: { content: { parts: ['\\nContinue WS:DC-166\\nresume'] }, metadata: {} } }
+    { role: 'user', message: { content: { parts: ['Continue WS:DC-166\nresume'] }, metadata: {} } }
   ] });
-  assert.equal(laterContinueBound.status, 'bound');
-  assert.equal(laterContinueBound.lane, 'DC-166');
+  assert.equal(continueBound.status, 'bound');
+  assert.equal(continueBound.lane, 'DC-166');
 
-  const unbound = workStackResolveLaneFromSpine({ records: [
-    { role: 'user', message: { content: { parts: ['first prompt has no token'] }, metadata: {} } },
-    { role: 'user', message: { content: { parts: ['later prose WS:WRONG-999'] }, metadata: {} } }
+  const rebindWhileUnbound = workStackResolveLaneFromSpine({ records: [
+    { role: 'user', message: { content: { parts: ['Rebind to WS:NO-PRIOR-BINDING'] }, metadata: {} } }
   ] });
-  assert.equal(unbound.status, 'unbound');
-  assert.equal(unbound.lane, null);
-
-  const bound = workStackResolveLaneFromSpine({ records: [
-    {
-      role: 'user',
-      message: {
-        content: { parts: ['internal'] },
-        metadata: { is_visually_hidden_from_conversation: true }
-      }
-    },
-    {
-      role: 'user',
-      message: { content: { parts: [{ text: 'Continue WS:RW-001' }] }, metadata: {} }
-    },
-    { role: 'assistant', message: { content: { parts: ['WS:OTHER-002'] }, metadata: {} } }
-  ] });
-  assert.equal(bound.status, 'bound');
-  assert.equal(bound.lane, 'RW-001');
+  assert.equal(rebindWhileUnbound.status, 'unbound');
+  assert.equal(rebindWhileUnbound.lane, null);
 });
 
 test('WorkStack continuation selects actual missing or failed Assistant markers, not the newest turn', () => {
