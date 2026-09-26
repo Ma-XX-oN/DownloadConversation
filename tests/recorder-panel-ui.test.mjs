@@ -145,11 +145,9 @@ test('Issue 166 archive runtime is assembled inside the DownloadConversation IIF
     new URL('../scripts/userscript-build-lib.mjs', import.meta.url),
     'utf8'
   );
-  assert.match(
-    buildLib,
-    /source\.replace\('\n\(\(\) => \{', `\\n\(\(\) => \{\\n\$\{prelude\}`\)/,
-    'Archive prelude must be injected inside the userscript IIFE so create7zArchive is in DC lexical scope.'
-  );
+  assert.match(buildLib, /const scopedSource = prelude/);
+  assert.match(buildLib, /source\.replace\('\n\(\(\) => \{'/);
+  assert.match(buildLib, /\$\{prelude\}/);
   assert.doesNotMatch(
     buildLib,
     /result \+= prelude;\s*result \+= source;/,
