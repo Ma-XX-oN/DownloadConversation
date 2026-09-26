@@ -112,7 +112,10 @@
         communicationLogFileName,
         duplicateNumber
       );
-      while (await communicationLogFileExists(duplicateName)) {
+      while (await communicationLogFileExists(duplicateName)
+          || await communicationLogFileExists(
+            communicationLogDuplicateArchiveFileName(duplicateName)
+          )) {
         duplicateNumber += 1;
         duplicateName = communicationLogDuplicateFileName(
           communicationLogFileName,
@@ -122,9 +125,6 @@
 
       const memberName = duplicateName;
       const archiveName = communicationLogDuplicateArchiveFileName(duplicateName);
-      if (await communicationLogFileExists(archiveName)) {
-        throw new Error(`Communication log archive already exists: ${archiveName}`);
-      }
       const archive = await create7zArchive(
         new Uint8Array(await sourceSnapshot.file.arrayBuffer()),
         memberName
