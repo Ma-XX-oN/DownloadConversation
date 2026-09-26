@@ -25,7 +25,7 @@
    */
   function workStackLaneFromFirstUserText(text) {
     const match = String(text ?? '').match(
-      /(?:^|[^A-Za-z0-9._-])WS:([A-Za-z0-9][A-Za-z0-9._-]*)(?=$|[^A-Za-z0-9._-])/
+      /^\s*(?:Continue\s+)?WS:([A-Za-z0-9][A-Za-z0-9._-]*)(?=$|[^A-Za-z0-9._-])/
     );
     return match?.[1] ?? null;
   }
