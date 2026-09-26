@@ -1,8 +1,13 @@
 
+  // Lazily initialized singleton for the build-materialized direct 7-Zip module.
   let stream7zModulePromise = null;
+  // Monotonic source handle used to correlate Wasm reads with one archive operation.
   let stream7zNextSourceId = 1;
+  // Monotonic output handle used to correlate random-access Wasm writes.
   let stream7zNextOutputId = 1;
+  // Active exact-byte archive inputs keyed by their Wasm source handles.
   const stream7zSources = new Map();
+  // Active growable archive outputs keyed by their Wasm output handles.
   const stream7zOutputs = new Map();
 
   /**
