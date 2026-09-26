@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         ChatGPT Conversation Markdown Recorder
 // @namespace    https://chatgpt.com/
-// @version      1.7.2-issue.166.20
+// @version      1.7.2-issue.166.21
 // @description  Exports the current ChatGPT conversation directly from the Conversation API as Markdown or JSONL.
 // @match        https://chatgpt.com/*
 // @match        https://chat.openai.com/*
@@ -12924,6 +12924,19 @@ const STREAM7Z_WASM_GZIP_BASE64 = 'H4sICLEtt2oCA3N0cmVhbTd6Lndhc20A7L0JmBzFmSiY9
   }
 
   /**
+   * Changes a duplicate JSONL member name to its sibling 7z archive name.
+   *
+   * @param {string} memberName - Duplicate member filename.
+   * @returns {string} Archive filename with the final extension replaced by .7z.
+   */
+  function communicationLogDuplicateArchiveFileName(memberName) {
+    const extensionIndex = memberName.lastIndexOf('.');
+    return extensionIndex > 0
+      ? `${memberName.slice(0, extensionIndex)}.7z`
+      : `${memberName}.7z`;
+  }
+
+  /**
    * Creates a committed point-in-time duplicate of the active communication log.
    *
    * The lowest unused positive `(N)` suffix is inserted immediately before the
@@ -12944,7 +12957,10 @@ const STREAM7Z_WASM_GZIP_BASE64 = 'H4sICLEtt2oCA3N0cmVhbTd6Lndhc20A7L0JmBzFmSiY9
         communicationLogFileName,
         duplicateNumber
       );
-      while (await communicationLogFileExists(duplicateName)) {
+      while (await communicationLogFileExists(duplicateName)
+          || await communicationLogFileExists(
+            communicationLogDuplicateArchiveFileName(duplicateName)
+          )) {
         duplicateNumber += 1;
         duplicateName = communicationLogDuplicateFileName(
           communicationLogFileName,
@@ -12952,8 +12968,38 @@ const STREAM7Z_WASM_GZIP_BASE64 = 'H4sICLEtt2oCA3N0cmVhbTd6Lndhc20A7L0JmBzFmSiY9
         );
       }
 
-      await communicationLogCopySnapshot(sourceSnapshot.file, duplicateName);
-      return duplicateName;
+      const memberName = duplicateName;
+      const archiveName = communicationLogDuplicateArchiveFileName(duplicateName);
+      const archive = await create7zArchive(
+        new Uint8Array(await sourceSnapshot.file.arrayBuffer()),
+        memberName
+      );
+      let writable = null;
+      let archiveCreated = false;
+      try {
+        const archiveHandle = await communicationLogDirectoryHandle.getFileHandle(
+          archiveName,
+          { create: true }
+        );
+        archiveCreated = true;
+        writable = await archiveHandle.createWritable();
+        await writable.write(new Blob([archive], { type: 'application/x-7z-compressed' }));
+        await writable.close();
+        writable = null;
+        const verified = await archiveHandle.getFile();
+        if (verified.size !== archive.byteLength) {
+          throw new Error(
+            `Communication log archive verification failed: expected ${archive.byteLength} bytes, found ${verified.size}.`
+          );
+        }
+      } catch (error) {
+        await abortWritableQuietly(writable);
+        if (archiveCreated) {
+          try { await communicationLogDirectoryHandle.removeEntry(archiveName); } catch {}
+        }
+        throw error;
+      }
+      return archiveName;
     });
     return queued.operation;
   }
