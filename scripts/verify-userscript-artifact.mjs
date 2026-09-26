@@ -147,7 +147,7 @@ async function main() {
   if (glueEnd <= glueStart) fail('Generated userscript stream7z glue boundary is missing.');
   const glue = Buffer.from(prelude.slice(glueStart, glueEnd), 'utf8');
   const glueSha256 = createHash('sha256').update(glue).digest('hex');
-  if (glueSha256 !== 'ba804c0a35f753b6c5804ce6b1512d166038506422253ba4f72244ca83b7d1ba') {
+  if (glueSha256 !== '566f51215d4f2f446f2a481addeea9bb61c2b49a97afc0f4e093d050b7f3b2a4') {
     fail(`Generated stream7z glue SHA-256 mismatch: ${glueSha256}.`);
   }
   const wasmMatch = prelude.match(/const STREAM7Z_WASM_BASE64 = '([A-Za-z0-9+/=]+)';/);
