@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         ChatGPT Conversation Markdown Recorder
 // @namespace    https://chatgpt.com/
-// @version      1.6.2
+// @version      1.6.3-issue.166.1
 // @description  Exports the current ChatGPT conversation directly from the Conversation API as Markdown or JSONL.
 // @match        https://chatgpt.com/*
 // @match        https://chat.openai.com/*
@@ -6001,6 +6001,8 @@ function projectCanonicalConversation(events) {
   const COMMUNICATION_LOG_HANDLE_KEY = 'communication-directory';
   /** Prefix used to retain the last known conversation title for immediate reload logging. */
   const COMMUNICATION_LOG_TITLE_STORAGE_PREFIX = 'tm-downloadconversation-communication-title:';
+  /** Initial sealed communication-segment target; tune this one symbol after browser benchmarks. */
+  const COMMUNICATION_LOG_SEGMENT_TARGET_BYTES = 10 * 1024 * 1024;
   /** Maximum decoded text retained before one communication body chunk is flushed to disk. */
   const COMMUNICATION_LOG_BODY_CHUNK_CHARS = 256 * 1024;
   /** Maximum wait for startup directory restoration before a cloned network body is abandoned. */
