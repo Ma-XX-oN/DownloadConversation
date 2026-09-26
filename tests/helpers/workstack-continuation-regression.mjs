@@ -338,6 +338,34 @@ test('WorkStack control and transaction preserve the superseding #163 contracts'
     'extractTurn must delegate to the shared DOM Markdown extraction implementation.');
 });
 
+test('WorkStack CONTINUE preserves previous-chat export and durable lane handoff as one causal chain', () => {
+  const transaction = productionFunctionSource('handleWorkStackContinue');
+  const packet = productionFunctionSource('workStackContinuationPacket');
+  const resolver = productionFunctionSource('workStackResolveLaneFromSpine');
+
+  assert.match(transaction, /fetchConversationPages\(conversationId\)/,
+    'CONTINUE must recover authoritative conversation history before handoff.');
+  assert.match(transaction, /mergeStreamTailCaptureIntoSpine/,
+    'CONTINUE must reconcile retained stream tail before selecting recovery content.');
+  assert.match(transaction, /workStackContinuationPacket\(lane, recovered\)/);
+  assert.match(packet, /`Continue WS:\$\{lane\}/,
+    'The next-chat packet must carry the current durable lane identity.');
+  assert.match(transaction, /navigator\.clipboard\.writeText\(packet\)/,
+    'The continuation packet must be made available to seed the next chat.');
+  assert.match(transaction, /forceTimestamps:\s*true/,
+    'The previous conversation handoff must retain timestamps.');
+  assert.match(transaction, /await runExport\(\['md'\]\)/,
+    'WorkStack must not replace the required previous-conversation Markdown export.');
+  assert.match(transaction, /githubWindow\.location\.href\s*=\s*workStackLaneContinueUrl\(lane\)/,
+    'CONTINUE must open the durable WorkStack lane handoff.');
+  assert.match(transaction, /projectWindow\.location\.href\s*=\s*projectUrl/,
+    'CONTINUE must open the same-Project new-chat landing page.');
+  assert.match(resolver, /workStackBindingCommandFromUserText/,
+    'The receiving conversation must recover lane identity from its User command history.');
+  assert.match(resolver, /command\.action === 'rebind'/,
+    'Explicit later rebind must remain part of deterministic reconstruction.');
+});
+
 test('WorkStack production remains a separate subsystem from stopwatch lifecycle source', () => {
   assert.match(userscript, /BEGIN Issue #163 WorkStack continuation state/);
   assert.match(userscript, /BEGIN Issue #163 shared DOM Markdown extraction/);
