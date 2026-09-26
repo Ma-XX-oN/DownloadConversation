@@ -4,7 +4,7 @@
    * @param {string} destinationName - New sibling filename that must not exist.
    * @returns {Promise<void>} Resolves after the destination is committed and verified.
    */
-  async function communicationLogCopySnapshot(sourceFile, destinationName) {
+  async function communicationLogCopyForRename(sourceFile, destinationName) {
     if (!communicationLogDirectoryHandle) {
       throw new Error('Communication log directory is not ready.');
     }
@@ -63,7 +63,7 @@
       await communicationLogCloseActiveWriter();
       const sourceName = communicationLogFileName;
       const sourceSnapshot = await communicationLogRefreshedFileSnapshot();
-      await communicationLogCopySnapshot(sourceSnapshot.file, validatedName);
+      await communicationLogCopyForRename(sourceSnapshot.file, validatedName);
 
       try {
         await communicationLogDirectoryHandle.removeEntry(sourceName);
@@ -99,7 +99,7 @@
    *
    * @returns {Promise<string>} The created duplicate filename.
    */
-  function communicationLogDuplicate() {
+  function communicationLogArchiveDuplicate() {
     const queued = communicationLogEnqueue('duplicate', async () => {
       if (!communicationLogReady || !communicationLogDirectoryHandle || !communicationLogFileName) {
         throw new Error('Communication log directory/file is not ready.');
