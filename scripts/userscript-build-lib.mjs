@@ -108,7 +108,12 @@ export function assembleUserscript(header, dependencies, source, prelude = '') {
     validatePinnedDependency(dependency, content);
     result += dependencyBanner(dependency, content);
   }
-  result += prelude;
-  result += source;
+  // The archive bridge is part of DownloadConversation, not a page-global
+  // dependency. Inject it immediately inside DC's preserved IIFE so its
+  // functions are in the same lexical scope as diagnostic/communication code.
+  const scopedSource = prelude
+    ? source.replace('\n(() => {', `\n(() => {\n${prelude}`)
+    : source;
+  result += scopedSource;
   return result;
 }
