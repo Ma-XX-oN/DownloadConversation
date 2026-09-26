@@ -1,4 +1,5 @@
 import './helpers/workstack-continuation-regression.mjs';
+import './helpers/workstack-continuation-ux-regression.mjs';
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import vm from 'node:vm';
