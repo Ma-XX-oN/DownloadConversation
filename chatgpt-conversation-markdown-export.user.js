@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         ChatGPT Conversation Markdown Recorder
 // @namespace    https://chatgpt.com/
-// @version      1.7.2-issue.166.13
+// @version      1.7.2-issue.166.14
 // @description  Exports the current ChatGPT conversation directly from the Conversation API as Markdown or JSONL.
 // @match        https://chatgpt.com/*
 // @match        https://chat.openai.com/*
@@ -11595,6 +11595,9 @@ const STREAM7Z_WASM_GZIP_BASE64 = 'H4sICLEtt2oCA3N0cmVhbTd6Lndhc20A7L0JmBzFmSiY9
    */
   async function create7zArchive(bytes, memberName) {
     if (!(bytes instanceof Uint8Array)) throw new TypeError('Archive input must be Uint8Array.');
+    if (!/^[\x20-\x7e]+$/.test(memberName)) {
+      throw new Error('Archive member name must contain ASCII characters only.');
+    }
     const module = await stream7zModule();
     const sourceId = stream7zNextSourceId++;
     const outputId = stream7zNextOutputId++;
@@ -21917,12 +21920,19 @@ Image elapsed: ${formatDuration(imageElapsed)} — Completed: ${imageCompleted}/
     button.setAttribute('aria-busy', 'true');
     button.title = 'Preparing diagnostic archive…';
     const base = `DownloadConversation_${sanitizeFileName(conversationTitle())}_diagnostic-log`;
-    const memberName = `${base}.txt`;
+    // The direct 7-Zip bridge currently accepts ASCII member names only. Keep
+    // the visible archive title intact while using a deterministic safe member.
+    const memberName = 'diagnostic-log.txt';
     const archiveName = `${base}.7z`;
     try {
       const archive = await create7zArchive(new TextEncoder().encode(text), memberName);
       downloadBlob(new Blob([archive], { type: 'application/x-7z-compressed' }), archiveName);
       setStatus(`Diagnostic log saved as ${archiveName}.`);
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      logDiagnostic('errors', 'diagnostic-log-save-failed', { archive_name: archiveName, message });
+      setStatus(`Diagnostic log save failed: ${message}`);
+      throw error;
     } finally {
       button.disabled = false;
       button.removeAttribute('aria-busy');
