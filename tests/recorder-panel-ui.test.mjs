@@ -37,6 +37,14 @@ test('recorder panel restores dialog/log/switch/extract UI contracts', () => {
   assert.match(userscript, /data-role="show-timestamps" type="checkbox"> Timestamp/);
   assert.match(userscript, /data-role="show-record-numbers" type="checkbox"> Record #/);
   assert.match(userscript, /data-role="show-turn-ids" type="checkbox"> Turn ID/);
+  assert.match(userscript, /#\$\{PANEL_ID\} input\[type="checkbox"\]/,
+    'Recorder must own checkbox rendering instead of inheriting host-page checkbox suppression.');
+  assert.match(userscript, /(?:all:\s*revert|appearance:\s*(?:auto|checkbox)|-webkit-appearance:\s*checkbox)/,
+    'Recorder checkbox styles must explicitly restore native appearance.');
+  assert.match(userscript, /(?:all:\s*revert|visibility:\s*visible)/,
+    'Recorder checkbox styles must explicitly remain visible.');
+  assert.match(userscript, /(?:all:\s*revert|opacity:\s*1)/,
+    'Recorder checkbox styles must not inherit host opacity suppression.');
   assert.match(userscript, /SHOW_TIMESTAMPS_STORAGE_KEY/);
   assert.match(userscript, /SHOW_RECORD_NUMBERS_STORAGE_KEY/);
   assert.match(userscript, /SHOW_TURN_IDS_STORAGE_KEY/);
