@@ -1,4 +1,5 @@
 import { userscript } from './helpers/userscript-source.mjs';
+import { readFile } from 'node:fs/promises';
 import assert from 'node:assert/strict';
 import test from 'node:test';
 
