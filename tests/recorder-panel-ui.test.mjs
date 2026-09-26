@@ -125,3 +125,15 @@ test('Issue 166 diagnostic Save is immediately left of Copy', () => {
   assert.ok(saveAt >= 0 && copyAt > saveAt && toggleAt > copyAt,
     'Diagnostic controls must be ordered Save, Copy, Expand.');
 });
+
+
+test('Issue 166 diagnostic Save uses a supported deterministic archive member and reports failures', () => {
+  assert.match(userscript, /const memberName = 'diagnostic-log\.txt';/,
+    'Diagnostic archive member must satisfy the direct 7-Zip ASCII-name contract.');
+  assert.match(userscript, /diagnostic-log-save-failed/,
+    'Diagnostic archive failures must be recorded in the diagnostic log.');
+  assert.match(userscript, /Diagnostic log save failed:/,
+    'Diagnostic archive failures must remain visible to the user.');
+  assert.match(userscript, /Archive member name must contain ASCII characters only/,
+    'Archive bridge must reject unsupported member names before entering Wasm.');
+});
