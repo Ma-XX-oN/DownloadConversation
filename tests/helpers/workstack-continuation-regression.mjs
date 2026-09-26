@@ -10,6 +10,21 @@ function productionApi(names, globals = {}) {
   return context.api;
 }
 
+function text(value) {
+  return { nodeType: 3, nodeValue: value, textContent: value, childNodes: [] };
+}
+
+function element(tag, attrs = {}, children = []) {
+  return {
+    nodeType: 1,
+    tagName: String(tag).toUpperCase(),
+    childNodes: children,
+    textContent: children.map(child => child.textContent ?? child.nodeValue ?? '').join(''),
+    getAttribute(name) { return Object.hasOwn(attrs, name) ? attrs[name] : null; },
+    hasAttribute(name) { return Object.hasOwn(attrs, name); }
+  };
+}
+
 test('WorkStack lane binding reads only the first User turn and keeps recovery explicit', () => {
   const { workStackLaneFromFirstUserText, workStackResolveLaneFromSpine } = productionApi([
     'workStackLaneFromFirstUserText',
@@ -34,7 +49,7 @@ test('WorkStack lane binding reads only the first User turn and keeps recovery e
   );
   assert.deepEqual(
     workStackResolveLaneFromSpine({ records: [
-      { role: 'user', message: { content: { parts: ['Continue WS:RW-001'] } } },
+      { role: 'user', message: { content: { parts: [{ text: 'Continue WS:RW-001' }] } } },
       { role: 'assistant', message: { content: { parts: ['WS:OTHER-002'] } } }
     ] }),
     { status: 'bound', lane: 'RW-001' }
@@ -44,15 +59,15 @@ test('WorkStack lane binding reads only the first User turn and keeps recovery e
 test('WorkStack continuation selects actual missing Assistant markers, not the newest turn', () => {
   const { workStackMissingAssistantMarkers } = productionApi(['workStackMissingAssistantMarkers']);
   const markers = [
-    { role: 'user', message_id: 'u1', dom_turn_id: 'tu1' },
-    { role: 'assistant', message_id: 'a-missing-old', dom_turn_id: 'ta1' },
-    { role: 'user', message_id: 'u2', dom_turn_id: 'tu2' },
-    { role: 'assistant', message_id: 'a-present-new', dom_turn_id: 'ta2' }
+    { role: 'user', message_id: 'u1', dom_turn_id: 'tu1', comparison_text: 'user one' },
+    { role: 'assistant', message_id: 'a-missing-old', dom_turn_id: 'ta1', comparison_text: 'missing old reply' },
+    { role: 'user', message_id: 'u2', dom_turn_id: 'tu2', comparison_text: 'user two' },
+    { role: 'assistant', message_id: 'a-present-new', dom_turn_id: 'ta2', comparison_text: 'present newest reply' }
   ];
   const spine = { records: [
-    { role: 'user', message_id: 'u1' },
-    { role: 'user', message_id: 'u2' },
-    { role: 'assistant', message_id: 'a-present-new' }
+    { role: 'user', message_id: 'u1', message: { content: { parts: ['user one'] } } },
+    { role: 'user', message_id: 'u2', message: { content: { parts: ['user two'] } } },
+    { role: 'assistant', message_id: 'a-present-new', message: { content: { parts: ['present newest reply'] } } }
   ] };
   assert.deepEqual(
     Array.from(workStackMissingAssistantMarkers(markers, spine), marker => marker.message_id),
@@ -60,11 +75,27 @@ test('WorkStack continuation selects actual missing Assistant markers, not the n
   );
 
   const multiple = workStackMissingAssistantMarkers([
-    { role: 'assistant', message_id: 'a-old', dom_turn_id: 't-old' },
-    { role: 'assistant', message_id: 'a-middle', dom_turn_id: 't-middle' },
-    { role: 'assistant', message_id: 'a-new', dom_turn_id: 't-new' }
-  ], { records: [{ role: 'assistant', message_id: 'a-middle' }] });
+    { role: 'assistant', message_id: 'a-old', dom_turn_id: 't-old', comparison_text: 'old' },
+    { role: 'assistant', message_id: 'a-middle', dom_turn_id: 't-middle', comparison_text: 'middle' },
+    { role: 'assistant', message_id: 'a-new', dom_turn_id: 't-new', comparison_text: 'new' }
+  ], { records: [{ role: 'assistant', message_id: 'a-middle', message: { content: { parts: ['middle'] } } }] });
   assert.deepEqual(Array.from(multiple, marker => marker.message_id), ['a-old', 'a-new']);
+});
+
+test('WorkStack continuation also selects same-ID Assistant content that is materially stale', () => {
+  const { workStackMissingAssistantMarkers } = productionApi(['workStackMissingAssistantMarkers']);
+  const live = 'alpha beta gamma delta epsilon zeta eta theta iota kappa lambda';
+  const result = workStackMissingAssistantMarkers([
+    { role: 'assistant', message_id: 'same', dom_turn_id: 'turn-same', comparison_text: live }
+  ], {
+    records: [{
+      role: 'assistant',
+      message_id: 'same',
+      message: { content: { parts: ['alpha beta gamma delta epsilon'] } }
+    }]
+  });
+  assert.equal(result.length, 1);
+  assert.equal(result[0].message_id, 'same');
 });
 
 test('WorkStack DOM correlation prefers exact identity, preserves chronology, and rejects ambiguity', () => {
@@ -92,6 +123,33 @@ test('WorkStack DOM correlation prefers exact identity, preserves chronology, an
     [{ role: 'assistant', message_id: 'expected', dom_turn_id: 'turn-1', container_id: null }],
     [{ message_id: 'different', dom_turn_id: 'turn-1', section: 'WRONG' }]
   ), /correlation/i, 'Exact message identity disagreement must not fall back to DOM position/turn id.');
+});
+
+test('restored shared DOM Markdown extractor preserves representative #64 structures', () => {
+  const { extractTurnChildrenMarkdown, extractTurnNodeMarkdown } = productionApi([
+    'extractTurnNodeMarkdown',
+    'extractTurnChildrenMarkdown'
+  ]);
+  const root = element('div', {}, [
+    element('p', {}, [text('Plain '), element('strong', {}, [text('bold')]), text(' and '), element('em', {}, [text('emphasis')]), text(' with '), element('code', {}, [text('x < y')]), text('.')]),
+    element('h3', {}, [text('Heading')]),
+    element('ul', {}, [element('li', {}, [text('one')]), element('li', {}, [text('two')])]),
+    element('blockquote', {}, [element('p', {}, [text('quoted')])]),
+    element('p', {}, [element('a', { href: 'https://example.test/source' }, [text('source link')])]),
+    element('pre', {}, [element('code', { class: 'language-js' }, [text('const x = 1;\nconsole.log(x);')])]),
+    element('p', {}, [element('img', { alt: 'diagram', src: 'https://example.test/image.png' }, [])]),
+    element('p', {}, [element('a', { href: 'https://example.test/file.zip', download: '' }, [text('attachment.zip')])])
+  ]);
+  const markdown = extractTurnChildrenMarkdown(root);
+  assert.match(markdown, /Plain \*\*bold\*\* and \*emphasis\* with `x < y`\./);
+  assert.match(markdown, /### Heading/);
+  assert.match(markdown, /- one[\s\S]*- two/);
+  assert.match(markdown, /> quoted/);
+  assert.match(markdown, /\[source link\]\(https:\/\/example\.test\/source\)/);
+  assert.match(markdown, /```js\nconst x = 1;\nconsole\.log\(x\);\n```/);
+  assert.match(markdown, /!\[diagram\]\(https:\/\/example\.test\/image\.png\)/);
+  assert.match(markdown, /\[attachment\.zip\]\(https:\/\/example\.test\/file\.zip\)/);
+  assert.equal(extractTurnNodeMarkdown(text('literal text')), 'literal text');
 });
 
 test('WorkStack clipboard packet and URLs are deterministic', () => {
@@ -154,13 +212,6 @@ test('WorkStack control and transaction preserve the superseding #163 contracts'
     'Required browsing contexts must be reserved from the user gesture.');
 
   const extractor = productionFunctionSource('extractTurn');
-  assert.match(extractor, /extractTurnNodeMarkdown|extractTurnChildrenMarkdown/,
+  assert.match(extractor, /extractTurnChildrenMarkdown/,
     'extractTurn must delegate to the shared DOM Markdown extraction implementation.');
-  assert.match(userscript, /(?:H1|h1|heading)/i);
-  assert.match(userscript, /(?:UL|OL|LI|list)/i);
-  assert.match(userscript, /(?:BLOCKQUOTE|blockquote)/i);
-  assert.match(userscript, /(?:PRE|fenced)/i);
-  assert.match(userscript, /(?:CODE|inline code)/i);
-  assert.match(userscript, /(?:IMG|image)/i);
-  assert.match(userscript, /(?:attachment|download)/i);
 });
