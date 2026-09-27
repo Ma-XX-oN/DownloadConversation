@@ -163,3 +163,17 @@ test('Issue 166 diagnostic member naming preserves printable ASCII exactly', () 
     'DownloadConversation_Bind conversation lane_20260927T165259521Z_20260927T181449827Z.txt'
   );
 });
+
+
+test('Issue 166 diagnostic archive timestamps use browser-local calendar/time fields', () => {
+  const timestamp = productionFunctionSource('diagnosticLogArchiveTimestamp');
+  assert.match(timestamp, /getFullYear/);
+  assert.match(timestamp, /getMonth/);
+  assert.match(timestamp, /getDate/);
+  assert.match(timestamp, /getHours/);
+  assert.match(timestamp, /getMinutes/);
+  assert.match(timestamp, /getSeconds/);
+  assert.match(timestamp, /getMilliseconds/);
+  assert.doesNotMatch(timestamp, /toISOString/);
+  assert.doesNotMatch(timestamp, /Z['"\x60]/);
+});
