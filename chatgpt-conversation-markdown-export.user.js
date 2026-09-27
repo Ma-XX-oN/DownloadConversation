@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         ChatGPT Conversation Markdown Recorder
 // @namespace    https://chatgpt.com/
-// @version      1.7.2-issue.171.3
+// @version      1.7.2-issue.171.4
 // @description  Exports the current ChatGPT conversation directly from the Conversation API as Markdown or JSONL.
 // @match        https://chatgpt.com/*
 // @match        https://chat.openai.com/*
@@ -10657,11 +10657,17 @@ function projectCanonicalConversation(events) {
    * @param {string} url - The URL to process.
    * @returns {Promise<Object|boolean|string|number|null>} A promise that resolves to the Object|boolean|string|number|null result produced by `apiFetch`.
    */
-  async function apiFetch(url) {
-    const conversationId = currentConversationId();
-    // Snapshot the captured request context used to authorize this direct API request.
-    const context = apiRequestContext;
-    if (!context?.headers?.authorization || context.conversation_id !== conversationId) {
+  async function apiFetch(
+    url,
+    requestContext = apiRequestContext,
+    expectedConversationId = currentConversationId()
+  ) {
+    // Use the caller's transaction snapshot when one is supplied. Long multi-page
+    // acquisitions must not depend on transient SPA location state between pages.
+    const context = requestContext;
+    if (!context?.headers?.authorization ||
+        !expectedConversationId ||
+        context.conversation_id !== expectedConversationId) {
       throw new Error('No authenticated Conversation API context is available. Reload this conversation, then try again.');
     }
     // Use the page realm rather than the userscript sandbox when intercepting page networking.
@@ -10909,6 +10915,13 @@ function projectCanonicalConversation(events) {
    * @returns {Promise<Array<unknown>>} A promise that resolves to the Array<unknown> result produced by `fetchConversationPages`.
    */
   async function fetchConversationPages(conversationId, onProgress) {
+    // Pin the authenticated context once for the complete pagination transaction.
+    // The page can transiently lose/rewrite its route while an older page is loading.
+    const requestContext = apiRequestContext;
+    if (!requestContext?.headers?.authorization ||
+        requestContext.conversation_id !== conversationId) {
+      throw new Error('No authenticated Conversation API context is available. Reload this conversation, then try again.');
+    }
     return collectConversationPages(
       (cursor, pageNumber, previousPageInfo) => fetchOneConversationPage(
         pageUrl(conversationId, cursor),
@@ -10916,6 +10929,8 @@ function projectCanonicalConversation(events) {
         {
           page_number: pageNumber,
           request_kind: cursor === null ? 'initial' : 'pagination',
+          conversation_id: conversationId,
+          api_request_context: requestContext,
           cursor,
           previous_page_info: previousPageInfo ? {
             start_cursor: previousPageInfo.start_cursor ?? null,
