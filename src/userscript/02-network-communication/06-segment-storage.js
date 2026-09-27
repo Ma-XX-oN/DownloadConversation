@@ -141,7 +141,11 @@
       segment.compression_state = 'compressing';
       setStatus(`Communication log: compressing sealed segment ${segment.ordinal}; recording continues.`);
       await communicationLogWriteSegmentManifest();
-      const archiveBytes = await create7zArchive(rawBytes, segment.member_name);
+      const archiveBytes = await create7zArchive(
+        rawBytes,
+        segment.member_name,
+        communicationLogArchiveMTime(segment)
+      );
       const archiveHandle = await communicationLogWriteExactFile(
         directory,
         segment.archive_name,
