@@ -89,6 +89,7 @@
    * @returns {Promise<Uint8Array>} Verified raw JSONL segment bytes.
    */
   async function communicationLogReadHistoricalSegment(segment) {
+    /** Reads and extracts the committed archive representation for this segment. */
     const readArchive = async () => {
       const handle = await communicationLogSegmentDirectoryHandle.getFileHandle(
         segment.archive_name,
