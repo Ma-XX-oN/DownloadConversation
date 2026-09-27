@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         ChatGPT Conversation Markdown Recorder
 // @namespace    https://chatgpt.com/
-// @version      1.7.2-issue.166.69
+// @version      1.7.2-issue.166.70
 // @description  Exports the current ChatGPT conversation directly from the Conversation API as Markdown or JSONL.
 // @match        https://chatgpt.com/*
 // @match        https://chat.openai.com/*
@@ -22781,6 +22781,7 @@ Image elapsed: ${formatDuration(imageElapsed)} — Completed: ${imageCompleted}/
     button.setAttribute('aria-busy', 'true');
     button.title = 'Compressing diagnostic log…';
     const started = performance.now();
+    /** @returns {string} Human-readable elapsed archive-save time. */
     const elapsed = () => `${((performance.now() - started) / 1000).toFixed(1)}s elapsed`;
     let phase = 'naming';
     let archiveName = null;
