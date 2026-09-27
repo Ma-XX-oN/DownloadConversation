@@ -537,6 +537,7 @@
       await writable.close();
       writable = null;
       communicationLogWriterDirty = false;
+      communicationLogActiveBytes = 0;
       await communicationLogOpenWriter();
     } catch (error) {
       await abortWritableQuietly(writable);
@@ -561,9 +562,8 @@
       await communicationLogOpenWriter();
       await communicationLogWritable.write(line);
       communicationLogWriterDirty = true;
-      const snapshot = await communicationLogRefreshedFileSnapshot();
-      const projectedBytes = Math.max(snapshot.file.size, snapshot.file.size + lineBytes);
-      if (projectedBytes >= COMMUNICATION_LOG_SEGMENT_TARGET_BYTES) {
+      communicationLogActiveBytes = (communicationLogActiveBytes ?? 0) + lineBytes;
+      if (communicationLogActiveBytes >= COMMUNICATION_LOG_SEGMENT_TARGET_BYTES) {
         await communicationLogSealActiveSegment();
       }
     });
