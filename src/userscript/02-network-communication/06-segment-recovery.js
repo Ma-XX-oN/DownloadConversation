@@ -86,13 +86,54 @@
    * @returns {Promise<void>} Resolves when active and historical state is ready.
    */
   async function communicationLogInitializeSegmentStorage() {
-    communicationLogSegmentDirectoryHandle =
-      await communicationLogDirectoryHandle.getDirectoryHandle(
-        communicationLogSegmentDirectoryName(),
-        { create: true }
-      );
-    communicationLogSegmentManifest = await communicationLogReadSegmentManifest();
-    await communicationLogRecoverSegmentState();
-    communicationLogActiveSegmentBytes =
-      (await communicationLogRefreshedFileSnapshot()).file.size;
+    const directoryName = communicationLogSegmentDirectoryName();
+    let phase = 'directory-create-open';
+    logDiagnostic('debug', 'communication-log-segment-initialize-started', {
+      segment_directory: directoryName
+    });
+    try {
+      communicationLogSegmentDirectoryHandle =
+        await communicationLogDirectoryHandle.getDirectoryHandle(
+          directoryName,
+          { create: true }
+        );
+      logDiagnostic('debug', 'communication-log-segment-directory-ready', {
+        segment_directory: directoryName
+      });
+
+      phase = 'manifest-read';
+      communicationLogSegmentManifest = await communicationLogReadSegmentManifest();
+      logDiagnostic('debug', 'communication-log-segment-manifest-ready', {
+        segment_directory: directoryName,
+        next_ordinal: communicationLogSegmentManifest.next_ordinal,
+        historical_segments: communicationLogSegmentManifest.segments.length
+      });
+
+      phase = 'recovery';
+      logDiagnostic('debug', 'communication-log-segment-recovery-started', {
+        segment_directory: directoryName,
+        historical_segments: communicationLogSegmentManifest.segments.length
+      });
+      await communicationLogRecoverSegmentState();
+      logDiagnostic('debug', 'communication-log-segment-recovery-completed', {
+        segment_directory: directoryName,
+        historical_segments: communicationLogSegmentManifest.segments.length
+      });
+
+      phase = 'active-snapshot';
+      communicationLogActiveSegmentBytes =
+        (await communicationLogRefreshedFileSnapshot()).file.size;
+      logDiagnostic('debug', 'communication-log-segment-initialize-completed', {
+        segment_directory: directoryName,
+        active_segment_bytes: communicationLogActiveSegmentBytes,
+        historical_segments: communicationLogSegmentManifest.segments.length
+      });
+    } catch (error) {
+      logDiagnostic('warnings', 'communication-log-segment-initialize-failed', {
+        phase,
+        segment_directory: directoryName,
+        message: boundedDiagnosticText(errorMessage(error), 2000)
+      });
+      throw error;
+    }
   }
