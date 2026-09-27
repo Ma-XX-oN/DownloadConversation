@@ -56,6 +56,9 @@
     logDiagnostic('debug', 'communication-log-swap-recovery-completed', {
       file_name: communicationLogFileName
     });
+    logDiagnostic('debug', 'communication-log-segment-initialize-call-started', {
+      initializer_type: typeof communicationLogInitializeSegmentStorage
+    });
     await communicationLogInitializeSegmentStorage();
     communicationLogReady = true;
     logDiagnostic('debug', 'communication-log-recorder-ready', {
@@ -226,6 +229,16 @@
       }
       return communicationLogActivateDirectory(handle);
     } catch (error) {
+      try {
+        logDiagnostic('warnings', 'communication-log-startup-caught', {
+          name: String(error?.name ?? ''),
+          message: String(error?.message ?? error),
+          stack: boundedDiagnosticText(String(error?.stack ?? ''), 6000)
+        });
+      } catch (diagnosticError) {
+        console.error('[DownloadConversation] communication recorder startup failure', error);
+        console.error('[DownloadConversation] startup diagnostic failure', diagnosticError);
+      }
       communicationLogReportFailure('startup', error);
       communicationLogShowDirectoryPrompt('The saved log folder could not be restored.');
       return false;
