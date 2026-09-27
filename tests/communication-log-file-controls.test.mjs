@@ -100,15 +100,15 @@ communicationLogLogicalSnapshot = async plan => ({
 });
 communicationLogAsciiArchiveMemberName = name => name;
 communicationLogUnusedRoleArchiveName = async (directory, base, _range, role) => {
-  const stem = `${base}_20260927T010203004Z_20260927T010205006Z`;
+  const stem = base + '_20260927T010203004Z_20260927T010205006Z';
   for (let collision = 0; ; collision += 1) {
-    const suffix = collision ? `(${collision})` : '';
-    const name = `${stem}${suffix}.${role}.7z`;
+    const suffix = collision ? '(' + collision + ')' : '';
+    const name = stem + suffix + '.' + role + '.7z';
     try { await directory.getFileHandle(name); }
     catch (error) { if (error?.name === 'NotFoundError') return name; throw error; }
   }
 };
-setStatus = message => this.__issue134Events.push(`status:${message}`);
+setStatus = message => this.__issue134Events.push('status:' + message);
 create7zArchive = async (bytes, memberName) => {\n  const text = new TextDecoder().decode(bytes);\n  this.__issue134Events.push(\`archive:\${memberName}:\${text}\`);\n  return new TextEncoder().encode(\`7Z:\${memberName}:\\n\${text}\`);\n};\nextract7zArchive = async bytes => {\n  const text = new TextDecoder().decode(bytes);\n  const newline = text.indexOf('\\n');\n  return new TextEncoder().encode(text.slice(newline + 1));\n};\nthis.__issue134 = {\n  rename: communicationLogRename,\n  duplicate: communicationLogArchiveDuplicate,\n  duplicateName: communicationLogDuplicateFileName,\n  departureCheckpoint: typeof communicationLogCheckpointForDocumentDeparture === 'function'\n    ? communicationLogCheckpointForDocumentDeparture\n    : null,\n  setWriter(writer, dirty) {\n    communicationLogWritable = writer;\n    communicationLogWriterDirty = dirty;\n  },\n  setWriteChain(chain) {\n    communicationLogWriteChain = chain;\n  },\n  state() {\n    return {\n      writable: communicationLogWritable,\n      dirty: communicationLogWriterDirty,\n      fileName: communicationLogFileName\n    };\n  }\n};`,
     context
   );
