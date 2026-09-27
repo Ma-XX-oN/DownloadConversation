@@ -64,6 +64,21 @@ test(
       'src/userscript/06-workstack-continuation/04-handoff-transaction.js'
     ]);
     const sourcePaths = orderedSourcePaths(manifest);
+    const communicationModule = manifest.modules.find(module => {
+      return module.name === 'network-communication';
+    });
+    assert.deepEqual(
+      communicationModule?.files.slice(5, 11),
+      [
+        'src/userscript/02-network-communication/06-communication-files.js',
+        'src/userscript/02-network-communication/07-communication-streams.js',
+        'src/userscript/02-network-communication/06-segment-storage.js',
+        'src/userscript/02-network-communication/06-segment-recovery.js',
+        'src/userscript/02-network-communication/06-segment-snapshot.js',
+        'src/userscript/02-network-communication/08-communication-xhr.js'
+      ],
+      'segment modules must follow the file that closes communicationLogStreamBody'
+    );
     assert.equal(sourcePaths.length, 54);
     assert.equal(new Set(sourcePaths).size, sourcePaths.length);
     assert.ok(sourcePaths.every(sourcePath => {
