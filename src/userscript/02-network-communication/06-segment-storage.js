@@ -239,7 +239,7 @@
     const memberStart = communicationLogArchiveTimestamp(range.start_timestamp);
     const memberEnd = communicationLogArchiveTimestamp(range.end_timestamp);
     const rawName = `segment-${suffix}_${memberStart}_${memberEnd}.jsonl`;
-    const archiveBase = communicationLogFileName.replace(/\\.jsonl$/i, '');
+    const archiveBase = communicationLogFileName.replace(/\.jsonl$/i, '');
     const archiveName = await communicationLogUnusedRoleArchiveName(
       communicationLogSegmentDirectoryHandle,
       archiveBase,
