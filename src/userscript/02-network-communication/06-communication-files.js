@@ -105,29 +105,29 @@
         throw new Error('Communication log directory/file is not ready.');
       }
 
-      const logicalSnapshot = await communicationLogLogicalSnapshotBytes();
-      let duplicateNumber = 1;
-      let duplicateName = communicationLogDuplicateFileName(
-        communicationLogFileName,
-        duplicateNumber
+      const started = performance.now();
+      const elapsed = () => `${((performance.now() - started) / 1000).toFixed(1)}s elapsed`;
+      setStatus(`Duplicate: establishing snapshot boundary; ${elapsed()}.`);
+      const logicalSnapshot = await communicationLogLogicalSnapshot();
+      const range = {
+        start_timestamp: logicalSnapshot.start_timestamp,
+        end_timestamp: logicalSnapshot.end_timestamp
+      };
+      const base = communicationLogFileName.replace(/\\.jsonl$/i, '');
+      const archiveName = await communicationLogUnusedRoleArchiveName(
+        communicationLogDirectoryHandle,
+        base,
+        range,
+        'comm'
       );
-      while (await communicationLogFileExists(duplicateName)
-          || await communicationLogFileExists(
-            communicationLogDuplicateArchiveFileName(duplicateName)
-          )) {
-        duplicateNumber += 1;
-        duplicateName = communicationLogDuplicateFileName(
-          communicationLogFileName,
-          duplicateNumber
-        );
-      }
+      const memberName = archiveName.replace(/\\.comm\\.7z$/i, '.jsonl');
 
-      const memberName = duplicateName;
-      const archiveName = communicationLogDuplicateArchiveFileName(duplicateName);
-      const archive = await create7zArchive(logicalSnapshot, memberName);
+      setStatus(`Duplicate: compressing consolidated archive; ${elapsed()}; recording continues.`);
+      const archive = await create7zArchive(logicalSnapshot.bytes, memberName);
       let writable = null;
       let archiveCreated = false;
       try {
+        setStatus(`Duplicate: finalizing/writing ${archiveName}; ${elapsed()}.`);
         const archiveHandle = await communicationLogDirectoryHandle.getFileHandle(
           archiveName,
           { create: true }
@@ -146,7 +146,7 @@
         const extracted = await extract7zArchive(
           new Uint8Array(await verified.arrayBuffer())
         );
-        if (!(await communicationLogBytesEqual(extracted, logicalSnapshot))) {
+        if (!(await communicationLogBytesEqual(extracted, logicalSnapshot.bytes))) {
           throw new Error('Communication log duplicate round-trip verification failed.');
         }
       } catch (error) {
@@ -154,8 +154,10 @@
         if (archiveCreated) {
           try { await communicationLogDirectoryHandle.removeEntry(archiveName); } catch {}
         }
+        setStatus(`Duplicate failed while finalizing ${archiveName}; ${elapsed()}.`);
         throw error;
       }
+      setStatus(`Duplicate completed: ${archiveName}; ${elapsed()}.`);
       return archiveName;
     });
     return queued.operation;
