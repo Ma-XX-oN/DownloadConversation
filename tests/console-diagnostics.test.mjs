@@ -105,7 +105,8 @@ test('Issue 166 Copy and Save share one canonical diagnostic serialization', () 
   const save = productionFunctionSource('saveDiagnosticLog');
   assert.match(copy, /diagnosticLogText\(\)/);
   assert.match(save, /diagnosticLogText\(\)/);
-  assert.match(save, /create7zArchive/);
+  assert.match(save, /diagnosticLogArchiveApi/);
+  assert.match(productionFunctionSource('diagnosticLogArchiveApi'), /create7zArchive/);
   assert.match(save, /downloadBlob/);
 });
 
