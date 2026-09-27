@@ -61,7 +61,11 @@
      */
     const elapsed = () => `${((performance.now() - started) / 1000).toFixed(1)}s elapsed`;
     const base = `DownloadConversation_${sanitizeFileName(conversationTitle())}`;
-    const archiveName = communicationLogRoleArchiveName(base, range, 'log');
+    const directory = communicationLogReady ? communicationLogDirectoryHandle : null;
+    let archiveName = communicationLogRoleArchiveName(base, range, 'log');
+    if (directory) {
+      archiveName = await communicationLogUnusedRoleArchiveName(directory, base, range, 'log');
+    }
     const memberName = communicationLogAsciiArchiveMemberName(
       archiveName.replace(/\.log\.7z$/i, '.txt')
     );
@@ -69,11 +73,21 @@
       setStatus(`Diagnostic log: compressing; ${elapsed()}.`);
       const archive = await create7zArchive(new TextEncoder().encode(text), memberName);
       setStatus(`Diagnostic log: preparing save; ${elapsed()}.`);
-      const extracted = await extract7zArchive(archive);
-      if (!(await communicationLogBytesEqual(extracted, new TextEncoder().encode(text)))) {
-        throw new Error('Diagnostic archive round-trip verification failed.');
+      if (directory) {
+        const handle = await communicationLogWriteExactFile(directory, archiveName, archive);
+        const committed = new Uint8Array(await (await handle.getFile()).arrayBuffer());
+        const extracted = await extract7zArchive(committed);
+        if (!(await communicationLogBytesEqual(extracted, new TextEncoder().encode(text)))) {
+          try { await directory.removeEntry(archiveName); } catch {}
+          throw new Error('Diagnostic archive round-trip verification failed.');
+        }
+      } else {
+        const extracted = await extract7zArchive(archive);
+        if (!(await communicationLogBytesEqual(extracted, new TextEncoder().encode(text)))) {
+          throw new Error('Diagnostic archive round-trip verification failed.');
+        }
+        downloadBlob(new Blob([archive], { type: 'application/x-7z-compressed' }), archiveName);
       }
-      downloadBlob(new Blob([archive], { type: 'application/x-7z-compressed' }), archiveName);
       setStatus(`Diagnostic log saved as ${archiveName}; ${elapsed()}.`);
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
