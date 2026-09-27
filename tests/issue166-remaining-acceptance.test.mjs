@@ -186,5 +186,5 @@ test('Issue 166 diagnostic archive name uses requested local range punctuation',
   assert.match(name, /start_timestamp/);
   assert.match(name, /end_timestamp/);
   assert.match(name, /-.*end_timestamp/s);
-  assert.match(name, /\.log\\\.7z|log\\\\\.7z|log\\.7z/);
+  assert.match(name, /\\.log\\.7z/);
 });
