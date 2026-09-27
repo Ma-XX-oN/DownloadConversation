@@ -14,6 +14,10 @@ execFileSync(process.execPath, ['scripts/build-userscript.mjs', '--output', cand
   stdio: 'pipe'
 });
 const candidateUserscript = await readFile(candidatePath, 'utf8');
+execFileSync(process.execPath, ['scripts/verify-userscript-artifact.mjs', candidatePath], {
+  cwd: new URL('..', import.meta.url),
+  stdio: 'pipe'
+});
 
 test('Issue 166 production archive bridge creates a real 7z in the JS runtime', async () => {
   globalThis.location ??= { href: 'https://chatgpt.com/c/test' };
