@@ -54,6 +54,7 @@
     button.setAttribute('aria-busy', 'true');
     button.title = 'Compressing diagnostic log…';
     const started = performance.now();
+    /** Returns elapsed diagnostic-save time for indeterminate progress. */
     const elapsed = () => `${((performance.now() - started) / 1000).toFixed(1)}s elapsed`;
     const base = `DownloadConversation_${sanitizeFileName(conversationTitle())}`;
     const directory = communicationLogReady ? communicationLogDirectoryHandle : null;
