@@ -1,0 +1,130 @@
+import { execFileSync, spawnSync } from 'node:child_process';
+import { mkdtempSync, readFileSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import path from 'node:path';
+
+const root = path.resolve(new URL('..', import.meta.url).pathname);
+const userscript = readFileSync(path.join(root, 'chatgpt-conversation-markdown-export.user.js'), 'utf8');
+const begin = userscript.indexOf('// BEGIN bundled stream7z 26.03 direct API source=');
+const endMarker = '// END bundled stream7z 26.03 direct API';
+const end = userscript.indexOf(endMarker, begin);
+const runtimeBegin = userscript.indexOf('  let stream7zModulePromise = null;', end);
+const runtimeEnd = userscript.indexOf(
+  '  /**\n   * Installs host-isolation styling for native recorder checkboxes.',
+  runtimeBegin
+);
+if (begin < 0 || end < 0 || runtimeBegin < 0 || runtimeEnd < 0) {
+  throw new Error('Could not isolate the exact generated archive bridge.');
+}
+const prelude = userscript.slice(begin, end + endMarker.length);
+const runtime = userscript.slice(runtimeBegin, runtimeEnd);
+const candidates = process.platform === 'win32'
+  ? ['chrome.exe']
+  : ['google-chrome', 'google-chrome-stable', 'chromium', 'chromium-browser'];
+let chrome = null;
+for (const candidate of candidates) {
+  try {
+    chrome = execFileSync('which', [candidate], { encoding: 'utf8' }).trim();
+    if (chrome) break;
+  } catch {}
+}
+if (!chrome) throw new Error('Browser benchmark requires Chrome/Chromium.');
+
+const benchmark = String.raw`
+(async () => {
+  const output = document.getElementById('output');
+  const module = await stream7zModule();
+  const results = [];
+  const encoder = new TextEncoder();
+  const template = encoder.encode(
+    '{"timestamp":"2026-09-27T12:00:00.000Z","type":"response_chunk",' +
+    '"text":"The quick brown fox jumps over the lazy dog 0123456789 repeated communication payload."}\\n'
+  );
+  const corpus = size => {
+    const bytes = new Uint8Array(size);
+    for (let offset = 0; offset < size; offset += template.length) {
+      bytes.set(template.subarray(0, Math.min(template.length, size - offset)), offset);
+    }
+    return bytes;
+  };
+  for (const mib of [10, 20, 40]) {
+    const bytes = corpus(mib * 1024 * 1024);
+    const heapBefore = performance.memory?.usedJSHeapSize ?? null;
+    const wasmBefore = module.HEAPU8?.buffer?.byteLength ?? null;
+    const scheduled = performance.now();
+    let timerFired = null;
+    setTimeout(() => { timerFired = performance.now(); }, 0);
+    const started = performance.now();
+    const archive = await create7zArchive(bytes, 'benchmark.jsonl');
+    const finished = performance.now();
+    const heapAfter = performance.memory?.usedJSHeapSize ?? null;
+    const wasmAfter = module.HEAPU8?.buffer?.byteLength ?? null;
+    await new Promise(resolve => setTimeout(resolve, 0));
+    const extracted = await extract7zArchive(archive);
+    let exact = extracted.byteLength === bytes.byteLength;
+    if (exact) {
+      for (let index = 0; index < bytes.byteLength; index += 65537) {
+        if (bytes[index] !== extracted[index]) { exact = false; break; }
+      }
+    }
+    results.push({
+      mib,
+      input_bytes: bytes.byteLength,
+      archive_bytes: archive.byteLength,
+      compression_ratio: archive.byteLength / bytes.byteLength,
+      compression_ms: finished - started,
+      event_loop_lag_ms: timerFired - scheduled,
+      js_heap_before: heapBefore,
+      js_heap_after: heapAfter,
+      wasm_bytes_before: wasmBefore,
+      wasm_bytes_after: wasmAfter,
+      exact_round_trip: exact
+    });
+  }
+  output.textContent = JSON.stringify({
+    user_agent: navigator.userAgent,
+    results
+  });
+})().catch(error => {
+  document.getElementById('output').textContent = JSON.stringify({
+    error: String(error),
+    stack: error?.stack ?? null
+  });
+});
+`;
+const directory = mkdtempSync(path.join(tmpdir(), 'dc166-browser-benchmark-'));
+const htmlPath = path.join(directory, 'benchmark.html');
+const html = '<!doctype html><meta charset="utf-8"><pre id="output">RUNNING</pre><script>\n' +
+  prelude + '\n' + runtime + '\n' + benchmark + '\n</script>';
+writeFileSync(htmlPath, html);
+const result = spawnSync(chrome, [
+  '--headless=new',
+  '--no-sandbox',
+  '--disable-gpu',
+  '--disable-dev-shm-usage',
+  '--enable-precise-memory-info',
+  '--virtual-time-budget=180000',
+  '--dump-dom',
+  new URL('file://' + htmlPath).href
+], {
+  encoding: 'utf8',
+  timeout: 240000,
+  maxBuffer: 16 * 1024 * 1024
+});
+if (result.error) throw result.error;
+if (result.status !== 0) {
+  throw new Error(`Browser benchmark failed (exit ${result.status}): ${result.stderr.slice(-4000)}`);
+}
+const match = result.stdout.match(/<pre id="output">([\\s\\S]*?)<\\/pre>/);
+if (!match) throw new Error('Browser benchmark did not produce a result.');
+const decoded = match[1]
+  .replace(/&quot;/g, '"')
+  .replace(/&amp;/g, '&')
+  .replace(/&lt;/g, '<')
+  .replace(/&gt;/g, '>');
+const parsed = JSON.parse(decoded);
+if (parsed.error) throw new Error(parsed.error);
+if (!parsed.results?.every(item => item.exact_round_trip)) {
+  throw new Error('Browser benchmark archive round-trip verification failed.');
+}
+console.log(JSON.stringify(parsed, null, 2));
