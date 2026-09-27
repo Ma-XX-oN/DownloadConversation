@@ -32,9 +32,9 @@ test('Issue 166 storage append crosses the target only after a complete record a
 test('Issue 166 sealing swaps to a new active segment before compression', () => {
   const seal = productionFunctionSource('communicationLogSealActiveSegment');
   const swap = seal.search(/communicationLogFileName\s*=|communicationLogOpenWriter|active/i);
-  const compress = seal.indexOf('communicationLogCompressSealedSegment');
+  const compress = seal.indexOf('communicationLogQueueSegmentCompression');
   assert.ok(swap >= 0 && compress > swap,
-    'the next active segment must be established before background compression begins');
+    'the next active segment must be established before background compression is queued');
 });
 
 test('Issue 166 verified compression deletes raw sealed bytes only after exact verification', () => {
