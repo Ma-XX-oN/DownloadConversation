@@ -114,7 +114,7 @@
     const boundary = communicationLogEnqueue(
       'duplicate-snapshot',
       async () => {
-        setStatus(`Duplicate: sealing snapshot boundary; ${elapsed()}.`);
+        setStatus(`Duplicate: establishing snapshot boundary; ${elapsed()}.`);
         await communicationLogSealActiveSegment();
         return communicationLogCaptureSnapshotPlan();
       }
