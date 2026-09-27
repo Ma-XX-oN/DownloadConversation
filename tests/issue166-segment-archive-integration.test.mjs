@@ -68,6 +68,8 @@ test('Issue 166 production initialization creates the segment directory and repo
   assert.equal(result.childSelected, true);
   assert.equal(result.activeBytes, 321);
   assert.deepEqual(result.events, [
+    'communication-log-segment-initialize-entered',
+    'communication-log-segment-directory-name-resolved',
     'communication-log-segment-initialize-started',
     'communication-log-segment-directory-ready',
     'communication-log-segment-manifest-ready',
@@ -75,6 +77,40 @@ test('Issue 166 production initialization creates the segment directory and repo
     'communication-log-segment-recovery-completed',
     'communication-log-segment-initialize-completed'
   ], 'successful initialization must leave a complete causal diagnostic trace');
+});
+
+test('Issue 166 directory-name failure is diagnosed after literal initializer entry', async () => {
+  const initialize = productionFunctionSource('communicationLogInitializeSegmentStorage');
+  const AsyncFunction = Object.getPrototypeOf(async function () {}).constructor;
+  const run = new AsyncFunction(`
+    const diagnostics = [];
+    const logDiagnostic = (level, event, data) => diagnostics.push({ level, event, data });
+    const boundedDiagnosticText = value => String(value);
+    const errorMessage = error => error?.message || String(error);
+    const communicationLogSegmentDirectoryName = () => {
+      throw new TypeError('directory-name fixture failure');
+    };
+    let communicationLogSegmentDirectoryHandle = null;
+    let communicationLogSegmentManifest = null;
+    let communicationLogActiveSegmentBytes = 0;
+    const communicationLogDirectoryHandle = {};
+    const communicationLogReadSegmentManifest = async () => ({ segments: [] });
+    const communicationLogRecoverSegmentState = async () => {};
+    const communicationLogRefreshedFileSnapshot = async () => ({ file: { size: 0 } });
+    ${initialize}
+    try {
+      await communicationLogInitializeSegmentStorage();
+    } catch {}
+    return diagnostics;
+  `);
+  const diagnostics = await run();
+  assert.equal(diagnostics[0].event, 'communication-log-segment-initialize-entered');
+  const failure = diagnostics.find(entry =>
+    entry.event === 'communication-log-segment-initialize-failed');
+  assert.ok(failure, 'directory-name failure must be explicitly diagnosed');
+  assert.equal(failure.data.phase, 'directory-name');
+  assert.equal(failure.data.segment_directory, null);
+  assert.match(failure.data.message, /directory-name fixture failure/);
 });
 
 test('Issue 166 production initialization reports the exact failing phase', async () => {
@@ -126,7 +162,8 @@ test('Issue 166 recorder startup diagnostics cover restore through ready state',
   for (const event of [
     'communication-log-startup-entered',
     'communication-log-directory-restore-completed',
-    'communication-log-directory-permission-checked'
+    'communication-log-directory-permission-checked',
+    'communication-log-startup-caught'
   ]) {
     assert.match(startup, new RegExp(event));
   }
@@ -135,6 +172,7 @@ test('Issue 166 recorder startup diagnostics cover restore through ready state',
     'communication-log-conversation-name-resolved',
     'communication-log-swap-recovery-started',
     'communication-log-swap-recovery-completed',
+    'communication-log-segment-initialize-call-started',
     'communication-log-recorder-ready'
   ]) {
     assert.match(activate, new RegExp(event));
