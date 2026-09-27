@@ -113,8 +113,6 @@
   // BEGIN Issue #123 disk communication recorder
   /** Interval between dirty communication-log checkpoints. */
   const COMMUNICATION_LOG_CHECKPOINT_MS = 30 * 1000;
-  /** Issue #166 raw-segment target. Rotation occurs after the complete record that crosses 10 MiB. */
-  const COMMUNICATION_LOG_SEGMENT_TARGET_BYTES = 10 * 1024 * 1024;
   /** Long-lived writable stream used by normal communication-log appends. */
   let communicationLogWritable = null;
   /** Whether the current long-lived writable contains bytes not yet checkpointed. */
