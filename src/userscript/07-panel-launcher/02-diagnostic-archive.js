@@ -115,6 +115,24 @@
   }
 
   /**
+   * Resolves the archive primitive from this diagnostic module's lexical scope.
+   *
+   * @returns {Object} Callable archive create/extract operations.
+   */
+  function diagnosticLogArchiveApi() {
+    if (typeof create7zArchive !== 'function') {
+      throw new ReferenceError('Diagnostic archive create function is unavailable in this runtime scope.');
+    }
+    if (typeof extract7zArchive !== 'function') {
+      throw new ReferenceError('Diagnostic archive extract function is unavailable in this runtime scope.');
+    }
+    return {
+      create: create7zArchive,
+      extract: extract7zArchive
+    };
+  }
+
+  /**
    * Saves the canonical diagnostic log as one verified 7z archive.
    *
    * @returns {Promise<void>} Resolves after the archive is committed/downloaded.
@@ -145,11 +163,12 @@
       const sourceBytes = new TextEncoder().encode(text);
 
       phase = 'archive-create';
+      const archiveApi = diagnosticLogArchiveApi();
       setStatus(`Diagnostic log: compressing; ${elapsed()}.`);
-      const archive = await create7zArchive(sourceBytes, memberName);
+      const archive = await archiveApi.create(sourceBytes, memberName);
 
       phase = 'archive-verify';
-      const extracted = await extract7zArchive(archive);
+      const extracted = await archiveApi.extract(archive);
       if (!diagnosticLogBytesEqual(extracted, sourceBytes)) {
         throw new Error('Diagnostic archive round-trip verification failed.');
       }
