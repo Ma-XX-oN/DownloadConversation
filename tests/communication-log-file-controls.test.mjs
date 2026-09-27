@@ -303,10 +303,15 @@ test('communication-log mutators share queue, writer-close, and panel action inf
 
 test('Issue 166 Duplicate creates a timestamped consolidated comm archive', () => {
   const duplicate = diskFunctionSource('communicationLogArchiveDuplicate');
-  assert.match(duplicate, /communicationLogCaptureSnapshotPlan/);
+  const seal = duplicate.indexOf('communicationLogSealActiveSegment');
+  const capture = duplicate.indexOf('communicationLogCaptureSnapshotPlan');
+  assert.ok(seal >= 0 && capture > seal,
+    'Duplicate must seal/rotate the active segment before freezing reconstruction membership');
   assert.match(duplicate, /communicationLogLogicalSnapshot\(plan\)/);
   assert.match(duplicate, /'comm'/);
-  assert.match(duplicate, /create7zArchive\(logicalSnapshot\.bytes, memberName\)/);
+  assert.match(duplicate,
+    /create7zArchive\(logicalSnapshot\.bytes, memberName, communicationLogArchiveMTime\(range\)\)/,
+    'consolidated archive member must carry the frozen content end time');
   assert.match(duplicate, /application\/x-7z-compressed/);
   assert.doesNotMatch(
     downloadConversationSource,
