@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         ChatGPT Conversation Markdown Recorder
 // @namespace    https://chatgpt.com/
-// @version      1.7.2-issue.166.80
+// @version      1.7.2-issue.166.81
 // @description  Exports the current ChatGPT conversation directly from the Conversation API as Markdown or JSONL.
 // @match        https://chatgpt.com/*
 // @match        https://chat.openai.com/*
@@ -12868,7 +12868,7 @@ const STREAM7Z_WASM_GZIP_BASE64 = 'H4sICMtvuWoCA3N0cmVhbTd6Lndhc20A7L0JmBzFmSCa9
     const boundary = communicationLogEnqueue(
       'duplicate-snapshot',
       async () => {
-        setStatus(`Duplicate: sealing snapshot boundary; ${elapsed()}.`);
+        setStatus(`Duplicate: establishing snapshot boundary; ${elapsed()}.`);
         await communicationLogSealActiveSegment();
         return communicationLogCaptureSnapshotPlan();
       }
@@ -13308,7 +13308,7 @@ const STREAM7Z_WASM_GZIP_BASE64 = 'H4sICMtvuWoCA3N0cmVhbTd6Lndhc20A7L0JmBzFmSCa9
     const suffix = String(ordinal).padStart(6, '0');
     const memberStart = communicationLogArchiveTimestamp(range.start_timestamp);
     const memberEnd = communicationLogArchiveTimestamp(range.end_timestamp);
-    const rawName = `segment-${suffix}_${memberStart}_${memberEnd}.jsonl`;
+    const rawName = `segment-${suffix}_${memberStart}-${memberEnd}.jsonl`;
     const archiveBase = communicationLogFileName.replace(/\.jsonl$/i, '');
     const archiveName = await communicationLogUnusedRoleArchiveName(
       communicationLogSegmentDirectoryHandle,
@@ -13532,7 +13532,7 @@ const STREAM7Z_WASM_GZIP_BASE64 = 'H4sICMtvuWoCA3N0cmVhbTd6Lndhc20A7L0JmBzFmSCa9
     const start = communicationLogArchiveTimestamp(range.start_timestamp);
     const end = communicationLogArchiveTimestamp(range.end_timestamp);
     const suffix = collision > 0 ? `(${collision})` : '';
-    return `${base}_${start}_${end}${suffix}.${role}.7z`;
+    return `${base}_${start}-${end}${suffix}.${role}.7z`;
   }
 
   /**
