@@ -30,6 +30,7 @@
         "src/userscript/02-network-communication/03-communication-lifecycle.js",
         "src/userscript/02-network-communication/04-communication-redaction.js",
         "src/userscript/02-network-communication/05-communication-recovery.js",
+        "src/userscript/02-network-communication/05a-segment-storage.js",
         "src/userscript/02-network-communication/06-communication-files.js",
         "src/userscript/02-network-communication/06-segment-storage.js",
         "src/userscript/02-network-communication/06-segment-snapshot.js",
