@@ -143,6 +143,12 @@
             `Communication log archive verification failed: expected ${archive.byteLength} bytes, found ${verified.size}.`
           );
         }
+        const extracted = await extract7zArchive(
+          new Uint8Array(await verified.arrayBuffer())
+        );
+        if (!(await communicationLogBytesEqual(extracted, logicalSnapshot))) {
+          throw new Error('Communication log duplicate round-trip verification failed.');
+        }
       } catch (error) {
         await abortWritableQuietly(writable);
         if (archiveCreated) {
