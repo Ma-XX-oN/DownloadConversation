@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict';
-import { mkdtemp, readFile } from 'node:fs/promises';
+import { mkdtemp, readFile, writeFile } from 'node:fs/promises';
 import { execFileSync } from 'node:child_process';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
@@ -81,4 +81,30 @@ test('Issue 166 generated archive bridge is top-level in the DownloadConversatio
     'archive bridge must not be injected into an earlier open production function');
   assert.ok(diagnosticSave > archiveState,
     'archive bridge must be initialized in shared IIFE scope before diagnostic Save');
+});
+
+
+test('Issue 166 production archive bridge stores explicit member modification time', async () => {
+  globalThis.location ??= { href: 'https://chatgpt.com/c/test' };
+  const begin = candidateUserscript.indexOf('// BEGIN bundled stream7z 26.03 direct API source=');
+  const endMarker = '// END bundled stream7z 26.03 direct API\n';
+  const end = candidateUserscript.indexOf(endMarker, begin);
+  assert.ok(begin >= 0 && end > begin);
+  const prelude = candidateUserscript.slice(begin, end + endMarker.length);
+  const runtime = await readFile(
+    new URL('../src/userscript/01-runtime/03-archive.js', import.meta.url),
+    'utf8'
+  );
+  const AsyncFunction = Object.getPrototypeOf(async function () {}).constructor;
+  const create = await new AsyncFunction(
+    `${prelude}\n${runtime}\nreturn create7zArchive;`
+  )();
+  const source = new TextEncoder().encode('{"type":"diagnostic"}\n');
+  const memberMTimeMs = Date.UTC(2026, 8, 27, 18, 26, 37);
+  const archive = await create(source, 'diagnostic.jsonl', memberMTimeMs);
+  const archivePath = path.join(candidateDir, 'diagnostic-mtime.7z');
+  await writeFile(archivePath, archive);
+  const listing = execFileSync('7z', ['l', '-slt', archivePath], { encoding: 'utf8' });
+  assert.match(listing, /Path = diagnostic\.jsonl/);
+  assert.match(listing, /Modified = 2026-09-27 18:26:37/);
 });
