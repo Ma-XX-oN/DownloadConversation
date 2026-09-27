@@ -1,16 +1,27 @@
 import assert from 'node:assert/strict';
-import { readFile } from 'node:fs/promises';
+import { mkdtemp, readFile } from 'node:fs/promises';
+import { execFileSync } from 'node:child_process';
+import { tmpdir } from 'node:os';
+import path from 'node:path';
 import test from 'node:test';
 
-import { productionFunctionSource, userscript } from './helpers/userscript-source.mjs';
+import { productionFunctionSource } from './helpers/userscript-source.mjs';
+
+const candidateDir = await mkdtemp(path.join(tmpdir(), 'dc-issue166-candidate-'));
+const candidatePath = path.join(candidateDir, 'candidate.user.js');
+execFileSync(process.execPath, ['scripts/build-userscript.mjs', '--output', candidatePath], {
+  cwd: new URL('..', import.meta.url),
+  stdio: 'pipe'
+});
+const candidateUserscript = await readFile(candidatePath, 'utf8');
 
 test('Issue 166 production archive bridge creates a real 7z in the JS runtime', async () => {
   globalThis.location ??= { href: 'https://chatgpt.com/c/test' };
-  const begin = userscript.indexOf('// BEGIN bundled stream7z 26.03 direct API source=');
+  const begin = candidateUserscript.indexOf('// BEGIN bundled stream7z 26.03 direct API source=');
   const endMarker = '// END bundled stream7z 26.03 direct API\n';
-  const end = userscript.indexOf(endMarker, begin);
+  const end = candidateUserscript.indexOf(endMarker, begin);
   assert.ok(begin >= 0 && end > begin, 'generated stream7z prelude must be present');
-  const prelude = userscript.slice(begin, end + endMarker.length);
+  const prelude = candidateUserscript.slice(begin, end + endMarker.length);
   const runtime = await readFile(
     new URL('../src/userscript/01-runtime/03-archive.js', import.meta.url),
     'utf8'
@@ -35,11 +46,11 @@ test('Issue 166 production archive bridge creates a real 7z in the JS runtime', 
 
 test('Issue 166 production archive bridge round-trips exact member bytes', async () => {
   globalThis.location ??= { href: 'https://chatgpt.com/c/test' };
-  const begin = userscript.indexOf('// BEGIN bundled stream7z 26.03 direct API source=');
+  const begin = candidateUserscript.indexOf('// BEGIN bundled stream7z 26.03 direct API source=');
   const endMarker = '// END bundled stream7z 26.03 direct API\n';
-  const end = userscript.indexOf(endMarker, begin);
+  const end = candidateUserscript.indexOf(endMarker, begin);
   assert.ok(begin >= 0 && end > begin);
-  const prelude = userscript.slice(begin, end + endMarker.length);
+  const prelude = candidateUserscript.slice(begin, end + endMarker.length);
   const runtime = await readFile(
     new URL('../src/userscript/01-runtime/03-archive.js', import.meta.url),
     'utf8'
