@@ -47,7 +47,7 @@ test('Issue 166 duplicate reports every required phase and keeps indeterminate e
 
 test('Issue 166 diagnostic Save uses main communication folder when authorized and browser download otherwise', () => {
   const save = productionFunctionSource('saveDiagnosticLog');
-  assert.match(save, /'log'/);
+  assert.match(productionFunctionSource('diagnosticLogArchiveName'), /\.log\.7z/);
   assert.match(save, /diagnosticLogTimestampRange/);
   assert.match(save, /communicationLogDirectoryHandle/);
   assert.match(save, /diagnosticLogWriteArchive/);
