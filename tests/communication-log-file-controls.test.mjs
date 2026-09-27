@@ -314,7 +314,7 @@ test('Issue 166 Duplicate creates a timestamped consolidated comm archive', () =
   assert.match(duplicate, /communicationLogLogicalSnapshot\(plan\)/);
   assert.match(duplicate, /'comm'/);
   assert.match(duplicate,
-    /create7zArchive\(logicalSnapshot\.bytes, memberName, communicationLogArchiveMTime\(range\)\)/,
+    /create7zArchive\(\s*logicalSnapshot\.bytes,\s*memberName,\s*communicationLogArchiveMTime\(range\)\s*\)/s,
     'consolidated archive member must carry the frozen content end time');
   assert.match(duplicate, /application\/x-7z-compressed/);
   assert.doesNotMatch(
