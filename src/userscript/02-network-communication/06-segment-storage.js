@@ -1,4 +1,28 @@
-  /**\n   * Loads or initializes compact durable segment metadata.\n   *\n   * @returns {Promise<Object>} Current logical-log segment manifest.\n   */\n  async function communicationLogReadSegmentManifest() {
+  /** Internal directory containing sealed/compressed segments for the logical log. */
+  let communicationLogSegmentDirectoryHandle = null;
+  /** Compact durable ordering/integrity metadata for the logical log. */
+  let communicationLogSegmentManifest = null;
+  /** Background compression chain; active recorder writes do not await it. */
+  let communicationLogCompressionChain = Promise.resolve();
+  /** Exact bytes accepted into the current active raw segment. */
+  let communicationLogActiveSegmentBytes = 0;
+
+  /**
+   * Returns the stable internal segment-directory name for this logical log.
+   *
+   * @returns {string} Stable internal directory name.
+   */
+  function communicationLogSegmentDirectoryName() {
+    const identity = sanitizeFileName(currentConversationId() || communicationLogConversationName() || 'conversation');
+    return `.DownloadConversation-${identity}-segments`;
+  }
+
+  /**
+   * Loads or initializes compact durable segment metadata.
+   *
+   * @returns {Promise<Object>} Current logical-log segment manifest.
+   */
+  async function communicationLogReadSegmentManifest() {
     const directory = communicationLogSegmentDirectoryHandle;
     if (!directory) throw new Error('Communication segment directory is not ready.');
     try {
@@ -20,7 +44,12 @@
     }
   }
 
-  /**\n   * Commits the current compact segment manifest.\n   *\n   * @returns {Promise<void>} Resolves after manifest commit.\n   */\n  async function communicationLogWriteSegmentManifest() {
+  /**
+   * Commits the current compact segment manifest.
+   *
+   * @returns {Promise<void>} Resolves after manifest commit.
+   */
+  async function communicationLogWriteSegmentManifest() {
     const directory = communicationLogSegmentDirectoryHandle;
     if (!directory || !communicationLogSegmentManifest) {
       throw new Error('Communication segment manifest is not ready.');
@@ -36,12 +65,26 @@
     }
   }
 
-  /**\n   * Hashes exact bytes for segment/archive verification.\n   *\n   * @param {Uint8Array} bytes - Exact bytes to hash.\n   * @returns {Promise<string>} Lowercase hexadecimal SHA-256 digest.\n   */\n  async function communicationLogSha256(bytes) {
+  /**
+   * Hashes exact bytes for segment/archive verification.
+   *
+   * @param {Uint8Array} bytes - Exact bytes to hash.
+   * @returns {Promise<string>} Lowercase hexadecimal SHA-256 digest.
+   */
+  async function communicationLogSha256(bytes) {
     const digest = await crypto.subtle.digest('SHA-256', bytes);
     return Array.from(new Uint8Array(digest), byte => byte.toString(16).padStart(2, '0')).join('');
   }
 
-  /**\n   * Writes and byte-verifies one internal segment file.\n   *\n   * @param {Object} directory - Target File System Access directory handle.\n   * @param {string} name - Exact target filename.\n   * @param {Uint8Array} bytes - Exact bytes to commit.\n   * @returns {Promise<Object>} Verified file handle.\n   */\n  async function communicationLogWriteExactFile(directory, name, bytes) {
+  /**
+   * Writes and byte-verifies one internal segment file.
+   *
+   * @param {Object} directory - Target File System Access directory handle.
+   * @param {string} name - Exact target filename.
+   * @param {Uint8Array} bytes - Exact bytes to commit.
+   * @returns {Promise<Object>} Verified file handle.
+   */
+  async function communicationLogWriteExactFile(directory, name, bytes) {
     const handle = await directory.getFileHandle(name, { create: true });
     let writable = null;
     try {
@@ -62,7 +105,14 @@
     }
   }
 
-  /**\n   * Compares two byte arrays exactly.\n   *\n   * @param {Uint8Array} left - First byte array.\n   * @param {Uint8Array} right - Second byte array.\n   * @returns {Promise<boolean>} True when every byte is identical.\n   */\n  async function communicationLogBytesEqual(left, right) {
+  /**
+   * Compares two byte arrays exactly.
+   *
+   * @param {Uint8Array} left - First byte array.
+   * @param {Uint8Array} right - Second byte array.
+   * @returns {Promise<boolean>} True when every byte is identical.
+   */
+  async function communicationLogBytesEqual(left, right) {
     if (left.byteLength !== right.byteLength) return false;
     for (let index = 0; index < left.byteLength; index += 1) {
       if (left[index] !== right[index]) return false;
@@ -70,7 +120,13 @@
     return true;
   }
 
-  /**\n   * Compresses, round-trip verifies, then retires one sealed raw segment.\n   *\n   * @param {Object} segment - Durable sealed-segment metadata.\n   * @returns {Promise<void>} Resolves after verified compression or rejects while retaining raw bytes.\n   */\n  async function communicationLogCompressSealedSegment(segment) {
+  /**
+   * Compresses, round-trip verifies, then retires one sealed raw segment.
+   *
+   * @param {Object} segment - Durable sealed-segment metadata.
+   * @returns {Promise<void>} Resolves after verified compression or rejects while retaining raw bytes.
+   */
+  async function communicationLogCompressSealedSegment(segment) {
     const directory = communicationLogSegmentDirectoryHandle;
     if (!directory) throw new Error('Communication segment directory is not ready.');
     const rawHandle = await directory.getFileHandle(segment.raw_name, { create: false });
@@ -120,7 +176,13 @@
     }
   }
 
-  /**\n   * Serializes background compression without blocking active appends.\n   *\n   * @param {Object} segment - Durable sealed-segment metadata.\n   * @returns {Promise<void>} Compression operation promise.\n   */\n  function communicationLogQueueSegmentCompression(segment) {
+  /**
+   * Serializes background compression without blocking active appends.
+   *
+   * @param {Object} segment - Durable sealed-segment metadata.
+   * @returns {Promise<void>} Compression operation promise.
+   */
+  function communicationLogQueueSegmentCompression(segment) {
     const operation = communicationLogCompressionChain.then(
       () => communicationLogCompressSealedSegment(segment)
     );
@@ -128,7 +190,14 @@
     return operation;
   }
 
-  /**\n   * Verifies and clears the active file after sealing its exact bytes.\n   *\n   * @param {number} expectedBytes - Expected committed active byte count.\n   * @param {string} expectedHash - Expected SHA-256 of committed active bytes.\n   * @returns {Promise<void>} Resolves after verified truncation.\n   */\n  async function communicationLogTruncateActiveAfterSeal(expectedBytes, expectedHash) {
+  /**
+   * Verifies and clears the active file after sealing its exact bytes.
+   *
+   * @param {number} expectedBytes - Expected committed active byte count.
+   * @param {string} expectedHash - Expected SHA-256 of committed active bytes.
+   * @returns {Promise<void>} Resolves after verified truncation.
+   */
+  async function communicationLogTruncateActiveAfterSeal(expectedBytes, expectedHash) {
     const snapshot = await communicationLogRefreshedFileSnapshot();
     const bytes = new Uint8Array(await snapshot.file.arrayBuffer());
     if (bytes.byteLength !== expectedBytes || await communicationLogSha256(bytes) !== expectedHash) {
@@ -141,13 +210,19 @@
       await writable.close();
       writable = null;
       communicationLogWriterDirty = false;
+      communicationLogActiveSegmentBytes = 0;
     } catch (error) {
       await abortWritableQuietly(writable);
       throw error;
     }
   }
 
-  /**\n   * Freezes the active segment, establishes the next active file, then queues compression.\n   *\n   * @returns {Promise<Object|null>} Sealed segment metadata, or null for an empty active segment.\n   */\n  async function communicationLogSealActiveSegment() {
+  /**
+   * Freezes the active segment, establishes the next active file, then queues compression.
+   *
+   * @returns {Promise<Object|null>} Sealed segment metadata, or null for an empty active segment.
+   */
+  async function communicationLogSealActiveSegment() {
     await communicationLogCloseActiveWriter();
     const snapshot = await communicationLogRefreshedFileSnapshot();
     if (snapshot.file.size === 0) return null;
@@ -179,7 +254,12 @@
     return segment;
   }
 
-  /**\n   * Recovers sealed pending/failed segments after reload.\n   *\n   * @returns {Promise<void>} Resolves after recovery work is scheduled.\n   */\n  async function communicationLogRecoverSegmentState() {
+  /**
+   * Recovers sealed pending/failed segments after reload.
+   *
+   * @returns {Promise<void>} Resolves after recovery work is scheduled.
+   */
+  async function communicationLogRecoverSegmentState() {
     for (const segment of communicationLogSegmentManifest.segments) {
       if (segment.compression_state === 'compressed') continue;
       let rawHandle;
@@ -211,7 +291,12 @@
     }
   }
 
-  /**\n   * Initializes durable segmented storage before recorder readiness.\n   *\n   * @returns {Promise<void>} Resolves when active and historical state is ready.\n   */\n  async function communicationLogInitializeSegmentStorage() {
+  /**
+   * Initializes durable segmented storage before recorder readiness.
+   *
+   * @returns {Promise<void>} Resolves when active and historical state is ready.
+   */
+  async function communicationLogInitializeSegmentStorage() {
     communicationLogSegmentDirectoryHandle =
       await communicationLogDirectoryHandle.getDirectoryHandle(
         communicationLogSegmentDirectoryName(),
@@ -219,18 +304,25 @@
       );
     communicationLogSegmentManifest = await communicationLogReadSegmentManifest();
     await communicationLogRecoverSegmentState();
+    communicationLogActiveSegmentBytes =
+      (await communicationLogRefreshedFileSnapshot()).file.size;
   }
 
-  /**\n   * Appends one complete JSONL record and rotates only after its record boundary.\n   *\n   * @param {Object} record - Complete structured communication record.\n   * @returns {Promise<void>} Resolves after the record is accepted by active storage.\n   */\n  async function communicationLogStorageAppendRecord(record) {
+  /**
+   * Appends one complete JSONL record and rotates only after its record boundary.
+   *
+   * @param {Object} record - Complete structured communication record.
+   * @returns {Promise<void>} Resolves after the record is accepted by active storage.
+   */
+  async function communicationLogStorageAppendRecord(record) {
     const line = `${JSON.stringify(record)}\n`;
     const lineBytes = new TextEncoder().encode(line).byteLength;
     const queued = communicationLogEnqueue('storage-append', async () => {
       await communicationLogOpenWriter();
       await communicationLogWritable.write(line);
       communicationLogWriterDirty = true;
-      const snapshot = await communicationLogRefreshedFileSnapshot();
-      const pendingBytes = communicationLogWriterDirty ? lineBytes : 0;
-      if (snapshot.file.size + pendingBytes >= COMMUNICATION_LOG_SEGMENT_TARGET_BYTES) {
+      communicationLogActiveSegmentBytes += lineBytes;
+      if (communicationLogActiveSegmentBytes >= COMMUNICATION_LOG_SEGMENT_TARGET_BYTES) {
         await communicationLogSealActiveSegment();
       }
     });
@@ -238,7 +330,13 @@
   }
 
 
-  /**\n   * Returns exact verified raw bytes for one historical segment.\n   *\n   * @param {Object} segment - Historical segment metadata.\n   * @returns {Promise<Uint8Array>} Verified raw JSONL segment bytes.\n   */\n  async function communicationLogReadHistoricalSegment(segment) {
+  /**
+   * Returns exact verified raw bytes for one historical segment.
+   *
+   * @param {Object} segment - Historical segment metadata.
+   * @returns {Promise<Uint8Array>} Verified raw JSONL segment bytes.
+   */
+  async function communicationLogReadHistoricalSegment(segment) {
     if (segment.compression_state === 'compressed') {
       const handle = await communicationLogSegmentDirectoryHandle.getFileHandle(
         segment.archive_name,
@@ -264,7 +362,12 @@
     return bytes;
   }
 
-  /**\n   * Reconstructs the logical JSONL stream in canonical ordinal order.\n   *\n   * @returns {Promise<Uint8Array>} Exact logical-log snapshot bytes.\n   */\n  async function communicationLogLogicalSnapshotBytes() {
+  /**
+   * Reconstructs the logical JSONL stream in canonical ordinal order.
+   *
+   * @returns {Promise<Uint8Array>} Exact logical-log snapshot bytes.
+   */
+  async function communicationLogLogicalSnapshotBytes() {
     await communicationLogCloseActiveWriter();
     const ordered = [...communicationLogSegmentManifest.segments]
       .sort((left, right) => left.ordinal - right.ordinal);
@@ -288,7 +391,12 @@
     return combined;
   }
 
-  /**\n   * Clears historical segment membership for an explicit log reset.\n   *\n   * @returns {Promise<void>} Resolves after historical segment state is reset.\n   */\n  async function communicationLogResetSegmentHistory() {
+  /**
+   * Clears historical segment membership for an explicit log reset.
+   *
+   * @returns {Promise<void>} Resolves after historical segment state is reset.
+   */
+  async function communicationLogResetSegmentHistory() {
     if (!communicationLogSegmentDirectoryHandle) return;
     await communicationLogCompressionChain;
     const name = communicationLogSegmentDirectoryName();
