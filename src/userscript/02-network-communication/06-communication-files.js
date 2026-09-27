@@ -120,7 +120,7 @@
         range,
         'comm'
       );
-      const memberName = archiveName.replace(/\\.comm\\.7z$/i, '.jsonl');
+      const memberName = communicationLogAsciiArchiveMemberName(\n        archiveName.replace(/\\.comm\\.7z$/i, '.jsonl')\n      );
 
       setStatus(`Duplicate: compressing consolidated archive; ${elapsed()}; recording continues.`);
       const archive = await create7zArchive(logicalSnapshot.bytes, memberName);
