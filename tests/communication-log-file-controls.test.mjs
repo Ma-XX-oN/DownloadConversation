@@ -78,6 +78,7 @@ function issue134Harness(initialFiles = {}) {
     TextDecoder,
     TextEncoder,
     URL,
+    performance,
     location: {
       origin: 'https://chatgpt.com',
       href: 'https://chatgpt.com/c/conversation-1'
