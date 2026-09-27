@@ -83,34 +83,44 @@ writeFileSync(htmlPath, html);
 const results = [];
 let userAgent = null;
 for (const mib of [10, 20, 40]) {
-  const started = process.hrtime.bigint();
-  const result = spawnSync(chrome, [
-    '--headless=new',
-    '--no-sandbox',
-    '--disable-gpu',
-    '--disable-dev-shm-usage',
-    '--enable-precise-memory-info',
-    '--virtual-time-budget=180000',
-    '--dump-dom',
-    new URL('file://' + htmlPath).href + '#' + mib
-  ], {
-    encoding: 'utf8',
-    timeout: 240000,
-    maxBuffer: 16 * 1024 * 1024
-  });
-  const wallMs = Number(process.hrtime.bigint() - started) / 1e6;
-  if (result.error) throw result.error;
-  if (result.status !== 0) {
-    throw new Error(`Browser benchmark failed (exit ${result.status}): ${result.stderr.slice(-4000)}`);
+  let parsed = null;
+  let wallMs = null;
+  for (let attempt = 1; attempt <= 3 && parsed === null; attempt += 1) {
+    const started = process.hrtime.bigint();
+    const result = spawnSync(chrome, [
+      '--headless=new',
+      '--no-sandbox',
+      '--disable-gpu',
+      '--disable-dev-shm-usage',
+      '--enable-precise-memory-info',
+      '--virtual-time-budget=180000',
+      '--dump-dom',
+      new URL('file://' + htmlPath).href + '#' + mib
+    ], {
+      encoding: 'utf8',
+      timeout: 240000,
+      maxBuffer: 16 * 1024 * 1024
+    });
+    wallMs = Number(process.hrtime.bigint() - started) / 1e6;
+    if (result.error) throw result.error;
+    if (result.status !== 0) {
+      throw new Error(`Browser benchmark failed (exit ${result.status}): ${result.stderr.slice(-4000)}`);
+    }
+    const match = result.stdout.match(new RegExp('<pre id="output">([\\s\\S]*?)</pre>'));
+    if (!match) throw new Error('Browser benchmark did not produce a result element.');
+    const decoded = match[1]
+      .replace(/&quot;/g, '"')
+      .replace(/&amp;/g, '&')
+      .replace(/&lt;/g, '<')
+      .replace(/&gt;/g, '>');
+    if (decoded === 'RUNNING') {
+      if (attempt === 3) {
+        throw new Error(`Browser benchmark remained RUNNING after ${attempt} independent browser processes.`);
+      }
+      continue;
+    }
+    parsed = JSON.parse(decoded);
   }
-  const match = result.stdout.match(new RegExp('<pre id="output">([\\s\\S]*?)</pre>'));
-  if (!match) throw new Error('Browser benchmark did not produce a result.');
-  const decoded = match[1]
-    .replace(/&quot;/g, '"')
-    .replace(/&amp;/g, '&')
-    .replace(/&lt;/g, '<')
-    .replace(/&gt;/g, '>');
-  const parsed = JSON.parse(decoded);
   if (parsed.error) throw new Error(parsed.error);
   if (!parsed.exact_round_trip) throw new Error('Browser benchmark archive round-trip verification failed.');
   userAgent ??= parsed.user_agent;
