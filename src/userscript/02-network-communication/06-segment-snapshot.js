@@ -52,6 +52,16 @@
   }
 
   /**
+   * Converts a user-facing archive-derived member name to the bridge's ASCII contract.
+   *
+   * @param {string} name - Desired member name.
+   * @returns {string} Deterministic printable-ASCII member name.
+   */
+  function communicationLogAsciiArchiveMemberName(name) {
+    return String(name).replace(/[^\\x20-\\x7e]/g, '_');
+  }
+
+  /**
    * Returns the first unused role archive name without adding (N) unnecessarily.
    *
    * @param {Object} directory - Directory where the archive will be written.
