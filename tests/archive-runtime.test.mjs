@@ -20,7 +20,7 @@ test('Issue 166 production archive bridge creates a real 7z in the JS runtime', 
     `${prelude}\n${runtime}\nreturn create7zArchive;`
   )();
   const previousLocation = globalThis.location;
-  globalThis.location = { href: 'https://chatgpt.com/' };
+  globalThis.location = { href: import.meta.url };
   const source = new TextEncoder().encode('DownloadConversation archive smoke test\n');
   const archive = await create(source, 'diagnostic-log.txt');
   assert.ok(archive instanceof Uint8Array);
