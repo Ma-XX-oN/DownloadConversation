@@ -631,3 +631,44 @@ The build pins AIConversationCore by exact repository commit, Git blob SHA-1, an
 Build determinism means the same authoritative DownloadConversation source plus the same verified pinned dependency bytes produces the same generated userscript bytes. `node scripts/build-userscript.mjs --check` rejects stale generated output. The test-cycle preparation path builds and commits that deterministic artifact before any project test. Ordinary and cross-consumer verification then exercise that exact prepared commit. Only after every required stage passes does publication push the tested artifact commit and its immutable `v<version>` tag; a failed cycle remains untagged.
 
 The pre-#150 monolithic userscript remains only as a migration/provenance fixture with its original Git blob identity. It is not authoritative source and must not be edited to make production changes. The behavior-preserving migration equivalence oracle is frozen at verified migration snapshot `62571e15af8f7f3e4472258e7a18bb2f2d48cef5`; it proves that original modularization preserved every non-whitespace legacy runtime byte in order without constraining legitimate later runtime changes. No fallback runtime loading path is introduced by this build layout.
+
+
+## Issue #166 segmented communication archives
+
+Communication recording uses an active raw JSONL -> sealed immutable raw -> verified
+7z segment lifecycle. The active recorder never appends to or updates historical
+archives. Internal segment files and manifest metadata are grouped in a stable
+per-log directory keyed by logical conversation identity; manifest ordinals, byte
+counts, SHA-256 values, archive/member identities, timestamp bounds, and compression
+state define canonical membership independently of filenames.
+
+The selected default segment target is **10 MiB**. The browser benchmark
+\`benchmarks/issue166-browser-segment-benchmark.mjs\` exercises the exact generated
+archive bridge in headless Chrome/Chromium at 10, 20, and 40 MiB and records
+compression time, archive ratio, event-loop delay, JavaScript heap observations,
+and exact round-trip verification. Ten MiB is retained as the default because it
+minimizes each synchronous Wasm compression stall and peak per-operation input
+while still amortizing archive setup; larger candidates reduce rotation frequency
+but increase the duration and memory footprint of one synchronous operation.
+The benchmark must be rerun when the archive bridge or target is changed.
+
+The direct 7-Zip bridge currently accepts and returns complete Uint8Array objects,
+so consolidated Duplicate reconstruction is necessarily in-memory.
+COMMUNICATION_LOG_DUPLICATE_MAX_BYTES therefore rejects snapshots above
+**128 MiB** before compression. This is an explicit safety guard, not a fallback:
+the operation fails visibly and leaves source segments and the active log intact.
+A future filesystem-backed archive interface can remove that limit only after
+equivalent exact-byte and crash-safety verification.
+
+Duplicate freezes segment membership plus the committed active prefix behind the
+append queue, releases the queue, reconstructs historical bytes in manifest ordinal
+order, and creates one timestamped .comm.7z. Later live writes remain attached to
+the original logical log and are excluded. Reset waits for background compression,
+truncates the active file, and removes/recreates the internal segment directory so
+old history is not attached to the reset logical stream. Rename changes only the
+visible active filename; the stable internal logical identity and manifest remain.
+
+Diagnostic Save is independent of communication-directory authorization. It
+round-trip verifies one timestamped .log.7z in memory and then invokes the normal
+browser download flow. Its member bytes are exactly the same canonical diagnostic
+serialization used by Copy.
