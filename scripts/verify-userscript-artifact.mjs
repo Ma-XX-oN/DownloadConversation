@@ -165,7 +165,7 @@ async function main() {
   const wasmGzip = Buffer.from(wasmMatch[1], 'base64');
   const wasm = gunzipSync(wasmGzip);
   const wasmSha256 = createHash('sha256').update(wasm).digest('hex');
-  if (wasmSha256 !== 'b238bf262f7077f039cfe548922311bb6ce0756aba5679d247b1dc4003fa5353') {
+  if (wasmSha256 !== '5adc460e42b71ee919dc4e9794b715164959665aa29aab430b729f16ffd326a2') {
     fail(`Generated stream7z Wasm SHA-256 mismatch: ${wasmSha256}.`);
   }
   const expectedTail = '\n(() => {\n' + prelude + sourceBody;
