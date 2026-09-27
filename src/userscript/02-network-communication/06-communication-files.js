@@ -105,6 +105,7 @@
     }
 
     const started = performance.now();
+    /** Returns elapsed duplicate-operation time for indeterminate progress. */
     const elapsed = () => `${((performance.now() - started) / 1000).toFixed(1)}s elapsed`;
     setStatus(`Duplicate: establishing snapshot boundary; ${elapsed()}.`);
     const boundary = communicationLogEnqueue(
