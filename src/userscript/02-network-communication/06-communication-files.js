@@ -105,12 +105,18 @@
     }
 
     const started = performance.now();
-    /** Returns elapsed duplicate-operation time for indeterminate progress. */
+    /**
+     * Returns elapsed duplicate-operation time for indeterminate progress.
+     *
+     * @returns {string} Human-readable elapsed duration.
+     */
     const elapsed = () => `${((performance.now() - started) / 1000).toFixed(1)}s elapsed`;
-    setStatus(`Duplicate: establishing snapshot boundary; ${elapsed()}.`);
     const boundary = communicationLogEnqueue(
       'duplicate-snapshot',
-      communicationLogCaptureSnapshotPlan
+      async () => {
+        setStatus(`Duplicate: establishing snapshot boundary; ${elapsed()}.`);
+        return communicationLogCaptureSnapshotPlan();
+      }
     );
     const plan = await boundary.operation;
 
@@ -122,7 +128,7 @@
       start_timestamp: logicalSnapshot.start_timestamp,
       end_timestamp: logicalSnapshot.end_timestamp
     };
-    const base = communicationLogFileName.replace(/\\.jsonl$/i, '');
+    const base = communicationLogFileName.replace(/\.jsonl$/i, '');
     const archiveName = await communicationLogUnusedRoleArchiveName(
       communicationLogDirectoryHandle,
       base,
@@ -130,7 +136,7 @@
       'comm'
     );
     const memberName = communicationLogAsciiArchiveMemberName(
-      archiveName.replace(/\\.comm\\.7z$/i, '.jsonl')
+      archiveName.replace(/\.comm\.7z$/i, '.jsonl')
     );
 
     setStatus(`Duplicate: compressing consolidated archive; ${elapsed()}; recording continues.`);
