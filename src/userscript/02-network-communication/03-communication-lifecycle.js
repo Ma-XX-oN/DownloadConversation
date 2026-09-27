@@ -236,8 +236,14 @@
           stack: boundedDiagnosticText(String(error?.stack ?? ''), 6000)
         });
       } catch (diagnosticError) {
-        console.error('[DownloadConversation] communication recorder startup failure', error);
-        console.error('[DownloadConversation] startup diagnostic failure', diagnosticError);
+        logConsoleDiagnostic(
+          'warnings',
+          '[DownloadConversation] communication recorder startup diagnostic failed',
+          {
+            startup_error: String(error?.message ?? error),
+            diagnostic_error: String(diagnosticError?.message ?? diagnosticError)
+          }
+        );
       }
       communicationLogReportFailure('startup', error);
       communicationLogShowDirectoryPrompt('The saved log folder could not be restored.');
