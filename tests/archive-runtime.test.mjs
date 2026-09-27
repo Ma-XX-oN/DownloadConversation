@@ -70,3 +70,15 @@ test('Issue 166 production archive bridge round-trips exact member bytes', async
   const extracted = await api.extract7zArchive(archive);
   assert.deepEqual(Array.from(extracted), Array.from(source));
 });
+
+
+test('Issue 166 generated archive bridge is top-level in the DownloadConversation IIFE', () => {
+  const safeBoundary = candidateUserscript.indexOf('// END Issue #163 WorkStack handoff transaction');
+  const archiveState = candidateUserscript.indexOf('let stream7zModulePromise = null;');
+  const diagnosticSave = candidateUserscript.indexOf('async function saveDiagnosticLog()');
+  assert.ok(safeBoundary >= 0, 'known closed top-level boundary must exist');
+  assert.ok(archiveState > safeBoundary,
+    'archive bridge must not be injected into an earlier open production function');
+  assert.ok(diagnosticSave > archiveState,
+    'archive bridge must be initialized in shared IIFE scope before diagnostic Save');
+});
