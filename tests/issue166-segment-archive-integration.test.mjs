@@ -40,7 +40,7 @@ test('Issue 166 sealing swaps to a new active segment before compression', () =>
 test('Issue 166 verified compression deletes raw sealed bytes only after exact verification', () => {
   const compress = productionFunctionSource('communicationLogCompressSealedSegment');
   const archive = compress.indexOf('create7zArchive');
-  const verify = compress.search(/extract|decompress|sha256|hash|exact/i);
+  const verify = compress.indexOf('extract7zArchive', archive);
   const remove = compress.indexOf('removeEntry');
   assert.ok(archive >= 0, 'sealed bytes must be archived');
   assert.ok(verify > archive, 'archive/member bytes must be independently verified');
