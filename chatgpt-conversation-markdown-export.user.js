@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         ChatGPT Conversation Markdown Recorder
 // @namespace    https://chatgpt.com/
-// @version      1.7.2-issue.166.57
+// @version      1.7.2-issue.166.58
 // @description  Exports the current ChatGPT conversation directly from the Conversation API as Markdown or JSONL.
 // @match        https://chatgpt.com/*
 // @match        https://chat.openai.com/*
@@ -11520,155 +11520,6 @@ const STREAM7Z_WASM_GZIP_BASE64 = 'H4sICJsLuGoCA3N0cmVhbTd6Lndhc20A7L0JmBzFmSiY9
       ['cf-ray', 'cf_ray']
     ];
     for (const [headerName, outputName] of allowed) {
-
-  // Lazily initialized singleton for the build-materialized direct 7-Zip module.
-  let stream7zModulePromise = null;
-  // Monotonic source handle used to correlate Wasm reads with one archive operation.
-  let stream7zNextSourceId = 1;
-  // Monotonic output handle used to correlate random-access Wasm writes.
-  let stream7zNextOutputId = 1;
-  // Active exact-byte archive inputs keyed by their Wasm source handles.
-  const stream7zSources = new Map();
-  // Active growable archive outputs keyed by their Wasm output handles.
-  const stream7zOutputs = new Map();
-
-  /**
-   * Decodes the build-materialized 7-Zip 26.03 Wasm payload.
-   *
-   * @returns {Uint8Array} Wasm bytes.
-   */
-  async function stream7zWasmBytes() {
-    const binary = atob(STREAM7Z_WASM_GZIP_BASE64);
-    const compressed = new Uint8Array(binary.length);
-    for (let index = 0; index < binary.length; index += 1) {
-      compressed[index] = binary.charCodeAt(index);
-    }
-    const stream = new Blob([compressed]).stream()
-      .pipeThrough(new DecompressionStream('gzip'));
-    return new Uint8Array(await new Response(stream).arrayBuffer());
-  }
-
-  /**
-   * Returns the singleton direct 7-Zip module.
-   *
-   * @returns {Promise<Object>} Initialized module.
-   */
-  function stream7zModule() {
-    if (!stream7zModulePromise) {
-      stream7zModulePromise = stream7zWasmBytes().then(wasmBinary => Stream7zModule({
-        wasmBinary,
-        stream7zRead(id, target) {
-          const source = stream7zSources.get(id);
-          if (!source) return -1;
-          const count = Math.min(target.length, source.bytes.length - source.offset);
-          if (count <= 0) return 0;
-          target.set(source.bytes.subarray(source.offset, source.offset + count));
-          source.offset += count;
-          return count;
-        },
-        stream7zReadAt(id, position, target) {
-          const source = stream7zSources.get(id);
-          if (!source || !Number.isSafeInteger(position) || position < 0) return -1;
-          const count = Math.min(target.length, source.bytes.length - position);
-          if (count <= 0) return 0;
-          target.set(source.bytes.subarray(position, position + count));
-          return count;
-        },
-        stream7zWriteAt(id, position, bytes) {
-          const output = stream7zOutputs.get(id);
-          if (!output || !Number.isSafeInteger(position) || position < 0) return -1;
-          const required = position + bytes.length;
-          if (required > output.bytes.length) {
-            const grown = new Uint8Array(Math.max(required, output.bytes.length * 2, 4096));
-            grown.set(output.bytes);
-            output.bytes = grown;
-          }
-          output.bytes.set(bytes, position);
-          output.size = Math.max(output.size, required);
-          return bytes.length;
-        },
-        stream7zSetSize(id, size) {
-          const output = stream7zOutputs.get(id);
-          if (!output || !Number.isSafeInteger(size) || size < 0) return -1;
-          if (size > output.bytes.length) {
-            const grown = new Uint8Array(size);
-            grown.set(output.bytes.subarray(0, output.size));
-            output.bytes = grown;
-          }
-          output.size = size;
-          return 0;
-        }
-      }));
-    }
-    return stream7zModulePromise;
-  }
-
-  /**
-   * Creates one stock-compatible 7z archive containing one member.
-   *
-   * @param {Uint8Array} bytes - Exact member bytes.
-   * @param {string} memberName - Archive member name.
-   * @returns {Promise<Uint8Array>} Complete 7z archive bytes.
-   */
-  async function create7zArchive(bytes, memberName) {
-    if (!(bytes instanceof Uint8Array)) throw new TypeError('Archive input must be Uint8Array.');
-    if (!/^[\x20-\x7e]+$/.test(memberName)) {
-      throw new Error('Archive member name must contain ASCII characters only.');
-    }
-    const module = await stream7zModule();
-    const sourceId = stream7zNextSourceId++;
-    const outputId = stream7zNextOutputId++;
-    const output = { bytes: new Uint8Array(4096), size: 0 };
-    stream7zSources.set(sourceId, { bytes, offset: 0 });
-    stream7zOutputs.set(outputId, output);
-    try {
-      const create = module.cwrap('stream7z_create', 'number', ['number', 'number', 'string', 'number']);
-      const result = create(sourceId, outputId, memberName, bytes.length);
-      if (result !== 0) {
-        const lastError = module.cwrap('stream7z_last_error', 'string', [])();
-        throw new Error(`7-Zip archive creation failed: ${lastError || result}`);
-      }
-      return output.bytes.slice(0, output.size);
-    } finally {
-      stream7zSources.delete(sourceId);
-      stream7zOutputs.delete(outputId);
-    }
-  }
-
-
-  /**
-   * Extracts the single member from one stock-compatible 7z archive.
-   *
-   * @param {Uint8Array} archiveBytes - Complete 7z archive bytes.
-   * @returns {Promise<Uint8Array>} Exact extracted member bytes.
-   */
-  async function extract7zArchive(archiveBytes) {
-    if (!(archiveBytes instanceof Uint8Array)) {
-      throw new TypeError('Archive input must be Uint8Array.');
-    }
-    const module = await stream7zModule();
-    const sourceId = stream7zNextSourceId++;
-    const outputId = stream7zNextOutputId++;
-    const output = { bytes: new Uint8Array(4096), size: 0 };
-    stream7zSources.set(sourceId, { bytes: archiveBytes, offset: 0 });
-    stream7zOutputs.set(outputId, output);
-    try {
-      const extract = module.cwrap(
-        'stream7z_extract',
-        'number',
-        ['number', 'number', 'number']
-      );
-      const result = extract(sourceId, archiveBytes.length, outputId);
-      if (result !== 0) {
-        const lastError = module.cwrap('stream7z_last_error', 'string', [])();
-        throw new Error(`7-Zip archive extraction failed: ${lastError || result}`);
-      }
-      return output.bytes.slice(0, output.size);
-    } finally {
-      stream7zSources.delete(sourceId);
-      stream7zOutputs.delete(outputId);
-    }
-  }
       let value = null;
       try { value = headers?.get?.(headerName) ?? null; } catch {}
       if (value) result[outputName] = boundedDiagnosticText(value, 1000);
@@ -22591,6 +22442,155 @@ Image elapsed: ${formatDuration(imageElapsed)} — Completed: ${imageCompleted}/
 
   installWorkStackContinuation();
   // END Issue #163 WorkStack handoff transaction
+
+  // Lazily initialized singleton for the build-materialized direct 7-Zip module.
+  let stream7zModulePromise = null;
+  // Monotonic source handle used to correlate Wasm reads with one archive operation.
+  let stream7zNextSourceId = 1;
+  // Monotonic output handle used to correlate random-access Wasm writes.
+  let stream7zNextOutputId = 1;
+  // Active exact-byte archive inputs keyed by their Wasm source handles.
+  const stream7zSources = new Map();
+  // Active growable archive outputs keyed by their Wasm output handles.
+  const stream7zOutputs = new Map();
+
+  /**
+   * Decodes the build-materialized 7-Zip 26.03 Wasm payload.
+   *
+   * @returns {Uint8Array} Wasm bytes.
+   */
+  async function stream7zWasmBytes() {
+    const binary = atob(STREAM7Z_WASM_GZIP_BASE64);
+    const compressed = new Uint8Array(binary.length);
+    for (let index = 0; index < binary.length; index += 1) {
+      compressed[index] = binary.charCodeAt(index);
+    }
+    const stream = new Blob([compressed]).stream()
+      .pipeThrough(new DecompressionStream('gzip'));
+    return new Uint8Array(await new Response(stream).arrayBuffer());
+  }
+
+  /**
+   * Returns the singleton direct 7-Zip module.
+   *
+   * @returns {Promise<Object>} Initialized module.
+   */
+  function stream7zModule() {
+    if (!stream7zModulePromise) {
+      stream7zModulePromise = stream7zWasmBytes().then(wasmBinary => Stream7zModule({
+        wasmBinary,
+        stream7zRead(id, target) {
+          const source = stream7zSources.get(id);
+          if (!source) return -1;
+          const count = Math.min(target.length, source.bytes.length - source.offset);
+          if (count <= 0) return 0;
+          target.set(source.bytes.subarray(source.offset, source.offset + count));
+          source.offset += count;
+          return count;
+        },
+        stream7zReadAt(id, position, target) {
+          const source = stream7zSources.get(id);
+          if (!source || !Number.isSafeInteger(position) || position < 0) return -1;
+          const count = Math.min(target.length, source.bytes.length - position);
+          if (count <= 0) return 0;
+          target.set(source.bytes.subarray(position, position + count));
+          return count;
+        },
+        stream7zWriteAt(id, position, bytes) {
+          const output = stream7zOutputs.get(id);
+          if (!output || !Number.isSafeInteger(position) || position < 0) return -1;
+          const required = position + bytes.length;
+          if (required > output.bytes.length) {
+            const grown = new Uint8Array(Math.max(required, output.bytes.length * 2, 4096));
+            grown.set(output.bytes);
+            output.bytes = grown;
+          }
+          output.bytes.set(bytes, position);
+          output.size = Math.max(output.size, required);
+          return bytes.length;
+        },
+        stream7zSetSize(id, size) {
+          const output = stream7zOutputs.get(id);
+          if (!output || !Number.isSafeInteger(size) || size < 0) return -1;
+          if (size > output.bytes.length) {
+            const grown = new Uint8Array(size);
+            grown.set(output.bytes.subarray(0, output.size));
+            output.bytes = grown;
+          }
+          output.size = size;
+          return 0;
+        }
+      }));
+    }
+    return stream7zModulePromise;
+  }
+
+  /**
+   * Creates one stock-compatible 7z archive containing one member.
+   *
+   * @param {Uint8Array} bytes - Exact member bytes.
+   * @param {string} memberName - Archive member name.
+   * @returns {Promise<Uint8Array>} Complete 7z archive bytes.
+   */
+  async function create7zArchive(bytes, memberName) {
+    if (!(bytes instanceof Uint8Array)) throw new TypeError('Archive input must be Uint8Array.');
+    if (!/^[\x20-\x7e]+$/.test(memberName)) {
+      throw new Error('Archive member name must contain ASCII characters only.');
+    }
+    const module = await stream7zModule();
+    const sourceId = stream7zNextSourceId++;
+    const outputId = stream7zNextOutputId++;
+    const output = { bytes: new Uint8Array(4096), size: 0 };
+    stream7zSources.set(sourceId, { bytes, offset: 0 });
+    stream7zOutputs.set(outputId, output);
+    try {
+      const create = module.cwrap('stream7z_create', 'number', ['number', 'number', 'string', 'number']);
+      const result = create(sourceId, outputId, memberName, bytes.length);
+      if (result !== 0) {
+        const lastError = module.cwrap('stream7z_last_error', 'string', [])();
+        throw new Error(`7-Zip archive creation failed: ${lastError || result}`);
+      }
+      return output.bytes.slice(0, output.size);
+    } finally {
+      stream7zSources.delete(sourceId);
+      stream7zOutputs.delete(outputId);
+    }
+  }
+
+
+  /**
+   * Extracts the single member from one stock-compatible 7z archive.
+   *
+   * @param {Uint8Array} archiveBytes - Complete 7z archive bytes.
+   * @returns {Promise<Uint8Array>} Exact extracted member bytes.
+   */
+  async function extract7zArchive(archiveBytes) {
+    if (!(archiveBytes instanceof Uint8Array)) {
+      throw new TypeError('Archive input must be Uint8Array.');
+    }
+    const module = await stream7zModule();
+    const sourceId = stream7zNextSourceId++;
+    const outputId = stream7zNextOutputId++;
+    const output = { bytes: new Uint8Array(4096), size: 0 };
+    stream7zSources.set(sourceId, { bytes: archiveBytes, offset: 0 });
+    stream7zOutputs.set(outputId, output);
+    try {
+      const extract = module.cwrap(
+        'stream7z_extract',
+        'number',
+        ['number', 'number', 'number']
+      );
+      const result = extract(sourceId, archiveBytes.length, outputId);
+      if (result !== 0) {
+        const lastError = module.cwrap('stream7z_last_error', 'string', [])();
+        throw new Error(`7-Zip archive extraction failed: ${lastError || result}`);
+      }
+      return output.bytes.slice(0, output.size);
+    } finally {
+      stream7zSources.delete(sourceId);
+      stream7zOutputs.delete(outputId);
+    }
+  }
 
   /**
    * Installs host-isolation styling for native recorder checkboxes.
