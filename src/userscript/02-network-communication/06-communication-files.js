@@ -105,8 +105,7 @@
         throw new Error('Communication log directory/file is not ready.');
       }
 
-      await communicationLogCloseActiveWriter();
-      const sourceSnapshot = await communicationLogRefreshedFileSnapshot();
+      const logicalSnapshot = await communicationLogLogicalSnapshotBytes();
       let duplicateNumber = 1;
       let duplicateName = communicationLogDuplicateFileName(
         communicationLogFileName,
@@ -125,10 +124,7 @@
 
       const memberName = duplicateName;
       const archiveName = communicationLogDuplicateArchiveFileName(duplicateName);
-      const archive = await create7zArchive(
-        new Uint8Array(await sourceSnapshot.file.arrayBuffer()),
-        memberName
-      );
+      const archive = await create7zArchive(logicalSnapshot, memberName);
       let writable = null;
       let archiveCreated = false;
       try {
@@ -183,6 +179,7 @@
         if (verified.file.size !== 0) {
           throw new Error(`Communication log reset verification failed: expected 0 bytes, found ${verified.file.size}.`);
         }
+        await communicationLogResetSegmentHistory();
       } catch (error) {
         await abortWritableQuietly(writable);
         throw error;
