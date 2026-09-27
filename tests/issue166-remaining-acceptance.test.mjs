@@ -87,13 +87,21 @@ test('Issue 166 timestamp range and role naming execute against fixed independen
     start_timestamp: '2026-09-27T01:02:03.004Z',
     end_timestamp: '2026-09-27T01:02:05.006Z'
   });
+  const pad = value => String(value).padStart(2, '0');
+  const local = timestamp => {
+    const date = new Date(timestamp);
+    return `${date.getFullYear()},${pad(date.getMonth() + 1)},${pad(date.getDate())};`
+      + `${pad(date.getHours())},${pad(date.getMinutes())},${pad(date.getSeconds())}`;
+  };
+  const start = local(result.range.start_timestamp);
+  const end = local(result.range.end_timestamp);
   assert.equal(
     result.normal,
-    'DownloadConversation_fixture_20260927T010203004Z_20260927T010205006Z.comm.7z'
+    `DownloadConversation_fixture_${start}-${end}.comm.7z`
   );
   assert.equal(
     result.collision,
-    'DownloadConversation_fixture_20260927T010203004Z_20260927T010205006Z(2).comm.7z'
+    `DownloadConversation_fixture_${start}-${end}(2).comm.7z`
   );
 });
 
