@@ -282,7 +282,7 @@ test(
     );
     assert.match(
       initializerSource,
-      /getDirectoryHandle\(directoryName, \{ create: true \}\)/
+      /getDirectoryHandle\(\s*directoryName,\s*\{ create: true \}\s*\)/s
     );
 
     const probeSource = [
