@@ -204,9 +204,9 @@ test('Issue 166 production storage performs repeated verified rotations and cont
     ${production}
 
     const records = [
-      { seq: 1, payload: 'alpha' },
-      { seq: 2, payload: 'beta' },
-      { seq: 3, payload: 'gamma' }
+      { timestamp: '2026-09-27T01:00:01.000Z', seq: 1, payload: 'alpha' },
+      { timestamp: '2026-09-27T01:00:02.000Z', seq: 2, payload: 'beta' },
+      { timestamp: '2026-09-27T01:00:03.000Z', seq: 3, payload: 'gamma' }
     ];
     for (const record of records) {
       await communicationLogStorageAppendRecord(record);
