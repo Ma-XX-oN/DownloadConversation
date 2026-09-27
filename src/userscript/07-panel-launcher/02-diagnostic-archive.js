@@ -55,6 +55,20 @@
   }
 
   /**
+   * Returns the final diagnostic content time at whole-second precision.
+   *
+   * @param {Object} range - Trustworthy diagnostic timestamp range.
+   * @returns {number} Unix modification time in milliseconds.
+   */
+  function diagnosticLogArchiveMTime(range) {
+    const endMs = Date.parse(range?.end_timestamp);
+    if (!Number.isFinite(endMs)) {
+      throw new Error('Diagnostic archive end timestamp is not trustworthy.');
+    }
+    return Math.floor(endMs / 1000) * 1000;
+  }
+
+  /**
    * Builds the diagnostic archive filename without communication-log helpers.
    *
    * @param {Object} range - Trustworthy diagnostic timestamp range.
@@ -174,11 +188,12 @@
       archiveName = diagnosticLogArchiveName(range);
       const memberName = diagnosticLogArchiveMemberName(archiveName);
       const sourceBytes = new TextEncoder().encode(text);
+      const memberMTimeMs = diagnosticLogArchiveMTime(range);
 
       phase = 'archive-create';
       const archiveApi = diagnosticLogArchiveApi();
       setStatus(`Diagnostic log: compressing; ${elapsed()}.`);
-      const archive = await archiveApi.create(sourceBytes, memberName);
+      const archive = await archiveApi.create(sourceBytes, memberName, memberMTimeMs);
 
       phase = 'archive-verify';
       const extracted = await archiveApi.extract(archive);
