@@ -87,7 +87,7 @@ function issue134Harness(initialFiles = {}) {
   };
 
   vm.runInNewContext(
-    `${diskHarnessSource()}\ncommunicationLogDirectoryHandle = this.__issue134Directory;\ncommunicationLogFileName = 'DownloadConversation_test.jsonl';\ncommunicationLogReady = true;\ncommunicationLogWriteChain = Promise.resolve();\ncommunicationLogReportFailure = (stage, error) => {\n  this.__issue134Events.push(\`failure:\${stage}:\${error?.message ?? error}\`);\n};\ncommunicationLogLogicalSnapshotBytes = async () => {
+    `${diskHarnessSource()}\ncommunicationLogDirectoryHandle = this.__issue134Directory;\ncommunicationLogFileName = 'DownloadConversation_test.jsonl';\ncommunicationLogReady = true;\ncommunicationLogWriteChain = Promise.resolve();\ncommunicationLogReportFailure = (stage, error) => {\n  this.__issue134Events.push(\`failure:\${stage}:\${error?.message ?? error}\`);\n};\ncommunicationLogBytesEqual = async (left, right) => {\n  if (left.byteLength !== right.byteLength) return false;\n  for (let index = 0; index < left.byteLength; index += 1) {\n    if (left[index] !== right[index]) return false;\n  }\n  return true;\n};\ncommunicationLogLogicalSnapshotBytes = async () => {
   const handle = await communicationLogDirectoryHandle.getFileHandle(communicationLogFileName);
   return new Uint8Array(await (await handle.getFile()).arrayBuffer());
 };
