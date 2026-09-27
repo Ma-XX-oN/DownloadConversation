@@ -252,7 +252,9 @@ test('rename waits for pending writes, preserves exact bytes, removes the old na
   assert.equal(api.state().fileName, 'renamed.jsonl');
   assert.equal(api.state().writable, null);
   assert.equal(api.state().dirty, false);
-  assert.equal(events[0], 'active-close');
+  assert.match(events[0], /^status:Duplicate: establishing snapshot boundary;/);
+  assert.ok(events.indexOf('active-close') > 0,
+    'Active close must occur after duplicate reaches its serialized snapshot boundary.');
   assert.ok(events.includes('remove:DownloadConversation_test.jsonl'));
 });
 
