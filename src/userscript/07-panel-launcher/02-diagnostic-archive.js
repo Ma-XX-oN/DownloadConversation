@@ -61,7 +61,7 @@
     if (directory) {
       archiveName = await communicationLogUnusedRoleArchiveName(directory, base, range, 'log');
     }
-    const memberName = archiveName.replace(/\\.log\\.7z$/i, '.txt');
+    const memberName = communicationLogAsciiArchiveMemberName(\n      archiveName.replace(/\\.log\\.7z$/i, '.txt')\n    );
     try {
       setStatus(`Diagnostic log: compressing; ${elapsed()}.`);
       const archive = await create7zArchive(new TextEncoder().encode(text), memberName);
