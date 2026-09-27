@@ -79,9 +79,9 @@ test('normal recording keeps one writable open instead of committing every JSONL
   assert.match(block, /let communicationLogWritable = null/);
   assert.match(block, /communicationLogOpenWriter/);
   assert.match(block, /communicationLogWritable\.write\(/);
-  const appendLine = diskFunctionSource('communicationLogAppendLine');
-  assert.doesNotMatch(appendLine, /\.close\(/,
-    'Per-record append must not close/commit the long-lived writable.');
+  const appendRecord = diskFunctionSource('communicationLogStorageAppendRecord');
+  assert.doesNotMatch(appendRecord, /communicationLogCompressSealedSegment/,
+    'Per-record append must not synchronously compress historical data.');
   assert.match(block, /communicationLogWriteChain/,
     'Independent network observers must still serialize writer access.');
 });
