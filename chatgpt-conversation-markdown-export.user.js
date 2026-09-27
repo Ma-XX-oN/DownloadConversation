@@ -10776,7 +10776,11 @@ function projectCanonicalConversation(events) {
 
     let response;
     try {
-      response = await apiFetch(url);
+      response = await apiFetch(
+        url,
+        requestInfo.api_request_context,
+        requestInfo.conversation_id
+      );
     } catch (error) {
       logDiagnostic('errors', 'conversation-api-page-network-failure', {
         ...requestDetails,
