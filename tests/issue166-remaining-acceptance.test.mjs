@@ -159,8 +159,8 @@ test('Issue 166 diagnostic member naming preserves printable ASCII exactly', () 
   assert.match(member, /\\[\\^\\\\x20-\\\\x7e\\]/);
   const fn = new Function('archiveName', member + '; return diagnosticLogArchiveMemberName(archiveName);');
   assert.equal(
-    fn('DownloadConversation_Bind conversation lane_20260927T165259521Z_20260927T181449827Z.log.7z'),
-    'DownloadConversation_Bind conversation lane_20260927T165259521Z_20260927T181449827Z.txt'
+    fn('DownloadConversation_Bind conversation lane_2026,09,27;12,59,34-2026,09,27;14,26,37.log.7z'),
+    'DownloadConversation_Bind conversation lane_2026,09,27;12,59,34-2026,09,27;14,26,37.jsonl'
   );
 });
 
@@ -173,7 +173,18 @@ test('Issue 166 diagnostic archive timestamps use browser-local calendar/time fi
   assert.match(timestamp, /getHours/);
   assert.match(timestamp, /getMinutes/);
   assert.match(timestamp, /getSeconds/);
-  assert.match(timestamp, /getMilliseconds/);
+  assert.doesNotMatch(timestamp, /getMilliseconds/);
+  assert.match(timestamp, /,/);
+  assert.match(timestamp, /;/);
   assert.doesNotMatch(timestamp, /toISOString/);
   assert.doesNotMatch(timestamp, /Z['"\x60]/);
+});
+
+
+test('Issue 166 diagnostic archive name uses requested local range punctuation', () => {
+  const name = productionFunctionSource('diagnosticLogArchiveName');
+  assert.match(name, /start_timestamp/);
+  assert.match(name, /end_timestamp/);
+  assert.match(name, /-.*end_timestamp/s);
+  assert.match(name, /\.log\\\.7z|log\\\\\.7z|log\\.7z/);
 });
