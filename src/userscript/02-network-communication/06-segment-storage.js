@@ -1,7 +1,7 @@
   /** Issue #166 segmented communication-log state. */
   let communicationLogSegmentDirectoryHandle = null;
   let communicationLogSegmentManifest = null;
-  let communicationLogCompressionChain = Promise.resolve();
+  let communicationLogCompressionChain = Promise.resolve();\n  let communicationLogActiveSegmentBytes = 0;
 
   function communicationLogSegmentDirectoryName() {
     const identity = sanitizeFileName(currentConversationId() || communicationLogConversationName() || 'conversation');
