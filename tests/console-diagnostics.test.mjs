@@ -111,7 +111,7 @@ test('Issue 166 Copy and Save share one canonical diagnostic serialization', () 
 
 test('Issue 166 diagnostic Save has explicit empty and busy behaviour', () => {
   const save = productionFunctionSource('saveDiagnosticLog');
-  assert.match(save, /if \(!text\) return/);
+  assert.match(save, /if \\(!text\\)[\\s\\S]*no archive was created/);
   assert.match(save, /disabled\s*=\s*true/);
   assert.match(save, /finally/);
   assert.match(save, /disabled\s*=\s*false/);
