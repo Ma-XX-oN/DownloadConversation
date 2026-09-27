@@ -50,7 +50,6 @@ const benchmark = String.raw`
   for (const mib of [10, 20, 40]) {
     const bytes = corpus(mib * 1024 * 1024);
     const heapBefore = performance.memory?.usedJSHeapSize ?? null;
-    const wasmBefore = module.HEAPU8?.buffer?.byteLength ?? null;
     const scheduled = performance.now();
     let timerFired = null;
     setTimeout(() => { timerFired = performance.now(); }, 0);
@@ -58,7 +57,6 @@ const benchmark = String.raw`
     const archive = await create7zArchive(bytes, 'benchmark.jsonl');
     const finished = performance.now();
     const heapAfter = performance.memory?.usedJSHeapSize ?? null;
-    const wasmAfter = module.HEAPU8?.buffer?.byteLength ?? null;
     await new Promise(resolve => setTimeout(resolve, 0));
     const extracted = await extract7zArchive(archive);
     let exact = extracted.byteLength === bytes.byteLength;
@@ -76,8 +74,6 @@ const benchmark = String.raw`
       event_loop_lag_ms: timerFired - scheduled,
       js_heap_before: heapBefore,
       js_heap_after: heapAfter,
-      wasm_bytes_before: wasmBefore,
-      wasm_bytes_after: wasmAfter,
       exact_round_trip: exact
     });
   }
