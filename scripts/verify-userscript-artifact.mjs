@@ -16,6 +16,7 @@ function gitBlobSha1(bytes) {
 }
 
 async function main() {
+  const artifactOverride = process.argv[2] ? path.resolve(process.argv[2]) : null;
   const manifest = JSON.parse(await readFile(
     path.join(root, 'src/userscript-manifest.json'),
     'utf8'
@@ -34,7 +35,8 @@ async function main() {
     fail('Manifest must declare at least one source module.');
   }
 
-  const artifact = await readFile(path.join(root, manifest.generated_artifact));
+  const artifactPath = artifactOverride ?? path.join(root, manifest.generated_artifact);
+  const artifact = await readFile(artifactPath);
   const header = await readFile(path.join(root, manifest.header));
   const headerText = header.toString('utf8');
   if (/^\/\/ @require\b/m.test(headerText)) {
@@ -172,7 +174,7 @@ async function main() {
   } catch (error) {
     fail(`Generated userscript is not valid classic-script JavaScript: ${error.message}`);
   }
-  console.log(`Verified ${manifest.generated_artifact} (${artifact.length} bytes) as a classic script.`);
+  console.log(`Verified ${artifactPath} (${artifact.length} bytes) as a classic script.`);
 }
 
 try {
