@@ -88,7 +88,10 @@ function issue134Harness(initialFiles = {}) {
   };
 
   vm.runInNewContext(
-    `${diskHarnessSource()}\ncommunicationLogDirectoryHandle = this.__issue134Directory;\ncommunicationLogFileName = 'DownloadConversation_test.jsonl';\ncommunicationLogReady = true;\ncommunicationLogWriteChain = Promise.resolve();\ncommunicationLogReportFailure = (stage, error) => {\n  this.__issue134Events.push(\`failure:\${stage}:\${error?.message ?? error}\`);\n};\ncommunicationLogBytesEqual = async (left, right) => {\n  if (left.byteLength !== right.byteLength) return false;\n  for (let index = 0; index < left.byteLength; index += 1) {\n    if (left[index] !== right[index]) return false;\n  }\n  return true;\n};\ncommunicationLogCaptureSnapshotPlan = async () => {
+    `${diskHarnessSource()}\ncommunicationLogDirectoryHandle = this.__issue134Directory;\ncommunicationLogFileName = 'DownloadConversation_test.jsonl';\ncommunicationLogReady = true;\ncommunicationLogWriteChain = Promise.resolve();\ncommunicationLogReportFailure = (stage, error) => {\n  this.__issue134Events.push(\`failure:\${stage}:\${error?.message ?? error}\`);\n};\ncommunicationLogBytesEqual = async (left, right) => {\n  if (left.byteLength !== right.byteLength) return false;\n  for (let index = 0; index < left.byteLength; index += 1) {\n    if (left[index] !== right[index]) return false;\n  }\n  return true;\n};\ncommunicationLogSealActiveSegment = async () => {
+  this.__issue134Events.push('seal-active');
+};
+communicationLogCaptureSnapshotPlan = async () => {
   await communicationLogCloseActiveWriter();
   const handle = await communicationLogDirectoryHandle.getFileHandle(communicationLogFileName);
   return { active_bytes: new Uint8Array(await (await handle.getFile()).arrayBuffer()) };
@@ -99,6 +102,7 @@ communicationLogLogicalSnapshot = async plan => ({
   end_timestamp: '2026-09-27T01:02:05.006Z'
 });
 communicationLogAsciiArchiveMemberName = name => name;
+communicationLogArchiveMTime = range => Math.floor(Date.parse(range.end_timestamp) / 1000) * 1000;
 communicationLogUnusedRoleArchiveName = async (directory, base, _range, role) => {
   const stem = base + '_20260927T010203004Z_20260927T010205006Z';
   for (let collision = 0; ; collision += 1) {
