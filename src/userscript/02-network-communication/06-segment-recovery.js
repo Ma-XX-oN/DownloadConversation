@@ -98,7 +98,6 @@
       logDiagnostic('debug', 'communication-log-segment-initialize-started', {
         segment_directory: directoryName
       });
-    try {
       communicationLogSegmentDirectoryHandle =
         await communicationLogDirectoryHandle.getDirectoryHandle(
           directoryName,
