@@ -119,6 +119,8 @@
   let communicationLogWritable = null;
   /** Whether the current long-lived writable contains bytes not yet checkpointed. */
   let communicationLogWriterDirty = false;
+  /** Exact accepted byte count in the current active raw segment. */
+  let communicationLogActiveBytes = null;
   /** Periodic checkpoint timer installed once communication logging becomes active. */
   let communicationLogCheckpointTimer = null;
   /**
