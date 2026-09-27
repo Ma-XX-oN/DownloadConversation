@@ -64,7 +64,7 @@
     const start = communicationLogArchiveTimestamp(range.start_timestamp);
     const end = communicationLogArchiveTimestamp(range.end_timestamp);
     const suffix = collision > 0 ? `(${collision})` : '';
-    return `${base}_${start}_${end}${suffix}.${role}.7z`;
+    return `${base}_${start}-${end}${suffix}.${role}.7z`;
   }
 
   /**
