@@ -89,27 +89,32 @@
    * @returns {Promise<Uint8Array>} Verified raw JSONL segment bytes.
    */
   async function communicationLogReadHistoricalSegment(segment) {
-    if (segment.compression_state === 'compressed') {
+    const readArchive = async () => {
       const handle = await communicationLogSegmentDirectoryHandle.getFileHandle(
         segment.archive_name,
         { create: false }
       );
       const archive = new Uint8Array(await (await handle.getFile()).arrayBuffer());
-      const bytes = await extract7zArchive(archive);
-      if (bytes.byteLength !== segment.raw_bytes
-          || await communicationLogSha256(bytes) !== segment.source_sha256) {
-        throw new Error(`Historical archive verification failed: segment ${segment.ordinal}`);
+      return extract7zArchive(archive);
+    };
+    let bytes;
+    if (segment.compression_state === 'compressed') {
+      bytes = await readArchive();
+    } else {
+      try {
+        const handle = await communicationLogSegmentDirectoryHandle.getFileHandle(
+          segment.raw_name,
+          { create: false }
+        );
+        bytes = new Uint8Array(await (await handle.getFile()).arrayBuffer());
+      } catch (error) {
+        if (error?.name !== 'NotFoundError') throw error;
+        bytes = await readArchive();
       }
-      return bytes;
     }
-    const handle = await communicationLogSegmentDirectoryHandle.getFileHandle(
-      segment.raw_name,
-      { create: false }
-    );
-    const bytes = new Uint8Array(await (await handle.getFile()).arrayBuffer());
     if (bytes.byteLength !== segment.raw_bytes
         || await communicationLogSha256(bytes) !== segment.source_sha256) {
-      throw new Error(`Historical raw verification failed: segment ${segment.ordinal}`);
+      throw new Error(`Historical segment verification failed: segment ${segment.ordinal}`);
     }
     return bytes;
   }
@@ -119,9 +124,26 @@
    *
    * @returns {Promise<Uint8Array>} Exact logical-log snapshot bytes.
    */
-  async function communicationLogLogicalSnapshot() {
+  async function communicationLogCaptureSnapshotPlan() {
     await communicationLogCloseActiveWriter();
-    const ordered = [...communicationLogSegmentManifest.segments]
+    const active = await communicationLogRefreshedFileSnapshot();
+    const activeBytes = new Uint8Array(await active.file.arrayBuffer());
+    return {
+      segments: communicationLogSegmentManifest.segments.map(segment => ({ ...segment })),
+      active_bytes: activeBytes,
+      active_range: communicationLogTimestampRangeFromJsonl(activeBytes)
+    };
+  }
+
+  /**
+   * Reconstructs one previously frozen snapshot plan without holding the append queue.
+   *
+   * @param {Object|null} plan - Frozen segment membership and active prefix.
+   * @returns {Promise<Object>} Exact bytes and trustworthy content timestamp range.
+   */
+  async function communicationLogLogicalSnapshot(plan = null) {
+    const frozen = plan ?? await communicationLogCaptureSnapshotPlan();
+    const ordered = [...frozen.segments]
       .sort((left, right) => left.ordinal - right.ordinal);
     const parts = [];
     let total = 0;
@@ -141,18 +163,15 @@
       startTimestamp ??= segment.start_timestamp ?? null;
       endTimestamp = segment.end_timestamp ?? endTimestamp;
     }
-    const active = await communicationLogRefreshedFileSnapshot();
-    const activeBytes = new Uint8Array(await active.file.arrayBuffer());
-    const activeRange = communicationLogTimestampRangeFromJsonl(activeBytes);
-    parts.push(activeBytes);
-    total += activeBytes.byteLength;
+    parts.push(frozen.active_bytes);
+    total += frozen.active_bytes.byteLength;
     if (total > COMMUNICATION_LOG_DUPLICATE_MAX_BYTES) {
       throw new Error(
         `Duplicate snapshot exceeds the ${COMMUNICATION_LOG_DUPLICATE_MAX_BYTES}-byte in-memory safety limit.`
       );
     }
-    startTimestamp ??= activeRange?.start_timestamp ?? null;
-    endTimestamp = activeRange?.end_timestamp ?? endTimestamp;
+    startTimestamp ??= frozen.active_range?.start_timestamp ?? null;
+    endTimestamp = frozen.active_range?.end_timestamp ?? endTimestamp;
     if (!startTimestamp || !endTimestamp) {
       throw new Error('Communication log snapshot has no trustworthy content timestamp range.');
     }
