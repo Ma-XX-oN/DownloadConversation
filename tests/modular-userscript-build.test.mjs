@@ -64,7 +64,7 @@ test(
       'src/userscript/06-workstack-continuation/04-handoff-transaction.js'
     ]);
     const sourcePaths = orderedSourcePaths(manifest);
-    assert.equal(sourcePaths.length, 52);
+    assert.equal(sourcePaths.length, 53);
     assert.equal(new Set(sourcePaths).size, sourcePaths.length);
     assert.ok(sourcePaths.every(sourcePath => {
       return sourcePath.startsWith('src/userscript/');
