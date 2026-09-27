@@ -139,6 +139,7 @@
 
     try {
       segment.compression_state = 'compressing';
+      setStatus(`Communication log: compressing sealed segment ${segment.ordinal}; recording continues.`);
       await communicationLogWriteSegmentManifest();
       const archiveBytes = await create7zArchive(rawBytes, segment.member_name);
       const archiveHandle = await communicationLogWriteExactFile(
@@ -158,6 +159,7 @@
       segment.verified_sha256 = extractedHash;
       await communicationLogWriteSegmentManifest();
       await directory.removeEntry(segment.raw_name);
+      setStatus(`Communication log: sealed segment ${segment.ordinal} compressed; recording continues.`);
       logDiagnostic('debug', 'communication-log-segment-compressed', {
         ordinal: segment.ordinal,
         raw_bytes: segment.raw_bytes,
@@ -167,6 +169,7 @@
       segment.compression_state = 'failed';
       segment.failure = boundedDiagnosticText(errorMessage(error), 2000);
       await communicationLogWriteSegmentManifest().catch(() => {});
+      setStatus(`Communication log: segment ${segment.ordinal} compression failed; sealed raw retained and recording continues.`);
       logDiagnostic('warnings', 'communication-log-segment-compression-failed', {
         ordinal: segment.ordinal,
         raw_name: segment.raw_name,
@@ -227,10 +230,22 @@
     const snapshot = await communicationLogRefreshedFileSnapshot();
     if (snapshot.file.size === 0) return null;
     const rawBytes = new Uint8Array(await snapshot.file.arrayBuffer());
+    const range = communicationLogTimestampRangeFromJsonl(rawBytes);
+    if (!range) {
+      throw new Error('Sealed communication segment has no trustworthy content timestamp range.');
+    }
     const ordinal = communicationLogSegmentManifest.next_ordinal++;
     const suffix = String(ordinal).padStart(6, '0');
-    const rawName = `segment-${suffix}.jsonl`;
-    const archiveName = `segment-${suffix}.7z`;
+    const memberStart = communicationLogArchiveTimestamp(range.start_timestamp);
+    const memberEnd = communicationLogArchiveTimestamp(range.end_timestamp);
+    const rawName = `segment-${suffix}_${memberStart}_${memberEnd}.jsonl`;
+    const archiveBase = communicationLogFileName.replace(/\\.jsonl$/i, '');
+    const archiveName = await communicationLogUnusedRoleArchiveName(
+      communicationLogSegmentDirectoryHandle,
+      archiveBase,
+      range,
+      'seg'
+    );
     const sourceHash = await communicationLogSha256(rawBytes);
     await communicationLogWriteExactFile(
       communicationLogSegmentDirectoryHandle,
@@ -244,6 +259,8 @@
       member_name: rawName,
       raw_bytes: rawBytes.byteLength,
       source_sha256: sourceHash,
+      start_timestamp: range.start_timestamp,
+      end_timestamp: range.end_timestamp,
       compression_state: 'sealed'
     };
     communicationLogSegmentManifest.segments.push(segment);
