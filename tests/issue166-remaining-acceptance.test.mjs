@@ -50,7 +50,7 @@ test('Issue 166 diagnostic Save uses main communication folder when authorized a
   assert.match(save, /'log'/);
   assert.match(save, /diagnosticLogTimestampRange/);
   assert.match(save, /communicationLogDirectoryHandle/);
-  assert.match(save, /communicationLogWriteExactFile/);
+  assert.match(save, /diagnosticLogWriteArchive/);
   assert.match(save, /downloadBlob/);
 });
 
