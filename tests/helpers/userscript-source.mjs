@@ -18,10 +18,10 @@ export const userscript = await readFile(
 export const downloadConversationSource = await readDownloadConversationSource(root, manifest);
 
 export function markedBlock(startMarker, endMarker) {
-  const start = userscript.indexOf(startMarker);
-  const end = userscript.indexOf(endMarker, start);
+  const start = downloadConversationSource.indexOf(startMarker);
+  const end = downloadConversationSource.indexOf(endMarker, start);
   assert.ok(start >= 0 && end > start, `Production block ${startMarker} is missing.`);
-  return userscript.slice(start, end + endMarker.length);
+  return downloadConversationSource.slice(start, end + endMarker.length);
 }
 
 export function diskBlock() {
@@ -47,7 +47,7 @@ function functionSourceFrom(source, name) {
 }
 
 export function productionFunctionSource(name) {
-  return functionSourceFrom(userscript, name);
+  return functionSourceFrom(downloadConversationSource, name);
 }
 
 export function diskFunctionSource(name) {
