@@ -29,7 +29,23 @@
   function communicationLogArchiveTimestamp(timestamp) {
     const date = new Date(timestamp);
     if (!Number.isFinite(date.getTime())) throw new Error('Archive timestamp is not trustworthy.');
-    return date.toISOString().replace(/[-:]/g, '').replace('.', '').replace('Z', 'Z');
+    const pad = value => String(value).padStart(2, '0');
+    return `${date.getFullYear()},${pad(date.getMonth() + 1)},${pad(date.getDate())};`
+      + `${pad(date.getHours())},${pad(date.getMinutes())},${pad(date.getSeconds())}`;
+  }
+
+  /**
+   * Returns the final communication content time at whole-second precision.
+   *
+   * @param {Object} range - Trustworthy communication timestamp range.
+   * @returns {number} Unix modification time in milliseconds.
+   */
+  function communicationLogArchiveMTime(range) {
+    const endMs = Date.parse(range?.end_timestamp);
+    if (!Number.isFinite(endMs)) {
+      throw new Error('Communication archive end timestamp is not trustworthy.');
+    }
+    return Math.floor(endMs / 1000) * 1000;
   }
 
   /**
