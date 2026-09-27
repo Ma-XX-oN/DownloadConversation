@@ -63,7 +63,7 @@
    */
   function diagnosticLogArchiveName(range) {
     const base = `DownloadConversation_${sanitizeFileName(conversationTitle())}`;
-    return `${base}_${diagnosticLogArchiveTimestamp(range.start_timestamp)}_`
+    return `${base}_${diagnosticLogArchiveTimestamp(range.start_timestamp)}-`
       + `${diagnosticLogArchiveTimestamp(range.end_timestamp)}.log.7z`;
   }
 
@@ -74,7 +74,7 @@
    * @returns {string} Archive member filename.
    */
   function diagnosticLogArchiveMemberName(archiveName) {
-    return archiveName.replace(/\.log\.7z$/i, '.txt').replace(/[^\x20-\x7e]/g, '_');
+    return archiveName.replace(/\.log\.7z$/i, '.jsonl').replace(/[^\x20-\x7e]/g, '_');
   }
 
   /**
