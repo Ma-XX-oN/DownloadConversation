@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         ChatGPT Conversation Markdown Recorder
 // @namespace    https://chatgpt.com/
-// @version      1.7.2-issue.166.74
+// @version      1.7.2-issue.166.75
 // @description  Exports the current ChatGPT conversation directly from the Conversation API as Markdown or JSONL.
 // @match        https://chatgpt.com/*
 // @match        https://chat.openai.com/*
@@ -22677,9 +22677,8 @@ Image elapsed: ${formatDuration(imageElapsed)} — Completed: ${imageCompleted}/
      * @returns {string} Two-digit field.
      */
     const pad = value => String(value).padStart(2, '0');
-    const milliseconds = String(date.getMilliseconds()).padStart(3, '0');
-    return `${date.getFullYear()}${pad(date.getMonth() + 1)}${pad(date.getDate())}T`
-      + `${pad(date.getHours())}${pad(date.getMinutes())}${pad(date.getSeconds())}${milliseconds}`;
+    return `${date.getFullYear()},${pad(date.getMonth() + 1)},${pad(date.getDate())};`
+      + `${pad(date.getHours())},${pad(date.getMinutes())},${pad(date.getSeconds())}`;
   }
 
   /**
@@ -22690,7 +22689,7 @@ Image elapsed: ${formatDuration(imageElapsed)} — Completed: ${imageCompleted}/
    */
   function diagnosticLogArchiveName(range) {
     const base = `DownloadConversation_${sanitizeFileName(conversationTitle())}`;
-    return `${base}_${diagnosticLogArchiveTimestamp(range.start_timestamp)}_`
+    return `${base}_${diagnosticLogArchiveTimestamp(range.start_timestamp)}-`
       + `${diagnosticLogArchiveTimestamp(range.end_timestamp)}.log.7z`;
   }
 
@@ -22701,7 +22700,7 @@ Image elapsed: ${formatDuration(imageElapsed)} — Completed: ${imageCompleted}/
    * @returns {string} Archive member filename.
    */
   function diagnosticLogArchiveMemberName(archiveName) {
-    return archiveName.replace(/\.log\.7z$/i, '.txt').replace(/[^\x20-\x7e]/g, '_');
+    return archiveName.replace(/\.log\.7z$/i, '.jsonl').replace(/[^\x20-\x7e]/g, '_');
   }
 
   /**
