@@ -263,7 +263,7 @@ test('communication-log mutators share queue, writer-close, and panel action inf
     'communicationLogRename',
     'communicationLogArchiveDuplicate',
     'communicationLogReset',
-    'communicationLogAppendLine'
+    'communicationLogStorageAppendRecord'
   ]) {
     assert.match(diskFunctionSource(name), /communicationLogEnqueue\(/,
       `${name} must use the shared communication-log queue helper.`);
