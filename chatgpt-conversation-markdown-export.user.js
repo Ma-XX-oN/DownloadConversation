@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         ChatGPT Conversation Markdown Recorder
 // @namespace    https://chatgpt.com/
-// @version      1.7.2-issue.166.83
+// @version      1.7.2-issue.166.84
 // @description  Exports the current ChatGPT conversation directly from the Conversation API as Markdown or JSONL.
 // @match        https://chatgpt.com/*
 // @match        https://chat.openai.com/*
@@ -12049,7 +12049,14 @@ const STREAM7Z_WASM_GZIP_BASE64 = 'H4sICMtvuWoCA3N0cmVhbTd6Lndhc20A7L0JmBzFmSCa9
    * @returns {Promise<boolean>} True when logging becomes ready.
    */
   async function communicationLogActivateDirectory(handle) {
+    logDiagnostic('debug', 'communication-log-activation-entered', {
+      directory_handle_present: Boolean(handle)
+    });
     const conversationName = await communicationLogWaitForConversationName();
+    logDiagnostic('debug', 'communication-log-conversation-name-resolved', {
+      available: Boolean(conversationName),
+      conversation_id: currentConversationId()
+    });
     if (!conversationName) {
       communicationLogShowDirectoryPrompt('Conversation title is not available yet.');
       return false;
@@ -12059,9 +12066,21 @@ const STREAM7Z_WASM_GZIP_BASE64 = 'H4sICMtvuWoCA3N0cmVhbTd6Lndhc20A7L0JmBzFmSCa9
     if (/^DownloadConversation_(?:ChatGPT|ChatGPT conversation)\.jsonl$/i.test(communicationLogFileName)) {
       communicationLogFileName = `DownloadConversation_${conversationName}.jsonl`;
     }
+    logDiagnostic('debug', 'communication-log-swap-recovery-started', {
+      file_name: communicationLogFileName
+    });
     await communicationLogRecoverSwapFiles();
+    logDiagnostic('debug', 'communication-log-swap-recovery-completed', {
+      file_name: communicationLogFileName
+    });
     await communicationLogInitializeSegmentStorage();
     communicationLogReady = true;
+    logDiagnostic('debug', 'communication-log-recorder-ready', {
+      file_name: communicationLogFileName,
+      segment_directory: communicationLogSegmentDirectoryName(),
+      active_segment_bytes: communicationLogActiveSegmentBytes,
+      historical_segments: communicationLogSegmentManifest?.segments?.length ?? null
+    });
     communicationLogDisarmDirectoryGesture();
     document.getElementById('tm-communication-directory-required')?.remove();
     communicationLogPromptShown = false;
@@ -12204,13 +12223,20 @@ const STREAM7Z_WASM_GZIP_BASE64 = 'H4sICMtvuWoCA3N0cmVhbTd6Lndhc20A7L0JmBzFmSCa9
    * @returns {Promise<boolean>} True when a saved writable directory was activated.
    */
   async function initializeCommunicationDiskRecorder() {
+    logDiagnostic('debug', 'communication-log-startup-entered', {});
     try {
       const handle = await communicationLogLoadDirectoryHandle();
+      logDiagnostic('debug', 'communication-log-directory-restore-completed', {
+        handle_present: Boolean(handle)
+      });
       if (!handle) {
         communicationLogShowDirectoryPrompt('No log folder has been authorized for this browser profile.');
         return false;
       }
       const permission = await communicationLogPermissionState(handle);
+      logDiagnostic('debug', 'communication-log-directory-permission-checked', {
+        permission
+      });
       if (permission !== 'granted') {
         communicationLogShowDirectoryPrompt('The saved log folder is no longer authorized; choose it again.');
         return false;
@@ -13456,15 +13482,56 @@ const STREAM7Z_WASM_GZIP_BASE64 = 'H4sICMtvuWoCA3N0cmVhbTd6Lndhc20A7L0JmBzFmSCa9
    * @returns {Promise<void>} Resolves when active and historical state is ready.
    */
   async function communicationLogInitializeSegmentStorage() {
-    communicationLogSegmentDirectoryHandle =
-      await communicationLogDirectoryHandle.getDirectoryHandle(
-        communicationLogSegmentDirectoryName(),
-        { create: true }
-      );
-    communicationLogSegmentManifest = await communicationLogReadSegmentManifest();
-    await communicationLogRecoverSegmentState();
-    communicationLogActiveSegmentBytes =
-      (await communicationLogRefreshedFileSnapshot()).file.size;
+    const directoryName = communicationLogSegmentDirectoryName();
+    let phase = 'directory-create-open';
+    logDiagnostic('debug', 'communication-log-segment-initialize-started', {
+      segment_directory: directoryName
+    });
+    try {
+      communicationLogSegmentDirectoryHandle =
+        await communicationLogDirectoryHandle.getDirectoryHandle(
+          directoryName,
+          { create: true }
+        );
+      logDiagnostic('debug', 'communication-log-segment-directory-ready', {
+        segment_directory: directoryName
+      });
+
+      phase = 'manifest-read';
+      communicationLogSegmentManifest = await communicationLogReadSegmentManifest();
+      logDiagnostic('debug', 'communication-log-segment-manifest-ready', {
+        segment_directory: directoryName,
+        next_ordinal: communicationLogSegmentManifest.next_ordinal,
+        historical_segments: communicationLogSegmentManifest.segments.length
+      });
+
+      phase = 'recovery';
+      logDiagnostic('debug', 'communication-log-segment-recovery-started', {
+        segment_directory: directoryName,
+        historical_segments: communicationLogSegmentManifest.segments.length
+      });
+      await communicationLogRecoverSegmentState();
+      logDiagnostic('debug', 'communication-log-segment-recovery-completed', {
+        segment_directory: directoryName,
+        historical_segments: communicationLogSegmentManifest.segments.length
+      });
+
+      phase = 'active-snapshot';
+      communicationLogActiveSegmentBytes =
+        (await communicationLogRefreshedFileSnapshot()).file.size;
+      logDiagnostic('debug', 'communication-log-segment-initialize-completed', {
+        segment_directory: directoryName,
+        active_segment_bytes: communicationLogActiveSegmentBytes,
+        historical_segments: communicationLogSegmentManifest.segments.length
+      });
+    } catch (error) {
+      logDiagnostic('warnings', 'communication-log-segment-initialize-failed', {
+        phase,
+        segment_directory: directoryName,
+        message: boundedDiagnosticText(errorMessage(error), 2000)
+      });
+      throw error;
+    }
   }
   /**
    * Extracts the trustworthy earliest/latest record timestamps from exact JSONL bytes.
