@@ -88,3 +88,26 @@ return async () => {
   );
   assert.match(result.status, /Diagnostic log saved as .*\.7z\./);
 });
+
+
+test('Issue 166 production archive bridge round-trips exact member bytes', async () => {
+  const begin = userscript.indexOf('// BEGIN bundled stream7z 26.03 direct API source=');
+  const endMarker = '// END bundled stream7z 26.03 direct API\n';
+  const end = userscript.indexOf(endMarker, begin);
+  assert.ok(begin >= 0 && end > begin);
+  const prelude = userscript.slice(begin, end + endMarker.length);
+  const runtime = await readFile(
+    new URL('../src/userscript/01-runtime/03-archive.js', import.meta.url),
+    'utf8'
+  );
+  const AsyncFunction = Object.getPrototypeOf(async function () {}).constructor;
+  const api = await new AsyncFunction(
+    `${prelude}\n${runtime}\nreturn { create7zArchive, extract7zArchive };`
+  )();
+  const source = new TextEncoder().encode(
+    'first complete JSONL record\\nsecond complete JSONL record\\n'
+  );
+  const archive = await api.create7zArchive(source, 'segment-000001.jsonl');
+  const extracted = await api.extract7zArchive(archive);
+  assert.deepEqual(Array.from(extracted), Array.from(source));
+});
