@@ -154,6 +154,7 @@
     button.setAttribute('aria-busy', 'true');
     button.title = 'Compressing diagnostic log…';
     const started = performance.now();
+    /** @returns {string} Human-readable elapsed archive-save time. */
     const elapsed = () => `${((performance.now() - started) / 1000).toFixed(1)}s elapsed`;
     let phase = 'naming';
     let archiveName = null;
