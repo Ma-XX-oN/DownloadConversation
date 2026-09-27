@@ -65,6 +65,7 @@ test('Issue 166 production storage performs repeated verified rotations and cont
   const names = [
     'communicationLogTimestampRangeFromJsonl',
     'communicationLogArchiveTimestamp',
+    'communicationLogArchiveMTime',
     'communicationLogRoleArchiveName',
     'communicationLogUnusedRoleArchiveName',
     'communicationLogBytesEqual',
@@ -289,6 +290,7 @@ test('Issue 166 production compression failure preserves the only sealed raw cop
       const digest = await crypto.subtle.digest('SHA-256', bytes);
       return Array.from(new Uint8Array(digest), byte => byte.toString(16).padStart(2, '0')).join('');
     };
+    const communicationLogArchiveMTime = () => 0;
     const create7zArchive = async bytes => bytes.slice();
     const extract7zArchive = async () => new Uint8Array([0]);
     const boundedDiagnosticText = value => String(value);
