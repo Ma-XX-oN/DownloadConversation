@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         ChatGPT Conversation Markdown Recorder
 // @namespace    https://chatgpt.com/
-// @version      1.7.2-issue.166.68
+// @version      1.7.2-issue.166.69
 // @description  Exports the current ChatGPT conversation directly from the Conversation API as Markdown or JSONL.
 // @match        https://chatgpt.com/*
 // @match        https://chat.openai.com/*
@@ -22660,9 +22660,109 @@ Image elapsed: ${formatDuration(imageElapsed)} — Completed: ${imageCompleted}/
   }
 
   /**
-   * Saves the current diagnostic log as one 7z archive through the browser download flow.
+   * Formats one trustworthy diagnostic timestamp for an archive filename.
    *
-   * @returns {Promise<void>} Resolves after the download has been triggered.
+   * @param {string} timestamp - ISO diagnostic timestamp.
+   * @returns {string} Filesystem-safe UTC timestamp.
+   */
+  function diagnosticLogArchiveTimestamp(timestamp) {
+    const date = new Date(timestamp);
+    if (!Number.isFinite(date.getTime())) {
+      throw new Error('Diagnostic archive timestamp is not trustworthy.');
+    }
+    return date.toISOString().replace(/[-:]/g, '').replace('.', '');
+  }
+
+  /**
+   * Builds the diagnostic archive filename without communication-log helpers.
+   *
+   * @param {Object} range - Trustworthy diagnostic timestamp range.
+   * @returns {string} Timestamped diagnostic archive filename.
+   */
+  function diagnosticLogArchiveName(range) {
+    const base = `DownloadConversation_${sanitizeFileName(conversationTitle())}`;
+    return `${base}_${diagnosticLogArchiveTimestamp(range.start_timestamp)}_`
+      + `${diagnosticLogArchiveTimestamp(range.end_timestamp)}.log.7z`;
+  }
+
+  /**
+   * Returns a printable-ASCII member name accepted by the archive bridge.
+   *
+   * @param {string} archiveName - Diagnostic archive filename.
+   * @returns {string} Archive member filename.
+   */
+  function diagnosticLogArchiveMemberName(archiveName) {
+    return archiveName.replace(/\.log\.7z$/i, '.txt').replace(/[^\\x20-\\x7e]/g, '_');
+  }
+
+  /**
+   * Compares diagnostic source/extracted bytes exactly.
+   *
+   * @param {Uint8Array} left - Expected bytes.
+   * @param {Uint8Array} right - Extracted bytes.
+   * @returns {boolean} True only for byte-identical values.
+   */
+  function diagnosticLogBytesEqual(left, right) {
+    if (left.byteLength !== right.byteLength) return false;
+    for (let index = 0; index < left.byteLength; index += 1) {
+      if (left[index] !== right[index]) return false;
+    }
+    return true;
+  }
+
+  /**
+   * Saves exact bytes into the already-authorized main communication directory.
+   *
+   * This helper deliberately has no dependency on communication segment/archive code.
+   *
+   * @param {Object} directory - Authorized main directory handle.
+   * @param {string} name - Destination archive filename.
+   * @param {Uint8Array} bytes - Exact archive bytes.
+   * @returns {Promise<Object>} Committed file handle.
+   */
+  async function diagnosticLogWriteArchive(directory, name, bytes) {
+    const handle = await directory.getFileHandle(name, { create: true });
+    let writable = null;
+    try {
+      writable = await handle.createWritable();
+      await writable.write(bytes);
+      await writable.close();
+      writable = null;
+      const committed = new Uint8Array(await (await handle.getFile()).arrayBuffer());
+      if (!diagnosticLogBytesEqual(committed, bytes)) {
+        throw new Error('Diagnostic archive destination verification failed.');
+      }
+      return handle;
+    } catch (error) {
+      if (writable) {
+        try { await writable.abort(); } catch {}
+      }
+      throw error;
+    }
+  }
+
+  /**
+   * Resolves the archive primitive from this diagnostic module's lexical scope.
+   *
+   * @returns {Object} Callable archive create/extract operations.
+   */
+  function diagnosticLogArchiveApi() {
+    if (typeof create7zArchive !== 'function') {
+      throw new ReferenceError('Diagnostic archive create function is unavailable in this runtime scope.');
+    }
+    if (typeof extract7zArchive !== 'function') {
+      throw new ReferenceError('Diagnostic archive extract function is unavailable in this runtime scope.');
+    }
+    return {
+      create: create7zArchive,
+      extract: extract7zArchive
+    };
+  }
+
+  /**
+   * Saves the canonical diagnostic log as one verified 7z archive.
+   *
+   * @returns {Promise<void>} Resolves after the archive is committed/downloaded.
    */
   async function saveDiagnosticLog() {
     const text = diagnosticLogText();
@@ -22681,46 +22781,43 @@ Image elapsed: ${formatDuration(imageElapsed)} — Completed: ${imageCompleted}/
     button.setAttribute('aria-busy', 'true');
     button.title = 'Compressing diagnostic log…';
     const started = performance.now();
-    /**
-     * Returns elapsed diagnostic-save time for indeterminate progress.
-     *
-     * @returns {string} Human-readable elapsed duration.
-     */
     const elapsed = () => `${((performance.now() - started) / 1000).toFixed(1)}s elapsed`;
-    const base = `DownloadConversation_${sanitizeFileName(conversationTitle())}`;
-    const directory = communicationLogReady ? communicationLogDirectoryHandle : null;
-    let archiveName = communicationLogRoleArchiveName(base, range, 'log');
-    if (directory) {
-      archiveName = await communicationLogUnusedRoleArchiveName(directory, base, range, 'log');
-    }
-    const memberName = communicationLogAsciiArchiveMemberName(
-      archiveName.replace(/\.log\.7z$/i, '.txt')
-    );
+    let phase = 'naming';
+    let archiveName = null;
     try {
+      archiveName = diagnosticLogArchiveName(range);
+      const memberName = diagnosticLogArchiveMemberName(archiveName);
+      const sourceBytes = new TextEncoder().encode(text);
+
+      phase = 'archive-create';
+      const archiveApi = diagnosticLogArchiveApi();
       setStatus(`Diagnostic log: compressing; ${elapsed()}.`);
-      const archive = await create7zArchive(new TextEncoder().encode(text), memberName);
+      const archive = await archiveApi.create(sourceBytes, memberName);
+
+      phase = 'archive-verify';
+      const extracted = await archiveApi.extract(archive);
+      if (!diagnosticLogBytesEqual(extracted, sourceBytes)) {
+        throw new Error('Diagnostic archive round-trip verification failed.');
+      }
+
+      phase = 'destination';
       setStatus(`Diagnostic log: preparing save; ${elapsed()}.`);
+      const directory = communicationLogReady ? communicationLogDirectoryHandle : null;
       if (directory) {
-        const handle = await communicationLogWriteExactFile(directory, archiveName, archive);
-        const committed = new Uint8Array(await (await handle.getFile()).arrayBuffer());
-        const extracted = await extract7zArchive(committed);
-        if (!(await communicationLogBytesEqual(extracted, new TextEncoder().encode(text)))) {
-          try { await directory.removeEntry(archiveName); } catch {}
-          throw new Error('Diagnostic archive round-trip verification failed.');
-        }
+        await diagnosticLogWriteArchive(directory, archiveName, archive);
       } else {
-        const extracted = await extract7zArchive(archive);
-        if (!(await communicationLogBytesEqual(extracted, new TextEncoder().encode(text)))) {
-          throw new Error('Diagnostic archive round-trip verification failed.');
-        }
         downloadBlob(new Blob([archive], { type: 'application/x-7z-compressed' }), archiveName);
       }
       setStatus(`Diagnostic log saved as ${archiveName}; ${elapsed()}.`);
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
-      logDiagnostic('errors', 'diagnostic-log-save-failed', { archive_name: archiveName, message });
-      setStatus(`Diagnostic log save failed: ${message}`);
-      throw error;
+      logDiagnostic('errors', 'diagnostic-log-save-failed', {
+        phase,
+        archive_name: archiveName,
+        error_name: error instanceof Error ? error.name : typeof error,
+        message
+      });
+      setStatus(`Diagnostic log save failed during ${phase}: ${message}`);
     } finally {
       button.disabled = false;
       button.removeAttribute('aria-busy');
