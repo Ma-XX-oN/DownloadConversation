@@ -317,3 +317,22 @@ test('Issue 166 production compression failure preserves the only sealed raw cop
     'verification failure must never delete the sealed raw source');
   assert.equal(result.state, 'failed');
 });
+
+
+test('Issue 166 reload recovery owns every durable compression state', () => {
+  const recover = productionFunctionSource('communicationLogRecoverSegmentState');
+  assert.match(recover, /compression_state === 'compressed'/);
+  assert.match(recover, /compression_state = 'sealed'/);
+  assert.match(recover, /source_sha256/);
+  assert.match(recover, /communicationLogQueueSegmentCompression/);
+  assert.match(recover, /Missing recoverable raw segment/);
+});
+
+test('Issue 166 reconstruction sorts by ordinal and appends the frozen active prefix last', () => {
+  const snapshot = productionFunctionSource('communicationLogLogicalSnapshot');
+  assert.match(snapshot, /sort\(\(left, right\) => left\.ordinal - right\.ordinal\)/);
+  const historicalPush = snapshot.indexOf('parts.push(bytes)');
+  const activePush = snapshot.indexOf('parts.push(frozen.active_bytes)');
+  assert.ok(historicalPush >= 0 && activePush > historicalPush);
+  assert.match(snapshot, /communicationLogReadHistoricalSegment/);
+});
