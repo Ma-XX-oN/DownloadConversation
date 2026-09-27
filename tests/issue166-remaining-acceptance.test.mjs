@@ -120,3 +120,35 @@ test('Issue 166 selected segment default and in-memory guard are documented with
   assert.match(downloadConversationSource, /COMMUNICATION_LOG_SEGMENT_TARGET_BYTES = 10 \* 1024 \* 1024/);
   assert.match(downloadConversationSource, /COMMUNICATION_LOG_DUPLICATE_MAX_BYTES = 128 \* 1024 \* 1024/);
 });
+
+
+test('Issue 166 diagnostic Save does not cross into communication segment helper scope', () => {
+  const save = productionFunctionSource('saveDiagnosticLog');
+  assert.doesNotMatch(save, /communicationLogRoleArchiveName/);
+  assert.doesNotMatch(save, /communicationLogUnusedRoleArchiveName/);
+  assert.doesNotMatch(save, /communicationLogAsciiArchiveMemberName/);
+  assert.doesNotMatch(save, /communicationLogWriteExactFile/);
+  assert.doesNotMatch(save, /communicationLogBytesEqual/);
+  assert.match(save, /diagnosticLogArchiveApi/);
+  assert.match(save, /diagnosticLogArchiveName/);
+  assert.match(save, /diagnosticLogWriteArchive/);
+  assert.match(save, /diagnosticLogBytesEqual/);
+});
+
+test('Issue 166 diagnostic archive API rejects an actually unavailable runtime primitive', () => {
+  const api = productionFunctionSource('diagnosticLogArchiveApi');
+  assert.match(api, /typeof create7zArchive !== 'function'/);
+  assert.match(api, /typeof extract7zArchive !== 'function'/);
+  assert.match(api, /ReferenceError/);
+});
+
+test('Issue 166 diagnostic Save reports the original phase and error without rethrowing', () => {
+  const save = productionFunctionSource('saveDiagnosticLog');
+  assert.match(save, /phase = 'archive-create'/);
+  assert.match(save, /phase = 'archive-verify'/);
+  assert.match(save, /phase = 'destination'/);
+  assert.match(save, /diagnostic-log-save-failed/);
+  assert.match(save, /error_name/);
+  assert.match(save, /message/);
+  assert.doesNotMatch(save, /throw error/);
+});
