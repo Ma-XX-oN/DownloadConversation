@@ -44,6 +44,14 @@
           source.offset += count;
           return count;
         },
+        stream7zReadAt(id, position, target) {
+          const source = stream7zSources.get(id);
+          if (!source || !Number.isSafeInteger(position) || position < 0) return -1;
+          const count = Math.min(target.length, source.bytes.length - position);
+          if (count <= 0) return 0;
+          target.set(source.bytes.subarray(position, position + count));
+          return count;
+        },
         stream7zWriteAt(id, position, bytes) {
           const output = stream7zOutputs.get(id);
           if (!output || !Number.isSafeInteger(position) || position < 0) return -1;
@@ -97,6 +105,41 @@
       if (result !== 0) {
         const lastError = module.cwrap('stream7z_last_error', 'string', [])();
         throw new Error(`7-Zip archive creation failed: ${lastError || result}`);
+      }
+      return output.bytes.slice(0, output.size);
+    } finally {
+      stream7zSources.delete(sourceId);
+      stream7zOutputs.delete(outputId);
+    }
+  }
+
+
+  /**
+   * Extracts the single member from one stock-compatible 7z archive.
+   *
+   * @param {Uint8Array} archiveBytes - Complete 7z archive bytes.
+   * @returns {Promise<Uint8Array>} Exact extracted member bytes.
+   */
+  async function extract7zArchive(archiveBytes) {
+    if (!(archiveBytes instanceof Uint8Array)) {
+      throw new TypeError('Archive input must be Uint8Array.');
+    }
+    const module = await stream7zModule();
+    const sourceId = stream7zNextSourceId++;
+    const outputId = stream7zNextOutputId++;
+    const output = { bytes: new Uint8Array(4096), size: 0 };
+    stream7zSources.set(sourceId, { bytes: archiveBytes, offset: 0 });
+    stream7zOutputs.set(outputId, output);
+    try {
+      const extract = module.cwrap(
+        'stream7z_extract',
+        'number',
+        ['number', 'number', 'number']
+      );
+      const result = extract(sourceId, archiveBytes.length, outputId);
+      if (result !== 0) {
+        const lastError = module.cwrap('stream7z_last_error', 'string', [])();
+        throw new Error(`7-Zip archive extraction failed: ${lastError || result}`);
       }
       return output.bytes.slice(0, output.size);
     } finally {
