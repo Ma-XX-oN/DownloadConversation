@@ -55,3 +55,258 @@ test('Issue 166 compression failure retains the sealed raw source', () => {
   assert.doesNotMatch(compress.slice(catchStart), /removeEntry\(/,
     'failure path must not delete the only sealed raw copy');
 });
+
+
+test('Issue 166 production storage performs repeated verified rotations and continues recording', async () => {
+  const names = [
+    'communicationLogBytesEqual',
+    'communicationLogSha256',
+    'communicationLogWriteExactFile',
+    'communicationLogWriteSegmentManifest',
+    'communicationLogTruncateActiveAfterSeal',
+    'communicationLogCompressSealedSegment',
+    'communicationLogQueueSegmentCompression',
+    'communicationLogSealActiveSegment',
+    'communicationLogStorageAppendRecord'
+  ];
+  const production = names.map(productionFunctionSource).join('\n\n');
+  for (const name of names) {
+    assert.ok(userscript.includes(`function ${name}(`) ||
+      userscript.includes(`async function ${name}(`),
+    `generated artifact is missing production function ${name}`);
+  }
+
+  const AsyncFunction = Object.getPrototypeOf(async function () {}).constructor;
+  const run = new AsyncFunction('webcrypto', `
+    const encoder = new TextEncoder();
+    const cloneBytes = value => {
+      if (typeof value === 'string') return encoder.encode(value);
+      return new Uint8Array(value);
+    };
+    class MemoryFile {
+      constructor(bytes) { this.bytes = bytes; }
+      get size() { return this.bytes.byteLength; }
+      async arrayBuffer() {
+        return this.bytes.slice().buffer;
+      }
+      async text() {
+        return new TextDecoder().decode(this.bytes);
+      }
+    }
+    class MemoryHandle {
+      constructor(name) {
+        this.name = name;
+        this.kind = 'file';
+        this.bytes = new Uint8Array();
+      }
+      async getFile() {
+        return new MemoryFile(this.bytes.slice());
+      }
+      async createWritable(options = {}) {
+        const handle = this;
+        let working = options.keepExistingData
+          ? handle.bytes.slice()
+          : new Uint8Array();
+        return {
+          async write(value) {
+            working = cloneBytes(value);
+          },
+          async truncate(size) {
+            working = working.slice(0, size);
+          },
+          async close() {
+            handle.bytes = working.slice();
+          },
+          async abort() {}
+        };
+      }
+    }
+    class MemoryDirectory {
+      constructor() {
+        this.files = new Map();
+      }
+      async getFileHandle(name, options = {}) {
+        if (!this.files.has(name)) {
+          if (!options.create) {
+            const error = new Error('missing');
+            error.name = 'NotFoundError';
+            throw error;
+          }
+          this.files.set(name, new MemoryHandle(name));
+        }
+        return this.files.get(name);
+      }
+      async removeEntry(name) {
+        if (!this.files.delete(name)) throw new Error('missing: ' + name);
+      }
+    }
+
+    const crypto = webcrypto;
+    const communicationLogSegmentDirectoryHandle = new MemoryDirectory();
+    const activeHandle = new MemoryHandle('active.jsonl');
+    let communicationLogWritable = null;
+    let communicationLogWriterDirty = false;
+    let communicationLogActiveSegmentBytes = 0;
+    let communicationLogCompressionChain = Promise.resolve();
+    const COMMUNICATION_LOG_SEGMENT_TARGET_BYTES = 1;
+    const communicationLogSegmentManifest = {
+      schema: 1,
+      logical_log_id: 'fixture',
+      next_ordinal: 1,
+      segments: []
+    };
+    const diagnostics = [];
+
+    const abortWritableQuietly = async writable => {
+      try { await writable?.abort?.(); } catch {}
+    };
+    const boundedDiagnosticText = value => String(value);
+    const errorMessage = error => error?.message || String(error);
+    const logDiagnostic = (...args) => diagnostics.push(args);
+    const communicationLogReportFailure = (...args) => diagnostics.push(args);
+    const communicationLogRefreshedFileSnapshot = async () => ({
+      handle: activeHandle,
+      file: await activeHandle.getFile()
+    });
+    const communicationLogCloseActiveWriter = async () => {
+      communicationLogWritable = null;
+    };
+    const communicationLogOpenWriter = async () => {
+      if (communicationLogWritable) return communicationLogWritable;
+      communicationLogWritable = {
+        async write(value) {
+          const next = cloneBytes(value);
+          const combined = new Uint8Array(activeHandle.bytes.byteLength + next.byteLength);
+          combined.set(activeHandle.bytes);
+          combined.set(next, activeHandle.bytes.byteLength);
+          activeHandle.bytes = combined;
+        }
+      };
+      return communicationLogWritable;
+    };
+    const communicationLogEnqueue = (_stage, operation) => ({
+      operation: Promise.resolve().then(operation)
+    });
+    const create7zArchive = async bytes => {
+      const result = new Uint8Array(bytes.byteLength + 4);
+      result.set([55, 122, 0, 1]);
+      result.set(bytes, 4);
+      return result;
+    };
+    const extract7zArchive = async archive => archive.slice(4);
+
+    ${production}
+
+    const records = [
+      { seq: 1, payload: 'alpha' },
+      { seq: 2, payload: 'beta' },
+      { seq: 3, payload: 'gamma' }
+    ];
+    for (const record of records) {
+      await communicationLogStorageAppendRecord(record);
+    }
+    await communicationLogCompressionChain;
+
+    return {
+      records,
+      manifest: JSON.parse(JSON.stringify(communicationLogSegmentManifest)),
+      active: new TextDecoder().decode(activeHandle.bytes),
+      files: Array.from(communicationLogSegmentDirectoryHandle.files.entries())
+        .map(([name, handle]) => [name, Array.from(handle.bytes)])
+    };
+  `);
+
+  const result = await run(globalThis.crypto);
+  assert.equal(result.manifest.segments.length, 3,
+    'three threshold crossings must produce three consecutive sealed segments');
+  assert.deepEqual(
+    result.manifest.segments.map(segment => segment.ordinal),
+    [1, 2, 3],
+    'segment ordinals must preserve logical order'
+  );
+  assert.ok(result.manifest.segments.every(segment =>
+    segment.compression_state === 'compressed' &&
+    segment.verified_sha256 === segment.source_sha256
+  ), 'every sealed segment must be round-trip verified before retirement');
+  assert.equal(result.active, '',
+    'recording must continue with a fresh active segment after every rotation');
+
+  const fileMap = new Map(result.files);
+  for (const segment of result.manifest.segments) {
+    assert.ok(fileMap.has(segment.archive_name),
+      `verified archive missing for segment ${segment.ordinal}`);
+    assert.ok(!fileMap.has(segment.raw_name),
+      `verified raw source was not retired for segment ${segment.ordinal}`);
+  }
+});
+
+test('Issue 166 production compression failure preserves the only sealed raw copy', async () => {
+  const compress = productionFunctionSource('communicationLogCompressSealedSegment');
+  const AsyncFunction = Object.getPrototypeOf(async function () {}).constructor;
+  const run = new AsyncFunction('webcrypto', `
+    const crypto = webcrypto;
+    const source = new TextEncoder().encode('{"seq":1}\\n');
+    const rawHandle = {
+      async getFile() {
+        return { async arrayBuffer() { return source.slice().buffer; } };
+      }
+    };
+    let removed = false;
+    const communicationLogSegmentDirectoryHandle = {
+      async getFileHandle(name) {
+        if (name === 'segment-000001.jsonl') return rawHandle;
+        return {
+          async createWritable() {
+            return { async write() {}, async close() {}, async abort() {} };
+          },
+          async getFile() {
+            return { async arrayBuffer() { return new Uint8Array([1]).buffer; } };
+          }
+        };
+      },
+      async removeEntry() { removed = true; }
+    };
+    const communicationLogSegmentManifest = { segments: [] };
+    const communicationLogWriteSegmentManifest = async () => {};
+    const communicationLogWriteExactFile = async (_directory, _name, bytes) => ({
+      async getFile() {
+        return { async arrayBuffer() { return bytes.slice().buffer; } };
+      }
+    });
+    const communicationLogBytesEqual = async (a, b) =>
+      a.length === b.length && a.every((value, index) => value === b[index]);
+    const communicationLogSha256 = async bytes => {
+      const digest = await crypto.subtle.digest('SHA-256', bytes);
+      return Array.from(new Uint8Array(digest), byte => byte.toString(16).padStart(2, '0')).join('');
+    };
+    const create7zArchive = async bytes => bytes.slice();
+    const extract7zArchive = async () => new Uint8Array([0]);
+    const boundedDiagnosticText = value => String(value);
+    const errorMessage = error => error?.message || String(error);
+    const logDiagnostic = () => {};
+    ${compress}
+    const sourceHash = await communicationLogSha256(source);
+    const segment = {
+      ordinal: 1,
+      raw_name: 'segment-000001.jsonl',
+      archive_name: 'segment-000001.7z',
+      member_name: 'segment-000001.jsonl',
+      raw_bytes: source.length,
+      source_sha256: sourceHash,
+      compression_state: 'sealed'
+    };
+    let rejected = false;
+    try {
+      await communicationLogCompressSealedSegment(segment);
+    } catch {
+      rejected = true;
+    }
+    return { rejected, removed, state: segment.compression_state };
+  `);
+
+  const result = await run(globalThis.crypto);
+  assert.equal(result.rejected, true);
+  assert.equal(result.removed, false,
+    'verification failure must never delete the sealed raw source');
+  assert.equal(result.state, 'failed');
+});
