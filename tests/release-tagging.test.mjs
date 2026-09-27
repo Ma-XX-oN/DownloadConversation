@@ -94,9 +94,19 @@ test('generated userscript stays tracked while RepoWorkflow owns artifact handli
 
   assert.match(cycleScript, /build-userscript\.mjs/);
   assert.match(cycleScript, /git[\s\S]*commit[\s\S]*build\(test-cycle\): materialize/);
-  assert.match(repoWorkflowConfig, /"generatorCommand"\s*:\s*\["node", "scripts\/build-userscript\.mjs"\]/);
-  assert.match(repoWorkflowConfig, /"verifierCommand"\s*:\s*\["node", "scripts\/verify-userscript-artifact\.mjs"\]/);
-  assert.match(repoWorkflowConfig, /"outputs"\s*:\s*\["chatgpt-conversation-markdown-export\.user\.js"\]/);
+  const parsedRepoWorkflowConfig = JSON.parse(repoWorkflowConfig);
+  assert.deepEqual(
+    parsedRepoWorkflowConfig.artifacts[0].generatorCommand,
+    ['node', 'scripts/build-userscript.mjs']
+  );
+  assert.deepEqual(
+    parsedRepoWorkflowConfig.artifacts[0].verifierCommand,
+    ['node', 'scripts/verify-userscript-artifact.mjs']
+  );
+  assert.deepEqual(
+    parsedRepoWorkflowConfig.artifacts[0].outputs,
+    ['chatgpt-conversation-markdown-export.user.js']
+  );
   assert.match(workflow, /RepoWorkflow\/repo_workflow\.py materialize-artifacts/);
   assert.match(workflow, /Configure generated-artifact commit identity/);
 });
