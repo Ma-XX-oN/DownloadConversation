@@ -31,6 +31,7 @@ for (const candidate of candidates) {
 if (!chrome) throw new Error('Browser benchmark requires Chrome/Chromium.');
 
 const benchmark = String.raw`
+const benchmarkKeepAlive = setInterval(() => {}, 1000);
 (async () => {
   const output = document.getElementById('output');
   await stream7zModule();
@@ -65,7 +66,9 @@ const benchmark = String.raw`
     js_heap_after: heapAfter,
     exact_round_trip: exact
   });
+  clearInterval(benchmarkKeepAlive);
 })().catch(error => {
+  clearInterval(benchmarkKeepAlive);
   document.getElementById('output').textContent = JSON.stringify({
     error: String(error),
     stack: error?.stack ?? null
