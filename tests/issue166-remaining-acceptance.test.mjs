@@ -56,3 +56,51 @@ test('Issue 166 all-in-memory reconstruction has an explicit measured-size guard
   assert.match(snapshot, /COMMUNICATION_LOG_DUPLICATE_MAX_BYTES/);
   assert.match(snapshot, /memory/i);
 });
+
+
+test('Issue 166 timestamp range and role naming execute against fixed independent fixtures', async () => {
+  const rangeSource = productionFunctionSource('communicationLogTimestampRangeFromJsonl');
+  const timestampSource = productionFunctionSource('communicationLogArchiveTimestamp');
+  const roleSource = productionFunctionSource('communicationLogRoleArchiveName');
+  const AsyncFunction = Object.getPrototypeOf(async function () {}).constructor;
+  const run = new AsyncFunction(`
+    ${rangeSource}
+    ${timestampSource}
+    ${roleSource}
+    const bytes = new TextEncoder().encode(
+      '{"timestamp":"2026-09-27T01:02:03.004Z","sequence":1}\\n' +
+      '{"timestamp":"2026-09-27T01:02:05.006Z","sequence":2}\\n'
+    );
+    const range = communicationLogTimestampRangeFromJsonl(bytes);
+    return {
+      range,
+      normal: communicationLogRoleArchiveName('DownloadConversation_fixture', range, 'comm', 0),
+      collision: communicationLogRoleArchiveName('DownloadConversation_fixture', range, 'comm', 2)
+    };
+  `);
+  const result = await run();
+  assert.deepEqual(result.range, {
+    start_timestamp: '2026-09-27T01:02:03.004Z',
+    end_timestamp: '2026-09-27T01:02:05.006Z'
+  });
+  assert.equal(
+    result.normal,
+    'DownloadConversation_fixture_20260927T010203004Z_20260927T010205006Z.comm.7z'
+  );
+  assert.equal(
+    result.collision,
+    'DownloadConversation_fixture_20260927T010203004Z_20260927T010205006Z(2).comm.7z'
+  );
+});
+
+test('Issue 166 no-trustworthy-timestamp fixture is rejected instead of inventing save time', async () => {
+  const rangeSource = productionFunctionSource('communicationLogTimestampRangeFromJsonl');
+  const AsyncFunction = Object.getPrototypeOf(async function () {}).constructor;
+  const run = new AsyncFunction(`
+    ${rangeSource}
+    return communicationLogTimestampRangeFromJsonl(
+      new TextEncoder().encode('{"sequence":1}\\n')
+    );
+  `);
+  assert.equal(await run(), null);
+});
