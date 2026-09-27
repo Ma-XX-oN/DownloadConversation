@@ -7,7 +7,7 @@ import { fileURLToPath } from 'node:url';
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const repoWorkflowSha = '0a051ab09200ff2824e7c901d6fe0efa652a912a';
-const sevenZipBenchmarkSha = 'adb92d52b957a0fde34fbc2ba0d06191b1f85c0a';
+const sevenZipBenchmarkSha = 'cd4df432149dea826bc175358b2f563762c007a2';
 
 async function readText(relativePath) {
   return readFile(path.join(root, relativePath), 'utf8');
