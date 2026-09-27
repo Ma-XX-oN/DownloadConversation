@@ -1,4 +1,4 @@
-import { diskBlock, diskFunctionSource, diskHarnessSource, userscript } from './helpers/userscript-source.mjs';
+import { downloadConversationSource, diskBlock, diskFunctionSource, diskHarnessSource, userscript } from './helpers/userscript-source.mjs';
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import vm from 'node:vm';
@@ -277,12 +277,12 @@ test('communication-log mutators share queue, writer-close, and panel action inf
 
 
 test('Issue 166 Duplicate creates a 7z archive instead of a raw JSONL sibling', () => {
-  assert.match(userscript, /communicationLogDuplicateArchiveFileName\(/);
-  assert.match(userscript, /const logicalSnapshotBytes = await communicationLogLogicalSnapshotBytes\(\);/);
-  assert.match(userscript, /await create7zArchive\(\s*logicalSnapshotBytes,\s*memberName\s*\)/);
-  assert.match(userscript, /application\/x-7z-compressed/);
+  assert.match(downloadConversationSource, /communicationLogDuplicateArchiveFileName\(/);
+  assert.match(downloadConversationSource, /const logicalSnapshotBytes = await communicationLogLogicalSnapshotBytes\(\);/);
+  assert.match(downloadConversationSource, /await create7zArchive\(\s*logicalSnapshotBytes,\s*memberName\s*\)/);
+  assert.match(downloadConversationSource, /application\/x-7z-compressed/);
   assert.doesNotMatch(
-    userscript,
+    downloadConversationSource,
     /await communicationLogCopyForRename\(sourceSnapshot\.file, duplicateName\);\s*return duplicateName;/,
     'Duplicate must not retain the old raw JSONL copy path.'
   );
