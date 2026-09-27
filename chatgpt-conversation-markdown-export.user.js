@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         ChatGPT Conversation Markdown Recorder
 // @namespace    https://chatgpt.com/
-// @version      1.7.2-issue.166.81
+// @version      1.7.2-issue.166.82
 // @description  Exports the current ChatGPT conversation directly from the Conversation API as Markdown or JSONL.
 // @match        https://chatgpt.com/*
 // @match        https://chat.openai.com/*
@@ -13497,6 +13497,12 @@ const STREAM7Z_WASM_GZIP_BASE64 = 'H4sICMtvuWoCA3N0cmVhbTd6Lndhc20A7L0JmBzFmSCa9
   function communicationLogArchiveTimestamp(timestamp) {
     const date = new Date(timestamp);
     if (!Number.isFinite(date.getTime())) throw new Error('Archive timestamp is not trustworthy.');
+    /**
+     * Pads one local date/time field to two digits.
+     *
+     * @param {number} value - Local calendar/time field.
+     * @returns {string} Two-digit field.
+     */
     const pad = value => String(value).padStart(2, '0');
     return `${date.getFullYear()},${pad(date.getMonth() + 1)},${pad(date.getDate())};`
       + `${pad(date.getHours())},${pad(date.getMinutes())},${pad(date.getSeconds())}`;
