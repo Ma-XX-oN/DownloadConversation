@@ -115,7 +115,7 @@ if (result.error) throw result.error;
 if (result.status !== 0) {
   throw new Error(`Browser benchmark failed (exit ${result.status}): ${result.stderr.slice(-4000)}`);
 }
-const match = result.stdout.match(/<pre id="output">([\\s\\S]*?)<\\/pre>/);
+const match = result.stdout.match(new RegExp('<pre id="output">([\\s\\S]*?)</pre>'));
 if (!match) throw new Error('Browser benchmark did not produce a result.');
 const decoded = match[1]
   .replace(/&quot;/g, '"')
