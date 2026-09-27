@@ -129,9 +129,9 @@ test('Issue 166 diagnostic Save is immediately left of Copy', () => {
 
 
 test('Issue 166 diagnostic Save uses a supported deterministic archive member and reports failures', () => {
-  assert.match(userscript, /communicationLogAsciiArchiveMemberName\(/,
+  assert.match(downloadConversationSource, /communicationLogAsciiArchiveMemberName\(/,
     'Diagnostic archive member must be normalized through the direct 7-Zip ASCII-name contract.');
-  assert.match(userscript, /archiveName\.replace\(\/\\\.log\\\.7z\$\/i, '\.txt'\)/,
+  assert.match(downloadConversationSource, /archiveName\.replace\(\/\\\.log\\\.7z\$\/i, '\.txt'\)/,
     'Diagnostic archive member must derive deterministically from the timestamped log archive name.');
   assert.match(downloadConversationSource, /diagnostic-log-save-failed/,
     'Diagnostic archive failures must be recorded in the diagnostic log.');
