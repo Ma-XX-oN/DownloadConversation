@@ -278,7 +278,8 @@ test('communication-log mutators share queue, writer-close, and panel action inf
 
 test('Issue 166 Duplicate creates a 7z archive instead of a raw JSONL sibling', () => {
   assert.match(userscript, /communicationLogDuplicateArchiveFileName\(/);
-  assert.match(userscript, /await create7zArchive\(new Uint8Array\(await sourceSnapshot\.file\.arrayBuffer\(\)\), memberName\)/);
+  assert.match(userscript, /const logicalSnapshotBytes = await communicationLogLogicalSnapshotBytes\(\);/);
+  assert.match(userscript, /await create7zArchive\(\s*logicalSnapshotBytes,\s*memberName\s*\)/);
   assert.match(userscript, /application\/x-7z-compressed/);
   assert.doesNotMatch(
     userscript,
