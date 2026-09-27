@@ -45,11 +45,11 @@ test('Issue 166 duplicate reports every required phase and keeps indeterminate e
   assert.doesNotMatch(duplicate, /ETA.*(?:size|benchmark|assum)/i);
 });
 
-test('Issue 166 diagnostic Save uses timestamped log role and main communication directory when authorized', () => {
+test('Issue 166 diagnostic Save uses timestamped log role and browser download flow', () => {
   const save = productionFunctionSource('saveDiagnosticLog');
   assert.match(save, /'log'/);
   assert.match(save, /diagnosticLogTimestampRange/);
-  assert.match(save, /communicationLogDirectoryHandle/);
+  assert.doesNotMatch(save, /communicationLogDirectoryHandle/);
   assert.match(save, /downloadBlob/);
 });
 
@@ -116,10 +116,10 @@ test('Issue 166 diagnostic Save never writes into the communication-log director
   assert.match(save, /downloadBlob/);
 });
 
-test('Issue 166 duplicate naming preserves the existing lowest-unused (N) contract', () => {
+test('Issue 166 duplicate naming is collision-safe and never overwrites an existing archive', () => {
   const duplicate = productionFunctionSource('communicationLogArchiveDuplicate');
-  assert.match(duplicate, /communicationLogNextDuplicateName/);
-  assert.match(duplicate, /communicationLogDuplicateArchiveFileName/);
+  assert.match(duplicate, /communicationLogUnusedRoleArchiveName/);
+  assert.match(duplicate, /'comm'/);
 });
 
 test('Issue 166 selected segment default and in-memory guard are documented with browser measurements', () => {
