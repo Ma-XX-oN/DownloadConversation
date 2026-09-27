@@ -1,4 +1,4 @@
-import { userscript } from './helpers/userscript-source.mjs';
+import { downloadConversationSource, userscript } from './helpers/userscript-source.mjs';
 import { readFile } from 'node:fs/promises';
 import assert from 'node:assert/strict';
 import test from 'node:test';
@@ -133,9 +133,9 @@ test('Issue 166 diagnostic Save uses a supported deterministic archive member an
     'Diagnostic archive member must be normalized through the direct 7-Zip ASCII-name contract.');
   assert.match(userscript, /archiveName\.replace\(\/\\\.log\\\.7z\$\/i, '\.txt'\)/,
     'Diagnostic archive member must derive deterministically from the timestamped log archive name.');
-  assert.match(userscript, /diagnostic-log-save-failed/,
+  assert.match(downloadConversationSource, /diagnostic-log-save-failed/,
     'Diagnostic archive failures must be recorded in the diagnostic log.');
-  assert.match(userscript, /Diagnostic log save failed:/,
+  assert.match(downloadConversationSource, /Diagnostic log save failed:/,
     'Diagnostic archive failures must remain visible to the user.');
   assert.match(userscript, /Archive member name must contain ASCII characters only/,
     'Archive bridge must reject unsupported member names before entering Wasm.');
