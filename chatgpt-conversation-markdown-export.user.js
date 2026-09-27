@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         ChatGPT Conversation Markdown Recorder
 // @namespace    https://chatgpt.com/
-// @version      1.7.2-issue.166.52
+// @version      1.7.2-issue.166.55
 // @description  Exports the current ChatGPT conversation directly from the Conversation API as Markdown or JSONL.
 // @match        https://chatgpt.com/*
 // @match        https://chat.openai.com/*
@@ -11104,6 +11104,8 @@ const STREAM7Z_WASM_GZIP_BASE64 = 'H4sICJsLuGoCA3N0cmVhbTd6Lndhc20A7L0JmBzFmSiY9
   const COMMUNICATION_LOG_TITLE_STORAGE_PREFIX = 'tm-downloadconversation-communication-title:';
   /** Initial sealed communication-segment target; tune this one symbol after browser benchmarks. */
   const COMMUNICATION_LOG_SEGMENT_TARGET_BYTES = 10 * 1024 * 1024;
+  /** All-in-memory duplicate guard: 128 MiB bounds source+archive+verification copies while the direct Wasm bridge is synchronous. */
+  const COMMUNICATION_LOG_DUPLICATE_MAX_BYTES = 128 * 1024 * 1024;
   /** Maximum decoded text retained before one communication body chunk is flushed to disk. */
   const COMMUNICATION_LOG_BODY_CHUNK_CHARS = 256 * 1024;
   /** Maximum wait for startup directory restoration before a cloned network body is abandoned. */
@@ -12997,66 +12999,83 @@ const STREAM7Z_WASM_GZIP_BASE64 = 'H4sICJsLuGoCA3N0cmVhbTd6Lndhc20A7L0JmBzFmSiY9
    *
    * @returns {Promise<string>} The created duplicate filename.
    */
-  function communicationLogArchiveDuplicate() {
-    const queued = communicationLogEnqueue('duplicate', async () => {
-      if (!communicationLogReady || !communicationLogDirectoryHandle || !communicationLogFileName) {
-        throw new Error('Communication log directory/file is not ready.');
-      }
+  async function communicationLogArchiveDuplicate() {
+    if (!communicationLogReady || !communicationLogDirectoryHandle || !communicationLogFileName) {
+      throw new Error('Communication log directory/file is not ready.');
+    }
 
-      const logicalSnapshot = await communicationLogLogicalSnapshotBytes();
-      let duplicateNumber = 1;
-      let duplicateName = communicationLogDuplicateFileName(
-        communicationLogFileName,
-        duplicateNumber
+    const started = performance.now();
+    /**
+     * Returns elapsed duplicate-operation time for indeterminate progress.
+     *
+     * @returns {string} Human-readable elapsed duration.
+     */
+    const elapsed = () => `${((performance.now() - started) / 1000).toFixed(1)}s elapsed`;
+    const boundary = communicationLogEnqueue(
+      'duplicate-snapshot',
+      async () => {
+        setStatus(`Duplicate: establishing snapshot boundary; ${elapsed()}.`);
+        return communicationLogCaptureSnapshotPlan();
+      }
+    );
+    const plan = await boundary.operation;
+
+    // The append queue is free from this point forward. Historical reconstruction,
+    // compression and verification operate on the frozen plan while recording continues.
+    setStatus(`Duplicate: reading/decompressing historical segments; ${elapsed()}; recording continues.`);
+    const logicalSnapshot = await communicationLogLogicalSnapshot(plan);
+    const range = {
+      start_timestamp: logicalSnapshot.start_timestamp,
+      end_timestamp: logicalSnapshot.end_timestamp
+    };
+    const base = communicationLogFileName.replace(/\.jsonl$/i, '');
+    const archiveName = await communicationLogUnusedRoleArchiveName(
+      communicationLogDirectoryHandle,
+      base,
+      range,
+      'comm'
+    );
+    const memberName = communicationLogAsciiArchiveMemberName(
+      archiveName.replace(/\.comm\.7z$/i, '.jsonl')
+    );
+
+    setStatus(`Duplicate: compressing consolidated archive; ${elapsed()}; recording continues.`);
+    const archive = await create7zArchive(logicalSnapshot.bytes, memberName);
+    let writable = null;
+    let archiveCreated = false;
+    try {
+      setStatus(`Duplicate: finalizing/writing ${archiveName}; ${elapsed()}.`);
+      const archiveHandle = await communicationLogDirectoryHandle.getFileHandle(
+        archiveName,
+        { create: true }
       );
-      while (await communicationLogFileExists(duplicateName)
-          || await communicationLogFileExists(
-            communicationLogDuplicateArchiveFileName(duplicateName)
-          )) {
-        duplicateNumber += 1;
-        duplicateName = communicationLogDuplicateFileName(
-          communicationLogFileName,
-          duplicateNumber
+      archiveCreated = true;
+      writable = await archiveHandle.createWritable();
+      await writable.write(new Blob([archive], { type: 'application/x-7z-compressed' }));
+      await writable.close();
+      writable = null;
+      const verified = await archiveHandle.getFile();
+      if (verified.size !== archive.byteLength) {
+        throw new Error(
+          `Communication log archive verification failed: expected ${archive.byteLength} bytes, found ${verified.size}.`
         );
       }
-
-      const memberName = duplicateName;
-      const archiveName = communicationLogDuplicateArchiveFileName(duplicateName);
-      const archive = await create7zArchive(logicalSnapshot, memberName);
-      let writable = null;
-      let archiveCreated = false;
-      try {
-        const archiveHandle = await communicationLogDirectoryHandle.getFileHandle(
-          archiveName,
-          { create: true }
-        );
-        archiveCreated = true;
-        writable = await archiveHandle.createWritable();
-        await writable.write(new Blob([archive], { type: 'application/x-7z-compressed' }));
-        await writable.close();
-        writable = null;
-        const verified = await archiveHandle.getFile();
-        if (verified.size !== archive.byteLength) {
-          throw new Error(
-            `Communication log archive verification failed: expected ${archive.byteLength} bytes, found ${verified.size}.`
-          );
-        }
-        const extracted = await extract7zArchive(
-          new Uint8Array(await verified.arrayBuffer())
-        );
-        if (!(await communicationLogBytesEqual(extracted, logicalSnapshot))) {
-          throw new Error('Communication log duplicate round-trip verification failed.');
-        }
-      } catch (error) {
-        await abortWritableQuietly(writable);
-        if (archiveCreated) {
-          try { await communicationLogDirectoryHandle.removeEntry(archiveName); } catch {}
-        }
-        throw error;
+      const extracted = await extract7zArchive(
+        new Uint8Array(await verified.arrayBuffer())
+      );
+      if (!(await communicationLogBytesEqual(extracted, logicalSnapshot.bytes))) {
+        throw new Error('Communication log duplicate round-trip verification failed.');
       }
-      return archiveName;
-    });
-    return queued.operation;
+    } catch (error) {
+      await abortWritableQuietly(writable);
+      if (archiveCreated) {
+        try { await communicationLogDirectoryHandle.removeEntry(archiveName); } catch {}
+      }
+      setStatus(`Duplicate failed while finalizing ${archiveName}; ${elapsed()}.`);
+      throw error;
+    }
+    setStatus(`Duplicate completed: ${archiveName}; ${elapsed()}.`);
+    return archiveName;
   }
 
   /**
@@ -13327,6 +13346,7 @@ const STREAM7Z_WASM_GZIP_BASE64 = 'H4sICJsLuGoCA3N0cmVhbTd6Lndhc20A7L0JmBzFmSiY9
 
     try {
       segment.compression_state = 'compressing';
+      setStatus(`Communication log: compressing sealed segment ${segment.ordinal}; recording continues.`);
       await communicationLogWriteSegmentManifest();
       const archiveBytes = await create7zArchive(rawBytes, segment.member_name);
       const archiveHandle = await communicationLogWriteExactFile(
@@ -13346,6 +13366,7 @@ const STREAM7Z_WASM_GZIP_BASE64 = 'H4sICJsLuGoCA3N0cmVhbTd6Lndhc20A7L0JmBzFmSiY9
       segment.verified_sha256 = extractedHash;
       await communicationLogWriteSegmentManifest();
       await directory.removeEntry(segment.raw_name);
+      setStatus(`Communication log: sealed segment ${segment.ordinal} compressed; recording continues.`);
       logDiagnostic('debug', 'communication-log-segment-compressed', {
         ordinal: segment.ordinal,
         raw_bytes: segment.raw_bytes,
@@ -13355,6 +13376,7 @@ const STREAM7Z_WASM_GZIP_BASE64 = 'H4sICJsLuGoCA3N0cmVhbTd6Lndhc20A7L0JmBzFmSiY9
       segment.compression_state = 'failed';
       segment.failure = boundedDiagnosticText(errorMessage(error), 2000);
       await communicationLogWriteSegmentManifest().catch(() => {});
+      setStatus(`Communication log: segment ${segment.ordinal} compression failed; sealed raw retained and recording continues.`);
       logDiagnostic('warnings', 'communication-log-segment-compression-failed', {
         ordinal: segment.ordinal,
         raw_name: segment.raw_name,
@@ -13415,10 +13437,22 @@ const STREAM7Z_WASM_GZIP_BASE64 = 'H4sICJsLuGoCA3N0cmVhbTd6Lndhc20A7L0JmBzFmSiY9
     const snapshot = await communicationLogRefreshedFileSnapshot();
     if (snapshot.file.size === 0) return null;
     const rawBytes = new Uint8Array(await snapshot.file.arrayBuffer());
+    const range = communicationLogTimestampRangeFromJsonl(rawBytes);
+    if (!range) {
+      throw new Error('Sealed communication segment has no trustworthy content timestamp range.');
+    }
     const ordinal = communicationLogSegmentManifest.next_ordinal++;
     const suffix = String(ordinal).padStart(6, '0');
-    const rawName = `segment-${suffix}.jsonl`;
-    const archiveName = `segment-${suffix}.7z`;
+    const memberStart = communicationLogArchiveTimestamp(range.start_timestamp);
+    const memberEnd = communicationLogArchiveTimestamp(range.end_timestamp);
+    const rawName = `segment-${suffix}_${memberStart}_${memberEnd}.jsonl`;
+    const archiveBase = communicationLogFileName.replace(/\.jsonl$/i, '');
+    const archiveName = await communicationLogUnusedRoleArchiveName(
+      communicationLogSegmentDirectoryHandle,
+      archiveBase,
+      range,
+      'seg'
+    );
     const sourceHash = await communicationLogSha256(rawBytes);
     await communicationLogWriteExactFile(
       communicationLogSegmentDirectoryHandle,
@@ -13432,6 +13466,8 @@ const STREAM7Z_WASM_GZIP_BASE64 = 'H4sICJsLuGoCA3N0cmVhbTd6Lndhc20A7L0JmBzFmSiY9
       member_name: rawName,
       raw_bytes: rawBytes.byteLength,
       source_sha256: sourceHash,
+      start_timestamp: range.start_timestamp,
+      end_timestamp: range.end_timestamp,
       compression_state: 'sealed'
     };
     communicationLogSegmentManifest.segments.push(segment);
@@ -13442,6 +13478,33 @@ const STREAM7Z_WASM_GZIP_BASE64 = 'H4sICJsLuGoCA3N0cmVhbTd6Lndhc20A7L0JmBzFmSiY9
     return segment;
   }
 
+
+
+  /**
+   * Appends one complete JSONL record and rotates only after its record boundary.
+   *
+   * @param {Object} record - Complete structured communication record.
+   * @returns {Promise<void>} Resolves after the record is accepted by active storage.
+   */
+  async function communicationLogStorageAppendRecord(record) {
+    const line = `${JSON.stringify(record)}\n`;
+    const lineBytes = new TextEncoder().encode(line).byteLength;
+    const queued = communicationLogEnqueue('storage-append', async () => {
+      await communicationLogOpenWriter();
+      await communicationLogWritable.write(line);
+      communicationLogWriterDirty = true;
+      communicationLogActiveSegmentBytes += lineBytes;
+      if (communicationLogActiveSegmentBytes >= COMMUNICATION_LOG_SEGMENT_TARGET_BYTES) {
+        await communicationLogSealActiveSegment();
+      }
+    });
+    return queued.operation;
+  }
+
+  /** Segmented communication storage facade. */
+  const communicationLogStorage = Object.freeze({
+    appendRecord: communicationLogStorageAppendRecord
+  });
   /**
    * Recovers sealed pending/failed segments after reload.
    *
@@ -13449,7 +13512,52 @@ const STREAM7Z_WASM_GZIP_BASE64 = 'H4sICJsLuGoCA3N0cmVhbTd6Lndhc20A7L0JmBzFmSiY9
    */
   async function communicationLogRecoverSegmentState() {
     for (const segment of communicationLogSegmentManifest.segments) {
-      if (segment.compression_state === 'compressed') continue;
+      if (segment.compression_state === 'compressed') {
+        try {
+          const archiveHandle = await communicationLogSegmentDirectoryHandle.getFileHandle(
+            segment.archive_name,
+            { create: false }
+          );
+          const archive = new Uint8Array(await (await archiveHandle.getFile()).arrayBuffer());
+          const extracted = await extract7zArchive(archive);
+          const hash = await communicationLogSha256(extracted);
+          if (extracted.byteLength !== segment.raw_bytes || hash !== segment.source_sha256) {
+            throw new Error('compressed segment verification mismatch');
+          }
+          try {
+            const staleRaw = await communicationLogSegmentDirectoryHandle.getFileHandle(
+              segment.raw_name,
+              { create: false }
+            );
+            const staleBytes = new Uint8Array(await (await staleRaw.getFile()).arrayBuffer());
+            if (staleBytes.byteLength === segment.raw_bytes
+                && await communicationLogSha256(staleBytes) === segment.source_sha256) {
+              await communicationLogSegmentDirectoryHandle.removeEntry(segment.raw_name);
+            }
+          } catch (error) {
+            if (error?.name !== 'NotFoundError') throw error;
+          }
+          continue;
+        } catch (archiveError) {
+          try {
+            await communicationLogSegmentDirectoryHandle.getFileHandle(
+              segment.raw_name,
+              { create: false }
+            );
+            segment.compression_state = 'sealed';
+            segment.failure = `Recovery replaced invalid compressed state: ${errorMessage(archiveError)}`;
+            await communicationLogWriteSegmentManifest();
+          } catch (rawError) {
+            if (rawError?.name === 'NotFoundError') {
+              throw new Error(
+                `Compressed segment ${segment.ordinal} is invalid and has no recoverable raw source.`
+              );
+            }
+            throw rawError;
+          }
+        }
+      }
+
       let rawHandle;
       try {
         rawHandle = await communicationLogSegmentDirectoryHandle.getFileHandle(
@@ -13495,32 +13603,90 @@ const STREAM7Z_WASM_GZIP_BASE64 = 'H4sICJsLuGoCA3N0cmVhbTd6Lndhc20A7L0JmBzFmSiY9
     communicationLogActiveSegmentBytes =
       (await communicationLogRefreshedFileSnapshot()).file.size;
   }
-
   /**
-   * Appends one complete JSONL record and rotates only after its record boundary.
+   * Extracts the trustworthy earliest/latest record timestamps from exact JSONL bytes.
    *
-   * @param {Object} record - Complete structured communication record.
-   * @returns {Promise<void>} Resolves after the record is accepted by active storage.
+   * @param {Uint8Array} bytes - Exact JSONL bytes.
+   * @returns {Object|null} ISO start/end timestamps, or null when none are trustworthy.
    */
-  async function communicationLogStorageAppendRecord(record) {
-    const line = `${JSON.stringify(record)}\n`;
-    const lineBytes = new TextEncoder().encode(line).byteLength;
-    const queued = communicationLogEnqueue('storage-append', async () => {
-      await communicationLogOpenWriter();
-      await communicationLogWritable.write(line);
-      communicationLogWriterDirty = true;
-      communicationLogActiveSegmentBytes += lineBytes;
-      if (communicationLogActiveSegmentBytes >= COMMUNICATION_LOG_SEGMENT_TARGET_BYTES) {
-        await communicationLogSealActiveSegment();
-      }
-    });
-    return queued.operation;
+  function communicationLogTimestampRangeFromJsonl(bytes) {
+    const text = new TextDecoder().decode(bytes);
+    let start = null;
+    let end = null;
+    for (const line of text.split('\n')) {
+      if (!line) continue;
+      let record;
+      try { record = JSON.parse(line); } catch { continue; }
+      const timestamp = typeof record?.timestamp === 'string' ? record.timestamp : null;
+      if (!timestamp || !Number.isFinite(Date.parse(timestamp))) continue;
+      if (start === null || timestamp < start) start = timestamp;
+      if (end === null || timestamp > end) end = timestamp;
+    }
+    return start === null ? null : { start_timestamp: start, end_timestamp: end };
   }
 
-  /** Segmented communication storage facade. */
-  const communicationLogStorage = Object.freeze({
-    appendRecord: communicationLogStorageAppendRecord
-  });
+  /**
+   * Formats one ISO timestamp deterministically for cross-platform filenames.
+   *
+   * @param {string} timestamp - Trustworthy ISO timestamp.
+   * @returns {string} Filesystem-safe UTC timestamp.
+   */
+  function communicationLogArchiveTimestamp(timestamp) {
+    const date = new Date(timestamp);
+    if (!Number.isFinite(date.getTime())) throw new Error('Archive timestamp is not trustworthy.');
+    return date.toISOString().replace(/[-:]/g, '').replace('.', '').replace('Z', 'Z');
+  }
+
+  /**
+   * Builds a role-explicit archive filename; collision suffix is inserted before the role.
+   *
+   * @param {string} base - Logical archive base name.
+   * @param {Object} range - Trustworthy start/end timestamps.
+   * @param {'seg'|'comm'|'log'} role - Archive role.
+   * @param {number} collision - Zero for normal name, positive for actual collision.
+   * @returns {string} Timestamped role-explicit archive filename.
+   */
+  function communicationLogRoleArchiveName(base, range, role, collision = 0) {
+    if (!range?.start_timestamp || !range?.end_timestamp) {
+      throw new Error('Archive content has no trustworthy timestamp range.');
+    }
+    const start = communicationLogArchiveTimestamp(range.start_timestamp);
+    const end = communicationLogArchiveTimestamp(range.end_timestamp);
+    const suffix = collision > 0 ? `(${collision})` : '';
+    return `${base}_${start}_${end}${suffix}.${role}.7z`;
+  }
+
+  /**
+   * Converts a user-facing archive-derived member name to the bridge's ASCII contract.
+   *
+   * @param {string} name - Desired member name.
+   * @returns {string} Deterministic printable-ASCII member name.
+   */
+  function communicationLogAsciiArchiveMemberName(name) {
+    return String(name).replace(/[^\\x20-\\x7e]/g, '_');
+  }
+
+  /**
+   * Returns the first unused role archive name without adding (N) unnecessarily.
+   *
+   * @param {Object} directory - Directory where the archive will be written.
+   * @param {string} base - Logical archive base.
+   * @param {Object} range - Trustworthy timestamp range.
+   * @param {'seg'|'comm'|'log'} role - Archive role.
+   * @returns {Promise<string>} Lowest-collision archive name.
+   */
+  async function communicationLogUnusedRoleArchiveName(directory, base, range, role) {
+    for (let collision = 0; ; collision += 1) {
+      const name = communicationLogRoleArchiveName(base, range, role, collision);
+      try {
+        await directory.getFileHandle(name, { create: false });
+      } catch (error) {
+        if (error?.name === 'NotFoundError') return name;
+        throw error;
+      }
+    }
+  }
+
   /**
    * Returns exact verified raw bytes for one historical segment.
    *
@@ -13528,27 +13694,38 @@ const STREAM7Z_WASM_GZIP_BASE64 = 'H4sICJsLuGoCA3N0cmVhbTd6Lndhc20A7L0JmBzFmSiY9
    * @returns {Promise<Uint8Array>} Verified raw JSONL segment bytes.
    */
   async function communicationLogReadHistoricalSegment(segment) {
-    if (segment.compression_state === 'compressed') {
+    /** Reads and extracts the committed archive representation for this segment. */
+    /**
+     * Reads and extracts the verified archive member for this segment.
+     *
+     * @returns {Promise<Uint8Array>} Exact extracted segment bytes.
+     */
+    const readArchive = async () => {
       const handle = await communicationLogSegmentDirectoryHandle.getFileHandle(
         segment.archive_name,
         { create: false }
       );
       const archive = new Uint8Array(await (await handle.getFile()).arrayBuffer());
-      const bytes = await extract7zArchive(archive);
-      if (bytes.byteLength !== segment.raw_bytes
-          || await communicationLogSha256(bytes) !== segment.source_sha256) {
-        throw new Error(`Historical archive verification failed: segment ${segment.ordinal}`);
+      return extract7zArchive(archive);
+    };
+    let bytes;
+    if (segment.compression_state === 'compressed') {
+      bytes = await readArchive();
+    } else {
+      try {
+        const handle = await communicationLogSegmentDirectoryHandle.getFileHandle(
+          segment.raw_name,
+          { create: false }
+        );
+        bytes = new Uint8Array(await (await handle.getFile()).arrayBuffer());
+      } catch (error) {
+        if (error?.name !== 'NotFoundError') throw error;
+        bytes = await readArchive();
       }
-      return bytes;
     }
-    const handle = await communicationLogSegmentDirectoryHandle.getFileHandle(
-      segment.raw_name,
-      { create: false }
-    );
-    const bytes = new Uint8Array(await (await handle.getFile()).arrayBuffer());
     if (bytes.byteLength !== segment.raw_bytes
         || await communicationLogSha256(bytes) !== segment.source_sha256) {
-      throw new Error(`Historical raw verification failed: segment ${segment.ordinal}`);
+      throw new Error(`Historical segment verification failed: segment ${segment.ordinal}`);
     }
     return bytes;
   }
@@ -13558,28 +13735,78 @@ const STREAM7Z_WASM_GZIP_BASE64 = 'H4sICJsLuGoCA3N0cmVhbTd6Lndhc20A7L0JmBzFmSiY9
    *
    * @returns {Promise<Uint8Array>} Exact logical-log snapshot bytes.
    */
-  async function communicationLogLogicalSnapshotBytes() {
+  async function communicationLogCaptureSnapshotPlan() {
     await communicationLogCloseActiveWriter();
-    const ordered = [...communicationLogSegmentManifest.segments]
+    const active = await communicationLogRefreshedFileSnapshot();
+    const activeBytes = new Uint8Array(await active.file.arrayBuffer());
+    return {
+      segments: communicationLogSegmentManifest.segments.map(segment => ({ ...segment })),
+      active_bytes: activeBytes,
+      active_range: communicationLogTimestampRangeFromJsonl(activeBytes)
+    };
+  }
+
+  /**
+   * Reconstructs one previously frozen snapshot plan without holding the append queue.
+   *
+   * @param {Object|null} plan - Frozen segment membership and active prefix.
+   * @returns {Promise<Object>} Exact bytes and trustworthy content timestamp range.
+   */
+  async function communicationLogLogicalSnapshot(plan = null) {
+    const frozen = plan ?? await communicationLogCaptureSnapshotPlan();
+    const ordered = [...frozen.segments]
       .sort((left, right) => left.ordinal - right.ordinal);
     const parts = [];
     let total = 0;
-    for (const segment of ordered) {
+    let startTimestamp = null;
+    let endTimestamp = null;
+    for (let index = 0; index < ordered.length; index += 1) {
+      const segment = ordered[index];
+      setStatus(`Duplicate: reading historical segments ${index + 1} of ${ordered.length}; recording continues.`);
       const bytes = await communicationLogReadHistoricalSegment(segment);
       parts.push(bytes);
       total += bytes.byteLength;
+      if (total > COMMUNICATION_LOG_DUPLICATE_MAX_BYTES) {
+        throw new Error(
+          `Duplicate snapshot exceeds the ${COMMUNICATION_LOG_DUPLICATE_MAX_BYTES}-byte in-memory safety limit.`
+        );
+      }
+      startTimestamp ??= segment.start_timestamp ?? null;
+      endTimestamp = segment.end_timestamp ?? endTimestamp;
     }
-    const active = await communicationLogRefreshedFileSnapshot();
-    const activeBytes = new Uint8Array(await active.file.arrayBuffer());
-    parts.push(activeBytes);
-    total += activeBytes.byteLength;
+    parts.push(frozen.active_bytes);
+    total += frozen.active_bytes.byteLength;
+    if (total > COMMUNICATION_LOG_DUPLICATE_MAX_BYTES) {
+      throw new Error(
+        `Duplicate snapshot exceeds the ${COMMUNICATION_LOG_DUPLICATE_MAX_BYTES}-byte in-memory safety limit.`
+      );
+    }
+    startTimestamp ??= frozen.active_range?.start_timestamp ?? null;
+    endTimestamp = frozen.active_range?.end_timestamp ?? endTimestamp;
+    if (!startTimestamp || !endTimestamp) {
+      throw new Error('Communication log snapshot has no trustworthy content timestamp range.');
+    }
+    setStatus('Duplicate: reconstructing exact logical JSONL; recording continues.');
     const combined = new Uint8Array(total);
     let offset = 0;
     for (const part of parts) {
       combined.set(part, offset);
       offset += part.byteLength;
     }
-    return combined;
+    return {
+      bytes: combined,
+      start_timestamp: startTimestamp,
+      end_timestamp: endTimestamp
+    };
+  }
+
+  /**
+   * Compatibility helper returning only exact snapshot bytes.
+   *
+   * @returns {Promise<Uint8Array>} Exact logical snapshot bytes.
+   */
+  async function communicationLogLogicalSnapshotBytes() {
+    return (await communicationLogLogicalSnapshot()).bytes;
   }
 
   /**
@@ -22418,27 +22645,73 @@ Image elapsed: ${formatDuration(imageElapsed)} — Completed: ${imageCompleted}/
   }
 
   /**
+   * Returns the trustworthy content timestamp range represented by diagnostics.
+   *
+   * @returns {Object|null} ISO start/end timestamps, or null for an empty/untrusted log.
+   */
+  function diagnosticLogTimestampRange() {
+    const timestamps = diagnosticLog
+      .map(entry => entry?.timestamp)
+      .filter(timestamp => typeof timestamp === 'string' && Number.isFinite(Date.parse(timestamp)))
+      .sort();
+    return timestamps.length
+      ? { start_timestamp: timestamps[0], end_timestamp: timestamps[timestamps.length - 1] }
+      : null;
+  }
+
+  /**
    * Saves the current diagnostic log as one 7z archive through the browser download flow.
    *
    * @returns {Promise<void>} Resolves after the download has been triggered.
    */
   async function saveDiagnosticLog() {
     const text = diagnosticLogText();
-    if (!text) return;
+    if (!text) {
+      setStatus('Diagnostic log is empty; no archive was created.');
+      return;
+    }
+    const range = diagnosticLogTimestampRange();
+    if (!range) {
+      setStatus('Diagnostic log has no trustworthy content timestamps; no archive was created.');
+      return;
+    }
     const button = document.querySelector(`#${PANEL_ID} [data-role="save-log"]`);
     if (!(button instanceof HTMLButtonElement) || button.disabled) return;
     button.disabled = true;
     button.setAttribute('aria-busy', 'true');
-    button.title = 'Preparing diagnostic archive…';
-    const base = `DownloadConversation_${sanitizeFileName(conversationTitle())}_diagnostic-log`;
-    // The direct 7-Zip bridge currently accepts ASCII member names only. Keep
-    // the visible archive title intact while using a deterministic safe member.
-    const memberName = 'diagnostic-log.txt';
-    const archiveName = `${base}.7z`;
+    button.title = 'Compressing diagnostic log…';
+    const started = performance.now();
+    /**
+     * Returns elapsed diagnostic-save time for indeterminate progress.
+     *
+     * @returns {string} Human-readable elapsed duration.
+     */
+    const elapsed = () => `${((performance.now() - started) / 1000).toFixed(1)}s elapsed`;
+    const base = `DownloadConversation_${sanitizeFileName(conversationTitle())}`;
+    const directory = communicationLogReady ? communicationLogDirectoryHandle : null;
+    let archiveName = communicationLogRoleArchiveName(base, range, 'log');
+    if (directory) {
+      archiveName = await communicationLogUnusedRoleArchiveName(directory, base, range, 'log');
+    }
+    const memberName = communicationLogAsciiArchiveMemberName(
+      archiveName.replace(/\.log\.7z$/i, '.txt')
+    );
     try {
+      setStatus(`Diagnostic log: compressing; ${elapsed()}.`);
       const archive = await create7zArchive(new TextEncoder().encode(text), memberName);
-      downloadBlob(new Blob([archive], { type: 'application/x-7z-compressed' }), archiveName);
-      setStatus(`Diagnostic log saved as ${archiveName}.`);
+      setStatus(`Diagnostic log: preparing save; ${elapsed()}.`);
+      if (directory) {
+        const handle = await communicationLogWriteExactFile(directory, archiveName, archive);
+        const committed = new Uint8Array(await (await handle.getFile()).arrayBuffer());
+        const extracted = await extract7zArchive(committed);
+        if (!(await communicationLogBytesEqual(extracted, new TextEncoder().encode(text)))) {
+          try { await directory.removeEntry(archiveName); } catch {}
+          throw new Error('Diagnostic archive round-trip verification failed.');
+        }
+      } else {
+        downloadBlob(new Blob([archive], { type: 'application/x-7z-compressed' }), archiveName);
+      }
+      setStatus(`Diagnostic log saved as ${archiveName}; ${elapsed()}.`);
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
       logDiagnostic('errors', 'diagnostic-log-save-failed', { archive_name: archiveName, message });
