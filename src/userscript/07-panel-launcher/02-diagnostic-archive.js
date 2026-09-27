@@ -54,7 +54,11 @@
     button.setAttribute('aria-busy', 'true');
     button.title = 'Compressing diagnostic log…';
     const started = performance.now();
-    /** Returns elapsed diagnostic-save time for indeterminate progress. */
+    /**
+     * Returns elapsed diagnostic-save time for indeterminate progress.
+     *
+     * @returns {string} Human-readable elapsed duration.
+     */
     const elapsed = () => `${((performance.now() - started) / 1000).toFixed(1)}s elapsed`;
     const base = `DownloadConversation_${sanitizeFileName(conversationTitle())}`;
     const directory = communicationLogReady ? communicationLogDirectoryHandle : null;
@@ -62,7 +66,9 @@
     if (directory) {
       archiveName = await communicationLogUnusedRoleArchiveName(directory, base, range, 'log');
     }
-    const memberName = communicationLogAsciiArchiveMemberName(\n      archiveName.replace(/\\.log\\.7z$/i, '.txt')\n    );
+    const memberName = communicationLogAsciiArchiveMemberName(
+      archiveName.replace(/\.log\.7z$/i, '.txt')
+    );
     try {
       setStatus(`Diagnostic log: compressing; ${elapsed()}.`);
       const archive = await create7zArchive(new TextEncoder().encode(text), memberName);
