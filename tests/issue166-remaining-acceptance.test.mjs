@@ -45,11 +45,12 @@ test('Issue 166 duplicate reports every required phase and keeps indeterminate e
   assert.doesNotMatch(duplicate, /ETA.*(?:size|benchmark|assum)/i);
 });
 
-test('Issue 166 diagnostic Save uses timestamped log role and browser download flow', () => {
+test('Issue 166 diagnostic Save uses main communication folder when authorized and browser download otherwise', () => {
   const save = productionFunctionSource('saveDiagnosticLog');
   assert.match(save, /'log'/);
   assert.match(save, /diagnosticLogTimestampRange/);
-  assert.doesNotMatch(save, /communicationLogDirectoryHandle/);
+  assert.match(save, /communicationLogDirectoryHandle/);
+  assert.match(save, /communicationLogWriteExactFile/);
   assert.match(save, /downloadBlob/);
 });
 
@@ -108,13 +109,6 @@ test('Issue 166 no-trustworthy-timestamp fixture is rejected instead of inventin
   assert.equal(await run(), null);
 });
 
-
-test('Issue 166 diagnostic Save never writes into the communication-log directory', () => {
-  const save = productionFunctionSource('saveDiagnosticLog');
-  assert.doesNotMatch(save, /communicationLogDirectoryHandle/);
-  assert.doesNotMatch(save, /communicationLogWriteExactFile/);
-  assert.match(save, /downloadBlob/);
-});
 
 test('Issue 166 duplicate naming is collision-safe and never overwrites an existing archive', () => {
   const duplicate = productionFunctionSource('communicationLogArchiveDuplicate');
