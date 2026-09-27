@@ -107,3 +107,22 @@ test('Issue 166 no-trustworthy-timestamp fixture is rejected instead of inventin
   `);
   assert.equal(await run(), null);
 });
+
+
+test('Issue 166 diagnostic Save never writes into the communication-log directory', () => {
+  const save = productionFunctionSource('saveDiagnosticLog');
+  assert.doesNotMatch(save, /communicationLogDirectoryHandle/);
+  assert.doesNotMatch(save, /communicationLogWriteExactFile/);
+  assert.match(save, /downloadBlob/);
+});
+
+test('Issue 166 duplicate naming preserves the existing lowest-unused (N) contract', () => {
+  const duplicate = productionFunctionSource('communicationLogArchiveDuplicate');
+  assert.match(duplicate, /communicationLogNextDuplicateName/);
+  assert.match(duplicate, /communicationLogDuplicateArchiveFileName/);
+});
+
+test('Issue 166 selected segment default and in-memory guard are documented with browser measurements', () => {
+  assert.match(downloadConversationSource, /COMMUNICATION_LOG_SEGMENT_TARGET_BYTES = 10 \* 1024 \* 1024/);
+  assert.match(downloadConversationSource, /COMMUNICATION_LOG_DUPLICATE_MAX_BYTES = 128 \* 1024 \* 1024/);
+});
