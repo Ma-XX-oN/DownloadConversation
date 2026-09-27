@@ -50,12 +50,12 @@ const benchmark = String.raw`
   for (const mib of [10, 20, 40]) {
     const bytes = corpus(mib * 1024 * 1024);
     const heapBefore = performance.memory?.usedJSHeapSize ?? null;
-    const scheduled = performance.now();
+    const scheduled = Date.now();
     let timerFired = null;
-    setTimeout(() => { timerFired = performance.now(); }, 0);
-    const started = performance.now();
+    setTimeout(() => { timerFired = Date.now(); }, 0);
+    const started = Date.now();
     const archive = await create7zArchive(bytes, 'benchmark.jsonl');
-    const finished = performance.now();
+    const finished = Date.now();
     const heapAfter = performance.memory?.usedJSHeapSize ?? null;
     await new Promise(resolve => setTimeout(resolve, 0));
     const extracted = await extract7zArchive(archive);
