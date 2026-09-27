@@ -91,7 +91,7 @@ function issue134Harness(initialFiles = {}) {
   const handle = await communicationLogDirectoryHandle.getFileHandle(communicationLogFileName);
   return new Uint8Array(await (await handle.getFile()).arrayBuffer());
 };
-create7zArchive = async (bytes, memberName) => {\n  const text = new TextDecoder().decode(bytes);\n  this.__issue134Events.push(\`archive:\${memberName}:\${text}\`);\n  return new TextEncoder().encode(\`7Z:\${memberName}:\\n\${text}\`);\n};\nthis.__issue134 = {\n  rename: communicationLogRename,\n  duplicate: communicationLogArchiveDuplicate,\n  duplicateName: communicationLogDuplicateFileName,\n  departureCheckpoint: typeof communicationLogCheckpointForDocumentDeparture === 'function'\n    ? communicationLogCheckpointForDocumentDeparture\n    : null,\n  setWriter(writer, dirty) {\n    communicationLogWritable = writer;\n    communicationLogWriterDirty = dirty;\n  },\n  setWriteChain(chain) {\n    communicationLogWriteChain = chain;\n  },\n  state() {\n    return {\n      writable: communicationLogWritable,\n      dirty: communicationLogWriterDirty,\n      fileName: communicationLogFileName\n    };\n  }\n};`,
+create7zArchive = async (bytes, memberName) => {\n  const text = new TextDecoder().decode(bytes);\n  this.__issue134Events.push(\`archive:\${memberName}:\${text}\`);\n  return new TextEncoder().encode(\`7Z:\${memberName}:\\n\${text}\`);\n};\nextract7zArchive = async bytes => {\n  const text = new TextDecoder().decode(bytes);\n  const newline = text.indexOf('\\n');\n  return new TextEncoder().encode(text.slice(newline + 1));\n};\nthis.__issue134 = {\n  rename: communicationLogRename,\n  duplicate: communicationLogArchiveDuplicate,\n  duplicateName: communicationLogDuplicateFileName,\n  departureCheckpoint: typeof communicationLogCheckpointForDocumentDeparture === 'function'\n    ? communicationLogCheckpointForDocumentDeparture\n    : null,\n  setWriter(writer, dirty) {\n    communicationLogWritable = writer;\n    communicationLogWriterDirty = dirty;\n  },\n  setWriteChain(chain) {\n    communicationLogWriteChain = chain;\n  },\n  state() {\n    return {\n      writable: communicationLogWritable,\n      dirty: communicationLogWriterDirty,\n      fileName: communicationLogFileName\n    };\n  }\n};`,
     context
   );
 
@@ -283,7 +283,7 @@ test('communication-log mutators share queue, writer-close, and panel action inf
 test('Issue 166 Duplicate creates a 7z archive instead of a raw JSONL sibling', () => {
   assert.match(downloadConversationSource, /communicationLogDuplicateArchiveFileName\(/);
   assert.match(downloadConversationSource, /const logicalSnapshot = await communicationLogLogicalSnapshotBytes\(\);/);
-  assert.match(downloadConversationSource, /await create7zArchive\(\s*logicalSnapshotBytes,\s*memberName\s*\)/);
+  assert.match(downloadConversationSource, /await create7zArchive\(\s*logicalSnapshot,\s*memberName\s*\)/);
   assert.match(downloadConversationSource, /application\/x-7z-compressed/);
   assert.doesNotMatch(
     downloadConversationSource,
