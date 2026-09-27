@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         ChatGPT Conversation Markdown Recorder
 // @namespace    https://chatgpt.com/
-// @version      1.7.2-issue.166.87
+// @version      1.7.2-issue.166.88
 // @description  Exports the current ChatGPT conversation directly from the Conversation API as Markdown or JSONL.
 // @match        https://chatgpt.com/*
 // @match        https://chat.openai.com/*
@@ -12306,6 +12306,699 @@ const STREAM7Z_WASM_GZIP_BASE64 = 'H4sICMtvuWoCA3N0cmVhbTd6Lndhc20A7L0JmBzFmSCa9
     return candidates[0];
   }
 
+  /** Internal directory containing sealed/compressed segments for the logical log. */
+  let communicationLogSegmentDirectoryHandle = null;
+  /** Compact durable ordering/integrity metadata for the logical log. */
+  let communicationLogSegmentManifest = null;
+  /** Background compression chain; active recorder writes do not await it. */
+  let communicationLogCompressionChain = Promise.resolve();
+  /** Exact bytes accepted into the current active raw segment. */
+  let communicationLogActiveSegmentBytes = 0;
+
+  /**
+   * Returns the stable internal segment-directory name for this logical log.
+   *
+   * @returns {string} Stable internal directory name.
+   */
+  function communicationLogSegmentDirectoryName() {
+    const identity = sanitizeFileName(currentConversationId() || communicationLogConversationName() || 'conversation');
+    return `.DownloadConversation-${identity}-segments`;
+  }
+
+  /**
+   * Loads or initializes compact durable segment metadata.
+   *
+   * @returns {Promise<Object>} Current logical-log segment manifest.
+   */
+  async function communicationLogReadSegmentManifest() {
+    const directory = communicationLogSegmentDirectoryHandle;
+    if (!directory) throw new Error('Communication segment directory is not ready.');
+    try {
+      const handle = await directory.getFileHandle('manifest.json', { create: false });
+      const file = await handle.getFile();
+      const parsed = JSON.parse(await file.text());
+      if (parsed?.schema !== 1 || !Array.isArray(parsed.segments)) {
+        throw new Error('Invalid communication segment manifest.');
+      }
+      return parsed;
+    } catch (error) {
+      if (error?.name !== 'NotFoundError') throw error;
+      return {
+        schema: 1,
+        logical_log_id: currentConversationId() || crypto.randomUUID(),
+        next_ordinal: 1,
+        segments: []
+      };
+    }
+  }
+
+  /**
+   * Commits the current compact segment manifest.
+   *
+   * @returns {Promise<void>} Resolves after manifest commit.
+   */
+  async function communicationLogWriteSegmentManifest() {
+    const directory = communicationLogSegmentDirectoryHandle;
+    if (!directory || !communicationLogSegmentManifest) {
+      throw new Error('Communication segment manifest is not ready.');
+    }
+    const handle = await directory.getFileHandle('manifest.json', { create: true });
+    const writable = await handle.createWritable();
+    try {
+      await writable.write(JSON.stringify(communicationLogSegmentManifest, null, 2) + '\n');
+      await writable.close();
+    } catch (error) {
+      await abortWritableQuietly(writable);
+      throw error;
+    }
+  }
+
+  /**
+   * Hashes exact bytes for segment/archive verification.
+   *
+   * @param {Uint8Array} bytes - Exact bytes to hash.
+   * @returns {Promise<string>} Lowercase hexadecimal SHA-256 digest.
+   */
+  async function communicationLogSha256(bytes) {
+    const digest = await crypto.subtle.digest('SHA-256', bytes);
+    return Array.from(new Uint8Array(digest), byte => byte.toString(16).padStart(2, '0')).join('');
+  }
+
+  /**
+   * Writes and byte-verifies one internal segment file.
+   *
+   * @param {Object} directory - Target File System Access directory handle.
+   * @param {string} name - Exact target filename.
+   * @param {Uint8Array} bytes - Exact bytes to commit.
+   * @returns {Promise<Object>} Verified file handle.
+   */
+  async function communicationLogWriteExactFile(directory, name, bytes) {
+    const handle = await directory.getFileHandle(name, { create: true });
+    let writable = null;
+    try {
+      writable = await handle.createWritable();
+      await writable.write(bytes);
+      await writable.close();
+      writable = null;
+      const file = await handle.getFile();
+      const committed = new Uint8Array(await file.arrayBuffer());
+      if (committed.byteLength !== bytes.byteLength
+          || !(await communicationLogBytesEqual(committed, bytes))) {
+        throw new Error(`Exact file verification failed: ${name}`);
+      }
+      return handle;
+    } catch (error) {
+      await abortWritableQuietly(writable);
+      throw error;
+    }
+  }
+
+  /**
+   * Compares two byte arrays exactly.
+   *
+   * @param {Uint8Array} left - First byte array.
+   * @param {Uint8Array} right - Second byte array.
+   * @returns {Promise<boolean>} True when every byte is identical.
+   */
+  async function communicationLogBytesEqual(left, right) {
+    if (left.byteLength !== right.byteLength) return false;
+    for (let index = 0; index < left.byteLength; index += 1) {
+      if (left[index] !== right[index]) return false;
+    }
+    return true;
+  }
+
+  /**
+   * Compresses, round-trip verifies, then retires one sealed raw segment.
+   *
+   * @param {Object} segment - Durable sealed-segment metadata.
+   * @returns {Promise<void>} Resolves after verified compression or rejects while retaining raw bytes.
+   */
+  async function communicationLogCompressSealedSegment(segment) {
+    const directory = communicationLogSegmentDirectoryHandle;
+    if (!directory) throw new Error('Communication segment directory is not ready.');
+    const rawHandle = await directory.getFileHandle(segment.raw_name, { create: false });
+    const rawFile = await rawHandle.getFile();
+    const rawBytes = new Uint8Array(await rawFile.arrayBuffer());
+    const sourceHash = await communicationLogSha256(rawBytes);
+    if (rawBytes.byteLength !== segment.raw_bytes || sourceHash !== segment.source_sha256) {
+      throw new Error(`Sealed segment ${segment.ordinal} changed before compression.`);
+    }
+
+    try {
+      segment.compression_state = 'compressing';
+      setStatus(`Communication log: compressing sealed segment ${segment.ordinal}; recording continues.`);
+      await communicationLogWriteSegmentManifest();
+      const archiveBytes = await create7zArchive(
+        rawBytes,
+        segment.member_name,
+        communicationLogArchiveMTime(segment)
+      );
+      const archiveHandle = await communicationLogWriteExactFile(
+        directory,
+        segment.archive_name,
+        archiveBytes
+      );
+      const committedArchive = new Uint8Array(await (await archiveHandle.getFile()).arrayBuffer());
+      const extracted = await extract7zArchive(committedArchive);
+      const extractedHash = await communicationLogSha256(extracted);
+      if (!(await communicationLogBytesEqual(extracted, rawBytes))
+          || extractedHash !== segment.source_sha256) {
+        throw new Error(`Archive round-trip verification failed for segment ${segment.ordinal}.`);
+      }
+      segment.archive_bytes = committedArchive.byteLength;
+      segment.compression_state = 'compressed';
+      segment.verified_sha256 = extractedHash;
+      await communicationLogWriteSegmentManifest();
+      await directory.removeEntry(segment.raw_name);
+      setStatus(`Communication log: sealed segment ${segment.ordinal} compressed; recording continues.`);
+      logDiagnostic('debug', 'communication-log-segment-compressed', {
+        ordinal: segment.ordinal,
+        raw_bytes: segment.raw_bytes,
+        archive_bytes: segment.archive_bytes
+      });
+    } catch (error) {
+      segment.compression_state = 'failed';
+      segment.failure = boundedDiagnosticText(errorMessage(error), 2000);
+      await communicationLogWriteSegmentManifest().catch(() => {});
+      setStatus(`Communication log: segment ${segment.ordinal} compression failed; sealed raw retained and recording continues.`);
+      logDiagnostic('warnings', 'communication-log-segment-compression-failed', {
+        ordinal: segment.ordinal,
+        raw_name: segment.raw_name,
+        message: segment.failure
+      });
+      throw error;
+    }
+  }
+
+  /**
+   * Serializes background compression without blocking active appends.
+   *
+   * @param {Object} segment - Durable sealed-segment metadata.
+   * @returns {Promise<void>} Compression operation promise.
+   */
+  function communicationLogQueueSegmentCompression(segment) {
+    const operation = communicationLogCompressionChain.then(
+      () => communicationLogCompressSealedSegment(segment)
+    );
+    communicationLogCompressionChain = operation.catch(() => undefined);
+    return operation;
+  }
+
+  /**
+   * Verifies and clears the active file after sealing its exact bytes.
+   *
+   * @param {number} expectedBytes - Expected committed active byte count.
+   * @param {string} expectedHash - Expected SHA-256 of committed active bytes.
+   * @returns {Promise<void>} Resolves after verified truncation.
+   */
+  async function communicationLogTruncateActiveAfterSeal(expectedBytes, expectedHash) {
+    const snapshot = await communicationLogRefreshedFileSnapshot();
+    const bytes = new Uint8Array(await snapshot.file.arrayBuffer());
+    if (bytes.byteLength !== expectedBytes || await communicationLogSha256(bytes) !== expectedHash) {
+      throw new Error('Active communication segment changed during seal transaction.');
+    }
+    let writable = null;
+    try {
+      writable = await snapshot.handle.createWritable({ keepExistingData: true });
+      await writable.truncate(0);
+      await writable.close();
+      writable = null;
+      communicationLogWriterDirty = false;
+      communicationLogActiveSegmentBytes = 0;
+    } catch (error) {
+      await abortWritableQuietly(writable);
+      throw error;
+    }
+  }
+
+  /**
+   * Freezes the active segment, establishes the next active file, then queues compression.
+   *
+   * @returns {Promise<Object|null>} Sealed segment metadata, or null for an empty active segment.
+   */
+  async function communicationLogSealActiveSegment() {
+    await communicationLogCloseActiveWriter();
+    const snapshot = await communicationLogRefreshedFileSnapshot();
+    if (snapshot.file.size === 0) return null;
+    const rawBytes = new Uint8Array(await snapshot.file.arrayBuffer());
+    const range = communicationLogTimestampRangeFromJsonl(rawBytes);
+    if (!range) {
+      throw new Error('Sealed communication segment has no trustworthy content timestamp range.');
+    }
+    const ordinal = communicationLogSegmentManifest.next_ordinal++;
+    const suffix = String(ordinal).padStart(6, '0');
+    const memberStart = communicationLogArchiveTimestamp(range.start_timestamp);
+    const memberEnd = communicationLogArchiveTimestamp(range.end_timestamp);
+    const rawName = `segment-${suffix}_${memberStart}-${memberEnd}.jsonl`;
+    const archiveBase = communicationLogFileName.replace(/\.jsonl$/i, '');
+    const archiveName = await communicationLogUnusedRoleArchiveName(
+      communicationLogSegmentDirectoryHandle,
+      archiveBase,
+      range,
+      'seg'
+    );
+    const sourceHash = await communicationLogSha256(rawBytes);
+    await communicationLogWriteExactFile(
+      communicationLogSegmentDirectoryHandle,
+      rawName,
+      rawBytes
+    );
+    const segment = {
+      ordinal,
+      raw_name: rawName,
+      archive_name: archiveName,
+      member_name: rawName,
+      raw_bytes: rawBytes.byteLength,
+      source_sha256: sourceHash,
+      start_timestamp: range.start_timestamp,
+      end_timestamp: range.end_timestamp,
+      compression_state: 'sealed'
+    };
+    communicationLogSegmentManifest.segments.push(segment);
+    await communicationLogWriteSegmentManifest();
+    await communicationLogTruncateActiveAfterSeal(rawBytes.byteLength, sourceHash);
+    await communicationLogOpenWriter();
+    void communicationLogQueueSegmentCompression(segment).catch(() => {});
+    return segment;
+  }
+
+
+
+  /**
+   * Appends one complete JSONL record and rotates only after its record boundary.
+   *
+   * @param {Object} record - Complete structured communication record.
+   * @returns {Promise<void>} Resolves after the record is accepted by active storage.
+   */
+  async function communicationLogStorageAppendRecord(record) {
+    const line = `${JSON.stringify(record)}\n`;
+    const lineBytes = new TextEncoder().encode(line).byteLength;
+    const queued = communicationLogEnqueue('storage-append', async () => {
+      await communicationLogOpenWriter();
+      await communicationLogWritable.write(line);
+      communicationLogWriterDirty = true;
+      communicationLogActiveSegmentBytes += lineBytes;
+      if (communicationLogActiveSegmentBytes >= COMMUNICATION_LOG_SEGMENT_TARGET_BYTES) {
+        await communicationLogSealActiveSegment();
+      }
+    });
+    return queued.operation;
+  }
+
+  /** Segmented communication storage facade. */
+  const communicationLogStorage = Object.freeze({
+    appendRecord: communicationLogStorageAppendRecord
+  });
+  /**
+   * Recovers sealed pending/failed segments after reload.
+   *
+   * @returns {Promise<void>} Resolves after recovery work is scheduled.
+   */
+  async function communicationLogRecoverSegmentState() {
+    for (const segment of communicationLogSegmentManifest.segments) {
+      if (segment.compression_state === 'compressed') {
+        try {
+          const archiveHandle = await communicationLogSegmentDirectoryHandle.getFileHandle(
+            segment.archive_name,
+            { create: false }
+          );
+          const archive = new Uint8Array(await (await archiveHandle.getFile()).arrayBuffer());
+          const extracted = await extract7zArchive(archive);
+          const hash = await communicationLogSha256(extracted);
+          if (extracted.byteLength !== segment.raw_bytes || hash !== segment.source_sha256) {
+            throw new Error('compressed segment verification mismatch');
+          }
+          try {
+            const staleRaw = await communicationLogSegmentDirectoryHandle.getFileHandle(
+              segment.raw_name,
+              { create: false }
+            );
+            const staleBytes = new Uint8Array(await (await staleRaw.getFile()).arrayBuffer());
+            if (staleBytes.byteLength === segment.raw_bytes
+                && await communicationLogSha256(staleBytes) === segment.source_sha256) {
+              await communicationLogSegmentDirectoryHandle.removeEntry(segment.raw_name);
+            }
+          } catch (error) {
+            if (error?.name !== 'NotFoundError') throw error;
+          }
+          continue;
+        } catch (archiveError) {
+          try {
+            await communicationLogSegmentDirectoryHandle.getFileHandle(
+              segment.raw_name,
+              { create: false }
+            );
+            segment.compression_state = 'sealed';
+            segment.failure = `Recovery replaced invalid compressed state: ${errorMessage(archiveError)}`;
+            await communicationLogWriteSegmentManifest();
+          } catch (rawError) {
+            if (rawError?.name === 'NotFoundError') {
+              throw new Error(
+                `Compressed segment ${segment.ordinal} is invalid and has no recoverable raw source.`
+              );
+            }
+            throw rawError;
+          }
+        }
+      }
+
+      let rawHandle;
+      try {
+        rawHandle = await communicationLogSegmentDirectoryHandle.getFileHandle(
+          segment.raw_name,
+          { create: false }
+        );
+      } catch (error) {
+        if (error?.name === 'NotFoundError') {
+          throw new Error(`Missing recoverable raw segment: ${segment.raw_name}`);
+        }
+        throw error;
+      }
+      const rawBytes = new Uint8Array(await (await rawHandle.getFile()).arrayBuffer());
+      const hash = await communicationLogSha256(rawBytes);
+      if (rawBytes.byteLength !== segment.raw_bytes || hash !== segment.source_sha256) {
+        throw new Error(`Recoverable raw segment verification failed: ${segment.raw_name}`);
+      }
+      const active = await communicationLogRefreshedFileSnapshot();
+      if (active.file.size === segment.raw_bytes) {
+        const activeBytes = new Uint8Array(await active.file.arrayBuffer());
+        if (await communicationLogSha256(activeBytes) === segment.source_sha256) {
+          await communicationLogTruncateActiveAfterSeal(segment.raw_bytes, segment.source_sha256);
+        }
+      }
+      segment.compression_state = 'sealed';
+      void communicationLogQueueSegmentCompression(segment).catch(() => {});
+    }
+  }
+
+  /**
+   * Initializes durable segmented storage before recorder readiness.
+   *
+   * @returns {Promise<void>} Resolves when active and historical state is ready.
+   */
+  async function communicationLogInitializeSegmentStorage() {
+    logDiagnostic('debug', 'communication-log-segment-initialize-entered', {});
+    let phase = 'directory-name';
+    let directoryName = null;
+    try {
+      directoryName = communicationLogSegmentDirectoryName();
+      logDiagnostic('debug', 'communication-log-segment-directory-name-resolved', {
+        segment_directory: directoryName
+      });
+      phase = 'directory-create-open';
+      logDiagnostic('debug', 'communication-log-segment-initialize-started', {
+        segment_directory: directoryName
+      });
+      communicationLogSegmentDirectoryHandle =
+        await communicationLogDirectoryHandle.getDirectoryHandle(
+          directoryName,
+          { create: true }
+        );
+      logDiagnostic('debug', 'communication-log-segment-directory-ready', {
+        segment_directory: directoryName
+      });
+
+      phase = 'manifest-read';
+      communicationLogSegmentManifest = await communicationLogReadSegmentManifest();
+      logDiagnostic('debug', 'communication-log-segment-manifest-ready', {
+        segment_directory: directoryName,
+        next_ordinal: communicationLogSegmentManifest.next_ordinal,
+        historical_segments: communicationLogSegmentManifest.segments.length
+      });
+
+      phase = 'recovery';
+      logDiagnostic('debug', 'communication-log-segment-recovery-started', {
+        segment_directory: directoryName,
+        historical_segments: communicationLogSegmentManifest.segments.length
+      });
+      await communicationLogRecoverSegmentState();
+      logDiagnostic('debug', 'communication-log-segment-recovery-completed', {
+        segment_directory: directoryName,
+        historical_segments: communicationLogSegmentManifest.segments.length
+      });
+
+      phase = 'active-snapshot';
+      communicationLogActiveSegmentBytes =
+        (await communicationLogRefreshedFileSnapshot()).file.size;
+      logDiagnostic('debug', 'communication-log-segment-initialize-completed', {
+        segment_directory: directoryName,
+        active_segment_bytes: communicationLogActiveSegmentBytes,
+        historical_segments: communicationLogSegmentManifest.segments.length
+      });
+    } catch (error) {
+      logDiagnostic('warnings', 'communication-log-segment-initialize-failed', {
+        phase,
+        segment_directory: directoryName,
+        message: boundedDiagnosticText(errorMessage(error), 2000)
+      });
+      throw error;
+    }
+  }
+  /**
+   * Extracts the trustworthy earliest/latest record timestamps from exact JSONL bytes.
+   *
+   * @param {Uint8Array} bytes - Exact JSONL bytes.
+   * @returns {Object|null} ISO start/end timestamps, or null when none are trustworthy.
+   */
+  function communicationLogTimestampRangeFromJsonl(bytes) {
+    const text = new TextDecoder().decode(bytes);
+    let start = null;
+    let end = null;
+    for (const line of text.split('\n')) {
+      if (!line) continue;
+      let record;
+      try { record = JSON.parse(line); } catch { continue; }
+      const timestamp = typeof record?.timestamp === 'string' ? record.timestamp : null;
+      if (!timestamp || !Number.isFinite(Date.parse(timestamp))) continue;
+      if (start === null || timestamp < start) start = timestamp;
+      if (end === null || timestamp > end) end = timestamp;
+    }
+    return start === null ? null : { start_timestamp: start, end_timestamp: end };
+  }
+
+  /**
+   * Formats one ISO timestamp deterministically for cross-platform filenames.
+   *
+   * @param {string} timestamp - Trustworthy ISO timestamp.
+   * @returns {string} Filesystem-safe UTC timestamp.
+   */
+  function communicationLogArchiveTimestamp(timestamp) {
+    const date = new Date(timestamp);
+    if (!Number.isFinite(date.getTime())) throw new Error('Archive timestamp is not trustworthy.');
+    /**
+     * Pads one local date/time field to two digits.
+     *
+     * @param {number} value - Local calendar/time field.
+     * @returns {string} Two-digit field.
+     */
+    const pad = value => String(value).padStart(2, '0');
+    return `${date.getFullYear()},${pad(date.getMonth() + 1)},${pad(date.getDate())};`
+      + `${pad(date.getHours())},${pad(date.getMinutes())},${pad(date.getSeconds())}`;
+  }
+
+  /**
+   * Returns the final communication content time at whole-second precision.
+   *
+   * @param {Object} range - Trustworthy communication timestamp range.
+   * @returns {number} Unix modification time in milliseconds.
+   */
+  function communicationLogArchiveMTime(range) {
+    const endMs = Date.parse(range?.end_timestamp);
+    if (!Number.isFinite(endMs)) {
+      throw new Error('Communication archive end timestamp is not trustworthy.');
+    }
+    return Math.floor(endMs / 1000) * 1000;
+  }
+
+  /**
+   * Builds a role-explicit archive filename; collision suffix is inserted before the role.
+   *
+   * @param {string} base - Logical archive base name.
+   * @param {Object} range - Trustworthy start/end timestamps.
+   * @param {'seg'|'comm'|'log'} role - Archive role.
+   * @param {number} collision - Zero for normal name, positive for actual collision.
+   * @returns {string} Timestamped role-explicit archive filename.
+   */
+  function communicationLogRoleArchiveName(base, range, role, collision = 0) {
+    if (!range?.start_timestamp || !range?.end_timestamp) {
+      throw new Error('Archive content has no trustworthy timestamp range.');
+    }
+    const start = communicationLogArchiveTimestamp(range.start_timestamp);
+    const end = communicationLogArchiveTimestamp(range.end_timestamp);
+    const suffix = collision > 0 ? `(${collision})` : '';
+    return `${base}_${start}-${end}${suffix}.${role}.7z`;
+  }
+
+  /**
+   * Converts a user-facing archive-derived member name to the bridge's ASCII contract.
+   *
+   * @param {string} name - Desired member name.
+   * @returns {string} Deterministic printable-ASCII member name.
+   */
+  function communicationLogAsciiArchiveMemberName(name) {
+    return String(name).replace(/[^\\x20-\\x7e]/g, '_');
+  }
+
+  /**
+   * Returns the first unused role archive name without adding (N) unnecessarily.
+   *
+   * @param {Object} directory - Directory where the archive will be written.
+   * @param {string} base - Logical archive base.
+   * @param {Object} range - Trustworthy timestamp range.
+   * @param {'seg'|'comm'|'log'} role - Archive role.
+   * @returns {Promise<string>} Lowest-collision archive name.
+   */
+  async function communicationLogUnusedRoleArchiveName(directory, base, range, role) {
+    for (let collision = 0; ; collision += 1) {
+      const name = communicationLogRoleArchiveName(base, range, role, collision);
+      try {
+        await directory.getFileHandle(name, { create: false });
+      } catch (error) {
+        if (error?.name === 'NotFoundError') return name;
+        throw error;
+      }
+    }
+  }
+
+  /**
+   * Returns exact verified raw bytes for one historical segment.
+   *
+   * @param {Object} segment - Historical segment metadata.
+   * @returns {Promise<Uint8Array>} Verified raw JSONL segment bytes.
+   */
+  async function communicationLogReadHistoricalSegment(segment) {
+    /** Reads and extracts the committed archive representation for this segment. */
+    /**
+     * Reads and extracts the verified archive member for this segment.
+     *
+     * @returns {Promise<Uint8Array>} Exact extracted segment bytes.
+     */
+    const readArchive = async () => {
+      const handle = await communicationLogSegmentDirectoryHandle.getFileHandle(
+        segment.archive_name,
+        { create: false }
+      );
+      const archive = new Uint8Array(await (await handle.getFile()).arrayBuffer());
+      return extract7zArchive(archive);
+    };
+    let bytes;
+    if (segment.compression_state === 'compressed') {
+      bytes = await readArchive();
+    } else {
+      try {
+        const handle = await communicationLogSegmentDirectoryHandle.getFileHandle(
+          segment.raw_name,
+          { create: false }
+        );
+        bytes = new Uint8Array(await (await handle.getFile()).arrayBuffer());
+      } catch (error) {
+        if (error?.name !== 'NotFoundError') throw error;
+        bytes = await readArchive();
+      }
+    }
+    if (bytes.byteLength !== segment.raw_bytes
+        || await communicationLogSha256(bytes) !== segment.source_sha256) {
+      throw new Error(`Historical segment verification failed: segment ${segment.ordinal}`);
+    }
+    return bytes;
+  }
+
+  /**
+   * Reconstructs the logical JSONL stream in canonical ordinal order.
+   *
+   * @returns {Promise<Uint8Array>} Exact logical-log snapshot bytes.
+   */
+  async function communicationLogCaptureSnapshotPlan() {
+    await communicationLogCloseActiveWriter();
+    const active = await communicationLogRefreshedFileSnapshot();
+    const activeBytes = new Uint8Array(await active.file.arrayBuffer());
+    return {
+      segments: communicationLogSegmentManifest.segments.map(segment => ({ ...segment })),
+      active_bytes: activeBytes,
+      active_range: communicationLogTimestampRangeFromJsonl(activeBytes)
+    };
+  }
+
+  /**
+   * Reconstructs one previously frozen snapshot plan without holding the append queue.
+   *
+   * @param {Object|null} plan - Frozen segment membership and active prefix.
+   * @returns {Promise<Object>} Exact bytes and trustworthy content timestamp range.
+   */
+  async function communicationLogLogicalSnapshot(plan = null) {
+    const frozen = plan ?? await communicationLogCaptureSnapshotPlan();
+    const ordered = [...frozen.segments]
+      .sort((left, right) => left.ordinal - right.ordinal);
+    const parts = [];
+    let total = 0;
+    let startTimestamp = null;
+    let endTimestamp = null;
+    for (let index = 0; index < ordered.length; index += 1) {
+      const segment = ordered[index];
+      setStatus(`Duplicate: reading historical segments ${index + 1} of ${ordered.length}; recording continues.`);
+      const bytes = await communicationLogReadHistoricalSegment(segment);
+      parts.push(bytes);
+      total += bytes.byteLength;
+      if (total > COMMUNICATION_LOG_DUPLICATE_MAX_BYTES) {
+        throw new Error(
+          `Duplicate snapshot exceeds the ${COMMUNICATION_LOG_DUPLICATE_MAX_BYTES}-byte in-memory safety limit.`
+        );
+      }
+      startTimestamp ??= segment.start_timestamp ?? null;
+      endTimestamp = segment.end_timestamp ?? endTimestamp;
+    }
+    parts.push(frozen.active_bytes);
+    total += frozen.active_bytes.byteLength;
+    if (total > COMMUNICATION_LOG_DUPLICATE_MAX_BYTES) {
+      throw new Error(
+        `Duplicate snapshot exceeds the ${COMMUNICATION_LOG_DUPLICATE_MAX_BYTES}-byte in-memory safety limit.`
+      );
+    }
+    startTimestamp ??= frozen.active_range?.start_timestamp ?? null;
+    endTimestamp = frozen.active_range?.end_timestamp ?? endTimestamp;
+    if (!startTimestamp || !endTimestamp) {
+      throw new Error('Communication log snapshot has no trustworthy content timestamp range.');
+    }
+    setStatus('Duplicate: reconstructing exact logical JSONL; recording continues.');
+    const combined = new Uint8Array(total);
+    let offset = 0;
+    for (const part of parts) {
+      combined.set(part, offset);
+      offset += part.byteLength;
+    }
+    return {
+      bytes: combined,
+      start_timestamp: startTimestamp,
+      end_timestamp: endTimestamp
+    };
+  }
+
+  /**
+   * Compatibility helper returning only exact snapshot bytes.
+   *
+   * @returns {Promise<Uint8Array>} Exact logical snapshot bytes.
+   */
+  async function communicationLogLogicalSnapshotBytes() {
+    return (await communicationLogLogicalSnapshot()).bytes;
+  }
+
+  /**
+   * Clears historical segment membership for an explicit log reset.
+   *
+   * @returns {Promise<void>} Resolves after historical segment state is reset.
+   */
+  async function communicationLogResetSegmentHistory() {
+    if (!communicationLogSegmentDirectoryHandle) return;
+    await communicationLogCompressionChain;
+    const name = communicationLogSegmentDirectoryName();
+    await communicationLogDirectoryHandle.removeEntry(name, { recursive: true });
+    communicationLogSegmentDirectoryHandle =
+      await communicationLogDirectoryHandle.getDirectoryHandle(name, { create: true });
+    communicationLogSegmentManifest = await communicationLogReadSegmentManifest();
+    await communicationLogWriteSegmentManifest();
+    communicationLogActiveSegmentBytes = 0;
+  }
   /**
    * Creates independent state for one request/response body redaction stream.
    *
@@ -13354,699 +14047,6 @@ const STREAM7Z_WASM_GZIP_BASE64 = 'H4sICMtvuWoCA3N0cmVhbTd6Lndhc20A7L0JmBzFmSCa9
         body_omitted: 'binary'
       });
     }
-  /** Internal directory containing sealed/compressed segments for the logical log. */
-  let communicationLogSegmentDirectoryHandle = null;
-  /** Compact durable ordering/integrity metadata for the logical log. */
-  let communicationLogSegmentManifest = null;
-  /** Background compression chain; active recorder writes do not await it. */
-  let communicationLogCompressionChain = Promise.resolve();
-  /** Exact bytes accepted into the current active raw segment. */
-  let communicationLogActiveSegmentBytes = 0;
-
-  /**
-   * Returns the stable internal segment-directory name for this logical log.
-   *
-   * @returns {string} Stable internal directory name.
-   */
-  function communicationLogSegmentDirectoryName() {
-    const identity = sanitizeFileName(currentConversationId() || communicationLogConversationName() || 'conversation');
-    return `.DownloadConversation-${identity}-segments`;
-  }
-
-  /**
-   * Loads or initializes compact durable segment metadata.
-   *
-   * @returns {Promise<Object>} Current logical-log segment manifest.
-   */
-  async function communicationLogReadSegmentManifest() {
-    const directory = communicationLogSegmentDirectoryHandle;
-    if (!directory) throw new Error('Communication segment directory is not ready.');
-    try {
-      const handle = await directory.getFileHandle('manifest.json', { create: false });
-      const file = await handle.getFile();
-      const parsed = JSON.parse(await file.text());
-      if (parsed?.schema !== 1 || !Array.isArray(parsed.segments)) {
-        throw new Error('Invalid communication segment manifest.');
-      }
-      return parsed;
-    } catch (error) {
-      if (error?.name !== 'NotFoundError') throw error;
-      return {
-        schema: 1,
-        logical_log_id: currentConversationId() || crypto.randomUUID(),
-        next_ordinal: 1,
-        segments: []
-      };
-    }
-  }
-
-  /**
-   * Commits the current compact segment manifest.
-   *
-   * @returns {Promise<void>} Resolves after manifest commit.
-   */
-  async function communicationLogWriteSegmentManifest() {
-    const directory = communicationLogSegmentDirectoryHandle;
-    if (!directory || !communicationLogSegmentManifest) {
-      throw new Error('Communication segment manifest is not ready.');
-    }
-    const handle = await directory.getFileHandle('manifest.json', { create: true });
-    const writable = await handle.createWritable();
-    try {
-      await writable.write(JSON.stringify(communicationLogSegmentManifest, null, 2) + '\n');
-      await writable.close();
-    } catch (error) {
-      await abortWritableQuietly(writable);
-      throw error;
-    }
-  }
-
-  /**
-   * Hashes exact bytes for segment/archive verification.
-   *
-   * @param {Uint8Array} bytes - Exact bytes to hash.
-   * @returns {Promise<string>} Lowercase hexadecimal SHA-256 digest.
-   */
-  async function communicationLogSha256(bytes) {
-    const digest = await crypto.subtle.digest('SHA-256', bytes);
-    return Array.from(new Uint8Array(digest), byte => byte.toString(16).padStart(2, '0')).join('');
-  }
-
-  /**
-   * Writes and byte-verifies one internal segment file.
-   *
-   * @param {Object} directory - Target File System Access directory handle.
-   * @param {string} name - Exact target filename.
-   * @param {Uint8Array} bytes - Exact bytes to commit.
-   * @returns {Promise<Object>} Verified file handle.
-   */
-  async function communicationLogWriteExactFile(directory, name, bytes) {
-    const handle = await directory.getFileHandle(name, { create: true });
-    let writable = null;
-    try {
-      writable = await handle.createWritable();
-      await writable.write(bytes);
-      await writable.close();
-      writable = null;
-      const file = await handle.getFile();
-      const committed = new Uint8Array(await file.arrayBuffer());
-      if (committed.byteLength !== bytes.byteLength
-          || !(await communicationLogBytesEqual(committed, bytes))) {
-        throw new Error(`Exact file verification failed: ${name}`);
-      }
-      return handle;
-    } catch (error) {
-      await abortWritableQuietly(writable);
-      throw error;
-    }
-  }
-
-  /**
-   * Compares two byte arrays exactly.
-   *
-   * @param {Uint8Array} left - First byte array.
-   * @param {Uint8Array} right - Second byte array.
-   * @returns {Promise<boolean>} True when every byte is identical.
-   */
-  async function communicationLogBytesEqual(left, right) {
-    if (left.byteLength !== right.byteLength) return false;
-    for (let index = 0; index < left.byteLength; index += 1) {
-      if (left[index] !== right[index]) return false;
-    }
-    return true;
-  }
-
-  /**
-   * Compresses, round-trip verifies, then retires one sealed raw segment.
-   *
-   * @param {Object} segment - Durable sealed-segment metadata.
-   * @returns {Promise<void>} Resolves after verified compression or rejects while retaining raw bytes.
-   */
-  async function communicationLogCompressSealedSegment(segment) {
-    const directory = communicationLogSegmentDirectoryHandle;
-    if (!directory) throw new Error('Communication segment directory is not ready.');
-    const rawHandle = await directory.getFileHandle(segment.raw_name, { create: false });
-    const rawFile = await rawHandle.getFile();
-    const rawBytes = new Uint8Array(await rawFile.arrayBuffer());
-    const sourceHash = await communicationLogSha256(rawBytes);
-    if (rawBytes.byteLength !== segment.raw_bytes || sourceHash !== segment.source_sha256) {
-      throw new Error(`Sealed segment ${segment.ordinal} changed before compression.`);
-    }
-
-    try {
-      segment.compression_state = 'compressing';
-      setStatus(`Communication log: compressing sealed segment ${segment.ordinal}; recording continues.`);
-      await communicationLogWriteSegmentManifest();
-      const archiveBytes = await create7zArchive(
-        rawBytes,
-        segment.member_name,
-        communicationLogArchiveMTime(segment)
-      );
-      const archiveHandle = await communicationLogWriteExactFile(
-        directory,
-        segment.archive_name,
-        archiveBytes
-      );
-      const committedArchive = new Uint8Array(await (await archiveHandle.getFile()).arrayBuffer());
-      const extracted = await extract7zArchive(committedArchive);
-      const extractedHash = await communicationLogSha256(extracted);
-      if (!(await communicationLogBytesEqual(extracted, rawBytes))
-          || extractedHash !== segment.source_sha256) {
-        throw new Error(`Archive round-trip verification failed for segment ${segment.ordinal}.`);
-      }
-      segment.archive_bytes = committedArchive.byteLength;
-      segment.compression_state = 'compressed';
-      segment.verified_sha256 = extractedHash;
-      await communicationLogWriteSegmentManifest();
-      await directory.removeEntry(segment.raw_name);
-      setStatus(`Communication log: sealed segment ${segment.ordinal} compressed; recording continues.`);
-      logDiagnostic('debug', 'communication-log-segment-compressed', {
-        ordinal: segment.ordinal,
-        raw_bytes: segment.raw_bytes,
-        archive_bytes: segment.archive_bytes
-      });
-    } catch (error) {
-      segment.compression_state = 'failed';
-      segment.failure = boundedDiagnosticText(errorMessage(error), 2000);
-      await communicationLogWriteSegmentManifest().catch(() => {});
-      setStatus(`Communication log: segment ${segment.ordinal} compression failed; sealed raw retained and recording continues.`);
-      logDiagnostic('warnings', 'communication-log-segment-compression-failed', {
-        ordinal: segment.ordinal,
-        raw_name: segment.raw_name,
-        message: segment.failure
-      });
-      throw error;
-    }
-  }
-
-  /**
-   * Serializes background compression without blocking active appends.
-   *
-   * @param {Object} segment - Durable sealed-segment metadata.
-   * @returns {Promise<void>} Compression operation promise.
-   */
-  function communicationLogQueueSegmentCompression(segment) {
-    const operation = communicationLogCompressionChain.then(
-      () => communicationLogCompressSealedSegment(segment)
-    );
-    communicationLogCompressionChain = operation.catch(() => undefined);
-    return operation;
-  }
-
-  /**
-   * Verifies and clears the active file after sealing its exact bytes.
-   *
-   * @param {number} expectedBytes - Expected committed active byte count.
-   * @param {string} expectedHash - Expected SHA-256 of committed active bytes.
-   * @returns {Promise<void>} Resolves after verified truncation.
-   */
-  async function communicationLogTruncateActiveAfterSeal(expectedBytes, expectedHash) {
-    const snapshot = await communicationLogRefreshedFileSnapshot();
-    const bytes = new Uint8Array(await snapshot.file.arrayBuffer());
-    if (bytes.byteLength !== expectedBytes || await communicationLogSha256(bytes) !== expectedHash) {
-      throw new Error('Active communication segment changed during seal transaction.');
-    }
-    let writable = null;
-    try {
-      writable = await snapshot.handle.createWritable({ keepExistingData: true });
-      await writable.truncate(0);
-      await writable.close();
-      writable = null;
-      communicationLogWriterDirty = false;
-      communicationLogActiveSegmentBytes = 0;
-    } catch (error) {
-      await abortWritableQuietly(writable);
-      throw error;
-    }
-  }
-
-  /**
-   * Freezes the active segment, establishes the next active file, then queues compression.
-   *
-   * @returns {Promise<Object|null>} Sealed segment metadata, or null for an empty active segment.
-   */
-  async function communicationLogSealActiveSegment() {
-    await communicationLogCloseActiveWriter();
-    const snapshot = await communicationLogRefreshedFileSnapshot();
-    if (snapshot.file.size === 0) return null;
-    const rawBytes = new Uint8Array(await snapshot.file.arrayBuffer());
-    const range = communicationLogTimestampRangeFromJsonl(rawBytes);
-    if (!range) {
-      throw new Error('Sealed communication segment has no trustworthy content timestamp range.');
-    }
-    const ordinal = communicationLogSegmentManifest.next_ordinal++;
-    const suffix = String(ordinal).padStart(6, '0');
-    const memberStart = communicationLogArchiveTimestamp(range.start_timestamp);
-    const memberEnd = communicationLogArchiveTimestamp(range.end_timestamp);
-    const rawName = `segment-${suffix}_${memberStart}-${memberEnd}.jsonl`;
-    const archiveBase = communicationLogFileName.replace(/\.jsonl$/i, '');
-    const archiveName = await communicationLogUnusedRoleArchiveName(
-      communicationLogSegmentDirectoryHandle,
-      archiveBase,
-      range,
-      'seg'
-    );
-    const sourceHash = await communicationLogSha256(rawBytes);
-    await communicationLogWriteExactFile(
-      communicationLogSegmentDirectoryHandle,
-      rawName,
-      rawBytes
-    );
-    const segment = {
-      ordinal,
-      raw_name: rawName,
-      archive_name: archiveName,
-      member_name: rawName,
-      raw_bytes: rawBytes.byteLength,
-      source_sha256: sourceHash,
-      start_timestamp: range.start_timestamp,
-      end_timestamp: range.end_timestamp,
-      compression_state: 'sealed'
-    };
-    communicationLogSegmentManifest.segments.push(segment);
-    await communicationLogWriteSegmentManifest();
-    await communicationLogTruncateActiveAfterSeal(rawBytes.byteLength, sourceHash);
-    await communicationLogOpenWriter();
-    void communicationLogQueueSegmentCompression(segment).catch(() => {});
-    return segment;
-  }
-
-
-
-  /**
-   * Appends one complete JSONL record and rotates only after its record boundary.
-   *
-   * @param {Object} record - Complete structured communication record.
-   * @returns {Promise<void>} Resolves after the record is accepted by active storage.
-   */
-  async function communicationLogStorageAppendRecord(record) {
-    const line = `${JSON.stringify(record)}\n`;
-    const lineBytes = new TextEncoder().encode(line).byteLength;
-    const queued = communicationLogEnqueue('storage-append', async () => {
-      await communicationLogOpenWriter();
-      await communicationLogWritable.write(line);
-      communicationLogWriterDirty = true;
-      communicationLogActiveSegmentBytes += lineBytes;
-      if (communicationLogActiveSegmentBytes >= COMMUNICATION_LOG_SEGMENT_TARGET_BYTES) {
-        await communicationLogSealActiveSegment();
-      }
-    });
-    return queued.operation;
-  }
-
-  /** Segmented communication storage facade. */
-  const communicationLogStorage = Object.freeze({
-    appendRecord: communicationLogStorageAppendRecord
-  });
-  /**
-   * Recovers sealed pending/failed segments after reload.
-   *
-   * @returns {Promise<void>} Resolves after recovery work is scheduled.
-   */
-  async function communicationLogRecoverSegmentState() {
-    for (const segment of communicationLogSegmentManifest.segments) {
-      if (segment.compression_state === 'compressed') {
-        try {
-          const archiveHandle = await communicationLogSegmentDirectoryHandle.getFileHandle(
-            segment.archive_name,
-            { create: false }
-          );
-          const archive = new Uint8Array(await (await archiveHandle.getFile()).arrayBuffer());
-          const extracted = await extract7zArchive(archive);
-          const hash = await communicationLogSha256(extracted);
-          if (extracted.byteLength !== segment.raw_bytes || hash !== segment.source_sha256) {
-            throw new Error('compressed segment verification mismatch');
-          }
-          try {
-            const staleRaw = await communicationLogSegmentDirectoryHandle.getFileHandle(
-              segment.raw_name,
-              { create: false }
-            );
-            const staleBytes = new Uint8Array(await (await staleRaw.getFile()).arrayBuffer());
-            if (staleBytes.byteLength === segment.raw_bytes
-                && await communicationLogSha256(staleBytes) === segment.source_sha256) {
-              await communicationLogSegmentDirectoryHandle.removeEntry(segment.raw_name);
-            }
-          } catch (error) {
-            if (error?.name !== 'NotFoundError') throw error;
-          }
-          continue;
-        } catch (archiveError) {
-          try {
-            await communicationLogSegmentDirectoryHandle.getFileHandle(
-              segment.raw_name,
-              { create: false }
-            );
-            segment.compression_state = 'sealed';
-            segment.failure = `Recovery replaced invalid compressed state: ${errorMessage(archiveError)}`;
-            await communicationLogWriteSegmentManifest();
-          } catch (rawError) {
-            if (rawError?.name === 'NotFoundError') {
-              throw new Error(
-                `Compressed segment ${segment.ordinal} is invalid and has no recoverable raw source.`
-              );
-            }
-            throw rawError;
-          }
-        }
-      }
-
-      let rawHandle;
-      try {
-        rawHandle = await communicationLogSegmentDirectoryHandle.getFileHandle(
-          segment.raw_name,
-          { create: false }
-        );
-      } catch (error) {
-        if (error?.name === 'NotFoundError') {
-          throw new Error(`Missing recoverable raw segment: ${segment.raw_name}`);
-        }
-        throw error;
-      }
-      const rawBytes = new Uint8Array(await (await rawHandle.getFile()).arrayBuffer());
-      const hash = await communicationLogSha256(rawBytes);
-      if (rawBytes.byteLength !== segment.raw_bytes || hash !== segment.source_sha256) {
-        throw new Error(`Recoverable raw segment verification failed: ${segment.raw_name}`);
-      }
-      const active = await communicationLogRefreshedFileSnapshot();
-      if (active.file.size === segment.raw_bytes) {
-        const activeBytes = new Uint8Array(await active.file.arrayBuffer());
-        if (await communicationLogSha256(activeBytes) === segment.source_sha256) {
-          await communicationLogTruncateActiveAfterSeal(segment.raw_bytes, segment.source_sha256);
-        }
-      }
-      segment.compression_state = 'sealed';
-      void communicationLogQueueSegmentCompression(segment).catch(() => {});
-    }
-  }
-
-  /**
-   * Initializes durable segmented storage before recorder readiness.
-   *
-   * @returns {Promise<void>} Resolves when active and historical state is ready.
-   */
-  async function communicationLogInitializeSegmentStorage() {
-    logDiagnostic('debug', 'communication-log-segment-initialize-entered', {});
-    let phase = 'directory-name';
-    let directoryName = null;
-    try {
-      directoryName = communicationLogSegmentDirectoryName();
-      logDiagnostic('debug', 'communication-log-segment-directory-name-resolved', {
-        segment_directory: directoryName
-      });
-      phase = 'directory-create-open';
-      logDiagnostic('debug', 'communication-log-segment-initialize-started', {
-        segment_directory: directoryName
-      });
-      communicationLogSegmentDirectoryHandle =
-        await communicationLogDirectoryHandle.getDirectoryHandle(
-          directoryName,
-          { create: true }
-        );
-      logDiagnostic('debug', 'communication-log-segment-directory-ready', {
-        segment_directory: directoryName
-      });
-
-      phase = 'manifest-read';
-      communicationLogSegmentManifest = await communicationLogReadSegmentManifest();
-      logDiagnostic('debug', 'communication-log-segment-manifest-ready', {
-        segment_directory: directoryName,
-        next_ordinal: communicationLogSegmentManifest.next_ordinal,
-        historical_segments: communicationLogSegmentManifest.segments.length
-      });
-
-      phase = 'recovery';
-      logDiagnostic('debug', 'communication-log-segment-recovery-started', {
-        segment_directory: directoryName,
-        historical_segments: communicationLogSegmentManifest.segments.length
-      });
-      await communicationLogRecoverSegmentState();
-      logDiagnostic('debug', 'communication-log-segment-recovery-completed', {
-        segment_directory: directoryName,
-        historical_segments: communicationLogSegmentManifest.segments.length
-      });
-
-      phase = 'active-snapshot';
-      communicationLogActiveSegmentBytes =
-        (await communicationLogRefreshedFileSnapshot()).file.size;
-      logDiagnostic('debug', 'communication-log-segment-initialize-completed', {
-        segment_directory: directoryName,
-        active_segment_bytes: communicationLogActiveSegmentBytes,
-        historical_segments: communicationLogSegmentManifest.segments.length
-      });
-    } catch (error) {
-      logDiagnostic('warnings', 'communication-log-segment-initialize-failed', {
-        phase,
-        segment_directory: directoryName,
-        message: boundedDiagnosticText(errorMessage(error), 2000)
-      });
-      throw error;
-    }
-  }
-  /**
-   * Extracts the trustworthy earliest/latest record timestamps from exact JSONL bytes.
-   *
-   * @param {Uint8Array} bytes - Exact JSONL bytes.
-   * @returns {Object|null} ISO start/end timestamps, or null when none are trustworthy.
-   */
-  function communicationLogTimestampRangeFromJsonl(bytes) {
-    const text = new TextDecoder().decode(bytes);
-    let start = null;
-    let end = null;
-    for (const line of text.split('\n')) {
-      if (!line) continue;
-      let record;
-      try { record = JSON.parse(line); } catch { continue; }
-      const timestamp = typeof record?.timestamp === 'string' ? record.timestamp : null;
-      if (!timestamp || !Number.isFinite(Date.parse(timestamp))) continue;
-      if (start === null || timestamp < start) start = timestamp;
-      if (end === null || timestamp > end) end = timestamp;
-    }
-    return start === null ? null : { start_timestamp: start, end_timestamp: end };
-  }
-
-  /**
-   * Formats one ISO timestamp deterministically for cross-platform filenames.
-   *
-   * @param {string} timestamp - Trustworthy ISO timestamp.
-   * @returns {string} Filesystem-safe UTC timestamp.
-   */
-  function communicationLogArchiveTimestamp(timestamp) {
-    const date = new Date(timestamp);
-    if (!Number.isFinite(date.getTime())) throw new Error('Archive timestamp is not trustworthy.');
-    /**
-     * Pads one local date/time field to two digits.
-     *
-     * @param {number} value - Local calendar/time field.
-     * @returns {string} Two-digit field.
-     */
-    const pad = value => String(value).padStart(2, '0');
-    return `${date.getFullYear()},${pad(date.getMonth() + 1)},${pad(date.getDate())};`
-      + `${pad(date.getHours())},${pad(date.getMinutes())},${pad(date.getSeconds())}`;
-  }
-
-  /**
-   * Returns the final communication content time at whole-second precision.
-   *
-   * @param {Object} range - Trustworthy communication timestamp range.
-   * @returns {number} Unix modification time in milliseconds.
-   */
-  function communicationLogArchiveMTime(range) {
-    const endMs = Date.parse(range?.end_timestamp);
-    if (!Number.isFinite(endMs)) {
-      throw new Error('Communication archive end timestamp is not trustworthy.');
-    }
-    return Math.floor(endMs / 1000) * 1000;
-  }
-
-  /**
-   * Builds a role-explicit archive filename; collision suffix is inserted before the role.
-   *
-   * @param {string} base - Logical archive base name.
-   * @param {Object} range - Trustworthy start/end timestamps.
-   * @param {'seg'|'comm'|'log'} role - Archive role.
-   * @param {number} collision - Zero for normal name, positive for actual collision.
-   * @returns {string} Timestamped role-explicit archive filename.
-   */
-  function communicationLogRoleArchiveName(base, range, role, collision = 0) {
-    if (!range?.start_timestamp || !range?.end_timestamp) {
-      throw new Error('Archive content has no trustworthy timestamp range.');
-    }
-    const start = communicationLogArchiveTimestamp(range.start_timestamp);
-    const end = communicationLogArchiveTimestamp(range.end_timestamp);
-    const suffix = collision > 0 ? `(${collision})` : '';
-    return `${base}_${start}-${end}${suffix}.${role}.7z`;
-  }
-
-  /**
-   * Converts a user-facing archive-derived member name to the bridge's ASCII contract.
-   *
-   * @param {string} name - Desired member name.
-   * @returns {string} Deterministic printable-ASCII member name.
-   */
-  function communicationLogAsciiArchiveMemberName(name) {
-    return String(name).replace(/[^\\x20-\\x7e]/g, '_');
-  }
-
-  /**
-   * Returns the first unused role archive name without adding (N) unnecessarily.
-   *
-   * @param {Object} directory - Directory where the archive will be written.
-   * @param {string} base - Logical archive base.
-   * @param {Object} range - Trustworthy timestamp range.
-   * @param {'seg'|'comm'|'log'} role - Archive role.
-   * @returns {Promise<string>} Lowest-collision archive name.
-   */
-  async function communicationLogUnusedRoleArchiveName(directory, base, range, role) {
-    for (let collision = 0; ; collision += 1) {
-      const name = communicationLogRoleArchiveName(base, range, role, collision);
-      try {
-        await directory.getFileHandle(name, { create: false });
-      } catch (error) {
-        if (error?.name === 'NotFoundError') return name;
-        throw error;
-      }
-    }
-  }
-
-  /**
-   * Returns exact verified raw bytes for one historical segment.
-   *
-   * @param {Object} segment - Historical segment metadata.
-   * @returns {Promise<Uint8Array>} Verified raw JSONL segment bytes.
-   */
-  async function communicationLogReadHistoricalSegment(segment) {
-    /** Reads and extracts the committed archive representation for this segment. */
-    /**
-     * Reads and extracts the verified archive member for this segment.
-     *
-     * @returns {Promise<Uint8Array>} Exact extracted segment bytes.
-     */
-    const readArchive = async () => {
-      const handle = await communicationLogSegmentDirectoryHandle.getFileHandle(
-        segment.archive_name,
-        { create: false }
-      );
-      const archive = new Uint8Array(await (await handle.getFile()).arrayBuffer());
-      return extract7zArchive(archive);
-    };
-    let bytes;
-    if (segment.compression_state === 'compressed') {
-      bytes = await readArchive();
-    } else {
-      try {
-        const handle = await communicationLogSegmentDirectoryHandle.getFileHandle(
-          segment.raw_name,
-          { create: false }
-        );
-        bytes = new Uint8Array(await (await handle.getFile()).arrayBuffer());
-      } catch (error) {
-        if (error?.name !== 'NotFoundError') throw error;
-        bytes = await readArchive();
-      }
-    }
-    if (bytes.byteLength !== segment.raw_bytes
-        || await communicationLogSha256(bytes) !== segment.source_sha256) {
-      throw new Error(`Historical segment verification failed: segment ${segment.ordinal}`);
-    }
-    return bytes;
-  }
-
-  /**
-   * Reconstructs the logical JSONL stream in canonical ordinal order.
-   *
-   * @returns {Promise<Uint8Array>} Exact logical-log snapshot bytes.
-   */
-  async function communicationLogCaptureSnapshotPlan() {
-    await communicationLogCloseActiveWriter();
-    const active = await communicationLogRefreshedFileSnapshot();
-    const activeBytes = new Uint8Array(await active.file.arrayBuffer());
-    return {
-      segments: communicationLogSegmentManifest.segments.map(segment => ({ ...segment })),
-      active_bytes: activeBytes,
-      active_range: communicationLogTimestampRangeFromJsonl(activeBytes)
-    };
-  }
-
-  /**
-   * Reconstructs one previously frozen snapshot plan without holding the append queue.
-   *
-   * @param {Object|null} plan - Frozen segment membership and active prefix.
-   * @returns {Promise<Object>} Exact bytes and trustworthy content timestamp range.
-   */
-  async function communicationLogLogicalSnapshot(plan = null) {
-    const frozen = plan ?? await communicationLogCaptureSnapshotPlan();
-    const ordered = [...frozen.segments]
-      .sort((left, right) => left.ordinal - right.ordinal);
-    const parts = [];
-    let total = 0;
-    let startTimestamp = null;
-    let endTimestamp = null;
-    for (let index = 0; index < ordered.length; index += 1) {
-      const segment = ordered[index];
-      setStatus(`Duplicate: reading historical segments ${index + 1} of ${ordered.length}; recording continues.`);
-      const bytes = await communicationLogReadHistoricalSegment(segment);
-      parts.push(bytes);
-      total += bytes.byteLength;
-      if (total > COMMUNICATION_LOG_DUPLICATE_MAX_BYTES) {
-        throw new Error(
-          `Duplicate snapshot exceeds the ${COMMUNICATION_LOG_DUPLICATE_MAX_BYTES}-byte in-memory safety limit.`
-        );
-      }
-      startTimestamp ??= segment.start_timestamp ?? null;
-      endTimestamp = segment.end_timestamp ?? endTimestamp;
-    }
-    parts.push(frozen.active_bytes);
-    total += frozen.active_bytes.byteLength;
-    if (total > COMMUNICATION_LOG_DUPLICATE_MAX_BYTES) {
-      throw new Error(
-        `Duplicate snapshot exceeds the ${COMMUNICATION_LOG_DUPLICATE_MAX_BYTES}-byte in-memory safety limit.`
-      );
-    }
-    startTimestamp ??= frozen.active_range?.start_timestamp ?? null;
-    endTimestamp = frozen.active_range?.end_timestamp ?? endTimestamp;
-    if (!startTimestamp || !endTimestamp) {
-      throw new Error('Communication log snapshot has no trustworthy content timestamp range.');
-    }
-    setStatus('Duplicate: reconstructing exact logical JSONL; recording continues.');
-    const combined = new Uint8Array(total);
-    let offset = 0;
-    for (const part of parts) {
-      combined.set(part, offset);
-      offset += part.byteLength;
-    }
-    return {
-      bytes: combined,
-      start_timestamp: startTimestamp,
-      end_timestamp: endTimestamp
-    };
-  }
-
-  /**
-   * Compatibility helper returning only exact snapshot bytes.
-   *
-   * @returns {Promise<Uint8Array>} Exact logical snapshot bytes.
-   */
-  async function communicationLogLogicalSnapshotBytes() {
-    return (await communicationLogLogicalSnapshot()).bytes;
-  }
-
-  /**
-   * Clears historical segment membership for an explicit log reset.
-   *
-   * @returns {Promise<void>} Resolves after historical segment state is reset.
-   */
-  async function communicationLogResetSegmentHistory() {
-    if (!communicationLogSegmentDirectoryHandle) return;
-    await communicationLogCompressionChain;
-    const name = communicationLogSegmentDirectoryName();
-    await communicationLogDirectoryHandle.removeEntry(name, { recursive: true });
-    communicationLogSegmentDirectoryHandle =
-      await communicationLogDirectoryHandle.getDirectoryHandle(name, { create: true });
-    communicationLogSegmentManifest = await communicationLogReadSegmentManifest();
-    await communicationLogWriteSegmentManifest();
-    communicationLogActiveSegmentBytes = 0;
-  }
   }
 
   /**
