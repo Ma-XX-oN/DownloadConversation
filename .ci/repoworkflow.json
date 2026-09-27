@@ -32,8 +32,8 @@
       ],
       "verifierCommand": [
         "node",
-        "scripts/verify-userscript-artifact.mjs",
-        "chatgpt-conversation-markdown-export.user.js"
+        "scripts/build-userscript.mjs",
+        "--check"
       ],
       "outputs": [
         "chatgpt-conversation-markdown-export.user.js"
