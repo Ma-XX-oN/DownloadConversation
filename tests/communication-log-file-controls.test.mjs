@@ -224,7 +224,8 @@ test('duplicate waits for pending writes, snapshots exact committed bytes, and k
   assert.equal(api.state().fileName, 'DownloadConversation_test.jsonl');
   assert.equal(api.state().writable, null);
   assert.equal(api.state().dirty, false);
-  assert.equal(events[0], 'active-close');
+  assert.ok(events.includes('active-close'));
+  assert.ok(events.indexOf('status:Duplicate: establishing snapshot boundary; 0.0s elapsed.') < events.indexOf('active-close'));
 
   files.set('DownloadConversation_test.jsonl', new Blob(['changed later']));
   assert.equal(
