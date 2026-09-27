@@ -278,7 +278,52 @@
    */
   async function communicationLogRecoverSegmentState() {
     for (const segment of communicationLogSegmentManifest.segments) {
-      if (segment.compression_state === 'compressed') continue;
+      if (segment.compression_state === 'compressed') {
+        try {
+          const archiveHandle = await communicationLogSegmentDirectoryHandle.getFileHandle(
+            segment.archive_name,
+            { create: false }
+          );
+          const archive = new Uint8Array(await (await archiveHandle.getFile()).arrayBuffer());
+          const extracted = await extract7zArchive(archive);
+          const hash = await communicationLogSha256(extracted);
+          if (extracted.byteLength !== segment.raw_bytes || hash !== segment.source_sha256) {
+            throw new Error('compressed segment verification mismatch');
+          }
+          try {
+            const staleRaw = await communicationLogSegmentDirectoryHandle.getFileHandle(
+              segment.raw_name,
+              { create: false }
+            );
+            const staleBytes = new Uint8Array(await (await staleRaw.getFile()).arrayBuffer());
+            if (staleBytes.byteLength === segment.raw_bytes
+                && await communicationLogSha256(staleBytes) === segment.source_sha256) {
+              await communicationLogSegmentDirectoryHandle.removeEntry(segment.raw_name);
+            }
+          } catch (error) {
+            if (error?.name !== 'NotFoundError') throw error;
+          }
+          continue;
+        } catch (archiveError) {
+          try {
+            await communicationLogSegmentDirectoryHandle.getFileHandle(
+              segment.raw_name,
+              { create: false }
+            );
+            segment.compression_state = 'sealed';
+            segment.failure = `Recovery replaced invalid compressed state: ${errorMessage(archiveError)}`;
+            await communicationLogWriteSegmentManifest();
+          } catch (rawError) {
+            if (rawError?.name === 'NotFoundError') {
+              throw new Error(
+                `Compressed segment ${segment.ordinal} is invalid and has no recoverable raw source.`
+              );
+            }
+            throw rawError;
+          }
+        }
+      }
+
       let rawHandle;
       try {
         rawHandle = await communicationLogSegmentDirectoryHandle.getFileHandle(
