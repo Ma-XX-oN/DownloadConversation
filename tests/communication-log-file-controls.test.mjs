@@ -87,11 +87,27 @@ function issue134Harness(initialFiles = {}) {
   };
 
   vm.runInNewContext(
-    `${diskHarnessSource()}\ncommunicationLogDirectoryHandle = this.__issue134Directory;\ncommunicationLogFileName = 'DownloadConversation_test.jsonl';\ncommunicationLogReady = true;\ncommunicationLogWriteChain = Promise.resolve();\ncommunicationLogReportFailure = (stage, error) => {\n  this.__issue134Events.push(\`failure:\${stage}:\${error?.message ?? error}\`);\n};\ncommunicationLogBytesEqual = async (left, right) => {\n  if (left.byteLength !== right.byteLength) return false;\n  for (let index = 0; index < left.byteLength; index += 1) {\n    if (left[index] !== right[index]) return false;\n  }\n  return true;\n};\ncommunicationLogLogicalSnapshotBytes = async () => {
+    `${diskHarnessSource()}\ncommunicationLogDirectoryHandle = this.__issue134Directory;\ncommunicationLogFileName = 'DownloadConversation_test.jsonl';\ncommunicationLogReady = true;\ncommunicationLogWriteChain = Promise.resolve();\ncommunicationLogReportFailure = (stage, error) => {\n  this.__issue134Events.push(\`failure:\${stage}:\${error?.message ?? error}\`);\n};\ncommunicationLogBytesEqual = async (left, right) => {\n  if (left.byteLength !== right.byteLength) return false;\n  for (let index = 0; index < left.byteLength; index += 1) {\n    if (left[index] !== right[index]) return false;\n  }\n  return true;\n};\ncommunicationLogCaptureSnapshotPlan = async () => {
   await communicationLogCloseActiveWriter();
   const handle = await communicationLogDirectoryHandle.getFileHandle(communicationLogFileName);
-  return new Uint8Array(await (await handle.getFile()).arrayBuffer());
+  return { active_bytes: new Uint8Array(await (await handle.getFile()).arrayBuffer()) };
 };
+communicationLogLogicalSnapshot = async plan => ({
+  bytes: plan.active_bytes,
+  start_timestamp: '2026-09-27T01:02:03.004Z',
+  end_timestamp: '2026-09-27T01:02:05.006Z'
+});
+communicationLogAsciiArchiveMemberName = name => name;
+communicationLogUnusedRoleArchiveName = async (directory, base, _range, role) => {
+  const stem = `${base}_20260927T010203004Z_20260927T010205006Z`;
+  for (let collision = 0; ; collision += 1) {
+    const suffix = collision ? `(${collision})` : '';
+    const name = `${stem}${suffix}.${role}.7z`;
+    try { await directory.getFileHandle(name); }
+    catch (error) { if (error?.name === 'NotFoundError') return name; throw error; }
+  }
+};
+setStatus = message => this.__issue134Events.push(`status:${message}`);
 create7zArchive = async (bytes, memberName) => {\n  const text = new TextDecoder().decode(bytes);\n  this.__issue134Events.push(\`archive:\${memberName}:\${text}\`);\n  return new TextEncoder().encode(\`7Z:\${memberName}:\\n\${text}\`);\n};\nextract7zArchive = async bytes => {\n  const text = new TextDecoder().decode(bytes);\n  const newline = text.indexOf('\\n');\n  return new TextEncoder().encode(text.slice(newline + 1));\n};\nthis.__issue134 = {\n  rename: communicationLogRename,\n  duplicate: communicationLogArchiveDuplicate,\n  duplicateName: communicationLogDuplicateFileName,\n  departureCheckpoint: typeof communicationLogCheckpointForDocumentDeparture === 'function'\n    ? communicationLogCheckpointForDocumentDeparture\n    : null,\n  setWriter(writer, dirty) {\n    communicationLogWritable = writer;\n    communicationLogWriterDirty = dirty;\n  },\n  setWriteChain(chain) {\n    communicationLogWriteChain = chain;\n  },\n  state() {\n    return {\n      writable: communicationLogWritable,\n      dirty: communicationLogWriterDirty,\n      fileName: communicationLogFileName\n    };\n  }\n};`,
     context
   );
@@ -159,7 +175,7 @@ test('document-departure checkpoint waits for queued writes and commits the dirt
     /addEventListener\('pagehide',[\s\S]*communicationLogCheckpointForDocumentDeparture\('pagehide'\)/);
 });
 
-test('duplicate names use the lowest unused positive suffix with no space before parenthesis', async () => {
+test('timestamped duplicate archive omits (N) unless the complete name collides', async () => {
   const { api, directory } = issue134Harness({
     'DownloadConversation_test.jsonl': 'source',
     'DownloadConversation_test(1).jsonl': 'one',
@@ -170,10 +186,11 @@ test('duplicate names use the lowest unused positive suffix with no space before
   assert.equal(api.duplicateName('archive.tar.gz', 4), 'archive.tar(4).gz');
   assert.equal(api.duplicateName('no-extension', 3), 'no-extension(3)');
 
-  await assert.rejects(directory.getFileHandle('DownloadConversation_test(3).7z'),
-    error => error?.name === 'NotFoundError');
   const duplicated = await api.duplicate();
-  assert.equal(duplicated, 'DownloadConversation_test(3).7z');
+  assert.equal(
+    duplicated,
+    'DownloadConversation_test_20260927T010203004Z_20260927T010205006Z.comm.7z'
+  );
 });
 
 test('duplicate waits for pending writes, snapshots exact committed bytes, and keeps the active filename', async () => {
@@ -195,13 +212,13 @@ test('duplicate waits for pending writes, snapshots exact committed bytes, and k
   releasePending();
   const duplicateName = await operation;
 
-  assert.equal(duplicateName, 'DownloadConversation_test(1).7z');
+  assert.equal(duplicateName, 'DownloadConversation_test_20260927T010203004Z_20260927T010205006Z.comm.7z');
   assert.equal(
     await blobText(files.get(duplicateName)),
-    '7Z:DownloadConversation_test(1).jsonl:\nalpha\nbeta\n'
+    '7Z:DownloadConversation_test_20260927T010203004Z_20260927T010205006Z.jsonl:\nalpha\nbeta\n'
   );
   assert.ok(events.includes(
-    'archive:DownloadConversation_test(1).jsonl:alpha\nbeta\n'
+    'archive:DownloadConversation_test_20260927T010203004Z_20260927T010205006Z.jsonl:alpha\nbeta\n'
   ));
   assert.equal(api.state().fileName, 'DownloadConversation_test.jsonl');
   assert.equal(api.state().writable, null);
@@ -211,7 +228,7 @@ test('duplicate waits for pending writes, snapshots exact committed bytes, and k
   files.set('DownloadConversation_test.jsonl', new Blob(['changed later']));
   assert.equal(
     await blobText(files.get(duplicateName)),
-    '7Z:DownloadConversation_test(1).jsonl:\nalpha\nbeta\n',
+    '7Z:DownloadConversation_test_20260927T010203004Z_20260927T010205006Z.jsonl:\nalpha\nbeta\n',
     'Later writes to the active log must not mutate the archived duplicate snapshot.'
   );
 });
@@ -281,11 +298,13 @@ test('communication-log mutators share queue, writer-close, and panel action inf
 });
 
 
-test('Issue 166 Duplicate creates a 7z archive instead of a raw JSONL sibling', () => {
-  assert.match(downloadConversationSource, /communicationLogDuplicateArchiveFileName\(/);
-  assert.match(downloadConversationSource, /const logicalSnapshot = await communicationLogLogicalSnapshotBytes\(\);/);
-  assert.match(downloadConversationSource, /await create7zArchive\(\s*logicalSnapshot,\s*memberName\s*\)/);
-  assert.match(downloadConversationSource, /application\/x-7z-compressed/);
+test('Issue 166 Duplicate creates a timestamped consolidated comm archive', () => {
+  const duplicate = diskFunctionSource('communicationLogArchiveDuplicate');
+  assert.match(duplicate, /communicationLogCaptureSnapshotPlan/);
+  assert.match(duplicate, /communicationLogLogicalSnapshot\(plan\)/);
+  assert.match(duplicate, /'comm'/);
+  assert.match(duplicate, /create7zArchive\(logicalSnapshot\.bytes, memberName\)/);
+  assert.match(duplicate, /application\/x-7z-compressed/);
   assert.doesNotMatch(
     downloadConversationSource,
     /await communicationLogCopyForRename\(sourceSnapshot\.file, duplicateName\);\s*return duplicateName;/,
