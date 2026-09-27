@@ -32,7 +32,14 @@
    * @returns {Promise<boolean>} True when logging becomes ready.
    */
   async function communicationLogActivateDirectory(handle) {
+    logDiagnostic('debug', 'communication-log-activation-entered', {
+      directory_handle_present: Boolean(handle)
+    });
     const conversationName = await communicationLogWaitForConversationName();
+    logDiagnostic('debug', 'communication-log-conversation-name-resolved', {
+      available: Boolean(conversationName),
+      conversation_id: currentConversationId()
+    });
     if (!conversationName) {
       communicationLogShowDirectoryPrompt('Conversation title is not available yet.');
       return false;
@@ -42,9 +49,21 @@
     if (/^DownloadConversation_(?:ChatGPT|ChatGPT conversation)\.jsonl$/i.test(communicationLogFileName)) {
       communicationLogFileName = `DownloadConversation_${conversationName}.jsonl`;
     }
+    logDiagnostic('debug', 'communication-log-swap-recovery-started', {
+      file_name: communicationLogFileName
+    });
     await communicationLogRecoverSwapFiles();
+    logDiagnostic('debug', 'communication-log-swap-recovery-completed', {
+      file_name: communicationLogFileName
+    });
     await communicationLogInitializeSegmentStorage();
     communicationLogReady = true;
+    logDiagnostic('debug', 'communication-log-recorder-ready', {
+      file_name: communicationLogFileName,
+      segment_directory: communicationLogSegmentDirectoryName(),
+      active_segment_bytes: communicationLogActiveSegmentBytes,
+      historical_segments: communicationLogSegmentManifest?.segments?.length ?? null
+    });
     communicationLogDisarmDirectoryGesture();
     document.getElementById('tm-communication-directory-required')?.remove();
     communicationLogPromptShown = false;
@@ -187,13 +206,20 @@
    * @returns {Promise<boolean>} True when a saved writable directory was activated.
    */
   async function initializeCommunicationDiskRecorder() {
+    logDiagnostic('debug', 'communication-log-startup-entered', {});
     try {
       const handle = await communicationLogLoadDirectoryHandle();
+      logDiagnostic('debug', 'communication-log-directory-restore-completed', {
+        handle_present: Boolean(handle)
+      });
       if (!handle) {
         communicationLogShowDirectoryPrompt('No log folder has been authorized for this browser profile.');
         return false;
       }
       const permission = await communicationLogPermissionState(handle);
+      logDiagnostic('debug', 'communication-log-directory-permission-checked', {
+        permission
+      });
       if (permission !== 'granted') {
         communicationLogShowDirectoryPrompt('The saved log folder is no longer authorized; choose it again.');
         return false;
