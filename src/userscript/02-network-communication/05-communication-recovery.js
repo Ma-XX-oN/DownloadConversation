@@ -114,6 +114,7 @@
       await writable.seek(refreshed.file.size);
       communicationLogWritable = writable;
       communicationLogWriterDirty = false;
+      communicationLogActiveBytes = refreshed.file.size;
       return communicationLogWritable;
     } catch (error) {
       await abortWritableQuietly(writable);
