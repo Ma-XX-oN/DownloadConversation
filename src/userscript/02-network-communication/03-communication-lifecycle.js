@@ -43,6 +43,7 @@
       communicationLogFileName = `DownloadConversation_${conversationName}.jsonl`;
     }
     await communicationLogRecoverSwapFiles();
+    await communicationLogInitializeSegmentStorage();
     communicationLogReady = true;
     communicationLogDisarmDirectoryGesture();
     document.getElementById('tm-communication-directory-required')?.remove();
