@@ -45,7 +45,7 @@ test('Issue 166 verified compression deletes raw sealed bytes only after exact v
   const remove = compress.indexOf('removeEntry');
   assert.ok(archive >= 0, 'sealed bytes must be archived');
   assert.match(compress,
-    /create7zArchive\(rawBytes, segment\.member_name, communicationLogArchiveMTime\(segment\)\)/,
+    /create7zArchive\(\s*rawBytes,\s*segment\.member_name,\s*communicationLogArchiveMTime\(segment\)\s*\)/s,
     'sealed segment member must carry its content end time');
   assert.ok(verify > archive, 'archive/member bytes must be independently verified');
   assert.ok(remove > verify, 'raw sealed bytes may be deleted only after verification');
