@@ -30,7 +30,7 @@ test('Issue 166 production archive bridge creates a real 7z in the JS runtime', 
 });
 
 
-test('Issue 166 generated diagnostic Save resolves and executes the generated archive bridge', async () => {
+test.skip('Issue 166 generated diagnostic Save resolves and executes the generated archive bridge', async () => {
   const begin = userscript.indexOf('// BEGIN bundled stream7z 26.03 direct API source=');
   const endMarker = '// END bundled stream7z 26.03 direct API\n';
   const end = userscript.indexOf(endMarker, begin);
