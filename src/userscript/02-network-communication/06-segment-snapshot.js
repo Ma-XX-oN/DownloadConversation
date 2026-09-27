@@ -90,6 +90,11 @@
    */
   async function communicationLogReadHistoricalSegment(segment) {
     /** Reads and extracts the committed archive representation for this segment. */
+    /**
+     * Reads and extracts the verified archive member for this segment.
+     *
+     * @returns {Promise<Uint8Array>} Exact extracted segment bytes.
+     */
     const readArchive = async () => {
       const handle = await communicationLogSegmentDirectoryHandle.getFileHandle(
         segment.archive_name,
