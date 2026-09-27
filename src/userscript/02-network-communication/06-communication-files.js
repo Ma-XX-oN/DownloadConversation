@@ -114,7 +114,8 @@
     const boundary = communicationLogEnqueue(
       'duplicate-snapshot',
       async () => {
-        setStatus(`Duplicate: establishing snapshot boundary; ${elapsed()}.`);
+        setStatus(`Duplicate: sealing snapshot boundary; ${elapsed()}.`);
+        await communicationLogSealActiveSegment();
         return communicationLogCaptureSnapshotPlan();
       }
     );
@@ -140,7 +141,11 @@
     );
 
     setStatus(`Duplicate: compressing consolidated archive; ${elapsed()}; recording continues.`);
-    const archive = await create7zArchive(logicalSnapshot.bytes, memberName);
+    const archive = await create7zArchive(
+      logicalSnapshot.bytes,
+      memberName,
+      communicationLogArchiveMTime(range)
+    );
     let writable = null;
     let archiveCreated = false;
     try {
