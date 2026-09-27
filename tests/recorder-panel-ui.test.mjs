@@ -129,13 +129,13 @@ test('Issue 166 diagnostic Save is immediately left of Copy', () => {
 
 
 test('Issue 166 diagnostic Save uses a supported deterministic archive member and reports failures', () => {
-  assert.match(downloadConversationSource, /communicationLogAsciiArchiveMemberName\(/,
-    'Diagnostic archive member must be normalized through the direct 7-Zip ASCII-name contract.');
-  assert.match(downloadConversationSource, /archiveName\.replace\(\/\\\.log\\\.7z\$\/i, '\.txt'\)/,
-    'Diagnostic archive member must derive deterministically from the timestamped log archive name.');
+  assert.match(downloadConversationSource, /diagnosticLogArchiveMemberName\(/,
+    'Diagnostic archive member must be owned by the diagnostic-log boundary.');
+  assert.match(downloadConversationSource, /archiveName\.replace\(\/\\\.log\\\.7z\$\/i, '\.jsonl'\)/,
+    'Diagnostic archive member must derive as JSONL from the timestamped log archive name.');
   assert.match(downloadConversationSource, /diagnostic-log-save-failed/,
     'Diagnostic archive failures must be recorded in the diagnostic log.');
-  assert.match(downloadConversationSource, /Diagnostic log save failed:/,
+  assert.match(downloadConversationSource, /Diagnostic log save failed during/,
     'Diagnostic archive failures must remain visible to the user.');
   assert.match(userscript, /Archive member name must contain ASCII characters only/,
     'Archive bridge must reject unsupported member names before entering Wasm.');
