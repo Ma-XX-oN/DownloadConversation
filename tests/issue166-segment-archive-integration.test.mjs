@@ -59,6 +59,10 @@ test('Issue 166 compression failure retains the sealed raw source', () => {
 
 test('Issue 166 production storage performs repeated verified rotations and continues recording', async () => {
   const names = [
+    'communicationLogTimestampRangeFromJsonl',
+    'communicationLogArchiveTimestamp',
+    'communicationLogRoleArchiveName',
+    'communicationLogUnusedRoleArchiveName',
     'communicationLogBytesEqual',
     'communicationLogSha256',
     'communicationLogWriteExactFile',
@@ -143,6 +147,8 @@ test('Issue 166 production storage performs repeated verified rotations and cont
 
     const crypto = webcrypto;
     const communicationLogSegmentDirectoryHandle = new MemoryDirectory();
+    const communicationLogFileName = 'DownloadConversation_fixture.jsonl';
+    const setStatus = () => {};
     const activeHandle = new MemoryHandle('active.jsonl');
     let communicationLogWritable = null;
     let communicationLogWriterDirty = false;
