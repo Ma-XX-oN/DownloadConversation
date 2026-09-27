@@ -43,6 +43,12 @@
     if (!Number.isFinite(date.getTime())) {
       throw new Error('Diagnostic archive timestamp is not trustworthy.');
     }
+    /**
+     * Pads one local date/time field to two digits.
+     *
+     * @param {number} value - Local calendar/time field.
+     * @returns {string} Two-digit field.
+     */
     const pad = value => String(value).padStart(2, '0');
     const milliseconds = String(date.getMilliseconds()).padStart(3, '0');
     return `${date.getFullYear()}${pad(date.getMonth() + 1)}${pad(date.getDate())}T`
