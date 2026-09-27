@@ -646,11 +646,15 @@ The selected default segment target is **10 MiB**. The browser benchmark
 \`benchmarks/issue166-browser-segment-benchmark.mjs\` exercises the exact generated
 archive bridge in headless Chrome/Chromium at 10, 20, and 40 MiB and records
 compression time, archive ratio, event-loop delay, JavaScript heap observations,
-and exact round-trip verification. Ten MiB is retained as the default because it
-minimizes each synchronous Wasm compression stall and peak per-operation input
-while still amortizing archive setup; larger candidates reduce rotation frequency
-but increase the duration and memory footprint of one synchronous operation.
-The benchmark must be rerun when the archive bridge or target is changed.
+and exact round-trip verification. The measured Chrome 153 end-to-end browser-process wall times for the exact bridge
+were approximately 2069 ms at 10 MiB, 2571 ms at 20 MiB, and 2523 ms at 40 MiB;
+archive ratios were 0.000177, 0.000161, and 0.000154 for the repetitive JSONL
+fixture. These wall measurements include browser startup and therefore are useful
+as a coarse browser cost bound, not a codec-only ranking. Ten MiB is retained as
+the conservative default because it minimizes bytes exposed to one synchronous
+Wasm operation and rotates before the larger candidates. The benchmark must be
+rerun when the archive bridge or target is changed; these headless-Chrome results
+do not establish a general Tampermonkey/browser performance ranking.
 
 The direct 7-Zip bridge currently accepts and returns complete Uint8Array objects,
 so consolidated Duplicate reconstruction is necessarily in-memory.
@@ -668,7 +672,9 @@ truncates the active file, and removes/recreates the internal segment directory 
 old history is not attached to the reset logical stream. Rename changes only the
 visible active filename; the stable internal logical identity and manifest remain.
 
-Diagnostic Save is independent of communication-directory authorization. It
-round-trip verifies one timestamped .log.7z in memory and then invokes the normal
-browser download flow. Its member bytes are exactly the same canonical diagnostic
-serialization used by Copy.
+Diagnostic Save does not require communication-directory authorization. When the
+main communication directory is already authorized, the timestamped .log.7z is
+written and verified there; otherwise the same verified archive uses the normal
+browser download flow. It is never placed in the internal segment subdirectory.
+Its member bytes are exactly the same canonical diagnostic serialization used by
+Copy.
