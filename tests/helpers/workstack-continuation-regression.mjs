@@ -338,6 +338,23 @@ test('WorkStack control and transaction preserve the superseding #163 contracts'
     'extractTurn must delegate to the shared DOM Markdown extraction implementation.');
 });
 
+test('multi-page history pins authenticated request context for the whole acquisition', () => {
+  const fetchPages = productionFunctionSource('fetchConversationPages');
+  const fetchPage = productionFunctionSource('fetchOneConversationPage');
+  const apiFetch = productionFunctionSource('apiFetch');
+
+  assert.match(fetchPages, /const requestContext = apiRequestContext/,
+    'History acquisition must snapshot authorization before page 1.');
+  assert.match(fetchPages, /conversation_id: conversationId/);
+  assert.match(fetchPages, /api_request_context: requestContext/);
+  assert.match(fetchPage, /apiFetch\(url, requestInfo\.api_request_context, requestInfo\.conversation_id\)/,
+    'Every page must use the transaction snapshot instead of mutable live page state.');
+  assert.match(apiFetch, /requestContext = apiRequestContext/);
+  assert.match(apiFetch, /expectedConversationId = currentConversationId\(\)/);
+  assert.doesNotMatch(apiFetch, /context\.conversation_id !== conversationId/,
+    'Pinned pagination must not re-read a transient currentConversationId between pages.');
+});
+
 test('WorkStack CONTINUE preserves previous-chat export and durable lane handoff as one causal chain', () => {
   const transaction = productionFunctionSource('handleWorkStackContinue');
   const packet = productionFunctionSource('workStackContinuationPacket');
