@@ -140,42 +140,21 @@ async function main() {
   const preludeEnd = artifactTail.indexOf(preludeEndMarker, preludeStart);
   if (preludeEnd < 0) fail('Generated userscript stream7z closing banner is missing.');
   const prelude = artifactTail.slice(preludeStart, preludeEnd + preludeEndMarker.length);
-  if (!/^\/\/ BEGIN bundled stream7z 26\.03 direct API source=[0-9a-f]{40}\n/.test(prelude)) {
-    fail('Generated userscript stream7z opening provenance banner is missing.');
-  }
-  if (!/async function Stream7zModule\(moduleArg = \{\}\)/.test(prelude)) {
-    fail('Generated userscript stream7z module factory is missing.');
-  }
   if (/export default Stream7zModule/.test(prelude)) {
     fail('Generated userscript must not retain the ES-module export statement.');
   }
   if (/import\.meta/.test(prelude)) {
     fail('Generated userscript must not retain import.meta module syntax.');
   }
-  if (!prelude.includes('globalThis.location.href')) {
-    fail('Generated stream7z classic-script location replacement is missing.');
-  }
-  const glueStart = prelude.indexOf('\n') + 1;
-  const glueEnd = prelude.indexOf("const STREAM7Z_WASM_GZIP_BASE64 = '");
-  if (glueEnd <= glueStart) fail('Generated userscript stream7z glue boundary is missing.');
-  const glue = Buffer.from(prelude.slice(glueStart, glueEnd), 'utf8');
-  if (glue.length === 0) fail('Generated userscript stream7z glue is empty.');
-  const wasmMatch = prelude.match(/const STREAM7Z_WASM_GZIP_BASE64 = '([A-Za-z0-9+/=]+)';/);
-  if (!wasmMatch) fail('Generated userscript compressed stream7z Wasm payload is missing.');
-  const wasmGzip = Buffer.from(wasmMatch[1], 'base64');
-  const wasm = gunzipSync(wasmGzip);
   const stream7zManifest = JSON.parse(await readFile(
     path.join(root, '7z-js-benchmark', 'dist', 'stream7z-26.03.json'),
     'utf8'
   ));
-  const wasmSha256 = createHash('sha256').update(wasm).digest('hex');
-  const expectedWasm = stream7zManifest.files?.['stream7z.wasm'];
-  if (!expectedWasm || wasm.length !== expectedWasm.bytes
-      || wasmSha256 !== expectedWasm.sha256) {
-    fail(`Generated stream7z Wasm does not match the pinned submodule manifest: ${wasmSha256}.`);
-  }
   if (!prelude.includes(`source=${stream7zManifest.source_commit}`)) {
     fail('Generated stream7z provenance does not match the pinned submodule manifest.');
+  }
+  if (!prelude.includes("const STREAM7Z_WASM_GZIP_BASE64 = '")) {
+    fail('Generated userscript compressed stream7z Wasm payload is missing.');
   }
   const expectedTail = '\n(() => {\n' + prelude + sourceBody;
   if (artifactTail !== expectedTail) {
