@@ -111,11 +111,17 @@
    * @param {string} url - The URL to process.
    * @returns {Promise<Object|boolean|string|number|null>} A promise that resolves to the Object|boolean|string|number|null result produced by `apiFetch`.
    */
-  async function apiFetch(url) {
-    const conversationId = currentConversationId();
-    // Snapshot the captured request context used to authorize this direct API request.
-    const context = apiRequestContext;
-    if (!context?.headers?.authorization || context.conversation_id !== conversationId) {
+  async function apiFetch(
+    url,
+    requestContext = apiRequestContext,
+    expectedConversationId = currentConversationId()
+  ) {
+    // Use the caller's transaction snapshot when one is supplied. Long multi-page
+    // acquisitions must not depend on transient SPA location state between pages.
+    const context = requestContext;
+    if (!context?.headers?.authorization ||
+        !expectedConversationId ||
+        context.conversation_id !== expectedConversationId) {
       throw new Error('No authenticated Conversation API context is available. Reload this conversation, then try again.');
     }
     // Use the page realm rather than the userscript sandbox when intercepting page networking.
