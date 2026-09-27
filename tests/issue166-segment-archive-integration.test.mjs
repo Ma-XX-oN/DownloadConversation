@@ -3,6 +3,7 @@ import { readFile } from 'node:fs/promises';
 import test from 'node:test';
 
 import {
+  downloadConversationSource,
   productionFunctionSource,
   userscript
 } from './helpers/userscript-source.mjs';
@@ -75,8 +76,8 @@ test('Issue 166 production storage performs repeated verified rotations and cont
   ];
   const production = names.map(productionFunctionSource).join('\n\n');
   for (const name of names) {
-    assert.ok(userscript.includes(`function ${name}(`) ||
-      userscript.includes(`async function ${name}(`),
+    assert.ok(downloadConversationSource.includes(`function ${name}(`) ||
+      downloadConversationSource.includes(`async function ${name}(`),
     `generated artifact is missing production function ${name}`);
   }
 
