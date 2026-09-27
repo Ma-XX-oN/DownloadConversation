@@ -152,3 +152,14 @@ test('Issue 166 diagnostic Save reports the original phase and error without ret
   assert.match(save, /message/);
   assert.doesNotMatch(save, /throw error/);
 });
+
+
+test('Issue 166 diagnostic member naming preserves printable ASCII exactly', () => {
+  const member = productionFunctionSource('diagnosticLogArchiveMemberName');
+  assert.match(member, /\\[\\^\\\\x20-\\\\x7e\\]/);
+  const fn = new Function('archiveName', member + '; return diagnosticLogArchiveMemberName(archiveName);');
+  assert.equal(
+    fn('DownloadConversation_Bind conversation lane_20260927T165259521Z_20260927T181449827Z.log.7z'),
+    'DownloadConversation_Bind conversation lane_20260927T165259521Z_20260927T181449827Z.txt'
+  );
+});
