@@ -86,11 +86,18 @@
    * @returns {Promise<void>} Resolves when active and historical state is ready.
    */
   async function communicationLogInitializeSegmentStorage() {
-    const directoryName = communicationLogSegmentDirectoryName();
-    let phase = 'directory-create-open';
-    logDiagnostic('debug', 'communication-log-segment-initialize-started', {
-      segment_directory: directoryName
-    });
+    logDiagnostic('debug', 'communication-log-segment-initialize-entered', {});
+    let phase = 'directory-name';
+    let directoryName = null;
+    try {
+      directoryName = communicationLogSegmentDirectoryName();
+      logDiagnostic('debug', 'communication-log-segment-directory-name-resolved', {
+        segment_directory: directoryName
+      });
+      phase = 'directory-create-open';
+      logDiagnostic('debug', 'communication-log-segment-initialize-started', {
+        segment_directory: directoryName
+      });
     try {
       communicationLogSegmentDirectoryHandle =
         await communicationLogDirectoryHandle.getDirectoryHandle(
