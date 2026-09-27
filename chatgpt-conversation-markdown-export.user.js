@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         ChatGPT Conversation Markdown Recorder
 // @namespace    https://chatgpt.com/
-// @version      1.7.2-issue.166.79
+// @version      1.7.2-issue.166.80
 // @description  Exports the current ChatGPT conversation directly from the Conversation API as Markdown or JSONL.
 // @match        https://chatgpt.com/*
 // @match        https://chat.openai.com/*
@@ -12868,7 +12868,8 @@ const STREAM7Z_WASM_GZIP_BASE64 = 'H4sICMtvuWoCA3N0cmVhbTd6Lndhc20A7L0JmBzFmSCa9
     const boundary = communicationLogEnqueue(
       'duplicate-snapshot',
       async () => {
-        setStatus(`Duplicate: establishing snapshot boundary; ${elapsed()}.`);
+        setStatus(`Duplicate: sealing snapshot boundary; ${elapsed()}.`);
+        await communicationLogSealActiveSegment();
         return communicationLogCaptureSnapshotPlan();
       }
     );
@@ -12894,7 +12895,11 @@ const STREAM7Z_WASM_GZIP_BASE64 = 'H4sICMtvuWoCA3N0cmVhbTd6Lndhc20A7L0JmBzFmSCa9
     );
 
     setStatus(`Duplicate: compressing consolidated archive; ${elapsed()}; recording continues.`);
-    const archive = await create7zArchive(logicalSnapshot.bytes, memberName);
+    const archive = await create7zArchive(
+      logicalSnapshot.bytes,
+      memberName,
+      communicationLogArchiveMTime(range)
+    );
     let writable = null;
     let archiveCreated = false;
     try {
@@ -13202,7 +13207,11 @@ const STREAM7Z_WASM_GZIP_BASE64 = 'H4sICMtvuWoCA3N0cmVhbTd6Lndhc20A7L0JmBzFmSCa9
       segment.compression_state = 'compressing';
       setStatus(`Communication log: compressing sealed segment ${segment.ordinal}; recording continues.`);
       await communicationLogWriteSegmentManifest();
-      const archiveBytes = await create7zArchive(rawBytes, segment.member_name);
+      const archiveBytes = await create7zArchive(
+        rawBytes,
+        segment.member_name,
+        communicationLogArchiveMTime(segment)
+      );
       const archiveHandle = await communicationLogWriteExactFile(
         directory,
         segment.archive_name,
@@ -13488,7 +13497,23 @@ const STREAM7Z_WASM_GZIP_BASE64 = 'H4sICMtvuWoCA3N0cmVhbTd6Lndhc20A7L0JmBzFmSCa9
   function communicationLogArchiveTimestamp(timestamp) {
     const date = new Date(timestamp);
     if (!Number.isFinite(date.getTime())) throw new Error('Archive timestamp is not trustworthy.');
-    return date.toISOString().replace(/[-:]/g, '').replace('.', '').replace('Z', 'Z');
+    const pad = value => String(value).padStart(2, '0');
+    return `${date.getFullYear()},${pad(date.getMonth() + 1)},${pad(date.getDate())};`
+      + `${pad(date.getHours())},${pad(date.getMinutes())},${pad(date.getSeconds())}`;
+  }
+
+  /**
+   * Returns the final communication content time at whole-second precision.
+   *
+   * @param {Object} range - Trustworthy communication timestamp range.
+   * @returns {number} Unix modification time in milliseconds.
+   */
+  function communicationLogArchiveMTime(range) {
+    const endMs = Date.parse(range?.end_timestamp);
+    if (!Number.isFinite(endMs)) {
+      throw new Error('Communication archive end timestamp is not trustworthy.');
+    }
+    return Math.floor(endMs / 1000) * 1000;
   }
 
   /**
