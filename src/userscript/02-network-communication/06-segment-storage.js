@@ -328,3 +328,8 @@
     });
     return queued.operation;
   }
+
+  /** Segmented communication storage facade. */
+  const communicationLogStorage = Object.freeze({
+    appendRecord: communicationLogStorageAppendRecord
+  });
