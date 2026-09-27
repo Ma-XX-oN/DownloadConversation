@@ -99,68 +99,76 @@
    *
    * @returns {Promise<string>} The created duplicate filename.
    */
-  function communicationLogArchiveDuplicate() {
-    const queued = communicationLogEnqueue('duplicate', async () => {
-      if (!communicationLogReady || !communicationLogDirectoryHandle || !communicationLogFileName) {
-        throw new Error('Communication log directory/file is not ready.');
-      }
+  async function communicationLogArchiveDuplicate() {
+    if (!communicationLogReady || !communicationLogDirectoryHandle || !communicationLogFileName) {
+      throw new Error('Communication log directory/file is not ready.');
+    }
 
-      const started = performance.now();
-      const elapsed = () => `${((performance.now() - started) / 1000).toFixed(1)}s elapsed`;
-      setStatus(`Duplicate: establishing snapshot boundary; ${elapsed()}.`);
-      const logicalSnapshot = await communicationLogLogicalSnapshot();
-      const range = {
-        start_timestamp: logicalSnapshot.start_timestamp,
-        end_timestamp: logicalSnapshot.end_timestamp
-      };
-      const base = communicationLogFileName.replace(/\\.jsonl$/i, '');
-      const archiveName = await communicationLogUnusedRoleArchiveName(
-        communicationLogDirectoryHandle,
-        base,
-        range,
-        'comm'
+    const started = performance.now();
+    const elapsed = () => `${((performance.now() - started) / 1000).toFixed(1)}s elapsed`;
+    setStatus(`Duplicate: establishing snapshot boundary; ${elapsed()}.`);
+    const boundary = communicationLogEnqueue(
+      'duplicate-snapshot',
+      communicationLogCaptureSnapshotPlan
+    );
+    const plan = await boundary.operation;
+
+    // The append queue is free from this point forward. Historical reconstruction,
+    // compression and verification operate on the frozen plan while recording continues.
+    setStatus(`Duplicate: reading/decompressing historical segments; ${elapsed()}; recording continues.`);
+    const logicalSnapshot = await communicationLogLogicalSnapshot(plan);
+    const range = {
+      start_timestamp: logicalSnapshot.start_timestamp,
+      end_timestamp: logicalSnapshot.end_timestamp
+    };
+    const base = communicationLogFileName.replace(/\\.jsonl$/i, '');
+    const archiveName = await communicationLogUnusedRoleArchiveName(
+      communicationLogDirectoryHandle,
+      base,
+      range,
+      'comm'
+    );
+    const memberName = communicationLogAsciiArchiveMemberName(
+      archiveName.replace(/\\.comm\\.7z$/i, '.jsonl')
+    );
+
+    setStatus(`Duplicate: compressing consolidated archive; ${elapsed()}; recording continues.`);
+    const archive = await create7zArchive(logicalSnapshot.bytes, memberName);
+    let writable = null;
+    let archiveCreated = false;
+    try {
+      setStatus(`Duplicate: finalizing/writing ${archiveName}; ${elapsed()}.`);
+      const archiveHandle = await communicationLogDirectoryHandle.getFileHandle(
+        archiveName,
+        { create: true }
       );
-      const memberName = communicationLogAsciiArchiveMemberName(\n        archiveName.replace(/\\.comm\\.7z$/i, '.jsonl')\n      );
-
-      setStatus(`Duplicate: compressing consolidated archive; ${elapsed()}; recording continues.`);
-      const archive = await create7zArchive(logicalSnapshot.bytes, memberName);
-      let writable = null;
-      let archiveCreated = false;
-      try {
-        setStatus(`Duplicate: finalizing/writing ${archiveName}; ${elapsed()}.`);
-        const archiveHandle = await communicationLogDirectoryHandle.getFileHandle(
-          archiveName,
-          { create: true }
+      archiveCreated = true;
+      writable = await archiveHandle.createWritable();
+      await writable.write(new Blob([archive], { type: 'application/x-7z-compressed' }));
+      await writable.close();
+      writable = null;
+      const verified = await archiveHandle.getFile();
+      if (verified.size !== archive.byteLength) {
+        throw new Error(
+          `Communication log archive verification failed: expected ${archive.byteLength} bytes, found ${verified.size}.`
         );
-        archiveCreated = true;
-        writable = await archiveHandle.createWritable();
-        await writable.write(new Blob([archive], { type: 'application/x-7z-compressed' }));
-        await writable.close();
-        writable = null;
-        const verified = await archiveHandle.getFile();
-        if (verified.size !== archive.byteLength) {
-          throw new Error(
-            `Communication log archive verification failed: expected ${archive.byteLength} bytes, found ${verified.size}.`
-          );
-        }
-        const extracted = await extract7zArchive(
-          new Uint8Array(await verified.arrayBuffer())
-        );
-        if (!(await communicationLogBytesEqual(extracted, logicalSnapshot.bytes))) {
-          throw new Error('Communication log duplicate round-trip verification failed.');
-        }
-      } catch (error) {
-        await abortWritableQuietly(writable);
-        if (archiveCreated) {
-          try { await communicationLogDirectoryHandle.removeEntry(archiveName); } catch {}
-        }
-        setStatus(`Duplicate failed while finalizing ${archiveName}; ${elapsed()}.`);
-        throw error;
       }
-      setStatus(`Duplicate completed: ${archiveName}; ${elapsed()}.`);
-      return archiveName;
-    });
-    return queued.operation;
+      const extracted = await extract7zArchive(
+        new Uint8Array(await verified.arrayBuffer())
+      );
+      if (!(await communicationLogBytesEqual(extracted, logicalSnapshot.bytes))) {
+        throw new Error('Communication log duplicate round-trip verification failed.');
+      }
+    } catch (error) {
+      await abortWritableQuietly(writable);
+      if (archiveCreated) {
+        try { await communicationLogDirectoryHandle.removeEntry(archiveName); } catch {}
+      }
+      setStatus(`Duplicate failed while finalizing ${archiveName}; ${elapsed()}.`);
+      throw error;
+    }
+    setStatus(`Duplicate completed: ${archiveName}; ${elapsed()}.`);
+    return archiveName;
   }
 
   /**
