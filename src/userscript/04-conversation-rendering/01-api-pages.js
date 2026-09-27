@@ -118,6 +118,13 @@
    * @returns {Promise<Array<unknown>>} A promise that resolves to the Array<unknown> result produced by `fetchConversationPages`.
    */
   async function fetchConversationPages(conversationId, onProgress) {
+    // Pin the authenticated context once for the complete pagination transaction.
+    // The page can transiently lose/rewrite its route while an older page is loading.
+    const requestContext = apiRequestContext;
+    if (!requestContext?.headers?.authorization ||
+        requestContext.conversation_id !== conversationId) {
+      throw new Error('No authenticated Conversation API context is available. Reload this conversation, then try again.');
+    }
     return collectConversationPages(
       (cursor, pageNumber, previousPageInfo) => fetchOneConversationPage(
         pageUrl(conversationId, cursor),
@@ -125,6 +132,8 @@
         {
           page_number: pageNumber,
           request_kind: cursor === null ? 'initial' : 'pagination',
+          conversation_id: conversationId,
+          api_request_context: requestContext,
           cursor,
           previous_page_info: previousPageInfo ? {
             start_cursor: previousPageInfo.start_cursor ?? null,
