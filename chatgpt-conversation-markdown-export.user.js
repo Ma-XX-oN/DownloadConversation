@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         ChatGPT Conversation Markdown Recorder
 // @namespace    https://chatgpt.com/
-// @version      1.7.2-issue.166.48
+// @version      1.7.2-issue.166.49
 // @description  Exports the current ChatGPT conversation directly from the Conversation API as Markdown or JSONL.
 // @match        https://chatgpt.com/*
 // @match        https://chat.openai.com/*
@@ -12027,8 +12027,6 @@ const STREAM7Z_WASM_GZIP_BASE64 = 'H4sICJsLuGoCA3N0cmVhbTd6Lndhc20A7L0JmBzFmSiY9
   // BEGIN Issue #123 disk communication recorder
   /** Interval between dirty communication-log checkpoints. */
   const COMMUNICATION_LOG_CHECKPOINT_MS = 30 * 1000;
-  /** Issue #166 raw-segment target. Rotation occurs after the complete record that crosses 10 MiB. */
-  const COMMUNICATION_LOG_SEGMENT_TARGET_BYTES = 10 * 1024 * 1024;
   /** Long-lived writable stream used by normal communication-log appends. */
   let communicationLogWritable = null;
   /** Whether the current long-lived writable contains bytes not yet checkpointed. */
