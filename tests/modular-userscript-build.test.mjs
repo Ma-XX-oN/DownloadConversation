@@ -241,6 +241,52 @@ test(
   }
 );
 
+
+test(
+  'assembled communication startup resolves the segment runtime contract',
+  async () => {
+    const manifest = await readUserscriptManifest(root);
+    const built = await readDownloadConversationSource(root, manifest);
+    const activation = built.indexOf(
+      'async function communicationLogActivateDirectory(handle)'
+    );
+    const initializer = built.indexOf(
+      'async function communicationLogInitializeSegmentStorage()'
+    );
+    const redaction = built.indexOf(
+      'function communicationLogCreateRedactionState()'
+    );
+    assert.ok(activation >= 0, 'assembled activation function must exist');
+    assert.ok(initializer >= 0, 'assembled segment initializer must exist');
+    assert.ok(redaction > initializer, 'verified top-level boundary must follow initializer');
+
+    const activationSource = built.slice(
+      activation,
+      built.indexOf(
+        'function communicationLogDisarmDirectoryGesture()',
+        activation
+      )
+    );
+    assert.match(
+      activationSource,
+      /typeof communicationLogInitializeSegmentStorage/
+    );
+    assert.match(
+      activationSource,
+      /await communicationLogInitializeSegmentStorage\(\)/
+    );
+
+    const initializerSource = built.slice(
+      initializer,
+      redaction
+    );
+    assert.match(
+      initializerSource,
+      /getDirectoryHandle\(directoryName, \{ create: true \}\)/
+    );
+  }
+);
+
 test(
   'assembly is deterministic and places dependency before DC runtime',
   () => {
