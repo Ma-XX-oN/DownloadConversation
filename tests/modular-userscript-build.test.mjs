@@ -284,6 +284,20 @@ test(
       initializerSource,
       /getDirectoryHandle\(directoryName, \{ create: true \}\)/
     );
+
+    const probeSource = [
+      'return (() => {',
+      activationSource,
+      initializerSource,
+      'return {',
+      '  initializerType: typeof communicationLogInitializeSegmentStorage,',
+      '  activationType: typeof communicationLogActivateDirectory',
+      '};',
+      '})();'
+    ].join('\n');
+    const probe = Function(probeSource)();
+    assert.equal(probe.initializerType, 'function');
+    assert.equal(probe.activationType, 'function');
   }
 );
 
