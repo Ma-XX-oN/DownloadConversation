@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         ChatGPT Conversation Markdown Recorder
 // @namespace    https://chatgpt.com/
-// @version      1.7.2-issue.166.84
+// @version      1.7.2-issue.166.86
 // @description  Exports the current ChatGPT conversation directly from the Conversation API as Markdown or JSONL.
 // @match        https://chatgpt.com/*
 // @match        https://chat.openai.com/*
@@ -12073,6 +12073,9 @@ const STREAM7Z_WASM_GZIP_BASE64 = 'H4sICMtvuWoCA3N0cmVhbTd6Lndhc20A7L0JmBzFmSCa9
     logDiagnostic('debug', 'communication-log-swap-recovery-completed', {
       file_name: communicationLogFileName
     });
+    logDiagnostic('debug', 'communication-log-segment-initialize-call-started', {
+      initializer_type: typeof communicationLogInitializeSegmentStorage
+    });
     await communicationLogInitializeSegmentStorage();
     communicationLogReady = true;
     logDiagnostic('debug', 'communication-log-recorder-ready', {
@@ -12243,6 +12246,22 @@ const STREAM7Z_WASM_GZIP_BASE64 = 'H4sICMtvuWoCA3N0cmVhbTd6Lndhc20A7L0JmBzFmSCa9
       }
       return communicationLogActivateDirectory(handle);
     } catch (error) {
+      try {
+        logDiagnostic('warnings', 'communication-log-startup-caught', {
+          name: String(error?.name ?? ''),
+          message: String(error?.message ?? error),
+          stack: boundedDiagnosticText(String(error?.stack ?? ''), 6000)
+        });
+      } catch (diagnosticError) {
+        logConsoleDiagnostic(
+          'warnings',
+          '[DownloadConversation] communication recorder startup diagnostic failed',
+          {
+            startup_error: String(error?.message ?? error),
+            diagnostic_error: String(diagnosticError?.message ?? diagnosticError)
+          }
+        );
+      }
       communicationLogReportFailure('startup', error);
       communicationLogShowDirectoryPrompt('The saved log folder could not be restored.');
       return false;
@@ -13482,12 +13501,18 @@ const STREAM7Z_WASM_GZIP_BASE64 = 'H4sICMtvuWoCA3N0cmVhbTd6Lndhc20A7L0JmBzFmSCa9
    * @returns {Promise<void>} Resolves when active and historical state is ready.
    */
   async function communicationLogInitializeSegmentStorage() {
-    const directoryName = communicationLogSegmentDirectoryName();
-    let phase = 'directory-create-open';
-    logDiagnostic('debug', 'communication-log-segment-initialize-started', {
-      segment_directory: directoryName
-    });
+    logDiagnostic('debug', 'communication-log-segment-initialize-entered', {});
+    let phase = 'directory-name';
+    let directoryName = null;
     try {
+      directoryName = communicationLogSegmentDirectoryName();
+      logDiagnostic('debug', 'communication-log-segment-directory-name-resolved', {
+        segment_directory: directoryName
+      });
+      phase = 'directory-create-open';
+      logDiagnostic('debug', 'communication-log-segment-initialize-started', {
+        segment_directory: directoryName
+      });
       communicationLogSegmentDirectoryHandle =
         await communicationLogDirectoryHandle.getDirectoryHandle(
           directoryName,
