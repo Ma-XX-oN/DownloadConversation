@@ -164,9 +164,18 @@ async function main() {
   if (!wasmMatch) fail('Generated userscript compressed stream7z Wasm payload is missing.');
   const wasmGzip = Buffer.from(wasmMatch[1], 'base64');
   const wasm = gunzipSync(wasmGzip);
+  const stream7zManifest = JSON.parse(await readFile(
+    path.join(root, '7z-js-benchmark', 'dist', 'stream7z-26.03.json'),
+    'utf8'
+  ));
   const wasmSha256 = createHash('sha256').update(wasm).digest('hex');
-  if (wasmSha256 !== '5adc460e42b71ee919dc4e9794b715164959665aa29aab430b729f16ffd326a2') {
-    fail(`Generated stream7z Wasm SHA-256 mismatch: ${wasmSha256}.`);
+  const expectedWasm = stream7zManifest.files?.['stream7z.wasm'];
+  if (!expectedWasm || wasm.length !== expectedWasm.bytes
+      || wasmSha256 !== expectedWasm.sha256) {
+    fail(`Generated stream7z Wasm does not match the pinned submodule manifest: ${wasmSha256}.`);
+  }
+  if (!prelude.includes(`source=${stream7zManifest.source_commit}`)) {
+    fail('Generated stream7z provenance does not match the pinned submodule manifest.');
   }
   const expectedTail = '\n(() => {\n' + prelude + sourceBody;
   if (artifactTail !== expectedTail) {
