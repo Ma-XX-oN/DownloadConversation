@@ -86,12 +86,17 @@
    *
    * @param {Uint8Array} bytes - Exact member bytes.
    * @param {string} memberName - Archive member name.
+   * @param {number|null} memberMTimeMs - Optional Unix modification time in milliseconds.
    * @returns {Promise<Uint8Array>} Complete 7z archive bytes.
    */
-  async function create7zArchive(bytes, memberName) {
+  async function create7zArchive(bytes, memberName, memberMTimeMs = null) {
     if (!(bytes instanceof Uint8Array)) throw new TypeError('Archive input must be Uint8Array.');
     if (!/^[\x20-\x7e]+$/.test(memberName)) {
       throw new Error('Archive member name must contain ASCII characters only.');
+    }
+    if (memberMTimeMs !== null &&
+        (!Number.isSafeInteger(memberMTimeMs) || memberMTimeMs < 0)) {
+      throw new Error('Archive member modification time must be a non-negative integer.');
     }
     const module = await stream7zModule();
     const sourceId = stream7zNextSourceId++;
@@ -100,8 +105,17 @@
     stream7zSources.set(sourceId, { bytes, offset: 0 });
     stream7zOutputs.set(outputId, output);
     try {
-      const create = module.cwrap('stream7z_create', 'number', ['number', 'number', 'string', 'number']);
-      const result = create(sourceId, outputId, memberName, bytes.length);
+      const hasMTime = memberMTimeMs !== null;
+      const create = module.cwrap(
+        hasMTime ? 'stream7z_create_mtime' : 'stream7z_create',
+        'number',
+        hasMTime
+          ? ['number', 'number', 'string', 'number', 'number']
+          : ['number', 'number', 'string', 'number']
+      );
+      const args = [sourceId, outputId, memberName, bytes.length];
+      if (hasMTime) args.push(memberMTimeMs);
+      const result = create(...args);
       if (result !== 0) {
         const lastError = module.cwrap('stream7z_last_error', 'string', [])();
         throw new Error(`7-Zip archive creation failed: ${lastError || result}`);
