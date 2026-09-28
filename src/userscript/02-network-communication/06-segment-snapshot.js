@@ -179,7 +179,7 @@
   }
 
   /**
-   * Reconstructs the logical JSONL stream in canonical ordinal order.
+   * Freezes filesystem-derived history plus the exact active committed EOF.
    *
    * @returns {Promise<Uint8Array>} Exact logical-log snapshot bytes.
    */
@@ -187,19 +187,15 @@
     await communicationLogCloseActiveWriter();
     const active = await communicationLogActiveFileSnapshot();
     const activeEof = active.file.size;
-    const activePrefix = active.file.slice(0, activeEof);
-    const activeRange = communicationLogTimestampRangeFromJsonl(
-      new Uint8Array(await activePrefix.arrayBuffer())
-    );
     communicationLogSegmentManifest.active_committed_eof = activeEof;
     communicationLogSegmentManifest.active_last_timestamp =
-      activeRange?.end_timestamp ?? null;
+      communicationLogActiveLastTimestamp;
     await communicationLogWriteSegmentManifest();
     return {
       segments: await communicationLogHistoricalSegmentsFromDirectory(),
       active_name: communicationLogActiveFileName,
       active_eof: activeEof,
-      active_range: activeRange
+      active_last_timestamp: communicationLogActiveLastTimestamp
     };
   }
 
