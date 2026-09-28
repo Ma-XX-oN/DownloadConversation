@@ -127,3 +127,34 @@ test('Issue 166 startup never creates the logical top-level JSONL as the active 
     /communicationLogSegmentDirectoryHandle\s*&&\s*communicationLogActiveFileName/);
   assert.match(redaction, /return communicationLogActiveFileSnapshot\(\)/);
 });
+
+
+test('Issue 166 reload does not close an oversized active writer while alternate is occupied', async () => {
+  const source = await readFile(storagePath, 'utf8');
+  const start = source.indexOf('async function communicationLogSealActiveSegment');
+  const end = source.indexOf('async function communicationLogReleaseRotationHold', start);
+  assert.ok(start >= 0 && end > start);
+  const seal = source.slice(start, end);
+  const preflight = seal.indexOf('communicationLogAvailableAlternateActiveFile');
+  const close = seal.indexOf('communicationLogCloseActiveWriter');
+  assert.ok(preflight >= 0 && close >= 0);
+  assert.ok(preflight < close,
+    'occupied alternate must be detected before closing the long-lived active writer');
+  const unavailable = seal.indexOf('if (!alternate)');
+  assert.ok(unavailable > preflight && unavailable < close,
+    'occupied alternate must return without destroying/recreating Chromium crswap');
+});
+
+test('Issue 166 active crswap recovery enumerates the private segment directory on reload', async () => {
+  const source = await readFile(
+    new URL('../src/userscript/02-network-communication/05-communication-recovery.js', import.meta.url),
+    'utf8'
+  );
+  const start = source.indexOf('async function communicationLogRecoverSwapFiles');
+  const end = source.indexOf('async function communicationLogOpenWriter', start);
+  assert.ok(start >= 0 && end > start);
+  const recover = source.slice(start, end);
+  assert.match(recover, /const recoveryDirectory = communicationLogSegmentDirectoryHandle/);
+  assert.match(recover, /recoveryDirectory\.entries\(\)/);
+  assert.match(recover, /recoveryDirectory\.removeEntry\(/);
+});
