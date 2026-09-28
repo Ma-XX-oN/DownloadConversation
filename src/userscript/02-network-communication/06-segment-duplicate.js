@@ -50,7 +50,54 @@
   }
 
   /**
+   * Formats a measured Duplicate ETA as whole minutes/seconds.
+   *
+   * @param {number} milliseconds - Remaining wall time estimate.
+   * @returns {string} Human-readable duration such as `1 m 23 s`.
+   */
+  function communicationLogFormatDuration(milliseconds) {
+    const totalSeconds = Math.max(0, Math.round(milliseconds / 1000));
+    const minutes = Math.floor(totalSeconds / 60);
+    const seconds = totalSeconds % 60;
+    return minutes > 0 ? `${minutes} m ${seconds} s` : `${seconds} s`;
+  }
+
+  /**
+   * Updates visible Duplicate file-count progress from measured current-operation work.
+   *
+   * @param {number} completedFiles - Number of source files fully processed.
+   * @param {number} totalFiles - Total source files in this Duplicate plan.
+   * @param {number} startedMs - performance.now() when source processing began.
+   * @returns {void} No value is returned.
+   */
+  function communicationLogReportDuplicateProgress(completedFiles, totalFiles, startedMs) {
+    const elapsedMs = Math.max(0, performance.now() - startedMs);
+    const percent = totalFiles > 0 ? (completedFiles / totalFiles) * 100 : 100;
+    const etaMs = completedFiles > 0
+      ? (elapsedMs / completedFiles) * (totalFiles - completedFiles)
+      : null;
+    const progress = {
+      completed_files: completedFiles,
+      total_files: totalFiles,
+      percent,
+      eta_ms: etaMs
+    };
+    const etaText = progress.eta_ms === null
+      ? 'calculating...'
+      : communicationLogFormatDuration(progress.eta_ms);
+    setStatus(
+      `Duplicate: ${progress.completed_files}/${progress.total_files} files `
+      + `${progress.percent.toFixed(1)}% done ETA: ${etaText}; recording continues.`
+    );
+  }
+
+  /**
    * Streams one frozen Duplicate plan through one continuously open archive writer.
+   *
+   * Each relevant historical archive is decompressed exactly once, then its exact
+   * accepted JSONL bytes are supplied to the single output encoder. The frozen
+   * active prefix is the final source file. Progress therefore uses completed
+   * source files as a real denominator rather than an elapsed-time guess.
    *
    * @param {Object} plan - Frozen historical membership and active EOF.
    * @param {Object} options - Optional ISO lower/upper timestamp bounds.
@@ -80,90 +127,91 @@
       String(left.start_timestamp).localeCompare(String(right.start_timestamp))
       || String(left.end_timestamp).localeCompare(String(right.end_timestamp))
     );
-    const prepared = [];
+    const relevantSegments = ordered.filter(segment => {
+      const segmentStart = Date.parse(segment.start_timestamp);
+      const segmentEnd = Date.parse(segment.end_timestamp);
+      return !((lowerMs !== null && segmentEnd < lowerMs)
+        || (upperMs !== null && segmentStart > upperMs));
+    });
+    const totalFiles = relevantSegments.length + 1;
+    const progressStarted = performance.now();
+    let completedFiles = 0;
     let expectedBytes = 0;
     let startTimestamp = null;
     let endTimestamp = null;
-
-    for (const segment of ordered) {
-      const segmentStart = Date.parse(segment.start_timestamp);
-      const segmentEnd = Date.parse(segment.end_timestamp);
-      if ((lowerMs !== null && segmentEnd < lowerMs)
-          || (upperMs !== null && segmentStart > upperMs)) continue;
-      const raw = await communicationLogReadHistoricalSegment(segment);
-      const whole = (lowerMs === null || segmentStart >= lowerMs)
-        && (upperMs === null || segmentEnd <= upperMs);
-      if (whole) {
-        const range = communicationLogTimestampRangeFromJsonl(raw);
-        if (!range) continue;
-        prepared.push({ segment, whole: true });
-        expectedBytes += raw.byteLength;
-        startTimestamp ??= range.start_timestamp;
-        endTimestamp = range.end_timestamp;
-        continue;
-      }
-      const filtered = communicationLogFilterJsonlBytes(raw, lowerMs, upperMs);
-      if (!filtered.bytes.byteLength) continue;
-      prepared.push({ segment, whole: false });
-      expectedBytes += filtered.bytes.byteLength;
-      startTimestamp ??= filtered.start_timestamp;
-      endTimestamp = filtered.end_timestamp;
-    }
-
-    const activeHandle = await communicationLogSegmentDirectoryHandle.getFileHandle(
-      plan.active_name,
-      { create: false }
-    );
-    const activeFile = await activeHandle.getFile();
-    if (activeFile.size < plan.active_eof) {
-      throw new Error('Frozen active communication prefix became shorter during Duplicate.');
-    }
-    const activeRaw = new Uint8Array(
-      await activeFile.slice(0, plan.active_eof).arrayBuffer()
-    );
-    const activeFiltered = communicationLogFilterJsonlBytes(
-      activeRaw,
-      lowerMs,
-      upperMs
-    );
-    expectedBytes += activeFiltered.bytes.byteLength;
-    startTimestamp ??= activeFiltered.start_timestamp;
-    endTimestamp = activeFiltered.end_timestamp ?? endTimestamp;
-
-    if (!startTimestamp || !endTimestamp || expectedBytes === 0) {
-      throw new Error('Duplicate bounds contain no trustworthy communication records.');
-    }
-    const range = {
-      start_timestamp: startTimestamp,
-      end_timestamp: endTimestamp
-    };
-    const base = communicationLogFileName.replace(/\.jsonl$/i, '');
-    const archiveName = await communicationLogUnusedRoleArchiveName(
-      communicationLogDirectoryHandle,
-      base,
-      range,
-      'comm'
-    );
     const writer = await streamingArchiveWriterBegin();
+    communicationLogReportDuplicateProgress(completedFiles, totalFiles, progressStarted);
+
     try {
-      for (const item of prepared) {
-        if (!item.whole) {
-          const raw = await communicationLogReadHistoricalSegment(item.segment);
-          const filtered = communicationLogFilterJsonlBytes(raw, lowerMs, upperMs);
-          streamingArchiveWriterAppendBytes(writer, filtered.bytes);
-          continue;
+      for (const segment of relevantSegments) {
+        const raw = await communicationLogReadHistoricalSegment(segment);
+        const segmentStart = Date.parse(segment.start_timestamp);
+        const segmentEnd = Date.parse(segment.end_timestamp);
+        const whole = (lowerMs === null || segmentStart >= lowerMs)
+          && (upperMs === null || segmentEnd <= upperMs);
+        const accepted = whole
+          ? {
+            bytes: raw,
+            ...communicationLogTimestampRangeFromJsonl(raw)
+          }
+          : communicationLogFilterJsonlBytes(raw, lowerMs, upperMs);
+        if (accepted.bytes.byteLength) {
+          streamingArchiveWriterAppendBytes(writer, accepted.bytes);
+          expectedBytes += accepted.bytes.byteLength;
+          startTimestamp ??= accepted.start_timestamp;
+          endTimestamp = accepted.end_timestamp ?? endTimestamp;
         }
-        const archiveHandle =
-          await communicationLogSegmentDirectoryHandle.getFileHandle(
-            item.segment.archive_name,
-            { create: false }
-          );
-        const archiveBytes = new Uint8Array(
-          await (await archiveHandle.getFile()).arrayBuffer()
+        completedFiles += 1;
+        communicationLogReportDuplicateProgress(
+          completedFiles,
+          totalFiles,
+          progressStarted
         );
-        streamingArchiveWriterAppendArchive(writer, archiveBytes);
       }
-      streamingArchiveWriterAppendBytes(writer, activeFiltered.bytes);
+
+      const activeHandle = await communicationLogSegmentDirectoryHandle.getFileHandle(
+        plan.active_name,
+        { create: false }
+      );
+      const activeFile = await activeHandle.getFile();
+      if (activeFile.size < plan.active_eof) {
+        throw new Error('Frozen active communication prefix became shorter during Duplicate.');
+      }
+      const activeRaw = new Uint8Array(
+        await activeFile.slice(0, plan.active_eof).arrayBuffer()
+      );
+      const activeFiltered = communicationLogFilterJsonlBytes(
+        activeRaw,
+        lowerMs,
+        upperMs
+      );
+      if (activeFiltered.bytes.byteLength) {
+        streamingArchiveWriterAppendBytes(writer, activeFiltered.bytes);
+        expectedBytes += activeFiltered.bytes.byteLength;
+        startTimestamp ??= activeFiltered.start_timestamp;
+        endTimestamp = activeFiltered.end_timestamp ?? endTimestamp;
+      }
+      completedFiles += 1;
+      communicationLogReportDuplicateProgress(
+        completedFiles,
+        totalFiles,
+        progressStarted
+      );
+
+      if (!startTimestamp || !endTimestamp || expectedBytes === 0) {
+        throw new Error('Duplicate bounds contain no trustworthy communication records.');
+      }
+      const range = {
+        start_timestamp: startTimestamp,
+        end_timestamp: endTimestamp
+      };
+      const base = communicationLogFileName.replace(/\.jsonl$/i, '');
+      const archiveName = await communicationLogUnusedRoleArchiveName(
+        communicationLogDirectoryHandle,
+        base,
+        range,
+        'comm'
+      );
       return {
         archive: streamingArchiveWriterFinish(writer),
         archive_name: archiveName,
