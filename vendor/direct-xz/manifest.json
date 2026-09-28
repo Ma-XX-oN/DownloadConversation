@@ -1,0 +1,12 @@
+{
+  "schema": 1,
+  "source_repository": "Ma-XX-oN/xz-js-benchmark",
+  "source_commit": "4ece75965d53ee7e78d96d32f36c2a1497f9ef38",
+  "lzma_rust2": "0.16.2",
+  "wasm_raw_bytes": 148050,
+  "wasm_raw_sha256": "a0c46cbc960e14c628dace2098a7ed2636fafc082cdb4c708cec632928bdbb45",
+  "wasm_gzip_bytes": 58876,
+  "wasm_gzip_sha256": "770f5e4840e0b891c8d7f1c3ec66d3ec266b51715e4fc59114376aa39eb6ac16",
+  "glue_bytes": 10029,
+  "glue_sha256": "cf20e46c969654b0c4823cc5257ac03c0167569efe512ae245cad6ae478fb40c"
+}
