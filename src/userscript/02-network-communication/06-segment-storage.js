@@ -221,14 +221,14 @@
 
     try {
       setStatus(`Communication log: compressing ${segment.raw_name}; recording continues.`);
-      const archiveBytes = await createXzArchive(rawBytes);
+      const archiveBytes = await createArchive(rawBytes);
       const archiveHandle = await communicationLogWriteExactFile(
         directory,
         segment.archive_name,
         archiveBytes
       );
       const committedArchive = new Uint8Array(await (await archiveHandle.getFile()).arrayBuffer());
-      const extracted = await extractXzArchive(committedArchive);
+      const extracted = await extractArchive(committedArchive);
       if (!(await communicationLogBytesEqual(extracted, rawBytes))
           || await communicationLogSha256(extracted) !== segment.source_sha256) {
         throw new Error(`Archive round-trip verification failed: ${segment.archive_name}`);
@@ -302,9 +302,6 @@
    * @returns {Promise<Object|null>} Sealed segment metadata, or null when empty.
    */
   async function communicationLogSealActiveSegment() {
-    // Preflight the alternate while the current writer remains open.  When the
-    // alternate is still an immutable recovery/compression source, defer the
-    // rotation without forcing Chromium to commit and recreate its .crswap.
     const alternate = await communicationLogAvailableAlternateActiveFile();
     if (!alternate) return null;
 
@@ -338,15 +335,11 @@
       start_timestamp: range.start_timestamp,
       end_timestamp: range.end_timestamp
     };
-    // Switch first.  If the page dies before manifest commit, startup derives
-    // the newer active file from the two physical files and discovers the
-    // closed older source directly.
     await communicationLogSwitchActiveFile(alternate);
     await communicationLogOpenWriter();
     void communicationLogQueueSegmentCompression(segment).catch(() => {});
     return segment;
   }
-
 
   /**
    * Releases one Duplicate rotation hold and immediately services pending
@@ -363,7 +356,6 @@
     }
     await communicationLogSealActiveSegment();
   }
-
 
   /**
    * Appends one complete JSONL record and rotates only after its record boundary.
