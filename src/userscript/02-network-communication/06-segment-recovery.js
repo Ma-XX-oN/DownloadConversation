@@ -51,6 +51,28 @@
   }
 
   /**
+   * Removes any crash-interrupted Duplicate output while retaining the original
+   * request parameters for a fresh-boundary restart after recorder readiness.
+   *
+   * @returns {Promise<void>} Resolves after partial-output cleanup.
+   */
+  async function communicationLogRecoverDuplicateRequest() {
+    if (!communicationLogSegmentManifest?.duplicate_request) return;
+    const output = communicationLogSegmentManifest.duplicate_output;
+    if (output) {
+      try {
+        await communicationLogDirectoryHandle.removeEntry(output);
+      } catch (error) {
+        if (error?.name !== 'NotFoundError') throw error;
+      }
+      delete communicationLogSegmentManifest.duplicate_output;
+      await communicationLogWriteSegmentManifest();
+    }
+    communicationLogRotationHold = 0;
+    communicationLogDuplicateInProgress = false;
+  }
+
+  /**
    * Derives the append target from the two alternating files and recoverable
    * sealed-source ownership.  No persisted active-name flag is trusted.
    *
@@ -214,6 +236,9 @@
 
       phase = 'legacy-active-retirement';
       await communicationLogRetireLegacyTopLevelActive();
+
+      phase = 'duplicate-recovery';
+      await communicationLogRecoverDuplicateRequest();
 
       phase = 'active-file-recovery';
       await communicationLogRecoverAlternatingActiveFiles();
