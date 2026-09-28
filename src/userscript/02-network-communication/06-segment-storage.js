@@ -306,6 +306,12 @@
    * @returns {Promise<Object|null>} Sealed segment metadata, or null when empty.
    */
   async function communicationLogSealActiveSegment() {
+    // Preflight the alternate while the current writer remains open.  When the
+    // alternate is still an immutable recovery/compression source, defer the
+    // rotation without forcing Chromium to commit and recreate its .crswap.
+    const alternate = await communicationLogAvailableAlternateActiveFile();
+    if (!alternate) return null;
+
     await communicationLogCloseActiveWriter();
     const snapshot = await communicationLogActiveFileSnapshot();
     if (snapshot.file.size === 0) return null;
@@ -328,14 +334,6 @@
       throw new Error(`Communication segment filename collision: ${archiveName}`);
     }
     const sourceHash = await communicationLogSha256(rawBytes);
-
-    // Reserve the alternate before sealing.  If it is still occupied, keep
-    // recording in the current file and defer this rotation.
-    const alternate = await communicationLogAvailableAlternateActiveFile();
-    if (!alternate) {
-      await communicationLogOpenWriter();
-      return null;
-    }
 
     const segment = {
       raw_name: rawName,
