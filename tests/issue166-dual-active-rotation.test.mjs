@@ -52,3 +52,30 @@ test('Issue 166 startup awaits activation so asynchronous failures reach its cat
   assert.match(body, /return await communicationLogActivateDirectory\(handle\)/);
   assert.match(body, /communication-log-startup-caught/);
 });
+
+test('Issue 166 Duplicate freezes EOF without sealing and holds rotation', async () => {
+  const duplicate = await readFile(
+    new URL('../src/userscript/02-network-communication/06-communication-files.js', import.meta.url),
+    'utf8'
+  );
+  const start = duplicate.indexOf('async function communicationLogArchiveDuplicate');
+  assert.ok(start >= 0);
+  const body = duplicate.slice(start, duplicate.indexOf('\n  /**', start + 20));
+  assert.match(body, /communicationLogDuplicateInProgress/);
+  assert.match(body, /communicationLogRotationHold/);
+  assert.match(body, /active_eof/);
+  assert.doesNotMatch(body, /communicationLogSealActiveSegment\s*\(/);
+  assert.match(body, /finally\s*\{/);
+});
+
+test('Issue 166 Duplicate uses streaming reconstruction rather than a whole-log buffer', async () => {
+  const duplicate = await readFile(
+    new URL('../src/userscript/02-network-communication/06-communication-files.js', import.meta.url),
+    'utf8'
+  );
+  const start = duplicate.indexOf('async function communicationLogArchiveDuplicate');
+  const body = duplicate.slice(start, duplicate.indexOf('\n  /**', start + 20));
+  assert.match(body, /communicationLogStreamDuplicateArchive\s*\(/);
+  assert.doesNotMatch(body, /communicationLogLogicalSnapshot\s*\(/);
+  assert.doesNotMatch(body, /logicalSnapshot\.bytes/);
+});
