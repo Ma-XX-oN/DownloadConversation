@@ -8,7 +8,7 @@ test('Issue 166 archive roles and timestamp ranges are explicit production contr
     'communicationLogTimestampRangeFromJsonl',
     'communicationLogArchiveTimestamp',
     'communicationLogRoleArchiveName',
-    'communicationLogLogicalSnapshot'
+    'communicationLogStreamDuplicateArchive'
   ]) {
     assert.ok(downloadConversationSource.includes(`function ${name}(`) ||
       downloadConversationSource.includes(`async function ${name}(`), `missing ${name}`);
@@ -18,8 +18,8 @@ test('Issue 166 archive roles and timestamp ranges are explicit production contr
   assert.match(seal, /end_timestamp/);
   assert.match(seal, /'seg'/);
   const duplicate = productionFunctionSource('communicationLogArchiveDuplicate');
-  assert.match(duplicate, /'comm'/);
-  assert.match(duplicate, /communicationLogLogicalSnapshot/);
+  assert.match(duplicate, /communicationLogStreamDuplicateArchive/);
+  assert.match(productionFunctionSource('communicationLogStreamDuplicateArchive'), /'comm'/);
 });
 
 test('Issue 166 user-facing archive naming adds collision suffix only before role suffix', () => {
@@ -34,12 +34,12 @@ test('Issue 166 duplicate reports every required phase and keeps indeterminate e
   for (const phrase of [
     'snapshot boundary',
     'historical segments',
-    'compressing',
+    'streaming',
     'finalizing'
   ]) assert.match(duplicate, new RegExp(phrase, 'i'));
   assert.match(
-    productionFunctionSource('communicationLogLogicalSnapshot'),
-    /reconstructing/i
+    productionFunctionSource('communicationLogStreamDuplicateArchive'),
+    /streaming7zWriterBegin|streaming7zWriterAppendArchive/
   );
   assert.match(duplicate, /elapsed/i);
   assert.doesNotMatch(duplicate, /ETA.*(?:size|benchmark|assum)/i);
@@ -54,11 +54,14 @@ test('Issue 166 diagnostic Save uses main communication folder when authorized a
   assert.match(save, /downloadBlob/);
 });
 
-test('Issue 166 all-in-memory reconstruction has an explicit measured-size guard', () => {
-  assert.match(downloadConversationSource, /COMMUNICATION_LOG_DUPLICATE_MAX_BYTES/);
-  const snapshot = productionFunctionSource('communicationLogLogicalSnapshot');
-  assert.match(snapshot, /COMMUNICATION_LOG_DUPLICATE_MAX_BYTES/);
-  assert.match(snapshot, /memory/i);
+test('Issue 166 Duplicate no longer reconstructs the complete logical log in memory', () => {
+  const duplicate = productionFunctionSource('communicationLogArchiveDuplicate');
+  const stream = productionFunctionSource('communicationLogStreamDuplicateArchive');
+  assert.doesNotMatch(duplicate, /communicationLogLogicalSnapshot/);
+  assert.doesNotMatch(duplicate, /logicalSnapshot\.bytes/);
+  assert.match(stream, /streaming7zWriterBegin/);
+  assert.match(stream, /streaming7zWriterAppendArchive/);
+  assert.match(stream, /streaming7zWriterAppendBytes/);
 });
 
 
@@ -119,14 +122,13 @@ test('Issue 166 no-trustworthy-timestamp fixture is rejected instead of inventin
 
 
 test('Issue 166 duplicate naming is collision-safe and never overwrites an existing archive', () => {
-  const duplicate = productionFunctionSource('communicationLogArchiveDuplicate');
-  assert.match(duplicate, /communicationLogUnusedRoleArchiveName/);
-  assert.match(duplicate, /'comm'/);
+  const stream = productionFunctionSource('communicationLogStreamDuplicateArchive');
+  assert.match(stream, /communicationLogUnusedRoleArchiveName/);
+  assert.match(stream, /'comm'/);
 });
 
-test('Issue 166 selected segment default and in-memory guard are documented with browser measurements', () => {
+test('Issue 166 selected segment default remains the repository-owned 10 MiB threshold', () => {
   assert.match(downloadConversationSource, /COMMUNICATION_LOG_SEGMENT_TARGET_BYTES = 10 \* 1024 \* 1024/);
-  assert.match(downloadConversationSource, /COMMUNICATION_LOG_DUPLICATE_MAX_BYTES = 128 \* 1024 \* 1024/);
 });
 
 
