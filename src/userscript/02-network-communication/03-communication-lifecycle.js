@@ -227,7 +227,7 @@
         communicationLogShowDirectoryPrompt('The saved log folder is no longer authorized; choose it again.');
         return false;
       }
-      return communicationLogActivateDirectory(handle);
+      return await communicationLogActivateDirectory(handle);
     } catch (error) {
       try {
         logDiagnostic('warnings', 'communication-log-startup-caught', {
