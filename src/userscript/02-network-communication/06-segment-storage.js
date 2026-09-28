@@ -13,8 +13,12 @@
   ]);
   /** Current append target inside the private segment directory. */
   let communicationLogActiveFileName = null;
-  /** Threshold rotation deferred while the alternate file is still occupied. */
+  /** Threshold rotation deferred while held or while the alternate is occupied. */
   let communicationLogRotationPending = false;
+  /** Duplicate snapshot hold preventing active-file rotation. */
+  let communicationLogRotationHold = 0;
+  /** One Duplicate operation may run per logical conversation. */
+  let communicationLogDuplicateInProgress = false;
 
   /**
    * Reads the current active file from the private segment directory.
@@ -343,7 +347,11 @@
       communicationLogWriterDirty = true;
       communicationLogActiveSegmentBytes += lineBytes;
       if (communicationLogActiveSegmentBytes >= COMMUNICATION_LOG_SEGMENT_TARGET_BYTES) {
-        await communicationLogSealActiveSegment();
+        if (communicationLogRotationHold > 0) {
+          communicationLogRotationPending = true;
+        } else {
+          await communicationLogSealActiveSegment();
+        }
       }
     });
     return queued.operation;
