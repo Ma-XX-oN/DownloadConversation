@@ -21,7 +21,7 @@ execFileSync(process.execPath, ['scripts/verify-userscript-artifact.mjs', candid
 
 test('Issue 166 production archive bridge creates a real XZ in the JS runtime', async () => {
   globalThis.location ??= { href: 'https://chatgpt.com/c/test' };
-  const begin = candidateUserscript.indexOf('// BEGIN bundled direct XZ source=');
+  const begin = candidateUserscript.indexOf('// BEGIN bundled direct XZ lzma-rust2=0.16.2');
   const endMarker = '// END bundled direct XZ\n';
   const end = candidateUserscript.indexOf(endMarker, begin);
   assert.ok(begin >= 0 && end > begin, 'generated directXz prelude must be present');
@@ -50,7 +50,7 @@ test('Issue 166 production archive bridge creates a real XZ in the JS runtime', 
 
 test('Issue 166 production archive bridge round-trips exact member bytes', async () => {
   globalThis.location ??= { href: 'https://chatgpt.com/c/test' };
-  const begin = candidateUserscript.indexOf('// BEGIN bundled direct XZ source=');
+  const begin = candidateUserscript.indexOf('// BEGIN bundled direct XZ lzma-rust2=0.16.2');
   const endMarker = '// END bundled direct XZ\n';
   const end = candidateUserscript.indexOf(endMarker, begin);
   assert.ok(begin >= 0 && end > begin);
@@ -74,7 +74,7 @@ test('Issue 166 production archive bridge round-trips exact member bytes', async
 
 test('Issue 166 generated archive bridge is top-level in the DownloadConversation IIFE', () => {
   const safeBoundary = candidateUserscript.indexOf('// END Issue #163 WorkStack handoff transaction');
-  const archiveState = candidateUserscript.indexOf('let directXzModulePromise = null;');
+  const archiveState = candidateUserscript.indexOf('let directXzReady = false;');
   const diagnosticSave = candidateUserscript.indexOf('async function saveDiagnosticLog()');
   assert.ok(safeBoundary >= 0, 'known closed top-level boundary must exist');
   assert.ok(archiveState > safeBoundary,
