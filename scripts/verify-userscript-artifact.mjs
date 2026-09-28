@@ -157,7 +157,33 @@ async function main() {
   if (!prelude.includes("const STREAM7Z_WASM_GZIP_BASE64 = '")) {
     fail('Generated userscript compressed stream7z Wasm payload is missing.');
   }
-  const expectedTail = '\n(() => {\n' + prelude + sourceBody;
+  const streamingStart = preludeEnd + preludeEndMarker.length;
+  const streamingOpen = '// BEGIN bundled streaming7z libarchive source=';
+  if (!artifactTail.startsWith(streamingOpen, streamingStart)) {
+    fail('Generated userscript streaming7z opening banner is missing.');
+  }
+  const streamingEndMarker = '// END bundled streaming7z libarchive\n';
+  const streamingEnd = artifactTail.indexOf(streamingEndMarker, streamingStart);
+  if (streamingEnd < 0) fail('Generated userscript streaming7z closing banner is missing.');
+  const streamingPrelude = artifactTail.slice(
+    streamingStart,
+    streamingEnd + streamingEndMarker.length
+  );
+  const streamingManifest = JSON.parse(await readFile(
+    path.join(root, '7z-js-benchmark', 'dist', 'streaming7z-libarchive.json'),
+    'utf8'
+  ));
+  if (!streamingPrelude.includes(`source=${streamingManifest.source_commit}`)) {
+    fail('Generated streaming7z provenance does not match the pinned submodule manifest.');
+  }
+  if (!streamingPrelude.includes("const STREAMING7Z_WASM_GZIP_BASE64 = '")) {
+    fail('Generated userscript compressed streaming7z Wasm payload is missing.');
+  }
+  if (/export default createStream7z/.test(streamingPrelude)
+      || /import\.meta/.test(streamingPrelude)) {
+    fail('Generated streaming7z prelude retains ES-module-only syntax.');
+  }
+  const expectedTail = '\n(() => {\n' + prelude + streamingPrelude + sourceBody;
   if (artifactTail !== expectedTail) {
     fail('Generated userscript scoped archive prelude/source assembly differs from repository source.');
   }
