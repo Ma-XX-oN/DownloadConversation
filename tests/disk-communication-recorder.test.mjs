@@ -86,26 +86,30 @@ test('normal recording keeps one writable open instead of committing every JSONL
     'Independent network observers must still serialize writer access.');
 });
 
-test('long-lived writer checkpoints every 30 seconds and reopens lazily', () => {
+test('long-lived writer stays open throughout ordinary recording', () => {
   const block = diskBlock();
-  assert.match(block, /COMMUNICATION_LOG_CHECKPOINT_MS\s*=\s*30\s*\*\s*1000/);
-  assert.match(block, /setInterval\([^\n]*communicationLogCheckpoint/);
+  assert.doesNotMatch(block, /COMMUNICATION_LOG_CHECKPOINT_MS/);
+  assert.doesNotMatch(block, /setInterval\([^\n]*communicationLogCheckpoint/);
+  assert.doesNotMatch(block,
+    /visibilityState\s*===\s*['"]hidden['"][\s\S]{0,400}communicationLogCheckpoint/);
+  const fetchResponse = diskFunctionSource('communicationLogFetchResponse');
+  assert.doesNotMatch(fetchResponse,
+    /communicationLogCheckpoint\(['"]generation-response-complete['"]\)/);
+
+  const open = diskFunctionSource('communicationLogOpenWriter');
+  assert.match(open, /if \(communicationLogWritable\) return communicationLogWritable/);
+  assert.match(open, /createWritable\(\{ keepExistingData: true \}\)/);
+});
+
+test('hard document departure remains an intentional active-writer commit boundary', () => {
+  const block = diskBlock();
+  assert.match(block, /beforeunload[\s\S]{0,300}communicationLogCheckpointForDocumentDeparture/);
+  assert.match(block, /pagehide[\s\S]{0,500}communicationLogCheckpointForDocumentDeparture/);
   const checkpoint = diskFunctionSource('communicationLogCheckpoint');
   assert.match(checkpoint, /communicationLogWritable\.close\(\)/);
   assert.match(checkpoint, /communicationLogWritable\s*=\s*null/);
   assert.doesNotMatch(checkpoint, /createWritable\(/,
-    'Checkpoint should commit and leave reopening to the next append.');
-  assert.match(checkpoint, /communicationLogWriterDirty/,
-    'Clean writers should not churn swap files merely because the timer fired.');
-});
-
-test('page lifecycle and completed generation-stream response trigger checkpoints', () => {
-  const block = diskBlock();
-  assert.match(block, /visibilityState\s*===\s*['"]hidden['"][\s\S]{0,400}communicationLogCheckpoint/);
-  assert.match(block, /pagehide[\s\S]{0,400}communicationLogCheckpoint/);
-  const fetchResponse = diskFunctionSource('communicationLogFetchResponse');
-  assert.match(fetchResponse, /\/backend-api\/f\/conversation/);
-  assert.match(fetchResponse, /communicationLogCheckpoint\(['"]generation-response-complete['"]\)/);
+    'A true commit boundary leaves reopening to the next append if the document survives.');
 });
 
 test('startup recovers compatible Chromium crswap candidates before normal recording', () => {
