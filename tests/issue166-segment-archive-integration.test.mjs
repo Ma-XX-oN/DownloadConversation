@@ -146,6 +146,10 @@ test('Issue 166 production initialization reports the exact failing phase', asyn
       next_ordinal: 1,
       segments: []
     });
+    let communicationLogRotationHold = 0;
+    let communicationLogRotationPending = false;
+    const communicationLogRecoverDuplicateRequest = async () => {};
+    const communicationLogRecoverAlternatingActiveFiles = async () => {};
     const communicationLogRecoverDuplicateRequest = async () => {};
     const communicationLogRecoverAlternatingActiveFiles = async () => {};
     const communicationLogRecoverSegmentState = async () => {
