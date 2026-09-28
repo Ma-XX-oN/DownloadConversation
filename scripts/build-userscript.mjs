@@ -96,6 +96,43 @@ async function buildStream7zPrelude() {
     + '// END bundled stream7z 26.03 direct API\n';
 }
 
+async function buildStreaming7zPrelude() {
+  const dist = path.join(root, '7z-js-benchmark', 'dist');
+  const manifest = JSON.parse(await readFile(
+    path.join(dist, 'streaming7z-libarchive.json'),
+    'utf8'
+  ));
+  if (manifest?.schema !== 1 || !manifest.source_commit) {
+    throw new Error('Invalid pinned streaming7z distribution manifest.');
+  }
+  const readVerified = async name => {
+    const expected = manifest.files?.[name];
+    if (!expected) throw new Error(`Missing streaming7z manifest entry: ${name}`);
+    const bytes = gunzipSync(await readFile(path.join(dist, expected.compressed)));
+    const digest = createHash('sha256').update(bytes).digest('hex');
+    if (bytes.length !== expected.bytes || digest !== expected.sha256) {
+      throw new Error(`Pinned streaming7z payload mismatch: ${name}`);
+    }
+    return bytes;
+  };
+  let glue = (await readVerified('stream7z.mjs')).toString('utf8');
+  if (!/export default createStream7z;\s*$/.test(glue)) {
+    throw new Error('Unexpected streaming7z.mjs export shape.');
+  }
+  glue = glue.replace(/export default createStream7z;\s*$/, '');
+  glue = glue.replaceAll('import.meta.url', 'globalThis.location.href');
+  await readVerified('stream7z.wasm');
+  const wasmGzip = await readFile(path.join(
+    dist,
+    manifest.files['stream7z.wasm'].compressed
+  ));
+  return `// BEGIN bundled streaming7z libarchive source=${manifest.source_commit}\n`
+    + glue + '\n'
+    + 'const Streaming7zModule = createStream7z;\n'
+    + `const STREAMING7Z_WASM_GZIP_BASE64 = '${wasmGzip.toString('base64')}';\n`
+    + '// END bundled streaming7z libarchive\n';
+}
+
 async function main() {
   const args = parseArguments(process.argv.slice(2));
   const manifest = await readUserscriptManifest(root);
@@ -107,7 +144,13 @@ async function main() {
     dependencies.push(await fetchPinnedDependency(dependency));
   }
   const stream7zPrelude = await buildStream7zPrelude();
-  const built = assembleUserscript(header, dependencies, source, stream7zPrelude);
+  const streaming7zPrelude = await buildStreaming7zPrelude();
+  const built = assembleUserscript(
+    header,
+    dependencies,
+    source,
+    stream7zPrelude + streaming7zPrelude
+  );
 
   if (args.check) {
     let existing;
