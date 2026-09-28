@@ -146,6 +146,8 @@ test('Issue 166 production initialization reports the exact failing phase', asyn
       next_ordinal: 1,
       segments: []
     });
+    const communicationLogRecoverDuplicateRequest = async () => {};
+    const communicationLogRecoverAlternatingActiveFiles = async () => {};
     const communicationLogRecoverSegmentState = async () => {
       throw new Error('recovery fixture failure');
     };
@@ -319,6 +321,7 @@ test('Issue 166 production rotation switches active files before compression', a
     ]);
     let communicationLogActiveFileName = 'active-a.jsonl';
     let communicationLogRotationPending = false;
+    let communicationLogRotationHold = 0;
     let communicationLogWritable = null;
     let communicationLogWriterDirty = false;
     let communicationLogActiveSegmentBytes = 0;
@@ -477,13 +480,15 @@ test('Issue 166 reload recovery owns every durable compression state', () => {
   assert.match(recover, /Missing recoverable raw segment/);
 });
 
-test('Issue 166 reconstruction sorts by ordinal and appends the frozen active prefix last', () => {
-  const snapshot = productionFunctionSource('communicationLogLogicalSnapshot');
-  assert.match(snapshot, /sort\(\(left, right\) => left\.ordinal - right\.ordinal\)/);
-  const historicalPush = snapshot.indexOf('parts.push(bytes)');
-  const activePush = snapshot.indexOf('parts.push(frozen.active_bytes)');
-  assert.ok(historicalPush >= 0 && activePush > historicalPush);
-  assert.match(snapshot, /communicationLogReadHistoricalSegment/);
+test('Issue 166 streaming Duplicate orders historical segments before frozen active prefix', () => {
+  const stream = productionFunctionSource('communicationLogStreamDuplicateArchive');
+  assert.match(stream, /start_timestamp/);
+  const historical = stream.indexOf('for (const item of prepared)');
+  const active = stream.lastIndexOf('streaming7zWriterAppendBytes(writer, activeFiltered.bytes)');
+  assert.ok(historical >= 0 && active > historical,
+    'historical segments must feed the open writer before the frozen active prefix');
+  assert.match(stream, /streaming7zWriterAppendArchive/);
+  assert.match(stream, /streaming7zWriterFinish/);
 });
 
 
