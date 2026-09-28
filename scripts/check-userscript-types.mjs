@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 import { spawnSync } from 'node:child_process';
-import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -9,6 +9,19 @@ const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const TYPESCRIPT_VERSION = '7.0.2';
 const BROKEN_COMMIT = 'c16c2beb71e210ceb3110b69b61a92de6483deb3';
 const USERSCRIPT = 'chatgpt-conversation-markdown-export.user.js';
+
+function downloadConversationProgram(userscript) {
+  const marker = '// END bundled ';
+  const markerIndex = userscript.lastIndexOf(marker);
+  if (markerIndex < 0) {
+    throw new Error('Bundled dependency terminator is missing.');
+  }
+  const boundary = userscript.indexOf('\n', markerIndex);
+  if (boundary < 0) {
+    throw new Error('Bundled dependency terminator has no line ending.');
+  }
+  return userscript.slice(boundary + 1);
+}
 
 function runTsc(filePath) {
   return spawnSync(
@@ -24,7 +37,14 @@ function runTsc(filePath) {
   );
 }
 
-const current = runTsc(USERSCRIPT);
+const currentRoot = mkdtempSync(path.join(os.tmpdir(), 'dc-typescript-current-'));
+const currentPath = path.join(currentRoot, 'downloadconversation-current.js');
+writeFileSync(
+  currentPath,
+  downloadConversationProgram(readFileSync(path.join(root, USERSCRIPT), 'utf8')),
+  'utf8'
+);
+const current = runTsc(currentPath);
 if (current.error) {
   console.error(`TypeScript ${TYPESCRIPT_VERSION} could not execute: ${current.error.message}`);
   process.exit(2);
@@ -35,6 +55,8 @@ if (current.status !== 0) {
   console.error('Current assembled userscript failed TypeScript semantic checking.');
   process.exit(1);
 }
+
+rmSync(currentRoot, { recursive: true, force: true });
 
 const temporaryRoot = mkdtempSync(path.join(os.tmpdir(), 'dc-typescript-negative-'));
 try {
@@ -49,7 +71,11 @@ try {
     process.exit(2);
   }
   const brokenPath = path.join(temporaryRoot, 'issue-166.87.user.js');
-  writeFileSync(brokenPath, historical.stdout, 'utf8');
+  writeFileSync(
+    brokenPath,
+    downloadConversationProgram(historical.stdout),
+    'utf8'
+  );
   const broken = runTsc(brokenPath);
   const output = `${broken.stdout ?? ''}\n${broken.stderr ?? ''}`;
   if (broken.error) {
