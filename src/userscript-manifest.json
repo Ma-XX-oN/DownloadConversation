@@ -18,7 +18,8 @@
       "name": "runtime",
       "files": [
         "src/userscript/01-runtime/01-bootstrap.js",
-        "src/userscript/01-runtime/02-shared-network-transition.js"
+        "src/userscript/01-runtime/02-shared-network-transition.js",
+        "src/userscript/01-runtime/03-archive.js"
       ]
     },
     {
@@ -99,7 +100,6 @@
     {
       "name": "panel-launcher",
       "files": [
-        "src/userscript/01-runtime/03-archive.js",
         "src/userscript/07-panel-launcher/00-checkbox-appearance.js",
         "src/userscript/07-panel-launcher/02-diagnostic-archive.js",
         "src/userscript/07-panel-launcher/01-panel-diagnostics.js",
