@@ -83,6 +83,7 @@ async function buildDirectXzPrelude() {
     glue = glue.replace(/^export default async function __wbg_init/m, 'async function __wbg_init');
     glue = glue.replace(/^export \{[^\n]*\};?\s*$/gm, '');
     glue = glue.replace(/^export /gm, '');
+    glue = glue.replaceAll('import.meta.url', 'globalThis.location.href');
     glue = glue.replace(/export \{ initSync, __wbg_init as default \};\s*$/, '');
     const wasm = await readFile(path.join(pkg, 'dc_direct_xz_wasm_bg.wasm'));
     const wasmGzip = gzipSync(wasm, { level: 9 });
