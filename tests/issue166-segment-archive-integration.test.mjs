@@ -57,8 +57,8 @@ test('Issue 166 production initialization creates the segment directory and repo
     const communicationLogRecoverSegmentState = async () => {};
     const communicationLogRefreshedFileSnapshot = async () => ({
       file: {
-        size: 321,
-        async arrayBuffer() { return new Uint8Array(321).buffer; }
+        size: 0,
+        async arrayBuffer() { return new Uint8Array(0).buffer; }
       }
     });
     ${initialize}
@@ -76,7 +76,7 @@ test('Issue 166 production initialization creates the segment directory and repo
     options: { create: true }
   }], 'production initialization must create/open the per-log segment directory');
   assert.equal(result.childSelected, true);
-  assert.equal(result.activeBytes, 321);
+  assert.equal(result.activeBytes, 0);
   assert.deepEqual(result.events, [
     'communication-log-segment-initialize-entered',
     'communication-log-segment-directory-name-resolved',
