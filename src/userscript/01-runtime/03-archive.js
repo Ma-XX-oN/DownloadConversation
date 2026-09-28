@@ -40,38 +40,29 @@
     }
     const module = await streaming7zModule();
     const sourceId = streaming7zRegisterSource(archiveBytes);
+    const outputId = streaming7zNextOutputId++;
+    const output = { chunks: [], size: 0 };
+    streaming7zOutputs.set(outputId, output);
     let reader = 0;
-    let pointer = 0;
     try {
       reader = module.cwrap('stream7z_reader_open', 'number', ['number'])(sourceId);
       if (!reader) throw new Error('Streaming 7-Zip reader open failed.');
       const size = module.cwrap('stream7z_reader_size', 'number', ['number'])(reader);
-      if (!Number.isSafeInteger(size) || size < 0) {
-        throw new Error('Streaming 7-Zip member size is invalid.');
+      if (!Number.isSafeInteger(size) || size < 0) throw new Error('Streaming 7-Zip member size is invalid.');
+      const extract = module.cwrap('stream7z_reader_extract_to_js', 'number', ['number', 'number']);
+      if (extract(reader, outputId) !== 0) {
+        const lastError = module.cwrap('stream7z_last_error', 'string', [])();
+        throw new Error('Streaming 7-Zip extraction failed: ' + lastError);
       }
+      if (output.size !== size) throw new Error('Streaming 7-Zip extraction size mismatch.');
       const result = new Uint8Array(size);
-      const capacity = Math.min(Math.max(size, 1), 256 * 1024);
-      pointer = module._malloc(capacity);
-      if (!pointer) throw new Error('Streaming 7-Zip extraction buffer allocation failed.');
-      const read = module.cwrap(
-        'stream7z_reader_read',
-        'number',
-        ['number', 'number', 'number']
-      );
       let offset = 0;
-      while (offset < size) {
-        const count = read(reader, pointer, Math.min(capacity, size - offset));
-        if (count <= 0) throw new Error('Streaming 7-Zip member ended unexpectedly.');
-        result.set(module.HEAPU8.subarray(pointer, pointer + count), offset);
-        offset += count;
-      }
+      for (const chunk of output.chunks) { result.set(chunk, offset); offset += chunk.byteLength; }
       return result;
     } finally {
-      if (pointer) module._free(pointer);
-      if (reader) {
-        module.cwrap('stream7z_reader_close', 'number', ['number'])(reader);
-      }
+      if (reader) module.cwrap('stream7z_reader_close', 'number', ['number'])(reader);
       streaming7zSources.delete(sourceId);
+      streaming7zOutputs.delete(outputId);
     }
   }
 
@@ -140,6 +131,13 @@
                 || position > source.bytes.length) return -1;
             source.offset = position;
             return position;
+          },
+          stream7zExtractWrite(id, bytes) {
+            const output = streaming7zOutputs.get(id);
+            if (!output) return -1;
+            output.chunks.push(bytes.slice());
+            output.size += bytes.length;
+            return bytes.length;
           },
           stream7zWrite(id, bytes) {
             const output = streaming7zOutputs.get(id);
