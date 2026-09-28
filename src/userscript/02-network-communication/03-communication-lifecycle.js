@@ -61,6 +61,10 @@
     });
     await communicationLogInitializeSegmentStorage();
     communicationLogReady = true;
+    const recoveredDuplicateRequest =
+      communicationLogSegmentManifest?.duplicate_request
+        ? { ...communicationLogSegmentManifest.duplicate_request }
+        : null;
     logDiagnostic('debug', 'communication-log-recorder-ready', {
       file_name: communicationLogFileName,
       segment_directory: communicationLogSegmentDirectoryName(),
@@ -84,6 +88,12 @@
       dropped_before_ready: communicationLogDroppedBeforeReady
     });
     communicationLogDroppedBeforeReady = 0;
+    if (recoveredDuplicateRequest) {
+      queueMicrotask(() => {
+        void communicationLogArchiveDuplicate(recoveredDuplicateRequest)
+          .catch(error => communicationLogReportFailure('duplicate-restart', error));
+      });
+    }
     return true;
   }
 
