@@ -11,7 +11,7 @@
     const baselineSnapshot = await communicationLogRefreshedFileSnapshot();
     const baseline = baselineSnapshot.file;
     // Escape the literal log filename before recognizing Chromium sibling swap names.
-    const escapedLogName = communicationLogFileName.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+    const escapedLogName = (communicationLogActiveFileName ?? communicationLogFileName).replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
     const swapPattern = new RegExp(`^${escapedLogName}(?:\\.\\d+)?\\.crswap$`);
     // Retain candidate file snapshots so selection and cleanup use one observed swap state.
     const candidates = [];
