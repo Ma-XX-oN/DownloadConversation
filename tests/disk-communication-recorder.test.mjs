@@ -360,9 +360,9 @@ test('aborted cloned response stream before any bytes reports zero counts withou
 
 test('fetch response reports incomplete body warning without committing the active writer', () => {
   const fetchResponse = diskFunctionSource('communicationLogFetchResponse');
-  assert.match(fetchResponse, /summary\\.body_incomplete/);
-  assert.match(fetchResponse, /communication-log-response-body-incomplete/);
-  assert.match(fetchResponse, /message:\\s*summary\\.error_message/);
-  assert.doesNotMatch(fetchResponse, /communicationLogCheckpoint\\(/,
+  assert.ok(fetchResponse.includes('summary.body_incomplete'));
+  assert.ok(fetchResponse.includes('communication-log-response-body-incomplete'));
+  assert.ok(fetchResponse.includes('message: summary.error_message'));
+  assert.equal(fetchResponse.includes('communicationLogCheckpoint('), false,
     'Completing or aborting a generation response is not an active-file commit boundary.');
 });
