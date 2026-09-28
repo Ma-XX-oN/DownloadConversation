@@ -79,3 +79,12 @@ test('Issue 166 Duplicate uses streaming reconstruction rather than a whole-log 
   assert.doesNotMatch(body, /communicationLogLogicalSnapshot\s*\(/);
   assert.doesNotMatch(body, /logicalSnapshot\.bytes/);
 });
+
+test('Issue 166 private segment filenames do not repeat the conversation prefix', async () => {
+  const source = await readFile(storagePath, 'utf8');
+  const start = source.indexOf('async function communicationLogSealActiveSegment');
+  const end = source.indexOf('async function communicationLogReleaseRotationHold', start);
+  const seal = source.slice(start, end);
+  assert.match(seal, /communicationLogUnusedRoleArchiveName\(\s*communicationLogSegmentDirectoryHandle,\s*'segment'/s);
+  assert.doesNotMatch(seal, /archiveBase/);
+});
