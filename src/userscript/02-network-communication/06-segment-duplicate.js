@@ -144,9 +144,6 @@
       range,
       'comm'
     );
-    const memberName = communicationLogAsciiArchiveMemberName(
-      archiveName.replace(/\.comm\.XZ$/i, '.jsonl')
-    );
     const writer = await streamingXzWriterBegin();
     try {
       for (const item of prepared) {
@@ -170,7 +167,6 @@
       return {
         archive: streamingXzWriterFinish(writer),
         archive_name: archiveName,
-        member_name: memberName,
         expected_bytes: expectedBytes,
         start_timestamp: startTimestamp,
         end_timestamp: endTimestamp
