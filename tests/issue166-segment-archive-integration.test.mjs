@@ -479,3 +479,33 @@ test('Issue 166 reconstruction sorts by ordinal and appends the frozen active pr
   assert.ok(historicalPush >= 0 && activePush > historicalPush);
   assert.match(snapshot, /communicationLogReadHistoricalSegment/);
 });
+
+
+test('Issue 166 bounded Duplicate filtering preserves exact accepted JSONL bytes', () => {
+  const filter = productionFunctionSource('communicationLogFilterJsonlBytes');
+  const run = new Function(`
+    ${filter}
+    const encoder = new TextEncoder();
+    const decoder = new TextDecoder();
+    const first = '{"timestamp":"2026-09-27T01:00:01.000Z","v":"A  B"}\\n';
+    const second = '{"timestamp":"2026-09-27T01:00:02.000Z","v":"C"}\\n';
+    const third = '{"timestamp":"2026-09-27T01:00:03.000Z","v":"D"}\\n';
+    const result = communicationLogFilterJsonlBytes(
+      encoder.encode(first + second + third),
+      Date.parse('2026-09-27T01:00:02.000Z'),
+      Date.parse('2026-09-27T01:00:02.000Z')
+    );
+    return { text: decoder.decode(result.bytes), second };
+  `);
+  const result = run();
+  assert.equal(result.text, result.second,
+    'accepted records must retain their original byte representation');
+});
+
+test('Issue 166 Duplicate restart cleanup retains parameters but clears transient hold', () => {
+  const recover = productionFunctionSource('communicationLogRecoverDuplicateRequest');
+  assert.match(recover, /duplicate_request/);
+  assert.match(recover, /removeEntry\(output\)/);
+  assert.match(recover, /communicationLogRotationHold\s*=\s*0/);
+  assert.doesNotMatch(recover, /delete communicationLogSegmentManifest\.duplicate_request/);
+});
