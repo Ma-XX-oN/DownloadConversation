@@ -6,11 +6,6 @@
    */
   async function communicationLogRecoverAlternatingActiveFiles() {
     const names = ['active-a.jsonl', 'active-b.jsonl'];
-    const sealed = new Set(
-      communicationLogSegmentManifest.segments
-        .filter(segment => segment.compression_state !== 'compressed')
-        .map(segment => segment.raw_name)
-    );
     const states = [];
     for (const name of names) {
       try {
@@ -26,20 +21,67 @@
       }
     }
 
-    const candidates = states.filter(state => !sealed.has(state.name));
-    if (candidates.length === 0) {
-      throw new Error('Both alternating communication files are sealed recovery sources.');
+    const existing = states.filter(state => state.exists);
+    let active;
+    if (existing.length === 0) {
+      active = states[0];
+    } else if (existing.length === 1) {
+      active = existing[0];
+    } else {
+      const empty = existing.filter(state => state.size === 0);
+      if (empty.length === 1) {
+        active = empty[0];
+      } else {
+        active = [...existing].sort((left, right) =>
+          right.modified - left.modified || left.name.localeCompare(right.name)
+        )[0];
+      }
     }
-    candidates.sort((left, right) => {
-      if (left.exists !== right.exists) return left.exists ? -1 : 1;
-      if (left.size !== right.size) return right.size - left.size;
-      return right.modified - left.modified;
-    });
-    communicationLogActiveFileName = candidates[0].name;
+    communicationLogActiveFileName = active.name;
     await communicationLogSegmentDirectoryHandle.getFileHandle(
       communicationLogActiveFileName,
       { create: true }
     );
+
+    const closed = states.find(state =>
+      state.name !== communicationLogActiveFileName && state.exists && state.size > 0
+    );
+    if (!closed) return;
+    const alreadyTracked = communicationLogSegmentManifest.segments.some(segment =>
+      segment.raw_name === closed.name && segment.compression_state !== 'compressed'
+    );
+    if (alreadyTracked) return;
+
+    const handle = await communicationLogSegmentDirectoryHandle.getFileHandle(
+      closed.name,
+      { create: false }
+    );
+    const bytes = new Uint8Array(await (await handle.getFile()).arrayBuffer());
+    const range = communicationLogTimestampRangeFromJsonl(bytes);
+    if (!range) throw new Error(`Closed communication source has no timestamp range: ${closed.name}`);
+    const ordinal = communicationLogSegmentManifest.next_ordinal++;
+    const suffix = String(ordinal).padStart(6, '0');
+    const start = communicationLogArchiveTimestamp(range.start_timestamp);
+    const end = communicationLogArchiveTimestamp(range.end_timestamp);
+    const segment = {
+      ordinal,
+      raw_name: closed.name,
+      raw_parent: 'segment',
+      archive_name: await communicationLogUnusedRoleArchiveName(
+        communicationLogSegmentDirectoryHandle,
+        'segment',
+        range,
+        'seg'
+      ),
+      member_name: `segment-${suffix}_${start}-${end}.jsonl`,
+      raw_bytes: bytes.byteLength,
+      source_sha256: await communicationLogSha256(bytes),
+      start_timestamp: range.start_timestamp,
+      end_timestamp: range.end_timestamp,
+      compression_state: 'sealed'
+    };
+    communicationLogSegmentManifest.segments.push(segment);
+    await communicationLogWriteSegmentManifest();
   }
 
   /**
