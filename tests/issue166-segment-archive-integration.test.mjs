@@ -11,11 +11,11 @@ import {
 test('Issue 166 generated artifact keeps archive bridge and diagnostic Save in one runtime IIFE', () => {
   const iifeStart = userscript.indexOf('\n(() => {');
   const iifeEnd = userscript.lastIndexOf('})();');
-  const create = userscript.indexOf('async function create7zArchive(', iifeStart);
+  const create = userscript.indexOf('async function createXzArchive(', iifeStart);
   const save = userscript.indexOf('async function saveDiagnosticLog(', iifeStart);
   assert.ok(iifeStart >= 0 && iifeEnd > iifeStart);
   assert.ok(create > iifeStart && create < iifeEnd,
-    'generated artifact must contain create7zArchive inside the DC runtime IIFE');
+    'generated artifact must contain createXzArchive inside the DC runtime IIFE');
   assert.ok(save > create && save < iifeEnd,
     'generated artifact diagnostic Save must share the archive bridge lexical scope');
 });
@@ -220,12 +220,12 @@ test('Issue 166 sealing swaps to a new active segment before compression', () =>
 
 test('Issue 166 verified compression deletes raw sealed bytes only after exact verification', () => {
   const compress = productionFunctionSource('communicationLogCompressSealedSegment');
-  const archive = compress.indexOf('create7zArchive');
-  const verify = compress.indexOf('extract7zArchive', archive);
+  const archive = compress.indexOf('createXzArchive');
+  const verify = compress.indexOf('extractXzArchive', archive);
   const remove = compress.indexOf('removeEntry');
   assert.ok(archive >= 0, 'sealed bytes must be archived');
   assert.match(compress,
-    /create7zArchive\(\s*rawBytes,\s*segment\.member_name,\s*communicationLogArchiveMTime\(segment\)\s*\)/s,
+    /createXzArchive\(\s*rawBytes,\s*segment\.member_name,\s*communicationLogArchiveMTime\(segment\)\s*\)/s,
     'sealed segment member must carry its content end time');
   assert.ok(verify > archive, 'archive/member bytes must be independently verified');
   assert.ok(remove > verify, 'raw sealed bytes may be deleted only after verification');
@@ -366,14 +366,14 @@ test('Issue 166 production rotation switches active files before compression', a
     const communicationLogEnqueue = (_stage, operation) => ({
       operation: Promise.resolve().then(operation)
     });
-    const create7zArchive = async bytes => {
+    const createXzArchive = async bytes => {
       events.push(['compress', communicationLogActiveFileName]);
       const result = new Uint8Array(bytes.byteLength + 4);
       result.set([55, 122, 0, 1]);
       result.set(bytes, 4);
       return result;
     };
-    const extract7zArchive = async archive => archive.slice(4);
+    const extractXzArchive = async archive => archive.slice(4);
 
     ${production}
 
@@ -445,8 +445,8 @@ test('Issue 166 production compression failure preserves the only sealed raw cop
       return Array.from(new Uint8Array(digest), byte => byte.toString(16).padStart(2, '0')).join('');
     };
     const communicationLogArchiveMTime = () => 0;
-    const create7zArchive = async bytes => bytes.slice();
-    const extract7zArchive = async () => new Uint8Array([0]);
+    const createXzArchive = async bytes => bytes.slice();
+    const extractXzArchive = async () => new Uint8Array([0]);
     const boundedDiagnosticText = value => String(value);
     const errorMessage = error => error?.message || String(error);
     const logDiagnostic = () => {};
@@ -454,7 +454,7 @@ test('Issue 166 production compression failure preserves the only sealed raw cop
     const sourceHash = await communicationLogSha256(source);
     const segment = {
       raw_name: 'segment-000001.jsonl',
-      archive_name: 'segment-000001.7z',
+      archive_name: 'segment-000001.xz',
       member_name: 'segment-000001.jsonl',
       raw_bytes: source.length,
       source_sha256: sourceHash
@@ -479,7 +479,7 @@ test('Issue 166 reload recovery derives unfinished compression from physical fil
   const recover = productionFunctionSource('communicationLogRecoverSegmentState');
   assert.match(recover, /COMMUNICATION_LOG_ACTIVE_FILE_NAMES/);
   assert.match(recover, /communicationLogRoleArchiveName\('segment'/);
-  assert.match(recover, /extract7zArchive/);
+  assert.match(recover, /extractXzArchive/);
   assert.match(recover, /communicationLogBytesEqual/);
   assert.match(recover, /communicationLogQueueSegmentCompression/);
   assert.doesNotMatch(recover, /compression_state|next_ordinal|segments\.push/);
@@ -489,11 +489,11 @@ test('Issue 166 streaming Duplicate orders historical segments before frozen act
   const stream = productionFunctionSource('communicationLogStreamDuplicateArchive');
   assert.match(stream, /start_timestamp/);
   const historical = stream.indexOf('for (const item of prepared)');
-  const active = stream.lastIndexOf('streaming7zWriterAppendBytes(writer, activeFiltered.bytes)');
+  const active = stream.lastIndexOf('streamingXzWriterAppendBytes(writer, activeFiltered.bytes)');
   assert.ok(historical >= 0 && active > historical,
     'historical segments must feed the open writer before the frozen active prefix');
-  assert.match(stream, /streaming7zWriterAppendArchive/);
-  assert.match(stream, /streaming7zWriterFinish/);
+  assert.match(stream, /streamingXzWriterAppendArchive/);
+  assert.match(stream, /streamingXzWriterFinish/);
 });
 
 
