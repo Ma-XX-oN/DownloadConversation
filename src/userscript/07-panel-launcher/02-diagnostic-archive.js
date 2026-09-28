@@ -142,15 +142,15 @@
    * @returns {Object} Callable archive create/extract operations.
    */
   function diagnosticLogArchiveApi() {
-    if (typeof createXzArchive !== 'function') {
+    if (typeof createArchive !== 'function') {
       throw new ReferenceError('Diagnostic archive create function is unavailable in this runtime scope.');
     }
-    if (typeof extractXzArchive !== 'function') {
+    if (typeof extractArchive !== 'function') {
       throw new ReferenceError('Diagnostic archive extract function is unavailable in this runtime scope.');
     }
     return {
-      create: createXzArchive,
-      extract: extractXzArchive
+      create: createArchive,
+      extract: extractArchive
     };
   }
 
