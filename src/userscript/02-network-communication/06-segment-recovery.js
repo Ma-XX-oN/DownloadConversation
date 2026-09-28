@@ -62,18 +62,14 @@
             throw new Error('compressed segment verification mismatch');
           }
           try {
-            const staleRaw = await (segment.raw_parent === 'root'
-              ? communicationLogDirectoryHandle
-              : communicationLogSegmentDirectoryHandle).getFileHandle(
+            const staleRaw = await communicationLogSegmentDirectoryHandle.getFileHandle(
               segment.raw_name,
               { create: false }
             );
             const staleBytes = new Uint8Array(await (await staleRaw.getFile()).arrayBuffer());
             if (staleBytes.byteLength === segment.raw_bytes
                 && await communicationLogSha256(staleBytes) === segment.source_sha256) {
-              await (segment.raw_parent === 'root'
-                ? communicationLogDirectoryHandle
-                : communicationLogSegmentDirectoryHandle).removeEntry(segment.raw_name);
+              await communicationLogSegmentDirectoryHandle.removeEntry(segment.raw_name);
             }
           } catch (error) {
             if (error?.name !== 'NotFoundError') throw error;
@@ -81,9 +77,7 @@
           continue;
         } catch (archiveError) {
           try {
-            await (segment.raw_parent === 'root'
-              ? communicationLogDirectoryHandle
-              : communicationLogSegmentDirectoryHandle).getFileHandle(
+            await communicationLogSegmentDirectoryHandle.getFileHandle(
               segment.raw_name,
               { create: false }
             );
@@ -103,9 +97,7 @@
 
       let rawHandle;
       try {
-        rawHandle = await (segment.raw_parent === 'root'
-          ? communicationLogDirectoryHandle
-          : communicationLogSegmentDirectoryHandle).getFileHandle(
+        rawHandle = await communicationLogSegmentDirectoryHandle.getFileHandle(
           segment.raw_name,
           { create: false }
         );
