@@ -257,6 +257,10 @@
       phase = 'active-snapshot';
       communicationLogActiveSegmentBytes =
         (await communicationLogRefreshedFileSnapshot()).file.size;
+      if (communicationLogActiveSegmentBytes >= COMMUNICATION_LOG_SEGMENT_TARGET_BYTES) {
+        communicationLogRotationPending = true;
+        await communicationLogSealActiveSegment();
+      }
       logDiagnostic('debug', 'communication-log-segment-initialize-completed', {
         segment_directory: directoryName,
         active_segment_bytes: communicationLogActiveSegmentBytes,
