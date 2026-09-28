@@ -1,9 +1,10 @@
 import { createHash } from 'node:crypto';
-import { mkdir, readFile, writeFile } from 'node:fs/promises';
+import { cp, mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { spawnSync } from 'node:child_process';
 import { gzipSync } from 'node:zlib';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { tmpdir } from 'node:os';
 import {
   assembleUserscript,
   readDownloadConversationSource,
@@ -57,39 +58,37 @@ async function fetchPinnedDependency(dependency) {
 }
 
 async function buildDirectXzPrelude() {
-  const crate = path.join(root, 'vendor', 'direct-xz');
-  const pkg = path.join(crate, 'pkg');
-  let wasmPack = spawnSync('wasm-pack', ['--version'], { encoding: 'utf8' });
-  if (wasmPack.status !== 0) {
-    const install = spawnSync(
-      'cargo',
-      ['install', 'wasm-pack', '--version', '0.15.0', '--locked'],
-      { cwd: root, encoding: 'utf8', stdio: 'inherit' }
-    );
-    if (install.status !== 0) {
-      throw new Error('Could not install pinned wasm-pack 0.15.0 for direct XZ build.');
+  const sourceCrate = path.join(root, 'vendor', 'direct-xz');
+  const work = await mkdtemp(path.join(tmpdir(), 'dc-direct-xz-'));
+  const crate = path.join(work, 'crate');
+  const pkg = path.join(work, 'pkg');
+  try {
+    await cp(sourceCrate, crate, { recursive: true, filter: source => !source.includes('/target') && !source.includes('\\\\target') && !source.includes('/pkg') && !source.includes('\\\\pkg') });
+    let wasmPack = spawnSync('wasm-pack', ['--version'], { encoding: 'utf8' });
+    if (wasmPack.status !== 0) {
+      const install = spawnSync('cargo', ['install', 'wasm-pack', '--version', '0.15.0', '--locked'], {
+        cwd: work, encoding: 'utf8', stdio: 'inherit'
+      });
+      if (install.status !== 0) throw new Error('Could not install pinned wasm-pack 0.15.0 for direct XZ build.');
     }
+    const build = spawnSync('wasm-pack', ['build', crate, '--target', 'web', '--release', '--out-dir', pkg], {
+      cwd: work, encoding: 'utf8', stdio: 'inherit'
+    });
+    if (build.status !== 0) throw new Error('Direct XZ Wasm build failed.');
+    let glue = await readFile(path.join(pkg, 'dc_direct_xz_wasm.js'), 'utf8');
+    glue = glue.replace(/^export class XzEncoder/m, 'class XzEncoder');
+    glue = glue.replace(/^export function decompress_xz/m, 'function decompress_xz');
+    glue = glue.replace(/export \{ initSync, __wbg_init as default \};\s*$/, '');
+    const wasm = await readFile(path.join(pkg, 'dc_direct_xz_wasm_bg.wasm'));
+    const wasmGzip = gzipSync(wasm, { level: 9 });
+    return '// BEGIN bundled direct XZ lzma-rust2=0.16.2\n'
+      + glue + '\n'
+      + 'globalThis.__dcDirectXz = { initSync, XzEncoder, decompress_xz, '
+      + `wasmGzipBase64: '${wasmGzip.toString('base64')}' };\n`
+      + '// END bundled direct XZ\n';
+  } finally {
+    await rm(work, { recursive: true, force: true });
   }
-  const build = spawnSync(
-    'wasm-pack',
-    ['build', crate, '--target', 'web', '--release', '--out-dir', 'pkg'],
-    { cwd: root, encoding: 'utf8', stdio: 'inherit' }
-  );
-  if (build.status !== 0) throw new Error('Direct XZ Wasm build failed.');
-  let glue = await readFile(path.join(pkg, 'dc_direct_xz_wasm.js'), 'utf8');
-  glue = glue.replace(/^export class XzEncoder/m, 'class XzEncoder');
-  glue = glue.replace(/^export function decompress_xz/m, 'function decompress_xz');
-  glue = glue.replace(/export \{ initSync, __wbg_init as default \};\s*$/, '');
-  if (!glue.includes('function initSync(') || !glue.includes('class XzEncoder')) {
-    throw new Error('Unexpected direct XZ browser glue shape.');
-  }
-  const wasm = await readFile(path.join(pkg, 'dc_direct_xz_wasm_bg.wasm'));
-  const wasmGzip = gzipSync(wasm, { level: 9 });
-  return '// BEGIN bundled direct XZ lzma-rust2=0.16.2\n'
-    + glue + '\n'
-    + 'const DIRECT_XZ_WASM_GZIP_BASE64 = \''
-    + wasmGzip.toString('base64') + '\';\n'
-    + '// END bundled direct XZ\n';
 }
 
 async function main() {
