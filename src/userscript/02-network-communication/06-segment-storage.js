@@ -190,7 +190,10 @@
   async function communicationLogCompressSealedSegment(segment) {
     const directory = communicationLogSegmentDirectoryHandle;
     if (!directory) throw new Error('Communication segment directory is not ready.');
-    const rawHandle = await directory.getFileHandle(segment.raw_name, { create: false });
+    const rawDirectory = segment.raw_parent === 'root'
+      ? communicationLogDirectoryHandle
+      : directory;
+    const rawHandle = await rawDirectory.getFileHandle(segment.raw_name, { create: false });
     const rawFile = await rawHandle.getFile();
     const rawBytes = new Uint8Array(await rawFile.arrayBuffer());
     const sourceHash = await communicationLogSha256(rawBytes);
@@ -223,7 +226,7 @@
       segment.compression_state = 'compressed';
       segment.verified_sha256 = extractedHash;
       await communicationLogWriteSegmentManifest();
-      await directory.removeEntry(segment.raw_name);
+      await rawDirectory.removeEntry(segment.raw_name);
       setStatus(`Communication log: sealed segment ${segment.ordinal} compressed; recording continues.`);
       logDiagnostic('debug', 'communication-log-segment-compressed', {
         ordinal: segment.ordinal,
@@ -297,6 +300,7 @@
     const segment = {
       ordinal,
       raw_name: rawName,
+      raw_parent: 'segment',
       archive_name: archiveName,
       member_name: memberName,
       raw_bytes: rawBytes.byteLength,
