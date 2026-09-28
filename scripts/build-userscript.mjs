@@ -75,7 +75,7 @@ async function buildDirectXzPrelude() {
       cwd: work, encoding: 'utf8', stdio: 'inherit'
     });
     if (build.status !== 0) throw new Error('Direct XZ Wasm build failed.');
-    let glue = await readFile(path.join(pkg, 'dc_direct_xz_wasm.js'), 'utf8');
+    let glue = await readFile(path.join(pkg, 'direct_xz_wasm.js'), 'utf8');
     glue = glue.replace(/^\/\* @ts-self-types[^\n]*\n\s*\*\/\s*/m, '');
     glue = glue.replace(/^export class XzEncoder/m, 'class XzEncoder');
     glue = glue.replace(/^export function decompress_xz/m, 'function decompress_xz');
@@ -85,7 +85,7 @@ async function buildDirectXzPrelude() {
     glue = glue.replace(/^export /gm, '');
     glue = glue.replaceAll('import.meta.url', 'globalThis.location.href');
     glue = glue.replace(/export \{ initSync, __wbg_init as default \};\s*$/, '');
-    const wasm = await readFile(path.join(pkg, 'dc_direct_xz_wasm_bg.wasm'));
+    const wasm = await readFile(path.join(pkg, 'direct_xz_wasm_bg.wasm'));
     const wasmGzip = gzipSync(wasm, { level: 9 });
     return '// BEGIN bundled direct XZ lzma-rust2=0.16.2\n'
       + glue + '\n'
