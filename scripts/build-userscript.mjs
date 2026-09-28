@@ -58,7 +58,7 @@ async function fetchPinnedDependency(dependency) {
 }
 
 async function buildDirectXzPrelude() {
-  const sourceCrate = path.join(root, '7z-js-benchmark', 'prototype', 'direct-xz');
+  const sourceCrate = path.join(root, 'vendor', 'direct-xz');
   const work = await mkdtemp(path.join(tmpdir(), 'dc-direct-xz-'));
   const crate = path.join(work, 'crate');
   const pkg = path.join(work, 'pkg');
