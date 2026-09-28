@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         ChatGPT Conversation Markdown Recorder
 // @namespace    https://chatgpt.com/
-// @version      1.7.2-issue.166.105
+// @version      1.7.2-issue.166.106
 // @description  Exports the current ChatGPT conversation directly from the Conversation API as Markdown or JSONL.
 // @match        https://chatgpt.com/*
 // @match        https://chat.openai.com/*
@@ -6785,7 +6785,6 @@ const STREAMING7Z_WASM_GZIP_BASE64 = 'H4sIAAAAAAACA8z9DZwc11UmjNe9VdVV3dU9UyON5J
 
   // BEGIN Issue #123 disk communication recorder
   /** Interval between dirty communication-log checkpoints. */
-  const COMMUNICATION_LOG_CHECKPOINT_MS = 30 * 1000;
   /** Long-lived writable stream used by normal communication-log appends. */
   let communicationLogWritable = null;
   /** Whether the current long-lived writable contains bytes not yet checkpointed. */
@@ -6793,7 +6792,6 @@ const STREAMING7Z_WASM_GZIP_BASE64 = 'H4sIAAAAAAACA8z9DZwc11UmjNe9VdVV3dU9UyON5J
   /** Exact accepted byte count in the current active raw segment. */
   let communicationLogActiveBytes = null;
   /** Periodic checkpoint timer installed once communication logging becomes active. */
-  let communicationLogCheckpointTimer = null;
   /**
    * Opens the IndexedDB database that retains the authorized directory handle.
    *
@@ -6924,7 +6922,6 @@ const STREAMING7Z_WASM_GZIP_BASE64 = 'H4sIAAAAAAACA8z9DZwc11UmjNe9VdVV3dU9UyON5J
   function communicationLogInstallLifecycleObservers() {
     if (communicationLogLifecycleInstalled) return;
     communicationLogLifecycleInstalled = true;
-    communicationLogCheckpointTimer = setInterval(() => void communicationLogCheckpoint('periodic'), COMMUNICATION_LOG_CHECKPOINT_MS);
     window.addEventListener('beforeunload', () => {
       void communicationLogCheckpointForDocumentDeparture('beforeunload');
     });
@@ -6939,9 +6936,6 @@ const STREAMING7Z_WASM_GZIP_BASE64 = 'H4sIAAAAAAACA8z9DZwc11UmjNe9VdVV3dU9UyON5J
       void communicationLogRecord('communication_visibility_change', {
         visibility_state: document.visibilityState
       });
-      if (document.visibilityState === 'hidden') {
-        void communicationLogCheckpoint('visibility-hidden');
-      }
     });
   }
 
@@ -9257,11 +9251,6 @@ const STREAMING7Z_WASM_GZIP_BASE64 = 'H4sIAAAAAAACA8z9DZwc11UmjNe9VdVV3dU9UyON5J
       });
       await cancelReadableBodyQuietly(cloned.body);
     }
-    try {
-      if (new URL(responseUrl, location.href).pathname === '/backend-api/f/conversation') {
-        await communicationLogCheckpoint('generation-response-complete');
-      }
-    } catch {}
   }
 
   /**
