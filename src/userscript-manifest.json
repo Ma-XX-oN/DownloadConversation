@@ -31,7 +31,6 @@
         "src/userscript/02-network-communication/06-segment-recovery.js",
         "src/userscript/02-network-communication/06-segment-snapshot.js",
         "src/userscript/02-network-communication/06-segment-duplicate.js",
-        "src/userscript/02-network-communication/06-segment-duplicate.js",
         "src/userscript/02-network-communication/04-communication-redaction.js",
         "src/userscript/02-network-communication/05-communication-recovery.js",
         "src/userscript/02-network-communication/06-communication-files.js",
