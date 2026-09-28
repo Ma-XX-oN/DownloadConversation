@@ -63,7 +63,12 @@ test('Issue 166 Duplicate freezes EOF without sealing and holds rotation', async
   const body = duplicate.slice(start, duplicate.indexOf('\n  /**', start + 20));
   assert.match(body, /communicationLogDuplicateInProgress/);
   assert.match(body, /communicationLogRotationHold/);
-  assert.match(body, /active_eof/);
+  assert.match(body, /communicationLogCaptureSnapshotPlan\s*\(/);
+  const snapshot = await readFile(
+    new URL('../src/userscript/02-network-communication/06-segment-snapshot.js', import.meta.url),
+    'utf8'
+  );
+  assert.match(snapshot, /active_eof:\s*activeEof/);
   assert.doesNotMatch(body, /communicationLogSealActiveSegment\s*\(/);
   assert.match(body, /finally\s*\{/);
 });
