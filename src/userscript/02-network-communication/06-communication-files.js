@@ -60,18 +60,9 @@
         throw new Error(`Communication log file already exists: ${validatedName}`);
       }
 
-      await communicationLogCloseActiveWriter();
-      const sourceName = communicationLogFileName;
-      const sourceSnapshot = await communicationLogRefreshedFileSnapshot();
-      await communicationLogCopyForRename(sourceSnapshot.file, validatedName);
-
-      try {
-        await communicationLogDirectoryHandle.removeEntry(sourceName);
-      } catch (error) {
-        try { await communicationLogDirectoryHandle.removeEntry(validatedName); } catch {}
-        throw error;
-      }
-
+      // The physical active files are private alternating segment files.  Rename
+      // therefore changes the logical/user-facing basename only; no log bytes
+      // are copied and the active writer remains attached to the same file.
       communicationLogFileName = validatedName;
       return validatedName;
     });
