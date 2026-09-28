@@ -160,6 +160,29 @@
   }
 
   /**
+   * Removes an interrupted Duplicate output while retaining its request for a
+   * fresh post-startup snapshot boundary.
+   *
+   * @returns {Promise<void>} Resolves after transient Duplicate output is cleared.
+   */
+  async function communicationLogRecoverDuplicateRequest() {
+    const request = communicationLogSegmentManifest?.duplicate_request;
+    if (!request) return;
+    const outputName = communicationLogSegmentManifest.duplicate_output;
+    if (typeof outputName === 'string' && outputName) {
+      try {
+        await communicationLogDirectoryHandle.removeEntry(outputName);
+      } catch (error) {
+        if (error?.name !== 'NotFoundError') throw error;
+      }
+    }
+    delete communicationLogSegmentManifest.duplicate_output;
+    communicationLogRotationHold = 0;
+    communicationLogRotationPending = false;
+    await communicationLogWriteSegmentManifest();
+  }
+
+  /**
    * Initializes durable segmented storage before recorder readiness.
    *
    * @returns {Promise<void>} Resolves when active and historical state is ready.
@@ -193,9 +216,6 @@
         next_ordinal: communicationLogSegmentManifest.next_ordinal,
         historical_segments: communicationLogSegmentManifest.segments.length
       });
-
-      phase = 'legacy-active-retirement';
-      await communicationLogRetireLegacyTopLevelActive();
 
       phase = 'duplicate-recovery';
       await communicationLogRecoverDuplicateRequest();
