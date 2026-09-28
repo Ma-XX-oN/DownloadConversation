@@ -132,35 +132,13 @@ async function main() {
     fail('DownloadConversation source does not preserve the userscript IIFE boundary.');
   }
   const artifactTail = artifact.subarray(offset).toString('utf8');
-  const preludeStart = artifactTail.indexOf('// BEGIN bundled stream7z 26.03 direct API source=');
   const sourceBody = sourceText.slice('\n(() => {'.length);
-  if (!artifactTail.startsWith('\n(() => {\n') || preludeStart !== '\n(() => {\n'.length) {
-    fail('Generated userscript stream7z runtime is not scoped immediately inside the DC IIFE.');
-  }
-  const preludeEndMarker = '// END bundled stream7z 26.03 direct API\n';
-  const preludeEnd = artifactTail.indexOf(preludeEndMarker, preludeStart);
-  if (preludeEnd < 0) fail('Generated userscript stream7z closing banner is missing.');
-  const prelude = artifactTail.slice(preludeStart, preludeEnd + preludeEndMarker.length);
-  if (/export default Stream7zModule/.test(prelude)) {
-    fail('Generated userscript must not retain the ES-module export statement.');
-  }
-  if (/import\.meta/.test(prelude)) {
-    fail('Generated userscript must not retain import.meta module syntax.');
-  }
-  const stream7zManifest = JSON.parse(await readFile(
-    path.join(root, '7z-js-benchmark', 'dist', 'stream7z-26.03.json'),
-    'utf8'
-  ));
-  if (!prelude.includes(`source=${stream7zManifest.source_commit}`)) {
-    fail('Generated stream7z provenance does not match the pinned submodule manifest.');
-  }
-  if (!prelude.includes("const STREAM7Z_WASM_GZIP_BASE64 = '")) {
-    fail('Generated userscript compressed stream7z Wasm payload is missing.');
-  }
-  const streamingStart = preludeEnd + preludeEndMarker.length;
-  const streamingOpen = '// BEGIN bundled streaming7z libarchive source=';
-  if (!artifactTail.startsWith(streamingOpen, streamingStart)) {
-    fail('Generated userscript streaming7z opening banner is missing.');
+  const streamingStart = artifactTail.indexOf(
+    '// BEGIN bundled streaming7z libarchive source='
+  );
+  if (!artifactTail.startsWith('\n(() => {\n')
+      || streamingStart !== '\n(() => {\n'.length) {
+    fail('Generated streaming7z runtime is not scoped immediately inside the DC IIFE.');
   }
   const streamingEndMarker = '// END bundled streaming7z libarchive\n';
   const streamingEnd = artifactTail.indexOf(streamingEndMarker, streamingStart);
@@ -183,7 +161,7 @@ async function main() {
       || /import\.meta/.test(streamingPrelude)) {
     fail('Generated streaming7z prelude retains ES-module-only syntax.');
   }
-  const expectedTail = '\n(() => {\n' + prelude + streamingPrelude + sourceBody;
+  const expectedTail = '\n(() => {\n' + streamingPrelude + sourceBody;
   if (artifactTail !== expectedTail) {
     fail('Generated userscript scoped archive prelude/source assembly differs from repository source.');
   }
