@@ -108,8 +108,8 @@ communicationLogStreamDuplicateArchive = async plan => {
   const text = new TextDecoder().decode(plan.fixture_bytes);
   this.__issue134Events.push('archive:' + memberName + ':' + text);
   return {
-    archive: new TextEncoder().encode('7Z:' + memberName + ':\\n' + text),
-    archive_name: 'DownloadConversation_test_20260927T010203004Z_20260927T010205006Z.comm.7z'
+    archive: new TextEncoder().encode('XZ:' + memberName + ':\\n' + text),
+    archive_name: 'DownloadConversation_test_20260927T010203004Z_20260927T010205006Z.comm.xz'
   };
 };
 setStatus = message => this.__issue134Events.push('status:' + message);
@@ -194,7 +194,7 @@ test('timestamped duplicate archive omits (N) unless the complete name collides'
   const duplicated = await api.duplicate();
   assert.equal(
     duplicated,
-    'DownloadConversation_test_20260927T010203004Z_20260927T010205006Z.comm.7z'
+    'DownloadConversation_test_20260927T010203004Z_20260927T010205006Z.comm.xz'
   );
 });
 
@@ -217,10 +217,10 @@ test('duplicate waits for pending writes, snapshots exact committed bytes, and k
   releasePending();
   const duplicateName = await operation;
 
-  assert.equal(duplicateName, 'DownloadConversation_test_20260927T010203004Z_20260927T010205006Z.comm.7z');
+  assert.equal(duplicateName, 'DownloadConversation_test_20260927T010203004Z_20260927T010205006Z.comm.xz');
   assert.equal(
     await blobText(files.get(duplicateName)),
-    '7Z:DownloadConversation_test_20260927T010203004Z_20260927T010205006Z.jsonl:\nalpha\nbeta\n'
+    'XZ:DownloadConversation_test_20260927T010203004Z_20260927T010205006Z.jsonl:\nalpha\nbeta\n'
   );
   assert.ok(events.includes(
     'archive:DownloadConversation_test_20260927T010203004Z_20260927T010205006Z.jsonl:alpha\nbeta\n'
@@ -235,7 +235,7 @@ test('duplicate waits for pending writes, snapshots exact committed bytes, and k
   files.set('DownloadConversation_test.jsonl', new Blob(['changed later']));
   assert.equal(
     await blobText(files.get(duplicateName)),
-    '7Z:DownloadConversation_test_20260927T010203004Z_20260927T010205006Z.jsonl:\nalpha\nbeta\n',
+    'XZ:DownloadConversation_test_20260927T010203004Z_20260927T010205006Z.jsonl:\nalpha\nbeta\n',
     'Later writes to the active log must not mutate the archived duplicate snapshot.'
   );
 });
@@ -310,7 +310,7 @@ test('Issue 166 Duplicate streams a frozen EOF without rotating the active file'
   assert.match(duplicate, /communicationLogStreamDuplicateArchive\(plan, options\)/);
   assert.doesNotMatch(duplicate, /communicationLogSealActiveSegment\s*\(/);
   assert.doesNotMatch(duplicate, /communicationLogLogicalSnapshot\s*\(/);
-  assert.match(duplicate, /application\/x-7z-compressed/);
+  assert.match(duplicate, /application\/x-xz/);
   assert.match(duplicate, /communicationLogReleaseRotationHold\(\)/);
   assert.doesNotMatch(
     downloadConversationSource,
