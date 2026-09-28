@@ -5,10 +5,10 @@ import path from 'node:path';
 
 const root = path.resolve(new URL('..', import.meta.url).pathname);
 const userscript = readFileSync(path.join(root, 'chatgpt-conversation-markdown-export.user.js'), 'utf8');
-const begin = userscript.indexOf('// BEGIN bundled streaming7z libarchive source=');
-const endMarker = '// END bundled streaming7z libarchive';
+const begin = userscript.indexOf('// BEGIN bundled direct XZ lzma-rust2=0.16.2');
+const endMarker = '// END bundled direct XZ';
 const end = userscript.indexOf(endMarker, begin);
-const runtimeBegin = userscript.indexOf('  /**\n   * Creates one stock-compatible 7z archive through the unified streaming runtime.', end);
+const runtimeBegin = userscript.indexOf('  /**\n   * Creates one stock-compatible XZ stream through the unified streaming runtime.', end);
 const runtimeEnd = userscript.indexOf(
   '  /**\n   * Installs host-isolation styling for native recorder checkboxes.',
   runtimeBegin
@@ -34,7 +34,7 @@ const benchmark = String.raw`
 const benchmarkKeepAlive = setInterval(() => {}, 1000);
 (async () => {
   const output = document.getElementById('output');
-  await streaming7zModule();
+  await directXzModule();
   const mib = Number(location.hash.slice(1));
   const encoder = new TextEncoder();
   const template = encoder.encode(
@@ -47,9 +47,9 @@ const benchmarkKeepAlive = setInterval(() => {}, 1000);
     bytes.set(template.subarray(0, Math.min(template.length, size - offset)), offset);
   }
   const heapBefore = performance.memory?.usedJSHeapSize ?? null;
-  const archive = await create7zArchive(bytes, 'benchmark.jsonl');
+  const archive = await createXzArchive(bytes);
   const heapAfter = performance.memory?.usedJSHeapSize ?? null;
-  const extracted = await extract7zArchive(archive);
+  const extracted = await extractXzArchive(archive);
   let exact = extracted.byteLength === bytes.byteLength;
   if (exact) {
     for (let index = 0; index < bytes.byteLength; index += 65537) {
