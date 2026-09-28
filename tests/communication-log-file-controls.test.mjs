@@ -305,25 +305,21 @@ test('communication-log mutators share queue, writer-close, and panel action inf
 });
 
 
-test('Issue 166 Duplicate creates a timestamped consolidated comm archive', () => {
+test('Issue 166 Duplicate streams a frozen EOF without rotating the active file', () => {
   const duplicate = diskFunctionSource('communicationLogArchiveDuplicate');
-  const seal = duplicate.indexOf('communicationLogSealActiveSegment');
-  const capture = duplicate.indexOf('communicationLogCaptureSnapshotPlan');
-  assert.ok(seal >= 0 && capture > seal,
-    'Duplicate must seal/rotate the active segment before freezing reconstruction membership');
-  assert.match(duplicate, /communicationLogLogicalSnapshot\(plan\)/);
-  assert.match(duplicate, /'comm'/);
-  assert.match(duplicate,
-    /create7zArchive\(\s*logicalSnapshot\.bytes,\s*memberName,\s*communicationLogArchiveMTime\(range\)\s*\)/s,
-    'consolidated archive member must carry the frozen content end time');
+  assert.match(duplicate, /communicationLogRotationHold\s*\+=\s*1/);
+  assert.match(duplicate, /communicationLogCaptureSnapshotPlan\(\)/);
+  assert.match(duplicate, /communicationLogStreamDuplicateArchive\(plan, options\)/);
+  assert.doesNotMatch(duplicate, /communicationLogSealActiveSegment\s*\(/);
+  assert.doesNotMatch(duplicate, /communicationLogLogicalSnapshot\s*\(/);
   assert.match(duplicate, /application\/x-7z-compressed/);
+  assert.match(duplicate, /communicationLogReleaseRotationHold\(\)/);
   assert.doesNotMatch(
     downloadConversationSource,
     /await communicationLogCopyForRename\(sourceSnapshot\.file, duplicateName\);\s*return duplicateName;/,
     'Duplicate must not retain the old raw JSONL copy path.'
   );
 });
-
 
 test('Issue 166 panel duplicate control cannot call the legacy raw-copy interface', () => {
   assert.match(userscript, /operation: communicationLogArchiveDuplicate/);
