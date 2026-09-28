@@ -83,11 +83,11 @@ async function buildDirectXzPrelude() {
     glue = glue.replace(/^export default async function __wbg_init/m, 'async function __wbg_init');
     glue = glue.replace(/^export \{[^\n]*\};?\s*$/gm, '');
     glue = glue.replace(/^export /gm, '');
+    glue = glue.replaceAll('import.meta.url', 'globalThis.location.href');
     glue = glue.replaceAll('import.meta', 'globalThis.location');
     if (/^export\s/m.test(glue) || /import\.meta/.test(glue)) {
       throw new Error('Direct XZ browser glue still contains module-only syntax.');
     }
-    glue = glue.replaceAll('import.meta.url', 'globalThis.location.href');
     glue = glue.replace(/export \{ initSync, __wbg_init as default \};\s*$/, '');
     const wasm = await readFile(path.join(pkg, 'direct_xz_wasm_bg.wasm'));
     const wasmGzip = gzipSync(wasm, { level: 9 });
