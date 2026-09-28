@@ -69,7 +69,7 @@
       file_name: communicationLogFileName,
       segment_directory: communicationLogSegmentDirectoryName(),
       active_segment_bytes: communicationLogActiveSegmentBytes,
-      historical_segments: communicationLogSegmentManifest?.segments?.length ?? null
+      historical_segments: (await communicationLogHistoricalSegmentsFromDirectory()).length
     });
     communicationLogDisarmDirectoryGesture();
     document.getElementById('tm-communication-directory-required')?.remove();
