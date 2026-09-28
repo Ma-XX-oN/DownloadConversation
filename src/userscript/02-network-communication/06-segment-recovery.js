@@ -66,7 +66,6 @@
     const segment = {
       ordinal,
       raw_name: closed.name,
-      raw_parent: 'segment',
       archive_name: await communicationLogUnusedRoleArchiveName(
         communicationLogSegmentDirectoryHandle,
         'segment',
