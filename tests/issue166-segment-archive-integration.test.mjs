@@ -52,10 +52,6 @@ test('Issue 166 production initialization creates the segment directory and repo
       active_last_timestamp: null
     });
     const communicationLogWriteSegmentManifest = async () => {};
-    const communicationLogTimestampRangeFromJsonl = () => ({
-      start_timestamp: '2026-09-27T01:00:00.000Z',
-      end_timestamp: '2026-09-27T01:00:01.000Z'
-    });
     const communicationLogRecoverDuplicateRequest = async () => {};
     const communicationLogRecoverAlternatingActiveFiles = async () => {};
     const communicationLogRecoverSegmentState = async () => {};
