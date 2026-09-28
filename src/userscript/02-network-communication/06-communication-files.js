@@ -135,6 +135,8 @@
       );
       const streamed = await communicationLogStreamDuplicateArchive(plan, options);
       archiveName = streamed.archive_name;
+      communicationLogSegmentManifest.duplicate_output = archiveName;
+      await communicationLogWriteSegmentManifest();
 
       let writable = null;
       let archiveCreated = false;
