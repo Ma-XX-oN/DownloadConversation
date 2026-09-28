@@ -1,13 +1,11 @@
   /**
-   * Derives the append target from the two alternating files and recoverable
-   * sealed-source ownership.  No persisted active-name flag is trusted.
+   * Derives the append target from the two alternating physical files.
    *
    * @returns {Promise<void>} Resolves after an active file is selected/created.
    */
   async function communicationLogRecoverAlternatingActiveFiles() {
-    const names = ['active-a.jsonl', 'active-b.jsonl'];
     const states = [];
-    for (const name of names) {
+    for (const name of COMMUNICATION_LOG_ACTIVE_FILE_NAMES) {
       try {
         const handle = await communicationLogSegmentDirectoryHandle.getFileHandle(
           name,
@@ -42,120 +40,70 @@
       communicationLogActiveFileName,
       { create: true }
     );
-
-    const closed = states.find(state =>
-      state.name !== communicationLogActiveFileName && state.exists && state.size > 0
-    );
-    if (!closed) return;
-    const alreadyTracked = communicationLogSegmentManifest.segments.some(segment =>
-      segment.raw_name === closed.name && segment.compression_state !== 'compressed'
-    );
-    if (alreadyTracked) return;
-
-    const handle = await communicationLogSegmentDirectoryHandle.getFileHandle(
-      closed.name,
-      { create: false }
-    );
-    const bytes = new Uint8Array(await (await handle.getFile()).arrayBuffer());
-    const range = communicationLogTimestampRangeFromJsonl(bytes);
-    if (!range) throw new Error(`Closed communication source has no timestamp range: ${closed.name}`);
-    const ordinal = communicationLogSegmentManifest.next_ordinal++;
-    const suffix = String(ordinal).padStart(6, '0');
-    const start = communicationLogArchiveTimestamp(range.start_timestamp);
-    const end = communicationLogArchiveTimestamp(range.end_timestamp);
-    const segment = {
-      ordinal,
-      raw_name: closed.name,
-      archive_name: await communicationLogUnusedRoleArchiveName(
-        communicationLogSegmentDirectoryHandle,
-        'segment',
-        range,
-        'seg'
-      ),
-      member_name: `segment-${suffix}_${start}-${end}.jsonl`,
-      raw_bytes: bytes.byteLength,
-      source_sha256: await communicationLogSha256(bytes),
-      start_timestamp: range.start_timestamp,
-      end_timestamp: range.end_timestamp,
-      compression_state: 'sealed'
-    };
-    communicationLogSegmentManifest.segments.push(segment);
-    await communicationLogWriteSegmentManifest();
   }
 
   /**
-   * Recovers sealed pending/failed segments after reload.
+   * Recovers the non-active alternating file as an interrupted sealed source.
    *
-   * @returns {Promise<void>} Resolves after recovery work is scheduled.
+   * @returns {Promise<void>} Resolves after recovery compression is scheduled.
    */
   async function communicationLogRecoverSegmentState() {
-    for (const segment of communicationLogSegmentManifest.segments) {
-      if (segment.compression_state === 'compressed') {
-        try {
-          const archiveHandle = await communicationLogSegmentDirectoryHandle.getFileHandle(
-            segment.archive_name,
-            { create: false }
-          );
-          const archive = new Uint8Array(await (await archiveHandle.getFile()).arrayBuffer());
-          const extracted = await extract7zArchive(archive);
-          const hash = await communicationLogSha256(extracted);
-          if (extracted.byteLength !== segment.raw_bytes || hash !== segment.source_sha256) {
-            throw new Error('compressed segment verification mismatch');
-          }
-          try {
-            const staleRaw = await communicationLogSegmentDirectoryHandle.getFileHandle(
-              segment.raw_name,
-              { create: false }
-            );
-            const staleBytes = new Uint8Array(await (await staleRaw.getFile()).arrayBuffer());
-            if (staleBytes.byteLength === segment.raw_bytes
-                && await communicationLogSha256(staleBytes) === segment.source_sha256) {
-              await communicationLogSegmentDirectoryHandle.removeEntry(segment.raw_name);
-            }
-          } catch (error) {
-            if (error?.name !== 'NotFoundError') throw error;
-          }
-          continue;
-        } catch (archiveError) {
-          try {
-            await communicationLogSegmentDirectoryHandle.getFileHandle(
-              segment.raw_name,
-              { create: false }
-            );
-            segment.compression_state = 'sealed';
-            segment.failure = `Recovery replaced invalid compressed state: ${errorMessage(archiveError)}`;
-            await communicationLogWriteSegmentManifest();
-          } catch (rawError) {
-            if (rawError?.name === 'NotFoundError') {
-              throw new Error(
-                `Compressed segment ${segment.ordinal} is invalid and has no recoverable raw source.`
-              );
-            }
-            throw rawError;
-          }
-        }
-      }
-
-      let rawHandle;
-      try {
-        rawHandle = await communicationLogSegmentDirectoryHandle.getFileHandle(
-          segment.raw_name,
-          { create: false }
-        );
-      } catch (error) {
-        if (error?.name === 'NotFoundError') {
-          throw new Error(`Missing recoverable raw segment: ${segment.raw_name}`);
-        }
-        throw error;
-      }
-      const rawBytes = new Uint8Array(await (await rawHandle.getFile()).arrayBuffer());
-      const hash = await communicationLogSha256(rawBytes);
-      if (rawBytes.byteLength !== segment.raw_bytes || hash !== segment.source_sha256) {
-        throw new Error(`Recoverable raw segment verification failed: ${segment.raw_name}`);
-      }
-      segment.compression_state = 'sealed';
-      void communicationLogQueueSegmentCompression(segment).catch(() => {});
+    const closedName = COMMUNICATION_LOG_ACTIVE_FILE_NAMES.find(
+      name => name !== communicationLogActiveFileName
+    );
+    if (!closedName) return;
+    let rawHandle;
+    try {
+      rawHandle = await communicationLogSegmentDirectoryHandle.getFileHandle(
+        closedName,
+        { create: false }
+      );
+    } catch (error) {
+      if (error?.name === 'NotFoundError') return;
+      throw error;
     }
+    const rawFile = await rawHandle.getFile();
+    if (rawFile.size === 0) {
+      await communicationLogSegmentDirectoryHandle.removeEntry(closedName);
+      return;
+    }
+    const rawBytes = new Uint8Array(await rawFile.arrayBuffer());
+    const range = communicationLogTimestampRangeFromJsonl(rawBytes);
+    if (!range) throw new Error(`Closed communication source has no timestamp range: ${closedName}`);
+    const start = communicationLogArchiveTimestamp(range.start_timestamp);
+    const end = communicationLogArchiveTimestamp(range.end_timestamp);
+    const segment = {
+      raw_name: closedName,
+      archive_name: communicationLogRoleArchiveName('segment', range, 'seg'),
+      member_name: `segment_${start}-${end}.jsonl`,
+      raw_bytes: rawBytes.byteLength,
+      source_sha256: await communicationLogSha256(rawBytes),
+      start_timestamp: range.start_timestamp,
+      end_timestamp: range.end_timestamp
+    };
+
+    try {
+      const archiveHandle = await communicationLogSegmentDirectoryHandle.getFileHandle(
+        segment.archive_name,
+        { create: false }
+      );
+      const archive = new Uint8Array(await (await archiveHandle.getFile()).arrayBuffer());
+      const extracted = await extract7zArchive(archive);
+      if (await communicationLogBytesEqual(extracted, rawBytes)) {
+        await communicationLogSegmentDirectoryHandle.removeEntry(closedName);
+        return;
+      }
+      await communicationLogSegmentDirectoryHandle.removeEntry(segment.archive_name);
+    } catch (error) {
+      if (error?.name !== 'NotFoundError') {
+        try {
+          await communicationLogSegmentDirectoryHandle.removeEntry(segment.archive_name);
+        } catch (removeError) {
+          if (removeError?.name !== 'NotFoundError') throw removeError;
+        }
+      }
+    }
+    void communicationLogQueueSegmentCompression(segment).catch(() => {});
   }
 
   /**
@@ -211,9 +159,7 @@
       phase = 'manifest-read';
       communicationLogSegmentManifest = await communicationLogReadSegmentManifest();
       logDiagnostic('debug', 'communication-log-segment-manifest-ready', {
-        segment_directory: directoryName,
-        next_ordinal: communicationLogSegmentManifest.next_ordinal,
-        historical_segments: communicationLogSegmentManifest.segments.length
+        segment_directory: directoryName
       });
 
       phase = 'duplicate-recovery';
@@ -224,13 +170,11 @@
 
       phase = 'recovery';
       logDiagnostic('debug', 'communication-log-segment-recovery-started', {
-        segment_directory: directoryName,
-        historical_segments: communicationLogSegmentManifest.segments.length
+        segment_directory: directoryName
       });
       await communicationLogRecoverSegmentState();
       logDiagnostic('debug', 'communication-log-segment-recovery-completed', {
-        segment_directory: directoryName,
-        historical_segments: communicationLogSegmentManifest.segments.length
+        segment_directory: directoryName
       });
 
       phase = 'active-snapshot';
@@ -242,8 +186,7 @@
       }
       logDiagnostic('debug', 'communication-log-segment-initialize-completed', {
         segment_directory: directoryName,
-        active_segment_bytes: communicationLogActiveSegmentBytes,
-        historical_segments: communicationLogSegmentManifest.segments.length
+        active_segment_bytes: communicationLogActiveSegmentBytes
       });
     } catch (error) {
       logDiagnostic('warnings', 'communication-log-segment-initialize-failed', {
