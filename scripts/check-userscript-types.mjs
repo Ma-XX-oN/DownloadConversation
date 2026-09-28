@@ -52,6 +52,8 @@ function runTsc(source, label) {
         'declare const unsafeWindow: any;',
         'declare const STREAM7Z_WASM_GZIP_BASE64: string;',
         'declare const Stream7zModule: any;',
+        'declare const STREAMING7Z_WASM_GZIP_BASE64: string;',
+        'declare const Streaming7zModule: any;',
         'declare function create7zArchive(',
         '  bytes: Uint8Array, memberName: string, mtime?: number',
         '): Promise<Uint8Array>;',
