@@ -10,13 +10,17 @@
     }
     const baselineSnapshot = await communicationLogRefreshedFileSnapshot();
     const baseline = baselineSnapshot.file;
+    const recoveryDirectory = communicationLogSegmentDirectoryHandle
+      && communicationLogActiveFileName
+      ? communicationLogSegmentDirectoryHandle
+      : communicationLogDirectoryHandle;
     // Escape the literal log filename before recognizing Chromium sibling swap names.
     const escapedLogName = (communicationLogActiveFileName ?? communicationLogFileName).replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
     const swapPattern = new RegExp(`^${escapedLogName}(?:\\.\\d+)?\\.crswap$`);
     // Retain candidate file snapshots so selection and cleanup use one observed swap state.
     const candidates = [];
 
-    for await (const [name, entry] of communicationLogDirectoryHandle.entries()) {
+    for await (const [name, entry] of recoveryDirectory.entries()) {
       if (entry?.kind !== 'file' || !swapPattern.test(name)) continue;
       try {
         const file = await entry.getFile();
@@ -93,7 +97,7 @@
           });
           continue;
         }
-        await communicationLogDirectoryHandle.removeEntry(candidate.name);
+        await recoveryDirectory.removeEntry(candidate.name);
       } catch (error) {
         communicationLogReportFailure(`swap-cleanup:${candidate.name}`, error);
       }
