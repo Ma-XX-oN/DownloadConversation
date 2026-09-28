@@ -232,6 +232,7 @@ test('Issue 166 production rotation switches active files before compression', a
     'communicationLogWriteExactFile',
     'communicationLogWriteSegmentManifest',
     'communicationLogActiveFileSnapshot',
+    'communicationLogAvailableAlternateActiveFile',
     'communicationLogSwitchActiveFile',
     'communicationLogCompressSealedSegment',
     'communicationLogQueueSegmentCompression',
