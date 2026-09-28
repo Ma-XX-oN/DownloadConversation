@@ -24,6 +24,7 @@ const ordinaryStages = [
   ['Development branch/version identity', nodeCommand, ['scripts/check-development-version.mjs']],
   ['Production JSDoc coverage', nodeCommand, ['scripts/check-jsdoc.mjs']],
   ['JavaScript syntax', nodeCommand, ['--check', 'chatgpt-conversation-markdown-export.user.js']],
+  ['TypeScript assembled-userscript semantics', nodeCommand, ['scripts/check-userscript-types.mjs']],
   ['Version identity regression', nodeCommand, ['--test', 'tests/version-identity.test.mjs']],
   ['Development version guard regression', nodeCommand, ['--test', 'tests/development-version-guard.test.mjs']],
   ['Development version setter regression', nodeCommand, ['--test', 'tests/set-development-version.test.mjs']],
