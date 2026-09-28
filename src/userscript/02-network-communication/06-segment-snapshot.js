@@ -105,44 +105,69 @@
   }
 
   /**
-   * Returns exact verified raw bytes for one historical segment.
+   * Parses one filesystem-authoritative historical segment archive name.
    *
-   * @param {Object} segment - Historical segment metadata.
-   * @returns {Promise<Uint8Array>} Verified raw JSONL segment bytes.
+   * @param {string} name - Candidate private segment filename.
+   * @returns {Object|null} Parsed range metadata, or null for another file role.
+   */
+  function communicationLogParseSegmentArchiveName(name) {
+    const match = /^segment_(\d{4},\d{2},\d{2};\d{2},\d{2},\d{2})-(\d{4},\d{2},\d{2};\d{2},\d{2},\d{2})\.seg\.7z$/.exec(name);
+    if (!match) return null;
+    const parseLocal = value => {
+      const fields = value.match(/\d+/g).map(Number);
+      return new Date(
+        fields[0], fields[1] - 1, fields[2],
+        fields[3], fields[4], fields[5], 0
+      ).getTime();
+    };
+    const startMs = parseLocal(match[1]);
+    const endMs = parseLocal(match[2]) + 999;
+    if (!Number.isFinite(startMs) || !Number.isFinite(endMs)) {
+      throw new Error(`Invalid communication segment timestamp filename: ${name}`);
+    }
+    return {
+      archive_name: name,
+      start_timestamp: new Date(startMs).toISOString(),
+      end_timestamp: new Date(endMs).toISOString(),
+      filename_start: match[1],
+      filename_end: match[2]
+    };
+  }
+
+  /**
+   * Enumerates compressed historical segments from the private directory.
+   *
+   * @returns {Promise<Object[]>} Chronologically ordered archive metadata.
+   */
+  async function communicationLogHistoricalSegmentsFromDirectory() {
+    const segments = [];
+    for await (const [name, entry] of communicationLogSegmentDirectoryHandle.entries()) {
+      if (entry?.kind !== 'file') continue;
+      const parsed = communicationLogParseSegmentArchiveName(name);
+      if (parsed) segments.push(parsed);
+    }
+    segments.sort((left, right) => left.archive_name.localeCompare(right.archive_name));
+    return segments;
+  }
+
+  /**
+   * Returns exact extracted bytes for one filesystem-authoritative historical segment.
+   *
+   * @param {Object} segment - Historical archive metadata.
+   * @returns {Promise<Uint8Array>} Exact raw JSONL segment bytes.
    */
   async function communicationLogReadHistoricalSegment(segment) {
-    /** Reads and extracts the committed archive representation for this segment. */
-    /**
-     * Reads and extracts the verified archive member for this segment.
-     *
-     * @returns {Promise<Uint8Array>} Exact extracted segment bytes.
-     */
-    const readArchive = async () => {
-      const handle = await communicationLogSegmentDirectoryHandle.getFileHandle(
-        segment.archive_name,
-        { create: false }
-      );
-      const archive = new Uint8Array(await (await handle.getFile()).arrayBuffer());
-      return extract7zArchive(archive);
-    };
-    let bytes;
-    if (segment.compression_state === 'compressed') {
-      bytes = await readArchive();
-    } else {
-      try {
-        const handle = await communicationLogSegmentDirectoryHandle.getFileHandle(
-          segment.raw_name,
-          { create: false }
-        );
-        bytes = new Uint8Array(await (await handle.getFile()).arrayBuffer());
-      } catch (error) {
-        if (error?.name !== 'NotFoundError') throw error;
-        bytes = await readArchive();
-      }
-    }
-    if (bytes.byteLength !== segment.raw_bytes
-        || await communicationLogSha256(bytes) !== segment.source_sha256) {
-      throw new Error(`Historical segment verification failed: segment ${segment.ordinal}`);
+    const handle = await communicationLogSegmentDirectoryHandle.getFileHandle(
+      segment.archive_name,
+      { create: false }
+    );
+    const archive = new Uint8Array(await (await handle.getFile()).arrayBuffer());
+    const bytes = await extract7zArchive(archive);
+    const range = communicationLogTimestampRangeFromJsonl(bytes);
+    if (!range
+        || communicationLogArchiveTimestamp(range.start_timestamp) !== segment.filename_start
+        || communicationLogArchiveTimestamp(range.end_timestamp) !== segment.filename_end) {
+      throw new Error(`Historical segment range verification failed: ${segment.archive_name}`);
     }
     return bytes;
   }
@@ -165,7 +190,7 @@
       activeRange?.end_timestamp ?? null;
     await communicationLogWriteSegmentManifest();
     return {
-      segments: communicationLogSegmentManifest.segments.map(segment => ({ ...segment })),
+      segments: await communicationLogHistoricalSegmentsFromDirectory(),
       active_name: communicationLogActiveFileName,
       active_eof: activeEof,
       active_range: activeRange
