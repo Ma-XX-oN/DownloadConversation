@@ -113,6 +113,12 @@
   function communicationLogParseSegmentArchiveName(name) {
     const match = /^segment_(\d{4},\d{2},\d{2};\d{2},\d{2},\d{2})-(\d{4},\d{2},\d{2};\d{2},\d{2},\d{2})\.seg\.7z$/.exec(name);
     if (!match) return null;
+    /**
+     * Parses one local archive timestamp field.
+     *
+     * @param {string} value - Local filename timestamp.
+     * @returns {number} Epoch milliseconds at the start of that second.
+     */
     const parseLocal = value => {
       const fields = value.match(/\d+/g).map(Number);
       return new Date(
