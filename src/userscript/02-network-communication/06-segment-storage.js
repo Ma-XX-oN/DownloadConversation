@@ -48,7 +48,7 @@
       );
       if ((await occupied.getFile()).size > 0) {
         communicationLogRotationPending = true;
-        throw new Error(`Alternate communication active file is still occupied: ${next}`);
+        return null;
       }
       await communicationLogSegmentDirectoryHandle.removeEntry(next);
     } catch (error) {
@@ -227,6 +227,14 @@
       segment.verified_sha256 = extractedHash;
       await communicationLogWriteSegmentManifest();
       await rawDirectory.removeEntry(segment.raw_name);
+      if (communicationLogRotationPending) {
+        const pending = communicationLogEnqueue('pending-rotation', async () => {
+          if (communicationLogActiveSegmentBytes >= COMMUNICATION_LOG_SEGMENT_TARGET_BYTES) {
+            await communicationLogSealActiveSegment();
+          }
+        });
+        void pending.operation.catch(() => {});
+      }
       setStatus(`Communication log: sealed segment ${segment.ordinal} compressed; recording continues.`);
       logDiagnostic('debug', 'communication-log-segment-compressed', {
         ordinal: segment.ordinal,
@@ -294,7 +302,11 @@
     const sourceHash = await communicationLogSha256(rawBytes);
 
     // Establish the next append target before any compression work begins.
-    await communicationLogSwitchActiveFile();
+    const switched = await communicationLogSwitchActiveFile();
+    if (!switched) {
+      await communicationLogOpenWriter();
+      return null;
+    }
     await communicationLogOpenWriter();
 
     const segment = {
