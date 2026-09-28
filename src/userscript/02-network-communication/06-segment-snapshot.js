@@ -168,7 +168,7 @@
       { create: false }
     );
     const archive = new Uint8Array(await (await handle.getFile()).arrayBuffer());
-    const bytes = await extractXzArchive(archive);
+    const bytes = await extractArchive(archive);
     const range = communicationLogTimestampRangeFromJsonl(bytes);
     if (!range
         || communicationLogArchiveTimestamp(range.start_timestamp) !== segment.filename_start
