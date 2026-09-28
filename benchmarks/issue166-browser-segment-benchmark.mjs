@@ -5,10 +5,10 @@ import path from 'node:path';
 
 const root = path.resolve(new URL('..', import.meta.url).pathname);
 const userscript = readFileSync(path.join(root, 'chatgpt-conversation-markdown-export.user.js'), 'utf8');
-const begin = userscript.indexOf('// BEGIN bundled direct XZ lzma-rust2=0.16.2');
-const endMarker = '// END bundled direct XZ';
+const begin = userscript.indexOf('// BEGIN bundled archive codec upstream-liblzma=');
+const endMarker = '// END bundled archive codec';
 const end = userscript.indexOf(endMarker, begin);
-const runtimeBegin = userscript.indexOf('  /** True after the embedded direct XZ Wasm codec has been initialized. */', end);
+const runtimeBegin = userscript.indexOf('  /** True after the embedded archive codec has been initialized. */', end);
 const runtimeEnd = userscript.indexOf(
   '  /**\n   * Installs host-isolation styling for native recorder checkboxes.',
   runtimeBegin
@@ -34,7 +34,7 @@ const benchmark = String.raw`
 const benchmarkKeepAlive = setInterval(() => {}, 1000);
 (async () => {
   const output = document.getElementById('output');
-  await directXzModule();
+  await archiveCodecModule();
   const mib = Number(location.hash.slice(1));
   const encoder = new TextEncoder();
   const template = encoder.encode(
@@ -47,9 +47,9 @@ const benchmarkKeepAlive = setInterval(() => {}, 1000);
     bytes.set(template.subarray(0, Math.min(template.length, size - offset)), offset);
   }
   const heapBefore = performance.memory?.usedJSHeapSize ?? null;
-  const archive = await createXzArchive(bytes);
+  const archive = await createArchive(bytes);
   const heapAfter = performance.memory?.usedJSHeapSize ?? null;
-  const extracted = await extractXzArchive(archive);
+  const extracted = await extractArchive(archive);
   let exact = extracted.byteLength === bytes.byteLength;
   if (exact) {
     for (let index = 0; index < bytes.byteLength; index += 65537) {
