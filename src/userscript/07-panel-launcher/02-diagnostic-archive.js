@@ -186,14 +186,12 @@
     let archiveName = null;
     try {
       archiveName = diagnosticLogArchiveName(range);
-      const memberName = diagnosticLogArchiveMemberName(archiveName);
       const sourceBytes = new TextEncoder().encode(text);
-      const memberMTimeMs = diagnosticLogArchiveMTime(range);
 
       phase = 'archive-create';
       const archiveApi = diagnosticLogArchiveApi();
       setStatus(`Diagnostic log: compressing; ${elapsed()}.`);
-      const archive = await archiveApi.create(sourceBytes, memberName, memberMTimeMs);
+      const archive = await archiveApi.create(sourceBytes);
 
       phase = 'archive-verify';
       const extracted = await archiveApi.extract(archive);
