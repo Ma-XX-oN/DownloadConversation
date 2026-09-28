@@ -4,7 +4,6 @@
   function communicationLogInstallLifecycleObservers() {
     if (communicationLogLifecycleInstalled) return;
     communicationLogLifecycleInstalled = true;
-    communicationLogCheckpointTimer = setInterval(() => void communicationLogCheckpoint('periodic'), COMMUNICATION_LOG_CHECKPOINT_MS);
     window.addEventListener('beforeunload', () => {
       void communicationLogCheckpointForDocumentDeparture('beforeunload');
     });
@@ -19,9 +18,6 @@
       void communicationLogRecord('communication_visibility_change', {
         visibility_state: document.visibilityState
       });
-      if (document.visibilityState === 'hidden') {
-        void communicationLogCheckpoint('visibility-hidden');
-      }
     });
   }
 
