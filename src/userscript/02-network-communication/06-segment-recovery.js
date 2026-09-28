@@ -1,4 +1,48 @@
   /**
+   * Derives the append target from the two alternating files and recoverable
+   * sealed-source ownership.  No persisted active-name flag is trusted.
+   *
+   * @returns {Promise<void>} Resolves after an active file is selected/created.
+   */
+  async function communicationLogRecoverAlternatingActiveFiles() {
+    const names = ['active-a.jsonl', 'active-b.jsonl'];
+    const sealed = new Set(
+      communicationLogSegmentManifest.segments
+        .filter(segment => segment.compression_state !== 'compressed')
+        .map(segment => segment.raw_name)
+    );
+    const states = [];
+    for (const name of names) {
+      try {
+        const handle = await communicationLogSegmentDirectoryHandle.getFileHandle(
+          name,
+          { create: false }
+        );
+        const file = await handle.getFile();
+        states.push({ name, exists: true, size: file.size, modified: file.lastModified });
+      } catch (error) {
+        if (error?.name !== 'NotFoundError') throw error;
+        states.push({ name, exists: false, size: 0, modified: 0 });
+      }
+    }
+
+    const candidates = states.filter(state => !sealed.has(state.name));
+    if (candidates.length === 0) {
+      throw new Error('Both alternating communication files are sealed recovery sources.');
+    }
+    candidates.sort((left, right) => {
+      if (left.exists !== right.exists) return left.exists ? -1 : 1;
+      if (left.size !== right.size) return right.size - left.size;
+      return right.modified - left.modified;
+    });
+    communicationLogActiveFileName = candidates[0].name;
+    await communicationLogSegmentDirectoryHandle.getFileHandle(
+      communicationLogActiveFileName,
+      { create: true }
+    );
+  }
+
+  /**
    * Recovers sealed pending/failed segments after reload.
    *
    * @returns {Promise<void>} Resolves after recovery work is scheduled.
@@ -114,6 +158,9 @@
         next_ordinal: communicationLogSegmentManifest.next_ordinal,
         historical_segments: communicationLogSegmentManifest.segments.length
       });
+
+      phase = 'active-file-recovery';
+      await communicationLogRecoverAlternatingActiveFiles();
 
       phase = 'recovery';
       logDiagnostic('debug', 'communication-log-segment-recovery-started', {
