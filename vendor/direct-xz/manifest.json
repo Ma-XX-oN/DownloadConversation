@@ -8,8 +8,6 @@
   "emscripten": "6.0.10",
   "wasm_raw_bytes": 125618,
   "wasm_raw_sha256": "4bbe9a822719f2c929de2621ccd587a294124357a13776db43c1ed9181e2a973",
-  "wasm_gzip_bytes": 52707,
-  "wasm_gzip_sha256": "608e9961d72a74e80bbd5de9b279fd74f980f479dda5e5c74392450d7ebac8a3",
   "glue_bytes": 8175,
   "glue_sha256": "cafb87d3596900a78a6df65ee14ef8fc18e6dcf84825f76a0e56670ae2a7f2b7"
 }
