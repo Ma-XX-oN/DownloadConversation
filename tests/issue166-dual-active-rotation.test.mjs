@@ -90,6 +90,7 @@ test('Issue 166 private segment filenames do not repeat the conversation prefix'
   const start = source.indexOf('async function communicationLogSealActiveSegment');
   const end = source.indexOf('async function communicationLogReleaseRotationHold', start);
   const seal = source.slice(start, end);
-  assert.match(seal, /communicationLogUnusedRoleArchiveName\(\s*communicationLogSegmentDirectoryHandle,\s*'segment'/s);
+  assert.match(seal, /communicationLogRoleArchiveName\(\s*'segment'/s);
+  assert.match(seal, /Communication segment filename collision/);
   assert.doesNotMatch(seal, /archiveBase/);
 });
