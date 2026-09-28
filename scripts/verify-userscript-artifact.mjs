@@ -133,25 +133,29 @@ async function main() {
   }
   const artifactTail = artifact.subarray(offset).toString('utf8');
   const sourceBody = sourceText.slice('\n(() => {'.length);
-  const streamingStart = artifactTail.indexOf('// BEGIN bundled direct XZ lzma-rust2=0.16.2');
+  const archiveStart = artifactTail.indexOf('// BEGIN bundled archive codec upstream-liblzma=');
   if (!artifactTail.startsWith('\n(() => {\n')
-      || streamingStart !== '\n(() => {\n'.length) {
-    fail('Generated direct XZ runtime is not scoped immediately inside the DC IIFE.');
+      || archiveStart !== '\n(() => {\n'.length) {
+    fail('Generated archive codec runtime is not scoped immediately inside the DC IIFE.');
   }
-  const streamingEndMarker = '// END bundled direct XZ\n';
-  const streamingEnd = artifactTail.indexOf(streamingEndMarker, streamingStart);
-  if (streamingEnd < 0) fail('Generated userscript direct XZ closing banner is missing.');
-  const streamingPrelude = artifactTail.slice(
-    streamingStart,
-    streamingEnd + streamingEndMarker.length
+  const archiveEndMarker = '// END bundled archive codec\n';
+  const archiveEnd = artifactTail.indexOf(archiveEndMarker, archiveStart);
+  if (archiveEnd < 0) fail('Generated userscript archive codec closing banner is missing.');
+  const archivePrelude = artifactTail.slice(
+    archiveStart,
+    archiveEnd + archiveEndMarker.length
   );
-  if (!streamingPrelude.includes('globalThis.__dcDirectXz = { initSync, XzEncoder, decompress_xz,')) {
-    fail('Generated userscript direct XZ runtime bridge is missing.');
+  if (!archivePrelude.includes('globalThis.__dcArchiveCodec = {')) {
+    fail('Generated userscript archive codec runtime bridge is missing.');
   }
-  if (/^export\s/m.test(streamingPrelude) || /import\.meta/.test(streamingPrelude)) {
-    fail('Generated direct XZ prelude retains ES-module-only syntax.');
+  if (!archivePrelude.includes('Encoder: ArchiveEncoder')
+      || !archivePrelude.includes('decompress: __dcArchiveCodecDecompress')) {
+    fail('Generated userscript archive codec contract is incomplete.');
   }
-  const expectedTail = '\n(() => {\n' + streamingPrelude + sourceBody;
+  if (/^export\s/m.test(archivePrelude) || /import\.meta/.test(archivePrelude)) {
+    fail('Generated archive codec prelude retains ES-module-only syntax.');
+  }
+  const expectedTail = '\n(() => {\n' + archivePrelude + sourceBody;
   if (artifactTail !== expectedTail) {
     fail('Generated userscript scoped archive prelude/source assembly differs from repository source.');
   }
