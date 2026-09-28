@@ -129,7 +129,7 @@ test('Issue 166 diagnostic Save is immediately left of Copy', () => {
 
 
 test('Issue 166 diagnostic Save uses a supported deterministic archive member and reports failures', () => {
-  assert.match(downloadConversationSource, /diagnosticLogArchiveName\(/,
+  assert.ok(downloadConversationSource.includes('diagnosticLogArchiveName('),
     'Diagnostic XZ filename must be owned by the diagnostic-log boundary.');
   assert.match(downloadConversationSource, /diagnostic-log-save-failed/,
     'Diagnostic archive failures must be recorded in the diagnostic log.');
