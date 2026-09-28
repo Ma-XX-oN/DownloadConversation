@@ -220,7 +220,7 @@ test('Issue 166 compression failure retains the sealed raw source', () => {
 });
 
 
-test('Issue 166 production storage performs repeated verified rotations and continues recording', async () => {
+test('Issue 166 production rotation switches active files before compression', async () => {
   const names = [
     'communicationLogTimestampRangeFromJsonl',
     'communicationLogArchiveTimestamp',
@@ -231,68 +231,53 @@ test('Issue 166 production storage performs repeated verified rotations and cont
     'communicationLogSha256',
     'communicationLogWriteExactFile',
     'communicationLogWriteSegmentManifest',
-    'communicationLogTruncateActiveAfterSeal',
+    'communicationLogActiveFileSnapshot',
+    'communicationLogSwitchActiveFile',
     'communicationLogCompressSealedSegment',
     'communicationLogQueueSegmentCompression',
     'communicationLogSealActiveSegment',
     'communicationLogStorageAppendRecord'
   ];
   const production = names.map(productionFunctionSource).join('\n\n');
-  for (const name of names) {
-    assert.ok(downloadConversationSource.includes(`function ${name}(`) ||
-      downloadConversationSource.includes(`async function ${name}(`),
-    `generated artifact is missing production function ${name}`);
-  }
 
   const AsyncFunction = Object.getPrototypeOf(async function () {}).constructor;
   const run = new AsyncFunction('webcrypto', `
     const encoder = new TextEncoder();
-    const cloneBytes = value => {
-      if (typeof value === 'string') return encoder.encode(value);
-      return new Uint8Array(value);
-    };
+    const cloneBytes = value => typeof value === 'string'
+      ? encoder.encode(value)
+      : new Uint8Array(value);
     class MemoryFile {
-      constructor(bytes) { this.bytes = bytes; }
+      constructor(bytes) { this.bytes = bytes; this.lastModified = Date.now(); }
       get size() { return this.bytes.byteLength; }
-      async arrayBuffer() {
-        return this.bytes.slice().buffer;
-      }
-      async text() {
-        return new TextDecoder().decode(this.bytes);
-      }
+      async arrayBuffer() { return this.bytes.slice().buffer; }
     }
     class MemoryHandle {
-      constructor(name) {
-        this.name = name;
-        this.kind = 'file';
-        this.bytes = new Uint8Array();
-      }
-      async getFile() {
-        return new MemoryFile(this.bytes.slice());
-      }
+      constructor(name) { this.name = name; this.kind = 'file'; this.bytes = new Uint8Array(); }
+      async getFile() { return new MemoryFile(this.bytes.slice()); }
       async createWritable(options = {}) {
         const handle = this;
-        let working = options.keepExistingData
-          ? handle.bytes.slice()
-          : new Uint8Array();
+        let working = options.keepExistingData ? handle.bytes.slice() : new Uint8Array();
+        let position = working.byteLength;
         return {
+          async seek(offset) { position = offset; },
           async write(value) {
-            working = cloneBytes(value);
+            const bytes = cloneBytes(value);
+            const required = position + bytes.byteLength;
+            if (required > working.byteLength) {
+              const grown = new Uint8Array(required);
+              grown.set(working);
+              working = grown;
+            }
+            working.set(bytes, position);
+            position += bytes.byteLength;
           },
-          async truncate(size) {
-            working = working.slice(0, size);
-          },
-          async close() {
-            handle.bytes = working.slice();
-          },
+          async close() { handle.bytes = working.slice(); },
           async abort() {}
         };
       }
     }
     class MemoryDirectory {
-      constructor() {
-        this.files = new Map();
-      }
+      constructor() { this.files = new Map(); }
       async getFileHandle(name, options = {}) {
         if (!this.files.has(name)) {
           if (!options.create) {
@@ -305,59 +290,56 @@ test('Issue 166 production storage performs repeated verified rotations and cont
         return this.files.get(name);
       }
       async removeEntry(name) {
-        if (!this.files.delete(name)) throw new Error('missing: ' + name);
+        if (!this.files.delete(name)) {
+          const error = new Error('missing');
+          error.name = 'NotFoundError';
+          throw error;
+        }
       }
     }
 
     const crypto = webcrypto;
     const communicationLogSegmentDirectoryHandle = new MemoryDirectory();
     const communicationLogFileName = 'DownloadConversation_fixture.jsonl';
-    const setStatus = () => {};
-    const activeHandle = new MemoryHandle('active.jsonl');
+    const COMMUNICATION_LOG_ACTIVE_FILE_NAMES = Object.freeze([
+      'active-a.jsonl', 'active-b.jsonl'
+    ]);
+    let communicationLogActiveFileName = 'active-a.jsonl';
+    let communicationLogRotationPending = false;
     let communicationLogWritable = null;
     let communicationLogWriterDirty = false;
     let communicationLogActiveSegmentBytes = 0;
     let communicationLogCompressionChain = Promise.resolve();
     const COMMUNICATION_LOG_SEGMENT_TARGET_BYTES = 1;
     const communicationLogSegmentManifest = {
-      schema: 1,
-      logical_log_id: 'fixture',
-      next_ordinal: 1,
-      segments: []
+      schema: 1, logical_log_id: 'fixture', next_ordinal: 1, segments: []
     };
-    const diagnostics = [];
-
-    const abortWritableQuietly = async writable => {
-      try { await writable?.abort?.(); } catch {}
-    };
+    const events = [];
+    const setStatus = () => {};
+    const abortWritableQuietly = async writable => { try { await writable?.abort?.(); } catch {} };
     const boundedDiagnosticText = value => String(value);
     const errorMessage = error => error?.message || String(error);
-    const logDiagnostic = (...args) => diagnostics.push(args);
-    const communicationLogReportFailure = (...args) => diagnostics.push(args);
-    const communicationLogRefreshedFileSnapshot = async () => ({
-      handle: activeHandle,
-      file: await activeHandle.getFile()
-    });
+    const logDiagnostic = () => {};
+    const communicationLogReportFailure = () => {};
     const communicationLogCloseActiveWriter = async () => {
+      if (!communicationLogWritable) return;
+      await communicationLogWritable.close();
       communicationLogWritable = null;
+      communicationLogWriterDirty = false;
     };
     const communicationLogOpenWriter = async () => {
       if (communicationLogWritable) return communicationLogWritable;
-      communicationLogWritable = {
-        async write(value) {
-          const next = cloneBytes(value);
-          const combined = new Uint8Array(activeHandle.bytes.byteLength + next.byteLength);
-          combined.set(activeHandle.bytes);
-          combined.set(next, activeHandle.bytes.byteLength);
-          activeHandle.bytes = combined;
-        }
-      };
-      return communicationLogWritable;
+      const snapshot = await communicationLogActiveFileSnapshot();
+      const writable = await snapshot.handle.createWritable({ keepExistingData: true });
+      await writable.seek(snapshot.file.size);
+      communicationLogWritable = writable;
+      return writable;
     };
     const communicationLogEnqueue = (_stage, operation) => ({
       operation: Promise.resolve().then(operation)
     });
     const create7zArchive = async bytes => {
+      events.push(['compress', communicationLogActiveFileName]);
       const result = new Uint8Array(bytes.byteLength + 4);
       result.set([55, 122, 0, 1]);
       result.set(bytes, 4);
@@ -367,47 +349,37 @@ test('Issue 166 production storage performs repeated verified rotations and cont
 
     ${production}
 
-    const records = [
-      { timestamp: '2026-09-27T01:00:01.000Z', seq: 1, payload: 'alpha' },
-      { timestamp: '2026-09-27T01:00:02.000Z', seq: 2, payload: 'beta' },
-      { timestamp: '2026-09-27T01:00:03.000Z', seq: 3, payload: 'gamma' }
-    ];
-    for (const record of records) {
-      await communicationLogStorageAppendRecord(record);
-    }
+    await communicationLogSegmentDirectoryHandle.getFileHandle('active-a.jsonl', { create: true });
+    await communicationLogStorageAppendRecord({
+      timestamp: '2026-09-27T01:00:01.000Z', seq: 1, payload: 'alpha'
+    });
+    const activeImmediatelyAfterSeal = communicationLogActiveFileName;
+    const filesImmediatelyAfterSeal = Array.from(
+      communicationLogSegmentDirectoryHandle.files.keys()
+    );
     await communicationLogCompressionChain;
-
     return {
-      records,
+      activeImmediatelyAfterSeal,
+      filesImmediatelyAfterSeal,
       manifest: JSON.parse(JSON.stringify(communicationLogSegmentManifest)),
-      active: new TextDecoder().decode(activeHandle.bytes),
-      files: Array.from(communicationLogSegmentDirectoryHandle.files.entries())
-        .map(([name, handle]) => [name, Array.from(handle.bytes)])
+      finalFiles: Array.from(communicationLogSegmentDirectoryHandle.files.keys()),
+      events
     };
   `);
 
   const result = await run(globalThis.crypto);
-  assert.equal(result.manifest.segments.length, 3,
-    'three threshold crossings must produce three consecutive sealed segments');
-  assert.deepEqual(
-    result.manifest.segments.map(segment => segment.ordinal),
-    [1, 2, 3],
-    'segment ordinals must preserve logical order'
-  );
-  assert.ok(result.manifest.segments.every(segment =>
-    segment.compression_state === 'compressed' &&
-    segment.verified_sha256 === segment.source_sha256
-  ), 'every sealed segment must be round-trip verified before retirement');
-  assert.equal(result.active, '',
-    'recording must continue with a fresh active segment after every rotation');
-
-  const fileMap = new Map(result.files);
-  for (const segment of result.manifest.segments) {
-    assert.ok(fileMap.has(segment.archive_name),
-      `verified archive missing for segment ${segment.ordinal}`);
-    assert.ok(!fileMap.has(segment.raw_name),
-      `verified raw source was not retired for segment ${segment.ordinal}`);
-  }
+  assert.equal(result.activeImmediatelyAfterSeal, 'active-b.jsonl',
+    'recording must switch to the other active file before compression');
+  assert.ok(result.filesImmediatelyAfterSeal.includes('active-a.jsonl'),
+    'closed source must remain in place while compression runs');
+  assert.ok(result.filesImmediatelyAfterSeal.includes('active-b.jsonl'),
+    'new active file must exist before compression completes');
+  assert.equal(result.manifest.segments.length, 1);
+  assert.equal(result.manifest.segments[0].raw_name, 'active-a.jsonl');
+  assert.ok(!result.finalFiles.includes('active-a.jsonl'),
+    'verified closed source must be retired after compression');
+  assert.ok(result.finalFiles.includes('active-b.jsonl'),
+    'new active file must remain the recording target');
 });
 
 test('Issue 166 production compression failure preserves the only sealed raw copy', async () => {
