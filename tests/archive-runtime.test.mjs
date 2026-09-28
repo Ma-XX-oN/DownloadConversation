@@ -21,10 +21,10 @@ execFileSync(process.execPath, ['scripts/verify-userscript-artifact.mjs', candid
 
 test('Issue 166 production archive bridge creates a real 7z in the JS runtime', async () => {
   globalThis.location ??= { href: 'https://chatgpt.com/c/test' };
-  const begin = candidateUserscript.indexOf('// BEGIN bundled stream7z 26.03 direct API source=');
-  const endMarker = '// END bundled stream7z 26.03 direct API\n';
+  const begin = candidateUserscript.indexOf('// BEGIN bundled streaming7z libarchive source=');
+  const endMarker = '// END bundled streaming7z libarchive\n';
   const end = candidateUserscript.indexOf(endMarker, begin);
-  assert.ok(begin >= 0 && end > begin, 'generated stream7z prelude must be present');
+  assert.ok(begin >= 0 && end > begin, 'generated streaming7z prelude must be present');
   const prelude = candidateUserscript.slice(begin, end + endMarker.length);
   const runtime = await readFile(
     new URL('../src/userscript/01-runtime/03-archive.js', import.meta.url),
@@ -50,8 +50,8 @@ test('Issue 166 production archive bridge creates a real 7z in the JS runtime', 
 
 test('Issue 166 production archive bridge round-trips exact member bytes', async () => {
   globalThis.location ??= { href: 'https://chatgpt.com/c/test' };
-  const begin = candidateUserscript.indexOf('// BEGIN bundled stream7z 26.03 direct API source=');
-  const endMarker = '// END bundled stream7z 26.03 direct API\n';
+  const begin = candidateUserscript.indexOf('// BEGIN bundled streaming7z libarchive source=');
+  const endMarker = '// END bundled streaming7z libarchive\n';
   const end = candidateUserscript.indexOf(endMarker, begin);
   assert.ok(begin >= 0 && end > begin);
   const prelude = candidateUserscript.slice(begin, end + endMarker.length);
@@ -74,7 +74,7 @@ test('Issue 166 production archive bridge round-trips exact member bytes', async
 
 test('Issue 166 generated archive bridge is top-level in the DownloadConversation IIFE', () => {
   const safeBoundary = candidateUserscript.indexOf('// END Issue #163 WorkStack handoff transaction');
-  const archiveState = candidateUserscript.indexOf('let stream7zModulePromise = null;');
+  const archiveState = candidateUserscript.indexOf('let streaming7zModulePromise = null;');
   const diagnosticSave = candidateUserscript.indexOf('async function saveDiagnosticLog()');
   assert.ok(safeBoundary >= 0, 'known closed top-level boundary must exist');
   assert.ok(archiveState > safeBoundary,
@@ -86,8 +86,8 @@ test('Issue 166 generated archive bridge is top-level in the DownloadConversatio
 
 test('Issue 166 production archive bridge stores explicit member modification time', async () => {
   globalThis.location ??= { href: 'https://chatgpt.com/c/test' };
-  const begin = candidateUserscript.indexOf('// BEGIN bundled stream7z 26.03 direct API source=');
-  const endMarker = '// END bundled stream7z 26.03 direct API\n';
+  const begin = candidateUserscript.indexOf('// BEGIN bundled streaming7z libarchive source=');
+  const endMarker = '// END bundled streaming7z libarchive\n';
   const end = candidateUserscript.indexOf(endMarker, begin);
   assert.ok(begin >= 0 && end > begin);
   const prelude = candidateUserscript.slice(begin, end + endMarker.length);
