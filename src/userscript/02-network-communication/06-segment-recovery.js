@@ -168,10 +168,10 @@
   async function communicationLogRecoverDuplicateRequest() {
     const request = communicationLogSegmentManifest?.duplicate_request;
     if (!request) return;
-    const outputName = communicationLogSegmentManifest.duplicate_output;
-    if (typeof outputName === 'string' && outputName) {
+    const output = communicationLogSegmentManifest.duplicate_output;
+    if (typeof output === 'string' && output) {
       try {
-        await communicationLogDirectoryHandle.removeEntry(outputName);
+        await communicationLogDirectoryHandle.removeEntry(output);
       } catch (error) {
         if (error?.name !== 'NotFoundError') throw error;
       }
