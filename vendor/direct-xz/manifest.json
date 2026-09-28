@@ -1,12 +1,15 @@
 {
-  "schema": 1,
+  "schema": 2,
   "source_repository": "Ma-XX-oN/xz-js-benchmark",
-  "source_commit": "4ece75965d53ee7e78d96d32f36c2a1497f9ef38",
-  "lzma_rust2": "0.16.2",
-  "wasm_raw_bytes": 148050,
-  "wasm_raw_sha256": "a0c46cbc960e14c628dace2098a7ed2636fafc082cdb4c708cec632928bdbb45",
-  "wasm_gzip_bytes": 58876,
-  "wasm_gzip_sha256": "770f5e4840e0b891c8d7f1c3ec66d3ec266b51715e4fc59114376aa39eb6ac16",
-  "glue_bytes": 10029,
-  "glue_sha256": "cf20e46c969654b0c4823cc5257ac03c0167569efe512ae245cad6ae478fb40c"
+  "source_commit": "3f9bec8cbdb37877d795069dca9dc12a4b593fc3",
+  "upstream_repository": "tukaani-project/xz",
+  "upstream_commit": "3b1efb04d17c3a9ef7f473d73af13f1531428ffe",
+  "upstream_version": "5.8.4",
+  "emscripten": "6.0.10",
+  "wasm_raw_bytes": 125618,
+  "wasm_raw_sha256": "4bbe9a822719f2c929de2621ccd587a294124357a13776db43c1ed9181e2a973",
+  "wasm_gzip_bytes": 52707,
+  "wasm_gzip_sha256": "608e9961d72a74e80bbd5de9b279fd74f980f479dda5e5c74392450d7ebac8a3",
+  "glue_bytes": 8175,
+  "glue_sha256": "cafb87d3596900a78a6df65ee14ef8fc18e6dcf84825f76a0e56670ae2a7f2b7"
 }
