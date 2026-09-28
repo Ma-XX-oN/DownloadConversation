@@ -39,7 +39,7 @@ test('Issue 166 duplicate reports every required phase and keeps indeterminate e
   ]) assert.match(duplicate, new RegExp(phrase, 'i'));
   assert.match(
     productionFunctionSource('communicationLogStreamDuplicateArchive'),
-    /streamingXzWriterBegin|streamingXzWriterAppendArchive/
+    /streamingArchiveWriterBegin|streamingArchiveWriterAppendArchive/
   );
   assert.match(duplicate, /elapsed/i);
   assert.doesNotMatch(duplicate, /ETA.*(?:size|benchmark|assum)/i);
@@ -59,9 +59,9 @@ test('Issue 166 Duplicate no longer reconstructs the complete logical log in mem
   const stream = productionFunctionSource('communicationLogStreamDuplicateArchive');
   assert.doesNotMatch(duplicate, /communicationLogLogicalSnapshot/);
   assert.doesNotMatch(duplicate, /logicalSnapshot\.bytes/);
-  assert.match(stream, /streamingXzWriterBegin/);
-  assert.match(stream, /streamingXzWriterAppendArchive/);
-  assert.match(stream, /streamingXzWriterAppendBytes/);
+  assert.match(stream, /streamingArchiveWriterBegin/);
+  assert.match(stream, /streamingArchiveWriterAppendArchive/);
+  assert.match(stream, /streamingArchiveWriterAppendBytes/);
 });
 
 
@@ -147,8 +147,8 @@ test('Issue 166 diagnostic Save does not cross into communication segment helper
 
 test('Issue 166 diagnostic archive API rejects an actually unavailable runtime primitive', () => {
   const api = productionFunctionSource('diagnosticLogArchiveApi');
-  assert.match(api, /typeof createXzArchive !== 'function'/);
-  assert.match(api, /typeof extractXzArchive !== 'function'/);
+  assert.match(api, /typeof createArchive !== 'function'/);
+  assert.match(api, /typeof extractArchive !== 'function'/);
   assert.match(api, /ReferenceError/);
 });
 
