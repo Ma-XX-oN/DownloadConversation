@@ -88,32 +88,32 @@ function issue134Harness(initialFiles = {}) {
   };
 
   vm.runInNewContext(
-    `${diskHarnessSource()}\ncommunicationLogDirectoryHandle = this.__issue134Directory;\ncommunicationLogFileName = 'DownloadConversation_test.jsonl';\ncommunicationLogReady = true;\ncommunicationLogWriteChain = Promise.resolve();\ncommunicationLogReportFailure = (stage, error) => {\n  this.__issue134Events.push(\`failure:\${stage}:\${error?.message ?? error}\`);\n};\ncommunicationLogBytesEqual = async (left, right) => {\n  if (left.byteLength !== right.byteLength) return false;\n  for (let index = 0; index < left.byteLength; index += 1) {\n    if (left[index] !== right[index]) return false;\n  }\n  return true;\n};\ncommunicationLogSealActiveSegment = async () => {
-  this.__issue134Events.push('seal-active');
+    `${diskHarnessSource()}\ncommunicationLogDirectoryHandle = this.__issue134Directory;\ncommunicationLogFileName = 'DownloadConversation_test.jsonl';\ncommunicationLogReady = true;\ncommunicationLogWriteChain = Promise.resolve();\ncommunicationLogReportFailure = (stage, error) => {\n  this.__issue134Events.push(\`failure:\${stage}:\${error?.message ?? error}\`);\n};\ncommunicationLogBytesEqual = async (left, right) => {\n  if (left.byteLength !== right.byteLength) return false;\n  for (let index = 0; index < left.byteLength; index += 1) {\n    if (left[index] !== right[index]) return false;\n  }\n  return true;\n};\ncommunicationLogSegmentManifest = { segments: [] };
+communicationLogDuplicateInProgress = false;
+communicationLogRotationHold = 0;
+communicationLogRotationPending = false;
+communicationLogWriteSegmentManifest = async () => {};
+communicationLogReleaseRotationHold = async () => {
+  communicationLogRotationHold = Math.max(0, communicationLogRotationHold - 1);
 };
+communicationLogOpenWriter = async () => communicationLogWritable;
 communicationLogCaptureSnapshotPlan = async () => {
   await communicationLogCloseActiveWriter();
   const handle = await communicationLogDirectoryHandle.getFileHandle(communicationLogFileName);
-  return { active_bytes: new Uint8Array(await (await handle.getFile()).arrayBuffer()) };
+  const bytes = new Uint8Array(await (await handle.getFile()).arrayBuffer());
+  return { fixture_bytes: bytes, active_eof: bytes.byteLength };
 };
-communicationLogLogicalSnapshot = async plan => ({
-  bytes: plan.active_bytes,
-  start_timestamp: '2026-09-27T01:02:03.004Z',
-  end_timestamp: '2026-09-27T01:02:05.006Z'
-});
-communicationLogAsciiArchiveMemberName = name => name;
-communicationLogArchiveMTime = range => Math.floor(Date.parse(range.end_timestamp) / 1000) * 1000;
-communicationLogUnusedRoleArchiveName = async (directory, base, _range, role) => {
-  const stem = base + '_20260927T010203004Z_20260927T010205006Z';
-  for (let collision = 0; ; collision += 1) {
-    const suffix = collision ? '(' + collision + ')' : '';
-    const name = stem + suffix + '.' + role + '.7z';
-    try { await directory.getFileHandle(name); }
-    catch (error) { if (error?.name === 'NotFoundError') return name; throw error; }
-  }
+communicationLogStreamDuplicateArchive = async plan => {
+  const memberName = 'DownloadConversation_test_20260927T010203004Z_20260927T010205006Z.jsonl';
+  const text = new TextDecoder().decode(plan.fixture_bytes);
+  this.__issue134Events.push(`archive:${memberName}:${text}`);
+  return {
+    archive: new TextEncoder().encode(`7Z:${memberName}:\\n${text}`),
+    archive_name: 'DownloadConversation_test_20260927T010203004Z_20260927T010205006Z.comm.7z'
+  };
 };
 setStatus = message => this.__issue134Events.push('status:' + message);
-create7zArchive = async (bytes, memberName) => {\n  const text = new TextDecoder().decode(bytes);\n  this.__issue134Events.push(\`archive:\${memberName}:\${text}\`);\n  return new TextEncoder().encode(\`7Z:\${memberName}:\\n\${text}\`);\n};\nextract7zArchive = async bytes => {\n  const text = new TextDecoder().decode(bytes);\n  const newline = text.indexOf('\\n');\n  return new TextEncoder().encode(text.slice(newline + 1));\n};\nthis.__issue134 = {\n  rename: communicationLogRename,\n  duplicate: communicationLogArchiveDuplicate,\n  duplicateName: communicationLogDuplicateFileName,\n  departureCheckpoint: typeof communicationLogCheckpointForDocumentDeparture === 'function'\n    ? communicationLogCheckpointForDocumentDeparture\n    : null,\n  setWriter(writer, dirty) {\n    communicationLogWritable = writer;\n    communicationLogWriterDirty = dirty;\n  },\n  setWriteChain(chain) {\n    communicationLogWriteChain = chain;\n  },\n  state() {\n    return {\n      writable: communicationLogWritable,\n      dirty: communicationLogWriterDirty,\n      fileName: communicationLogFileName\n    };\n  }\n};`,
+this.__issue134 = {\n  rename: communicationLogRename,\n  duplicate: communicationLogArchiveDuplicate,\n  duplicateName: communicationLogDuplicateFileName,\n  departureCheckpoint: typeof communicationLogCheckpointForDocumentDeparture === 'function'\n    ? communicationLogCheckpointForDocumentDeparture\n    : null,\n  setWriter(writer, dirty) {\n    communicationLogWritable = writer;\n    communicationLogWriterDirty = dirty;\n  },\n  setWriteChain(chain) {\n    communicationLogWriteChain = chain;\n  },\n  state() {\n    return {\n      writable: communicationLogWritable,\n      dirty: communicationLogWriterDirty,\n      fileName: communicationLogFileName\n    };\n  }\n};`,
     context
   );
 
