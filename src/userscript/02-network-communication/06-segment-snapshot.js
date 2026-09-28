@@ -428,9 +428,7 @@
       };
     } catch (error) {
       if (!writer.finished) {
-        // The Wasm writer owns no filesystem state; abandoning it cannot expose
-        // a partial user archive.  The output file is created only after finish.
-        streaming7zOutputs.delete(writer.outputId);
+        try { streaming7zWriterFinish(writer); } catch {}
       }
       throw error;
     }
