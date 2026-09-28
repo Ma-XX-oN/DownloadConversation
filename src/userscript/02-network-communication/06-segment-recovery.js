@@ -112,13 +112,6 @@
       if (rawBytes.byteLength !== segment.raw_bytes || hash !== segment.source_sha256) {
         throw new Error(`Recoverable raw segment verification failed: ${segment.raw_name}`);
       }
-      const active = await communicationLogRefreshedFileSnapshot();
-      if (active.file.size === segment.raw_bytes) {
-        const activeBytes = new Uint8Array(await active.file.arrayBuffer());
-        if (await communicationLogSha256(activeBytes) === segment.source_sha256) {
-          await communicationLogTruncateActiveAfterSeal(segment.raw_bytes, segment.source_sha256);
-        }
-      }
       segment.compression_state = 'sealed';
       void communicationLogQueueSegmentCompression(segment).catch(() => {});
     }
