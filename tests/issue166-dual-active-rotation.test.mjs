@@ -96,3 +96,16 @@ test('Issue 166 private segment filenames do not repeat the conversation prefix'
   assert.match(seal, /Communication segment filename collision/);
   assert.doesNotMatch(seal, /archiveBase/);
 });
+
+test('Issue 166 manifest is control state, not a historical segment catalogue', async () => {
+  const storage = await readFile(storagePath, 'utf8');
+  const snapshot = await readFile(
+    new URL('../src/userscript/02-network-communication/06-segment-snapshot.js', import.meta.url),
+    'utf8'
+  );
+  assert.match(storage, /active_committed_eof/);
+  assert.match(storage, /active_last_timestamp/);
+  assert.doesNotMatch(storage, /next_ordinal|\.segments\.push/);
+  assert.match(snapshot, /communicationLogSegmentDirectoryHandle\.entries\(\)/);
+  assert.match(snapshot, /archive_name\.localeCompare/);
+});
