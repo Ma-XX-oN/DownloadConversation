@@ -78,11 +78,14 @@ async function buildArchiveCodecPrelude() {
     chunkNames.map(name => readFile(path.join(chunkDirectory, name), 'utf8'))
   )).join('').replace(/\s+/g, '');
   const wasmGzip = Buffer.from(base64, 'base64');
-  if (wasmGzip.byteLength !== manifest.wasm_gzip_bytes
-      || sha256(wasmGzip) !== manifest.wasm_gzip_sha256) {
-    throw new Error('Vendored archive codec compressed WASM does not match its manifest.');
+  let wasm;
+  try {
+    wasm = gunzipSync(wasmGzip);
+  } catch (error) {
+    throw new Error(
+      `Vendored archive codec compressed WASM is invalid: ${error instanceof Error ? error.message : String(error)}`
+    );
   }
-  const wasm = gunzipSync(wasmGzip);
   if (wasm.byteLength !== manifest.wasm_raw_bytes
       || sha256(wasm) !== manifest.wasm_raw_sha256) {
     throw new Error('Vendored archive codec WASM does not match its manifest.');
