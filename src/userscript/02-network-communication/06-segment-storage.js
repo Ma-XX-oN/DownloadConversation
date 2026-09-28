@@ -333,6 +333,23 @@
 
 
   /**
+   * Releases one Duplicate rotation hold and immediately services pending
+   * threshold rotation when possible.
+   *
+   * @returns {Promise<void>} Resolves after pending rotation is handled.
+   */
+  async function communicationLogReleaseRotationHold() {
+    communicationLogRotationHold = Math.max(0, communicationLogRotationHold - 1);
+    if (communicationLogRotationHold !== 0 || !communicationLogRotationPending) return;
+    if (communicationLogActiveSegmentBytes < COMMUNICATION_LOG_SEGMENT_TARGET_BYTES) {
+      communicationLogRotationPending = false;
+      return;
+    }
+    await communicationLogSealActiveSegment();
+  }
+
+
+  /**
    * Appends one complete JSONL record and rotates only after its record boundary.
    *
    * @param {Object} record - Complete structured communication record.
