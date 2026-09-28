@@ -178,8 +178,19 @@
       });
 
       phase = 'active-snapshot';
-      communicationLogActiveSegmentBytes =
-        (await communicationLogRefreshedFileSnapshot()).file.size;
+      const activeSnapshot = await communicationLogRefreshedFileSnapshot();
+      communicationLogActiveSegmentBytes = activeSnapshot.file.size;
+      const activeRange = communicationLogActiveSegmentBytes > 0
+        ? communicationLogTimestampRangeFromJsonl(
+          new Uint8Array(await activeSnapshot.file.arrayBuffer())
+        )
+        : null;
+      communicationLogActiveLastTimestamp = activeRange?.end_timestamp ?? null;
+      communicationLogSegmentManifest.active_committed_eof =
+        communicationLogActiveSegmentBytes;
+      communicationLogSegmentManifest.active_last_timestamp =
+        communicationLogActiveLastTimestamp;
+      await communicationLogWriteSegmentManifest();
       if (communicationLogActiveSegmentBytes >= COMMUNICATION_LOG_SEGMENT_TARGET_BYTES) {
         communicationLogRotationPending = true;
         await communicationLogSealActiveSegment();
