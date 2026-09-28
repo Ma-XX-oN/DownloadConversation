@@ -77,7 +77,7 @@
   function diagnosticLogArchiveName(range) {
     const base = `DownloadConversation_${sanitizeFileName(conversationTitle())}`;
     return `${base}_${diagnosticLogArchiveTimestamp(range.start_timestamp)}-`
-      + `${diagnosticLogArchiveTimestamp(range.end_timestamp)}.log.7z`;
+      + `${diagnosticLogArchiveTimestamp(range.end_timestamp)}.log.xz`;
   }
 
   /**
@@ -87,7 +87,7 @@
    * @returns {string} Archive member filename.
    */
   function diagnosticLogArchiveMemberName(archiveName) {
-    return archiveName.replace(/\.log\.7z$/i, '.jsonl').replace(/[^\x20-\x7e]/g, '_');
+    return archiveName.replace(/\.log\.XZ$/i, '.jsonl').replace(/[^\x20-\x7e]/g, '_');
   }
 
   /**
@@ -142,20 +142,20 @@
    * @returns {Object} Callable archive create/extract operations.
    */
   function diagnosticLogArchiveApi() {
-    if (typeof create7zArchive !== 'function') {
+    if (typeof createXzArchive !== 'function') {
       throw new ReferenceError('Diagnostic archive create function is unavailable in this runtime scope.');
     }
-    if (typeof extract7zArchive !== 'function') {
+    if (typeof extractXzArchive !== 'function') {
       throw new ReferenceError('Diagnostic archive extract function is unavailable in this runtime scope.');
     }
     return {
-      create: create7zArchive,
-      extract: extract7zArchive
+      create: createXzArchive,
+      extract: extractXzArchive
     };
   }
 
   /**
-   * Saves the canonical diagnostic log as one verified 7z archive.
+   * Saves the canonical diagnostic log as one verified XZ archive.
    *
    * @returns {Promise<void>} Resolves after the archive is committed/downloaded.
    */
@@ -207,7 +207,7 @@
       if (directory) {
         await diagnosticLogWriteArchive(directory, archiveName, archive);
       } else {
-        downloadBlob(new Blob([archive], { type: 'application/x-7z-compressed' }), archiveName);
+        downloadBlob(new Blob([archive], { type: 'application/x-xz' }), archiveName);
       }
       setStatus(`Diagnostic log saved as ${archiveName}; ${elapsed()}.`);
     } catch (error) {
