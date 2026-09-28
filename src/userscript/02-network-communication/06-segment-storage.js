@@ -221,11 +221,7 @@
 
     try {
       setStatus(`Communication log: compressing ${segment.raw_name}; recording continues.`);
-      const archiveBytes = await createXzArchive(
-        rawBytes,
-        segment.member_name,
-        communicationLogArchiveMTime(segment)
-      );
+      const archiveBytes = await createXzArchive(rawBytes);
       const archiveHandle = await communicationLogWriteExactFile(
         directory,
         segment.archive_name,
@@ -325,7 +321,6 @@
 
     const memberStart = communicationLogArchiveTimestamp(range.start_timestamp);
     const memberEnd = communicationLogArchiveTimestamp(range.end_timestamp);
-    const memberName = `segment_${memberStart}-${memberEnd}.jsonl`;
     const archiveName = communicationLogRoleArchiveName('segment', range, 'seg');
     if (await communicationLogFileExistsInDirectory(
       communicationLogSegmentDirectoryHandle,
@@ -338,7 +333,6 @@
     const segment = {
       raw_name: rawName,
       archive_name: archiveName,
-      member_name: memberName,
       raw_bytes: rawBytes.byteLength,
       source_sha256: sourceHash,
       start_timestamp: range.start_timestamp,
