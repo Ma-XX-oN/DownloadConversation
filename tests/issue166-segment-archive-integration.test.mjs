@@ -256,6 +256,7 @@ test('Issue 166 production rotation switches active files before compression', a
     'communicationLogSha256',
     'communicationLogWriteExactFile',
     'communicationLogWriteSegmentManifest',
+    'communicationLogFileExistsInDirectory',
     'communicationLogActiveFileSnapshot',
     'communicationLogAvailableAlternateActiveFile',
     'communicationLogSwitchActiveFile',
@@ -336,10 +337,14 @@ test('Issue 166 production rotation switches active files before compression', a
     let communicationLogWritable = null;
     let communicationLogWriterDirty = false;
     let communicationLogActiveSegmentBytes = 0;
+    let communicationLogActiveLastTimestamp = null;
     let communicationLogCompressionChain = Promise.resolve();
     const COMMUNICATION_LOG_SEGMENT_TARGET_BYTES = 1;
     const communicationLogSegmentManifest = {
-      schema: 1, logical_log_id: 'fixture', next_ordinal: 1, segments: []
+      schema: 2,
+      logical_log_id: 'fixture',
+      active_committed_eof: 0,
+      active_last_timestamp: null
     };
     const events = [];
     const setStatus = () => {};
@@ -388,7 +393,6 @@ test('Issue 166 production rotation switches active files before compression', a
     return {
       activeImmediatelyAfterSeal,
       filesImmediatelyAfterSeal,
-      manifest: JSON.parse(JSON.stringify(communicationLogSegmentManifest)),
       finalFiles: Array.from(communicationLogSegmentDirectoryHandle.files.keys()),
       events
     };
@@ -401,8 +405,6 @@ test('Issue 166 production rotation switches active files before compression', a
     'closed source must remain in place while compression runs');
   assert.ok(result.filesImmediatelyAfterSeal.includes('active-b.jsonl'),
     'new active file must exist before compression completes');
-  assert.equal(result.manifest.segments.length, 1);
-  assert.equal(result.manifest.segments[0].raw_name, 'active-a.jsonl');
   assert.ok(!result.finalFiles.includes('active-a.jsonl'),
     'verified closed source must be retired after compression');
   assert.ok(result.finalFiles.includes('active-b.jsonl'),
@@ -435,8 +437,6 @@ test('Issue 166 production compression failure preserves the only sealed raw cop
       },
       async removeEntry() { removed = true; }
     };
-    const communicationLogSegmentManifest = { segments: [] };
-    const communicationLogWriteSegmentManifest = async () => {};
     const communicationLogWriteExactFile = async (_directory, _name, bytes) => ({
       async getFile() {
         return { async arrayBuffer() { return bytes.slice().buffer; } };
@@ -457,13 +457,11 @@ test('Issue 166 production compression failure preserves the only sealed raw cop
     ${compress}
     const sourceHash = await communicationLogSha256(source);
     const segment = {
-      ordinal: 1,
       raw_name: 'segment-000001.jsonl',
       archive_name: 'segment-000001.7z',
       member_name: 'segment-000001.jsonl',
       raw_bytes: source.length,
-      source_sha256: sourceHash,
-      compression_state: 'sealed'
+      source_sha256: sourceHash
     };
     let rejected = false;
     try {
@@ -471,24 +469,24 @@ test('Issue 166 production compression failure preserves the only sealed raw cop
     } catch {
       rejected = true;
     }
-    return { rejected, removed, state: segment.compression_state };
+    return { rejected, removed };
   `);
 
   const result = await run(globalThis.crypto);
   assert.equal(result.rejected, true);
   assert.equal(result.removed, false,
     'verification failure must never delete the sealed raw source');
-  assert.equal(result.state, 'failed');
 });
 
 
-test('Issue 166 reload recovery owns every durable compression state', () => {
+test('Issue 166 reload recovery derives unfinished compression from physical files', () => {
   const recover = productionFunctionSource('communicationLogRecoverSegmentState');
-  assert.match(recover, /compression_state === 'compressed'/);
-  assert.match(recover, /compression_state = 'sealed'/);
-  assert.match(recover, /source_sha256/);
+  assert.match(recover, /COMMUNICATION_LOG_ACTIVE_FILE_NAMES/);
+  assert.match(recover, /communicationLogRoleArchiveName\('segment'/);
+  assert.match(recover, /extract7zArchive/);
+  assert.match(recover, /communicationLogBytesEqual/);
   assert.match(recover, /communicationLogQueueSegmentCompression/);
-  assert.match(recover, /Missing recoverable raw segment/);
+  assert.doesNotMatch(recover, /compression_state|next_ordinal|segments\.push/);
 });
 
 test('Issue 166 streaming Duplicate orders historical segments before frozen active prefix', () => {
