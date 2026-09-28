@@ -135,7 +135,7 @@ async function main() {
   const sourceBody = sourceText.slice('\n(() => {'.length);
   const streamingStart = artifactTail.indexOf('// BEGIN bundled direct XZ lzma-rust2=0.16.2');
   if (!artifactTail.startsWith('\n(() => {\n')
-      || streamingStart !== '\n(() => {\n'.length) {
+      || streamingStart !== '\n(() => {'.length + 1) {
     fail('Generated direct XZ runtime is not scoped immediately inside the DC IIFE.');
   }
   const streamingEndMarker = '// END bundled direct XZ\n';
