@@ -240,26 +240,24 @@ test('duplicate waits for pending writes, snapshots exact committed bytes, and k
   );
 });
 
-test('rename waits for pending writes, preserves exact bytes, removes the old name, and switches active filename', async () => {
+test('rename changes the logical basename without copying private active bytes', async () => {
   const { api, events, files } = issue134Harness({
-    'DownloadConversation_test.jsonl': 'rename payload'
+    'DownloadConversation_test.jsonl': 'legacy fixture'
   });
-  api.setWriter({
-    async close() {
-      events.push('active-close');
-    }
-  }, true);
+  const writer = { async close() { events.push('active-close'); } };
+  api.setWriter(writer, true);
 
   const renamed = await api.rename('renamed.jsonl');
   assert.equal(renamed, 'renamed.jsonl');
-  assert.equal(files.has('DownloadConversation_test.jsonl'), false);
-  assert.equal(await blobText(files.get('renamed.jsonl')), 'rename payload');
   assert.equal(api.state().fileName, 'renamed.jsonl');
-  assert.equal(api.state().writable, null);
-  assert.equal(api.state().dirty, false);
-  assert.equal(events[0], 'active-close');
-  assert.ok(events.includes('remove:DownloadConversation_test.jsonl'));
+  assert.equal(api.state().writable, writer,
+    'logical rename must not disturb the private active writer');
+  assert.equal(await blobText(files.get('DownloadConversation_test.jsonl')),
+    'legacy fixture', 'logical rename must not copy/delete unrelated legacy bytes');
+  assert.equal(files.has('renamed.jsonl'), false);
+  assert.deepEqual(events, []);
 });
+
 
 test('rename rejects collisions without changing either file or active identity', async () => {
   const { api, files } = issue134Harness({
