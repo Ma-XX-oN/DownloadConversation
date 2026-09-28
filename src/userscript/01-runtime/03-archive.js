@@ -171,19 +171,33 @@
    *
    * @param {string} memberName - Archive member name.
    * @param {number} expectedBytes - Exact uncompressed byte count.
+   * @param {number|null} memberMTimeMs - Optional member modification time.
    * @returns {Promise<Object>} Writer state.
    */
-  async function streaming7zWriterBegin(memberName, expectedBytes) {
+  async function streaming7zWriterBegin(
+    memberName,
+    expectedBytes,
+    memberMTimeMs = null
+  ) {
     const module = await streaming7zModule();
     const outputId = streaming7zNextOutputId++;
     const output = { chunks: [], size: 0 };
     streaming7zOutputs.set(outputId, output);
+    if (memberMTimeMs !== null
+        && (!Number.isSafeInteger(memberMTimeMs) || memberMTimeMs < 0)) {
+      throw new Error('Archive member modification time must be a non-negative integer.');
+    }
+    const hasMTime = memberMTimeMs !== null;
     const begin = module.cwrap(
-      'stream7z_writer_begin',
+      hasMTime ? 'stream7z_writer_begin_mtime' : 'stream7z_writer_begin',
       'number',
-      ['number', 'string', 'number']
+      hasMTime
+        ? ['number', 'string', 'number', 'number']
+        : ['number', 'string', 'number']
     );
-    const pointer = begin(outputId, memberName, expectedBytes);
+    const pointer = hasMTime
+      ? begin(outputId, memberName, expectedBytes, memberMTimeMs)
+      : begin(outputId, memberName, expectedBytes);
     if (!pointer) {
       streaming7zOutputs.delete(outputId);
       const lastError = module.cwrap('stream7z_last_error', 'string', [])();
