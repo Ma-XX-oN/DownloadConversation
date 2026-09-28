@@ -106,7 +106,7 @@ test('Issue 166 Copy and Save share one canonical diagnostic serialization', () 
   assert.match(copy, /diagnosticLogText\(\)/);
   assert.match(save, /diagnosticLogText\(\)/);
   assert.match(save, /diagnosticLogArchiveApi/);
-  assert.match(productionFunctionSource('diagnosticLogArchiveApi'), /create7zArchive/);
+  assert.match(productionFunctionSource('diagnosticLogArchiveApi'), /createXzArchive/);
   assert.match(save, /downloadBlob/);
 });
 
@@ -120,6 +120,6 @@ test('Issue 166 diagnostic Save has explicit empty and busy behaviour', () => {
 
 
 test('Issue 166 diagnostic Save archive dependency is implemented, not a dangling call', () => {
-  assert.match(downloadConversationSource, /(?:async\s+)?function create7zArchive\s*\(/,
-    'create7zArchive must be an implemented narrow archive interface before Save can ship.');
+  assert.match(downloadConversationSource, /(?:async\s+)?function createXzArchive\s*\(/,
+    'createXzArchive must be an implemented narrow archive interface before Save can ship.');
 });
