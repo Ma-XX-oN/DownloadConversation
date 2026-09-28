@@ -109,3 +109,21 @@ test('Issue 166 manifest is control state, not a historical segment catalogue', 
   assert.match(snapshot, /communicationLogSegmentDirectoryHandle\.entries\(\)/);
   assert.match(snapshot, /archive_name\.localeCompare/);
 });
+
+test('Issue 166 startup never creates the logical top-level JSONL as the active file', async () => {
+  const lifecycle = await readFile(
+    new URL('../src/userscript/02-network-communication/03-communication-lifecycle.js', import.meta.url),
+    'utf8'
+  );
+  const redaction = await readFile(
+    new URL('../src/userscript/02-network-communication/04-communication-redaction.js', import.meta.url),
+    'utf8'
+  );
+  const initialize = lifecycle.indexOf('await communicationLogInitializeSegmentStorage()');
+  const swap = lifecycle.indexOf('await communicationLogRecoverSwapFiles()');
+  assert.ok(initialize >= 0 && swap > initialize,
+    'private segment storage must exist before any active-file swap recovery');
+  assert.match(redaction,
+    /communicationLogSegmentDirectoryHandle\s*&&\s*communicationLogActiveFileName/);
+  assert.match(redaction, /return communicationLogActiveFileSnapshot\(\)/);
+});
