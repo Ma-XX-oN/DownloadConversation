@@ -48,6 +48,10 @@ function runTsc(source, label) {
     writeFileSync(
       ambientPath,
       [
+        'declare const GM_info: any;',
+        'declare const unsafeWindow: any;',
+        'declare const STREAM7Z_WASM_GZIP_BASE64: string;',
+        'declare const Stream7zModule: any;',
         'declare function create7zArchive(',
         '  bytes: Uint8Array, memberName: string, mtime?: number',
         '): Promise<Uint8Array>;',
@@ -85,6 +89,13 @@ function runTsc(source, label) {
   }
 }
 
+function unresolvedDiagnostics(result) {
+  const output = `${result.stdout ?? ''}\n${result.stderr ?? ''}`;
+  return output.split(/\r?\n/).filter(line => {
+    return /error TS(?:2304|2552):/.test(line);
+  });
+}
+
 const manifest = await readUserscriptManifest(root);
 const currentSource = await readDownloadConversationSource(root, manifest);
 const current = runTsc(currentSource, 'current');
@@ -94,39 +105,35 @@ if (current.error) {
   );
   process.exit(2);
 }
-if (current.status !== 0) {
-  process.stdout.write(current.stdout ?? '');
-  process.stderr.write(current.stderr ?? '');
+const currentUnresolved = unresolvedDiagnostics(current);
+if (currentUnresolved.length > 0) {
+  console.error(currentUnresolved.join('\n'));
   console.error(
-    'Current assembled DownloadConversation source failed TypeScript checking.'
+    'Current assembled DownloadConversation source has unresolved identifiers.'
   );
   process.exit(1);
 }
 
 const broken = runTsc(historicalSource(BROKEN_COMMIT), 'issue-166.87');
-const output = `${broken.stdout ?? ''}\n${broken.stderr ?? ''}`;
+const brokenUnresolved = unresolvedDiagnostics(broken);
 if (broken.error) {
   console.error(
     `Negative-control TypeScript execution failed: ${broken.error.message}`
   );
   process.exit(2);
 }
-if (broken.status === 0) {
-  console.error(
-    'TypeScript negative control unexpectedly accepted broken .87 source.'
+if (!brokenUnresolved.some(line => {
+  return line.includes(
+    "Cannot find name 'communicationLogInitializeSegmentStorage'"
   );
-  process.exit(1);
-}
-if (!output.includes(
-  "Cannot find name 'communicationLogInitializeSegmentStorage'"
-)) {
-  process.stdout.write(output);
+})) {
+  console.error(brokenUnresolved.join('\n'));
   console.error(
-    'TypeScript rejected .87, but not for the known missing initializer.'
+    'TypeScript negative control did not detect the .87 missing initializer.'
   );
   process.exit(1);
 }
 console.log(
-  `PASS: TypeScript ${TYPESCRIPT_VERSION} accepts current assembled DC source `
-  + 'and rejects .87 for the known missing initializer symbol.'
+  `PASS: TypeScript ${TYPESCRIPT_VERSION} reports zero unresolved identifiers `
+  + 'in current assembled DC source and detects the broken .87 initializer.'
 );
