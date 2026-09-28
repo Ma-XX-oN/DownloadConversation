@@ -49,17 +49,17 @@
     if (/^DownloadConversation_(?:ChatGPT|ChatGPT conversation)\.jsonl$/i.test(communicationLogFileName)) {
       communicationLogFileName = `DownloadConversation_${conversationName}.jsonl`;
     }
-    logDiagnostic('debug', 'communication-log-swap-recovery-started', {
-      file_name: communicationLogFileName
-    });
-    await communicationLogRecoverSwapFiles();
-    logDiagnostic('debug', 'communication-log-swap-recovery-completed', {
-      file_name: communicationLogFileName
-    });
     logDiagnostic('debug', 'communication-log-segment-initialize-call-started', {
       initializer_type: typeof communicationLogInitializeSegmentStorage
     });
     await communicationLogInitializeSegmentStorage();
+    logDiagnostic('debug', 'communication-log-swap-recovery-started', {
+      file_name: communicationLogActiveFileName
+    });
+    await communicationLogRecoverSwapFiles();
+    logDiagnostic('debug', 'communication-log-swap-recovery-completed', {
+      file_name: communicationLogActiveFileName
+    });
     communicationLogReady = true;
     const recoveredDuplicateRequest =
       communicationLogSegmentManifest?.duplicate_request
