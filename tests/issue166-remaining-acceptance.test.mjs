@@ -39,7 +39,7 @@ test('Issue 166 duplicate reports every required phase and keeps indeterminate e
   ]) assert.match(duplicate, new RegExp(phrase, 'i'));
   assert.match(
     productionFunctionSource('communicationLogStreamDuplicateArchive'),
-    /streaming7zWriterBegin|streaming7zWriterAppendArchive/
+    /streamingXzWriterBegin|streamingXzWriterAppendArchive/
   );
   assert.match(duplicate, /elapsed/i);
   assert.doesNotMatch(duplicate, /ETA.*(?:size|benchmark|assum)/i);
@@ -47,7 +47,7 @@ test('Issue 166 duplicate reports every required phase and keeps indeterminate e
 
 test('Issue 166 diagnostic Save uses main communication folder when authorized and browser download otherwise', () => {
   const save = productionFunctionSource('saveDiagnosticLog');
-  assert.match(productionFunctionSource('diagnosticLogArchiveName'), /\.log\.7z/);
+  assert.match(productionFunctionSource('diagnosticLogArchiveName'), /\.log\.xz/);
   assert.match(save, /diagnosticLogTimestampRange/);
   assert.match(save, /communicationLogDirectoryHandle/);
   assert.match(save, /diagnosticLogWriteArchive/);
@@ -59,9 +59,9 @@ test('Issue 166 Duplicate no longer reconstructs the complete logical log in mem
   const stream = productionFunctionSource('communicationLogStreamDuplicateArchive');
   assert.doesNotMatch(duplicate, /communicationLogLogicalSnapshot/);
   assert.doesNotMatch(duplicate, /logicalSnapshot\.bytes/);
-  assert.match(stream, /streaming7zWriterBegin/);
-  assert.match(stream, /streaming7zWriterAppendArchive/);
-  assert.match(stream, /streaming7zWriterAppendBytes/);
+  assert.match(stream, /streamingXzWriterBegin/);
+  assert.match(stream, /streamingXzWriterAppendArchive/);
+  assert.match(stream, /streamingXzWriterAppendBytes/);
 });
 
 
@@ -100,11 +100,11 @@ test('Issue 166 timestamp range and role naming execute against fixed independen
   const end = local(result.range.end_timestamp);
   assert.equal(
     result.normal,
-    `DownloadConversation_fixture_${start}-${end}.comm.7z`
+    `DownloadConversation_fixture_${start}-${end}.comm.xz`
   );
   assert.equal(
     result.collision,
-    `DownloadConversation_fixture_${start}-${end}(2).comm.7z`
+    `DownloadConversation_fixture_${start}-${end}(2).comm.xz`
   );
 });
 
@@ -147,8 +147,8 @@ test('Issue 166 diagnostic Save does not cross into communication segment helper
 
 test('Issue 166 diagnostic archive API rejects an actually unavailable runtime primitive', () => {
   const api = productionFunctionSource('diagnosticLogArchiveApi');
-  assert.match(api, /typeof create7zArchive !== 'function'/);
-  assert.match(api, /typeof extract7zArchive !== 'function'/);
+  assert.match(api, /typeof createXzArchive !== 'function'/);
+  assert.match(api, /typeof extractXzArchive !== 'function'/);
   assert.match(api, /ReferenceError/);
 });
 
@@ -169,7 +169,7 @@ test('Issue 166 diagnostic member naming preserves printable ASCII exactly', () 
   assert.match(member, /\\[\\^\\\\x20-\\\\x7e\\]/);
   const fn = new Function('archiveName', member + '; return diagnosticLogArchiveMemberName(archiveName);');
   assert.equal(
-    fn('DownloadConversation_Bind conversation lane_2026,09,27;12,59,34-2026,09,27;14,26,37.log.7z'),
+    fn('DownloadConversation_Bind conversation lane_2026,09,27;12,59,34-2026,09,27;14,26,37.log.xz'),
     'DownloadConversation_Bind conversation lane_2026,09,27;12,59,34-2026,09,27;14,26,37.jsonl'
   );
 });
@@ -196,7 +196,7 @@ test('Issue 166 diagnostic archive name uses requested local range punctuation',
   assert.match(name, /start_timestamp/);
   assert.match(name, /end_timestamp/);
   assert.match(name, /-.*end_timestamp/s);
-  assert.match(name, /\.log\.7z/);
+  assert.match(name, /\.log\.xz/);
 });
 
 
