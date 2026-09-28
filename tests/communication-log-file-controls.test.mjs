@@ -106,9 +106,9 @@ communicationLogCaptureSnapshotPlan = async () => {
 communicationLogStreamDuplicateArchive = async plan => {
   const memberName = 'DownloadConversation_test_20260927T010203004Z_20260927T010205006Z.jsonl';
   const text = new TextDecoder().decode(plan.fixture_bytes);
-  this.__issue134Events.push(`archive:${memberName}:${text}`);
+  this.__issue134Events.push('archive:' + memberName + ':' + text);
   return {
-    archive: new TextEncoder().encode(`7Z:${memberName}:\\n${text}`),
+    archive: new TextEncoder().encode('7Z:' + memberName + ':\\n' + text),
     archive_name: 'DownloadConversation_test_20260927T010203004Z_20260927T010205006Z.comm.7z'
   };
 };
