@@ -198,3 +198,29 @@ test('Issue 166 diagnostic archive name uses requested local range punctuation',
   assert.match(name, /-.*end_timestamp/s);
   assert.match(name, /\.log\.7z/);
 });
+
+
+test('Issue 166 ordinary recording keeps one long-lived active writable transaction', () => {
+  const lifecycle = productionFunctionSource('communicationLogInstallLifecycleObservers');
+  const response = productionFunctionSource('communicationLogFetchResponse');
+  assert.doesNotMatch(lifecycle, /checkpoint:periodic|communicationLogCheckpoint\('periodic'\)/);
+  assert.doesNotMatch(lifecycle, /communicationLogCheckpoint\('visibility-hidden'\)/);
+  assert.doesNotMatch(response, /communicationLogCheckpoint\('generation-response-complete'\)/);
+
+  const open = productionFunctionSource('communicationLogOpenWriter');
+  assert.match(open, /if \(communicationLogWritable\) return communicationLogWritable/);
+  assert.match(open, /createWritable\(\{ keepExistingData: true \}\)/);
+});
+
+test('Issue 166 Duplicate commits once, freezes EOF, then immediately reopens recording', () => {
+  const snapshot = productionFunctionSource('communicationLogCaptureSnapshotPlan');
+  const closeAt = snapshot.indexOf('communicationLogCloseActiveWriter');
+  const eofAt = snapshot.indexOf('active.file.size');
+  assert.ok(closeAt >= 0 && eofAt > closeAt, 'Duplicate must commit before freezing EOF');
+
+  const duplicate = productionFunctionSource('communicationLogArchiveDuplicate');
+  const captureAt = duplicate.indexOf('communicationLogCaptureSnapshotPlan');
+  const reopenAt = duplicate.indexOf('communicationLogOpenWriter', captureAt);
+  assert.ok(captureAt >= 0 && reopenAt > captureAt,
+    'Duplicate must reopen the active writer immediately after its frozen snapshot');
+});
