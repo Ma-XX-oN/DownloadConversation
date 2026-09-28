@@ -33,6 +33,9 @@ test('Issue 166 production initialization creates the segment directory and repo
     let communicationLogSegmentDirectoryHandle = null;
     let communicationLogSegmentManifest = null;
     let communicationLogActiveSegmentBytes = 0;
+    let communicationLogRotationPending = false;
+    const COMMUNICATION_LOG_SEGMENT_TARGET_BYTES = 1024;
+    const communicationLogSealActiveSegment = async () => {};
     const childDirectory = { kind: 'directory' };
     const directoryCalls = [];
     const communicationLogDirectoryHandle = {
@@ -96,6 +99,9 @@ test('Issue 166 directory-name failure is diagnosed after literal initializer en
     let communicationLogSegmentDirectoryHandle = null;
     let communicationLogSegmentManifest = null;
     let communicationLogActiveSegmentBytes = 0;
+    let communicationLogRotationPending = false;
+    const COMMUNICATION_LOG_SEGMENT_TARGET_BYTES = 1024;
+    const communicationLogSealActiveSegment = async () => {};
     const communicationLogDirectoryHandle = {};
     const communicationLogReadSegmentManifest = async () => ({ segments: [] });
     const communicationLogRetireLegacyTopLevelActive = async () => {};
