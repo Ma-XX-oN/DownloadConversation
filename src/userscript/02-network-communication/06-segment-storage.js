@@ -41,7 +41,7 @@
    *
    * @returns {Promise<string>} New active filename.
    */
-  async function communicationLogSwitchActiveFile() {
+  async function communicationLogAvailableAlternateActiveFile() {
     const current = communicationLogActiveFileName;
     const next = COMMUNICATION_LOG_ACTIVE_FILE_NAMES.find(name => name !== current);
     if (!next) throw new Error('Communication active-file alternation is invalid.');
@@ -58,18 +58,30 @@
     } catch (error) {
       if (error?.name !== 'NotFoundError') throw error;
     }
-    communicationLogActiveFileName = next;
+    return next;
+  }
+
+  /**
+   * Switches to one preflighted alternating active filename.
+   *
+   * @param {string|null} next - Available alternate filename.
+   * @returns {Promise<string|null>} New active filename, or null when unavailable.
+   */
+  async function communicationLogSwitchActiveFile(next = null) {
+    const selected = next ?? await communicationLogAvailableAlternateActiveFile();
+    if (!selected) return null;
+    communicationLogActiveFileName = selected;
     const handle = await communicationLogSegmentDirectoryHandle.getFileHandle(
       communicationLogActiveFileName,
       { create: true }
     );
     const file = await handle.getFile();
     if (file.size !== 0) {
-      throw new Error(`New communication active file is not empty: ${next}`);
+      throw new Error(`New communication active file is not empty: ${selected}`);
     }
     communicationLogActiveSegmentBytes = 0;
     communicationLogRotationPending = false;
-    return next;
+    return selected;
   }
 
   /**
@@ -305,13 +317,13 @@
     );
     const sourceHash = await communicationLogSha256(rawBytes);
 
-    // Establish the next append target before any compression work begins.
-    const switched = await communicationLogSwitchActiveFile();
-    if (!switched) {
+    // Reserve the alternate before sealing.  If it is still occupied, keep
+    // recording in the current file and defer this rotation.
+    const alternate = await communicationLogAvailableAlternateActiveFile();
+    if (!alternate) {
       await communicationLogOpenWriter();
       return null;
     }
-    await communicationLogOpenWriter();
 
     const segment = {
       ordinal,
@@ -325,8 +337,12 @@
       end_timestamp: range.end_timestamp,
       compression_state: 'sealed'
     };
+    // Persist sealed ownership before changing the append target.  A crash
+    // between these operations therefore recovers the old file as immutable.
     communicationLogSegmentManifest.segments.push(segment);
     await communicationLogWriteSegmentManifest();
+    await communicationLogSwitchActiveFile(alternate);
+    await communicationLogOpenWriter();
     void communicationLogQueueSegmentCompression(segment).catch(() => {});
     return segment;
   }
