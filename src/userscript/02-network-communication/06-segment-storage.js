@@ -1,6 +1,6 @@
   /** Internal directory containing sealed/compressed segments for the logical log. */
   let communicationLogSegmentDirectoryHandle = null;
-  /** Compact durable ordering/integrity metadata for the logical log. */
+  /** Small durable active-boundary and interrupted-Duplicate control record. */
   let communicationLogSegmentManifest = null;
   /** Background compression chain; active recorder writes do not await it. */
   let communicationLogCompressionChain = Promise.resolve();
@@ -95,34 +95,36 @@
   }
 
   /**
-   * Loads or initializes compact durable segment metadata.
+   * Loads or initializes the small control/recovery manifest.
    *
-   * @returns {Promise<Object>} Current logical-log segment manifest.
+   * Historical segment membership is filesystem-derived and is never catalogued
+   * here.
+   *
+   * @returns {Promise<Object>} Current control/recovery manifest.
    */
   async function communicationLogReadSegmentManifest() {
     const directory = communicationLogSegmentDirectoryHandle;
     if (!directory) throw new Error('Communication segment directory is not ready.');
     try {
       const handle = await directory.getFileHandle('manifest.json', { create: false });
-      const file = await handle.getFile();
-      const parsed = JSON.parse(await file.text());
-      if (parsed?.schema !== 1 || !Array.isArray(parsed.segments)) {
+      const parsed = JSON.parse(await (await handle.getFile()).text());
+      if (parsed?.schema !== 2 || typeof parsed.logical_log_id !== 'string') {
         throw new Error('Invalid communication segment manifest.');
       }
       return parsed;
     } catch (error) {
       if (error?.name !== 'NotFoundError') throw error;
       return {
-        schema: 1,
+        schema: 2,
         logical_log_id: currentConversationId() || crypto.randomUUID(),
-        next_ordinal: 1,
-        segments: []
+        active_committed_eof: 0,
+        active_last_timestamp: null
       };
     }
   }
 
   /**
-   * Commits the current compact segment manifest.
+   * Commits the current small control/recovery manifest.
    *
    * @returns {Promise<void>} Resolves after manifest commit.
    */
