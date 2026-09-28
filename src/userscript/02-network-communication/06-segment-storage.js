@@ -6,6 +6,67 @@
   let communicationLogCompressionChain = Promise.resolve();
   /** Exact bytes accepted into the current active raw segment. */
   let communicationLogActiveSegmentBytes = 0;
+  /** Alternating private active files; a closed source is never copied/truncated. */
+  const COMMUNICATION_LOG_ACTIVE_FILE_NAMES = Object.freeze([
+    'active-a.jsonl',
+    'active-b.jsonl'
+  ]);
+  /** Current append target inside the private segment directory. */
+  let communicationLogActiveFileName = null;
+  /** Threshold rotation deferred while the alternate file is still occupied. */
+  let communicationLogRotationPending = false;
+
+  /**
+   * Reads the current active file from the private segment directory.
+   *
+   * @returns {Promise<Object>} Fresh handle and file snapshot.
+   */
+  async function communicationLogActiveFileSnapshot() {
+    if (!communicationLogSegmentDirectoryHandle || !communicationLogActiveFileName) {
+      throw new Error('Communication active segment is not ready.');
+    }
+    const handle = await communicationLogSegmentDirectoryHandle.getFileHandle(
+      communicationLogActiveFileName,
+      { create: true }
+    );
+    return { handle, file: await handle.getFile() };
+  }
+
+  /**
+   * Switches the append target to the other alternating file without copying bytes.
+   *
+   * @returns {Promise<string>} New active filename.
+   */
+  async function communicationLogSwitchActiveFile() {
+    const current = communicationLogActiveFileName;
+    const next = COMMUNICATION_LOG_ACTIVE_FILE_NAMES.find(name => name !== current);
+    if (!next) throw new Error('Communication active-file alternation is invalid.');
+    try {
+      const occupied = await communicationLogSegmentDirectoryHandle.getFileHandle(
+        next,
+        { create: false }
+      );
+      if ((await occupied.getFile()).size > 0) {
+        communicationLogRotationPending = true;
+        throw new Error(`Alternate communication active file is still occupied: ${next}`);
+      }
+      await communicationLogSegmentDirectoryHandle.removeEntry(next);
+    } catch (error) {
+      if (error?.name !== 'NotFoundError') throw error;
+    }
+    communicationLogActiveFileName = next;
+    const handle = await communicationLogSegmentDirectoryHandle.getFileHandle(
+      communicationLogActiveFileName,
+      { create: true }
+    );
+    const file = await handle.getFile();
+    if (file.size !== 0) {
+      throw new Error(`New communication active file is not empty: ${next}`);
+    }
+    communicationLogActiveSegmentBytes = 0;
+    communicationLogRotationPending = false;
+    return next;
+  }
 
   /**
    * Returns the stable internal segment-directory name for this logical log.
@@ -198,51 +259,28 @@
   }
 
   /**
-   * Verifies and clears the active file after sealing its exact bytes.
+   * Closes the current active file, switches append ownership, then compresses
+   * the closed immutable source directly.  No raw copy or truncation occurs.
    *
-   * @param {number} expectedBytes - Expected committed active byte count.
-   * @param {string} expectedHash - Expected SHA-256 of committed active bytes.
-   * @returns {Promise<void>} Resolves after verified truncation.
-   */
-  async function communicationLogTruncateActiveAfterSeal(expectedBytes, expectedHash) {
-    const snapshot = await communicationLogRefreshedFileSnapshot();
-    const bytes = new Uint8Array(await snapshot.file.arrayBuffer());
-    if (bytes.byteLength !== expectedBytes || await communicationLogSha256(bytes) !== expectedHash) {
-      throw new Error('Active communication segment changed during seal transaction.');
-    }
-    let writable = null;
-    try {
-      writable = await snapshot.handle.createWritable({ keepExistingData: true });
-      await writable.truncate(0);
-      await writable.close();
-      writable = null;
-      communicationLogWriterDirty = false;
-      communicationLogActiveSegmentBytes = 0;
-    } catch (error) {
-      await abortWritableQuietly(writable);
-      throw error;
-    }
-  }
-
-  /**
-   * Freezes the active segment, establishes the next active file, then queues compression.
-   *
-   * @returns {Promise<Object|null>} Sealed segment metadata, or null for an empty active segment.
+   * @returns {Promise<Object|null>} Sealed segment metadata, or null when empty.
    */
   async function communicationLogSealActiveSegment() {
     await communicationLogCloseActiveWriter();
-    const snapshot = await communicationLogRefreshedFileSnapshot();
+    const snapshot = await communicationLogActiveFileSnapshot();
     if (snapshot.file.size === 0) return null;
+
+    const rawName = communicationLogActiveFileName;
     const rawBytes = new Uint8Array(await snapshot.file.arrayBuffer());
     const range = communicationLogTimestampRangeFromJsonl(rawBytes);
     if (!range) {
       throw new Error('Sealed communication segment has no trustworthy content timestamp range.');
     }
+
     const ordinal = communicationLogSegmentManifest.next_ordinal++;
     const suffix = String(ordinal).padStart(6, '0');
     const memberStart = communicationLogArchiveTimestamp(range.start_timestamp);
     const memberEnd = communicationLogArchiveTimestamp(range.end_timestamp);
-    const rawName = `segment-${suffix}_${memberStart}-${memberEnd}.jsonl`;
+    const memberName = `segment-${suffix}_${memberStart}-${memberEnd}.jsonl`;
     const archiveBase = communicationLogFileName.replace(/\.jsonl$/i, '');
     const archiveName = await communicationLogUnusedRoleArchiveName(
       communicationLogSegmentDirectoryHandle,
@@ -251,16 +289,16 @@
       'seg'
     );
     const sourceHash = await communicationLogSha256(rawBytes);
-    await communicationLogWriteExactFile(
-      communicationLogSegmentDirectoryHandle,
-      rawName,
-      rawBytes
-    );
+
+    // Establish the next append target before any compression work begins.
+    await communicationLogSwitchActiveFile();
+    await communicationLogOpenWriter();
+
     const segment = {
       ordinal,
       raw_name: rawName,
       archive_name: archiveName,
-      member_name: rawName,
+      member_name: memberName,
       raw_bytes: rawBytes.byteLength,
       source_sha256: sourceHash,
       start_timestamp: range.start_timestamp,
@@ -269,12 +307,9 @@
     };
     communicationLogSegmentManifest.segments.push(segment);
     await communicationLogWriteSegmentManifest();
-    await communicationLogTruncateActiveAfterSeal(rawBytes.byteLength, sourceHash);
-    await communicationLogOpenWriter();
     void communicationLogQueueSegmentCompression(segment).catch(() => {});
     return segment;
   }
-
 
 
   /**
