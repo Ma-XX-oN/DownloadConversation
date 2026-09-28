@@ -84,7 +84,7 @@ async function buildDirectXzPrelude() {
     glue = glue.replace(/^export \{[^\n]*\};?\s*$/gm, '');
     glue = glue.replace(/^export /gm, '');
     glue = glue.replaceAll('import.meta', 'globalThis.location');
-    if (/^export\\s/m.test(glue) || /import\\.meta/.test(glue)) {
+    if (/^export\s/m.test(glue) || /import\.meta/.test(glue)) {
       throw new Error('Direct XZ browser glue still contains module-only syntax.');
     }
     glue = glue.replaceAll('import.meta.url', 'globalThis.location.href');
