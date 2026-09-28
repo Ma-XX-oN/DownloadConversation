@@ -1,6 +1,10 @@
   /**
    * Filters exact JSONL record bytes by inclusive timestamp bounds.
    *
+   * Records are chronological.  Once a trustworthy record is later than the
+   * requested upper bound, no following record can be accepted and scanning
+   * stops immediately.
+   *
    * @param {Uint8Array} bytes - Complete JSONL bytes.
    * @param {number|null} lowerMs - Inclusive lower bound.
    * @param {number|null} upperMs - Inclusive upper bound.
@@ -29,8 +33,8 @@
         : null;
       const time = timestamp ? Date.parse(timestamp) : NaN;
       if (!Number.isFinite(time)) continue;
+      if (upperMs !== null && time > upperMs) break;
       if (lowerMs !== null && time < lowerMs) continue;
-      if (upperMs !== null && time > upperMs) continue;
       parts.push(complete);
       total += complete.byteLength;
       startTimestamp ??= timestamp;
@@ -47,6 +51,31 @@
       start_timestamp: startTimestamp,
       end_timestamp: endTimestamp
     };
+  }
+
+  /**
+   * Returns the first trustworthy JSONL record timestamp without scanning the
+   * remainder of the file.
+   *
+   * @param {Uint8Array} bytes - Complete JSONL bytes.
+   * @returns {string|null} First trustworthy ISO timestamp, or null.
+   */
+  function communicationLogFirstTimestampFromJsonl(bytes) {
+    let lineStart = 0;
+    for (let index = 0; index < bytes.byteLength; index += 1) {
+      if (bytes[index] !== 10) continue;
+      const line = bytes.subarray(lineStart, index);
+      lineStart = index + 1;
+      if (!line.byteLength) continue;
+      try {
+        const record = JSON.parse(new TextDecoder().decode(line));
+        const timestamp = typeof record?.timestamp === 'string'
+          ? record.timestamp
+          : null;
+        if (timestamp && Number.isFinite(Date.parse(timestamp))) return timestamp;
+      } catch {}
+    }
+    return null;
   }
 
   /**
@@ -94,10 +123,11 @@
   /**
    * Streams one frozen Duplicate plan through one continuously open archive writer.
    *
-   * Each relevant historical archive is decompressed exactly once, then its exact
-   * accepted JSONL bytes are supplied to the single output encoder. The frozen
-   * active prefix is the final source file. Progress therefore uses completed
-   * source files as a real denominator rather than an elapsed-time guess.
+   * Historical file selection is made entirely from the timestamp ranges encoded
+   * in filenames.  A whole selected segment is decompressed once by the archive
+   * layer and fed directly to the open output encoder without parsing JSONL
+   * records.  Only a first/last boundary segment actually cut by a requested
+   * timestamp is decompressed to raw bytes and filtered record by record.
    *
    * @param {Object} plan - Frozen historical membership and active EOF.
    * @param {Object} options - Optional ISO lower/upper timestamp bounds.
@@ -144,23 +174,34 @@
 
     try {
       for (const segment of relevantSegments) {
-        const raw = await communicationLogReadHistoricalSegment(segment);
         const segmentStart = Date.parse(segment.start_timestamp);
         const segmentEnd = Date.parse(segment.end_timestamp);
-        const whole = (lowerMs === null || segmentStart >= lowerMs)
-          && (upperMs === null || segmentEnd <= upperMs);
-        const accepted = whole
-          ? {
-            bytes: raw,
-            ...communicationLogTimestampRangeFromJsonl(raw)
+        const cutsLowerBoundary = lowerMs !== null && lowerMs > segmentStart;
+        const cutsUpperBoundary = upperMs !== null && upperMs < segmentEnd;
+        const archiveHandle =
+          await communicationLogSegmentDirectoryHandle.getFileHandle(
+            segment.archive_name,
+            { create: false }
+          );
+        const archiveBytes = new Uint8Array(
+          await (await archiveHandle.getFile()).arrayBuffer()
+        );
+
+        if (!cutsLowerBoundary && !cutsUpperBoundary) {
+          expectedBytes += streamingArchiveWriterAppendArchive(writer, archiveBytes);
+          startTimestamp ??= segment.start_timestamp;
+          endTimestamp = segment.end_timestamp;
+        } else {
+          const raw = await extractArchive(archiveBytes);
+          const filtered = communicationLogFilterJsonlBytes(raw, lowerMs, upperMs);
+          if (filtered.bytes.byteLength) {
+            streamingArchiveWriterAppendBytes(writer, filtered.bytes);
+            expectedBytes += filtered.bytes.byteLength;
+            startTimestamp ??= filtered.start_timestamp;
+            endTimestamp = filtered.end_timestamp ?? endTimestamp;
           }
-          : communicationLogFilterJsonlBytes(raw, lowerMs, upperMs);
-        if (accepted.bytes.byteLength) {
-          streamingArchiveWriterAppendBytes(writer, accepted.bytes);
-          expectedBytes += accepted.bytes.byteLength;
-          startTimestamp ??= accepted.start_timestamp;
-          endTimestamp = accepted.end_timestamp ?? endTimestamp;
         }
+
         completedFiles += 1;
         communicationLogReportDuplicateProgress(
           completedFiles,
@@ -180,16 +221,43 @@
       const activeRaw = new Uint8Array(
         await activeFile.slice(0, plan.active_eof).arrayBuffer()
       );
-      const activeFiltered = communicationLogFilterJsonlBytes(
-        activeRaw,
-        lowerMs,
-        upperMs
-      );
-      if (activeFiltered.bytes.byteLength) {
-        streamingArchiveWriterAppendBytes(writer, activeFiltered.bytes);
-        expectedBytes += activeFiltered.bytes.byteLength;
-        startTimestamp ??= activeFiltered.start_timestamp;
-        endTimestamp = activeFiltered.end_timestamp ?? endTimestamp;
+      const activeFirstTimestamp = communicationLogFirstTimestampFromJsonl(activeRaw);
+      const activeStartMs = activeFirstTimestamp
+        ? Date.parse(activeFirstTimestamp)
+        : NaN;
+      const activeEndMs = plan.active_last_timestamp
+        ? Date.parse(plan.active_last_timestamp)
+        : NaN;
+      const activeOutsideBounds = Number.isFinite(activeStartMs)
+        && Number.isFinite(activeEndMs)
+        && ((lowerMs !== null && activeEndMs < lowerMs)
+          || (upperMs !== null && activeStartMs > upperMs));
+      const activeCutsLowerBoundary = Number.isFinite(activeStartMs)
+        && lowerMs !== null
+        && lowerMs > activeStartMs;
+      const activeCutsUpperBoundary = Number.isFinite(activeEndMs)
+        && upperMs !== null
+        && upperMs < activeEndMs;
+
+      if (!activeOutsideBounds && activeRaw.byteLength) {
+        if (!activeCutsLowerBoundary && !activeCutsUpperBoundary) {
+          streamingArchiveWriterAppendBytes(writer, activeRaw);
+          expectedBytes += activeRaw.byteLength;
+          startTimestamp ??= activeFirstTimestamp;
+          endTimestamp = plan.active_last_timestamp ?? endTimestamp;
+        } else {
+          const activeFiltered = communicationLogFilterJsonlBytes(
+            activeRaw,
+            lowerMs,
+            upperMs
+          );
+          if (activeFiltered.bytes.byteLength) {
+            streamingArchiveWriterAppendBytes(writer, activeFiltered.bytes);
+            expectedBytes += activeFiltered.bytes.byteLength;
+            startTimestamp ??= activeFiltered.start_timestamp;
+            endTimestamp = activeFiltered.end_timestamp ?? endTimestamp;
+          }
+        }
       }
       completedFiles += 1;
       communicationLogReportDuplicateProgress(
