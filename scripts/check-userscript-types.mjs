@@ -11,14 +11,9 @@ const BROKEN_COMMIT = 'c16c2beb71e210ceb3110b69b61a92de6483deb3';
 const USERSCRIPT = 'chatgpt-conversation-markdown-export.user.js';
 
 function downloadConversationProgram(userscript) {
-  const marker = '// END bundled ';
-  const markerIndex = userscript.lastIndexOf(marker);
-  if (markerIndex < 0) {
-    throw new Error('Bundled dependency terminator is missing.');
-  }
-  const boundary = userscript.indexOf('\n', markerIndex);
+  const boundary = userscript.lastIndexOf('\n(() => {');
   if (boundary < 0) {
-    throw new Error('Bundled dependency terminator has no line ending.');
+    throw new Error('DownloadConversation IIFE boundary is missing.');
   }
   return userscript.slice(boundary + 1);
 }
