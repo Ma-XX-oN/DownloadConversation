@@ -165,10 +165,15 @@
 
   // Streaming 7z bridge used by communication Duplicate.  Historical archives
   // are decompressed and fed into one continuously open output compressor.
+  /** Lazily initialized singleton for the streaming libarchive Wasm module. */
   let streaming7zModulePromise = null;
+  /** Monotonic source handle for one streaming Wasm input. */
   let streaming7zNextSourceId = 1;
+  /** Monotonic output handle for one streaming Wasm archive output. */
   let streaming7zNextOutputId = 1;
+  /** Active streaming source byte ranges keyed by Wasm source handle. */
   const streaming7zSources = new Map();
+  /** Active streaming output chunk collectors keyed by Wasm output handle. */
   const streaming7zOutputs = new Map();
 
   /**
