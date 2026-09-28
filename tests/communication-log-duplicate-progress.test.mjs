@@ -23,8 +23,11 @@ test('Issue 166 Duplicate reports real file-count progress and measured ETA', ()
   assert.match(duplicateSource, /eta_ms:/);
   assert.match(
     filesSource,
-    /Duplicate: processing \$\{progress\.completed_files\} of \$\{progress\.total_files\} files/
+    /\$\{progress\.completed_files\}\/\$\{progress\.total_files\} files /
   );
-  assert.match(filesSource, /\$\{progress\.percent\.toFixed\(1\)\}%/);
-  assert.match(filesSource, /ETA ~\$\{communicationLogFormatDuration\(progress\.eta_ms\)\}/);
+  assert.match(filesSource, /\$\{progress\.percent\.toFixed\(1\)\}% done/);
+  assert.match(
+    filesSource,
+    /ETA: \$\{communicationLogFormatDuration\(progress\.eta_ms\)\}/
+  );
 });
