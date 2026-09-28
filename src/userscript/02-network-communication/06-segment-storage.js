@@ -13,6 +13,8 @@
   ]);
   /** Current append target inside the private segment directory. */
   let communicationLogActiveFileName = null;
+  /** Timestamp of the last complete record accepted into the active file. */
+  let communicationLogActiveLastTimestamp = null;
   /** Threshold rotation deferred while held or while the alternate is occupied. */
   let communicationLogRotationPending = false;
   /** Duplicate snapshot hold preventing active-file rotation. */
@@ -80,6 +82,7 @@
       throw new Error(`New communication active file is not empty: ${selected}`);
     }
     communicationLogActiveSegmentBytes = 0;
+    communicationLogActiveLastTimestamp = null;
     communicationLogRotationPending = false;
     return selected;
   }
@@ -384,6 +387,8 @@
       await communicationLogWritable.write(line);
       communicationLogWriterDirty = true;
       communicationLogActiveSegmentBytes += lineBytes;
+      communicationLogActiveLastTimestamp =
+        typeof record?.timestamp === 'string' ? record.timestamp : null;
       if (communicationLogActiveSegmentBytes >= COMMUNICATION_LOG_SEGMENT_TARGET_BYTES) {
         if (communicationLogRotationHold > 0) {
           communicationLogRotationPending = true;
