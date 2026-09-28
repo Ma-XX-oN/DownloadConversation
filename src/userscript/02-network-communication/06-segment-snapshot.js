@@ -334,7 +334,7 @@
       const whole = (lowerMs === null || segmentStart >= lowerMs)
         && (upperMs === null || segmentEnd <= upperMs);
       if (whole) {
-        prepared.push({ segment, whole: true, bytes: null });
+        prepared.push({ segment, whole: true });
         expectedBytes += segment.raw_bytes;
         startTimestamp ??= segment.start_timestamp;
         endTimestamp = segment.end_timestamp;
@@ -343,7 +343,7 @@
       const raw = await communicationLogReadHistoricalSegment(segment);
       const filtered = communicationLogFilterJsonlBytes(raw, lowerMs, upperMs);
       if (!filtered.bytes.byteLength) continue;
-      prepared.push({ segment, whole: false, bytes: filtered.bytes });
+      prepared.push({ segment, whole: false });
       expectedBytes += filtered.bytes.byteLength;
       startTimestamp ??= filtered.start_timestamp;
       endTimestamp = filtered.end_timestamp;
@@ -390,7 +390,9 @@
     try {
       for (const item of prepared) {
         if (!item.whole) {
-          streaming7zWriterAppendBytes(writer, item.bytes);
+          const raw = await communicationLogReadHistoricalSegment(item.segment);
+          const filtered = communicationLogFilterJsonlBytes(raw, lowerMs, upperMs);
+          streaming7zWriterAppendBytes(writer, filtered.bytes);
           continue;
         }
         if (item.segment.compression_state === 'compressed') {
