@@ -332,12 +332,13 @@
       end_timestamp: range.end_timestamp,
       compression_state: 'sealed'
     };
-    // Persist sealed ownership before changing the append target.  A crash
-    // between these operations therefore recovers the old file as immutable.
-    communicationLogSegmentManifest.segments.push(segment);
-    await communicationLogWriteSegmentManifest();
+    // Switch first.  If the page dies before manifest commit, startup derives
+    // the newer active file from the two physical files and discovers the
+    // closed older source directly.
     await communicationLogSwitchActiveFile(alternate);
     await communicationLogOpenWriter();
+    communicationLogSegmentManifest.segments.push(segment);
+    await communicationLogWriteSegmentManifest();
     void communicationLogQueueSegmentCompression(segment).catch(() => {});
     return segment;
   }
