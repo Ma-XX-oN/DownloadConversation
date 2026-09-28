@@ -200,9 +200,9 @@
   }
 
   /**
-   * Compresses, round-trip verifies, then retires one sealed raw segment.
+   * Compresses, round-trip verifies, then retires one closed raw active file.
    *
-   * @param {Object} segment - Durable sealed-segment metadata.
+   * @param {Object} segment - Immutable closed-source metadata.
    * @returns {Promise<void>} Resolves after verified compression or rejects while retaining raw bytes.
    */
   async function communicationLogCompressSealedSegment(segment) {
@@ -213,13 +213,11 @@
     const rawBytes = new Uint8Array(await rawFile.arrayBuffer());
     const sourceHash = await communicationLogSha256(rawBytes);
     if (rawBytes.byteLength !== segment.raw_bytes || sourceHash !== segment.source_sha256) {
-      throw new Error(`Sealed segment ${segment.ordinal} changed before compression.`);
+      throw new Error(`Closed communication source changed before compression: ${segment.raw_name}`);
     }
 
     try {
-      segment.compression_state = 'compressing';
-      setStatus(`Communication log: compressing sealed segment ${segment.ordinal}; recording continues.`);
-      await communicationLogWriteSegmentManifest();
+      setStatus(`Communication log: compressing ${segment.raw_name}; recording continues.`);
       const archiveBytes = await create7zArchive(
         rawBytes,
         segment.member_name,
@@ -232,39 +230,36 @@
       );
       const committedArchive = new Uint8Array(await (await archiveHandle.getFile()).arrayBuffer());
       const extracted = await extract7zArchive(committedArchive);
-      const extractedHash = await communicationLogSha256(extracted);
       if (!(await communicationLogBytesEqual(extracted, rawBytes))
-          || extractedHash !== segment.source_sha256) {
-        throw new Error(`Archive round-trip verification failed for segment ${segment.ordinal}.`);
+          || await communicationLogSha256(extracted) !== segment.source_sha256) {
+        throw new Error(`Archive round-trip verification failed: ${segment.archive_name}`);
       }
-      segment.archive_bytes = committedArchive.byteLength;
-      segment.compression_state = 'compressed';
-      segment.verified_sha256 = extractedHash;
-      await communicationLogWriteSegmentManifest();
       await directory.removeEntry(segment.raw_name);
       if (communicationLogRotationPending) {
         const pending = communicationLogEnqueue('pending-rotation', async () => {
-          if (communicationLogActiveSegmentBytes >= COMMUNICATION_LOG_SEGMENT_TARGET_BYTES) {
+          if (communicationLogRotationHold === 0
+              && communicationLogActiveSegmentBytes >= COMMUNICATION_LOG_SEGMENT_TARGET_BYTES) {
             await communicationLogSealActiveSegment();
           }
         });
         void pending.operation.catch(() => {});
       }
-      setStatus(`Communication log: sealed segment ${segment.ordinal} compressed; recording continues.`);
+      setStatus(`Communication log: ${segment.archive_name} verified; recording continues.`);
       logDiagnostic('debug', 'communication-log-segment-compressed', {
-        ordinal: segment.ordinal,
+        raw_name: segment.raw_name,
+        archive_name: segment.archive_name,
         raw_bytes: segment.raw_bytes,
-        archive_bytes: segment.archive_bytes
+        archive_bytes: committedArchive.byteLength
       });
     } catch (error) {
-      segment.compression_state = 'failed';
-      segment.failure = boundedDiagnosticText(errorMessage(error), 2000);
-      await communicationLogWriteSegmentManifest().catch(() => {});
-      setStatus(`Communication log: segment ${segment.ordinal} compression failed; sealed raw retained and recording continues.`);
+      setStatus(
+        `Communication log: compression failed for ${segment.raw_name}; `
+        + 'closed raw source retained and recording continues.'
+      );
       logDiagnostic('warnings', 'communication-log-segment-compression-failed', {
-        ordinal: segment.ordinal,
         raw_name: segment.raw_name,
-        message: segment.failure
+        archive_name: segment.archive_name,
+        message: boundedDiagnosticText(errorMessage(error), 2000)
       });
       throw error;
     }
