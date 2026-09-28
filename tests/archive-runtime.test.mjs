@@ -19,13 +19,28 @@ execFileSync(process.execPath, ['scripts/verify-userscript-artifact.mjs', candid
   stdio: 'pipe'
 });
 
-test('Issue 166 production archive bridge creates a real XZ in the JS runtime', async () => {
-  globalThis.location ??= { href: 'https://chatgpt.com/c/test' };
-  const begin = candidateUserscript.indexOf('// BEGIN bundled direct XZ lzma-rust2=0.16.2');
+function productionXzPrelude() {
+  const beginMarker = '// BEGIN bundled direct XZ upstream-liblzma=';
+  const begin = candidateUserscript.indexOf(beginMarker);
   const endMarker = '// END bundled direct XZ\n';
   const end = candidateUserscript.indexOf(endMarker, begin);
-  assert.ok(begin >= 0 && end > begin, 'generated directXz prelude must be present');
-  const prelude = candidateUserscript.slice(begin, end + endMarker.length);
+  assert.ok(begin >= 0 && end > begin,
+    'generated upstream liblzma XZ prelude must be present');
+  return candidateUserscript.slice(begin, end + endMarker.length);
+}
+
+test('Issue 166 production archive bridge uses upstream liblzma rather than lzma-rust2', () => {
+  assert.match(candidateUserscript,
+    /\/\/ BEGIN bundled direct XZ upstream-liblzma=/,
+    'production XZ bridge must identify the upstream liblzma build');
+  assert.doesNotMatch(candidateUserscript,
+    /\/\/ BEGIN bundled direct XZ lzma-rust2=/,
+    'production XZ bridge must not retain the Rust encoder');
+});
+
+test('Issue 166 production archive bridge creates a real XZ in the JS runtime', async () => {
+  globalThis.location ??= { href: 'https://chatgpt.com/c/test' };
+  const prelude = productionXzPrelude();
   const runtime = await readFile(
     new URL('../src/userscript/01-runtime/03-archive.js', import.meta.url),
     'utf8'
@@ -34,8 +49,6 @@ test('Issue 166 production archive bridge creates a real XZ in the JS runtime', 
   const create = await new AsyncFunction(
     `${prelude}\n${runtime}\nreturn createXzArchive;`
   )();
-  const previousLocation = globalThis.location;
-  globalThis.location = { href: import.meta.url };
   const source = new TextEncoder().encode('DownloadConversation archive smoke test\n');
   const archive = await create(source, 'diagnostic-log.txt');
   assert.ok(archive instanceof Uint8Array);
@@ -50,11 +63,7 @@ test('Issue 166 production archive bridge creates a real XZ in the JS runtime', 
 
 test('Issue 166 production archive bridge round-trips exact member bytes', async () => {
   globalThis.location ??= { href: 'https://chatgpt.com/c/test' };
-  const begin = candidateUserscript.indexOf('// BEGIN bundled direct XZ lzma-rust2=0.16.2');
-  const endMarker = '// END bundled direct XZ\n';
-  const end = candidateUserscript.indexOf(endMarker, begin);
-  assert.ok(begin >= 0 && end > begin);
-  const prelude = candidateUserscript.slice(begin, end + endMarker.length);
+  const prelude = productionXzPrelude();
   const runtime = await readFile(
     new URL('../src/userscript/01-runtime/03-archive.js', import.meta.url),
     'utf8'
@@ -85,11 +94,7 @@ test('Issue 166 generated archive bridge is top-level in the DownloadConversatio
 
 
 test('Issue 166 production XZ is accepted by native xz and recovers exact bytes', async () => {
-  const begin = candidateUserscript.indexOf('// BEGIN bundled direct XZ');
-  const endMarker = '// END bundled direct XZ\n';
-  const end = candidateUserscript.indexOf(endMarker, begin);
-  assert.ok(begin >= 0 && end > begin);
-  const prelude = candidateUserscript.slice(begin, end + endMarker.length);
+  const prelude = productionXzPrelude();
   const runtime = await readFile(new URL('../src/userscript/01-runtime/03-archive.js', import.meta.url), 'utf8');
   const AsyncFunction = Object.getPrototypeOf(async function () {}).constructor;
   const create = await new AsyncFunction(`${prelude}\n${runtime}\nreturn createXzArchive;`)();
