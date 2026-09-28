@@ -165,10 +165,7 @@
           );
           streaming7zWriterAppendArchive(writer, archiveBytes);
         } else {
-          const rawDirectory = item.segment.raw_parent === 'root'
-            ? communicationLogDirectoryHandle
-            : communicationLogSegmentDirectoryHandle;
-          const rawHandle = await rawDirectory.getFileHandle(
+          const rawHandle = await communicationLogSegmentDirectoryHandle.getFileHandle(
             item.segment.raw_name,
             { create: false }
           );
