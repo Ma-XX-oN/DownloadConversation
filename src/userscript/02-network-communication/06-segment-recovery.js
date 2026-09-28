@@ -88,7 +88,7 @@
         { create: false }
       );
       const archive = new Uint8Array(await (await archiveHandle.getFile()).arrayBuffer());
-      const extracted = await extractXzArchive(archive);
+      const extracted = await extractArchive(archive);
       if (await communicationLogBytesEqual(extracted, rawBytes)) {
         await communicationLogSegmentDirectoryHandle.removeEntry(closedName);
         return;
