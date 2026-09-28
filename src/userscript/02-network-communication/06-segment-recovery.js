@@ -34,7 +34,7 @@
       raw_parent: 'root',
       archive_name: await communicationLogUnusedRoleArchiveName(
         communicationLogSegmentDirectoryHandle,
-        communicationLogFileName.replace(/\.jsonl$/i, ''),
+        'segment',
         range,
         'seg'
       ),
