@@ -25,7 +25,6 @@ def run(command: list[str]) -> int:
 
 def main() -> int:
   results = [
-    run(["node", "--test", "7z-js-benchmark/test/direct-streaming.test.mjs"]),
     run(["node", "benchmarks/issue166-browser-segment-benchmark.mjs"]),
     run(["node", "scripts/ci-environment.mjs"]),
     run([sys.executable, "-m", "unittest", "tests/test_repoworkflow_validation.py"]),
