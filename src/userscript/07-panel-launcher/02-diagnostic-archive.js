@@ -87,7 +87,7 @@
    * @returns {string} Archive member filename.
    */
   function diagnosticLogArchiveMemberName(archiveName) {
-    return archiveName.replace(/\\.log\\.xz$/i, '.jsonl').replace(/[^\x20-\x7e]/g, '_');
+    return archiveName.replace(/\.log\.xz$/i, '.jsonl').replace(/[^\x20-\x7e]/g, '_');
   }
 
   /**
