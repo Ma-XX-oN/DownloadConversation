@@ -221,7 +221,7 @@
 
     try {
       setStatus(`Communication log: compressing ${segment.raw_name}; recording continues.`);
-      const archiveBytes = await create7zArchive(
+      const archiveBytes = await createXzArchive(
         rawBytes,
         segment.member_name,
         communicationLogArchiveMTime(segment)
@@ -232,7 +232,7 @@
         archiveBytes
       );
       const committedArchive = new Uint8Array(await (await archiveHandle.getFile()).arrayBuffer());
-      const extracted = await extract7zArchive(committedArchive);
+      const extracted = await extractXzArchive(committedArchive);
       if (!(await communicationLogBytesEqual(extracted, rawBytes))
           || await communicationLogSha256(extracted) !== segment.source_sha256) {
         throw new Error(`Archive round-trip verification failed: ${segment.archive_name}`);
