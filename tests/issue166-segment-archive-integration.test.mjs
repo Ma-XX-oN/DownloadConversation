@@ -33,6 +33,7 @@ test('Issue 166 production initialization creates the segment directory and repo
     let communicationLogSegmentDirectoryHandle = null;
     let communicationLogSegmentManifest = null;
     let communicationLogActiveSegmentBytes = 0;
+    let communicationLogActiveLastTimestamp = null;
     let communicationLogRotationPending = false;
     const COMMUNICATION_LOG_SEGMENT_TARGET_BYTES = 1024;
     const communicationLogSealActiveSegment = async () => {};
@@ -45,17 +46,24 @@ test('Issue 166 production initialization creates the segment directory and repo
       }
     };
     const communicationLogReadSegmentManifest = async () => ({
-      schema: 1,
+      schema: 2,
       logical_log_id: 'fixture',
-      next_ordinal: 4,
-      segments: [{}, {}, {}]
+      active_committed_eof: 0,
+      active_last_timestamp: null
     });
-    const communicationLogRetireLegacyTopLevelActive = async () => {};
+    const communicationLogWriteSegmentManifest = async () => {};
+    const communicationLogTimestampRangeFromJsonl = () => ({
+      start_timestamp: '2026-09-27T01:00:00.000Z',
+      end_timestamp: '2026-09-27T01:00:01.000Z'
+    });
     const communicationLogRecoverDuplicateRequest = async () => {};
     const communicationLogRecoverAlternatingActiveFiles = async () => {};
     const communicationLogRecoverSegmentState = async () => {};
     const communicationLogRefreshedFileSnapshot = async () => ({
-      file: { size: 321 }
+      file: {
+        size: 321,
+        async arrayBuffer() { return new Uint8Array(321).buffer; }
+      }
     });
     ${initialize}
     await communicationLogInitializeSegmentStorage();
@@ -104,7 +112,6 @@ test('Issue 166 directory-name failure is diagnosed after literal initializer en
     const communicationLogSealActiveSegment = async () => {};
     const communicationLogDirectoryHandle = {};
     const communicationLogReadSegmentManifest = async () => ({ segments: [] });
-    const communicationLogRetireLegacyTopLevelActive = async () => {};
     const communicationLogRecoverDuplicateRequest = async () => {};
     const communicationLogRecoverAlternatingActiveFiles = async () => {};
     const communicationLogRecoverSegmentState = async () => {};
@@ -141,15 +148,15 @@ test('Issue 166 production initialization reports the exact failing phase', asyn
       async getDirectoryHandle() { return {}; }
     };
     const communicationLogReadSegmentManifest = async () => ({
-      schema: 1,
+      schema: 2,
       logical_log_id: 'fixture',
-      next_ordinal: 1,
-      segments: []
+      active_committed_eof: 0,
+      active_last_timestamp: null
     });
+    const communicationLogWriteSegmentManifest = async () => {};
+    let communicationLogActiveLastTimestamp = null;
     let communicationLogRotationHold = 0;
     let communicationLogRotationPending = false;
-    const communicationLogRecoverDuplicateRequest = async () => {};
-    const communicationLogRecoverAlternatingActiveFiles = async () => {};
     const communicationLogRecoverDuplicateRequest = async () => {};
     const communicationLogRecoverAlternatingActiveFiles = async () => {};
     const communicationLogRecoverSegmentState = async () => {
