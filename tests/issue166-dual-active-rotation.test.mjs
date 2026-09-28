@@ -40,3 +40,15 @@ test('Issue 166 startup derives active ownership from alternating file state', a
   assert.match(source, /active-b\.jsonl/);
   assert.doesNotMatch(source, /persisted_active|active_file_name\s*:/);
 });
+
+test('Issue 166 startup awaits activation so asynchronous failures reach its catch', async () => {
+  const lifecycle = await readFile(
+    new URL('../src/userscript/02-network-communication/03-communication-lifecycle.js', import.meta.url),
+    'utf8'
+  );
+  const start = lifecycle.indexOf('async function initializeCommunicationDiskRecorder');
+  assert.ok(start >= 0);
+  const body = lifecycle.slice(start, lifecycle.indexOf('\n  /**', start + 20));
+  assert.match(body, /return await communicationLogActivateDirectory\(handle\)/);
+  assert.match(body, /communication-log-startup-caught/);
+});
