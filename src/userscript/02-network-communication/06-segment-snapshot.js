@@ -154,12 +154,21 @@
    */
   async function communicationLogCaptureSnapshotPlan() {
     await communicationLogCloseActiveWriter();
-    const active = await communicationLogRefreshedFileSnapshot();
-    const activeBytes = new Uint8Array(await active.file.arrayBuffer());
+    const active = await communicationLogActiveFileSnapshot();
+    const activeEof = active.file.size;
+    const activePrefix = active.file.slice(0, activeEof);
+    const activeRange = communicationLogTimestampRangeFromJsonl(
+      new Uint8Array(await activePrefix.arrayBuffer())
+    );
+    communicationLogSegmentManifest.active_committed_eof = activeEof;
+    communicationLogSegmentManifest.active_last_timestamp =
+      activeRange?.end_timestamp ?? null;
+    await communicationLogWriteSegmentManifest();
     return {
       segments: communicationLogSegmentManifest.segments.map(segment => ({ ...segment })),
-      active_bytes: activeBytes,
-      active_range: communicationLogTimestampRangeFromJsonl(activeBytes)
+      active_name: communicationLogActiveFileName,
+      active_eof: activeEof,
+      active_range: activeRange
     };
   }
 
@@ -191,8 +200,19 @@
       startTimestamp ??= segment.start_timestamp ?? null;
       endTimestamp = segment.end_timestamp ?? endTimestamp;
     }
-    parts.push(frozen.active_bytes);
-    total += frozen.active_bytes.byteLength;
+    const activeHandle = await communicationLogSegmentDirectoryHandle.getFileHandle(
+      frozen.active_name,
+      { create: false }
+    );
+    const activeFile = await activeHandle.getFile();
+    if (activeFile.size < frozen.active_eof) {
+      throw new Error('Frozen communication active prefix is no longer available.');
+    }
+    const activeBytes = new Uint8Array(
+      await activeFile.slice(0, frozen.active_eof).arrayBuffer()
+    );
+    parts.push(activeBytes);
+    total += activeBytes.byteLength;
     if (total > COMMUNICATION_LOG_DUPLICATE_MAX_BYTES) {
       throw new Error(
         `Duplicate snapshot exceeds the ${COMMUNICATION_LOG_DUPLICATE_MAX_BYTES}-byte in-memory safety limit.`
