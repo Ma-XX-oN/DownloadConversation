@@ -1,6 +1,7 @@
 import { createHash } from 'node:crypto';
 import { mkdir, readFile, writeFile } from 'node:fs/promises';
-import { gunzipSync } from 'node:zlib';
+import { spawnSync } from 'node:child_process';
+import { gzipSync } from 'node:zlib';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import {
@@ -55,41 +56,40 @@ async function fetchPinnedDependency(dependency) {
   return { manifest: dependency, content };
 }
 
-async function buildStreaming7zPrelude() {
-  const dist = path.join(root, '7z-js-benchmark', 'dist');
-  const manifest = JSON.parse(await readFile(
-    path.join(dist, 'streaming7z-libarchive.json'),
-    'utf8'
-  ));
-  if (manifest?.schema !== 1 || !manifest.source_commit) {
-    throw new Error('Invalid pinned streaming7z distribution manifest.');
-  }
-  const readVerified = async name => {
-    const expected = manifest.files?.[name];
-    if (!expected) throw new Error(`Missing streaming7z manifest entry: ${name}`);
-    const bytes = gunzipSync(await readFile(path.join(dist, expected.compressed)));
-    const digest = createHash('sha256').update(bytes).digest('hex');
-    if (bytes.length !== expected.bytes || digest !== expected.sha256) {
-      throw new Error(`Pinned streaming7z payload mismatch: ${name}`);
+async function buildDirectXzPrelude() {
+  const crate = path.join(root, 'vendor', 'direct-xz');
+  const pkg = path.join(crate, 'pkg');
+  let wasmPack = spawnSync('wasm-pack', ['--version'], { encoding: 'utf8' });
+  if (wasmPack.status !== 0) {
+    const install = spawnSync(
+      'cargo',
+      ['install', 'wasm-pack', '--version', '0.15.0', '--locked'],
+      { cwd: root, encoding: 'utf8', stdio: 'inherit' }
+    );
+    if (install.status !== 0) {
+      throw new Error('Could not install pinned wasm-pack 0.15.0 for direct XZ build.');
     }
-    return bytes;
-  };
-  let glue = (await readVerified('stream7z.mjs')).toString('utf8');
-  if (!/export default createStream7z;\s*$/.test(glue)) {
-    throw new Error('Unexpected streaming7z.mjs export shape.');
   }
-  glue = glue.replace(/export default createStream7z;\s*$/, '');
-  glue = glue.replaceAll('import.meta.url', 'globalThis.location.href');
-  await readVerified('stream7z.wasm');
-  const wasmGzip = await readFile(path.join(
-    dist,
-    manifest.files['stream7z.wasm'].compressed
-  ));
-  return `// BEGIN bundled streaming7z libarchive source=${manifest.source_commit}\n`
+  const build = spawnSync(
+    'wasm-pack',
+    ['build', crate, '--target', 'web', '--release', '--out-dir', 'pkg'],
+    { cwd: root, encoding: 'utf8', stdio: 'inherit' }
+  );
+  if (build.status !== 0) throw new Error('Direct XZ Wasm build failed.');
+  let glue = await readFile(path.join(pkg, 'dc_direct_xz_wasm.js'), 'utf8');
+  glue = glue.replace(/^export class XzEncoder/m, 'class XzEncoder');
+  glue = glue.replace(/^export function decompress_xz/m, 'function decompress_xz');
+  glue = glue.replace(/export \{ initSync, __wbg_init as default \};\s*$/, '');
+  if (!glue.includes('function initSync(') || !glue.includes('class XzEncoder')) {
+    throw new Error('Unexpected direct XZ browser glue shape.');
+  }
+  const wasm = await readFile(path.join(pkg, 'dc_direct_xz_wasm_bg.wasm'));
+  const wasmGzip = gzipSync(wasm, { level: 9 });
+  return '// BEGIN bundled direct XZ lzma-rust2=0.16.2\n'
     + glue + '\n'
-    + 'const Streaming7zModule = createStream7z;\n'
-    + `const STREAMING7Z_WASM_GZIP_BASE64 = '${wasmGzip.toString('base64')}';\n`
-    + '// END bundled streaming7z libarchive\n';
+    + 'const DIRECT_XZ_WASM_GZIP_BASE64 = \''
+    + wasmGzip.toString('base64') + '\';\n'
+    + '// END bundled direct XZ\n';
 }
 
 async function main() {
@@ -102,12 +102,12 @@ async function main() {
   for (const dependency of manifest.dependencies) {
     dependencies.push(await fetchPinnedDependency(dependency));
   }
-  const streaming7zPrelude = await buildStreaming7zPrelude();
+  const directXzPrelude = await buildDirectXzPrelude();
   const built = assembleUserscript(
     header,
     dependencies,
     source,
-    streaming7zPrelude
+    directXzPrelude
   );
 
   if (args.check) {
