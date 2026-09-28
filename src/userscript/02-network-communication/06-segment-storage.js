@@ -314,17 +314,16 @@
       throw new Error('Sealed communication segment has no trustworthy content timestamp range.');
     }
 
-    const ordinal = communicationLogSegmentManifest.next_ordinal++;
-    const suffix = String(ordinal).padStart(6, '0');
     const memberStart = communicationLogArchiveTimestamp(range.start_timestamp);
     const memberEnd = communicationLogArchiveTimestamp(range.end_timestamp);
-    const memberName = `segment-${suffix}_${memberStart}-${memberEnd}.jsonl`;
-    const archiveName = await communicationLogUnusedRoleArchiveName(
+    const memberName = `segment_${memberStart}-${memberEnd}.jsonl`;
+    const archiveName = communicationLogRoleArchiveName('segment', range, 'seg');
+    if (await communicationLogFileExistsInDirectory(
       communicationLogSegmentDirectoryHandle,
-      'segment',
-      range,
-      'seg'
-    );
+      archiveName
+    )) {
+      throw new Error(`Communication segment filename collision: ${archiveName}`);
+    }
     const sourceHash = await communicationLogSha256(rawBytes);
 
     // Reserve the alternate before sealing.  If it is still occupied, keep
@@ -336,23 +335,19 @@
     }
 
     const segment = {
-      ordinal,
       raw_name: rawName,
       archive_name: archiveName,
       member_name: memberName,
       raw_bytes: rawBytes.byteLength,
       source_sha256: sourceHash,
       start_timestamp: range.start_timestamp,
-      end_timestamp: range.end_timestamp,
-      compression_state: 'sealed'
+      end_timestamp: range.end_timestamp
     };
     // Switch first.  If the page dies before manifest commit, startup derives
     // the newer active file from the two physical files and discovers the
     // closed older source directly.
     await communicationLogSwitchActiveFile(alternate);
     await communicationLogOpenWriter();
-    communicationLogSegmentManifest.segments.push(segment);
-    await communicationLogWriteSegmentManifest();
     void communicationLogQueueSegmentCompression(segment).catch(() => {});
     return segment;
   }
