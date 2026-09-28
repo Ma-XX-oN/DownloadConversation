@@ -8,7 +8,7 @@ const userscript = readFileSync(path.join(root, 'chatgpt-conversation-markdown-e
 const begin = userscript.indexOf('// BEGIN bundled direct XZ lzma-rust2=0.16.2');
 const endMarker = '// END bundled direct XZ';
 const end = userscript.indexOf(endMarker, begin);
-const runtimeBegin = userscript.indexOf('  /**\n   * Creates one stock-compatible XZ stream through the unified streaming runtime.', end);
+const runtimeBegin = userscript.indexOf('  /** True after the embedded direct XZ Wasm codec has been initialized. */', end);
 const runtimeEnd = userscript.indexOf(
   '  /**\n   * Installs host-isolation styling for native recorder checkboxes.',
   runtimeBegin
