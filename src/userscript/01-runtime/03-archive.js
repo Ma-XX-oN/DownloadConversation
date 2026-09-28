@@ -91,11 +91,12 @@
    *
    * @param {Object} writer - Open writer state.
    * @param {Uint8Array} archiveBytes - Historical archive bytes.
-   * @returns {void}
+   * @returns {number} Exact number of decompressed bytes appended.
    */
   function streamingArchiveWriterAppendArchive(writer, archiveBytes) {
     const raw = globalThis['__dcArchiveCodec'].decompress(archiveBytes);
     streamingArchiveWriterAppendBytes(writer, raw);
+    return raw.byteLength;
   }
 
   /**
