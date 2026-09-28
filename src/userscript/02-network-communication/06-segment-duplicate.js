@@ -90,16 +90,18 @@
       const segmentEnd = Date.parse(segment.end_timestamp);
       if ((lowerMs !== null && segmentEnd < lowerMs)
           || (upperMs !== null && segmentStart > upperMs)) continue;
+      const raw = await communicationLogReadHistoricalSegment(segment);
       const whole = (lowerMs === null || segmentStart >= lowerMs)
         && (upperMs === null || segmentEnd <= upperMs);
       if (whole) {
+        const range = communicationLogTimestampRangeFromJsonl(raw);
+        if (!range) continue;
         prepared.push({ segment, whole: true });
-        expectedBytes += segment.raw_bytes;
-        startTimestamp ??= segment.start_timestamp;
-        endTimestamp = segment.end_timestamp;
+        expectedBytes += raw.byteLength;
+        startTimestamp ??= range.start_timestamp;
+        endTimestamp = range.end_timestamp;
         continue;
       }
-      const raw = await communicationLogReadHistoricalSegment(segment);
       const filtered = communicationLogFilterJsonlBytes(raw, lowerMs, upperMs);
       if (!filtered.bytes.byteLength) continue;
       prepared.push({ segment, whole: false });
@@ -154,26 +156,15 @@
           streaming7zWriterAppendBytes(writer, filtered.bytes);
           continue;
         }
-        if (item.segment.compression_state === 'compressed') {
-          const archiveHandle =
-            await communicationLogSegmentDirectoryHandle.getFileHandle(
-              item.segment.archive_name,
-              { create: false }
-            );
-          const archiveBytes = new Uint8Array(
-            await (await archiveHandle.getFile()).arrayBuffer()
-          );
-          streaming7zWriterAppendArchive(writer, archiveBytes);
-        } else {
-          const rawHandle = await communicationLogSegmentDirectoryHandle.getFileHandle(
-            item.segment.raw_name,
+        const archiveHandle =
+          await communicationLogSegmentDirectoryHandle.getFileHandle(
+            item.segment.archive_name,
             { create: false }
           );
-          streaming7zWriterAppendBytes(
-            writer,
-            new Uint8Array(await (await rawHandle.getFile()).arrayBuffer())
-          );
-        }
+        const archiveBytes = new Uint8Array(
+          await (await archiveHandle.getFile()).arrayBuffer()
+        );
+        streaming7zWriterAppendArchive(writer, archiveBytes);
       }
       streaming7zWriterAppendBytes(writer, activeFiltered.bytes);
       return {
