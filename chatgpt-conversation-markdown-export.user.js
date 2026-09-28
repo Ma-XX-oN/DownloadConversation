@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         ChatGPT Conversation Markdown Recorder
 // @namespace    https://chatgpt.com/
-// @version      1.7.2-issue.166.111
+// @version      1.7.2-issue.166.112
 // @description  Exports the current ChatGPT conversation directly from the Conversation API as Markdown or JSONL.
 // @match        https://chatgpt.com/*
 // @match        https://chat.openai.com/*
@@ -7521,6 +7521,12 @@ const STREAMING7Z_WASM_GZIP_BASE64 = 'H4sIAAAAAAACA8z9DZwc11UmjNe9VdVV3dU9UyON5J
    * @returns {Promise<Object|null>} Sealed segment metadata, or null when empty.
    */
   async function communicationLogSealActiveSegment() {
+    // Preflight the alternate while the current writer remains open.  When the
+    // alternate is still an immutable recovery/compression source, defer the
+    // rotation without forcing Chromium to commit and recreate its .crswap.
+    const alternate = await communicationLogAvailableAlternateActiveFile();
+    if (!alternate) return null;
+
     await communicationLogCloseActiveWriter();
     const snapshot = await communicationLogActiveFileSnapshot();
     if (snapshot.file.size === 0) return null;
@@ -7543,14 +7549,6 @@ const STREAMING7Z_WASM_GZIP_BASE64 = 'H4sIAAAAAAACA8z9DZwc11UmjNe9VdVV3dU9UyON5J
       throw new Error(`Communication segment filename collision: ${archiveName}`);
     }
     const sourceHash = await communicationLogSha256(rawBytes);
-
-    // Reserve the alternate before sealing.  If it is still occupied, keep
-    // recording in the current file and defer this rotation.
-    const alternate = await communicationLogAvailableAlternateActiveFile();
-    if (!alternate) {
-      await communicationLogOpenWriter();
-      return null;
-    }
 
     const segment = {
       raw_name: rawName,
@@ -8495,13 +8493,17 @@ const STREAMING7Z_WASM_GZIP_BASE64 = 'H4sIAAAAAAACA8z9DZwc11UmjNe9VdVV3dU9UyON5J
     }
     const baselineSnapshot = await communicationLogRefreshedFileSnapshot();
     const baseline = baselineSnapshot.file;
+    const recoveryDirectory = communicationLogSegmentDirectoryHandle
+      && communicationLogActiveFileName
+      ? communicationLogSegmentDirectoryHandle
+      : communicationLogDirectoryHandle;
     // Escape the literal log filename before recognizing Chromium sibling swap names.
     const escapedLogName = (communicationLogActiveFileName ?? communicationLogFileName).replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
     const swapPattern = new RegExp(`^${escapedLogName}(?:\\.\\d+)?\\.crswap$`);
     // Retain candidate file snapshots so selection and cleanup use one observed swap state.
     const candidates = [];
 
-    for await (const [name, entry] of communicationLogDirectoryHandle.entries()) {
+    for await (const [name, entry] of recoveryDirectory.entries()) {
       if (entry?.kind !== 'file' || !swapPattern.test(name)) continue;
       try {
         const file = await entry.getFile();
@@ -8578,7 +8580,7 @@ const STREAMING7Z_WASM_GZIP_BASE64 = 'H4sIAAAAAAACA8z9DZwc11UmjNe9VdVV3dU9UyON5J
           });
           continue;
         }
-        await communicationLogDirectoryHandle.removeEntry(candidate.name);
+        await recoveryDirectory.removeEntry(candidate.name);
       } catch (error) {
         communicationLogReportFailure(`swap-cleanup:${candidate.name}`, error);
       }
