@@ -50,7 +50,7 @@
   }
 
   /**
-   * Streams one frozen Duplicate plan through one continuously open 7z writer.
+   * Streams one frozen Duplicate plan through one continuously open XZ writer.
    *
    * @param {Object} plan - Frozen historical membership and active EOF.
    * @param {Object} options - Optional ISO lower/upper timestamp bounds.
@@ -145,15 +145,15 @@
       'comm'
     );
     const memberName = communicationLogAsciiArchiveMemberName(
-      archiveName.replace(/\.comm\.7z$/i, '.jsonl')
+      archiveName.replace(/\.comm\.XZ$/i, '.jsonl')
     );
-    const writer = await streaming7zWriterBegin(memberName, expectedBytes);
+    const writer = await streamingXzWriterBegin();
     try {
       for (const item of prepared) {
         if (!item.whole) {
           const raw = await communicationLogReadHistoricalSegment(item.segment);
           const filtered = communicationLogFilterJsonlBytes(raw, lowerMs, upperMs);
-          streaming7zWriterAppendBytes(writer, filtered.bytes);
+          streamingXzWriterAppendBytes(writer, filtered.bytes);
           continue;
         }
         const archiveHandle =
@@ -164,11 +164,11 @@
         const archiveBytes = new Uint8Array(
           await (await archiveHandle.getFile()).arrayBuffer()
         );
-        streaming7zWriterAppendArchive(writer, archiveBytes);
+        streamingXzWriterAppendArchive(writer, archiveBytes);
       }
-      streaming7zWriterAppendBytes(writer, activeFiltered.bytes);
+      streamingXzWriterAppendBytes(writer, activeFiltered.bytes);
       return {
-        archive: streaming7zWriterFinish(writer),
+        archive: streamingXzWriterFinish(writer),
         archive_name: archiveName,
         member_name: memberName,
         expected_bytes: expectedBytes,
@@ -177,7 +177,7 @@
       };
     } catch (error) {
       if (!writer.finished) {
-        try { streaming7zWriterFinish(writer); } catch {}
+        try { streamingXzWriterFinish(writer); } catch {}
       }
       throw error;
     }
