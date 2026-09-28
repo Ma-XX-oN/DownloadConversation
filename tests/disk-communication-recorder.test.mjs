@@ -358,13 +358,11 @@ test('aborted cloned response stream before any bytes reports zero counts withou
   assert.equal(api.records.length, 0);
 });
 
-test('fetch response reports incomplete body warning and leaves generation checkpoint reachable', () => {
+test('fetch response reports incomplete body warning without committing the active writer', () => {
   const fetchResponse = diskFunctionSource('communicationLogFetchResponse');
-  assert.match(fetchResponse, /summary\.body_incomplete/);
+  assert.match(fetchResponse, /summary\\.body_incomplete/);
   assert.match(fetchResponse, /communication-log-response-body-incomplete/);
-  assert.match(fetchResponse, /message:\s*summary\.error_message/);
-  const bodyEndIndex = fetchResponse.indexOf('communication_fetch_response_body_end');
-  const checkpointIndex = fetchResponse.indexOf("communicationLogCheckpoint('generation-response-complete')");
-  assert.ok(bodyEndIndex >= 0 && checkpointIndex > bodyEndIndex,
-    'Generation checkpoint must remain after incomplete-body recording/reporting.');
+  assert.match(fetchResponse, /message:\\s*summary\\.error_message/);
+  assert.doesNotMatch(fetchResponse, /communicationLogCheckpoint\\(/,
+    'Completing or aborting a generation response is not an active-file commit boundary.');
 });
