@@ -55,47 +55,6 @@ async function fetchPinnedDependency(dependency) {
   return { manifest: dependency, content };
 }
 
-async function buildStream7zPrelude() {
-  const dist = path.join(root, '7z-js-benchmark', 'dist');
-  const manifest = JSON.parse(await readFile(path.join(dist, 'stream7z-26.03.json'), 'utf8'));
-  if (manifest?.schema !== 1 || manifest.version !== '26.03') {
-    throw new Error('Invalid pinned stream7z distribution manifest.');
-  }
-  const readVerified = async name => {
-    const expected = manifest.files?.[name];
-    if (!expected) throw new Error(`Missing stream7z manifest entry: ${name}`);
-    const bytes = gunzipSync(await readFile(path.join(dist, expected.compressed)));
-    const digest = createHash('sha256').update(bytes).digest('hex');
-    if (bytes.length !== expected.bytes || digest !== expected.sha256) {
-      throw new Error(`Pinned stream7z payload mismatch: ${name}`);
-    }
-    return bytes;
-  };
-  let glue = (await readVerified('stream7z.mjs')).toString('utf8');
-  if (!/export default Stream7zModule;\s*$/.test(glue)) {
-    throw new Error('Unexpected stream7z.mjs export shape.');
-  }
-  glue = glue.replace(/export default Stream7zModule;\s*$/, '');
-  const importMetaMatches = glue.match(/import\.meta\.url/g) ?? [];
-  if (importMetaMatches.length !== 4) {
-    throw new Error(
-      `Expected exactly four import.meta.url occurrences in stream7z glue; found ${importMetaMatches.length}.`
-    );
-  }
-  // Emscripten uses import.meta.url to establish its script location. DC
-  // supplies wasmBinary directly, so no module-relative Wasm fetch is needed.
-  glue = glue.replaceAll('import.meta.url', 'globalThis.location.href');
-  await readVerified('stream7z.wasm');
-  const wasmGzip = await readFile(path.join(
-    dist,
-    manifest.files['stream7z.wasm'].compressed
-  ));
-  return `// BEGIN bundled stream7z 26.03 direct API source=${manifest.source_commit}\n`
-    + glue + '\n'
-    + `const STREAM7Z_WASM_GZIP_BASE64 = '${wasmGzip.toString('base64')}';\n`
-    + '// END bundled stream7z 26.03 direct API\n';
-}
-
 async function buildStreaming7zPrelude() {
   const dist = path.join(root, '7z-js-benchmark', 'dist');
   const manifest = JSON.parse(await readFile(
@@ -143,13 +102,12 @@ async function main() {
   for (const dependency of manifest.dependencies) {
     dependencies.push(await fetchPinnedDependency(dependency));
   }
-  const stream7zPrelude = await buildStream7zPrelude();
   const streaming7zPrelude = await buildStreaming7zPrelude();
   const built = assembleUserscript(
     header,
     dependencies,
     source,
-    stream7zPrelude + streaming7zPrelude
+    streaming7zPrelude
   );
 
   if (args.check) {
