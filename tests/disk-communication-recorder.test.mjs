@@ -366,3 +366,25 @@ test('fetch response reports incomplete body warning without committing the acti
   assert.equal(fetchResponse.includes('communicationLogCheckpoint('), false,
     'Completing or aborting a generation response is not an active-file commit boundary.');
 });
+
+
+test('reload swap recovery enumerates the private segment directory for active-file crswap siblings', () => {
+  const recover = diskFunctionSource('communicationLogRecoverSwapFiles');
+  assert.match(recover,
+    /communicationLogSegmentDirectoryHandle\s*\?\?\s*communicationLogDirectoryHandle|communicationLogSegmentDirectoryHandle\s*&&\s*communicationLogActiveFileName/,
+    'Segmented active-file swap recovery must select the private segment directory.');
+  assert.match(recover, /for await\s*\([^)]*recoveryDirectory\.entries\(\)/,
+    'Swap candidates must be enumerated from the directory that owns the active file.');
+});
+
+test('occupied alternate is preflighted before an oversized active writer is closed', () => {
+  const seal = diskFunctionSource('communicationLogSealActiveSegment');
+  const preflight = seal.indexOf('communicationLogAvailableAlternateActiveFile');
+  const close = seal.indexOf('communicationLogCloseActiveWriter');
+  assert.ok(preflight >= 0, 'Rotation must preflight the alternate active file.');
+  assert.ok(close >= 0, 'Successful rotation must still close the active writer.');
+  assert.ok(preflight < close,
+    'Reload/recording must not close and recreate Chromium crswap while the alternate is occupied.');
+  assert.match(seal, /if \(!alternate\)[\s\S]*return null/,
+    'An occupied alternate must defer rotation without touching the current writer.');
+});
