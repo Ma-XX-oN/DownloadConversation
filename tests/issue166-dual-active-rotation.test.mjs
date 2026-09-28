@@ -36,8 +36,10 @@ test('Issue 166 active files live in the private segment directory', async () =>
 test('Issue 166 startup derives active ownership from alternating file state', async () => {
   const source = await readFile(recoveryPath, 'utf8');
   assert.match(source, /communicationLogRecoverAlternatingActiveFiles\s*\(/);
-  assert.match(source, /active-a\.jsonl/);
-  assert.match(source, /active-b\.jsonl/);
+  assert.match(source, /COMMUNICATION_LOG_ACTIVE_FILE_NAMES/);
+  const storage = await readFile(storagePath, 'utf8');
+  assert.match(storage, /active-a\.jsonl/);
+  assert.match(storage, /active-b\.jsonl/);
   assert.doesNotMatch(source, /persisted_active|active_file_name\s*:/);
 });
 
