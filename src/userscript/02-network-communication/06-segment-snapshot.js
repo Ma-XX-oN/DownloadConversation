@@ -70,7 +70,7 @@
     const start = communicationLogArchiveTimestamp(range.start_timestamp);
     const end = communicationLogArchiveTimestamp(range.end_timestamp);
     const suffix = collision > 0 ? `(${collision})` : '';
-    return `${base}_${start}-${end}${suffix}.${role}.7z`;
+    return `${base}_${start}-${end}${suffix}.${role}.xz`;
   }
 
   /**
@@ -111,7 +111,7 @@
    * @returns {Object|null} Parsed range metadata, or null for another file role.
    */
   function communicationLogParseSegmentArchiveName(name) {
-    const match = /^segment_(\d{4},\d{2},\d{2};\d{2},\d{2},\d{2})-(\d{4},\d{2},\d{2};\d{2},\d{2},\d{2})\.seg\.7z$/.exec(name);
+    const match = /^segment_(\d{4},\d{2},\d{2};\d{2},\d{2},\d{2})-(\d{4},\d{2},\d{2};\d{2},\d{2},\d{2})\.seg\.xz$/.exec(name);
     if (!match) return null;
     /**
      * Parses one local archive timestamp field.
@@ -168,7 +168,7 @@
       { create: false }
     );
     const archive = new Uint8Array(await (await handle.getFile()).arrayBuffer());
-    const bytes = await extract7zArchive(archive);
+    const bytes = await extractXzArchive(archive);
     const range = communicationLogTimestampRangeFromJsonl(bytes);
     if (!range
         || communicationLogArchiveTimestamp(range.start_timestamp) !== segment.filename_start
