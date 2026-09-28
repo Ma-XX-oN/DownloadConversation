@@ -5,10 +5,10 @@ import path from 'node:path';
 
 const root = path.resolve(new URL('..', import.meta.url).pathname);
 const userscript = readFileSync(path.join(root, 'chatgpt-conversation-markdown-export.user.js'), 'utf8');
-const begin = userscript.indexOf('// BEGIN bundled stream7z 26.03 direct API source=');
-const endMarker = '// END bundled stream7z 26.03 direct API';
+const begin = userscript.indexOf('// BEGIN bundled streaming7z libarchive source=');
+const endMarker = '// END bundled streaming7z libarchive';
 const end = userscript.indexOf(endMarker, begin);
-const runtimeBegin = userscript.indexOf('  let stream7zModulePromise = null;', end);
+const runtimeBegin = userscript.indexOf('  /**\n   * Creates one stock-compatible 7z archive through the unified streaming runtime.', end);
 const runtimeEnd = userscript.indexOf(
   '  /**\n   * Installs host-isolation styling for native recorder checkboxes.',
   runtimeBegin
@@ -34,7 +34,7 @@ const benchmark = String.raw`
 const benchmarkKeepAlive = setInterval(() => {}, 1000);
 (async () => {
   const output = document.getElementById('output');
-  await stream7zModule();
+  await streaming7zModule();
   const mib = Number(location.hash.slice(1));
   const encoder = new TextEncoder();
   const template = encoder.encode(
