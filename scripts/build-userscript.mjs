@@ -76,6 +76,7 @@ async function buildDirectXzPrelude() {
     });
     if (build.status !== 0) throw new Error('Direct XZ Wasm build failed.');
     let glue = await readFile(path.join(pkg, 'dc_direct_xz_wasm.js'), 'utf8');
+    glue = glue.replace(/^\/\* @ts-self-types[^\n]*\n\s*\*\/\s*/m, '');
     glue = glue.replace(/^export class XzEncoder/m, 'class XzEncoder');
     glue = glue.replace(/^export function decompress_xz/m, 'function decompress_xz');
     glue = glue.replace(/export \{ initSync, __wbg_init as default \};\s*$/, '');
