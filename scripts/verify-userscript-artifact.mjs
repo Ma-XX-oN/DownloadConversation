@@ -133,33 +133,23 @@ async function main() {
   }
   const artifactTail = artifact.subarray(offset).toString('utf8');
   const sourceBody = sourceText.slice('\n(() => {'.length);
-  const streamingStart = artifactTail.indexOf(
-    '// BEGIN bundled streaming7z libarchive source='
-  );
+  const streamingStart = artifactTail.indexOf('// BEGIN bundled direct XZ lzma-rust2=0.16.2');
   if (!artifactTail.startsWith('\n(() => {\n')
       || streamingStart !== '\n(() => {\n'.length) {
-    fail('Generated streaming7z runtime is not scoped immediately inside the DC IIFE.');
+    fail('Generated direct XZ runtime is not scoped immediately inside the DC IIFE.');
   }
-  const streamingEndMarker = '// END bundled streaming7z libarchive\n';
+  const streamingEndMarker = '// END bundled direct XZ\n';
   const streamingEnd = artifactTail.indexOf(streamingEndMarker, streamingStart);
-  if (streamingEnd < 0) fail('Generated userscript streaming7z closing banner is missing.');
+  if (streamingEnd < 0) fail('Generated userscript direct XZ closing banner is missing.');
   const streamingPrelude = artifactTail.slice(
     streamingStart,
     streamingEnd + streamingEndMarker.length
   );
-  const streamingManifest = JSON.parse(await readFile(
-    path.join(root, '7z-js-benchmark', 'dist', 'streaming7z-libarchive.json'),
-    'utf8'
-  ));
-  if (!streamingPrelude.includes(`source=${streamingManifest.source_commit}`)) {
-    fail('Generated streaming7z provenance does not match the pinned submodule manifest.');
+  if (!streamingPrelude.includes('globalThis.__dcDirectXz = { initSync, XzEncoder, decompress_xz,')) {
+    fail('Generated userscript direct XZ runtime bridge is missing.');
   }
-  if (!streamingPrelude.includes("const STREAMING7Z_WASM_GZIP_BASE64 = '")) {
-    fail('Generated userscript compressed streaming7z Wasm payload is missing.');
-  }
-  if (/export default createStream7z/.test(streamingPrelude)
-      || /import\.meta/.test(streamingPrelude)) {
-    fail('Generated streaming7z prelude retains ES-module-only syntax.');
+  if (/^export\s/m.test(streamingPrelude) || /import\.meta/.test(streamingPrelude)) {
+    fail('Generated direct XZ prelude retains ES-module-only syntax.');
   }
   const expectedTail = '\n(() => {\n' + streamingPrelude + sourceBody;
   if (artifactTail !== expectedTail) {
