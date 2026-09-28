@@ -280,6 +280,23 @@
   }
 
   /**
+   * Checks whether one exact file exists in a specific directory.
+   *
+   * @param {Object} directory - File System Access directory handle.
+   * @param {string} name - Exact filename.
+   * @returns {Promise<boolean>} True when the file exists.
+   */
+  async function communicationLogFileExistsInDirectory(directory, name) {
+    try {
+      await directory.getFileHandle(name, { create: false });
+      return true;
+    } catch (error) {
+      if (error?.name === 'NotFoundError') return false;
+      throw error;
+    }
+  }
+
+  /**
    * Closes the current active file, switches append ownership, then compresses
    * the closed immutable source directly.  No raw copy or truncation occurs.
    *
