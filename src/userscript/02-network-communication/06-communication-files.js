@@ -172,6 +172,7 @@
       communicationLogDuplicateInProgress = false;
       if (communicationLogSegmentManifest) {
         delete communicationLogSegmentManifest.duplicate_request;
+        delete communicationLogSegmentManifest.duplicate_output;
         await communicationLogWriteSegmentManifest().catch(() => {});
       }
       if (holdEstablished) {
