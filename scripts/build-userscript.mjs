@@ -79,6 +79,8 @@ async function buildDirectXzPrelude() {
     glue = glue.replace(/^\/\* @ts-self-types[^\n]*\n\s*\*\/\s*/m, '');
     glue = glue.replace(/^export class XzEncoder/m, 'class XzEncoder');
     glue = glue.replace(/^export function decompress_xz/m, 'function decompress_xz');
+    glue = glue.replace(/^export function initSync/m, 'function initSync');
+    glue = glue.replace(/^export default async function __wbg_init/m, 'async function __wbg_init');
     glue = glue.replace(/export \{ initSync, __wbg_init as default \};\s*$/, '');
     const wasm = await readFile(path.join(pkg, 'dc_direct_xz_wasm_bg.wasm'));
     const wasmGzip = gzipSync(wasm, { level: 9 });
