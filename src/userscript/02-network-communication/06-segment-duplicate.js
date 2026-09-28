@@ -50,7 +50,7 @@
   }
 
   /**
-   * Streams one frozen Duplicate plan through one continuously open XZ writer.
+   * Streams one frozen Duplicate plan through one continuously open archive writer.
    *
    * @param {Object} plan - Frozen historical membership and active EOF.
    * @param {Object} options - Optional ISO lower/upper timestamp bounds.
@@ -144,13 +144,13 @@
       range,
       'comm'
     );
-    const writer = await streamingXzWriterBegin();
+    const writer = await streamingArchiveWriterBegin();
     try {
       for (const item of prepared) {
         if (!item.whole) {
           const raw = await communicationLogReadHistoricalSegment(item.segment);
           const filtered = communicationLogFilterJsonlBytes(raw, lowerMs, upperMs);
-          streamingXzWriterAppendBytes(writer, filtered.bytes);
+          streamingArchiveWriterAppendBytes(writer, filtered.bytes);
           continue;
         }
         const archiveHandle =
@@ -161,11 +161,11 @@
         const archiveBytes = new Uint8Array(
           await (await archiveHandle.getFile()).arrayBuffer()
         );
-        streamingXzWriterAppendArchive(writer, archiveBytes);
+        streamingArchiveWriterAppendArchive(writer, archiveBytes);
       }
-      streamingXzWriterAppendBytes(writer, activeFiltered.bytes);
+      streamingArchiveWriterAppendBytes(writer, activeFiltered.bytes);
       return {
-        archive: streamingXzWriterFinish(writer),
+        archive: streamingArchiveWriterFinish(writer),
         archive_name: archiveName,
         expected_bytes: expectedBytes,
         start_timestamp: startTimestamp,
@@ -173,10 +173,9 @@
       };
     } catch (error) {
       if (!writer.finished) {
-        try { streamingXzWriterFinish(writer); } catch {}
+        try { streamingArchiveWriterFinish(writer); } catch {}
       }
       throw error;
     }
   }
-
 
