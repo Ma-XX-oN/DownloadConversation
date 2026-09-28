@@ -88,6 +88,7 @@
    * The lowest unused positive `(N)` suffix is inserted immediately before the
    * extension with no intervening space. The active filename never changes.
    *
+   * @param {Object} options - Optional inclusive Duplicate timestamp bounds.
    * @returns {Promise<string>} The created duplicate filename.
    */
   async function communicationLogArchiveDuplicate(options = {}) {
@@ -100,6 +101,11 @@
     communicationLogDuplicateInProgress = true;
 
     const started = performance.now();
+    /**
+     * Formats elapsed Duplicate wall time for indeterminate progress.
+     *
+     * @returns {string} Human-readable elapsed duration.
+     */
     const elapsed = () => `${((performance.now() - started) / 1000).toFixed(1)}s elapsed`;
     let plan = null;
     let holdEstablished = false;
