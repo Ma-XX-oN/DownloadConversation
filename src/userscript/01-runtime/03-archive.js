@@ -1,16 +1,16 @@
 
-  /** True after the embedded direct XZ Wasm codec has been initialized. */
-  let directXzReady = false;
+  /** True after the embedded archive codec has been initialized. */
+  let archiveCodecReady = false;
 
   /**
-   * Initializes the embedded direct XZ codec once.
+   * Initializes the embedded archive codec once.
    *
    * @returns {Promise<void>} Resolves when the codec is ready.
    */
-  async function directXzModule() {
-    if (directXzReady) return;
-    const bridge = globalThis['__dcDirectXz'];
-    if (!bridge) throw new Error('Direct XZ runtime bridge is unavailable.');
+  async function archiveCodecModule() {
+    if (archiveCodecReady) return;
+    const bridge = globalThis['__dcArchiveCodec'];
+    if (!bridge) throw new Error('Archive codec runtime bridge is unavailable.');
     const binary = atob(bridge.wasmGzipBase64);
     const compressed = new Uint8Array(binary.length);
     for (let index = 0; index < binary.length; index += 1) {
@@ -19,61 +19,65 @@
     const stream = new Blob([compressed]).stream()
       .pipeThrough(new DecompressionStream('gzip'));
     const wasmBytes = new Uint8Array(await new Response(stream).arrayBuffer());
-    bridge.initSync({ module: wasmBytes });
-    directXzReady = true;
+    await bridge.init(wasmBytes);
+    archiveCodecReady = true;
   }
 
   /**
-   * Compresses exact bytes as one XZ stream at preset 9.
+   * Compresses exact bytes as one archive stream.
    *
    * @param {Uint8Array} bytes - Exact source bytes.
-   * @returns {Promise<Uint8Array>} Complete XZ stream.
+   * @returns {Promise<Uint8Array>} Complete archive stream.
    */
-  async function createXzArchive(bytes) {
-    if (!(bytes instanceof Uint8Array)) throw new TypeError('XZ input must be Uint8Array.');
-    const writer = await streamingXzWriterBegin();
+  async function createArchive(bytes) {
+    if (!(bytes instanceof Uint8Array)) {
+      throw new TypeError('Archive input must be Uint8Array.');
+    }
+    const writer = await streamingArchiveWriterBegin();
     try {
-      streamingXzWriterAppendBytes(writer, bytes);
-      return streamingXzWriterFinish(writer);
+      streamingArchiveWriterAppendBytes(writer, bytes);
+      return streamingArchiveWriterFinish(writer);
     } catch (error) {
       if (!writer.finished) {
-        try { streamingXzWriterFinish(writer); } catch {}
+        try { streamingArchiveWriterFinish(writer); } catch {}
       }
       throw error;
     }
   }
 
   /**
-   * Decompresses one or more concatenated XZ streams.
+   * Decompresses one or more concatenated archive streams.
    *
-   * @param {Uint8Array} archiveBytes - Complete XZ bytes.
+   * @param {Uint8Array} archiveBytes - Complete archive bytes.
    * @returns {Promise<Uint8Array>} Exact decompressed bytes.
    */
-  async function extractXzArchive(archiveBytes) {
-    if (!(archiveBytes instanceof Uint8Array)) throw new TypeError('XZ input must be Uint8Array.');
-    await directXzModule();
-    return globalThis['__dcDirectXz'].decompress_xz(archiveBytes);
+  async function extractArchive(archiveBytes) {
+    if (!(archiveBytes instanceof Uint8Array)) {
+      throw new TypeError('Archive input must be Uint8Array.');
+    }
+    await archiveCodecModule();
+    return globalThis['__dcArchiveCodec'].decompress(archiveBytes);
   }
 
   /**
-   * Begins one continuously open preset-9 XZ encoder.
+   * Begins one continuously open archive encoder.
    *
    * @returns {Promise<Object>} Mutable writer state.
    */
-  async function streamingXzWriterBegin() {
-    await directXzModule();
-    const Encoder = globalThis['__dcDirectXz'].XzEncoder;
+  async function streamingArchiveWriterBegin() {
+    await archiveCodecModule();
+    const Encoder = globalThis['__dcArchiveCodec'].Encoder;
     return { encoder: new Encoder(9), chunks: [], size: 0, finished: false };
   }
 
   /**
-   * Appends exact uncompressed bytes without resetting the XZ dictionary.
+   * Appends exact uncompressed bytes without resetting the codec dictionary.
    *
    * @param {Object} writer - Open writer state.
    * @param {Uint8Array} bytes - Exact bytes to append.
    * @returns {void}
    */
-  function streamingXzWriterAppendBytes(writer, bytes) {
+  function streamingArchiveWriterAppendBytes(writer, bytes) {
     if (!bytes.byteLength) return;
     const output = writer.encoder.write(bytes);
     if (output.byteLength) {
@@ -83,25 +87,25 @@
   }
 
   /**
-   * Decompresses a historical XZ stream into the continuously open writer.
+   * Decompresses a historical archive stream into the continuously open writer.
    *
    * @param {Object} writer - Open writer state.
-   * @param {Uint8Array} archiveBytes - Historical XZ bytes.
+   * @param {Uint8Array} archiveBytes - Historical archive bytes.
    * @returns {void}
    */
-  function streamingXzWriterAppendArchive(writer, archiveBytes) {
-    const raw = globalThis['__dcDirectXz'].decompress_xz(archiveBytes);
-    streamingXzWriterAppendBytes(writer, raw);
+  function streamingArchiveWriterAppendArchive(writer, archiveBytes) {
+    const raw = globalThis['__dcArchiveCodec'].decompress(archiveBytes);
+    streamingArchiveWriterAppendBytes(writer, raw);
   }
 
   /**
-   * Finalizes one XZ stream and returns all compressed bytes.
+   * Finalizes one archive stream and returns all compressed bytes.
    *
    * @param {Object} writer - Open writer state.
-   * @returns {Uint8Array} Complete XZ stream.
+   * @returns {Uint8Array} Complete archive stream.
    */
-  function streamingXzWriterFinish(writer) {
-    if (writer.finished) throw new Error('Streaming XZ writer is already finished.');
+  function streamingArchiveWriterFinish(writer) {
+    if (writer.finished) throw new Error('Streaming archive writer is already finished.');
     writer.finished = true;
     const tail = writer.encoder.finish();
     if (tail.byteLength) {
