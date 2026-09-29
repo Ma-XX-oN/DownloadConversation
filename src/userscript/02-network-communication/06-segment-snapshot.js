@@ -21,6 +21,84 @@
   }
 
   /**
+   * Returns a trustworthy timestamp from one exact JSONL line blob.
+   *
+   * @param {Blob} line - Exact JSONL line bytes without the newline delimiter.
+   * @returns {Promise<string|null>} Trustworthy timestamp, or null.
+   */
+  async function communicationLogTimestampFromJsonlLine(line) {
+    if (!line || line.size === 0) return null;
+    try {
+      const record = JSON.parse(await line.text());
+      const timestamp = typeof record?.timestamp === 'string' ? record.timestamp : null;
+      return timestamp && Number.isFinite(Date.parse(timestamp)) ? timestamp : null;
+    } catch {
+      return null;
+    }
+  }
+
+  /**
+   * Finds the first trustworthy complete JSONL record timestamp by scanning only
+   * as far forward from the file start as necessary.
+   *
+   * @param {File} file - JSONL file snapshot.
+   * @param {number} [end] - Exclusive frozen EOF.
+   * @returns {Promise<string|null>} First trustworthy timestamp, or null.
+   */
+  async function communicationLogFirstTimestampFromJsonlFile(file, end = file.size) {
+    const limit = Math.min(file.size, Math.max(0, end));
+    let lineStart = 0;
+    for (let cursor = 0; cursor < limit;) {
+      const next = Math.min(limit, cursor + COMMUNICATION_LOG_COMPARE_CHUNK_BYTES);
+      const bytes = new Uint8Array(await file.slice(cursor, next).arrayBuffer());
+      for (let index = 0; index < bytes.byteLength; index += 1) {
+        if (bytes[index] !== 10) continue;
+        const lineEnd = cursor + index;
+        const timestamp = await communicationLogTimestampFromJsonlLine(
+          file.slice(lineStart, lineEnd)
+        );
+        if (timestamp) return timestamp;
+        lineStart = lineEnd + 1;
+      }
+      cursor = next;
+    }
+    return null;
+  }
+
+  /**
+   * Finds the last trustworthy complete JSONL record timestamp by scanning
+   * backward from the frozen EOF in bounded chunks and stopping at the first
+   * timestamped line encountered.
+   *
+   * @param {File} file - JSONL file snapshot.
+   * @param {number} [end] - Exclusive frozen EOF.
+   * @returns {Promise<string|null>} Last trustworthy timestamp, or null.
+   */
+  async function communicationLogLastTimestampFromJsonlFile(file, end = file.size) {
+    const limit = Math.min(file.size, Math.max(0, end));
+    let lineEnd = limit;
+    for (let cursor = limit; cursor > 0;) {
+      const start = Math.max(0, cursor - COMMUNICATION_LOG_COMPARE_CHUNK_BYTES);
+      const bytes = new Uint8Array(await file.slice(start, cursor).arrayBuffer());
+      for (let index = bytes.byteLength - 1; index >= 0; index -= 1) {
+        if (bytes[index] !== 10) continue;
+        const lineStart = start + index + 1;
+        if (lineStart < lineEnd) {
+          const timestamp = await communicationLogTimestampFromJsonlLine(
+            file.slice(lineStart, lineEnd)
+          );
+          if (timestamp) return timestamp;
+        }
+        lineEnd = start + index;
+      }
+      cursor = start;
+    }
+    return lineEnd > 0
+      ? communicationLogTimestampFromJsonlLine(file.slice(0, lineEnd))
+      : null;
+  }
+
+  /**
    * Formats one ISO timestamp deterministically for cross-platform filenames.
    *
    * @param {string} timestamp - Trustworthy ISO timestamp.
@@ -80,7 +158,7 @@
    * @returns {string} Deterministic printable-ASCII member name.
    */
   function communicationLogAsciiArchiveMemberName(name) {
-    return String(name).replace(/[^\\x20-\\x7e]/g, '_');
+    return String(name).replace(/[^\x20-\x7e]/g, '_');
   }
 
   /**
@@ -181,15 +259,17 @@
   /**
    * Freezes filesystem-derived history plus the exact active committed EOF.
    *
-   * @returns {Promise<Uint8Array>} Exact logical-log snapshot bytes.
+   * @returns {Promise<Object>} Frozen logical-log snapshot plan.
    */
   async function communicationLogCaptureSnapshotPlan() {
     await communicationLogCloseActiveWriter();
     const active = await communicationLogActiveFileSnapshot();
     const activeEof = active.file.size;
+    communicationLogActiveLastTimestamp = activeEof > 0
+      ? await communicationLogLastTimestampFromJsonlFile(active.file, activeEof)
+      : null;
     communicationLogSegmentManifest.active_committed_eof = activeEof;
-    communicationLogSegmentManifest.active_last_timestamp =
-      communicationLogActiveLastTimestamp;
+    await communicationLogSyncManifestConversationName();
     await communicationLogWriteSegmentManifest();
     return {
       segments: await communicationLogHistoricalSegmentsFromDirectory(),
