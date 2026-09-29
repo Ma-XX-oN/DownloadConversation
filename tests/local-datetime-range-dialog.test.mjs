@@ -3,15 +3,11 @@ import { readFile } from 'node:fs/promises';
 import test from 'node:test';
 
 const controlSource = await readFile(
-  new URL('../src/userscript/07-panel-launcher/00-local-datetime-control.js', import.meta.url),
+  new URL('../src/userscript/07-panel-launcher/01-date-time-control.js', import.meta.url),
   'utf8'
 );
 const dialogSource = await readFile(
   new URL('../src/userscript/07-panel-launcher/01-duplicate-range-dialog.js', import.meta.url),
-  'utf8'
-);
-const launcherSource = await readFile(
-  new URL('../src/userscript/07-panel-launcher/04-launcher-removal.js', import.meta.url),
   'utf8'
 );
 
@@ -30,17 +26,20 @@ function functionSource(source, name) {
   throw new Error(`Could not extract ${name}`);
 }
 
-test('reusable local date/time control exposes six editable fields with up/down controls', () => {
+test('reusable single local date/time control exposes six editable fields with up/down controls', () => {
   assert.match(controlSource, /year.*month.*day.*hour.*minute.*second/s);
-  assert.match(controlSource, /data-datetime-step="up"/);
-  assert.match(controlSource, /data-datetime-step="down"/);
-  assert.match(controlSource, /type="text"/);
-  assert.match(controlSource, /localDateTimeControlCreate/);
+  assert.match(controlSource, /data-date-time-step="up"/);
+  assert.match(controlSource, /data-date-time-step="down"/);
+  assert.match(controlSource, /data-date-time-field="year"/);
+  assert.match(controlSource, /createSingleDateTimeControl/);
 });
 
 test('date/time stepping carries and borrows through surrounding local-time fields', () => {
-  const source = functionSource(controlSource, 'localDateTimeAdjust');
-  const adjust = new Function(`${source}; return localDateTimeAdjust;`)();
+  const daysSource = functionSource(controlSource, 'dateTimeControlDaysInMonth');
+  const adjustSource = functionSource(controlSource, 'dateTimeControlAdjustDate');
+  const adjust = new Function(
+    `${daysSource}\n${adjustSource}; return dateTimeControlAdjustDate;`
+  )();
 
   const endOfYear = new Date(2026, 11, 31, 23, 59, 59, 0);
   const nextSecond = adjust(endOfYear, 'second', 1);
@@ -62,8 +61,11 @@ test('date/time stepping carries and borrows through surrounding local-time fiel
 });
 
 test('month and year stepping clamps the local calendar day instead of skipping months', () => {
-  const source = functionSource(controlSource, 'localDateTimeAdjust');
-  const adjust = new Function(`${source}; return localDateTimeAdjust;`)();
+  const daysSource = functionSource(controlSource, 'dateTimeControlDaysInMonth');
+  const adjustSource = functionSource(controlSource, 'dateTimeControlAdjustDate');
+  const adjust = new Function(
+    `${daysSource}\n${adjustSource}; return dateTimeControlAdjustDate;`
+  )();
 
   const january31 = new Date(2026, 0, 31, 12, 0, 0, 0);
   const february = adjust(january31, 'month', 1);
@@ -78,17 +80,21 @@ test('month and year stepping clamps the local calendar day instead of skipping 
   assert.equal(nextYear.getDate(), 28);
 });
 
-test('Duplicate range dialog defaults start from earliest segment filename and end from manifest', () => {
+test('Duplicate range defaults start from earliest segment filename and end from manifest only', () => {
   assert.match(dialogSource, /communicationLogHistoricalSegmentsFromDirectory/);
   assert.match(dialogSource, /segments\[0\]\.start_timestamp/);
   assert.match(dialogSource, /communicationLogReadSegmentManifest/);
   assert.match(dialogSource, /manifest\.active_last_timestamp/);
-  assert.match(dialogSource, /localDateTimeControlCreate/);
-  assert.match(dialogSource, /start_timestamp:/);
-  assert.match(dialogSource, /end_timestamp:/);
+  assert.doesNotMatch(dialogSource, /communicationLogFirstTimestampFromJsonl/);
+  assert.doesNotMatch(dialogSource, /communicationLogCaptureSnapshotPlan/);
 });
 
-test('Duplicate button opens the range dialog before starting archive work', () => {
-  assert.match(launcherSource, /communicationLogPromptDuplicateRange/);
-  assert.match(launcherSource, /communicationLogArchiveDuplicate\(range\)/);
+test('Duplicate range dialog composes two reusable controls and passes selected inclusive bounds', () => {
+  assert.match(dialogSource, /createSingleDateTimeControl/);
+  assert.match(dialogSource, /start\.setMilliseconds\(0\)/);
+  assert.match(dialogSource, /end\.setMilliseconds\(999\)/);
+  assert.match(dialogSource, /start_timestamp: start\.toISOString\(\)/);
+  assert.match(dialogSource, /end_timestamp: end\.toISOString\(\)/);
+  assert.match(dialogSource, /communicationLogShowDuplicateRangeDialog/);
+  assert.match(dialogSource, /communicationLogArchiveDuplicate/);
 });
