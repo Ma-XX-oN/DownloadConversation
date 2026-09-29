@@ -100,11 +100,14 @@
    * Acquires one Conversation API snapshot and generates every selected export from that same spine.
    *
    * @param {Array<'jsonl'|'md'>} kinds - Selected output formats; JSONL is generated before Markdown when both are selected.
+   * @param {{compressed?: boolean}} options - Output projection options; compressed true emits XZ-wrapped format bytes.
    * @returns {Promise<void>} Resolves after selected exports finish or their failure is reported and export state is released.
    */
-  async function runExport(kinds) {
+  async function runExport(kinds, options = {}) {
     if (exportInProgress || testInProgress || jumpInProgress) return;
     assert(Array.isArray(kinds) && kinds.length > 0, 'At least one export format must be selected.');
+    /** Whether final JSONL/Markdown bytes are wrapped in the shared XZ archive codec. */
+    const compressedOutput = options.compressed === true;
     /** Deduplicated output formats executed from one authoritative Conversation API snapshot. */
     const requestedKinds = [...new Set(kinds)];
     assert(requestedKinds.every(kind => kind === 'jsonl' || kind === 'md'), 'Unsupported export format selected.');
@@ -176,11 +179,20 @@
           'conversation-tail-api-jsonl-consistency', jsonlTailComparison);
         const jsonlWarning = jsonlTailWarningText(jsonlTailComparison);
         if (jsonlWarning) tailConsistencyWarnings.push(jsonlWarning);
-        downloadBlob(
-          new Blob([jsonl], { type: 'application/x-ndjson;charset=utf-8' }),
-          filename
-        );
-        setStatus(`Extracted ${spine.records.length} API records from ${fetched.pages.length} API page(s) to ${filename}.`);
+        /** Exact UTF-8 JSONL bytes projected either raw or through the shared archive codec. */
+        const jsonlBytes = new TextEncoder().encode(jsonl);
+        /** Final JSONL filename, including the XZ suffix only in compressed mode. */
+        const outputFilename = compressedOutput ? `${filename}.xz` : filename;
+        if (compressedOutput) {
+          const archiveBytes = await createArchive(jsonlBytes);
+          downloadBlob(new Blob([archiveBytes], { type: 'application/x-xz' }), outputFilename);
+        } else {
+          downloadBlob(
+            new Blob([jsonlBytes], { type: 'application/x-ndjson;charset=utf-8' }),
+            outputFilename
+          );
+        }
+        setStatus(`Extracted ${spine.records.length} API records from ${fetched.pages.length} API page(s) to ${outputFilename}.`);
       }
       if (requestedKinds.includes('md')) {
         activeKind = 'md';
