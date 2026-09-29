@@ -107,13 +107,62 @@ test('Issue 166 Duplicate range dialog defaults to filename start and manifest e
   assert.match(rangeDialogSource, /segments\[0\]\.start_timestamp/);
   assert.match(rangeDialogSource, /communicationLogReadSegmentManifest/);
   assert.match(rangeDialogSource, /manifest\.active_last_timestamp/);
-  assert.doesNotMatch(rangeDialogSource, /communicationLogFirstTimestampFromJsonl/);
   assert.match(rangeDialogSource, /createSingleDateTimeControl/);
   assert.match(rangeDialogSource, /communicationLogArchiveDuplicate\(\{/);
   assert.match(rangeDialogSource, /start_timestamp: start\.toISOString\(\)/);
   assert.match(rangeDialogSource, /end_timestamp: end\.toISOString\(\)/);
   assert.match(rangeDialogSource, /button\.disabled = false;/,
     'the range preflight disable must be cleared before the shared action runner');
+});
+
+test('Issue 166 Duplicate range opens before first segment rotation', async () => {
+  const availableRange = functionSource(
+    rangeDialogSource,
+    'communicationLogDuplicateAvailableRange'
+  );
+  const activeTimestamp = '2026-09-28T20:00:01.125Z';
+  const manifestTimestamp = '2026-09-28T20:05:02.875Z';
+  let writerClosed = false;
+  const activeBytes = new TextEncoder().encode(
+    `${JSON.stringify({ timestamp: activeTimestamp, kind: 'request' })}\n`
+  );
+  const execute = new Function(
+    'communicationLogHistoricalSegmentsFromDirectory',
+    'communicationLogReadSegmentManifest',
+    'communicationLogEnqueue',
+    'communicationLogCloseActiveWriter',
+    'communicationLogActiveFileSnapshot',
+    'communicationLogFirstTimestampFromJsonl',
+    `return (async () => { ${availableRange}; return communicationLogDuplicateAvailableRange(); })();`
+  );
+  const result = await execute(
+    async () => [],
+    async () => ({ active_last_timestamp: manifestTimestamp }),
+    (_stage, task) => ({ operation: Promise.resolve().then(task) }),
+    async () => { writerClosed = true; },
+    async () => ({
+      file: {
+        arrayBuffer: async () => activeBytes.buffer.slice(
+          activeBytes.byteOffset,
+          activeBytes.byteOffset + activeBytes.byteLength
+        )
+      }
+    }),
+    bytes => {
+      const text = new TextDecoder().decode(bytes);
+      for (const line of text.split('\n')) {
+        if (!line) continue;
+        const timestamp = JSON.parse(line)?.timestamp;
+        if (timestamp && Number.isFinite(Date.parse(timestamp))) return timestamp;
+      }
+      return null;
+    }
+  );
+  assert.equal(writerClosed, true, 'active bytes must be committed before deriving start');
+  assert.deepEqual(result, {
+    start_timestamp: activeTimestamp,
+    end_timestamp: manifestTimestamp
+  });
 });
 
 test('Issue 166 Duplicate range dialog uses the shared modal contract', () => {
