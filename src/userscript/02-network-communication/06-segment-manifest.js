@@ -18,8 +18,12 @@
       }
       delete parsed.active_last_timestamp;
       const conversationName = communicationLogConversationName();
+      const projectName = conversationProjectName();
+      const inProject = /^\/g\/[^/]+(?:\/|$)/.test(location.pathname);
       parsed.conversation_name = conversationName
         ?? (typeof parsed.conversation_name === 'string' ? parsed.conversation_name : null);
+      parsed.project_name = projectName
+        ?? (inProject && typeof parsed.project_name === 'string' ? parsed.project_name : null);
       return parsed;
     } catch (error) {
       if (error?.name !== 'NotFoundError') throw error;
@@ -27,6 +31,7 @@
         schema: 2,
         logical_log_id: currentConversationId() || crypto.randomUUID(),
         conversation_name: communicationLogConversationName() ?? null,
+        project_name: conversationProjectName() ?? null,
         active_committed_eof: 0
       };
     }
@@ -54,18 +59,30 @@
   }
 
   /**
-   * Refreshes human-readable conversation identity in the durable manifest.
+   * Refreshes human-readable project/conversation identity in the durable manifest.
    *
-   * @returns {Promise<boolean>} True when a changed title was committed.
+   * @returns {Promise<boolean>} True when changed identity was committed.
    */
   async function communicationLogSyncManifestConversationName() {
     if (!communicationLogSegmentManifest) return false;
     const conversationName = communicationLogConversationName();
-    if (!conversationName
-        || communicationLogSegmentManifest.conversation_name === conversationName) {
-      return false;
+    const projectName = conversationProjectName();
+    const inProject = /^\/g\/[^/]+(?:\/|$)/.test(location.pathname);
+    let changed = false;
+    if (conversationName
+        && communicationLogSegmentManifest.conversation_name !== conversationName) {
+      communicationLogSegmentManifest.conversation_name = conversationName;
+      changed = true;
     }
-    communicationLogSegmentManifest.conversation_name = conversationName;
+    if (projectName
+        && communicationLogSegmentManifest.project_name !== projectName) {
+      communicationLogSegmentManifest.project_name = projectName;
+      changed = true;
+    } else if (!inProject && communicationLogSegmentManifest.project_name !== null) {
+      communicationLogSegmentManifest.project_name = null;
+      changed = true;
+    }
+    if (!changed) return false;
     await communicationLogWriteSegmentManifest();
     return true;
   }

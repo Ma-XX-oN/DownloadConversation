@@ -29,6 +29,7 @@
         "src/userscript/02-network-communication/03-communication-lifecycle.js",
         "src/userscript/02-network-communication/06-segment-storage.js",
         "src/userscript/02-network-communication/06-segment-manifest.js",
+        "src/userscript/01-runtime/03-conversation-identity.js",
         "src/userscript/02-network-communication/06-segment-recovery.js",
         "src/userscript/02-network-communication/06-segment-snapshot.js",
         "src/userscript/02-network-communication/06-segment-duplicate.js",

@@ -169,7 +169,7 @@
       if (requestedKinds.includes('jsonl')) {
         activeKind = 'jsonl';
         exportKind = activeKind;
-        const filename = `${sanitizeFileName(conversationTitle())}.jsonl`;
+        const filename = `${conversationFileBaseName()}.jsonl`;
         const jsonl = apiRecordsJsonl(spine, conversationId);
         const jsonlTailComparison = compareLiveTailMarkersToJsonl(frozenLiveTailMarkers, spine, jsonl);
         logDiagnostic(jsonlTailComparison.warning ? 'warnings' : 'debug',
@@ -209,7 +209,7 @@
           progressState.record_count = progress.record_count;
           refreshStatus();
         }, recoveredImageMap);
-        const filename = `${sanitizeFileName(conversationTitle())}.md`;
+        const filename = `${conversationFileBaseName()}.md`;
         logDiagnostic('debug', 'conversation-export-phase-complete', {
           phase: 'markdown-render',
           elapsed_ms: Math.round(performance.now() - renderStartedAt),
