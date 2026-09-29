@@ -94,6 +94,18 @@
   }
 
   /**
+   * Renders the raw/compressed export icon as an arrow entering a size-coded circle.
+   *
+   * @param {boolean} compressed - True for the small compressed circle; false for the large raw circle.
+   * @returns {string} Inline SVG markup for the export-mode toggle.
+   */
+  function exportCompressionIconMarkup(compressed) {
+    const radius = compressed ? 4 : 7;
+    const circleX = compressed ? 18 : 17;
+    return `<svg viewBox="0 0 28 20" aria-hidden="true" focusable="false"><circle cx="${circleX}" cy="10" r="${radius}" fill="none" stroke="currentColor" stroke-width="2"/><path d="M2 10h10M8 6l4 4-4 4" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>`;
+  }
+
+  /**
    * Handles make panel.
    *
    * @returns {void} No value is returned.
@@ -117,7 +129,7 @@
       <div class="tm-row"><span class="tm-label">Screen on when extracting</span><button class="tm-switch" data-role="screen-on" type="button" role="switch" aria-checked="false" aria-label="Keep screen on while extracting"><span class="tm-switch-thumb"></span></button></div>
       <div class="tm-row tm-sound-control-row"><button class="tm-sound-control" data-role="agent-sound-control" type="button" aria-haspopup="dialog" aria-expanded="false">Sound <span data-role="agent-sound-control-value"></span></button><div class="tm-sound-popup" data-role="agent-sound-popup" hidden role="dialog" aria-label="Agent sound volume"><input class="tm-sound-volume-slider" data-role="agent-sound-volume" type="range" min="0" max="10" step="1" aria-label="Agent sound volume"><output class="tm-sound-volume-value" data-role="agent-sound-volume-value"></output></div></div>
       <div class="tm-row"><button data-role="jump" type="button">Jump</button></div>
-      <div class="tm-row tm-extract-formats"><button data-role="extract" type="button">Extract</button><label><input data-role="format-jsonl" type="checkbox"> JSONL</label><label><input data-role="format-md" type="checkbox" checked> MD</label></div>
+      <div class="tm-row tm-extract-formats"><button data-role="extract" type="button">Extract</button><label><input data-role="format-jsonl" type="checkbox"> JSONL</label><label><input data-role="format-md" type="checkbox" checked> MD</label><button class="tm-export-compression" data-role="export-compression" type="button" role="switch" aria-checked="false" aria-label="Raw export output" title="Raw JSONL/MD files"></button></div>
       <div class="tm-row tm-md-metadata"><span class="tm-label">MD headings</span><label><input data-role="show-timestamps" type="checkbox"> Timestamp</label><label><input data-role="show-record-numbers" type="checkbox"> Record #</label><label><input data-role="show-turn-ids" type="checkbox"> Turn ID</label><label><input data-role="show-debug-provenance" type="checkbox"> provenance</label></div>
     `;
     panel.querySelector('.tm-close').addEventListener('click', () => {
@@ -234,6 +246,14 @@
     bindStoredCheckbox(panel, 'show-debug-provenance', SHOW_DEBUG_PROVENANCE_STORAGE_KEY, showDebugProvenance, value => {
       showDebugProvenance = value;
     });
+    const exportCompression = panel.querySelector('[data-role="export-compression"]');
+    if (exportCompression) {
+      exportCompression.innerHTML = exportCompressionIconMarkup(exportCompressionEnabled);
+      exportCompression.addEventListener('click', () => {
+        exportCompressionEnabled = !exportCompressionEnabled;
+        updateUi();
+      });
+    }
     const soundControl = panel.querySelector('[data-role="agent-sound-control"]');
     const soundPopup = panel.querySelector('[data-role="agent-sound-popup"]');
     const soundVolumeInput = panel.querySelector('[data-role="agent-sound-volume"]');
