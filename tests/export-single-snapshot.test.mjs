@@ -162,6 +162,18 @@ function exportHarness() {
     conversationFileBaseName() {
       return 'Conversation';
     },
+    conversationProjectName() {
+      return 'Project';
+    },
+    conversationSpineTimestampRange() {
+      return {
+        start_timestamp: '2026-09-29T01:02:03.000Z',
+        end_timestamp: '2026-09-29T01:02:04.000Z'
+      };
+    },
+    canonicalFilename() {
+      return 'Canonical';
+    },
     apiRecordsJsonl(received) {
       observed.jsonlSpines.push(received);
       return '{"record":"fixture"}\n';
@@ -204,13 +216,13 @@ function exportHarness() {
 }
 
 for (const [name, kinds, expected] of [
-  ['JSONL-only', ['jsonl'], { jsonl: 1, images: 0, markdown: 0, downloads: ['Conversation.jsonl'] }],
-  ['Markdown-only', ['md'], { jsonl: 0, images: 1, markdown: 1, downloads: ['Conversation.md'] }],
+  ['JSONL-only', ['jsonl'], { jsonl: 1, images: 0, markdown: 0, downloads: ['Canonical.jsonl'] }],
+  ['Markdown-only', ['md'], { jsonl: 0, images: 1, markdown: 1, downloads: ['Canonical.md'] }],
   ['JSONL+Markdown', ['jsonl', 'md'], {
     jsonl: 1,
     images: 1,
     markdown: 1,
-    downloads: ['Conversation.jsonl', 'Conversation.md']
+    downloads: ['Canonical.jsonl', 'Canonical.md']
   }]
 ]) {
   test(`${name} performs exactly one Conversation API acquisition`, async () => {
@@ -296,15 +308,12 @@ test('Issue 172 manifest persists project identity separately from conversation 
   assert.match(manifestSource, /conversation_name:/);
 });
 
-test('Issue 172 all user-facing filename paths use the canonical filename base', () => {
+test('Issue 172 all user-facing archive/export paths use canonical naming', () => {
   assert.match(lifecycleSource,
     /DownloadConversation_\$\{conversationFileBaseName\(\)\}\.jsonl/);
-  assert.match(imageRecoverySource,
-    /\$\{conversationFileBaseName\(\)\}\.jsonl/);
-  assert.match(imageRecoverySource,
-    /\$\{conversationFileBaseName\(\)\}\.md/);
-  assert.match(diagnosticSource,
-    /DownloadConversation_\$\{conversationFileBaseName\(\)\}/);
+  assert.match(imageRecoverySource, /canonicalFilename\(/);
+  assert.match(imageRecoverySource, /conversationSpineTimestampRange\(spine\)/);
+  assert.match(diagnosticSource, /canonicalFilename\(/);
   assert.doesNotMatch(imageRecoverySource,
     /sanitizeFileName\(conversationTitle\(\)\)\.(?:jsonl|md)/);
 });
