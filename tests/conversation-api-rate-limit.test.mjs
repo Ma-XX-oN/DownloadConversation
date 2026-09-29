@@ -92,6 +92,10 @@ test('coordinator is assembled at top level before the direct API fetch declarat
     /if \(!response\.ok\) \{\s*\/\/ BEGIN Issue #183 Conversation API rate-limit coordination/,
     'coordinator must never be assembled inside the page HTTP failure branch'
   );
+  assert.ok(
+    built.includes("    if (!response.ok) {\n      let bodyPreview = '';"),
+    'HTTP failure branch must preserve the source-boundary newline before bodyPreview'
+  );
 });
 
 test('Retry-After suppresses the next physical request for at least the server delay', async () => {
