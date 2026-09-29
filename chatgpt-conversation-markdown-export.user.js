@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         ChatGPT Conversation Markdown Recorder
 // @namespace    https://chatgpt.com/
-// @version      1.7.2-issue.166.142
+// @version      1.7.2-issue.166.143
 // @description  Exports the current ChatGPT conversation directly from the Conversation API as Markdown or JSONL.
 // @match        https://chatgpt.com/*
 // @match        https://chat.openai.com/*
@@ -18445,27 +18445,52 @@ Image elapsed: ${formatDuration(imageElapsed)} — Completed: ${imageCompleted}/
   /**
    * Resolves the currently available communication-log timestamp range.
    *
-   * The earliest timestamp is taken only from the filesystem-authoritative first
-   * historical segment filename. The latest timestamp is read from the durable
-   * segment manifest. No historical archive is opened or decompressed merely to
-   * populate the dialog.
+   * A frozen snapshot first commits the active writer and refreshes the durable
+   * manifest.  When historical segments exist, the earliest timestamp still
+   * comes only from the filesystem-authoritative first segment filename. Before
+   * the first rotation, the earliest trustworthy timestamp is read from the
+   * frozen active prefix instead. No historical archive is opened or decompressed
+   * merely to populate the dialog.
    *
    * @returns {Promise<Object>} Inclusive start/end ISO timestamp range.
    */
   async function communicationLogDuplicateAvailableRange() {
-    const segments = await communicationLogHistoricalSegmentsFromDirectory();
-    if (segments.length === 0) {
-      throw new Error(
-        'Duplicate range start is unavailable because no timestamped segment file exists.'
-      );
-    }
-    const manifest = await communicationLogReadSegmentManifest();
-    const startTimestamp = segments[0].start_timestamp;
-    const endTimestamp = manifest.active_last_timestamp;
+    const queued = communicationLogEnqueue('duplicate-range-snapshot', async () => {
+      const plan = await communicationLogCaptureSnapshotPlan();
+      const manifest = await communicationLogReadSegmentManifest();
+      let startTimestamp = plan.segments[0]?.start_timestamp ?? null;
+
+      if (!startTimestamp && plan.active_eof > 0) {
+        const activeHandle = await communicationLogSegmentDirectoryHandle.getFileHandle(
+          plan.active_name,
+          { create: false }
+        );
+        const activeFile = await activeHandle.getFile();
+        if (activeFile.size < plan.active_eof) {
+          throw new Error(
+            'Frozen active communication prefix became shorter while preparing Duplicate range.'
+          );
+        }
+        const activeBytes = new Uint8Array(
+          await activeFile.slice(0, plan.active_eof).arrayBuffer()
+        );
+        startTimestamp = communicationLogFirstTimestampFromJsonl(activeBytes);
+      }
+
+      return {
+        start_timestamp: startTimestamp,
+        end_timestamp: manifest.active_last_timestamp
+      };
+    });
+    const range = await queued.operation;
+    const startTimestamp = range?.start_timestamp ?? null;
+    const endTimestamp = range?.end_timestamp ?? null;
     const startMs = Date.parse(startTimestamp);
     const endMs = Date.parse(endTimestamp);
     if (!Number.isFinite(startMs)) {
-      throw new Error('Duplicate range start timestamp from segment filename is invalid.');
+      throw new Error(
+        'Duplicate range start is unavailable because no trustworthy timestamped record exists.'
+      );
     }
     if (!Number.isFinite(endMs)) {
       throw new Error('Duplicate range end timestamp is unavailable in the segment manifest.');
