@@ -119,7 +119,9 @@ test('Issue 166 Duplicate range dialog defaults to filename start and manifest e
 test('Issue 166 Duplicate range dialog uses the shared modal contract', () => {
   assert.match(rangeDialogSource, /installModalContract\(overlay,/);
   assert.match(rangeDialogSource, /defaultButton:\s*okButton/);
-  assert.match(rangeDialogSource, /onClose:\s*\(\) => finish\(null\)/);
+  assert.match(rangeDialogSource, /onClose:\s*\(\) => finish\(null, false\)/);
+  assert.match(rangeDialogSource, /opener:\s*previousFocus/);
+  assert.match(rangeDialogSource, /communicationLogShowDuplicateRangeDialog\(button\)/);
   assert.doesNotMatch(
     rangeDialogSource,
     /overlay\.addEventListener\('keydown',[\s\S]*event\.key === 'Escape'/,
