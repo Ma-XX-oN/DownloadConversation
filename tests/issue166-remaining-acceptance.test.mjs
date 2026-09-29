@@ -123,8 +123,8 @@ test('Issue 166 no-trustworthy-timestamp fixture is rejected instead of inventin
 
 test('Issue 166 duplicate naming is collision-safe and never overwrites an existing archive', () => {
   const stream = productionFunctionSource('communicationLogStreamDuplicateArchive');
-  assert.match(stream, /communicationLogUnusedRoleArchiveName/);
-  assert.match(stream, /'comm'/);
+  assert.match(stream, /unusedFilename/);
+  assert.match(stream, /'\.comm\.xz'/);
 });
 
 test('Issue 166 selected segment default remains the repository-owned 10 MiB threshold', () => {
