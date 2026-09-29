@@ -361,7 +361,7 @@ test('fetch interception clones the stock generation response and returns the or
 });
 
 test('one history acquisition still feeds both export formats after streamed-tail reconciliation', () => {
-  const start = userscript.indexOf('  async function runExport(kinds)');
+  const start = userscript.indexOf('  async function runExport(kinds, options = {})');
   const end = userscript.indexOf('\n  /**', start + 10);
   assert.ok(start >= 0 && end > start, 'runExport source block is unavailable.');
   const block = userscript.slice(start, end);
