@@ -38,7 +38,7 @@ test('Issue 166 Duplicate reports real file-count progress and measured ETA', ()
   assert.match(duplicateSource, /const totalFiles = relevantSegments\.length \+ 1;/);
   assert.match(duplicateSource, /completed_files:/);
   assert.match(duplicateSource, /total_files:/);
-  assert.match(duplicateSource, /percent:/);
+  assert.match(duplicateSource, /percent,/);
   assert.match(duplicateSource, /eta_ms:/);
   assert.match(
     duplicateSource,
@@ -112,4 +112,6 @@ test('Issue 166 Duplicate range dialog defaults to filename start and manifest e
   assert.match(rangeDialogSource, /communicationLogArchiveDuplicate\(\{/);
   assert.match(rangeDialogSource, /start_timestamp: start\.toISOString\(\)/);
   assert.match(rangeDialogSource, /end_timestamp: end\.toISOString\(\)/);
+  assert.match(rangeDialogSource, /button\.disabled = false;/,
+    'the range preflight disable must be cleared before the shared action runner');
 });
