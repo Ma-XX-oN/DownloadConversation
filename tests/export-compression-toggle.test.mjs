@@ -5,20 +5,12 @@ import test from 'node:test';
 
 function runExportSource() {
   const start = downloadConversationSource.indexOf('  async function runExport(');
-  const end = downloadConversationSource.indexOf('\n  }', start);
+  const end = downloadConversationSource.indexOf(
+    '\n  /**\n   * Tests API pagination logic.',
+    start
+  );
   assert.ok(start >= 0 && end > start, 'Production runExport function is missing.');
-  let depth = 0;
-  let opened = false;
-  for (let index = start; index < downloadConversationSource.length; index += 1) {
-    if (downloadConversationSource[index] === '{') {
-      depth += 1;
-      opened = true;
-    } else if (downloadConversationSource[index] === '}') {
-      depth -= 1;
-      if (opened && depth === 0) return downloadConversationSource.slice(start, index + 1);
-    }
-  }
-  throw new Error('Production runExport function is unterminated.');
+  return downloadConversationSource.slice(start, end).trimStart();
 }
 
 function harness() {
