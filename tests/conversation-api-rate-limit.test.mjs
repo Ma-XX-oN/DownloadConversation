@@ -14,6 +14,10 @@ const source = await readFile(
   new URL('../src/userscript/03-agent-lifecycle/10-conversation-api-rate-limit.js', import.meta.url),
   'utf8'
 );
+const stormFixture = JSON.parse(await readFile(
+  new URL('./fixtures/issue-183-rate-limit-storm.json', import.meta.url),
+  'utf8'
+));
 
 function fakeResponse(status, retryAfter = null) {
   return {
@@ -75,6 +79,88 @@ function harness(physicalFetch) {
   return context;
 }
 
+function scheduledHarness(physicalFetch) {
+  let now = 1_000_000;
+  let nextTimerId = 1;
+  const timers = [];
+  const delays = [];
+  const diagnostics = [];
+
+  async function flushMicrotasks() {
+    for (let index = 0; index < 8; index += 1) await Promise.resolve();
+  }
+
+  async function advanceTo(targetMs) {
+    assert.ok(targetMs >= now, 'test clock cannot move backwards');
+    await flushMicrotasks();
+    for (;;) {
+      timers.sort((left, right) => left.at - right.at || left.id - right.id);
+      const timer = timers[0];
+      if (!timer || timer.at > targetMs) break;
+      timers.shift();
+      now = timer.at;
+      timer.callback();
+      await flushMicrotasks();
+    }
+    now = targetMs;
+    await flushMicrotasks();
+  }
+
+  async function runAll() {
+    await flushMicrotasks();
+    while (timers.length > 0) {
+      timers.sort((left, right) => left.at - right.at || left.id - right.id);
+      await advanceTo(timers[0].at);
+    }
+    await flushMicrotasks();
+  }
+
+  const context = {
+    __conversationId: 'conversation-1',
+    __physicalFetch: physicalFetch,
+    __delays: delays,
+    __diagnostics: diagnostics,
+    Date: {
+      now: () => now,
+      parse: Date.parse
+    },
+    Math: {
+      max: Math.max,
+      min: Math.min,
+      round: Math.round,
+      random: () => 0.5
+    },
+    Promise,
+    Map,
+    Error,
+    Number,
+    String,
+    setTimeout(callback, delay) {
+      const normalizedDelay = Math.max(0, Number(delay));
+      const id = nextTimerId;
+      nextTimerId += 1;
+      delays.push(normalizedDelay);
+      timers.push({ id, at: now + normalizedDelay, callback });
+      return id;
+    },
+    queueMicrotask
+  };
+  vm.runInNewContext(`
+    let apiFetch = url => globalThis.__physicalFetch(url);
+    function currentConversationId() { return globalThis.__conversationId; }
+    function diagnosticRequestPath(url) { return String(url); }
+    function logDiagnostic(level, event, details) {
+      globalThis.__diagnostics.push({ level, event, details });
+    }
+    ${source}
+    globalThis.__apiFetch = apiFetch;
+  `, context);
+  context.__advanceTo = advanceTo;
+  context.__runAll = runAll;
+  context.__now = () => now;
+  return context;
+}
+
 test('coordinator is assembled at top level before the direct API fetch declaration', async () => {
   const manifest = await readUserscriptManifest(root);
   const built = await readDownloadConversationSource(root, manifest);
@@ -95,6 +181,57 @@ test('coordinator is assembled at top level before the direct API fetch declarat
   assert.ok(
     built.includes("    if (!response.ok) {\n      let bodyPreview = '';"),
     'HTTP failure branch must preserve the source-boundary newline before bodyPreview'
+  );
+});
+
+test('captured issue #183 storm fixture preserves the observed 429 burst', () => {
+  const offsets = stormFixture.caller_offsets_ms;
+  assert.equal(offsets.length, stormFixture.observed_429_count);
+  assert.equal(offsets[0], 0);
+  assert.equal(offsets.at(-1), stormFixture.observed_window_ms);
+  assert.equal(
+    offsets.slice(1).filter((offset, index) => offset - offsets[index] < 500).length,
+    25
+  );
+  assert.equal(
+    offsets.slice(1).filter((offset, index) => offset - offsets[index] < 1000).length,
+    34
+  );
+});
+
+test('captured issue #183 caller storm collapses onto one bounded retry chain', async () => {
+  const clockStart = 1_000_000;
+  const physicalOffsets = [];
+  let context;
+  context = scheduledHarness(async () => {
+    const offset = context.__now() - clockStart;
+    physicalOffsets.push(offset);
+    return fakeResponse(offset < 60_000 ? 429 : 200);
+  });
+
+  const requests = [];
+  const url = 'https://chatgpt.com/captured-conversation-page';
+  for (const offset of stormFixture.caller_offsets_ms) {
+    await context.__advanceTo(clockStart + offset);
+    requests.push(context.__apiFetch(url));
+  }
+
+  await context.__runAll();
+  const responses = await Promise.all(requests);
+  assert.ok(responses.every(response => response.status === 200));
+  assert.deepEqual(physicalOffsets, [0, 5_000, 15_000, 35_000, 75_000]);
+  assert.deepEqual(context.__delays, [5_000, 10_000, 20_000, 40_000]);
+  assert.equal(
+    context.__diagnostics.filter(
+      entry => entry.event === 'conversation-api-request-coalesced'
+    ).length,
+    stormFixture.observed_429_count - 1
+  );
+  assert.equal(
+    context.__diagnostics.filter(
+      entry => entry.event === 'conversation-api-rate-limited'
+    ).length,
+    4
   );
 });
 
