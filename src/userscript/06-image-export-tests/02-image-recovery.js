@@ -221,7 +221,10 @@
           progressState.record_count = progress.record_count;
           refreshStatus();
         }, recoveredImageMap);
-        const filename = `${conversationFileBaseName()}.md`;
+        /** Raw Markdown filename before optional archive wrapping. */
+        const rawFilename = `${conversationFileBaseName()}.md`;
+        /** Final Markdown filename, including the XZ suffix only in compressed mode. */
+        const filename = compressedOutput ? `${rawFilename}.xz` : rawFilename;
         logDiagnostic('debug', 'conversation-export-phase-complete', {
           phase: 'markdown-render',
           elapsed_ms: Math.round(performance.now() - renderStartedAt),
