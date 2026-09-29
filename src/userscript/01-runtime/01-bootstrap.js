@@ -22,6 +22,8 @@
   const MAX_PAGES = 10000;
   /** Local-storage key for the keep-screen-on capture preference. */
   const SCREEN_ON_STORAGE_KEY = 'tm-conversation-recorder-screen-on-when-capturing';
+  /** Whether selected JSONL/Markdown exports are compressed as XZ archives. */
+  let exportCompressionEnabled = false;
   /** Local-storage key for Markdown heading timestamp visibility. */
   const SHOW_TIMESTAMPS_STORAGE_KEY = 'tm-conversation-recorder-show-timestamps';
   /** Local-storage key for Markdown JSONL record-number visibility. */
