@@ -5,39 +5,35 @@ import path from 'node:path';
 import test from 'node:test';
 import { fileURLToPath } from 'node:url';
 import {
-  assembleUserscriptSource,
+  assembleUserscript,
+  gitBlobSha1,
   orderedSourcePaths,
+  readDownloadConversationSource,
+  readUserscriptHeader,
   readUserscriptManifest,
-  validatePinnedDependencies
+  validatePinnedDependency
 } from '../scripts/userscript-build-lib.mjs';
 
-const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
-const legacyFixturePath = path.join(root, 'tests/fixtures/legacy-userscript-issue-135.3.user.js');
-const verifiedSnapshotCommit = '62571e15af8f7f3e4472258e7a18bb2f2d48cef5';
-const currentLegacyFixture = await readFile(legacyFixturePath, 'utf8');
+const root = path.resolve(
+  path.dirname(fileURLToPath(import.meta.url)),
+  '..'
+);
+const CORE_COMMIT =
+  '1b531a1c92adfa1695db8c644159054e013f0a72';
+const CORE_BLOB =
+  '84a1fcf72a8da76f837a791a142c1c95ed37d607';
+const LEGACY_BLOB =
+  '44a4ab373a6515caed5527aeb19cbdff7ce91e07';
+const MIGRATION_SNAPSHOT_COMMIT =
+  '62571e15af8f7f3e4472258e7a18bb2f2d48cef5';
+const USER_SCRIPT_HEADER_END = '// ==/UserScript==\n';
 
-function git(...args) {
+function readSnapshotFile(commit, sourcePath) {
   return execFileSync(
     'git',
-    args,
+    ['show', `${commit}:${sourcePath}`],
     { cwd: root, encoding: 'utf8' }
   );
-}
-
-function gitBlobBytes(revision, filePath) {
-  return execFileSync(
-    'git',
-    ['show', `${revision}:${filePath}`],
-    { cwd: root }
-  );
-}
-
-function gitBlobSha1(buffer) {
-  return execFileSync(
-    'git',
-    ['hash-object', '--stdin'],
-    { cwd: root, input: buffer, encoding: 'utf8' }
-  ).trim();
 }
 
 test(
@@ -97,120 +93,273 @@ test(
       const info = await stat(path.join(root, sourcePath));
       assert.ok(
         info.isFile(),
-        `${sourcePath} must be an authoritative source file`
+        `${sourcePath} is not a source file.`
       );
       assert.ok(
-        info.size <= 16 * 1024,
-        `${sourcePath} is too large for modular source (${info.size} bytes)`
+        info.size > 0 && info.size < 16 * 1024,
+        `${sourcePath} is not a small source segment.`
       );
     }
   }
 );
 
-test('authoritative header preserves semver and document-start execution', async () => {
-  const manifest = await readUserscriptManifest(root);
-  const header = await readFile(path.join(root, manifest.header), 'utf8');
-  assert.match(header, /^\/\/\s*@version\s+\d+\.\d+\.\d+(?:-issue\.\d+\.\d+)?$/m);
-  assert.match(header, /^\/\/\s*@run-at\s+document-start$/m);
-});
-
-test('AIConversationCore build dependency uses exact pinned identity', async () => {
-  const manifest = await readUserscriptManifest(root);
-  const [dependency] = manifest.dependencies;
-  assert.equal(dependency.name, 'AIConversationCore');
-  assert.match(dependency.commit, /^[0-9a-f]{40}$/);
-  assert.match(dependency.git_blob_sha1, /^[0-9a-f]{40}$/);
-  assert.equal(Number.isInteger(dependency.byte_length), true);
-  assert.ok(dependency.byte_length > 0);
-  assert.equal(
-    dependency.url,
-    `https://raw.githubusercontent.com/Ma-XX-oN/AIConversationCore/${dependency.commit}/${dependency.path}`
-  );
-});
-
-test('pinned dependency validation rejects changed bytes independently', async () => {
-  const manifest = await readUserscriptManifest(root);
-  const [dependency] = manifest.dependencies;
-  const originalFetch = globalThis.fetch;
-  globalThis.fetch = async url => {
-    assert.equal(String(url), dependency.url);
-    return new Response('tampered dependency payload', { status: 200 });
-  };
-  try {
-    await assert.rejects(
-      validatePinnedDependencies(manifest),
-      /failed (?:byte-length|Git blob SHA-1) validation/
+test(
+  'authoritative header preserves semver and document-start execution',
+  async () => {
+    const manifest = await readUserscriptManifest(root);
+    const header = await readUserscriptHeader(root, manifest);
+    assert.match(header, /^\/\/ ==UserScript==\n/);
+    assert.match(
+      header,
+      /^\/\/ @version\s+\d+\.\d+\.\d+(?:-issue\.\d+\.\d+)?$/m
     );
-  } finally {
-    globalThis.fetch = originalFetch;
+    assert.match(header, /^\/\/ @run-at\s+document-start$/m);
+    assert.doesNotMatch(header, /^\/\/ @require\b/m);
+    assert.match(header, /\/\/ ==\/UserScript==\n$/);
   }
-});
+);
 
-test('ordered source preserves the userscript runtime IIFE boundary', async () => {
-  const manifest = await readUserscriptManifest(root);
-  const sourcePaths = orderedSourcePaths(manifest);
-  const first = await readFile(path.join(root, sourcePaths[0]), 'utf8');
-  const last = await readFile(path.join(root, sourcePaths.at(-1)), 'utf8');
-  assert.match(first, /^\(function\(\)\s*\{/);
-  assert.match(last, /\}\)\(\);\s*$/);
-});
+test(
+  'AIConversationCore build dependency uses exact pinned identity',
+  async () => {
+    const manifest = await readUserscriptManifest(root);
+    assert.equal(manifest.dependencies.length, 1);
+    const [dependency] = manifest.dependencies;
+    assert.equal(dependency.name, 'AIConversationCore');
+    assert.equal(dependency.commit, CORE_COMMIT);
+    assert.equal(dependency.git_blob_sha1, CORE_BLOB);
+    assert.equal(dependency.byte_length, 265877);
+    assert.equal(
+      dependency.repository,
+      'Ma-XX-oN/AIConversationCore'
+    );
+    assert.equal(
+      dependency.path,
+      'dist/aiconversationcore.chatgpt.browser.js'
+    );
+    assert.ok(dependency.url.includes(`/${CORE_COMMIT}/`));
+  }
+);
 
-test('verified #150 snapshot preserves legacy runtime bytes in source order', async () => {
-  const manifest = await readUserscriptManifest(root);
-  const snapshotSource = gitBlobBytes(
-    verifiedSnapshotCommit,
-    'chatgpt-conversation-markdown-export.user.js'
-  ).toString('utf8');
-  const assembled = await assembleUserscriptSource(root, manifest);
-  const header = await readFile(path.join(root, manifest.header), 'utf8');
-  const dependencyMarker = '// BEGIN PINNED DEPENDENCY: AIConversationCore';
-  const snapshotDependencyStart = snapshotSource.indexOf(dependencyMarker);
-  const snapshotRuntimeStart = snapshotSource.indexOf('(function() {');
-  assert.ok(snapshotDependencyStart >= 0);
-  assert.ok(snapshotRuntimeStart > snapshotDependencyStart);
-  const snapshotDependency = snapshotSource.slice(snapshotDependencyStart, snapshotRuntimeStart);
-  const assembledDependencyStart = assembled.indexOf(dependencyMarker);
-  const assembledRuntimeStart = assembled.indexOf('(function() {');
-  assert.ok(assembledDependencyStart >= 0);
-  assert.ok(assembledRuntimeStart > assembledDependencyStart);
-  const assembledDependency = assembled.slice(assembledDependencyStart, assembledRuntimeStart);
-  assert.equal(assembledDependency, snapshotDependency);
-  assert.equal(assembled.slice(assembledRuntimeStart), snapshotSource.slice(snapshotRuntimeStart));
-  assert.equal(assembled.slice(0, assembledDependencyStart), header);
-});
+test(
+  'pinned dependency validation rejects changed bytes independently',
+  () => {
+    const content = 'globalThis.AIConversationCore = {};\n';
+    const dependency = {
+      name: 'fixture-core',
+      byte_length: 36,
+      git_blob_sha1: 'b82dac162a42aa04170be5265afc69061dc0de30'
+    };
+    validatePinnedDependency(dependency, content);
+    assert.throws(
+      () => validatePinnedDependency(dependency, `${content} `),
+      /byte length mismatch/
+    );
+    assert.throws(
+      () => validatePinnedDependency(
+        { ...dependency, git_blob_sha1: '0'.repeat(40) },
+        content
+      ),
+      /Git blob mismatch/
+    );
+  }
+);
 
-test('assembled communication startup resolves the segment runtime contract', async () => {
-  const manifest = await readUserscriptManifest(root);
-  const assembled = await assembleUserscriptSource(root, manifest);
-  const storageIndex = assembled.indexOf('function communicationLogEnsureSegmentRuntime');
-  const lifecycleIndex = assembled.indexOf('async function communicationLogEnsureOpenWriter');
-  assert.ok(storageIndex >= 0, 'segment storage runtime must be assembled');
-  assert.ok(lifecycleIndex > storageIndex, 'lifecycle writer must assemble after segment storage runtime');
-});
+test(
+  'ordered source preserves the userscript runtime IIFE boundary',
+  async () => {
+    const manifest = await readUserscriptManifest(root);
+    const source = await readDownloadConversationSource(root, manifest);
+    assert.ok(source.startsWith("\n(() => {\n  'use strict';"));
+    assert.ok(source.endsWith('})();'));
+    assert.match(
+      source,
+      /const CORE_VERSION = canonicalCore\(\)\.getVersion\(\);/
+    );
+  }
+);
 
-test('assembly is deterministic and places dependency before DC runtime', async () => {
-  const manifest = await readUserscriptManifest(root);
-  const first = await assembleUserscriptSource(root, manifest);
-  const second = await assembleUserscriptSource(root, manifest);
-  assert.equal(first, second);
-  const dependencyIndex = first.indexOf('// BEGIN PINNED DEPENDENCY: AIConversationCore');
-  const runtimeIndex = first.indexOf('(function() {');
-  assert.ok(dependencyIndex >= 0);
-  assert.ok(runtimeIndex > dependencyIndex);
-});
+test(
+  'verified #150 snapshot preserves legacy runtime bytes in source order',
+  async () => {
+    const manifest = await readUserscriptManifest(root);
+    assert.equal(
+      manifest.migration_source.snapshot_commit,
+      MIGRATION_SNAPSHOT_COMMIT
+    );
 
-test('legacy monolith remains provenance-only with original Git blob', async () => {
-  const manifest = await readUserscriptManifest(root);
-  assert.equal(
-    manifest.migration_source.path,
-    'tests/fixtures/legacy-userscript-issue-135.3.user.js'
-  );
-  const currentBlob = gitBlobSha1(Buffer.from(currentLegacyFixture));
-  assert.equal(currentBlob, manifest.migration_source.git_blob_sha1);
-  const historicalBlob = gitBlobSha1(gitBlobBytes(
-    manifest.migration_source.snapshot_commit,
-    manifest.migration_source.path
-  ));
-  assert.equal(historicalBlob, manifest.migration_source.git_blob_sha1);
-  assert.equal(git('status', '--porcelain', '--', manifest.migration_source.path), '');
-});
+    const snapshotManifest = JSON.parse(
+      readSnapshotFile(
+        MIGRATION_SNAPSHOT_COMMIT,
+        'src/userscript-manifest.json'
+      )
+    );
+    assert.equal(
+      snapshotManifest.migration_source.git_blob_sha1,
+      LEGACY_BLOB
+    );
+
+    const fixture = await readFile(
+      path.join(root, manifest.migration_source.path),
+      'utf8'
+    );
+    const headerEnd = fixture.indexOf(USER_SCRIPT_HEADER_END);
+    assert.ok(
+      headerEnd >= 0,
+      'Legacy fixture userscript metadata terminator is missing.'
+    );
+    const legacyBody = fixture.slice(
+      headerEnd + USER_SCRIPT_HEADER_END.length
+    );
+    let cursor = 0;
+
+    for (const sourcePath of orderedSourcePaths(snapshotManifest)) {
+      const segment = readSnapshotFile(
+        MIGRATION_SNAPSHOT_COMMIT,
+        sourcePath
+      );
+      const payload = segment.trim();
+      assert.ok(
+        payload,
+        `${sourcePath} contains no non-whitespace source bytes.`
+      );
+      const match = legacyBody.indexOf(payload, cursor);
+      assert.ok(
+        match >= cursor,
+        `${sourcePath} does not occur in legacy runtime order.`
+      );
+      assert.match(
+        legacyBody.slice(cursor, match),
+        /^\s*$/,
+        `${sourcePath} has non-whitespace bytes before its segment.`
+      );
+      cursor = match + payload.length;
+    }
+
+    assert.match(
+      legacyBody.slice(cursor),
+      /^\s*$/,
+      'Legacy runtime has bytes after the final migration segment.'
+    );
+  }
+);
+
+
+test(
+  'assembled communication startup resolves the segment runtime contract',
+  async () => {
+    const manifest = await readUserscriptManifest(root);
+    const built = await readDownloadConversationSource(root, manifest);
+    const activation = built.indexOf(
+      'async function communicationLogActivateDirectory(handle)'
+    );
+    const initializer = built.indexOf(
+      'async function communicationLogInitializeSegmentStorage()'
+    );
+    const redaction = built.indexOf(
+      'function communicationLogCreateRedactionState()'
+    );
+    assert.ok(activation >= 0, 'assembled activation function must exist');
+    assert.ok(initializer >= 0, 'assembled segment initializer must exist');
+    assert.ok(redaction > initializer, 'verified top-level boundary must follow initializer');
+
+    const activationSource = built.slice(
+      activation,
+      built.indexOf(
+        'function communicationLogDisarmDirectoryGesture()',
+        activation
+      )
+    );
+    assert.match(
+      activationSource,
+      /typeof communicationLogInitializeSegmentStorage/
+    );
+    assert.match(
+      activationSource,
+      /await communicationLogInitializeSegmentStorage\(\)/
+    );
+
+    const initializerSource = built.slice(
+      initializer,
+      redaction
+    );
+    assert.match(
+      initializerSource,
+      /getDirectoryHandle\(\s*directoryName,\s*\{ create: true \}\s*\)/s
+    );
+
+    const probeSource = [
+      'return (() => {',
+      activationSource,
+      initializerSource,
+      'return {',
+      '  initializerType: typeof communicationLogInitializeSegmentStorage,',
+      '  activationType: typeof communicationLogActivateDirectory',
+      '};',
+      '})();'
+    ].join('\n');
+    const probe = Function(probeSource)();
+    assert.equal(probe.initializerType, 'function');
+    assert.equal(probe.activationType, 'function');
+  }
+);
+
+test(
+  'assembly is deterministic and places dependency before DC runtime',
+  () => {
+    const header = [
+      '// ==UserScript==',
+      '// @run-at document-start',
+      '// ==/UserScript==',
+      ''
+    ].join('\n');
+    const content = 'globalThis.AIConversationCore = {};\n';
+    const dependency = {
+      name: 'fixture-core',
+      commit: '1'.repeat(40),
+      url: `https://example.test/${'1'.repeat(40)}/fixture.js`,
+      git_blob_sha1: 'b82dac162a42aa04170be5265afc69061dc0de30',
+      byte_length: 36
+    };
+    const source = [
+      '',
+      '(() => {',
+      '  globalThis.downloadConversationLoaded = true;',
+      '})();'
+    ].join('\n');
+    const inputs = [{ manifest: dependency, content }];
+    const first = assembleUserscript(header, inputs, source);
+    const second = assembleUserscript(header, inputs, source);
+    assert.equal(first, second);
+    assert.ok(
+      first.indexOf(content) <
+      first.indexOf('downloadConversationLoaded')
+    );
+    assert.match(first, /BEGIN bundled fixture-core commit=/);
+    assert.match(first, /\/\/ source https:\/\/example\.test\//);
+    assert.doesNotMatch(first, /^\/\/ @require\b/m);
+  }
+);
+
+test(
+  'legacy monolith remains provenance-only with original Git blob',
+  async () => {
+    const manifest = await readUserscriptManifest(root);
+    assert.equal(
+      manifest.migration_source.git_blob_sha1,
+      LEGACY_BLOB
+    );
+    assert.equal(
+      manifest.migration_source.snapshot_commit,
+      MIGRATION_SNAPSHOT_COMMIT
+    );
+    assert.match(
+      manifest.migration_source.note,
+      /not authoritative source/i
+    );
+    const fixture = await readFile(
+      path.join(root, manifest.migration_source.path)
+    );
+    assert.equal(gitBlobSha1(fixture), LEGACY_BLOB);
+  }
+);
