@@ -113,3 +113,16 @@ for (const [name, compressed, expectedNames, expectedArchiveCalls] of [
     }
   });
 }
+
+test('Issue 173 repeated mode changes do not retain stale output projection', async () => {
+  const { context, downloads, archiveInputs } = harness();
+  await context.runExport(['jsonl'], { compressed: false });
+  await context.runExport(['jsonl'], { compressed: true });
+  await context.runExport(['jsonl'], { compressed: false });
+  assert.deepEqual(downloads.map(item => item.filename), [
+    'Conversation.jsonl',
+    'Conversation.jsonl.xz',
+    'Conversation.jsonl'
+  ]);
+  assert.equal(archiveInputs.length, 1);
+});
