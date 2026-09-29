@@ -6,41 +6,48 @@
   /**
    * Resolves the currently available communication-log timestamp range.
    *
-   * A frozen snapshot first commits the active writer and refreshes the durable
-   * manifest.  When historical segments exist, the earliest timestamp still
-   * comes only from the filesystem-authoritative first segment filename. Before
-   * the first rotation, the earliest trustworthy timestamp is read from the
-   * frozen active prefix instead. No historical archive is opened or decompressed
-   * merely to populate the dialog.
+   * A frozen snapshot first commits the active writer. When historical segments
+   * exist, the earliest timestamp still comes from the filesystem-authoritative
+   * first segment filename. Before the first compressed segment exists, both raw
+   * alternating active files are considered and their first trustworthy record
+   * timestamps are compared. The end comes from the frozen snapshot's live
+   * active timestamp state, not from a manifest timestamp cache.
    *
    * @returns {Promise<Object>} Inclusive start/end ISO timestamp range.
    */
   async function communicationLogDuplicateAvailableRange() {
     const queued = communicationLogEnqueue('duplicate-range-snapshot', async () => {
       const plan = await communicationLogCaptureSnapshotPlan();
-      const manifest = await communicationLogReadSegmentManifest();
       let startTimestamp = plan.segments[0]?.start_timestamp ?? null;
 
-      if (!startTimestamp && plan.active_eof > 0) {
-        const activeHandle = await communicationLogSegmentDirectoryHandle.getFileHandle(
-          plan.active_name,
-          { create: false }
-        );
-        const activeFile = await activeHandle.getFile();
-        if (activeFile.size < plan.active_eof) {
-          throw new Error(
-            'Frozen active communication prefix became shorter while preparing Duplicate range.'
-          );
+      if (!startTimestamp) {
+        const rawStarts = [];
+        for (const name of COMMUNICATION_LOG_ACTIVE_FILE_NAMES) {
+          let handle;
+          try {
+            handle = await communicationLogSegmentDirectoryHandle.getFileHandle(
+              name,
+              { create: false }
+            );
+          } catch (error) {
+            if (error?.name === 'NotFoundError') continue;
+            throw error;
+          }
+          const file = await handle.getFile();
+          const eof = name === plan.active_name
+            ? Math.min(file.size, plan.active_eof)
+            : file.size;
+          if (eof <= 0) continue;
+          const timestamp = await communicationLogFirstTimestampFromJsonlFile(file, eof);
+          if (timestamp) rawStarts.push(timestamp);
         }
-        const activeBytes = new Uint8Array(
-          await activeFile.slice(0, plan.active_eof).arrayBuffer()
-        );
-        startTimestamp = communicationLogFirstTimestampFromJsonl(activeBytes);
+        rawStarts.sort((left, right) => Date.parse(left) - Date.parse(right));
+        startTimestamp = rawStarts[0] ?? null;
       }
 
       return {
         start_timestamp: startTimestamp,
-        end_timestamp: manifest.active_last_timestamp
+        end_timestamp: plan.active_last_timestamp
       };
     });
     const range = await queued.operation;
@@ -54,7 +61,7 @@
       );
     }
     if (!Number.isFinite(endMs)) {
-      throw new Error('Duplicate range end timestamp is unavailable in the segment manifest.');
+      throw new Error('Duplicate range end timestamp is unavailable in the frozen active state.');
     }
     if (endMs < startMs) {
       throw new Error('Communication Duplicate range end precedes its start.');
