@@ -217,7 +217,7 @@ function exportHarness() {
 
 for (const [name, kinds, expected] of [
   ['JSONL-only', ['jsonl'], { jsonl: 1, images: 0, markdown: 0, downloads: ['Canonical.jsonl'] }],
-  ['Markdown-only', ['md'], { jsonl: 0, images: 1, markdown: 1, downloads: ['Canonical.md'] }],
+  ['Markdown-only', ['md'], { jsonl: 1, images: 1, markdown: 1, downloads: ['Canonical.md'] }],
   ['JSONL+Markdown', ['jsonl', 'md'], {
     jsonl: 1,
     images: 1,
@@ -312,7 +312,7 @@ test('Issue 172 all user-facing archive/export paths use canonical naming', () =
   assert.match(lifecycleSource,
     /DownloadConversation_\$\{conversationFileBaseName\(\)\}\.jsonl/);
   assert.match(imageRecoverySource, /canonicalFilename\(/);
-  assert.match(imageRecoverySource, /conversationSpineTimestampRange\(spine\)/);
+  assert.match(imageRecoverySource, /conversationJsonlTimestampRange\(jsonl\)/);
   assert.match(diagnosticSource, /canonicalFilename\(/);
   assert.doesNotMatch(imageRecoverySource,
     /sanitizeFileName\(conversationTitle\(\)\)\.(?:jsonl|md)/);
