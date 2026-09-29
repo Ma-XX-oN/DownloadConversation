@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         ChatGPT Conversation Markdown Recorder
 // @namespace    https://chatgpt.com/
-// @version      1.7.2-issue.166.147
+// @version      1.7.2-issue.166.148
 // @description  Exports the current ChatGPT conversation directly from the Conversation API as Markdown or JSONL.
 // @match        https://chatgpt.com/*
 // @match        https://chat.openai.com/*
@@ -7668,6 +7668,77 @@ globalThis.__dcArchiveCodec = {
   });
 
   /**
+   * Loads or initializes the small control/recovery manifest.
+   *
+   * Historical segment membership is filesystem-derived and is never catalogued
+   * here. Legacy active_last_timestamp cache fields are discarded on read.
+   *
+   * @returns {Promise<Object>} Current control/recovery manifest.
+   */
+  async function communicationLogReadSegmentManifest() {
+    const directory = communicationLogSegmentDirectoryHandle;
+    if (!directory) throw new Error('Communication segment directory is not ready.');
+    try {
+      const handle = await directory.getFileHandle('manifest.json', { create: false });
+      const parsed = JSON.parse(await (await handle.getFile()).text());
+      if (parsed?.schema !== 2 || typeof parsed.logical_log_id !== 'string') {
+        throw new Error('Invalid communication segment manifest.');
+      }
+      delete parsed.active_last_timestamp;
+      const conversationName = communicationLogConversationName();
+      parsed.conversation_name = conversationName
+        ?? (typeof parsed.conversation_name === 'string' ? parsed.conversation_name : null);
+      return parsed;
+    } catch (error) {
+      if (error?.name !== 'NotFoundError') throw error;
+      return {
+        schema: 2,
+        logical_log_id: currentConversationId() || crypto.randomUUID(),
+        conversation_name: communicationLogConversationName() ?? null,
+        active_committed_eof: 0
+      };
+    }
+  }
+
+  /**
+   * Commits the current small control/recovery manifest.
+   *
+   * @returns {Promise<void>} Resolves after manifest commit.
+   */
+  async function communicationLogWriteSegmentManifest() {
+    const directory = communicationLogSegmentDirectoryHandle;
+    if (!directory || !communicationLogSegmentManifest) {
+      throw new Error('Communication segment manifest is not ready.');
+    }
+    const handle = await directory.getFileHandle('manifest.json', { create: true });
+    const writable = await handle.createWritable();
+    try {
+      await writable.write(JSON.stringify(communicationLogSegmentManifest, null, 2) + '\n');
+      await writable.close();
+    } catch (error) {
+      await abortWritableQuietly(writable);
+      throw error;
+    }
+  }
+
+  /**
+   * Refreshes human-readable conversation identity in the durable manifest.
+   *
+   * @returns {Promise<boolean>} True when a changed title was committed.
+   */
+  async function communicationLogSyncManifestConversationName() {
+    if (!communicationLogSegmentManifest) return false;
+    const conversationName = communicationLogConversationName();
+    if (!conversationName
+        || communicationLogSegmentManifest.conversation_name === conversationName) {
+      return false;
+    }
+    communicationLogSegmentManifest.conversation_name = conversationName;
+    await communicationLogWriteSegmentManifest();
+    return true;
+  }
+
+  /**
    * Derives the append target from the two alternating physical files.
    *
    * @returns {Promise<void>} Resolves after an active file is selected/created.
@@ -8471,6 +8542,40 @@ globalThis.__dcArchiveCodec = {
     }
   }
 
+  /**
+   * Keeps the human-readable manifest conversation name aligned with ChatGPT's
+   * document title without polling or rewriting the manifest when it is unchanged.
+   *
+   * @returns {void} No value is returned.
+   */
+  function communicationLogInstallManifestTitleSync() {
+    /** Starts observing once the document head exists. */
+    const install = () => {
+      if (!document.head) {
+        requestAnimationFrame(install);
+        return;
+      }
+      let lastTitle = conversationTitle();
+      const observer = new MutationObserver(() => {
+        const nextTitle = conversationTitle();
+        if (nextTitle === lastTitle) return;
+        lastTitle = nextTitle;
+        if (!communicationLogSegmentManifest) return;
+        const queued = communicationLogEnqueue('manifest-title-sync', async () => {
+          await communicationLogSyncManifestConversationName();
+        });
+        void queued.operation.catch(() => {});
+      });
+      observer.observe(document.head, {
+        childList: true,
+        subtree: true,
+        characterData: true
+      });
+    };
+    install();
+  }
+
+  communicationLogInstallManifestTitleSync();
   /**
    * Creates independent state for one request/response body redaction stream.
    *
