@@ -39,19 +39,7 @@
    * @returns {string} Filesystem-safe UTC timestamp.
    */
   function diagnosticLogArchiveTimestamp(timestamp) {
-    const date = new Date(timestamp);
-    if (!Number.isFinite(date.getTime())) {
-      throw new Error('Diagnostic archive timestamp is not trustworthy.');
-    }
-    /**
-     * Pads one local date/time field to two digits.
-     *
-     * @param {number} value - Local calendar/time field.
-     * @returns {string} Two-digit field.
-     */
-    const pad = value => String(value).padStart(2, '0');
-    return `${date.getFullYear()},${pad(date.getMonth() + 1)},${pad(date.getDate())};`
-      + `${pad(date.getHours())},${pad(date.getMinutes())},${pad(date.getSeconds())}`;
+    return canonicalFilenameTimestamp(timestamp);
   }
 
   /**
@@ -75,9 +63,11 @@
    * @returns {string} Timestamped diagnostic archive filename.
    */
   function diagnosticLogArchiveName(range) {
-    const base = `DownloadConversation_${conversationFileBaseName()}`;
-    return `${base}_${diagnosticLogArchiveTimestamp(range.start_timestamp)}-`
-      + `${diagnosticLogArchiveTimestamp(range.end_timestamp)}.log.xz`;
+    return `${canonicalFilename(
+      conversationProjectName(),
+      conversationTitle(),
+      range
+    )}.log.xz`;
   }
 
   /**
@@ -203,6 +193,12 @@
       setStatus(`Diagnostic log: preparing save; ${elapsed()}.`);
       const directory = communicationLogReady ? communicationLogDirectoryHandle : null;
       if (directory) {
+        const filenamePrefix = canonicalFilename(
+          conversationProjectName(),
+          conversationTitle(),
+          range
+        );
+        archiveName = await unusedFilename(directory, filenamePrefix, '.log.xz');
         await diagnosticLogWriteArchive(directory, archiveName, archive);
       } else {
         downloadBlob(new Blob([archive], { type: 'application/x-xz' }), archiveName);
