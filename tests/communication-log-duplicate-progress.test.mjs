@@ -102,11 +102,12 @@ test('Issue 166 date/time spinner carries surrounding local fields correctly', (
   });
 });
 
-test('Issue 166 Duplicate range dialog defaults to filename start and manifest end', () => {
-  assert.match(rangeDialogSource, /communicationLogHistoricalSegmentsFromDirectory/);
-  assert.match(rangeDialogSource, /segments\[0\]\.start_timestamp/);
+test('Issue 166 Duplicate range dialog defaults to snapshot start and manifest end', () => {
+  assert.match(rangeDialogSource, /communicationLogCaptureSnapshotPlan/);
+  assert.match(rangeDialogSource, /plan\.segments\[0\]\?\.start_timestamp/);
   assert.match(rangeDialogSource, /communicationLogReadSegmentManifest/);
   assert.match(rangeDialogSource, /manifest\.active_last_timestamp/);
+  assert.match(rangeDialogSource, /communicationLogFirstTimestampFromJsonl/);
   assert.match(rangeDialogSource, /createSingleDateTimeControl/);
   assert.match(rangeDialogSource, /communicationLogArchiveDuplicate\(\{/);
   assert.match(rangeDialogSource, /start_timestamp: start\.toISOString\(\)/);
@@ -122,32 +123,48 @@ test('Issue 166 Duplicate range opens before first segment rotation', async () =
   );
   const activeTimestamp = '2026-09-28T20:00:01.125Z';
   const manifestTimestamp = '2026-09-28T20:05:02.875Z';
-  let writerClosed = false;
   const activeBytes = new TextEncoder().encode(
     `${JSON.stringify({ timestamp: activeTimestamp, kind: 'request' })}\n`
   );
+  let snapshotCalls = 0;
+  let activeReads = 0;
   const execute = new Function(
-    'communicationLogHistoricalSegmentsFromDirectory',
-    'communicationLogReadSegmentManifest',
     'communicationLogEnqueue',
-    'communicationLogCloseActiveWriter',
-    'communicationLogActiveFileSnapshot',
+    'communicationLogCaptureSnapshotPlan',
+    'communicationLogReadSegmentManifest',
+    'communicationLogSegmentDirectoryHandle',
     'communicationLogFirstTimestampFromJsonl',
     `return (async () => { ${availableRange}; return communicationLogDuplicateAvailableRange(); })();`
   );
   const result = await execute(
-    async () => [],
-    async () => ({ active_last_timestamp: manifestTimestamp }),
     (_stage, task) => ({ operation: Promise.resolve().then(task) }),
-    async () => { writerClosed = true; },
-    async () => ({
-      file: {
-        arrayBuffer: async () => activeBytes.buffer.slice(
-          activeBytes.byteOffset,
-          activeBytes.byteOffset + activeBytes.byteLength
-        )
+    async () => {
+      snapshotCalls += 1;
+      return {
+        segments: [],
+        active_name: 'active-a.jsonl',
+        active_eof: activeBytes.byteLength,
+        active_last_timestamp: manifestTimestamp
+      };
+    },
+    async () => ({ active_last_timestamp: manifestTimestamp }),
+    {
+      getFileHandle: async name => {
+        assert.equal(name, 'active-a.jsonl');
+        activeReads += 1;
+        return {
+          getFile: async () => ({
+            size: activeBytes.byteLength,
+            slice: (start, end) => ({
+              arrayBuffer: async () => activeBytes.buffer.slice(
+                activeBytes.byteOffset + start,
+                activeBytes.byteOffset + end
+              )
+            })
+          })
+        };
       }
-    }),
+    },
     bytes => {
       const text = new TextDecoder().decode(bytes);
       for (const line of text.split('\n')) {
@@ -158,9 +175,52 @@ test('Issue 166 Duplicate range opens before first segment rotation', async () =
       return null;
     }
   );
-  assert.equal(writerClosed, true, 'active bytes must be committed before deriving start');
+  assert.equal(snapshotCalls, 1, 'range preflight must freeze and refresh active state');
+  assert.equal(activeReads, 1, 'pre-rotation start must come from the frozen active prefix');
   assert.deepEqual(result, {
     start_timestamp: activeTimestamp,
+    end_timestamp: manifestTimestamp
+  });
+});
+
+test('Issue 166 Duplicate range keeps historical filename fast path', async () => {
+  const availableRange = functionSource(
+    rangeDialogSource,
+    'communicationLogDuplicateAvailableRange'
+  );
+  const segmentTimestamp = '2026-09-28T19:00:00.000Z';
+  const manifestTimestamp = '2026-09-28T20:05:02.875Z';
+  let activeReads = 0;
+  const execute = new Function(
+    'communicationLogEnqueue',
+    'communicationLogCaptureSnapshotPlan',
+    'communicationLogReadSegmentManifest',
+    'communicationLogSegmentDirectoryHandle',
+    'communicationLogFirstTimestampFromJsonl',
+    `return (async () => { ${availableRange}; return communicationLogDuplicateAvailableRange(); })();`
+  );
+  const result = await execute(
+    (_stage, task) => ({ operation: Promise.resolve().then(task) }),
+    async () => ({
+      segments: [{ start_timestamp: segmentTimestamp }],
+      active_name: 'active-a.jsonl',
+      active_eof: 123,
+      active_last_timestamp: manifestTimestamp
+    }),
+    async () => ({ active_last_timestamp: manifestTimestamp }),
+    {
+      getFileHandle: async () => {
+        activeReads += 1;
+        throw new Error('historical fast path must not read active JSONL for its start');
+      }
+    },
+    () => {
+      throw new Error('historical fast path must not parse active JSONL for its start');
+    }
+  );
+  assert.equal(activeReads, 0);
+  assert.deepEqual(result, {
+    start_timestamp: segmentTimestamp,
     end_timestamp: manifestTimestamp
   });
 });
