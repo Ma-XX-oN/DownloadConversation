@@ -17,8 +17,12 @@ const rangeDialogSource = await readFile(
 
 function functionSource(source, name) {
   const marker = `function ${name}`;
-  const start = source.indexOf(marker);
-  assert.ok(start >= 0, `missing ${name}`);
+  const functionStart = source.indexOf(marker);
+  assert.ok(functionStart >= 0, `missing ${name}`);
+  const asyncStart = source.lastIndexOf('async ', functionStart);
+  const start = asyncStart >= 0 && asyncStart + 'async '.length === functionStart
+    ? asyncStart
+    : functionStart;
   let depth = 0;
   let seenBrace = false;
   for (let index = start; index < source.length; index += 1) {
@@ -100,6 +104,70 @@ test('Issue 166 date/time spinner carries surrounding local fields correctly', (
     leapMonth: [1, 29],
     dayBorrow: [1, 29]
   });
+});
+
+test('Issue 166 date/time step rejects movement beyond available bounds', () => {
+  const clamp = functionSource(dateTimeSource, 'dateTimeControlClampDate');
+  const resolve = functionSource(dateTimeSource, 'dateTimeControlResolveBoundedAttempt');
+  const run = new Function(`
+    ${clamp}
+    ${resolve}
+    const minimum = new Date(2026, 8, 28, 10, 0, 0);
+    const maximum = new Date(2026, 8, 28, 11, 0, 0);
+    const current = new Date(maximum.getTime());
+    const result = dateTimeControlResolveBoundedAttempt(
+      current,
+      new Date(2026, 8, 28, 11, 0, 1),
+      minimum,
+      maximum,
+      false
+    );
+    return {
+      time: result.value.getTime(),
+      boundaryHit: result.boundary_hit
+    };
+  `);
+  const result = run();
+  assert.equal(result.time, new Date(2026, 8, 28, 11, 0, 0).getTime());
+  assert.equal(result.boundaryHit, true);
+});
+
+test('Issue 166 typed date/time beyond bounds clamps to nearest available limit', () => {
+  const clamp = functionSource(dateTimeSource, 'dateTimeControlClampDate');
+  const resolve = functionSource(dateTimeSource, 'dateTimeControlResolveBoundedAttempt');
+  const run = new Function(`
+    ${clamp}
+    ${resolve}
+    const minimum = new Date(2026, 8, 28, 10, 0, 0);
+    const maximum = new Date(2026, 8, 28, 11, 0, 0);
+    const current = new Date(2026, 8, 28, 10, 30, 0);
+    const low = dateTimeControlResolveBoundedAttempt(
+      current,
+      new Date(2026, 8, 28, 9, 0, 0),
+      minimum,
+      maximum,
+      true
+    );
+    const high = dateTimeControlResolveBoundedAttempt(
+      current,
+      new Date(2026, 8, 28, 12, 0, 0),
+      minimum,
+      maximum,
+      true
+    );
+    return {
+      lowTime: low.value.getTime(),
+      lowHit: low.boundary_hit,
+      highTime: high.value.getTime(),
+      highHit: high.boundary_hit
+    };
+  `);
+  const result = run();
+  assert.equal(result.lowTime, new Date(2026, 8, 28, 10, 0, 0).getTime());
+  assert.equal(result.lowHit, true);
+  assert.equal(result.highTime, new Date(2026, 8, 28, 11, 0, 0).getTime());
+  assert.equal(result.highHit, true);
+  assert.match(dateTimeSource, /if \(resolved\.boundary_hit\) playAgentSound\('error'\);/);
 });
 
 test('Issue 166 Duplicate range dialog defaults to snapshot start and manifest end', () => {
