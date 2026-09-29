@@ -96,27 +96,30 @@
   }
 
   /**
-   * Returns the exact content time range represented by a conversation spine.
+   * Returns the exact content time range represented by exported JSONL records.
    *
-   * @param {Object} spine - Canonical Conversation API spine.
+   * Metadata and absent/null/zero record times are not content timestamps.
+   *
+   * @param {string} jsonl - Exact JSONL database text being exported.
    * @returns {Object|null} ISO start/end timestamps, or null when unavailable.
    */
-  function conversationSpineTimestampRange(spine) {
+  function conversationJsonlTimestampRange(jsonl) {
     let startMs = null;
     let endMs = null;
-    for (const record of spine?.records ?? []) {
-      const message = record?.message ?? record;
-      const createSeconds = Number(message?.create_time);
-      const updateSeconds = Number(message?.update_time);
-      if (Number.isFinite(createSeconds)) {
-        const createMs = createSeconds * 1000;
-        startMs = startMs === null ? createMs : Math.min(startMs, createMs);
-        endMs = endMs === null ? createMs : Math.max(endMs, createMs);
+    for (const line of String(jsonl).split('\n')) {
+      if (!line) continue;
+      let record;
+      try {
+        record = JSON.parse(line);
+      } catch {
+        continue;
       }
-      if (Number.isFinite(updateSeconds)) {
-        const updateMs = updateSeconds * 1000;
-        startMs = startMs === null ? updateMs : Math.min(startMs, updateMs);
-        endMs = endMs === null ? updateMs : Math.max(endMs, updateMs);
+      for (const field of ['create_time', 'update_time']) {
+        const value = record?.[field];
+        if (typeof value !== 'number' || !Number.isFinite(value) || value <= 0) continue;
+        const timestampMs = value * 1000;
+        startMs = startMs === null ? timestampMs : Math.min(startMs, timestampMs);
+        endMs = endMs === null ? timestampMs : Math.max(endMs, timestampMs);
       }
     }
     return startMs === null || endMs === null
