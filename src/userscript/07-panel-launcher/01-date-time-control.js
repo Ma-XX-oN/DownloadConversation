@@ -18,6 +18,48 @@
   }
 
   /**
+   * Resolves one attempted date/time change against optional inclusive bounds.
+   *
+   * Stepping past a boundary is rejected so the value does not move in the
+   * attempted direction. Typed values are instead clamped to the nearest
+   * available boundary. Both cases report the boundary hit to the caller.
+   *
+   * @param {Date} current - Current accepted local date/time.
+   * @param {Date} candidate - Attempted local date/time.
+   * @param {Date|null} minimum - Optional inclusive minimum.
+   * @param {Date|null} maximum - Optional inclusive maximum.
+   * @param {boolean} clampOnBoundary - True for typed input; false for stepping.
+   * @returns {Object} Resolved date and whether an available-range boundary was hit.
+   */
+  function dateTimeControlResolveBoundedAttempt(
+    current,
+    candidate,
+    minimum = null,
+    maximum = null,
+    clampOnBoundary = false
+  ) {
+    const candidateTime = candidate.getTime();
+    if (!Number.isFinite(candidateTime)) {
+      throw new Error('Invalid date/time control value.');
+    }
+    const belowMinimum = minimum && candidateTime < minimum.getTime();
+    const aboveMaximum = maximum && candidateTime > maximum.getTime();
+    const boundaryHit = Boolean(belowMinimum || aboveMaximum);
+    if (!boundaryHit) {
+      return {
+        value: dateTimeControlClampDate(candidate, minimum, maximum),
+        boundary_hit: false
+      };
+    }
+    return {
+      value: clampOnBoundary
+        ? dateTimeControlClampDate(candidate, minimum, maximum)
+        : new Date(current.getTime()),
+      boundary_hit: true
+    };
+  }
+
+  /**
    * Returns the number of days in one local calendar month.
    *
    * @param {number} year - Full local year.
@@ -107,6 +149,9 @@
    * The control exposes year/month/day hour:minute:second text fields with
    * increment/decrement buttons above and below every field. Stepping uses local
    * Date arithmetic so carries/borrows update surrounding fields correctly.
+   * Attempts to step beyond the available range are rejected with the shared
+   * error sound. Typed values beyond the range produce the same sound and clamp
+   * to the nearest available boundary.
    *
    * @param {Object} options - Control configuration.
    * @param {string} options.label - Accessible control label.
@@ -178,6 +223,26 @@
     };
 
     /**
+     * Applies one bounded user attempt and emits the shared error cue on a hit.
+     *
+     * @param {Date} candidate - Attempted local date/time.
+     * @param {boolean} clampOnBoundary - True for typed input; false for stepping.
+     * @returns {void} No value is returned.
+     */
+    const applyAttempt = (candidate, clampOnBoundary) => {
+      const resolved = dateTimeControlResolveBoundedAttempt(
+        current,
+        candidate,
+        minDate,
+        maxDate,
+        clampOnBoundary
+      );
+      current = resolved.value;
+      if (resolved.boundary_hit) playAgentSound('error');
+      notify();
+    };
+
+    /**
      * Commits manually entered local field text as one bounded Date.
      *
      * @returns {void} No value is returned.
@@ -207,8 +272,7 @@
         Math.min(59, Math.max(0, second)),
         0
       );
-      current = dateTimeControlClampDate(candidate, minDate, maxDate);
-      notify();
+      applyAttempt(candidate, true);
     };
 
     root.addEventListener('click', event => {
@@ -218,12 +282,7 @@
       if (!(button instanceof HTMLButtonElement) || !root.contains(button)) return;
       const field = button.getAttribute('data-date-time-target');
       const delta = button.getAttribute('data-date-time-step') === 'up' ? 1 : -1;
-      current = dateTimeControlClampDate(
-        dateTimeControlAdjustDate(current, field, delta),
-        minDate,
-        maxDate
-      );
-      notify();
+      applyAttempt(dateTimeControlAdjustDate(current, field, delta), false);
     });
 
     root.addEventListener('change', event => {
@@ -244,12 +303,7 @@
       event.preventDefault();
       const field = event.target.getAttribute('data-date-time-field');
       const delta = event.key === 'ArrowUp' ? 1 : -1;
-      current = dateTimeControlClampDate(
-        dateTimeControlAdjustDate(current, field, delta),
-        minDate,
-        maxDate
-      );
-      notify();
+      applyAttempt(dateTimeControlAdjustDate(current, field, delta), false);
     });
 
     render();
