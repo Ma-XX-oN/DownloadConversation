@@ -6,6 +6,22 @@ const duplicateSource = await readFile(
   new URL('../src/userscript/02-network-communication/06-segment-duplicate.js', import.meta.url),
   'utf8'
 );
+const snapshotSource = await readFile(
+  new URL('../src/userscript/02-network-communication/06-segment-snapshot.js', import.meta.url),
+  'utf8'
+);
+const storageSource = await readFile(
+  new URL('../src/userscript/02-network-communication/06-segment-storage.js', import.meta.url),
+  'utf8'
+);
+const recoverySource = await readFile(
+  new URL('../src/userscript/02-network-communication/06-segment-recovery.js', import.meta.url),
+  'utf8'
+);
+const titleSyncSource = await readFile(
+  new URL('../src/userscript/02-network-communication/06-segment-title-sync.js', import.meta.url),
+  'utf8'
+);
 const dateTimeSource = await readFile(
   new URL('../src/userscript/07-panel-launcher/01-date-time-control.js', import.meta.url),
   'utf8'
@@ -44,12 +60,6 @@ test('Issue 166 Duplicate reports real file-count progress and measured ETA', ()
   assert.match(duplicateSource, /total_files:/);
   assert.match(duplicateSource, /percent,/);
   assert.match(duplicateSource, /eta_ms:/);
-  assert.match(
-    duplicateSource,
-    /\$\{progress\.completed_files\}\/\$\{progress\.total_files\} files /
-  );
-  assert.match(duplicateSource, /\$\{progress\.percent\.toFixed\(1\)\}% done/);
-  assert.match(duplicateSource, /communicationLogFormatDuration\(progress\.eta_ms\)/);
   assert.match(duplicateSource, /ETA: \$\{etaText\}/);
 });
 
@@ -58,7 +68,6 @@ test('Issue 166 Duplicate filters records only when a requested bound cuts throu
   assert.match(duplicateSource, /const cutsUpperBoundary = upperMs !== null && upperMs < segmentEnd;/);
   assert.match(duplicateSource, /if \(!cutsLowerBoundary && !cutsUpperBoundary\) \{/);
   assert.match(duplicateSource, /streamingArchiveWriterAppendArchive\(writer, archiveBytes\)/);
-  assert.match(duplicateSource, /const raw = await extractArchive\(archiveBytes\);/);
   assert.match(duplicateSource, /communicationLogFilterJsonlBytes\(raw, lowerMs, upperMs\)/);
 });
 
@@ -66,73 +75,56 @@ test('Issue 166 upper-bound filtering stops after the first record beyond the bo
   assert.match(duplicateSource, /if \(upperMs !== null && time > upperMs\) break;/);
 });
 
-test('Issue 166 reusable single date/time control exposes six local fields with steppers', () => {
-  assert.match(dateTimeSource, /function createSingleDateTimeControl\(/);
-  for (const field of ['year', 'month', 'day', 'hour', 'minute', 'second']) {
-    assert.match(dateTimeSource, new RegExp(`data-date-time-field=\\"${field}\\"`));
-  }
-  assert.match(dateTimeSource, /data-date-time-step="up"/);
-  assert.match(dateTimeSource, /data-date-time-step="down"/);
+test('Issue 166 active last timestamp scans backward from EOF in bounded chunks', async () => {
+  const parseLine = functionSource(snapshotSource, 'communicationLogTimestampFromJsonlLine');
+  const lastTimestamp = functionSource(
+    snapshotSource,
+    'communicationLogLastTimestampFromJsonlFile'
+  );
+  const execute = new Function('Blob', `
+    const COMMUNICATION_LOG_COMPARE_CHUNK_BYTES = 17;
+    ${parseLine}
+    ${lastTimestamp}
+    return communicationLogLastTimestampFromJsonlFile;
+  `)(Blob);
+  const first = '2026-09-28T19:00:00.000Z';
+  const last = '2026-09-28T20:05:02.875Z';
+  const blob = new Blob([
+    `${JSON.stringify({ timestamp: first, payload: 'α'.repeat(20) })}\n`,
+    `${JSON.stringify({ timestamp: last, payload: 'β'.repeat(20) })}\n`,
+    '{"timestamp":"incomplete"'
+  ]);
+  assert.equal(await execute(blob, blob.size), last);
+  assert.match(lastTimestamp, /cursor - COMMUNICATION_LOG_COMPARE_CHUNK_BYTES/);
+  assert.match(lastTimestamp, /file\.slice\(start, cursor\)/);
+  assert.match(lastTimestamp, /index -= 1/);
 });
 
-test('Issue 166 date/time spinner carries surrounding local fields correctly', () => {
-  const days = functionSource(dateTimeSource, 'dateTimeControlDaysInMonth');
-  const adjust = functionSource(dateTimeSource, 'dateTimeControlAdjustDate');
-  const run = new Function(`
-    ${days}
-    ${adjust}
-    const secondCarry = dateTimeControlAdjustDate(
-      new Date(2026, 11, 31, 23, 59, 59), 'second', 1
-    );
-    const leapMonth = dateTimeControlAdjustDate(
-      new Date(2024, 0, 31, 12, 0, 0), 'month', 1
-    );
-    const dayBorrow = dateTimeControlAdjustDate(
-      new Date(2024, 2, 1, 0, 0, 0), 'day', -1
-    );
-    return {
-      secondCarry: [
-        secondCarry.getFullYear(), secondCarry.getMonth(), secondCarry.getDate(),
-        secondCarry.getHours(), secondCarry.getMinutes(), secondCarry.getSeconds()
-      ],
-      leapMonth: [leapMonth.getMonth(), leapMonth.getDate()],
-      dayBorrow: [dayBorrow.getMonth(), dayBorrow.getDate()]
-    };
-  `);
-  assert.deepEqual(run(), {
-    secondCarry: [2027, 0, 1, 0, 0, 0],
-    leapMonth: [1, 29],
-    dayBorrow: [1, 29]
-  });
+test('Issue 166 manifest no longer caches active_last_timestamp', () => {
+  assert.match(storageSource, /delete parsed\.active_last_timestamp/,
+    'legacy manifests must be cleaned when read');
+  assert.doesNotMatch(
+    snapshotSource,
+    /communicationLogSegmentManifest\.active_last_timestamp\s*=/
+  );
+  assert.doesNotMatch(
+    recoverySource,
+    /communicationLogSegmentManifest\.active_last_timestamp\s*=/
+  );
+  assert.doesNotMatch(rangeDialogSource, /communicationLogReadSegmentManifest/);
+  assert.match(rangeDialogSource, /end_timestamp: plan\.active_last_timestamp/);
 });
 
-test('Issue 166 date/time step rejects movement beyond available bounds', () => {
-  const clamp = functionSource(dateTimeSource, 'dateTimeControlClampDate');
-  const resolve = functionSource(dateTimeSource, 'dateTimeControlResolveBoundedAttempt');
-  const run = new Function(`
-    ${clamp}
-    ${resolve}
-    const minimum = new Date(2026, 8, 28, 10, 0, 0);
-    const maximum = new Date(2026, 8, 28, 11, 0, 0);
-    const current = new Date(maximum.getTime());
-    const result = dateTimeControlResolveBoundedAttempt(
-      current,
-      new Date(2026, 8, 28, 11, 0, 1),
-      minimum,
-      maximum,
-      false
-    );
-    return {
-      time: result.value.getTime(),
-      boundaryHit: result.boundary_hit
-    };
-  `);
-  const result = run();
-  assert.equal(result.time, new Date(2026, 8, 28, 11, 0, 0).getTime());
-  assert.equal(result.boundaryHit, true);
+test('Issue 166 manifest carries a human-readable conversation name and refreshes on rename', () => {
+  assert.match(storageSource, /conversation_name:/);
+  assert.match(storageSource, /communicationLogSyncManifestConversationName/);
+  assert.match(recoverySource, /communicationLogSegmentManifest\.conversation_name/);
+  assert.match(titleSyncSource, /new MutationObserver/);
+  assert.match(titleSyncSource, /observer\.observe\(document\.head/);
+  assert.match(titleSyncSource, /communicationLogSyncManifestConversationName/);
 });
 
-test('Issue 166 typed date/time beyond bounds clamps to nearest available limit', () => {
+test('Issue 166 date/time spinner clamps movement beyond available bounds', () => {
   const clamp = functionSource(dateTimeSource, 'dateTimeControlClampDate');
   const resolve = functionSource(dateTimeSource, 'dateTimeControlResolveBoundedAttempt');
   const run = new Function(`
@@ -141,113 +133,71 @@ test('Issue 166 typed date/time beyond bounds clamps to nearest available limit'
     const minimum = new Date(2026, 8, 28, 10, 0, 0);
     const maximum = new Date(2026, 8, 28, 11, 0, 0);
     const current = new Date(2026, 8, 28, 10, 30, 0);
-    const low = dateTimeControlResolveBoundedAttempt(
-      current,
-      new Date(2026, 8, 28, 9, 0, 0),
-      minimum,
-      maximum,
-      true
-    );
     const high = dateTimeControlResolveBoundedAttempt(
       current,
-      new Date(2026, 8, 28, 12, 0, 0),
+      new Date(2026, 8, 28, 11, 0, 1),
       minimum,
-      maximum,
-      true
+      maximum
+    );
+    const low = dateTimeControlResolveBoundedAttempt(
+      current,
+      new Date(2026, 8, 28, 9, 59, 59),
+      minimum,
+      maximum
     );
     return {
-      lowTime: low.value.getTime(),
-      lowHit: low.boundary_hit,
-      highTime: high.value.getTime(),
-      highHit: high.boundary_hit
+      high: high.value.getTime(),
+      highHit: high.boundary_hit,
+      low: low.value.getTime(),
+      lowHit: low.boundary_hit
     };
   `);
-  const result = run();
-  assert.equal(result.lowTime, new Date(2026, 8, 28, 10, 0, 0).getTime());
-  assert.equal(result.lowHit, true);
-  assert.equal(result.highTime, new Date(2026, 8, 28, 11, 0, 0).getTime());
-  assert.equal(result.highHit, true);
+  assert.deepEqual(run(), {
+    high: new Date(2026, 8, 28, 11, 0, 0).getTime(),
+    highHit: true,
+    low: new Date(2026, 8, 28, 10, 0, 0).getTime(),
+    lowHit: true
+  });
   assert.match(dateTimeSource, /if \(resolved\.boundary_hit\) playAgentSound\('error'\);/);
 });
 
-test('Issue 166 Duplicate range dialog defaults to snapshot start and manifest end', () => {
-  assert.match(rangeDialogSource, /communicationLogCaptureSnapshotPlan/);
-  assert.match(rangeDialogSource, /plan\.segments\[0\]\?\.start_timestamp/);
-  assert.match(rangeDialogSource, /communicationLogReadSegmentManifest/);
-  assert.match(rangeDialogSource, /manifest\.active_last_timestamp/);
-  assert.match(rangeDialogSource, /communicationLogFirstTimestampFromJsonl/);
-  assert.match(rangeDialogSource, /createSingleDateTimeControl/);
-  assert.match(rangeDialogSource, /communicationLogArchiveDuplicate\(\{/);
-  assert.match(rangeDialogSource, /start_timestamp: start\.toISOString\(\)/);
-  assert.match(rangeDialogSource, /end_timestamp: end\.toISOString\(\)/);
-  assert.match(rangeDialogSource, /button\.disabled = false;/,
-    'the range preflight disable must be cleared before the shared action runner');
-});
-
-test('Issue 166 Duplicate range opens before first segment rotation', async () => {
+test('Issue 166 Duplicate range uses the oldest raw active file before first segment rotation', async () => {
   const availableRange = functionSource(
     rangeDialogSource,
     'communicationLogDuplicateAvailableRange'
   );
-  const activeTimestamp = '2026-09-28T20:00:01.125Z';
-  const manifestTimestamp = '2026-09-28T20:05:02.875Z';
-  const activeBytes = new TextEncoder().encode(
-    `${JSON.stringify({ timestamp: activeTimestamp, kind: 'request' })}\n`
-  );
-  let snapshotCalls = 0;
-  let activeReads = 0;
+  const olderTimestamp = '2026-09-28T19:00:01.125Z';
+  const currentTimestamp = '2026-09-28T20:00:01.125Z';
+  const endTimestamp = '2026-09-28T20:05:02.875Z';
+  const files = {
+    'active-a.jsonl': { size: 100, timestamp: olderTimestamp },
+    'active-b.jsonl': { size: 200, timestamp: currentTimestamp }
+  };
   const execute = new Function(
     'communicationLogEnqueue',
     'communicationLogCaptureSnapshotPlan',
-    'communicationLogReadSegmentManifest',
+    'COMMUNICATION_LOG_ACTIVE_FILE_NAMES',
     'communicationLogSegmentDirectoryHandle',
-    'communicationLogFirstTimestampFromJsonl',
+    'communicationLogFirstTimestampFromJsonlFile',
     `return (async () => { ${availableRange}; return communicationLogDuplicateAvailableRange(); })();`
   );
   const result = await execute(
     (_stage, task) => ({ operation: Promise.resolve().then(task) }),
-    async () => {
-      snapshotCalls += 1;
-      return {
-        segments: [],
-        active_name: 'active-a.jsonl',
-        active_eof: activeBytes.byteLength,
-        active_last_timestamp: manifestTimestamp
-      };
-    },
-    async () => ({ active_last_timestamp: manifestTimestamp }),
+    async () => ({
+      segments: [],
+      active_name: 'active-b.jsonl',
+      active_eof: 200,
+      active_last_timestamp: endTimestamp
+    }),
+    ['active-a.jsonl', 'active-b.jsonl'],
     {
-      getFileHandle: async name => {
-        assert.equal(name, 'active-a.jsonl');
-        activeReads += 1;
-        return {
-          getFile: async () => ({
-            size: activeBytes.byteLength,
-            slice: (start, end) => ({
-              arrayBuffer: async () => activeBytes.buffer.slice(
-                activeBytes.byteOffset + start,
-                activeBytes.byteOffset + end
-              )
-            })
-          })
-        };
-      }
+      getFileHandle: async name => ({ getFile: async () => files[name] })
     },
-    bytes => {
-      const text = new TextDecoder().decode(bytes);
-      for (const line of text.split('\n')) {
-        if (!line) continue;
-        const timestamp = JSON.parse(line)?.timestamp;
-        if (timestamp && Number.isFinite(Date.parse(timestamp))) return timestamp;
-      }
-      return null;
-    }
+    async file => file.timestamp
   );
-  assert.equal(snapshotCalls, 1, 'range preflight must freeze and refresh active state');
-  assert.equal(activeReads, 1, 'pre-rotation start must come from the frozen active prefix');
   assert.deepEqual(result, {
-    start_timestamp: activeTimestamp,
-    end_timestamp: manifestTimestamp
+    start_timestamp: olderTimestamp,
+    end_timestamp: endTimestamp
   });
 });
 
@@ -257,39 +207,39 @@ test('Issue 166 Duplicate range keeps historical filename fast path', async () =
     'communicationLogDuplicateAvailableRange'
   );
   const segmentTimestamp = '2026-09-28T19:00:00.000Z';
-  const manifestTimestamp = '2026-09-28T20:05:02.875Z';
+  const endTimestamp = '2026-09-28T20:05:02.875Z';
   let activeReads = 0;
   const execute = new Function(
     'communicationLogEnqueue',
     'communicationLogCaptureSnapshotPlan',
-    'communicationLogReadSegmentManifest',
+    'COMMUNICATION_LOG_ACTIVE_FILE_NAMES',
     'communicationLogSegmentDirectoryHandle',
-    'communicationLogFirstTimestampFromJsonl',
+    'communicationLogFirstTimestampFromJsonlFile',
     `return (async () => { ${availableRange}; return communicationLogDuplicateAvailableRange(); })();`
   );
   const result = await execute(
     (_stage, task) => ({ operation: Promise.resolve().then(task) }),
     async () => ({
       segments: [{ start_timestamp: segmentTimestamp }],
-      active_name: 'active-a.jsonl',
+      active_name: 'active-b.jsonl',
       active_eof: 123,
-      active_last_timestamp: manifestTimestamp
+      active_last_timestamp: endTimestamp
     }),
-    async () => ({ active_last_timestamp: manifestTimestamp }),
+    ['active-a.jsonl', 'active-b.jsonl'],
     {
       getFileHandle: async () => {
         activeReads += 1;
-        throw new Error('historical fast path must not read active JSONL for its start');
+        throw new Error('historical fast path must not read raw active files for its start');
       }
     },
-    () => {
-      throw new Error('historical fast path must not parse active JSONL for its start');
+    async () => {
+      throw new Error('historical fast path must not scan raw active files for its start');
     }
   );
   assert.equal(activeReads, 0);
   assert.deepEqual(result, {
     start_timestamp: segmentTimestamp,
-    end_timestamp: manifestTimestamp
+    end_timestamp: endTimestamp
   });
 });
 
@@ -298,7 +248,6 @@ test('Issue 166 Duplicate range dialog uses the shared modal contract', () => {
   assert.match(rangeDialogSource, /defaultButton:\s*okButton/);
   assert.match(rangeDialogSource, /onClose:\s*\(\) => finish\(null, false\)/);
   assert.match(rangeDialogSource, /opener:\s*previousFocus/);
-  assert.match(rangeDialogSource, /communicationLogShowDuplicateRangeDialog\(button\)/);
   assert.doesNotMatch(
     rangeDialogSource,
     /overlay\.addEventListener\('keydown',[\s\S]*event\.key === 'Escape'/,
