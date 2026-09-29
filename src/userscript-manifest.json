@@ -51,7 +51,8 @@
         "src/userscript/03-agent-lifecycle/06-generation-stream-detection.js",
         "src/userscript/03-agent-lifecycle/07-generation-stream-sse.js",
         "src/userscript/03-agent-lifecycle/08-generation-request.js",
-        "src/userscript/03-agent-lifecycle/09-network-install-api-transition.js"
+        "src/userscript/03-agent-lifecycle/09-network-install-api-transition.js",
+        "src/userscript/03-agent-lifecycle/10-conversation-api-rate-limit.js"
       ]
     },
     {
