@@ -18,10 +18,6 @@ const recoverySource = await readFile(
   new URL('../src/userscript/02-network-communication/06-segment-recovery.js', import.meta.url),
   'utf8'
 );
-const titleSyncSource = await readFile(
-  new URL('../src/userscript/02-network-communication/06-segment-title-sync.js', import.meta.url),
-  'utf8'
-);
 const dateTimeSource = await readFile(
   new URL('../src/userscript/07-panel-launcher/01-date-time-control.js', import.meta.url),
   'utf8'
@@ -115,13 +111,11 @@ test('Issue 166 manifest no longer caches active_last_timestamp', () => {
   assert.match(rangeDialogSource, /end_timestamp: plan\.active_last_timestamp/);
 });
 
-test('Issue 166 manifest carries a human-readable conversation name and refreshes on rename', () => {
+test('Issue 166 manifest carries a human-readable conversation name and refreshes at durable boundaries', () => {
   assert.match(manifestSource, /conversation_name:/);
-  assert.match(manifestSource, /communicationLogSyncManifestConversationName/);
   assert.match(manifestSource, /communicationLogConversationName\(\)/);
-  assert.match(titleSyncSource, /new MutationObserver/);
-  assert.match(titleSyncSource, /observer\.observe\(document\.head/);
-  assert.match(titleSyncSource, /communicationLogSyncManifestConversationName/);
+  assert.match(manifestSource, /communicationLogSyncManifestConversationName/);
+  assert.match(snapshotSource, /communicationLogSyncManifestConversationName\(\)/);
 });
 
 test('Issue 166 date/time spinner clamps movement beyond available bounds', () => {
