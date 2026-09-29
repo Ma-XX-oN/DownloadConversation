@@ -678,3 +678,9 @@ written and verified there; otherwise the same verified archive uses the normal
 browser download flow. It is never placed in the internal segment subdirectory.
 Its member bytes are exactly the same canonical diagnostic serialization used by
 Copy.
+
+## Extract output projection
+
+The Extract operation acquires one authoritative Conversation API snapshot and renders each selected format from that same snapshot.  Output storage mode is a final projection only: raw mode downloads the exact UTF-8 JSONL or Markdown bytes, while compressed mode passes those same bytes through the shared codec-neutral `createArchive()` boundary and downloads the resulting XZ stream with an added `.xz` suffix.  Compression must not refetch, rerender, or otherwise create a second conversation snapshot.
+
+The recorder panel exposes this choice immediately after the JSONL/MD selectors.  The large-circle arrow icon means raw output and is the compatibility-preserving default; the small-circle arrow icon means compressed output.  The control's switch state, accessible label, and tooltip are projected from the same in-memory mode value so the visual and behavioural state cannot diverge.

@@ -162,7 +162,9 @@
       #${PANEL_ID} .tm-switch{margin-left:auto;width:42px;height:24px;padding:2px;border-radius:999px;position:relative}
       #${PANEL_ID} .tm-switch-thumb{display:block;width:18px;height:18px;border-radius:50%;background:#aaa;transform:translateX(0);transition:transform .16s ease,background .16s ease}
       #${PANEL_ID} .tm-switch[aria-checked="true"] .tm-switch-thumb{transform:translateX(16px);background:#fff}
-      #${PANEL_ID} .tm-extract-formats{display:grid;grid-template-columns:auto auto auto;gap:6px 12px;align-items:center}
+      #${PANEL_ID} .tm-extract-formats{display:grid;grid-template-columns:auto auto auto auto;gap:6px 12px;align-items:center}
+      #${PANEL_ID} .tm-export-compression{width:34px;height:28px;padding:3px 4px;display:flex;align-items:center;justify-content:center}
+      #${PANEL_ID} .tm-export-compression svg{display:block;width:28px;height:20px}
       #${PANEL_ID} .tm-extract-formats label{display:flex;gap:5px;align-items:center}
     `;
     (document.head || document.documentElement).append(style);
@@ -181,6 +183,7 @@
     const extract = panel.querySelector('[data-role="extract"]');
     const jsonl = panel.querySelector('[data-role="format-jsonl"]');
     const md = panel.querySelector('[data-role="format-md"]');
+    const exportCompression = panel.querySelector('[data-role="export-compression"]');
     const timestamps = panel.querySelector('[data-role="show-timestamps"]');
     const recordNumbers = panel.querySelector('[data-role="show-record-numbers"]');
     const turnIds = panel.querySelector('[data-role="show-turn-ids"]');
@@ -194,6 +197,15 @@
     }
     if (jsonl) jsonl.disabled = exportInProgress || testInProgress || jumpInProgress;
     if (md) md.disabled = exportInProgress || testInProgress || jumpInProgress;
+    if (exportCompression) {
+      const compressed = exportCompressionEnabled;
+      const description = compressed ? 'Compress JSONL/MD files' : 'Raw JSONL/MD files';
+      exportCompression.disabled = exportInProgress || testInProgress || jumpInProgress;
+      exportCompression.setAttribute('aria-checked', String(compressed));
+      exportCompression.setAttribute('aria-label', compressed ? 'Compressed export output' : 'Raw export output');
+      exportCompression.title = description;
+      exportCompression.innerHTML = exportCompressionIconMarkup(compressed);
+    }
     const metadataDisabled = exportInProgress || testInProgress || jumpInProgress || !md?.checked;
     if (timestamps) timestamps.disabled = metadataDisabled;
     if (recordNumbers) recordNumbers.disabled = metadataDisabled;

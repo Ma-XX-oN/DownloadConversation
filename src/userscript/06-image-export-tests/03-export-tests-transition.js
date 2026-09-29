@@ -8,11 +8,18 @@
           phase: 'download-trigger',
           blob_size: markdownBlob.size
         });
-        downloadBlob(markdownBlob, filename);
+        /** Final Markdown blob after applying the selected raw/compressed projection. */
+        let outputBlob = markdownBlob;
+        if (compressedOutput) {
+          const markdownBytes = new TextEncoder().encode(markdown);
+          const archiveBytes = await createArchive(markdownBytes);
+          outputBlob = new Blob([archiveBytes], { type: 'application/x-xz' });
+        }
+        downloadBlob(outputBlob, filename);
         logDiagnostic('debug', 'conversation-export-phase-complete', {
           phase: 'download-trigger',
           elapsed_ms: Math.round(performance.now() - downloadStartedAt),
-          blob_size: markdownBlob.size
+          blob_size: outputBlob.size
         });
         setStatus(`Extracted ${spine.records.length} API records from ${fetched.pages.length} API page(s) to ${filename}.`);
       }

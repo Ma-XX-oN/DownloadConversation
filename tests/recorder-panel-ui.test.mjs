@@ -35,6 +35,8 @@ test('recorder panel restores dialog/log/switch/extract UI contracts', () => {
   assert.match(userscript, /data-role="format-jsonl" type="checkbox"> JSONL/);
   assert.doesNotMatch(userscript, /data-role="format-jsonl" type="checkbox" checked/);
   assert.match(userscript, /data-role="format-md" type="checkbox" checked> MD/);
+  assert.match(userscript, /data-role="export-compression"[^>]*role="switch"/);
+  assert.match(userscript, /exportCompressionIconMarkup/);
   assert.match(userscript, /data-role="show-timestamps" type="checkbox"> Timestamp/);
   assert.match(userscript, /data-role="show-record-numbers" type="checkbox"> Record #/);
   assert.match(userscript, /data-role="show-turn-ids" type="checkbox"> Turn ID/);
@@ -54,7 +56,7 @@ test('recorder panel restores dialog/log/switch/extract UI contracts', () => {
   assert.doesNotMatch(userscript, /data-role="extract-md"/);
   assert.match(userscript, /if \(jsonl\?\.checked\) kinds\.push\('jsonl'\)/);
   assert.match(userscript, /if \(md\?\.checked\) kinds\.push\('md'\)/);
-  assert.match(userscript, /if \(kinds\.length\) await runExport\(kinds\)/);
+  assert.match(userscript, /if \(kinds\.length\) await runExport\(kinds, \{ compressed: exportCompressionEnabled \}\)/);
   assert.match(userscript, /const totalImages = records\.reduce\(\(total, item\) => total \+ userImagePointerCount\(item\?\.message\), 0\);/,
     'Image recovery must calculate the total image count before recovery begins.');
   assert.match(userscript, /recovering image \${imageNumber}\/\${imageCount}/,

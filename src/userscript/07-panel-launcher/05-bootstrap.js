@@ -40,7 +40,7 @@
       const kinds = [];
       if (jsonl?.checked) kinds.push('jsonl');
       if (md?.checked) kinds.push('md');
-      if (kinds.length) await runExport(kinds);
+      if (kinds.length) await runExport(kinds, { compressed: exportCompressionEnabled });
     };
     panel.querySelector('[data-role="extract"]').addEventListener('click', () => void runSelectedExports());
     panel.querySelector('[data-role="format-jsonl"]').addEventListener('change', updateUi);

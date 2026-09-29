@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         ChatGPT Conversation Markdown Recorder
 // @namespace    https://chatgpt.com/
-// @version      1.7.2-issue.172.4
+// @version      1.7.2-issue.173.5
 // @description  Exports the current ChatGPT conversation directly from the Conversation API as Markdown or JSONL.
 // @match        https://chatgpt.com/*
 // @match        https://chat.openai.com/*
@@ -6058,6 +6058,8 @@ globalThis.__dcArchiveCodec = {
   const MAX_PAGES = 10000;
   /** Local-storage key for the keep-screen-on capture preference. */
   const SCREEN_ON_STORAGE_KEY = 'tm-conversation-recorder-screen-on-when-capturing';
+  /** Whether selected JSONL/Markdown exports are compressed as XZ archives. */
+  let exportCompressionEnabled = false;
   /** Local-storage key for Markdown heading timestamp visibility. */
   const SHOW_TIMESTAMPS_STORAGE_KEY = 'tm-conversation-recorder-show-timestamps';
   /** Local-storage key for Markdown JSONL record-number visibility. */
@@ -16351,11 +16353,14 @@ Image elapsed: ${formatDuration(imageElapsed)} — Completed: ${imageCompleted}/
    * Acquires one Conversation API snapshot and generates every selected export from that same spine.
    *
    * @param {Array<'jsonl'|'md'>} kinds - Selected output formats; JSONL is generated before Markdown when both are selected.
+   * @param {Object} options - Output projection options; compressed true emits XZ-wrapped format bytes.
    * @returns {Promise<void>} Resolves after selected exports finish or their failure is reported and export state is released.
    */
-  async function runExport(kinds) {
+  async function runExport(kinds, options = {}) {
     if (exportInProgress || testInProgress || jumpInProgress) return;
     assert(Array.isArray(kinds) && kinds.length > 0, 'At least one export format must be selected.');
+    /** Whether final JSONL/Markdown bytes are wrapped in the shared XZ archive codec. */
+    const compressedOutput = options.compressed === true;
     /** Deduplicated output formats executed from one authoritative Conversation API snapshot. */
     const requestedKinds = [...new Set(kinds)];
     assert(requestedKinds.every(kind => kind === 'jsonl' || kind === 'md'), 'Unsupported export format selected.');
@@ -16427,11 +16432,20 @@ Image elapsed: ${formatDuration(imageElapsed)} — Completed: ${imageCompleted}/
           'conversation-tail-api-jsonl-consistency', jsonlTailComparison);
         const jsonlWarning = jsonlTailWarningText(jsonlTailComparison);
         if (jsonlWarning) tailConsistencyWarnings.push(jsonlWarning);
-        downloadBlob(
-          new Blob([jsonl], { type: 'application/x-ndjson;charset=utf-8' }),
-          filename
-        );
-        setStatus(`Extracted ${spine.records.length} API records from ${fetched.pages.length} API page(s) to ${filename}.`);
+        /** Exact UTF-8 JSONL bytes projected either raw or through the shared archive codec. */
+        const jsonlBytes = new TextEncoder().encode(jsonl);
+        /** Final JSONL filename, including the XZ suffix only in compressed mode. */
+        const outputFilename = compressedOutput ? `${filename}.xz` : filename;
+        if (compressedOutput) {
+          const archiveBytes = await createArchive(jsonlBytes);
+          downloadBlob(new Blob([archiveBytes], { type: 'application/x-xz' }), outputFilename);
+        } else {
+          downloadBlob(
+            new Blob([jsonlBytes], { type: 'application/x-ndjson;charset=utf-8' }),
+            outputFilename
+          );
+        }
+        setStatus(`Extracted ${spine.records.length} API records from ${fetched.pages.length} API page(s) to ${outputFilename}.`);
       }
       if (requestedKinds.includes('md')) {
         activeKind = 'md';
@@ -16460,7 +16474,10 @@ Image elapsed: ${formatDuration(imageElapsed)} — Completed: ${imageCompleted}/
           progressState.record_count = progress.record_count;
           refreshStatus();
         }, recoveredImageMap);
-        const filename = `${conversationFileBaseName()}.md`;
+        /** Raw Markdown filename before optional archive wrapping. */
+        const rawFilename = `${conversationFileBaseName()}.md`;
+        /** Final Markdown filename, including the XZ suffix only in compressed mode. */
+        const filename = compressedOutput ? `${rawFilename}.xz` : rawFilename;
         logDiagnostic('debug', 'conversation-export-phase-complete', {
           phase: 'markdown-render',
           elapsed_ms: Math.round(performance.now() - renderStartedAt),
@@ -16503,11 +16520,18 @@ Image elapsed: ${formatDuration(imageElapsed)} — Completed: ${imageCompleted}/
           phase: 'download-trigger',
           blob_size: markdownBlob.size
         });
-        downloadBlob(markdownBlob, filename);
+        /** Final Markdown blob after applying the selected raw/compressed projection. */
+        let outputBlob = markdownBlob;
+        if (compressedOutput) {
+          const markdownBytes = new TextEncoder().encode(markdown);
+          const archiveBytes = await createArchive(markdownBytes);
+          outputBlob = new Blob([archiveBytes], { type: 'application/x-xz' });
+        }
+        downloadBlob(outputBlob, filename);
         logDiagnostic('debug', 'conversation-export-phase-complete', {
           phase: 'download-trigger',
           elapsed_ms: Math.round(performance.now() - downloadStartedAt),
-          blob_size: markdownBlob.size
+          blob_size: outputBlob.size
         });
         setStatus(`Extracted ${spine.records.length} API records from ${fetched.pages.length} API page(s) to ${filename}.`);
       }
@@ -19345,7 +19369,9 @@ Image elapsed: ${formatDuration(imageElapsed)} — Completed: ${imageCompleted}/
       #${PANEL_ID} .tm-switch{margin-left:auto;width:42px;height:24px;padding:2px;border-radius:999px;position:relative}
       #${PANEL_ID} .tm-switch-thumb{display:block;width:18px;height:18px;border-radius:50%;background:#aaa;transform:translateX(0);transition:transform .16s ease,background .16s ease}
       #${PANEL_ID} .tm-switch[aria-checked="true"] .tm-switch-thumb{transform:translateX(16px);background:#fff}
-      #${PANEL_ID} .tm-extract-formats{display:grid;grid-template-columns:auto auto auto;gap:6px 12px;align-items:center}
+      #${PANEL_ID} .tm-extract-formats{display:grid;grid-template-columns:auto auto auto auto;gap:6px 12px;align-items:center}
+      #${PANEL_ID} .tm-export-compression{width:34px;height:28px;padding:3px 4px;display:flex;align-items:center;justify-content:center}
+      #${PANEL_ID} .tm-export-compression svg{display:block;width:28px;height:20px}
       #${PANEL_ID} .tm-extract-formats label{display:flex;gap:5px;align-items:center}
     `;
     (document.head || document.documentElement).append(style);
@@ -19364,6 +19390,7 @@ Image elapsed: ${formatDuration(imageElapsed)} — Completed: ${imageCompleted}/
     const extract = panel.querySelector('[data-role="extract"]');
     const jsonl = panel.querySelector('[data-role="format-jsonl"]');
     const md = panel.querySelector('[data-role="format-md"]');
+    const exportCompression = panel.querySelector('[data-role="export-compression"]');
     const timestamps = panel.querySelector('[data-role="show-timestamps"]');
     const recordNumbers = panel.querySelector('[data-role="show-record-numbers"]');
     const turnIds = panel.querySelector('[data-role="show-turn-ids"]');
@@ -19377,6 +19404,15 @@ Image elapsed: ${formatDuration(imageElapsed)} — Completed: ${imageCompleted}/
     }
     if (jsonl) jsonl.disabled = exportInProgress || testInProgress || jumpInProgress;
     if (md) md.disabled = exportInProgress || testInProgress || jumpInProgress;
+    if (exportCompression) {
+      const compressed = exportCompressionEnabled;
+      const description = compressed ? 'Compress JSONL/MD files' : 'Raw JSONL/MD files';
+      exportCompression.disabled = exportInProgress || testInProgress || jumpInProgress;
+      exportCompression.setAttribute('aria-checked', String(compressed));
+      exportCompression.setAttribute('aria-label', compressed ? 'Compressed export output' : 'Raw export output');
+      exportCompression.title = description;
+      exportCompression.innerHTML = exportCompressionIconMarkup(compressed);
+    }
     const metadataDisabled = exportInProgress || testInProgress || jumpInProgress || !md?.checked;
     if (timestamps) timestamps.disabled = metadataDisabled;
     if (recordNumbers) recordNumbers.disabled = metadataDisabled;
@@ -19985,6 +20021,18 @@ Image elapsed: ${formatDuration(imageElapsed)} — Completed: ${imageCompleted}/
   }
 
   /**
+   * Renders the raw/compressed export icon as an arrow entering a size-coded circle.
+   *
+   * @param {boolean} compressed - True for the small compressed circle; false for the large raw circle.
+   * @returns {string} Inline SVG markup for the export-mode toggle.
+   */
+  function exportCompressionIconMarkup(compressed) {
+    const radius = compressed ? 4 : 7;
+    const circleX = compressed ? 18 : 17;
+    return `<svg viewBox="0 0 28 20" aria-hidden="true" focusable="false"><circle cx="${circleX}" cy="10" r="${radius}" fill="none" stroke="currentColor" stroke-width="2"/><path d="M2 10h10M8 6l4 4-4 4" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>`;
+  }
+
+  /**
    * Handles make panel.
    *
    * @returns {void} No value is returned.
@@ -20008,7 +20056,7 @@ Image elapsed: ${formatDuration(imageElapsed)} — Completed: ${imageCompleted}/
       <div class="tm-row"><span class="tm-label">Screen on when extracting</span><button class="tm-switch" data-role="screen-on" type="button" role="switch" aria-checked="false" aria-label="Keep screen on while extracting"><span class="tm-switch-thumb"></span></button></div>
       <div class="tm-row tm-sound-control-row"><button class="tm-sound-control" data-role="agent-sound-control" type="button" aria-haspopup="dialog" aria-expanded="false">Sound <span data-role="agent-sound-control-value"></span></button><div class="tm-sound-popup" data-role="agent-sound-popup" hidden role="dialog" aria-label="Agent sound volume"><input class="tm-sound-volume-slider" data-role="agent-sound-volume" type="range" min="0" max="10" step="1" aria-label="Agent sound volume"><output class="tm-sound-volume-value" data-role="agent-sound-volume-value"></output></div></div>
       <div class="tm-row"><button data-role="jump" type="button">Jump</button></div>
-      <div class="tm-row tm-extract-formats"><button data-role="extract" type="button">Extract</button><label><input data-role="format-jsonl" type="checkbox"> JSONL</label><label><input data-role="format-md" type="checkbox" checked> MD</label></div>
+      <div class="tm-row tm-extract-formats"><button data-role="extract" type="button">Extract</button><label><input data-role="format-jsonl" type="checkbox"> JSONL</label><label><input data-role="format-md" type="checkbox" checked> MD</label><button class="tm-export-compression" data-role="export-compression" type="button" role="switch" aria-checked="false" aria-label="Raw export output" title="Raw JSONL/MD files"></button></div>
       <div class="tm-row tm-md-metadata"><span class="tm-label">MD headings</span><label><input data-role="show-timestamps" type="checkbox"> Timestamp</label><label><input data-role="show-record-numbers" type="checkbox"> Record #</label><label><input data-role="show-turn-ids" type="checkbox"> Turn ID</label><label><input data-role="show-debug-provenance" type="checkbox"> provenance</label></div>
     `;
     panel.querySelector('.tm-close').addEventListener('click', () => {
@@ -20125,6 +20173,14 @@ Image elapsed: ${formatDuration(imageElapsed)} — Completed: ${imageCompleted}/
     bindStoredCheckbox(panel, 'show-debug-provenance', SHOW_DEBUG_PROVENANCE_STORAGE_KEY, showDebugProvenance, value => {
       showDebugProvenance = value;
     });
+    const exportCompression = panel.querySelector('[data-role="export-compression"]');
+    if (exportCompression) {
+      exportCompression.innerHTML = exportCompressionIconMarkup(exportCompressionEnabled);
+      exportCompression.addEventListener('click', () => {
+        exportCompressionEnabled = !exportCompressionEnabled;
+        updateUi();
+      });
+    }
     const soundControl = panel.querySelector('[data-role="agent-sound-control"]');
     const soundPopup = panel.querySelector('[data-role="agent-sound-popup"]');
     const soundVolumeInput = panel.querySelector('[data-role="agent-sound-volume"]');
@@ -20186,7 +20242,7 @@ Image elapsed: ${formatDuration(imageElapsed)} — Completed: ${imageCompleted}/
       const kinds = [];
       if (jsonl?.checked) kinds.push('jsonl');
       if (md?.checked) kinds.push('md');
-      if (kinds.length) await runExport(kinds);
+      if (kinds.length) await runExport(kinds, { compressed: exportCompressionEnabled });
     };
     panel.querySelector('[data-role="extract"]').addEventListener('click', () => void runSelectedExports());
     panel.querySelector('[data-role="format-jsonl"]').addEventListener('change', updateUi);
