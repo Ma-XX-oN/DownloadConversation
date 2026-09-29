@@ -144,6 +144,36 @@ test('navigation cancels a queued 429 retry before another physical request fire
   assert.equal(calls, 1);
 });
 
+test('non-429 HTTP failures retain downstream status handling without coordinator retry', async () => {
+  let calls = 0;
+  const context = harness(async () => {
+    calls += 1;
+    return fakeResponse(500);
+  });
+
+  const response = await context.__apiFetch('https://chatgpt.com/page-1');
+  assert.equal(response.status, 500);
+  assert.equal(calls, 1);
+  assert.deepEqual(context.__delays, []);
+});
+
+test('successful distinct pagination pages are each requested exactly once', async () => {
+  const urls = [];
+  const context = harness(async url => {
+    urls.push(url);
+    return fakeResponse(200);
+  });
+
+  await context.__apiFetch('https://chatgpt.com/page-1');
+  await context.__apiFetch('https://chatgpt.com/page-2');
+  await context.__apiFetch('https://chatgpt.com/page-3');
+  assert.deepEqual(urls, [
+    'https://chatgpt.com/page-1',
+    'https://chatgpt.com/page-2',
+    'https://chatgpt.com/page-3'
+  ]);
+});
+
 test('rate-limit diagnostics record one decision per received 429', async () => {
   let calls = 0;
   const context = harness(async () => {
