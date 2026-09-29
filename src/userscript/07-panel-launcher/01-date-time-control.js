@@ -145,8 +145,19 @@
         input.getAttribute('data-date-time-field'), input
       ])
     );
+    /**
+     * Pads one numeric date/time field to two digits.
+     *
+     * @param {number} number - Numeric field value.
+     * @returns {string} Two-character decimal representation.
+     */
     const pad2 = number => String(number).padStart(2, '0');
 
+    /**
+     * Renders the current local date/time into all six text fields.
+     *
+     * @returns {void} No value is returned.
+     */
     const render = () => {
       fields.year.value = String(current.getFullYear()).padStart(4, '0');
       fields.month.value = pad2(current.getMonth() + 1);
@@ -156,11 +167,21 @@
       fields.second.value = pad2(current.getSeconds());
     };
 
+    /**
+     * Renders and notifies the optional consumer after a value change.
+     *
+     * @returns {void} No value is returned.
+     */
     const notify = () => {
       render();
       if (typeof onChange === 'function') onChange(new Date(current.getTime()));
     };
 
+    /**
+     * Commits manually entered local field text as one bounded Date.
+     *
+     * @returns {void} No value is returned.
+     */
     const commitText = () => {
       const year = Number.parseInt(fields.year.value, 10);
       const month = Number.parseInt(fields.month.value, 10);
