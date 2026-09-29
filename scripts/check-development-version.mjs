@@ -2,8 +2,10 @@ import { execFileSync } from 'node:child_process';
 import { readFile } from 'node:fs/promises';
 
 const DEFAULT_VERSION_SOURCE = 'src/userscript-header.js';
+const STABLE_VERSION_RE = /^\d+\.\d+\.\d+$/;
 const DEVELOPMENT_VERSION_RE = /^(\d+)\.(\d+)\.(\d+)-issue\.(\d+)\.(\d+)$/;
 const ISSUE_BRANCH_RE = /^issue-(\d+)(?:-|$)/;
+const INTEGRATION_BRANCH = 'main';
 
 function fail(message) {
   process.stderr.write(`${message}\n`);
@@ -74,6 +76,15 @@ function owningIssue(branch) {
 }
 
 function validate(branch, version) {
+  if (branch === INTEGRATION_BRANCH) {
+    if (!STABLE_VERSION_RE.test(version)) {
+      throw new Error(
+        `Integration branch ${INTEGRATION_BRANCH} requires plain x.y.z version; found ${version}.`
+      );
+    }
+    return `Integration branch ${INTEGRATION_BRANCH} has stable version ${version}.`;
+  }
+
   const owner = owningIssue(branch);
   if (owner === null) {
     return `No issue owner encoded by branch ${branch}; found version ${version}.`;
