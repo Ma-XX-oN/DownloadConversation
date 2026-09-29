@@ -180,16 +180,16 @@
       phase = 'active-snapshot';
       const activeSnapshot = await communicationLogRefreshedFileSnapshot();
       communicationLogActiveSegmentBytes = activeSnapshot.file.size;
-      const activeRange = communicationLogActiveSegmentBytes > 0
-        ? communicationLogTimestampRangeFromJsonl(
-          new Uint8Array(await activeSnapshot.file.arrayBuffer())
+      communicationLogActiveLastTimestamp = communicationLogActiveSegmentBytes > 0
+        ? await communicationLogLastTimestampFromJsonlFile(
+          activeSnapshot.file,
+          communicationLogActiveSegmentBytes
         )
         : null;
-      communicationLogActiveLastTimestamp = activeRange?.end_timestamp ?? null;
       communicationLogSegmentManifest.active_committed_eof =
         communicationLogActiveSegmentBytes;
-      communicationLogSegmentManifest.active_last_timestamp =
-        communicationLogActiveLastTimestamp;
+      communicationLogSegmentManifest.conversation_name =
+        communicationLogConversationName() ?? communicationLogSegmentManifest.conversation_name ?? null;
       await communicationLogWriteSegmentManifest();
       if (communicationLogActiveSegmentBytes >= COMMUNICATION_LOG_SEGMENT_TARGET_BYTES) {
         communicationLogRotationPending = true;
