@@ -7,4 +7,6 @@ The first authoritative candidate (`1.8.0-issue.183.1`) reached validation and f
 
 Both gates are corrected in the subsequent candidate so the rate-limit regression is part of repository-owned CI.
 
-The second request (`1.8.0-issue.183.2`) was invalidated during artifact materialization because the branch advanced after the test-cycle request.  The generated-artifact push was correctly rejected as non-fast-forward.  No validation result was claimed from that request.
+The second request (`1.8.0-issue.183.2`) was invalidated during artifact materialization because the branch advanced after the test-cycle request. The generated-artifact push was correctly rejected as non-fast-forward. No validation result was claimed from that request.
+
+The third candidate (`1.8.0-issue.183.3`) completed the repository validation entry point except for the modular-userscript build regression. Inspection of the structured result showed that an earlier bookkeeping edit had accidentally replaced the current modular-build test with an obsolete variant that imported removed `userscript-build-lib.mjs` exports. The production coordinator and the new rate-limit regression were not the source of that failure. The obsolete test replacement is removed in `1.8.0-issue.183.4`: the current mainline modular-build regression is restored unchanged except for its source-file count increasing from 59 to 60.
