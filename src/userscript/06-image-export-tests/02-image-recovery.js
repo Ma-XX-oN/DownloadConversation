@@ -100,7 +100,7 @@
    * Acquires one Conversation API snapshot and generates every selected export from that same spine.
    *
    * @param {Array<'jsonl'|'md'>} kinds - Selected output formats; JSONL is generated before Markdown when both are selected.
-   * @param {{compressed?: boolean}} options - Output projection options; compressed true emits XZ-wrapped format bytes.
+   * @param {Object} options - Output projection options; compressed true emits XZ-wrapped format bytes.
    * @returns {Promise<void>} Resolves after selected exports finish or their failure is reported and export state is released.
    */
   async function runExport(kinds, options = {}) {
