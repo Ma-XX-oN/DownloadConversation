@@ -5,11 +5,11 @@ import test from 'node:test';
 
 function runExportSource() {
   const start = downloadConversationSource.indexOf('  async function runExport(');
-  const end = source.indexOf('\n  }', start);
+  const end = downloadConversationSource.indexOf('\n  }', start);
   assert.ok(start >= 0 && end > start, 'Production runExport function is missing.');
   let depth = 0;
   let opened = false;
-  for (let index = start; index < source.length; index += 1) {
+  for (let index = start; index < downloadConversationSource.length; index += 1) {
     if (downloadConversationSource[index] === '{') {
       depth += 1;
       opened = true;
@@ -79,16 +79,16 @@ function harness() {
 }
 
 test('Issue 173 panel places an explicit raw/compressed toggle after MD', () => {
-  assert.match(panelSource, /format-md[^\n]+data-role="export-compression"/);
-  assert.match(panelSource, /data-role="export-compression"[^>]+role="switch"/);
-  assert.match(panelSource, /aria-label="Raw export output"/);
+  assert.match(userscript, /format-md[^\n]+data-role="export-compression"/);
+  assert.match(userscript, /data-role="export-compression"[^>]+role="switch"/);
+  assert.match(userscript, /aria-label="Raw export output"/);
 });
 
 test('Issue 173 toggle exposes large-circle raw and small-circle compressed semantics with tooltips', () => {
-  assert.match(panelSource + bootstrapSource, /exportCompressionIconMarkup/);
-  assert.match(panelSource + bootstrapSource, /Raw JSONL\/MD files/);
-  assert.match(panelSource + bootstrapSource, /Compress JSONL\/MD files/);
-  assert.match(panelSource + bootstrapSource, /aria-checked/);
+  assert.match(userscript, /exportCompressionIconMarkup/);
+  assert.match(userscript, /Raw JSONL\/MD files/);
+  assert.match(userscript, /Compress JSONL\/MD files/);
+  assert.match(userscript, /aria-checked/);
 });
 
 for (const [name, compressed, expectedNames, expectedArchiveCalls] of [
