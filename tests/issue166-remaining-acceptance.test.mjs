@@ -19,7 +19,7 @@ test('Issue 166 archive roles and timestamp ranges are explicit production contr
   assert.match(seal, /'seg'/);
   const duplicate = productionFunctionSource('communicationLogArchiveDuplicate');
   assert.match(duplicate, /communicationLogStreamDuplicateArchive/);
-  assert.match(productionFunctionSource('communicationLogStreamDuplicateArchive'), /'comm'/);
+  assert.match(productionFunctionSource('communicationLogStreamDuplicateArchive'), /'\.comm\.xz'/);
 });
 
 test('Issue 166 user-facing archive naming adds collision suffix only before role suffix', () => {
