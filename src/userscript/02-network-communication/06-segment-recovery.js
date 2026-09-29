@@ -1,3 +1,4 @@
+
   /**
    * Derives the append target from the two alternating physical files.
    *
@@ -69,7 +70,9 @@
     }
     const rawBytes = new Uint8Array(await rawFile.arrayBuffer());
     const range = communicationLogTimestampRangeFromJsonl(rawBytes);
-    if (!range) throw new Error(`Closed communication source has no timestamp range: ${closedName}`);
+    if (!range) {
+      throw new Error(`Closed communication source has no timestamp range: ${closedName}`);
+    }
     const start = communicationLogArchiveTimestamp(range.start_timestamp);
     const end = communicationLogArchiveTimestamp(range.end_timestamp);
     const segment = {
@@ -188,8 +191,6 @@
         : null;
       communicationLogSegmentManifest.active_committed_eof =
         communicationLogActiveSegmentBytes;
-      communicationLogSegmentManifest.conversation_name =
-        communicationLogConversationName() ?? communicationLogSegmentManifest.conversation_name ?? null;
       await communicationLogWriteSegmentManifest();
       if (communicationLogActiveSegmentBytes >= COMMUNICATION_LOG_SEGMENT_TARGET_BYTES) {
         communicationLogRotationPending = true;
