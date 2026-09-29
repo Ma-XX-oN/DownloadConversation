@@ -101,6 +101,8 @@
       "files": [
         "src/userscript/01-runtime/03-archive.js",
         "src/userscript/07-panel-launcher/00-checkbox-appearance.js",
+        "src/userscript/07-panel-launcher/01-date-time-control.js",
+        "src/userscript/07-panel-launcher/01-duplicate-range-dialog.js",
         "src/userscript/07-panel-launcher/02-diagnostic-archive.js",
         "src/userscript/07-panel-launcher/01-panel-diagnostics.js",
         "src/userscript/07-panel-launcher/02-launcher-lifecycle.js",
