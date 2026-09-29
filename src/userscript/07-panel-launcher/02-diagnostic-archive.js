@@ -75,7 +75,7 @@
    * @returns {string} Timestamped diagnostic archive filename.
    */
   function diagnosticLogArchiveName(range) {
-    const base = `DownloadConversation_${sanitizeFileName(conversationTitle())}`;
+    const base = `DownloadConversation_${conversationFileBaseName()}`;
     return `${base}_${diagnosticLogArchiveTimestamp(range.start_timestamp)}-`
       + `${diagnosticLogArchiveTimestamp(range.end_timestamp)}.log.xz`;
   }
