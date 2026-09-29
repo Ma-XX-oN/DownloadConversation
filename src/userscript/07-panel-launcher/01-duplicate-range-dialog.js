@@ -7,10 +7,11 @@
    * Resolves the currently available communication-log timestamp range.
    *
    * The earliest historical timestamp comes from the filesystem-authoritative
-   * segment filename range. The latest active timestamp comes from the manifest
-   * after committing a fresh active EOF/timestamp checkpoint. If no historical
-   * segment exists yet, the first active record supplies the unavoidable start
-   * fallback because there is no segment filename to consult.
+   * segment filename range already captured by the snapshot plan. The latest
+   * active timestamp comes from the manifest after committing a fresh active
+   * EOF/timestamp checkpoint. If no historical segment exists yet, the first
+   * active record supplies the unavoidable start fallback because there is no
+   * segment filename to consult.
    *
    * @returns {Promise<Object>} Inclusive start/end ISO timestamp range.
    */
@@ -18,7 +19,7 @@
     const queued = communicationLogEnqueue('duplicate-range', async () => {
       const plan = await communicationLogCaptureSnapshotPlan();
       try {
-        const segments = await communicationLogHistoricalSegmentsFromDirectory();
+        const segments = plan.segments;
         let startTimestamp = segments.length > 0
           ? segments[0].start_timestamp
           : null;
