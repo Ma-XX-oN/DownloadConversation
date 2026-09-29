@@ -32,6 +32,7 @@ const ordinaryStages = [
   ['Integration test-cycle preparation regression', nodeCommand, ['--test', 'tests/prepare-integration-test-cycle.test.mjs']],
   ['Release tagging regression', nodeCommand, ['--test', 'tests/release-tagging.test.mjs']],
   ['Single-snapshot export regression', nodeCommand, ['--test', 'tests/export-single-snapshot.test.mjs']],
+  ['Issue 172 canonical filename regression', nodeCommand, ['--test', 'tests/issue172-canonical-filenames.test.mjs']],
   ['Export compression toggle regression', nodeCommand, ['--test', 'tests/export-compression-toggle.test.mjs']],
   ['Agent completion sound regression', nodeCommand, ['--test', 'tests/agent-completion-sounds.test.mjs', 'tests/agent-completion-sound-pending.test.mjs']],
   ['Agent terminal shared dispatch regression', nodeCommand, ['--test', 'tests/agent-terminal-dispatch.test.mjs', 'tests/agent-terminal-dry-contract.test.mjs', 'tests/agent-terminal-conversation-turn-complete.test.mjs']],
