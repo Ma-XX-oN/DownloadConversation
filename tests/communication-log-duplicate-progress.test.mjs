@@ -15,6 +15,25 @@ const rangeDialogSource = await readFile(
   'utf8'
 );
 
+function functionSource(source, name) {
+  const marker = `function ${name}`;
+  const start = source.indexOf(marker);
+  assert.ok(start >= 0, `missing ${name}`);
+  let depth = 0;
+  let seenBrace = false;
+  for (let index = start; index < source.length; index += 1) {
+    const char = source[index];
+    if (char === '{') {
+      depth += 1;
+      seenBrace = true;
+    } else if (char === '}') {
+      depth -= 1;
+      if (seenBrace && depth === 0) return source.slice(start, index + 1);
+    }
+  }
+  throw new Error(`unterminated ${name}`);
+}
+
 test('Issue 166 Duplicate reports real file-count progress and measured ETA', () => {
   assert.match(duplicateSource, /const totalFiles = relevantSegments\.length \+ 1;/);
   assert.match(duplicateSource, /completed_files:/);
@@ -52,10 +71,37 @@ test('Issue 166 reusable single date/time control exposes six local fields with 
   }
   assert.match(dateTimeSource, /data-date-time-step="up"/);
   assert.match(dateTimeSource, /data-date-time-step="down"/);
-  assert.match(dateTimeSource, /setDate\(/);
-  assert.match(dateTimeSource, /setHours\(/);
-  assert.match(dateTimeSource, /setMinutes\(/);
-  assert.match(dateTimeSource, /setSeconds\(/);
+});
+
+test('Issue 166 date/time spinner carries surrounding local fields correctly', () => {
+  const days = functionSource(dateTimeSource, 'dateTimeControlDaysInMonth');
+  const adjust = functionSource(dateTimeSource, 'dateTimeControlAdjustDate');
+  const run = new Function(`
+    ${days}
+    ${adjust}
+    const secondCarry = dateTimeControlAdjustDate(
+      new Date(2026, 11, 31, 23, 59, 59), 'second', 1
+    );
+    const leapMonth = dateTimeControlAdjustDate(
+      new Date(2024, 0, 31, 12, 0, 0), 'month', 1
+    );
+    const dayBorrow = dateTimeControlAdjustDate(
+      new Date(2024, 2, 1, 0, 0, 0), 'day', -1
+    );
+    return {
+      secondCarry: [
+        secondCarry.getFullYear(), secondCarry.getMonth(), secondCarry.getDate(),
+        secondCarry.getHours(), secondCarry.getMinutes(), secondCarry.getSeconds()
+      ],
+      leapMonth: [leapMonth.getMonth(), leapMonth.getDate()],
+      dayBorrow: [dayBorrow.getMonth(), dayBorrow.getDate()]
+    };
+  `);
+  assert.deepEqual(run(), {
+    secondCarry: [2027, 0, 1, 0, 0, 0],
+    leapMonth: [1, 29],
+    dayBorrow: [1, 29]
+  });
 });
 
 test('Issue 166 Duplicate range dialog defaults to filename start and manifest end', () => {
