@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         ChatGPT Conversation Markdown Recorder
 // @namespace    https://chatgpt.com/
-// @version      1.7.2-issue.173.3
+// @version      1.7.2-issue.173.4
 // @description  Exports the current ChatGPT conversation directly from the Conversation API as Markdown or JSONL.
 // @match        https://chatgpt.com/*
 // @match        https://chat.openai.com/*
@@ -16353,7 +16353,7 @@ Image elapsed: ${formatDuration(imageElapsed)} — Completed: ${imageCompleted}/
    * Acquires one Conversation API snapshot and generates every selected export from that same spine.
    *
    * @param {Array<'jsonl'|'md'>} kinds - Selected output formats; JSONL is generated before Markdown when both are selected.
-   * @param {{compressed?: boolean}} options - Output projection options; compressed true emits XZ-wrapped format bytes.
+   * @param {Object} options - Output projection options; compressed true emits XZ-wrapped format bytes.
    * @returns {Promise<void>} Resolves after selected exports finish or their failure is reported and export state is released.
    */
   async function runExport(kinds, options = {}) {
