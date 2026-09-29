@@ -273,12 +273,15 @@
         start_timestamp: startTimestamp,
         end_timestamp: endTimestamp
       };
-      const base = communicationLogFileName.replace(/\.jsonl$/i, '');
-      const archiveName = await communicationLogUnusedRoleArchiveName(
+      const filenamePrefix = canonicalFilename(
+        conversationProjectName(),
+        conversationTitle(),
+        range
+      );
+      const archiveName = await unusedFilename(
         communicationLogDirectoryHandle,
-        base,
-        range,
-        'comm'
+        filenamePrefix,
+        '.comm.xz'
       );
       return {
         archive: streamingArchiveWriterFinish(writer),

@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         ChatGPT Conversation Markdown Recorder
 // @namespace    https://chatgpt.com/
-// @version      1.8.0
+// @version      1.8.1-issue.172.6
 // @description  Exports the current ChatGPT conversation directly from the Conversation API as Markdown or JSONL.
 // @match        https://chatgpt.com/*
 // @match        https://chat.openai.com/*
@@ -7813,6 +7813,113 @@ globalThis.__dcArchiveCodec = {
       : conversationName;
   }
 
+
+  /**
+   * Formats one trustworthy timestamp for a user-facing filename.
+   *
+   * @param {string|number} timestamp - ISO timestamp or epoch seconds.
+   * @returns {string} Filesystem-safe local calendar/time value.
+   */
+  function canonicalFilenameTimestamp(timestamp) {
+    const numeric = typeof timestamp === 'number' ? timestamp * 1000 : timestamp;
+    const date = new Date(numeric);
+    if (!Number.isFinite(date.getTime())) {
+      throw new Error('Filename timestamp is not trustworthy.');
+    }
+    /**
+     * Pads one local date/time field to two digits.
+     *
+     * @param {number} value - Local calendar/time field.
+     * @returns {string} Two-digit field.
+     */
+    const pad = value => String(value).padStart(2, '0');
+    return `${date.getFullYear()},${pad(date.getMonth() + 1)},${pad(date.getDate())};`
+      + `${pad(date.getHours())},${pad(date.getMinutes())},${pad(date.getSeconds())}`;
+  }
+
+  /**
+   * Builds the deterministic user-facing filename prefix.
+   *
+   * @param {string|null} project - Visible project name, or null.
+   * @param {string} chat - Visible conversation name.
+   * @param {Object} timestampRange - Trustworthy start/end timestamps.
+   * @returns {string} Project/chat/timestamp filename prefix without extension.
+   */
+  function canonicalFilename(project, chat, timestampRange) {
+    if (!timestampRange?.start_timestamp || !timestampRange?.end_timestamp) {
+      throw new Error('Filename content has no trustworthy timestamp range.');
+    }
+    const chatName = sanitizeFileName(chat);
+    const identity = project
+      ? `${sanitizeFileName(project)} - ${chatName}`
+      : chatName;
+    const start = canonicalFilenameTimestamp(timestampRange.start_timestamp);
+    const end = canonicalFilenameTimestamp(timestampRange.end_timestamp);
+    return `DownloadConversation_${identity}_${start}-${end}`;
+  }
+
+  /**
+   * Returns the exact content time range represented by exported JSONL records.
+   *
+   * Metadata and absent/null/zero record times are not content timestamps.
+   *
+   * @param {string} jsonl - Exact JSONL database text being exported.
+   * @returns {Object|null} ISO start/end timestamps, or null when unavailable.
+   */
+  function conversationJsonlTimestampRange(jsonl) {
+    let startMs = null;
+    let endMs = null;
+    for (const line of String(jsonl).split('\n')) {
+      if (!line) continue;
+      let record;
+      try {
+        record = JSON.parse(line);
+      } catch {
+        continue;
+      }
+      for (const field of ['create_time', 'update_time']) {
+        const value = record?.[field];
+        if (typeof value !== 'number' || !Number.isFinite(value) || value <= 0) continue;
+        const timestampMs = value * 1000;
+        startMs = startMs === null ? timestampMs : Math.min(startMs, timestampMs);
+        endMs = endMs === null ? timestampMs : Math.max(endMs, timestampMs);
+      }
+    }
+    return startMs === null || endMs === null
+      ? null
+      : {
+          start_timestamp: new Date(startMs).toISOString(),
+          end_timestamp: new Date(endMs).toISOString()
+        };
+  }
+
+  /**
+   * Finds the lowest unused filename for one destination/prefix/extension.
+   *
+   * @param {Object} destination - File System Access directory handle.
+   * @param {string} filenamePrefix - Complete filename prefix without extension.
+   * @param {string} ext - Caller-owned complete extension, including leading dot.
+   * @returns {Promise<string>} Lowest unused filename.
+   */
+  async function unusedFilename(destination, filenamePrefix, ext) {
+    if (!destination || typeof destination.getFileHandle !== 'function') {
+      throw new TypeError('Filename destination must support getFileHandle().');
+    }
+    if (typeof ext !== 'string' || !ext.startsWith('.')) {
+      throw new TypeError('Filename extension must start with a dot.');
+    }
+    for (let collision = 0; ; collision += 1) {
+      const suffix = collision > 0 ? `(${collision})` : '';
+      const candidate = `${filenamePrefix}${suffix}${ext}`;
+      try {
+        await destination.getFileHandle(candidate, { create: false });
+      } catch (error) {
+        if (error?.name === 'NotFoundError') return candidate;
+        throw error;
+      }
+    }
+  }
+
   /**
    * Derives the append target from the two alternating physical files.
    *
@@ -8595,12 +8702,15 @@ globalThis.__dcArchiveCodec = {
         start_timestamp: startTimestamp,
         end_timestamp: endTimestamp
       };
-      const base = communicationLogFileName.replace(/\.jsonl$/i, '');
-      const archiveName = await communicationLogUnusedRoleArchiveName(
+      const filenamePrefix = canonicalFilename(
+        conversationProjectName(),
+        conversationTitle(),
+        range
+      );
+      const archiveName = await unusedFilename(
         communicationLogDirectoryHandle,
-        base,
-        range,
-        'comm'
+        filenamePrefix,
+        '.comm.xz'
       );
       return {
         archive: streamingArchiveWriterFinish(writer),
@@ -16407,6 +16517,14 @@ Image elapsed: ${formatDuration(imageElapsed)} — Completed: ${imageCompleted}/
         historySpine, streamTailCaptureSnapshot(currentStreamCapture)
       );
       const spine = streamMerge.spine;
+      const jsonl = apiRecordsJsonl(spine, conversationId);
+      const exportRange = conversationJsonlTimestampRange(jsonl);
+      assert(exportRange, 'Conversation JSONL has no trustworthy content timestamp range.');
+      const exportFilenamePrefix = canonicalFilename(
+        conversationProjectName(),
+        conversationTitle(),
+        exportRange
+      );
       logDiagnostic(streamMerge.merged ? 'debug' : 'verbose',
         'conversation-stream-tail-reconciliation', {
           reason: streamMerge.reason,
@@ -16425,8 +16543,7 @@ Image elapsed: ${formatDuration(imageElapsed)} — Completed: ${imageCompleted}/
       if (requestedKinds.includes('jsonl')) {
         activeKind = 'jsonl';
         exportKind = activeKind;
-        const filename = `${conversationFileBaseName()}.jsonl`;
-        const jsonl = apiRecordsJsonl(spine, conversationId);
+        const filename = `${exportFilenamePrefix}.jsonl`;
         const jsonlTailComparison = compareLiveTailMarkersToJsonl(frozenLiveTailMarkers, spine, jsonl);
         logDiagnostic(jsonlTailComparison.warning ? 'warnings' : 'debug',
           'conversation-tail-api-jsonl-consistency', jsonlTailComparison);
@@ -16475,7 +16592,7 @@ Image elapsed: ${formatDuration(imageElapsed)} — Completed: ${imageCompleted}/
           refreshStatus();
         }, recoveredImageMap);
         /** Raw Markdown filename before optional archive wrapping. */
-        const rawFilename = `${conversationFileBaseName()}.md`;
+        const rawFilename = `${exportFilenamePrefix}.md`;
         /** Final Markdown filename, including the XZ suffix only in compressed mode. */
         const filename = compressedOutput ? `${rawFilename}.xz` : rawFilename;
         logDiagnostic('debug', 'conversation-export-phase-complete', {
@@ -18994,19 +19111,7 @@ Image elapsed: ${formatDuration(imageElapsed)} — Completed: ${imageCompleted}/
    * @returns {string} Filesystem-safe UTC timestamp.
    */
   function diagnosticLogArchiveTimestamp(timestamp) {
-    const date = new Date(timestamp);
-    if (!Number.isFinite(date.getTime())) {
-      throw new Error('Diagnostic archive timestamp is not trustworthy.');
-    }
-    /**
-     * Pads one local date/time field to two digits.
-     *
-     * @param {number} value - Local calendar/time field.
-     * @returns {string} Two-digit field.
-     */
-    const pad = value => String(value).padStart(2, '0');
-    return `${date.getFullYear()},${pad(date.getMonth() + 1)},${pad(date.getDate())};`
-      + `${pad(date.getHours())},${pad(date.getMinutes())},${pad(date.getSeconds())}`;
+    return canonicalFilenameTimestamp(timestamp);
   }
 
   /**
@@ -19030,9 +19135,11 @@ Image elapsed: ${formatDuration(imageElapsed)} — Completed: ${imageCompleted}/
    * @returns {string} Timestamped diagnostic archive filename.
    */
   function diagnosticLogArchiveName(range) {
-    const base = `DownloadConversation_${conversationFileBaseName()}`;
-    return `${base}_${diagnosticLogArchiveTimestamp(range.start_timestamp)}-`
-      + `${diagnosticLogArchiveTimestamp(range.end_timestamp)}.log.xz`;
+    return `${canonicalFilename(
+      conversationProjectName(),
+      conversationTitle(),
+      range
+    )}.log.xz`;
   }
 
   /**
@@ -19158,6 +19265,12 @@ Image elapsed: ${formatDuration(imageElapsed)} — Completed: ${imageCompleted}/
       setStatus(`Diagnostic log: preparing save; ${elapsed()}.`);
       const directory = communicationLogReady ? communicationLogDirectoryHandle : null;
       if (directory) {
+        const filenamePrefix = canonicalFilename(
+          conversationProjectName(),
+          conversationTitle(),
+          range
+        );
+        archiveName = await unusedFilename(directory, filenamePrefix, '.log.xz');
         await diagnosticLogWriteArchive(directory, archiveName, archive);
       } else {
         downloadBlob(new Blob([archive], { type: 'application/x-xz' }), archiveName);

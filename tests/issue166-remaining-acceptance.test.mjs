@@ -19,7 +19,7 @@ test('Issue 166 archive roles and timestamp ranges are explicit production contr
   assert.match(seal, /'seg'/);
   const duplicate = productionFunctionSource('communicationLogArchiveDuplicate');
   assert.match(duplicate, /communicationLogStreamDuplicateArchive/);
-  assert.match(productionFunctionSource('communicationLogStreamDuplicateArchive'), /'comm'/);
+  assert.match(productionFunctionSource('communicationLogStreamDuplicateArchive'), /'\.comm\.xz'/);
 });
 
 test('Issue 166 user-facing archive naming adds collision suffix only before role suffix', () => {
@@ -123,8 +123,8 @@ test('Issue 166 no-trustworthy-timestamp fixture is rejected instead of inventin
 
 test('Issue 166 duplicate naming is collision-safe and never overwrites an existing archive', () => {
   const stream = productionFunctionSource('communicationLogStreamDuplicateArchive');
-  assert.match(stream, /communicationLogUnusedRoleArchiveName/);
-  assert.match(stream, /'comm'/);
+  assert.match(stream, /unusedFilename/);
+  assert.match(stream, /'\.comm\.xz'/);
 });
 
 test('Issue 166 selected segment default remains the repository-owned 10 MiB threshold', () => {
@@ -175,27 +175,24 @@ test('Issue 166 diagnostic member naming preserves printable ASCII exactly', () 
 });
 
 
-test('Issue 166 diagnostic archive timestamps use browser-local calendar/time fields', () => {
+test('Issue 166 diagnostic archive timestamps delegate to canonical local formatting', () => {
   const timestamp = productionFunctionSource('diagnosticLogArchiveTimestamp');
-  assert.match(timestamp, /getFullYear/);
-  assert.match(timestamp, /getMonth/);
-  assert.match(timestamp, /getDate/);
-  assert.match(timestamp, /getHours/);
-  assert.match(timestamp, /getMinutes/);
-  assert.match(timestamp, /getSeconds/);
-  assert.doesNotMatch(timestamp, /getMilliseconds/);
-  assert.match(timestamp, /,/);
-  assert.match(timestamp, /;/);
-  assert.doesNotMatch(timestamp, /toISOString/);
-  assert.doesNotMatch(timestamp, /Z['"\x60]/);
+  assert.match(timestamp, /canonicalFilenameTimestamp\(timestamp\)/);
+  const canonical = productionFunctionSource('canonicalFilenameTimestamp');
+  assert.match(canonical, /getFullYear/);
+  assert.match(canonical, /getMonth/);
+  assert.match(canonical, /getDate/);
+  assert.match(canonical, /getHours/);
+  assert.match(canonical, /getMinutes/);
+  assert.match(canonical, /getSeconds/);
+  assert.doesNotMatch(canonical, /getMilliseconds/);
 });
 
 
-test('Issue 166 diagnostic archive name uses requested local range punctuation', () => {
+test('Issue 166 diagnostic archive name uses canonical range naming and log extension', () => {
   const name = productionFunctionSource('diagnosticLogArchiveName');
-  assert.match(name, /start_timestamp/);
-  assert.match(name, /end_timestamp/);
-  assert.match(name, /-.*end_timestamp/s);
+  assert.match(name, /canonicalFilename/);
+  assert.match(name, /range/);
   assert.match(name, /\.log\.xz/);
 });
 
