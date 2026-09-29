@@ -154,8 +154,9 @@
         historySpine, streamTailCaptureSnapshot(currentStreamCapture)
       );
       const spine = streamMerge.spine;
-      const exportRange = conversationSpineTimestampRange(spine);
-      assert(exportRange, 'Conversation export has no trustworthy content timestamp range.');
+      const jsonl = apiRecordsJsonl(spine, conversationId);
+      const exportRange = conversationJsonlTimestampRange(jsonl);
+      assert(exportRange, 'Conversation JSONL has no trustworthy content timestamp range.');
       const exportFilenamePrefix = canonicalFilename(
         conversationProjectName(),
         conversationTitle(),
@@ -180,7 +181,6 @@
         activeKind = 'jsonl';
         exportKind = activeKind;
         const filename = `${exportFilenamePrefix}.jsonl`;
-        const jsonl = apiRecordsJsonl(spine, conversationId);
         const jsonlTailComparison = compareLiveTailMarkersToJsonl(frozenLiveTailMarkers, spine, jsonl);
         logDiagnostic(jsonlTailComparison.warning ? 'warnings' : 'debug',
           'conversation-tail-api-jsonl-consistency', jsonlTailComparison);
