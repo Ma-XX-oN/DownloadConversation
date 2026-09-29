@@ -53,7 +53,7 @@ function harness() {
     conversationFileBaseName() { return 'Conversation'; },
     conversationProjectName() { return 'Project'; },
     conversationTitle() { return 'Conversation'; },
-    conversationSpineTimestampRange() {
+    conversationJsonlTimestampRange() {
       return {
         start_timestamp: '2026-09-29T01:02:03.000Z',
         end_timestamp: '2026-09-29T01:02:04.000Z'
