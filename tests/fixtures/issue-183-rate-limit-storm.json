@@ -1,0 +1,17 @@
+{
+  "source_logs": [
+    "DownloadConversation_XZ benchmark CI_2026,09,29;12,51,59-2026,09,29;13,15,40.log.xz",
+    "DownloadConversation_XZ benchmark CI_2026,09,29;13,10,05-2026,09,29;13,14,01.comm.xz"
+  ],
+  "description": "Redacted relative timing fixture derived from the captured issue #183 HTTP 429 storm. No conversation or account identifiers are retained.",
+  "observed_429_count": 60,
+  "observed_window_ms": 59848,
+  "caller_offsets_ms": [
+    0, 251, 784, 1492, 1960, 2969, 3317, 3715, 5662, 5961,
+    6335, 7360, 9276, 11030, 11232, 11764, 12026, 12810, 20090, 20309,
+    20484, 21791, 22160, 23977, 25753, 27190, 27441, 29061, 30751, 32320,
+    32524, 34000, 35475, 35706, 37205, 37400, 37662, 43150, 44089, 44481,
+    45024, 45257, 45660, 46724, 48157, 48406, 48600, 50087, 50561, 51807,
+    52856, 53498, 53763, 54026, 55205, 56922, 57700, 58025, 58612, 59848
+  ]
+}
