@@ -68,10 +68,11 @@ test(
       return module.name === 'network-communication';
     });
     assert.deepEqual(
-      communicationModule?.files.slice(2, 8),
+      communicationModule?.files.slice(2, 9),
       [
         'src/userscript/02-network-communication/03-communication-lifecycle.js',
         'src/userscript/02-network-communication/06-segment-storage.js',
+        'src/userscript/02-network-communication/06-segment-manifest.js',
         'src/userscript/02-network-communication/06-segment-recovery.js',
         'src/userscript/02-network-communication/06-segment-snapshot.js',
         'src/userscript/02-network-communication/06-segment-duplicate.js',
@@ -79,7 +80,7 @@ test(
       ],
       'segment runtime must remain at the verified lifecycle top-level boundary'
     );
-    assert.equal(sourcePaths.length, 57);
+    assert.equal(sourcePaths.length, 58);
     assert.equal(new Set(sourcePaths).size, sourcePaths.length);
     assert.ok(sourcePaths.every(sourcePath => {
       return sourcePath.startsWith('src/userscript/');
