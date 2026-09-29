@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         ChatGPT Conversation Markdown Recorder
 // @namespace    https://chatgpt.com/
-// @version      1.7.2-issue.173.4
+// @version      1.7.2-issue.173.5
 // @description  Exports the current ChatGPT conversation directly from the Conversation API as Markdown or JSONL.
 // @match        https://chatgpt.com/*
 // @match        https://chat.openai.com/*
@@ -16474,7 +16474,10 @@ Image elapsed: ${formatDuration(imageElapsed)} — Completed: ${imageCompleted}/
           progressState.record_count = progress.record_count;
           refreshStatus();
         }, recoveredImageMap);
-        const filename = `${conversationFileBaseName()}.md`;
+        /** Raw Markdown filename before optional archive wrapping. */
+        const rawFilename = `${conversationFileBaseName()}.md`;
+        /** Final Markdown filename, including the XZ suffix only in compressed mode. */
+        const filename = compressedOutput ? `${rawFilename}.xz` : rawFilename;
         logDiagnostic('debug', 'conversation-export-phase-complete', {
           phase: 'markdown-render',
           elapsed_ms: Math.round(performance.now() - renderStartedAt),
