@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         ChatGPT Conversation Markdown Recorder
 // @namespace    https://chatgpt.com/
-// @version      1.7.2-issue.166.137
+// @version      1.7.2-issue.166.138
 // @description  Exports the current ChatGPT conversation directly from the Conversation API as Markdown or JSONL.
 // @match        https://chatgpt.com/*
 // @match        https://chat.openai.com/*
@@ -18310,8 +18310,19 @@ Image elapsed: ${formatDuration(imageElapsed)} — Completed: ${imageCompleted}/
         input.getAttribute('data-date-time-field'), input
       ])
     );
+    /**
+     * Pads one numeric date/time field to two digits.
+     *
+     * @param {number} number - Numeric field value.
+     * @returns {string} Two-character decimal representation.
+     */
     const pad2 = number => String(number).padStart(2, '0');
 
+    /**
+     * Renders the current local date/time into all six text fields.
+     *
+     * @returns {void} No value is returned.
+     */
     const render = () => {
       fields.year.value = String(current.getFullYear()).padStart(4, '0');
       fields.month.value = pad2(current.getMonth() + 1);
@@ -18321,11 +18332,21 @@ Image elapsed: ${formatDuration(imageElapsed)} — Completed: ${imageCompleted}/
       fields.second.value = pad2(current.getSeconds());
     };
 
+    /**
+     * Renders and notifies the optional consumer after a value change.
+     *
+     * @returns {void} No value is returned.
+     */
     const notify = () => {
       render();
       if (typeof onChange === 'function') onChange(new Date(current.getTime()));
     };
 
+    /**
+     * Commits manually entered local field text as one bounded Date.
+     *
+     * @returns {void} No value is returned.
+     */
     const commitText = () => {
       const year = Number.parseInt(fields.year.value, 10);
       const month = Number.parseInt(fields.month.value, 10);
@@ -18526,6 +18547,11 @@ Image elapsed: ${formatDuration(imageElapsed)} — Completed: ${imageCompleted}/
 
     let startControl;
     let endControl;
+    /**
+     * Validates the currently selected start/end relationship and updates OK state.
+     *
+     * @returns {boolean} True when start is not later than end.
+     */
     const validate = () => {
       if (!startControl || !endControl) return true;
       const valid = startControl.getDate().getTime() <= endControl.getDate().getTime();
@@ -18561,6 +18587,12 @@ Image elapsed: ${formatDuration(imageElapsed)} — Completed: ${imageCompleted}/
 
     return new Promise(resolve => {
       let settled = false;
+      /**
+       * Closes the range dialog once and restores the previous focus target.
+       *
+       * @param {Object|null} value - Selected bounds or cancellation marker.
+       * @returns {void} No value is returned.
+       */
       const finish = value => {
         if (settled) return;
         settled = true;
@@ -18618,6 +18650,10 @@ Image elapsed: ${formatDuration(imageElapsed)} — Completed: ${imageCompleted}/
           setStatus('Communication log Duplicate cancelled.');
           return;
         }
+        // The shared action runner deliberately rejects an already-disabled
+        // button. Re-enable after range selection so it can establish its own
+        // busy/disabled lifecycle atomically.
+        button.disabled = false;
         return runCommunicationLogPanelAction(button, {
           idleLabel: 'Duplicate communication log',
           busyLabel: 'Duplicating communication log',
