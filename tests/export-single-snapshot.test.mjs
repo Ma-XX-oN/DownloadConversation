@@ -8,6 +8,11 @@ const runtimeSource = await readFile(
   new URL('../src/userscript/01-runtime/02-shared-network-transition.js', import.meta.url),
   'utf8'
 );
+const projectIdentitySource = await readFile(
+  new URL('../src/userscript/01-runtime/03-conversation-identity.js', import.meta.url),
+  'utf8'
+);
+const identitySource = `${runtimeSource}\n${projectIdentitySource}`;
 const lifecycleSource = await readFile(
   new URL('../src/userscript/02-network-communication/03-communication-lifecycle.js', import.meta.url),
   'utf8'
@@ -54,10 +59,10 @@ function functionSource(source, name) {
 }
 
 function identityHarness({ pathname, heading, title, links }) {
-  const conversationTitle = functionSource(runtimeSource, 'conversationTitle');
-  const sanitizeFileName = functionSource(runtimeSource, 'sanitizeFileName');
-  const projectName = functionSource(runtimeSource, 'conversationProjectName');
-  const fileBase = functionSource(runtimeSource, 'conversationFileBaseName');
+  const conversationTitle = functionSource(identitySource, 'conversationTitle');
+  const sanitizeFileName = functionSource(identitySource, 'sanitizeFileName');
+  const projectName = functionSource(identitySource, 'conversationProjectName');
+  const fileBase = functionSource(identitySource, 'conversationFileBaseName');
   const location = {
     origin: 'https://chatgpt.com',
     href: `https://chatgpt.com${pathname}`,
