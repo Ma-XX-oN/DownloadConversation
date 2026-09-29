@@ -59,7 +59,7 @@ test('Issue 166 reusable single date/time control exposes six local fields with 
 });
 
 test('Issue 166 Duplicate range dialog defaults to filename start and manifest end', () => {
-  assert.match(rangeDialogSource, /communicationLogHistoricalSegmentsFromDirectory\(\)/);
+  assert.match(rangeDialogSource, /const segments = plan\.segments;/);
   assert.match(rangeDialogSource, /segments\[0\]\.start_timestamp/);
   assert.match(rangeDialogSource, /communicationLogSegmentManifest\?\.active_last_timestamp/);
   assert.match(rangeDialogSource, /createSingleDateTimeControl/);
