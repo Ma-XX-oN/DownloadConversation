@@ -39,3 +39,19 @@ test('Issue 172 callers own simple and compound extensions', () => {
   assert.match(productionFunctionSource('diagnosticLogArchiveName'), /\.log\.xz/);
   assert.match(productionFunctionSource('communicationLogStreamDuplicateArchive'), /\.comm\.xz/);
 });
+
+
+test('Issue 172 export range is derived from exact JSONL database text', () => {
+  const source = productionFunctionSource('runExport');
+  assert.match(source, /apiRecordsJsonl\(spine, conversationId\)/);
+  assert.match(source, /conversationJsonlTimestampRange\(jsonl\)/);
+  assert.doesNotMatch(source, /conversationSpineTimestampRange\(spine\)/);
+});
+
+test('Issue 172 JSONL timestamp range rejects null and Unix epoch zero fields', () => {
+  const source = productionFunctionSource('conversationJsonlTimestampRange');
+  assert.match(source, /create_time/);
+  assert.match(source, /update_time/);
+  assert.match(source, /> 0/);
+  assert.doesNotMatch(source, /Number\(record\?\.(?:create_time|update_time)\)/);
+});
