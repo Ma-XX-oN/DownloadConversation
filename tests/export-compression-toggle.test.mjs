@@ -51,6 +51,15 @@ function harness() {
     async fetchConversationPages() { return { pages: [{}] }; },
     conversationSpineFromPages() { return spine; },
     conversationFileBaseName() { return 'Conversation'; },
+    conversationProjectName() { return 'Project'; },
+    conversationTitle() { return 'Conversation'; },
+    conversationSpineTimestampRange() {
+      return {
+        start_timestamp: '2026-09-29T01:02:03.000Z',
+        end_timestamp: '2026-09-29T01:02:04.000Z'
+      };
+    },
+    canonicalFilename() { return 'Canonical'; },
     apiRecordsJsonl() { return '{"record":"fixture"}\n'; },
     async createArchive(bytes) {
       archiveInputs.push(new Uint8Array(bytes));
@@ -84,8 +93,8 @@ test('Issue 173 toggle exposes large-circle raw and small-circle compressed sema
 });
 
 for (const [name, compressed, expectedNames, expectedArchiveCalls] of [
-  ['raw', false, ['Conversation.jsonl', 'Conversation.md'], 0],
-  ['compressed', true, ['Conversation.jsonl.xz', 'Conversation.md.xz'], 2]
+  ['raw', false, ['Canonical.jsonl', 'Canonical.md'], 0],
+  ['compressed', true, ['Canonical.jsonl.xz', 'Canonical.md.xz'], 2]
 ]) {
   test(`Issue 173 ${name} mode projects both selected formats through the requested output boundary`, async () => {
     const { context, downloads, archiveInputs } = harness();
@@ -112,9 +121,9 @@ test('Issue 173 repeated mode changes do not retain stale output projection', as
   await context.runExport(['jsonl'], { compressed: true });
   await context.runExport(['jsonl'], { compressed: false });
   assert.deepEqual(downloads.map(item => item.filename), [
-    'Conversation.jsonl',
-    'Conversation.jsonl.xz',
-    'Conversation.jsonl'
+    'Canonical.jsonl',
+    'Canonical.jsonl.xz',
+    'Canonical.jsonl'
   ]);
   assert.equal(archiveInputs.length, 1);
 });
