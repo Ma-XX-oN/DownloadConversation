@@ -52,6 +52,6 @@ test('Issue 172 JSONL timestamp range rejects null and Unix epoch zero fields', 
   const source = productionFunctionSource('conversationJsonlTimestampRange');
   assert.match(source, /create_time/);
   assert.match(source, /update_time/);
-  assert.match(source, /> 0/);
+  assert.match(source, /value <= 0/);
   assert.doesNotMatch(source, /Number\(record\?\.(?:create_time|update_time)\)/);
 });
