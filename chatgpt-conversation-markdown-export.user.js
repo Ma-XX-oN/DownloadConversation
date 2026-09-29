@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         ChatGPT Conversation Markdown Recorder
 // @namespace    https://chatgpt.com/
-// @version      1.7.2-issue.166.145
+// @version      1.7.2-issue.166.146
 // @description  Exports the current ChatGPT conversation directly from the Conversation API as Markdown or JSONL.
 // @match        https://chatgpt.com/*
 // @match        https://chat.openai.com/*
@@ -7418,7 +7418,7 @@ globalThis.__dcArchiveCodec = {
    * Loads or initializes the small control/recovery manifest.
    *
    * Historical segment membership is filesystem-derived and is never catalogued
-   * here.
+   * here. Legacy active_last_timestamp cache fields are discarded on read.
    *
    * @returns {Promise<Object>} Current control/recovery manifest.
    */
@@ -7431,14 +7431,16 @@ globalThis.__dcArchiveCodec = {
       if (parsed?.schema !== 2 || typeof parsed.logical_log_id !== 'string') {
         throw new Error('Invalid communication segment manifest.');
       }
+      delete parsed.active_last_timestamp;
+      if (typeof parsed.conversation_name !== 'string') parsed.conversation_name = null;
       return parsed;
     } catch (error) {
       if (error?.name !== 'NotFoundError') throw error;
       return {
         schema: 2,
         logical_log_id: currentConversationId() || crypto.randomUUID(),
-        active_committed_eof: 0,
-        active_last_timestamp: null
+        conversation_name: communicationLogConversationName() ?? null,
+        active_committed_eof: 0
       };
     }
   }
@@ -7462,6 +7464,23 @@ globalThis.__dcArchiveCodec = {
       await abortWritableQuietly(writable);
       throw error;
     }
+  }
+
+  /**
+   * Refreshes human-readable conversation identity in the durable manifest.
+   *
+   * @returns {Promise<boolean>} True when a changed title was committed.
+   */
+  async function communicationLogSyncManifestConversationName() {
+    if (!communicationLogSegmentManifest) return false;
+    const conversationName = communicationLogConversationName();
+    if (!conversationName
+        || communicationLogSegmentManifest.conversation_name === conversationName) {
+      return false;
+    }
+    communicationLogSegmentManifest.conversation_name = conversationName;
+    await communicationLogWriteSegmentManifest();
+    return true;
   }
 
   /**
@@ -7704,8 +7723,7 @@ globalThis.__dcArchiveCodec = {
   /** Segmented communication storage facade. */
   const communicationLogStorage = Object.freeze({
     appendRecord: communicationLogStorageAppendRecord
-  });
-  /**
+  });  /**
    * Derives the append target from the two alternating physical files.
    *
    * @returns {Promise<void>} Resolves after an active file is selected/created.
@@ -7887,16 +7905,16 @@ globalThis.__dcArchiveCodec = {
       phase = 'active-snapshot';
       const activeSnapshot = await communicationLogRefreshedFileSnapshot();
       communicationLogActiveSegmentBytes = activeSnapshot.file.size;
-      const activeRange = communicationLogActiveSegmentBytes > 0
-        ? communicationLogTimestampRangeFromJsonl(
-          new Uint8Array(await activeSnapshot.file.arrayBuffer())
+      communicationLogActiveLastTimestamp = communicationLogActiveSegmentBytes > 0
+        ? await communicationLogLastTimestampFromJsonlFile(
+          activeSnapshot.file,
+          communicationLogActiveSegmentBytes
         )
         : null;
-      communicationLogActiveLastTimestamp = activeRange?.end_timestamp ?? null;
       communicationLogSegmentManifest.active_committed_eof =
         communicationLogActiveSegmentBytes;
-      communicationLogSegmentManifest.active_last_timestamp =
-        communicationLogActiveLastTimestamp;
+      communicationLogSegmentManifest.conversation_name =
+        communicationLogConversationName() ?? communicationLogSegmentManifest.conversation_name ?? null;
       await communicationLogWriteSegmentManifest();
       if (communicationLogActiveSegmentBytes >= COMMUNICATION_LOG_SEGMENT_TARGET_BYTES) {
         communicationLogRotationPending = true;
@@ -7935,6 +7953,84 @@ globalThis.__dcArchiveCodec = {
       if (end === null || timestamp > end) end = timestamp;
     }
     return start === null ? null : { start_timestamp: start, end_timestamp: end };
+  }
+
+  /**
+   * Returns a trustworthy timestamp from one exact JSONL line blob.
+   *
+   * @param {Blob} line - Exact JSONL line bytes without the newline delimiter.
+   * @returns {Promise<string|null>} Trustworthy timestamp, or null.
+   */
+  async function communicationLogTimestampFromJsonlLine(line) {
+    if (!line || line.size === 0) return null;
+    try {
+      const record = JSON.parse(await line.text());
+      const timestamp = typeof record?.timestamp === 'string' ? record.timestamp : null;
+      return timestamp && Number.isFinite(Date.parse(timestamp)) ? timestamp : null;
+    } catch {
+      return null;
+    }
+  }
+
+  /**
+   * Finds the first trustworthy complete JSONL record timestamp by scanning only
+   * as far forward from the file start as necessary.
+   *
+   * @param {File} file - JSONL file snapshot.
+   * @param {number} [end] - Exclusive frozen EOF.
+   * @returns {Promise<string|null>} First trustworthy timestamp, or null.
+   */
+  async function communicationLogFirstTimestampFromJsonlFile(file, end = file.size) {
+    const limit = Math.min(file.size, Math.max(0, end));
+    let lineStart = 0;
+    for (let cursor = 0; cursor < limit;) {
+      const next = Math.min(limit, cursor + COMMUNICATION_LOG_COMPARE_CHUNK_BYTES);
+      const bytes = new Uint8Array(await file.slice(cursor, next).arrayBuffer());
+      for (let index = 0; index < bytes.byteLength; index += 1) {
+        if (bytes[index] !== 10) continue;
+        const lineEnd = cursor + index;
+        const timestamp = await communicationLogTimestampFromJsonlLine(
+          file.slice(lineStart, lineEnd)
+        );
+        if (timestamp) return timestamp;
+        lineStart = lineEnd + 1;
+      }
+      cursor = next;
+    }
+    return null;
+  }
+
+  /**
+   * Finds the last trustworthy complete JSONL record timestamp by scanning
+   * backward from the frozen EOF in bounded chunks and stopping at the first
+   * timestamped line encountered.
+   *
+   * @param {File} file - JSONL file snapshot.
+   * @param {number} [end] - Exclusive frozen EOF.
+   * @returns {Promise<string|null>} Last trustworthy timestamp, or null.
+   */
+  async function communicationLogLastTimestampFromJsonlFile(file, end = file.size) {
+    const limit = Math.min(file.size, Math.max(0, end));
+    let lineEnd = limit;
+    for (let cursor = limit; cursor > 0;) {
+      const start = Math.max(0, cursor - COMMUNICATION_LOG_COMPARE_CHUNK_BYTES);
+      const bytes = new Uint8Array(await file.slice(start, cursor).arrayBuffer());
+      for (let index = bytes.byteLength - 1; index >= 0; index -= 1) {
+        if (bytes[index] !== 10) continue;
+        const lineStart = start + index + 1;
+        if (lineStart < lineEnd) {
+          const timestamp = await communicationLogTimestampFromJsonlLine(
+            file.slice(lineStart, lineEnd)
+          );
+          if (timestamp) return timestamp;
+        }
+        lineEnd = start + index;
+      }
+      cursor = start;
+    }
+    return lineEnd > 0
+      ? communicationLogTimestampFromJsonlLine(file.slice(0, lineEnd))
+      : null;
   }
 
   /**
@@ -7997,7 +8093,7 @@ globalThis.__dcArchiveCodec = {
    * @returns {string} Deterministic printable-ASCII member name.
    */
   function communicationLogAsciiArchiveMemberName(name) {
-    return String(name).replace(/[^\\x20-\\x7e]/g, '_');
+    return String(name).replace(/[^\x20-\x7e]/g, '_');
   }
 
   /**
@@ -8098,15 +8194,17 @@ globalThis.__dcArchiveCodec = {
   /**
    * Freezes filesystem-derived history plus the exact active committed EOF.
    *
-   * @returns {Promise<Uint8Array>} Exact logical-log snapshot bytes.
+   * @returns {Promise<Object>} Frozen logical-log snapshot plan.
    */
   async function communicationLogCaptureSnapshotPlan() {
     await communicationLogCloseActiveWriter();
     const active = await communicationLogActiveFileSnapshot();
     const activeEof = active.file.size;
+    communicationLogActiveLastTimestamp = activeEof > 0
+      ? await communicationLogLastTimestampFromJsonlFile(active.file, activeEof)
+      : null;
     communicationLogSegmentManifest.active_committed_eof = activeEof;
-    communicationLogSegmentManifest.active_last_timestamp =
-      communicationLogActiveLastTimestamp;
+    await communicationLogSyncManifestConversationName();
     await communicationLogWriteSegmentManifest();
     return {
       segments: await communicationLogHistoricalSegmentsFromDirectory(),
@@ -18185,23 +18283,21 @@ Image elapsed: ${formatDuration(imageElapsed)} — Completed: ${imageCompleted}/
   /**
    * Resolves one attempted date/time change against optional inclusive bounds.
    *
-   * Stepping past a boundary is rejected so the value does not move in the
-   * attempted direction. Typed values are instead clamped to the nearest
-   * available boundary. Both cases report the boundary hit to the caller.
+   * Any attempt beyond an available boundary clamps to that boundary. The caller
+   * receives a boundary-hit flag so both typed and stepped overflow can emit the
+   * shared error cue.
    *
    * @param {Date} current - Current accepted local date/time.
    * @param {Date} candidate - Attempted local date/time.
    * @param {Date|null} minimum - Optional inclusive minimum.
    * @param {Date|null} maximum - Optional inclusive maximum.
-   * @param {boolean} clampOnBoundary - True for typed input; false for stepping.
    * @returns {Object} Resolved date and whether an available-range boundary was hit.
    */
   function dateTimeControlResolveBoundedAttempt(
     current,
     candidate,
     minimum = null,
-    maximum = null,
-    clampOnBoundary = false
+    maximum = null
   ) {
     const candidateTime = candidate.getTime();
     if (!Number.isFinite(candidateTime)) {
@@ -18210,17 +18306,9 @@ Image elapsed: ${formatDuration(imageElapsed)} — Completed: ${imageCompleted}/
     const belowMinimum = minimum && candidateTime < minimum.getTime();
     const aboveMaximum = maximum && candidateTime > maximum.getTime();
     const boundaryHit = Boolean(belowMinimum || aboveMaximum);
-    if (!boundaryHit) {
-      return {
-        value: dateTimeControlClampDate(candidate, minimum, maximum),
-        boundary_hit: false
-      };
-    }
     return {
-      value: clampOnBoundary
-        ? dateTimeControlClampDate(candidate, minimum, maximum)
-        : new Date(current.getTime()),
-      boundary_hit: true
+      value: dateTimeControlClampDate(candidate, minimum, maximum),
+      boundary_hit: boundaryHit
     };
   }
 
@@ -18314,9 +18402,8 @@ Image elapsed: ${formatDuration(imageElapsed)} — Completed: ${imageCompleted}/
    * The control exposes year/month/day hour:minute:second text fields with
    * increment/decrement buttons above and below every field. Stepping uses local
    * Date arithmetic so carries/borrows update surrounding fields correctly.
-   * Attempts to step beyond the available range are rejected with the shared
-   * error sound. Typed values beyond the range produce the same sound and clamp
-   * to the nearest available boundary.
+   * Attempts beyond the available range produce the shared error sound and clamp
+   * to the nearest available boundary, whether typed or stepped.
    *
    * @param {Object} options - Control configuration.
    * @param {string} options.label - Accessible control label.
@@ -18391,16 +18478,14 @@ Image elapsed: ${formatDuration(imageElapsed)} — Completed: ${imageCompleted}/
      * Applies one bounded user attempt and emits the shared error cue on a hit.
      *
      * @param {Date} candidate - Attempted local date/time.
-     * @param {boolean} clampOnBoundary - True for typed input; false for stepping.
      * @returns {void} No value is returned.
      */
-    const applyAttempt = (candidate, clampOnBoundary) => {
+    const applyAttempt = candidate => {
       const resolved = dateTimeControlResolveBoundedAttempt(
         current,
         candidate,
         minDate,
-        maxDate,
-        clampOnBoundary
+        maxDate
       );
       current = resolved.value;
       if (resolved.boundary_hit) playAgentSound('error');
@@ -18437,7 +18522,7 @@ Image elapsed: ${formatDuration(imageElapsed)} — Completed: ${imageCompleted}/
         Math.min(59, Math.max(0, second)),
         0
       );
-      applyAttempt(candidate, true);
+      applyAttempt(candidate);
     };
 
     root.addEventListener('click', event => {
@@ -18447,7 +18532,7 @@ Image elapsed: ${formatDuration(imageElapsed)} — Completed: ${imageCompleted}/
       if (!(button instanceof HTMLButtonElement) || !root.contains(button)) return;
       const field = button.getAttribute('data-date-time-target');
       const delta = button.getAttribute('data-date-time-step') === 'up' ? 1 : -1;
-      applyAttempt(dateTimeControlAdjustDate(current, field, delta), false);
+      applyAttempt(dateTimeControlAdjustDate(current, field, delta));
     });
 
     root.addEventListener('change', event => {
@@ -18468,7 +18553,7 @@ Image elapsed: ${formatDuration(imageElapsed)} — Completed: ${imageCompleted}/
       event.preventDefault();
       const field = event.target.getAttribute('data-date-time-field');
       const delta = event.key === 'ArrowUp' ? 1 : -1;
-      applyAttempt(dateTimeControlAdjustDate(current, field, delta), false);
+      applyAttempt(dateTimeControlAdjustDate(current, field, delta));
     });
 
     render();
@@ -18499,41 +18584,48 @@ Image elapsed: ${formatDuration(imageElapsed)} — Completed: ${imageCompleted}/
   /**
    * Resolves the currently available communication-log timestamp range.
    *
-   * A frozen snapshot first commits the active writer and refreshes the durable
-   * manifest.  When historical segments exist, the earliest timestamp still
-   * comes only from the filesystem-authoritative first segment filename. Before
-   * the first rotation, the earliest trustworthy timestamp is read from the
-   * frozen active prefix instead. No historical archive is opened or decompressed
-   * merely to populate the dialog.
+   * A frozen snapshot first commits the active writer. When historical segments
+   * exist, the earliest timestamp still comes from the filesystem-authoritative
+   * first segment filename. Before the first compressed segment exists, both raw
+   * alternating active files are considered and their first trustworthy record
+   * timestamps are compared. The end comes from the frozen snapshot's live
+   * active timestamp state, not from a manifest timestamp cache.
    *
    * @returns {Promise<Object>} Inclusive start/end ISO timestamp range.
    */
   async function communicationLogDuplicateAvailableRange() {
     const queued = communicationLogEnqueue('duplicate-range-snapshot', async () => {
       const plan = await communicationLogCaptureSnapshotPlan();
-      const manifest = await communicationLogReadSegmentManifest();
       let startTimestamp = plan.segments[0]?.start_timestamp ?? null;
 
-      if (!startTimestamp && plan.active_eof > 0) {
-        const activeHandle = await communicationLogSegmentDirectoryHandle.getFileHandle(
-          plan.active_name,
-          { create: false }
-        );
-        const activeFile = await activeHandle.getFile();
-        if (activeFile.size < plan.active_eof) {
-          throw new Error(
-            'Frozen active communication prefix became shorter while preparing Duplicate range.'
-          );
+      if (!startTimestamp) {
+        const rawStarts = [];
+        for (const name of COMMUNICATION_LOG_ACTIVE_FILE_NAMES) {
+          let handle;
+          try {
+            handle = await communicationLogSegmentDirectoryHandle.getFileHandle(
+              name,
+              { create: false }
+            );
+          } catch (error) {
+            if (error?.name === 'NotFoundError') continue;
+            throw error;
+          }
+          const file = await handle.getFile();
+          const eof = name === plan.active_name
+            ? Math.min(file.size, plan.active_eof)
+            : file.size;
+          if (eof <= 0) continue;
+          const timestamp = await communicationLogFirstTimestampFromJsonlFile(file, eof);
+          if (timestamp) rawStarts.push(timestamp);
         }
-        const activeBytes = new Uint8Array(
-          await activeFile.slice(0, plan.active_eof).arrayBuffer()
-        );
-        startTimestamp = communicationLogFirstTimestampFromJsonl(activeBytes);
+        rawStarts.sort((left, right) => Date.parse(left) - Date.parse(right));
+        startTimestamp = rawStarts[0] ?? null;
       }
 
       return {
         start_timestamp: startTimestamp,
-        end_timestamp: manifest.active_last_timestamp
+        end_timestamp: plan.active_last_timestamp
       };
     });
     const range = await queued.operation;
@@ -18547,7 +18639,7 @@ Image elapsed: ${formatDuration(imageElapsed)} — Completed: ${imageCompleted}/
       );
     }
     if (!Number.isFinite(endMs)) {
-      throw new Error('Duplicate range end timestamp is unavailable in the segment manifest.');
+      throw new Error('Duplicate range end timestamp is unavailable in the frozen active state.');
     }
     if (endMs < startMs) {
       throw new Error('Communication Duplicate range end precedes its start.');
