@@ -12,9 +12,13 @@ const dialogSource = await readFile(
 );
 
 function functionSource(source, name) {
-  const start = source.indexOf(`function ${name}(`);
-  assert.ok(start >= 0, `${name} must exist`);
-  const brace = source.indexOf('{', start);
+  const functionStart = source.indexOf(`function ${name}(`);
+  assert.ok(functionStart >= 0, `${name} must exist`);
+  const asyncStart = source.lastIndexOf('async ', functionStart);
+  const start = asyncStart >= 0 && asyncStart + 'async '.length === functionStart
+    ? asyncStart
+    : functionStart;
+  const brace = source.indexOf('{', functionStart);
   let depth = 0;
   for (let index = brace; index < source.length; index += 1) {
     if (source[index] === '{') depth += 1;
@@ -80,13 +84,22 @@ test('month and year stepping clamps the local calendar day instead of skipping 
   assert.equal(nextYear.getDate(), 28);
 });
 
-test('Duplicate range defaults start from earliest segment filename and end from manifest only', () => {
-  assert.match(dialogSource, /communicationLogHistoricalSegmentsFromDirectory/);
-  assert.match(dialogSource, /segments\[0\]\.start_timestamp/);
+test('date/time available-range bounds reject stepping and clamp typed input with error sound', () => {
+  assert.match(controlSource, /dateTimeControlResolveBoundedAttempt/);
+  assert.match(controlSource, /clampOnBoundary/);
+  assert.match(controlSource, /boundary_hit/);
+  assert.match(controlSource, /playAgentSound\('error'\)/);
+  assert.match(controlSource, /applyAttempt\(dateTimeControlAdjustDate\(current, field, delta\), false\)/);
+  assert.match(controlSource, /applyAttempt\(candidate, true\)/);
+});
+
+test('Duplicate range uses historical filename start when available and active prefix before first rotation', () => {
+  assert.match(dialogSource, /communicationLogCaptureSnapshotPlan/);
+  assert.match(dialogSource, /plan\.segments\[0\]\?\.start_timestamp/);
+  assert.match(dialogSource, /communicationLogFirstTimestampFromJsonl/);
   assert.match(dialogSource, /communicationLogReadSegmentManifest/);
   assert.match(dialogSource, /manifest\.active_last_timestamp/);
-  assert.doesNotMatch(dialogSource, /communicationLogFirstTimestampFromJsonl/);
-  assert.doesNotMatch(dialogSource, /communicationLogCaptureSnapshotPlan/);
+  assert.match(dialogSource, /if \(!startTimestamp && plan\.active_eof > 0\)/);
 });
 
 test('Duplicate range dialog composes two reusable controls and passes selected inclusive bounds', () => {
