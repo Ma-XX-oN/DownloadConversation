@@ -165,3 +165,58 @@
       });
     });
   }
+
+  /**
+   * Intercepts the recorder Duplicate button before its legacy direct handler.
+   *
+   * The range picker remains a separate reusable UI module while the existing
+   * panel constructor stays unchanged. Accepted bounds are passed directly into
+   * the established Duplicate storage operation.
+   *
+   * @param {MouseEvent} event - Captured document click event.
+   * @returns {void} No value is returned.
+   */
+  function communicationLogHandleDuplicateRangeClick(event) {
+    const button = event.target instanceof Element
+      ? event.target.closest('[data-role="duplicate-communication-log"]')
+      : null;
+    if (!(button instanceof HTMLButtonElement)) return;
+    event.preventDefault();
+    event.stopImmediatePropagation();
+    if (button.disabled || communicationLogUiActionInProgress || !communicationLogFileName) return;
+
+    button.disabled = true;
+    setStatus('Duplicate: preparing available local date/time range…');
+    void communicationLogShowDuplicateRangeDialog()
+      .then(bounds => {
+        if (!bounds) {
+          button.disabled = false;
+          updateUi();
+          setStatus('Communication log Duplicate cancelled.');
+          return;
+        }
+        button.disabled = false;
+        return runCommunicationLogPanelAction(button, {
+          idleLabel: 'Duplicate communication log',
+          busyLabel: 'Duplicating communication log',
+          busyTitle: 'Duplicating…',
+          operation: () => communicationLogArchiveDuplicate({
+            start_timestamp: bounds.start_timestamp,
+            end_timestamp: bounds.end_timestamp
+          }),
+          onSuccess: duplicateName =>
+            setStatus(`Communication log duplicated as ${duplicateName}.`),
+          failurePrefix: 'Communication log duplicate failed'
+        });
+      })
+      .catch(error => {
+        button.disabled = false;
+        updateUi();
+        setStatus(`Communication log duplicate failed: ${errorMessage(error)}`);
+        logDiagnostic('errors', 'communication-log-duplicate-range-failure', {
+          message: boundedDiagnosticText(errorMessage(error), 2000)
+        });
+      });
+  }
+
+  document.addEventListener('click', communicationLogHandleDuplicateRangeClick, true);
