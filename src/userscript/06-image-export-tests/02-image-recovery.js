@@ -154,6 +154,13 @@
         historySpine, streamTailCaptureSnapshot(currentStreamCapture)
       );
       const spine = streamMerge.spine;
+      const exportRange = conversationSpineTimestampRange(spine);
+      assert(exportRange, 'Conversation export has no trustworthy content timestamp range.');
+      const exportFilenamePrefix = canonicalFilename(
+        conversationProjectName(),
+        conversationTitle(),
+        exportRange
+      );
       logDiagnostic(streamMerge.merged ? 'debug' : 'verbose',
         'conversation-stream-tail-reconciliation', {
           reason: streamMerge.reason,
@@ -172,7 +179,7 @@
       if (requestedKinds.includes('jsonl')) {
         activeKind = 'jsonl';
         exportKind = activeKind;
-        const filename = `${conversationFileBaseName()}.jsonl`;
+        const filename = `${exportFilenamePrefix}.jsonl`;
         const jsonl = apiRecordsJsonl(spine, conversationId);
         const jsonlTailComparison = compareLiveTailMarkersToJsonl(frozenLiveTailMarkers, spine, jsonl);
         logDiagnostic(jsonlTailComparison.warning ? 'warnings' : 'debug',
@@ -222,7 +229,7 @@
           refreshStatus();
         }, recoveredImageMap);
         /** Raw Markdown filename before optional archive wrapping. */
-        const rawFilename = `${conversationFileBaseName()}.md`;
+        const rawFilename = `${exportFilenamePrefix}.md`;
         /** Final Markdown filename, including the XZ suffix only in compressed mode. */
         const filename = compressedOutput ? `${rawFilename}.xz` : rawFilename;
         logDiagnostic('debug', 'conversation-export-phase-complete', {
