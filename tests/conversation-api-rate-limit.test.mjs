@@ -1,8 +1,15 @@
 import assert from 'node:assert/strict';
 import { readFile } from 'node:fs/promises';
+import path from 'node:path';
 import test from 'node:test';
+import { fileURLToPath } from 'node:url';
 import vm from 'node:vm';
+import {
+  readDownloadConversationSource,
+  readUserscriptManifest
+} from '../scripts/userscript-build-lib.mjs';
 
+const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const source = await readFile(
   new URL('../src/userscript/03-agent-lifecycle/10-conversation-api-rate-limit.js', import.meta.url),
   'utf8'
@@ -67,6 +74,25 @@ function harness(physicalFetch) {
   `, context);
   return context;
 }
+
+test('coordinator is assembled at top level before the direct API fetch declaration', async () => {
+  const manifest = await readUserscriptManifest(root);
+  const built = await readDownloadConversationSource(root, manifest);
+  const captureEnd = built.indexOf('    captureInstalled = true;\n  }');
+  const coordinator = built.indexOf('// BEGIN Issue #183 Conversation API rate-limit coordination');
+  const apiFetchDeclaration = built.indexOf('  async function apiFetch(url)');
+  const pageHttpFailure = built.indexOf('    if (!response.ok) {', apiFetchDeclaration);
+
+  assert.ok(captureEnd >= 0, 'network-capture installation boundary must exist');
+  assert.ok(coordinator > captureEnd, 'coordinator must begin after the completed network-capture function');
+  assert.ok(apiFetchDeclaration > coordinator, 'coordinator must be installed before direct Conversation API use');
+  assert.ok(pageHttpFailure > apiFetchDeclaration, 'page HTTP failure handling must remain after apiFetch');
+  assert.doesNotMatch(
+    built,
+    /if \(!response\.ok\) \{\s*\/\/ BEGIN Issue #183 Conversation API rate-limit coordination/,
+    'coordinator must never be assembled inside the page HTTP failure branch'
+  );
+});
 
 test('Retry-After suppresses the next physical request for at least the server delay', async () => {
   let calls = 0;
