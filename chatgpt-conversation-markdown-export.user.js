@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         ChatGPT Conversation Markdown Recorder
 // @namespace    https://chatgpt.com/
-// @version      1.7.2-issue.166.135
+// @version      1.7.2-issue.166.136
 // @description  Exports the current ChatGPT conversation directly from the Conversation API as Markdown or JSONL.
 // @match        https://chatgpt.com/*
 // @match        https://chat.openai.com/*
@@ -18163,6 +18163,484 @@ Image elapsed: ${formatDuration(imageElapsed)} — Completed: ${imageCompleted}/
   }
 
   injectRecorderCheckboxStyles();
+
+  /**
+   * Clamps one Date to optional inclusive bounds.
+   *
+   * @param {Date} value - Candidate local date/time.
+   * @param {Date|null} minimum - Optional inclusive minimum.
+   * @param {Date|null} maximum - Optional inclusive maximum.
+   * @returns {Date} Clamped copy.
+   */
+  function dateTimeControlClampDate(value, minimum = null, maximum = null) {
+    let time = value.getTime();
+    if (!Number.isFinite(time)) throw new Error('Invalid date/time control value.');
+    if (minimum && time < minimum.getTime()) time = minimum.getTime();
+    if (maximum && time > maximum.getTime()) time = maximum.getTime();
+    const result = new Date(time);
+    result.setMilliseconds(0);
+    return result;
+  }
+
+  /**
+   * Returns the number of days in one local calendar month.
+   *
+   * @param {number} year - Full local year.
+   * @param {number} monthIndex - Zero-based local month.
+   * @returns {number} Number of days in the month.
+   */
+  function dateTimeControlDaysInMonth(year, monthIndex) {
+    return new Date(year, monthIndex + 1, 0).getDate();
+  }
+
+  /**
+   * Adjusts one local date/time field while carrying into surrounding fields.
+   *
+   * Month/year changes preserve the day when possible and clamp it to the last
+   * valid day otherwise (for example Jan 31 -> Feb 28/29). Day/hour/minute/second
+   * use native Date rollover so neighbouring fields advance or retreat naturally.
+   *
+   * @param {Date} value - Current local date/time.
+   * @param {'year'|'month'|'day'|'hour'|'minute'|'second'} field - Field to adjust.
+   * @param {number} delta - Signed integer increment.
+   * @returns {Date} Adjusted copy.
+   */
+  function dateTimeControlAdjustDate(value, field, delta) {
+    const next = new Date(value.getTime());
+    next.setMilliseconds(0);
+    if (!Number.isInteger(delta) || delta === 0) return next;
+    if (field === 'year') {
+      const day = next.getDate();
+      next.setDate(1);
+      next.setFullYear(next.getFullYear() + delta);
+      next.setDate(Math.min(day, dateTimeControlDaysInMonth(
+        next.getFullYear(), next.getMonth()
+      )));
+      return next;
+    }
+    if (field === 'month') {
+      const day = next.getDate();
+      next.setDate(1);
+      next.setMonth(next.getMonth() + delta);
+      next.setDate(Math.min(day, dateTimeControlDaysInMonth(
+        next.getFullYear(), next.getMonth()
+      )));
+      return next;
+    }
+    if (field === 'day') next.setDate(next.getDate() + delta);
+    else if (field === 'hour') next.setHours(next.getHours() + delta);
+    else if (field === 'minute') next.setMinutes(next.getMinutes() + delta);
+    else if (field === 'second') next.setSeconds(next.getSeconds() + delta);
+    else throw new Error(`Unknown date/time field: ${field}`);
+    return next;
+  }
+
+  /**
+   * Installs reusable date/time spinner and range-dialog styling.
+   *
+   * @returns {void} No value is returned.
+   */
+  function injectSingleDateTimeControlStyles() {
+    const styleId = `${PANEL_ID}-date-time-style`;
+    if (document.getElementById(styleId)) return;
+    const style = document.createElement('style');
+    style.id = styleId;
+    style.textContent = `
+      .tm-date-time-control{display:inline-flex;align-items:center;gap:2px;white-space:nowrap;font:13px/1.2 system-ui,sans-serif}
+      .tm-date-time-field{display:grid;grid-template-rows:18px 28px 18px;align-items:center;justify-items:center}
+      .tm-date-time-step{width:100%;height:18px;padding:0!important;border:0!important;border-radius:4px!important;background:transparent!important;color:#ddd!important;line-height:16px!important;cursor:pointer}
+      .tm-date-time-step:hover{background:#3a3a3a!important}
+      .tm-date-time-input{box-sizing:border-box;height:28px;padding:3px 4px;border:1px solid #666;border-radius:5px;background:#181818;color:#fff;text-align:center;font:13px/1.2 ui-monospace,SFMono-Regular,Consolas,monospace;font-variant-numeric:tabular-nums}
+      .tm-date-time-input[data-date-time-field="year"]{width:5.2ch}
+      .tm-date-time-input:not([data-date-time-field="year"]){width:3.2ch}
+      .tm-date-time-separator{align-self:center;color:#bbb;margin:0 1px}
+      .tm-date-range-overlay{position:fixed;inset:0;z-index:2147483647;display:grid;place-items:center;padding:16px;box-sizing:border-box;background:rgba(0,0,0,.62)}
+      .tm-date-range-dialog{max-width:calc(100vw - 32px);padding:16px;border:1px solid #666;border-radius:12px;background:#202020;color:#f2f2f2;box-shadow:0 10px 40px rgba(0,0,0,.5);font:13px/1.35 system-ui,sans-serif}
+      .tm-date-range-row{display:flex;align-items:center;gap:8px;flex-wrap:wrap}
+      .tm-date-range-label{font-weight:600}
+      .tm-date-range-actions{display:flex;gap:8px;margin-left:auto}
+      .tm-date-range-actions button{border:1px solid #666;border-radius:8px;background:#292929;color:#fff;padding:8px 12px;font:inherit;cursor:pointer}
+      .tm-date-range-actions button:disabled{opacity:.45;cursor:not-allowed}
+      .tm-date-range-error{min-height:1.35em;margin-top:8px;color:#ffb4b4}
+    `;
+    (document.head || document.documentElement)?.append(style);
+  }
+
+  /**
+   * Creates one reusable local-time date/time spinner control.
+   *
+   * The control exposes year/month/day hour:minute:second text fields with
+   * increment/decrement buttons above and below every field. Stepping uses local
+   * Date arithmetic so carries/borrows update surrounding fields correctly.
+   *
+   * @param {Object} options - Control configuration.
+   * @param {string} options.label - Accessible control label.
+   * @param {Date} options.value - Initial local date/time.
+   * @param {Date|null} [options.minimum] - Optional inclusive minimum.
+   * @param {Date|null} [options.maximum] - Optional inclusive maximum.
+   * @param {Function|null} [options.onChange] - Optional changed callback.
+   * @returns {Object} Element and date/bounds accessors.
+   */
+  function createSingleDateTimeControl({
+    label,
+    value,
+    minimum = null,
+    maximum = null,
+    onChange = null
+  }) {
+    injectSingleDateTimeControlStyles();
+    const root = document.createElement('div');
+    root.className = 'tm-date-time-control';
+    root.setAttribute('role', 'group');
+    root.setAttribute('aria-label', label);
+    root.innerHTML = `
+      <span class="tm-date-time-field"><button class="tm-date-time-step" type="button" data-date-time-step="up" data-date-time-target="year" aria-label="Increment year">▲</button><input class="tm-date-time-input" data-date-time-field="year" inputmode="numeric" maxlength="4" aria-label="Year"><button class="tm-date-time-step" type="button" data-date-time-step="down" data-date-time-target="year" aria-label="Decrement year">▼</button></span><span class="tm-date-time-separator">/</span>
+      <span class="tm-date-time-field"><button class="tm-date-time-step" type="button" data-date-time-step="up" data-date-time-target="month" aria-label="Increment month">▲</button><input class="tm-date-time-input" data-date-time-field="month" inputmode="numeric" maxlength="2" aria-label="Month"><button class="tm-date-time-step" type="button" data-date-time-step="down" data-date-time-target="month" aria-label="Decrement month">▼</button></span><span class="tm-date-time-separator">/</span>
+      <span class="tm-date-time-field"><button class="tm-date-time-step" type="button" data-date-time-step="up" data-date-time-target="day" aria-label="Increment day">▲</button><input class="tm-date-time-input" data-date-time-field="day" inputmode="numeric" maxlength="2" aria-label="Day"><button class="tm-date-time-step" type="button" data-date-time-step="down" data-date-time-target="day" aria-label="Decrement day">▼</button></span><span class="tm-date-time-separator">&nbsp;</span>
+      <span class="tm-date-time-field"><button class="tm-date-time-step" type="button" data-date-time-step="up" data-date-time-target="hour" aria-label="Increment hour">▲</button><input class="tm-date-time-input" data-date-time-field="hour" inputmode="numeric" maxlength="2" aria-label="Hour"><button class="tm-date-time-step" type="button" data-date-time-step="down" data-date-time-target="hour" aria-label="Decrement hour">▼</button></span><span class="tm-date-time-separator">:</span>
+      <span class="tm-date-time-field"><button class="tm-date-time-step" type="button" data-date-time-step="up" data-date-time-target="minute" aria-label="Increment minute">▲</button><input class="tm-date-time-input" data-date-time-field="minute" inputmode="numeric" maxlength="2" aria-label="Minute"><button class="tm-date-time-step" type="button" data-date-time-step="down" data-date-time-target="minute" aria-label="Decrement minute">▼</button></span><span class="tm-date-time-separator">:</span>
+      <span class="tm-date-time-field"><button class="tm-date-time-step" type="button" data-date-time-step="up" data-date-time-target="second" aria-label="Increment second">▲</button><input class="tm-date-time-input" data-date-time-field="second" inputmode="numeric" maxlength="2" aria-label="Second"><button class="tm-date-time-step" type="button" data-date-time-step="down" data-date-time-target="second" aria-label="Decrement second">▼</button></span>
+    `;
+
+    let minDate = minimum ? new Date(minimum.getTime()) : null;
+    let maxDate = maximum ? new Date(maximum.getTime()) : null;
+    let current = dateTimeControlClampDate(value, minDate, maxDate);
+    const fields = Object.fromEntries(
+      Array.from(root.querySelectorAll('[data-date-time-field]')).map(input => [
+        input.getAttribute('data-date-time-field'), input
+      ])
+    );
+    const pad2 = number => String(number).padStart(2, '0');
+
+    const render = () => {
+      fields.year.value = String(current.getFullYear()).padStart(4, '0');
+      fields.month.value = pad2(current.getMonth() + 1);
+      fields.day.value = pad2(current.getDate());
+      fields.hour.value = pad2(current.getHours());
+      fields.minute.value = pad2(current.getMinutes());
+      fields.second.value = pad2(current.getSeconds());
+    };
+
+    const notify = () => {
+      render();
+      if (typeof onChange === 'function') onChange(new Date(current.getTime()));
+    };
+
+    const commitText = () => {
+      const year = Number.parseInt(fields.year.value, 10);
+      const month = Number.parseInt(fields.month.value, 10);
+      const day = Number.parseInt(fields.day.value, 10);
+      const hour = Number.parseInt(fields.hour.value, 10);
+      const minute = Number.parseInt(fields.minute.value, 10);
+      const second = Number.parseInt(fields.second.value, 10);
+      if (![year, month, day, hour, minute, second].every(Number.isFinite)) {
+        render();
+        return;
+      }
+      const safeMonth = Math.min(12, Math.max(1, month));
+      const safeDay = Math.min(
+        dateTimeControlDaysInMonth(year, safeMonth - 1),
+        Math.max(1, day)
+      );
+      const candidate = new Date(
+        year,
+        safeMonth - 1,
+        safeDay,
+        Math.min(23, Math.max(0, hour)),
+        Math.min(59, Math.max(0, minute)),
+        Math.min(59, Math.max(0, second)),
+        0
+      );
+      current = dateTimeControlClampDate(candidate, minDate, maxDate);
+      notify();
+    };
+
+    root.addEventListener('click', event => {
+      const button = event.target instanceof Element
+        ? event.target.closest('[data-date-time-step]')
+        : null;
+      if (!(button instanceof HTMLButtonElement) || !root.contains(button)) return;
+      const field = button.getAttribute('data-date-time-target');
+      const delta = button.getAttribute('data-date-time-step') === 'up' ? 1 : -1;
+      current = dateTimeControlClampDate(
+        dateTimeControlAdjustDate(current, field, delta),
+        minDate,
+        maxDate
+      );
+      notify();
+    });
+
+    root.addEventListener('change', event => {
+      if (event.target instanceof HTMLInputElement
+          && event.target.matches('[data-date-time-field]')) {
+        commitText();
+      }
+    });
+    root.addEventListener('keydown', event => {
+      if (!(event.target instanceof HTMLInputElement)
+          || !event.target.matches('[data-date-time-field]')) return;
+      if (event.key === 'Enter') {
+        event.preventDefault();
+        commitText();
+        return;
+      }
+      if (event.key !== 'ArrowUp' && event.key !== 'ArrowDown') return;
+      event.preventDefault();
+      const field = event.target.getAttribute('data-date-time-field');
+      const delta = event.key === 'ArrowUp' ? 1 : -1;
+      current = dateTimeControlClampDate(
+        dateTimeControlAdjustDate(current, field, delta),
+        minDate,
+        maxDate
+      );
+      notify();
+    });
+
+    render();
+    return {
+      element: root,
+      getDate: () => new Date(current.getTime()),
+      setDate(next) {
+        current = dateTimeControlClampDate(next, minDate, maxDate);
+        notify();
+      },
+      setBounds(nextMinimum, nextMaximum) {
+        minDate = nextMinimum ? new Date(nextMinimum.getTime()) : null;
+        maxDate = nextMaximum ? new Date(nextMaximum.getTime()) : null;
+        current = dateTimeControlClampDate(current, minDate, maxDate);
+        notify();
+      },
+      focus() {
+        fields.year.focus();
+        fields.year.select();
+      }
+    };
+  }
+
+  /** ID of the communication Duplicate range dialog overlay. */
+  const COMMUNICATION_LOG_DUPLICATE_RANGE_DIALOG_ID =
+    'tm-conversation-duplicate-range-dialog';
+
+  /**
+   * Resolves the currently available communication-log timestamp range.
+   *
+   * The earliest historical timestamp comes from the filesystem-authoritative
+   * segment filename range already captured by the snapshot plan. The latest
+   * active timestamp comes from the manifest after committing a fresh active
+   * EOF/timestamp checkpoint. If no historical segment exists yet, the first
+   * active record supplies the unavoidable start fallback because there is no
+   * segment filename to consult.
+   *
+   * @returns {Promise<Object>} Inclusive start/end ISO timestamp range.
+   */
+  async function communicationLogDuplicateAvailableRange() {
+    const queued = communicationLogEnqueue('duplicate-range', async () => {
+      const plan = await communicationLogCaptureSnapshotPlan();
+      try {
+        const segments = plan.segments;
+        let startTimestamp = segments.length > 0
+          ? segments[0].start_timestamp
+          : null;
+        if (!startTimestamp && plan.active_eof > 0) {
+          const activeHandle = await communicationLogSegmentDirectoryHandle.getFileHandle(
+            plan.active_name,
+            { create: false }
+          );
+          const activeFile = await activeHandle.getFile();
+          const activeBytes = new Uint8Array(
+            await activeFile.slice(0, plan.active_eof).arrayBuffer()
+          );
+          startTimestamp = communicationLogFirstTimestampFromJsonl(activeBytes);
+        }
+        const endTimestamp =
+          communicationLogSegmentManifest?.active_last_timestamp
+          ?? segments.at(-1)?.end_timestamp
+          ?? startTimestamp;
+        if (!startTimestamp || !endTimestamp) {
+          throw new Error('Communication log has no trustworthy timestamp range to duplicate.');
+        }
+        return {
+          start_timestamp: startTimestamp,
+          end_timestamp: endTimestamp
+        };
+      } finally {
+        await communicationLogOpenWriter();
+      }
+    });
+    return queued.operation;
+  }
+
+  /**
+   * Shows the communication-log Duplicate local date/time range dialog.
+   *
+   * Each visible field is local time. The selected start second is inclusive at
+   * millisecond 000 and the selected end second is inclusive through millisecond
+   * 999 so the seconds-only control does not accidentally discard the last record.
+   *
+   * @returns {Promise<Object|null>} Duplicate bounds, or null when cancelled.
+   */
+  async function communicationLogShowDuplicateRangeDialog() {
+    document.getElementById(COMMUNICATION_LOG_DUPLICATE_RANGE_DIALOG_ID)?.remove();
+    const range = await communicationLogDuplicateAvailableRange();
+    const minimum = new Date(Date.parse(range.start_timestamp));
+    const maximumExact = new Date(Date.parse(range.end_timestamp));
+    if (!Number.isFinite(minimum.getTime()) || !Number.isFinite(maximumExact.getTime())) {
+      throw new Error('Communication Duplicate range contains an invalid timestamp.');
+    }
+    minimum.setMilliseconds(0);
+    const maximum = new Date(maximumExact.getTime());
+    maximum.setMilliseconds(0);
+    if (maximum < minimum) {
+      throw new Error('Communication Duplicate range end precedes its start.');
+    }
+
+    injectSingleDateTimeControlStyles();
+    const overlay = document.createElement('div');
+    overlay.id = COMMUNICATION_LOG_DUPLICATE_RANGE_DIALOG_ID;
+    overlay.className = 'tm-date-range-overlay';
+    overlay.innerHTML = `
+      <div class="tm-date-range-dialog" role="dialog" aria-modal="true" aria-label="Duplicate communication log date range">
+        <div class="tm-date-range-row">
+          <span class="tm-date-range-label">Duplicate:</span>
+          <span data-role="duplicate-range-start"></span>
+          <span aria-hidden="true">–</span>
+          <span data-role="duplicate-range-end"></span>
+          <span class="tm-date-range-actions"><button type="button" data-role="duplicate-range-ok">OK</button><button type="button" data-role="duplicate-range-cancel">Cancel</button></span>
+        </div>
+        <div class="tm-date-range-error" data-role="duplicate-range-error" aria-live="polite"></div>
+      </div>
+    `;
+    const dialog = overlay.querySelector('.tm-date-range-dialog');
+    const startHost = overlay.querySelector('[data-role="duplicate-range-start"]');
+    const endHost = overlay.querySelector('[data-role="duplicate-range-end"]');
+    const okButton = overlay.querySelector('[data-role="duplicate-range-ok"]');
+    const cancelButton = overlay.querySelector('[data-role="duplicate-range-cancel"]');
+    const errorOutput = overlay.querySelector('[data-role="duplicate-range-error"]');
+    if (!(dialog instanceof HTMLElement)
+        || !(startHost instanceof HTMLElement)
+        || !(endHost instanceof HTMLElement)
+        || !(okButton instanceof HTMLButtonElement)
+        || !(cancelButton instanceof HTMLButtonElement)) {
+      throw new Error('Communication Duplicate range dialog could not be constructed.');
+    }
+
+    let startControl;
+    let endControl;
+    const validate = () => {
+      if (!startControl || !endControl) return true;
+      const valid = startControl.getDate().getTime() <= endControl.getDate().getTime();
+      okButton.disabled = !valid;
+      if (errorOutput) {
+        errorOutput.textContent = valid ? '' : 'Start date/time must not be after end date/time.';
+      }
+      return valid;
+    };
+    startControl = createSingleDateTimeControl({
+      label: 'Duplicate start local date and time',
+      value: minimum,
+      minimum,
+      maximum,
+      onChange: validate
+    });
+    endControl = createSingleDateTimeControl({
+      label: 'Duplicate end local date and time',
+      value: maximum,
+      minimum,
+      maximum,
+      onChange: validate
+    });
+    startHost.append(startControl.element);
+    endHost.append(endControl.element);
+    validate();
+
+    const previousFocus = document.activeElement instanceof HTMLElement
+      ? document.activeElement
+      : null;
+    document.body.append(overlay);
+    startControl.focus();
+
+    return new Promise(resolve => {
+      let settled = false;
+      const finish = value => {
+        if (settled) return;
+        settled = true;
+        overlay.remove();
+        previousFocus?.focus();
+        resolve(value);
+      };
+      okButton.addEventListener('click', () => {
+        if (!validate()) return;
+        const start = startControl.getDate();
+        const end = new Date(endControl.getDate().getTime() + 999);
+        finish({
+          start_timestamp: start.toISOString(),
+          end_timestamp: end.toISOString()
+        });
+      });
+      cancelButton.addEventListener('click', () => finish(null));
+      overlay.addEventListener('click', event => {
+        if (event.target === overlay) finish(null);
+      });
+      overlay.addEventListener('keydown', event => {
+        if (event.key === 'Escape') {
+          event.preventDefault();
+          finish(null);
+        }
+      });
+    });
+  }
+
+  /**
+   * Replaces the legacy direct Duplicate click with the range-selection dialog.
+   *
+   * A document capture listener is used so the reusable range UI can remain a
+   * separate module without coupling the general recorder-panel constructor to
+   * communication archive policy.
+   *
+   * @param {MouseEvent} event - Document click event.
+   * @returns {void} No value is returned.
+   */
+  function communicationLogHandleDuplicateRangeClick(event) {
+    const button = event.target instanceof Element
+      ? event.target.closest('[data-role="duplicate-communication-log"]')
+      : null;
+    if (!(button instanceof HTMLButtonElement)) return;
+    event.preventDefault();
+    event.stopImmediatePropagation();
+    if (button.disabled || communicationLogUiActionInProgress || !communicationLogFileName) return;
+
+    button.disabled = true;
+    setStatus('Duplicate: preparing available local date/time range…');
+    void communicationLogShowDuplicateRangeDialog()
+      .then(bounds => {
+        if (!bounds) {
+          updateUi();
+          setStatus('Communication log Duplicate cancelled.');
+          return;
+        }
+        return runCommunicationLogPanelAction(button, {
+          idleLabel: 'Duplicate communication log',
+          busyLabel: 'Duplicating communication log',
+          busyTitle: 'Duplicating…',
+          operation: () => communicationLogArchiveDuplicate({
+            start_timestamp: bounds.start_timestamp,
+            end_timestamp: bounds.end_timestamp
+          }),
+          onSuccess: duplicateName =>
+            setStatus(`Communication log duplicated as ${duplicateName}.`),
+          failurePrefix: 'Communication log duplicate failed'
+        });
+      })
+      .catch(error => {
+        updateUi();
+        setStatus(`Communication log duplicate failed: ${errorMessage(error)}`);
+        logDiagnostic('errors', 'communication-log-duplicate-range-failure', {
+          message: boundedDiagnosticText(errorMessage(error), 2000)
+        });
+      });
+  }
+
+  document.addEventListener('click', communicationLogHandleDuplicateRangeClick, true);
 
   /**
    * Returns the diagnostic archive/save icon.
