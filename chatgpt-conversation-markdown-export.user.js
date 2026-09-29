@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         ChatGPT Conversation Markdown Recorder
 // @namespace    https://chatgpt.com/
-// @version      1.7.2-issue.172.2
+// @version      1.7.2-issue.172.3
 // @description  Exports the current ChatGPT conversation directly from the Conversation API as Markdown or JSONL.
 // @match        https://chatgpt.com/*
 // @match        https://chat.openai.com/*
@@ -6528,6 +6528,57 @@ globalThis.__dcArchiveCodec = {
       ['cf-ray', 'cf_ray']
     ];
     for (const [headerName, outputName] of allowed) {
+
+  /**
+   * Resolves the containing ChatGPT project name for a project conversation.
+   *
+   * The project route segment supplies stable identity while the matching project
+   * navigation link supplies the user-visible name. A document-title split is a
+   * secondary source when ChatGPT has not mounted that navigation link yet.
+   *
+   * @returns {string|null} Visible project name, or null for standalone/unresolved chats.
+   */
+  function conversationProjectName() {
+    const projectSegment = location.pathname.match(/^\/g\/([^/]+)(?:\/|$)/)?.[1] ?? null;
+    if (!projectSegment) return null;
+    const projectPath = `/g/${projectSegment}/project`;
+    for (const anchor of document.querySelectorAll('a[href]')) {
+      try {
+        const target = new URL(anchor.href, location.href);
+        if (target.origin !== location.origin || target.pathname !== projectPath) continue;
+        const visibleName = anchor.textContent?.trim();
+        if (visibleName) return visibleName;
+      } catch {}
+    }
+
+    const heading = document.querySelector('h1')?.textContent?.trim();
+    const pageTitle = String(document.title ?? '')
+      .replace(/\s*[-–—]\s*ChatGPT\s*$/i, '')
+      .trim();
+    if (!heading || !pageTitle || pageTitle === heading) return null;
+    for (const separator of [' - ', ' – ', ' — ']) {
+      if (pageTitle.endsWith(`${separator}${heading}`)) {
+        return pageTitle.slice(0, -(`${separator}${heading}`).length).trim() || null;
+      }
+      if (pageTitle.startsWith(`${heading}${separator}`)) {
+        return pageTitle.slice(`${heading}${separator}`.length).trim() || null;
+      }
+    }
+    return null;
+  }
+
+  /**
+   * Builds the canonical user-facing filename base for the current conversation.
+   *
+   * @returns {string} Sanitized `project - conversation` or conversation-only base.
+   */
+  function conversationFileBaseName() {
+    const conversationName = sanitizeFileName(conversationTitle());
+    const projectName = conversationProjectName();
+    return projectName
+      ? `${sanitizeFileName(projectName)} - ${conversationName}`
+      : conversationName;
+  }
       let value = null;
       try { value = headers?.get?.(headerName) ?? null; } catch {}
       if (value) result[outputName] = boundedDiagnosticText(value, 1000);
@@ -7061,9 +7112,13 @@ globalThis.__dcArchiveCodec = {
       return false;
     }
     communicationLogDirectoryHandle = handle;
-    communicationLogFileName = `DownloadConversation_${sanitizeFileName(conversationTitle())}.jsonl`;
+    communicationLogFileName = `DownloadConversation_${conversationFileBaseName()}.jsonl`;
     if (/^DownloadConversation_(?:ChatGPT|ChatGPT conversation)\.jsonl$/i.test(communicationLogFileName)) {
-      communicationLogFileName = `DownloadConversation_${conversationName}.jsonl`;
+      const projectName = conversationProjectName();
+      const fallbackBase = projectName
+        ? `${sanitizeFileName(projectName)} - ${conversationName}`
+        : conversationName;
+      communicationLogFileName = `DownloadConversation_${fallbackBase}.jsonl`;
     }
     logDiagnostic('debug', 'communication-log-segment-initialize-call-started', {
       initializer_type: typeof communicationLogInitializeSegmentStorage
@@ -7097,6 +7152,7 @@ globalThis.__dcArchiveCodec = {
       core_version: CORE_VERSION,
       conversation_id: currentConversationId(),
       conversation_name: conversationName,
+      project_name: conversationProjectName(),
       file_name: communicationLogFileName,
       page_url: stockNetworkSafeUrl(location.href),
       navigation_type: navigation?.type ?? null,
@@ -7686,8 +7742,12 @@ globalThis.__dcArchiveCodec = {
       }
       delete parsed.active_last_timestamp;
       const conversationName = communicationLogConversationName();
+      const projectName = conversationProjectName();
+      const inProject = /^\/g\/[^/]+(?:\/|$)/.test(location.pathname);
       parsed.conversation_name = conversationName
         ?? (typeof parsed.conversation_name === 'string' ? parsed.conversation_name : null);
+      parsed.project_name = projectName
+        ?? (inProject && typeof parsed.project_name === 'string' ? parsed.project_name : null);
       return parsed;
     } catch (error) {
       if (error?.name !== 'NotFoundError') throw error;
@@ -7695,6 +7755,7 @@ globalThis.__dcArchiveCodec = {
         schema: 2,
         logical_log_id: currentConversationId() || crypto.randomUUID(),
         conversation_name: communicationLogConversationName() ?? null,
+        project_name: conversationProjectName() ?? null,
         active_committed_eof: 0
       };
     }
@@ -7722,18 +7783,30 @@ globalThis.__dcArchiveCodec = {
   }
 
   /**
-   * Refreshes human-readable conversation identity in the durable manifest.
+   * Refreshes human-readable project/conversation identity in the durable manifest.
    *
-   * @returns {Promise<boolean>} True when a changed title was committed.
+   * @returns {Promise<boolean>} True when changed identity was committed.
    */
   async function communicationLogSyncManifestConversationName() {
     if (!communicationLogSegmentManifest) return false;
     const conversationName = communicationLogConversationName();
-    if (!conversationName
-        || communicationLogSegmentManifest.conversation_name === conversationName) {
-      return false;
+    const projectName = conversationProjectName();
+    const inProject = /^\/g\/[^/]+(?:\/|$)/.test(location.pathname);
+    let changed = false;
+    if (conversationName
+        && communicationLogSegmentManifest.conversation_name !== conversationName) {
+      communicationLogSegmentManifest.conversation_name = conversationName;
+      changed = true;
     }
-    communicationLogSegmentManifest.conversation_name = conversationName;
+    if (projectName
+        && communicationLogSegmentManifest.project_name !== projectName) {
+      communicationLogSegmentManifest.project_name = projectName;
+      changed = true;
+    } else if (!inProject && communicationLogSegmentManifest.project_name !== null) {
+      communicationLogSegmentManifest.project_name = null;
+      changed = true;
+    }
+    if (!changed) return false;
     await communicationLogWriteSegmentManifest();
     return true;
   }
@@ -16347,7 +16420,7 @@ Image elapsed: ${formatDuration(imageElapsed)} — Completed: ${imageCompleted}/
       if (requestedKinds.includes('jsonl')) {
         activeKind = 'jsonl';
         exportKind = activeKind;
-        const filename = `${sanitizeFileName(conversationTitle())}.jsonl`;
+        const filename = `${conversationFileBaseName()}.jsonl`;
         const jsonl = apiRecordsJsonl(spine, conversationId);
         const jsonlTailComparison = compareLiveTailMarkersToJsonl(frozenLiveTailMarkers, spine, jsonl);
         logDiagnostic(jsonlTailComparison.warning ? 'warnings' : 'debug',
@@ -16387,7 +16460,7 @@ Image elapsed: ${formatDuration(imageElapsed)} — Completed: ${imageCompleted}/
           progressState.record_count = progress.record_count;
           refreshStatus();
         }, recoveredImageMap);
-        const filename = `${sanitizeFileName(conversationTitle())}.md`;
+        const filename = `${conversationFileBaseName()}.md`;
         logDiagnostic('debug', 'conversation-export-phase-complete', {
           phase: 'markdown-render',
           elapsed_ms: Math.round(performance.now() - renderStartedAt),
@@ -16420,8 +16493,7 @@ Image elapsed: ${formatDuration(imageElapsed)} — Completed: ${imageCompleted}/
         });
         if (diagnosticEnabled('debug')) {
           logDiagnostic('debug', 'conversation-export-blob-created', {
-            filename,
-            markdown_length: markdown.length,
+            filename,            markdown_length: markdown.length,
             blob_size: markdownBlob.size,
             blob_type: markdownBlob.type
           });
@@ -18934,7 +19006,7 @@ Image elapsed: ${formatDuration(imageElapsed)} — Completed: ${imageCompleted}/
    * @returns {string} Timestamped diagnostic archive filename.
    */
   function diagnosticLogArchiveName(range) {
-    const base = `DownloadConversation_${sanitizeFileName(conversationTitle())}`;
+    const base = `DownloadConversation_${conversationFileBaseName()}`;
     return `${base}_${diagnosticLogArchiveTimestamp(range.start_timestamp)}-`
       + `${diagnosticLogArchiveTimestamp(range.end_timestamp)}.log.xz`;
   }
