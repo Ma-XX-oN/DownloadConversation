@@ -108,6 +108,11 @@
 
     let startControl;
     let endControl;
+    /**
+     * Validates the currently selected start/end relationship and updates OK state.
+     *
+     * @returns {boolean} True when start is not later than end.
+     */
     const validate = () => {
       if (!startControl || !endControl) return true;
       const valid = startControl.getDate().getTime() <= endControl.getDate().getTime();
@@ -143,6 +148,12 @@
 
     return new Promise(resolve => {
       let settled = false;
+      /**
+       * Closes the range dialog once and restores the previous focus target.
+       *
+       * @param {Object|null} value - Selected bounds or cancellation marker.
+       * @returns {void} No value is returned.
+       */
       const finish = value => {
         if (settled) return;
         settled = true;
@@ -200,6 +211,10 @@
           setStatus('Communication log Duplicate cancelled.');
           return;
         }
+        // The shared action runner deliberately rejects an already-disabled
+        // button. Re-enable after range selection so it can establish its own
+        // busy/disabled lifecycle atomically.
+        button.disabled = false;
         return runCommunicationLogPanelAction(button, {
           idleLabel: 'Duplicate communication log',
           busyLabel: 'Duplicating communication log',
