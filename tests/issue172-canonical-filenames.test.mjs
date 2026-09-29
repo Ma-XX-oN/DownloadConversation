@@ -34,9 +34,8 @@ test('Issue 172 filesystem archive producers share collision resolution', () => 
 test('Issue 172 callers own simple and compound extensions', () => {
   const runExport = productionFunctionSource('runExport');
   assert.match(runExport, /\.jsonl/);
-  assert.match(runExport, /\.jsonl\.xz/);
   assert.match(runExport, /\.md/);
-  assert.match(runExport, /\.md\.xz/);
+  assert.match(runExport, /\$\{filename\}\.xz|\$\{rawFilename\}\.xz/);
   assert.match(productionFunctionSource('diagnosticLogArchiveName'), /\.log\.xz/);
   assert.match(productionFunctionSource('communicationLogStreamDuplicateArchive'), /\.comm\.xz/);
 });
