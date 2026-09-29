@@ -41,9 +41,13 @@
       return false;
     }
     communicationLogDirectoryHandle = handle;
-    communicationLogFileName = `DownloadConversation_${sanitizeFileName(conversationTitle())}.jsonl`;
+    communicationLogFileName = `DownloadConversation_${conversationFileBaseName()}.jsonl`;
     if (/^DownloadConversation_(?:ChatGPT|ChatGPT conversation)\.jsonl$/i.test(communicationLogFileName)) {
-      communicationLogFileName = `DownloadConversation_${conversationName}.jsonl`;
+      const projectName = conversationProjectName();
+      const fallbackBase = projectName
+        ? `${sanitizeFileName(projectName)} - ${conversationName}`
+        : conversationName;
+      communicationLogFileName = `DownloadConversation_${fallbackBase}.jsonl`;
     }
     logDiagnostic('debug', 'communication-log-segment-initialize-call-started', {
       initializer_type: typeof communicationLogInitializeSegmentStorage
@@ -77,6 +81,7 @@
       core_version: CORE_VERSION,
       conversation_id: currentConversationId(),
       conversation_name: conversationName,
+      project_name: conversationProjectName(),
       file_name: communicationLogFileName,
       page_url: stockNetworkSafeUrl(location.href),
       navigation_type: navigation?.type ?? null,
