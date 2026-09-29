@@ -101,6 +101,7 @@ function exportHarness() {
   };
   const context = {
     Blob,
+    TextEncoder,
     performance,
     setTimeout,
     exportInProgress: false,
@@ -165,8 +166,14 @@ function exportHarness() {
       observed.jsonlSpines.push(received);
       return '{"record":"fixture"}\n';
     },
+    async createArchive(bytes) {
+      return new Uint8Array(bytes);
+    },
     downloadBlob(_blob, filename) {
       observed.downloads.push(filename);
+    },
+    errorMessage(error) {
+      return error instanceof Error ? error.message : String(error);
     },
     setStatus() {},
     async recoverUserImages(received) {
