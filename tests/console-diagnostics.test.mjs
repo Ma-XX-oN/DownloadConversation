@@ -96,3 +96,30 @@ test('provenance is only a label change; Core preference and diagnostic Debug re
   assert.match(downloadConversationSource, /<option value="debug">Debug<\/option>/);
   assert.doesNotMatch(downloadConversationSource, /data-role="show-debug-provenance" type="checkbox"> Debug/);
 });
+
+
+test('Issue 166 Copy and Save share one canonical diagnostic serialization', () => {
+  const canonical = productionFunctionSource('diagnosticLogText');
+  assert.match(canonical, /diagnosticLog\.map\(diagnosticLogLine\)\.join\('\\n'\)/);
+  const copy = productionFunctionSource('copyDiagnosticLog');
+  const save = productionFunctionSource('saveDiagnosticLog');
+  assert.match(copy, /diagnosticLogText\(\)/);
+  assert.match(save, /diagnosticLogText\(\)/);
+  assert.match(save, /diagnosticLogArchiveApi/);
+  assert.match(productionFunctionSource('diagnosticLogArchiveApi'), /createArchive/);
+  assert.match(save, /downloadBlob/);
+});
+
+test('Issue 166 diagnostic Save has explicit empty and busy behaviour', () => {
+  const save = productionFunctionSource('saveDiagnosticLog');
+  assert.match(save, /if \(!text\)[\s\S]*no archive was created/);
+  assert.match(save, /disabled\s*=\s*true/);
+  assert.match(save, /finally/);
+  assert.match(save, /disabled\s*=\s*false/);
+});
+
+
+test('Issue 166 diagnostic Save archive dependency is implemented, not a dangling call', () => {
+  assert.match(downloadConversationSource, /(?:async\s+)?function createArchive\s*\(/,
+    'createArchive must be an implemented generic archive interface before Save can ship.');
+});

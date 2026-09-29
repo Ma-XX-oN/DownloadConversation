@@ -183,7 +183,13 @@
     if (!communicationLogDirectoryHandle || !communicationLogFileName) {
       throw new Error('Communication log directory/file is not ready.');
     }
-    const handle = await communicationLogDirectoryHandle.getFileHandle(communicationLogFileName, { create: true });
+    if (communicationLogSegmentDirectoryHandle && communicationLogActiveFileName) {
+      return communicationLogActiveFileSnapshot();
+    }
+    const handle = await communicationLogDirectoryHandle.getFileHandle(
+      communicationLogFileName,
+      { create: true }
+    );
     const file = await handle.getFile();
     return { handle, file };
   }

@@ -79,33 +79,37 @@ test('normal recording keeps one writable open instead of committing every JSONL
   assert.match(block, /let communicationLogWritable = null/);
   assert.match(block, /communicationLogOpenWriter/);
   assert.match(block, /communicationLogWritable\.write\(/);
-  const appendLine = diskFunctionSource('communicationLogAppendLine');
-  assert.doesNotMatch(appendLine, /\.close\(/,
-    'Per-record append must not close/commit the long-lived writable.');
+  const appendRecord = diskFunctionSource('communicationLogStorageAppendRecord');
+  assert.doesNotMatch(appendRecord, /communicationLogCompressSealedSegment/,
+    'Per-record append must not synchronously compress historical data.');
   assert.match(block, /communicationLogWriteChain/,
     'Independent network observers must still serialize writer access.');
 });
 
-test('long-lived writer checkpoints every 30 seconds and reopens lazily', () => {
+test('long-lived writer stays open throughout ordinary recording', () => {
   const block = diskBlock();
-  assert.match(block, /COMMUNICATION_LOG_CHECKPOINT_MS\s*=\s*30\s*\*\s*1000/);
-  assert.match(block, /setInterval\([^\n]*communicationLogCheckpoint/);
+  assert.doesNotMatch(block, /COMMUNICATION_LOG_CHECKPOINT_MS/);
+  assert.doesNotMatch(block, /setInterval\([^\n]*communicationLogCheckpoint/);
+  assert.doesNotMatch(block,
+    /visibilityState\s*===\s*['"]hidden['"][\s\S]{0,400}communicationLogCheckpoint/);
+  const fetchResponse = diskFunctionSource('communicationLogFetchResponse');
+  assert.doesNotMatch(fetchResponse,
+    /communicationLogCheckpoint\(['"]generation-response-complete['"]\)/);
+
+  const open = diskFunctionSource('communicationLogOpenWriter');
+  assert.match(open, /if \(communicationLogWritable\) return communicationLogWritable/);
+  assert.match(open, /createWritable\(\{ keepExistingData: true \}\)/);
+});
+
+test('hard document departure remains an intentional active-writer commit boundary', () => {
+  const block = diskBlock();
+  assert.match(block, /beforeunload[\s\S]{0,300}communicationLogCheckpointForDocumentDeparture/);
+  assert.match(block, /pagehide[\s\S]{0,500}communicationLogCheckpointForDocumentDeparture/);
   const checkpoint = diskFunctionSource('communicationLogCheckpoint');
   assert.match(checkpoint, /communicationLogWritable\.close\(\)/);
   assert.match(checkpoint, /communicationLogWritable\s*=\s*null/);
   assert.doesNotMatch(checkpoint, /createWritable\(/,
-    'Checkpoint should commit and leave reopening to the next append.');
-  assert.match(checkpoint, /communicationLogWriterDirty/,
-    'Clean writers should not churn swap files merely because the timer fired.');
-});
-
-test('page lifecycle and completed generation-stream response trigger checkpoints', () => {
-  const block = diskBlock();
-  assert.match(block, /visibilityState\s*===\s*['"]hidden['"][\s\S]{0,400}communicationLogCheckpoint/);
-  assert.match(block, /pagehide[\s\S]{0,400}communicationLogCheckpoint/);
-  const fetchResponse = diskFunctionSource('communicationLogFetchResponse');
-  assert.match(fetchResponse, /\/backend-api\/f\/conversation/);
-  assert.match(fetchResponse, /communicationLogCheckpoint\(['"]generation-response-complete['"]\)/);
+    'A true commit boundary leaves reopening to the next append if the document survives.');
 });
 
 test('startup recovers compatible Chromium crswap candidates before normal recording', () => {
@@ -354,13 +358,33 @@ test('aborted cloned response stream before any bytes reports zero counts withou
   assert.equal(api.records.length, 0);
 });
 
-test('fetch response reports incomplete body warning and leaves generation checkpoint reachable', () => {
+test('fetch response reports incomplete body warning without committing the active writer', () => {
   const fetchResponse = diskFunctionSource('communicationLogFetchResponse');
-  assert.match(fetchResponse, /summary\.body_incomplete/);
-  assert.match(fetchResponse, /communication-log-response-body-incomplete/);
-  assert.match(fetchResponse, /message:\s*summary\.error_message/);
-  const bodyEndIndex = fetchResponse.indexOf('communication_fetch_response_body_end');
-  const checkpointIndex = fetchResponse.indexOf("communicationLogCheckpoint('generation-response-complete')");
-  assert.ok(bodyEndIndex >= 0 && checkpointIndex > bodyEndIndex,
-    'Generation checkpoint must remain after incomplete-body recording/reporting.');
+  assert.ok(fetchResponse.includes('summary.body_incomplete'));
+  assert.ok(fetchResponse.includes('communication-log-response-body-incomplete'));
+  assert.ok(fetchResponse.includes('message: summary.error_message'));
+  assert.equal(fetchResponse.includes('communicationLogCheckpoint('), false,
+    'Completing or aborting a generation response is not an active-file commit boundary.');
+});
+
+
+test('reload swap recovery enumerates the private segment directory for active-file crswap siblings', () => {
+  const recover = diskFunctionSource('communicationLogRecoverSwapFiles');
+  assert.match(recover,
+    /communicationLogSegmentDirectoryHandle\s*\?\?\s*communicationLogDirectoryHandle|communicationLogSegmentDirectoryHandle\s*&&\s*communicationLogActiveFileName/,
+    'Segmented active-file swap recovery must select the private segment directory.');
+  assert.match(recover, /for await\s*\([^)]*recoveryDirectory\.entries\(\)/,
+    'Swap candidates must be enumerated from the directory that owns the active file.');
+});
+
+test('occupied alternate is preflighted before an oversized active writer is closed', () => {
+  const seal = diskFunctionSource('communicationLogSealActiveSegment');
+  const preflight = seal.indexOf('communicationLogAvailableAlternateActiveFile');
+  const close = seal.indexOf('communicationLogCloseActiveWriter');
+  assert.ok(preflight >= 0, 'Rotation must preflight the alternate active file.');
+  assert.ok(close >= 0, 'Successful rotation must still close the active writer.');
+  assert.ok(preflight < close,
+    'Reload/recording must not close and recreate Chromium crswap while the alternate is occupied.');
+  assert.match(seal, /if \(!alternate\)[\s\S]*return null/,
+    'An occupied alternate must defer rotation without touching the current writer.');
 });

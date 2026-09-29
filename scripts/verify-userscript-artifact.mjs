@@ -1,5 +1,6 @@
 import { createHash } from 'node:crypto';
 import { readFile } from 'node:fs/promises';
+import vm from 'node:vm';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
@@ -15,6 +16,7 @@ function gitBlobSha1(bytes) {
 }
 
 async function main() {
+  const artifactOverride = process.argv[2] ? path.resolve(process.argv[2]) : null;
   const manifest = JSON.parse(await readFile(
     path.join(root, 'src/userscript-manifest.json'),
     'utf8'
@@ -33,7 +35,8 @@ async function main() {
     fail('Manifest must declare at least one source module.');
   }
 
-  const artifact = await readFile(path.join(root, manifest.generated_artifact));
+  const artifactPath = artifactOverride ?? path.join(root, manifest.generated_artifact);
+  const artifact = await readFile(artifactPath);
   const header = await readFile(path.join(root, manifest.header));
   const headerText = header.toString('utf8');
   if (/^\/\/ @require\b/m.test(headerText)) {
@@ -124,14 +127,52 @@ async function main() {
     }
   }
   const source = Buffer.concat(sourceParts);
-  if (!source.subarray(0, 9).equals(Buffer.from('\n(() => {', 'utf8'))) {
+  const sourceText = source.toString('utf8');
+  if (!sourceText.startsWith('\n(() => {')) {
     fail('DownloadConversation source does not preserve the userscript IIFE boundary.');
   }
-  consume('repository source', source);
-  if (offset !== artifact.length) {
-    fail(`Generated userscript has ${artifact.length - offset} unexpected trailing byte(s).`);
+  const artifactTail = artifact.subarray(offset).toString('utf8');
+  const sourceBody = sourceText.slice('\n(() => {'.length);
+  const archiveStart = artifactTail.indexOf('// BEGIN bundled archive codec upstream-liblzma=');
+  if (!artifactTail.startsWith('\n(() => {\n')
+      || archiveStart !== '\n(() => {\n'.length) {
+    fail('Generated archive codec runtime is not scoped immediately inside the DC IIFE.');
   }
-  console.log(`Verified ${manifest.generated_artifact} (${artifact.length} bytes).`);
+  const archiveEndMarker = '// END bundled archive codec\n';
+  const archiveEnd = artifactTail.indexOf(archiveEndMarker, archiveStart);
+  if (archiveEnd < 0) fail('Generated userscript archive codec closing banner is missing.');
+  const archivePrelude = artifactTail.slice(
+    archiveStart,
+    archiveEnd + archiveEndMarker.length
+  );
+  if (!archivePrelude.includes('globalThis.__dcArchiveCodec = {')) {
+    fail('Generated userscript archive codec runtime bridge is missing.');
+  }
+  if (!archivePrelude.includes('Encoder: ArchiveEncoder')
+      || !archivePrelude.includes('decompress: __dcArchiveCodecDecompress')) {
+    fail('Generated userscript archive codec contract is incomplete.');
+  }
+  if (/^export\s/m.test(archivePrelude) || /import\.meta/.test(archivePrelude)) {
+    fail('Generated archive codec prelude retains ES-module-only syntax.');
+  }
+  const expectedTail = '\n(() => {\n' + archivePrelude + sourceBody;
+  if (artifactTail !== expectedTail) {
+    fail('Generated userscript scoped archive prelude/source assembly differs from repository source.');
+  }
+  offset = artifact.length;
+  if (artifact.length >= 2 * 1024 * 1024) {
+    fail(`Generated userscript unexpectedly exceeds 2 MiB: ${artifact.length} bytes.`);
+  }
+  const artifactText = artifact.toString('utf8');
+  if (/import\.meta/.test(artifactText)) {
+    fail('Generated userscript contains import.meta and is not Tampermonkey classic-script compatible.');
+  }
+  try {
+    new vm.Script(artifactText, { filename: manifest.generated_artifact });
+  } catch (error) {
+    fail(`Generated userscript is not valid classic-script JavaScript: ${error.message}`);
+  }
+  console.log(`Verified ${artifactPath} (${artifact.length} bytes) as a classic script.`);
 }
 
 try {

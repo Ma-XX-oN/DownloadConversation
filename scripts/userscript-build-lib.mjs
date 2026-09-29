@@ -95,7 +95,7 @@ function dependencyBanner(dependency, content) {
   return `${provenance}${prefix}${content}${content.endsWith('\n') ? '' : '\n'}${suffix}`;
 }
 
-export function assembleUserscript(header, dependencies, source) {
+export function assembleUserscript(header, dependencies, source, prelude = '') {
   if (/^\/\/ @require\b/m.test(header)) {
     throw new Error('Authoritative userscript header must not contain runtime @require directives.');
   }
@@ -108,6 +108,12 @@ export function assembleUserscript(header, dependencies, source) {
     validatePinnedDependency(dependency, content);
     result += dependencyBanner(dependency, content);
   }
-  result += source;
+  // The archive bridge is part of DownloadConversation, not a page-global
+  // dependency. Inject it immediately inside DC's preserved IIFE so its
+  // functions are in the same lexical scope as diagnostic/communication code.
+  const scopedSource = prelude
+    ? source.replace('\n(() => {', `\n(() => {\n${prelude}`)
+    : source;
+  result += scopedSource;
   return result;
 }

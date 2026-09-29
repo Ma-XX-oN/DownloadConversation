@@ -4,7 +4,7 @@
    * @param {string} destinationName - New sibling filename that must not exist.
    * @returns {Promise<void>} Resolves after the destination is committed and verified.
    */
-  async function communicationLogCopySnapshot(sourceFile, destinationName) {
+  async function communicationLogCopyForRename(sourceFile, destinationName) {
     if (!communicationLogDirectoryHandle) {
       throw new Error('Communication log directory is not ready.');
     }
@@ -60,22 +60,26 @@
         throw new Error(`Communication log file already exists: ${validatedName}`);
       }
 
-      await communicationLogCloseActiveWriter();
-      const sourceName = communicationLogFileName;
-      const sourceSnapshot = await communicationLogRefreshedFileSnapshot();
-      await communicationLogCopySnapshot(sourceSnapshot.file, validatedName);
-
-      try {
-        await communicationLogDirectoryHandle.removeEntry(sourceName);
-      } catch (error) {
-        try { await communicationLogDirectoryHandle.removeEntry(validatedName); } catch {}
-        throw error;
-      }
-
+      // The physical active files are private alternating segment files.  Rename
+      // therefore changes the logical/user-facing basename only; no log bytes
+      // are copied and the active writer remains attached to the same file.
       communicationLogFileName = validatedName;
       return validatedName;
     });
     return queued.operation;
+  }
+
+  /**
+   * Changes a duplicate JSONL member name to its sibling XZ stream name.
+   *
+   * @param {string} memberName - Duplicate member filename.
+   * @returns {string} Archive filename with the final extension replaced by .xz.
+   */
+  function communicationLogDuplicateArchiveFileName(memberName) {
+    const extensionIndex = memberName.lastIndexOf('.');
+    return extensionIndex > 0
+      ? `${memberName.slice(0, extensionIndex)}.xz`
+      : `${memberName}.xz`;
   }
 
   /**
@@ -84,33 +88,101 @@
    * The lowest unused positive `(N)` suffix is inserted immediately before the
    * extension with no intervening space. The active filename never changes.
    *
+   * @param {Object} options - Optional inclusive Duplicate timestamp bounds.
    * @returns {Promise<string>} The created duplicate filename.
    */
-  function communicationLogDuplicate() {
-    const queued = communicationLogEnqueue('duplicate', async () => {
-      if (!communicationLogReady || !communicationLogDirectoryHandle || !communicationLogFileName) {
-        throw new Error('Communication log directory/file is not ready.');
-      }
+  async function communicationLogArchiveDuplicate(options = {}) {
+    if (!communicationLogReady || !communicationLogDirectoryHandle || !communicationLogFileName) {
+      throw new Error('Communication log directory/file is not ready.');
+    }
+    if (communicationLogDuplicateInProgress) {
+      throw new Error('A Duplicate operation is already running for this conversation.');
+    }
+    communicationLogDuplicateInProgress = true;
 
-      await communicationLogCloseActiveWriter();
-      const sourceSnapshot = await communicationLogRefreshedFileSnapshot();
-      let duplicateNumber = 1;
-      let duplicateName = communicationLogDuplicateFileName(
-        communicationLogFileName,
-        duplicateNumber
+    const started = performance.now();
+    /**
+     * Formats elapsed Duplicate wall time for indeterminate progress.
+     *
+     * @returns {string} Human-readable elapsed duration.
+     */
+    const elapsed = () => `${((performance.now() - started) / 1000).toFixed(1)}s elapsed`;
+    let plan = null;
+    let holdEstablished = false;
+    let archiveName = null;
+    try {
+      const boundary = communicationLogEnqueue('duplicate-snapshot', async () => {
+        setStatus(`Duplicate: establishing snapshot boundary; ${elapsed()}.`);
+        communicationLogRotationHold += 1;
+        holdEstablished = true;
+        communicationLogSegmentManifest.duplicate_request = {
+          start_timestamp: options.start_timestamp ?? null,
+          end_timestamp: options.end_timestamp ?? null
+        };
+        await communicationLogWriteSegmentManifest();
+        plan = await communicationLogCaptureSnapshotPlan();
+        await communicationLogOpenWriter();
+        return plan;
+      });
+      await boundary.operation;
+
+      setStatus(
+        `Duplicate: streaming historical segments and frozen active prefix; `
+        + `${elapsed()}; recording continues.`
       );
-      while (await communicationLogFileExists(duplicateName)) {
-        duplicateNumber += 1;
-        duplicateName = communicationLogDuplicateFileName(
-          communicationLogFileName,
-          duplicateNumber
+      const streamed = await communicationLogStreamDuplicateArchive(plan, options);
+      archiveName = streamed.archive_name;
+      communicationLogSegmentManifest.duplicate_output = archiveName;
+      await communicationLogWriteSegmentManifest();
+
+      let writable = null;
+      let archiveCreated = false;
+      try {
+        setStatus(`Duplicate: finalizing/writing ${archiveName}; ${elapsed()}.`);
+        const archiveHandle = await communicationLogDirectoryHandle.getFileHandle(
+          archiveName,
+          { create: true }
         );
+        archiveCreated = true;
+        writable = await archiveHandle.createWritable();
+        await writable.write(new Blob(
+          [streamed.archive],
+          { type: 'application/x-xz' }
+        ));
+        await writable.close();
+        writable = null;
+        const verified = await archiveHandle.getFile();
+        if (verified.size !== streamed.archive.byteLength) {
+          throw new Error(
+            `Communication log archive verification failed: expected `
+            + `${streamed.archive.byteLength} bytes, found ${verified.size}.`
+          );
+        }
+      } catch (error) {
+        await abortWritableQuietly(writable);
+        if (archiveCreated) {
+          try { await communicationLogDirectoryHandle.removeEntry(archiveName); } catch {}
+        }
+        throw error;
       }
 
-      await communicationLogCopySnapshot(sourceSnapshot.file, duplicateName);
-      return duplicateName;
-    });
-    return queued.operation;
+      setStatus(`Duplicate completed: ${archiveName}; ${elapsed()}.`);
+      return archiveName;
+    } finally {
+      communicationLogDuplicateInProgress = false;
+      if (communicationLogSegmentManifest) {
+        delete communicationLogSegmentManifest.duplicate_request;
+        delete communicationLogSegmentManifest.duplicate_output;
+        await communicationLogWriteSegmentManifest().catch(() => {});
+      }
+      if (holdEstablished) {
+        const release = communicationLogEnqueue(
+          'duplicate-release',
+          () => communicationLogReleaseRotationHold()
+        );
+        await release.operation.catch(() => {});
+      }
+    }
   }
 
   /**
@@ -137,6 +209,7 @@
         if (verified.file.size !== 0) {
           throw new Error(`Communication log reset verification failed: expected 0 bytes, found ${verified.file.size}.`);
         }
+        await communicationLogResetSegmentHistory();
       } catch (error) {
         await abortWritableQuietly(writable);
         throw error;
@@ -146,19 +219,15 @@
   }
 
   /**
-   * Serializes one JSONL append through the active long-lived communication writer.
+   * Issue 166 communication-log storage boundary.
    *
-   * @param {string} line - Complete newline-terminated JSONL record.
-   * @returns {Promise<void>} Resolves after the bytes are accepted by the active writer.
+   * Producers submit complete structured records here. They do not know whether
+   * the current bytes live in an active raw segment, a sealed segment, or an
+   * archived historical segment. Segment rotation can therefore replace this
+   * implementation without leaving the legacy raw-file append API on the
+   * recorder execution path.
    */
-  function communicationLogAppendLine(line) {
-    const queued = communicationLogEnqueue('append', async () => {
-      await communicationLogOpenWriter();
-      await communicationLogWritable.write(line);
-      communicationLogWriterDirty = true;
-    });
-    return queued.operation;
-  }
+
 
   /**
    * Reports disk-recorder failures through existing diagnostics without throwing into page networking.
@@ -196,7 +265,7 @@
       type,
       ...data
     };
-    await communicationLogAppendLine(`${JSON.stringify(record)}\n`);
+    await communicationLogStorage.appendRecord(record);
     return true;
   }
 

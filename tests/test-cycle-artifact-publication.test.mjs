@@ -200,9 +200,19 @@ test('stable artifact path remains separate while RepoWorkflow owns shared lifec
   assert.match(environment, /process\.exitCode = 2/);
   assert.match(environment, /process\.exitCode = 1/);
 
-  assert.match(repoWorkflowConfig, /"validationCommand"\s*:\s*\["python", "scripts\/repoworkflow-validate\.py"\]/);
-  assert.match(repoWorkflowConfig, /"generatorCommand"\s*:\s*\["node", "scripts\/build-userscript\.mjs"\]/);
-  assert.match(repoWorkflowConfig, /"verifierCommand"\s*:\s*\["node", "scripts\/verify-userscript-artifact\.mjs"\]/);
+  const parsedRepoWorkflowConfig = JSON.parse(repoWorkflowConfig);
+  assert.deepEqual(
+    parsedRepoWorkflowConfig.environments[0].validationCommand,
+    ['python', 'scripts/repoworkflow-validate.py']
+  );
+  assert.deepEqual(
+    parsedRepoWorkflowConfig.artifacts[0].generatorCommand,
+    ['node', 'scripts/build-userscript.mjs']
+  );
+  assert.deepEqual(
+    parsedRepoWorkflowConfig.artifacts[0].verifierCommand,
+    ['node', 'scripts/verify-userscript-artifact.mjs']
+  );
   assert.match(workflow, /RepoWorkflow\/repo_workflow\.py github-mode/);
   assert.match(workflow, /needs\.policy\.outputs\.mode != 'none'/);
   assert.match(workflow, /RepoWorkflow\/repo_workflow\.py materialize-artifacts/);

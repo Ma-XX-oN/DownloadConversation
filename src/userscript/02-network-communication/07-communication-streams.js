@@ -206,11 +206,6 @@
       });
       await cancelReadableBodyQuietly(cloned.body);
     }
-    try {
-      if (new URL(responseUrl, location.href).pathname === '/backend-api/f/conversation') {
-        await communicationLogCheckpoint('generation-response-complete');
-      }
-    } catch {}
   }
 
   /**

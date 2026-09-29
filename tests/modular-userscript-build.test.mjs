@@ -64,7 +64,24 @@ test(
       'src/userscript/06-workstack-continuation/04-handoff-transaction.js'
     ]);
     const sourcePaths = orderedSourcePaths(manifest);
-    assert.equal(sourcePaths.length, 49);
+    const communicationModule = manifest.modules.find(module => {
+      return module.name === 'network-communication';
+    });
+    assert.deepEqual(
+      communicationModule?.files.slice(2, 10),
+      [
+        'src/userscript/02-network-communication/03-communication-lifecycle.js',
+        'src/userscript/02-network-communication/06-segment-storage.js',
+        'src/userscript/02-network-communication/06-segment-manifest.js',
+        'src/userscript/01-runtime/03-conversation-identity.js',
+        'src/userscript/02-network-communication/06-segment-recovery.js',
+        'src/userscript/02-network-communication/06-segment-snapshot.js',
+        'src/userscript/02-network-communication/06-segment-duplicate.js',
+        'src/userscript/02-network-communication/04-communication-redaction.js'
+      ],
+      'identity and segment runtime must remain at verified top-level source boundaries'
+    );
+    assert.equal(sourcePaths.length, 59);
     assert.equal(new Set(sourcePaths).size, sourcePaths.length);
     assert.ok(sourcePaths.every(sourcePath => {
       return sourcePath.startsWith('src/userscript/');
@@ -224,6 +241,66 @@ test(
       /^\s*$/,
       'Legacy runtime has bytes after the final migration segment.'
     );
+  }
+);
+
+
+test(
+  'assembled communication startup resolves the segment runtime contract',
+  async () => {
+    const manifest = await readUserscriptManifest(root);
+    const built = await readDownloadConversationSource(root, manifest);
+    const activation = built.indexOf(
+      'async function communicationLogActivateDirectory(handle)'
+    );
+    const initializer = built.indexOf(
+      'async function communicationLogInitializeSegmentStorage()'
+    );
+    const redaction = built.indexOf(
+      'function communicationLogCreateRedactionState()'
+    );
+    assert.ok(activation >= 0, 'assembled activation function must exist');
+    assert.ok(initializer >= 0, 'assembled segment initializer must exist');
+    assert.ok(redaction > initializer, 'verified top-level boundary must follow initializer');
+
+    const activationSource = built.slice(
+      activation,
+      built.indexOf(
+        'function communicationLogDisarmDirectoryGesture()',
+        activation
+      )
+    );
+    assert.match(
+      activationSource,
+      /typeof communicationLogInitializeSegmentStorage/
+    );
+    assert.match(
+      activationSource,
+      /await communicationLogInitializeSegmentStorage\(\)/
+    );
+
+    const initializerSource = built.slice(
+      initializer,
+      redaction
+    );
+    assert.match(
+      initializerSource,
+      /getDirectoryHandle\(\s*directoryName,\s*\{ create: true \}\s*\)/s
+    );
+
+    const probeSource = [
+      'return (() => {',
+      activationSource,
+      initializerSource,
+      'return {',
+      '  initializerType: typeof communicationLogInitializeSegmentStorage,',
+      '  activationType: typeof communicationLogActivateDirectory',
+      '};',
+      '})();'
+    ].join('\n');
+    const probe = Function(probeSource)();
+    assert.equal(probe.initializerType, 'function');
+    assert.equal(probe.activationType, 'function');
   }
 );
 

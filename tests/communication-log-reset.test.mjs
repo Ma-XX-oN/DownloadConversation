@@ -22,6 +22,7 @@ function resetHarness() {
 
   vm.runInNewContext(
     `${diskHarnessSource()}
+communicationLogResetSegmentHistory = async () => {};
 communicationLogReportFailure = (stage, error) => {
   this.__issue133Events.push(\`failure:\${stage}:\${error?.message ?? error}\`);
 };

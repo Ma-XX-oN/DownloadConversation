@@ -1,4 +1,5 @@
-import { userscript } from './helpers/userscript-source.mjs';
+import { downloadConversationSource, userscript } from './helpers/userscript-source.mjs';
+import { readFile } from 'node:fs/promises';
 import assert from 'node:assert/strict';
 import test from 'node:test';
 
@@ -113,4 +114,41 @@ test('recorder panel restores dialog/log/switch/extract UI contracts', () => {
     'Delayed bootstrap must create the launcher after the quiet interval.');
   assert.doesNotMatch(bootstrapSource, /makePanel\(\);/,
     'Recorder panel must remain lazy and must not be inserted during host reconciliation.');
+});
+
+
+test('Issue 166 diagnostic Save is immediately left of Copy', () => {
+  const head = userscript.match(/<div class="tm-log-head">[^\n]+<\/div>/)?.[0] ?? '';
+  assert.match(head, /data-role="save-log"[^>]*aria-label="Save diagnostic log"[^>]*title="Save log"/);
+  const saveAt = head.indexOf('data-role="save-log"');
+  const copyAt = head.indexOf('data-role="copy-log"');
+  const toggleAt = head.indexOf('data-role="toggle-log"');
+  assert.ok(saveAt >= 0 && copyAt > saveAt && toggleAt > copyAt,
+    'Diagnostic controls must be ordered Save, Copy, Expand.');
+});
+
+
+test('Issue 166 diagnostic Save uses a supported deterministic archive member and reports failures', () => {
+  assert.ok(downloadConversationSource.includes('diagnosticLogArchiveName('),
+    'Diagnostic XZ filename must be owned by the diagnostic-log boundary.');
+  assert.match(downloadConversationSource, /diagnostic-log-save-failed/,
+    'Diagnostic archive failures must be recorded in the diagnostic log.');
+  assert.match(downloadConversationSource, /Diagnostic log save failed during/,
+    'Diagnostic archive failures must remain visible to the user.');
+});
+
+
+test('Issue 166 archive runtime is assembled inside the DownloadConversation IIFE', async () => {
+  const buildLib = await readFile(
+    new URL('../scripts/userscript-build-lib.mjs', import.meta.url),
+    'utf8'
+  );
+  assert.match(buildLib, /const scopedSource = prelude/);
+  assert.match(buildLib, /source\.replace\(/);
+  assert.match(buildLib, /\$\{prelude\}/);
+  assert.doesNotMatch(
+    buildLib,
+    /result \+= prelude;\s*result \+= source;/,
+    'Archive prelude must not be emitted outside the DownloadConversation IIFE.'
+  );
 });

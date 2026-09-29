@@ -7,6 +7,7 @@ import { fileURLToPath } from 'node:url';
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const repoWorkflowSha = '0a051ab09200ff2824e7c901d6fe0efa652a912a';
+const sevenZipBenchmarkSha = '8921c1b9d2b1d8b85e5ee5d1c55ea88ecd5737b0';
 
 async function readText(relativePath) {
   return readFile(path.join(root, relativePath), 'utf8');
@@ -39,6 +40,23 @@ test('RepoWorkflow is a canonical submodule pinned to released v0.1.0', async ()
     git('ls-tree', 'HEAD', 'RepoWorkflow'),
     `160000 commit ${repoWorkflowSha}\tRepoWorkflow`
   );
+});
+
+test('Issue 166 pins the verified direct and streaming 7-Zip browser payload source', async () => {
+  const modules = await readText('.gitmodules');
+  assert.match(modules, /\[submodule "7z-js-benchmark"\]/);
+  assert.match(modules, /path = 7z-js-benchmark/);
+  assert.match(modules, /url = https:\/\/github\.com\/Ma-XX-oN\/7z-js-benchmark\.git/);
+  assert.equal(
+    git('ls-tree', 'HEAD', '7z-js-benchmark'),
+    `160000 commit ${sevenZipBenchmarkSha}\t7z-js-benchmark`
+  );
+  await access(path.join(root, '7z-js-benchmark/prototype/7zip-direct/build.sh'));
+  await access(path.join(root, '7z-js-benchmark/prototype/7zip-direct/stream7z.cpp'));
+  await access(path.join(root, '7z-js-benchmark/prototype/7zip-direct/verify.mjs'));
+  await access(path.join(root, '7z-js-benchmark/dist/streaming7z-libarchive.json'));
+  await access(path.join(root, '7z-js-benchmark/dist/streaming7z-libarchive.mjs.gz'));
+  await access(path.join(root, '7z-js-benchmark/dist/streaming7z-libarchive.wasm.gz'));
 });
 
 test('consumer configuration preserves the DownloadConversation validation environment', async () => {

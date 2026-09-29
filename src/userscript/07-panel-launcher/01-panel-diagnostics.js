@@ -42,33 +42,6 @@
   }
 
   /**
-   * Handles copy diagnostic log.
-   *
-   * @returns {void} No value is returned.
-   */
-  async function copyDiagnosticLog() {
-    const text = diagnosticLog.map(diagnosticLogLine).join('\n');
-    if (!text) return;
-    await navigator.clipboard.writeText(text);
-    const button = document.querySelector(`#${PANEL_ID} [data-role="copy-log"]`);
-    if (!(button instanceof HTMLButtonElement)) return;
-    button.innerHTML = checkIconMarkup();
-    button.classList.add('tm-copy-confirmed');
-    button.setAttribute('aria-label', 'Copied');
-    setTimeout(() => {
-      if (!button.isConnected) return;
-      button.classList.add('tm-copy-fade');
-      setTimeout(() => {
-        if (!button.isConnected) return;
-        button.classList.remove('tm-copy-confirmed');
-        button.innerHTML = copyIconMarkup();
-        button.setAttribute('aria-label', 'Copy diagnostic log');
-        requestAnimationFrame(() => button.classList.remove('tm-copy-fade'));
-      }, 200);
-    }, 800);
-  }
-
-  /**
    * Redacts transient signed URL tokens from diagnostic payloads without mutating callers.
    *
    * @param {Object} value - The diagnostic value to sanitize.

@@ -74,6 +74,10 @@
   const COMMUNICATION_LOG_HANDLE_KEY = 'communication-directory';
   /** Prefix used to retain the last known conversation title for immediate reload logging. */
   const COMMUNICATION_LOG_TITLE_STORAGE_PREFIX = 'tm-downloadconversation-communication-title:';
+  /** Initial sealed communication-segment target; tune this one symbol after browser benchmarks. */
+  const COMMUNICATION_LOG_SEGMENT_TARGET_BYTES = 10 * 1024 * 1024;
+  /** All-in-memory duplicate guard: 128 MiB bounds source+archive+verification copies while the direct Wasm bridge is synchronous. */
+  const COMMUNICATION_LOG_DUPLICATE_MAX_BYTES = 128 * 1024 * 1024;
   /** Maximum decoded text retained before one communication body chunk is flushed to disk. */
   const COMMUNICATION_LOG_BODY_CHUNK_CHARS = 256 * 1024;
   /** Maximum wait for startup directory restoration before a cloned network body is abandoned. */

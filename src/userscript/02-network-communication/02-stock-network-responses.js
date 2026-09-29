@@ -112,13 +112,13 @@
 
   // BEGIN Issue #123 disk communication recorder
   /** Interval between dirty communication-log checkpoints. */
-  const COMMUNICATION_LOG_CHECKPOINT_MS = 30 * 1000;
   /** Long-lived writable stream used by normal communication-log appends. */
   let communicationLogWritable = null;
   /** Whether the current long-lived writable contains bytes not yet checkpointed. */
   let communicationLogWriterDirty = false;
+  /** Exact accepted byte count in the current active raw segment. */
+  let communicationLogActiveBytes = null;
   /** Periodic checkpoint timer installed once communication logging becomes active. */
-  let communicationLogCheckpointTimer = null;
   /**
    * Opens the IndexedDB database that retains the authorized directory handle.
    *

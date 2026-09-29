@@ -4,7 +4,6 @@
   function communicationLogInstallLifecycleObservers() {
     if (communicationLogLifecycleInstalled) return;
     communicationLogLifecycleInstalled = true;
-    communicationLogCheckpointTimer = setInterval(() => void communicationLogCheckpoint('periodic'), COMMUNICATION_LOG_CHECKPOINT_MS);
     window.addEventListener('beforeunload', () => {
       void communicationLogCheckpointForDocumentDeparture('beforeunload');
     });
@@ -19,9 +18,6 @@
       void communicationLogRecord('communication_visibility_change', {
         visibility_state: document.visibilityState
       });
-      if (document.visibilityState === 'hidden') {
-        void communicationLogCheckpoint('visibility-hidden');
-      }
     });
   }
 
@@ -32,18 +28,49 @@
    * @returns {Promise<boolean>} True when logging becomes ready.
    */
   async function communicationLogActivateDirectory(handle) {
+    logDiagnostic('debug', 'communication-log-activation-entered', {
+      directory_handle_present: Boolean(handle)
+    });
     const conversationName = await communicationLogWaitForConversationName();
+    logDiagnostic('debug', 'communication-log-conversation-name-resolved', {
+      available: Boolean(conversationName),
+      conversation_id: currentConversationId()
+    });
     if (!conversationName) {
       communicationLogShowDirectoryPrompt('Conversation title is not available yet.');
       return false;
     }
     communicationLogDirectoryHandle = handle;
-    communicationLogFileName = `DownloadConversation_${sanitizeFileName(conversationTitle())}.jsonl`;
+    communicationLogFileName = `DownloadConversation_${conversationFileBaseName()}.jsonl`;
     if (/^DownloadConversation_(?:ChatGPT|ChatGPT conversation)\.jsonl$/i.test(communicationLogFileName)) {
-      communicationLogFileName = `DownloadConversation_${conversationName}.jsonl`;
+      const projectName = conversationProjectName();
+      const fallbackBase = projectName
+        ? `${sanitizeFileName(projectName)} - ${conversationName}`
+        : conversationName;
+      communicationLogFileName = `DownloadConversation_${fallbackBase}.jsonl`;
     }
+    logDiagnostic('debug', 'communication-log-segment-initialize-call-started', {
+      initializer_type: typeof communicationLogInitializeSegmentStorage
+    });
+    await communicationLogInitializeSegmentStorage();
+    logDiagnostic('debug', 'communication-log-swap-recovery-started', {
+      file_name: communicationLogActiveFileName
+    });
     await communicationLogRecoverSwapFiles();
+    logDiagnostic('debug', 'communication-log-swap-recovery-completed', {
+      file_name: communicationLogActiveFileName
+    });
     communicationLogReady = true;
+    const recoveredDuplicateRequest =
+      communicationLogSegmentManifest?.duplicate_request
+        ? { ...communicationLogSegmentManifest.duplicate_request }
+        : null;
+    logDiagnostic('debug', 'communication-log-recorder-ready', {
+      file_name: communicationLogFileName,
+      segment_directory: communicationLogSegmentDirectoryName(),
+      active_segment_bytes: communicationLogActiveSegmentBytes,
+      historical_segments: (await communicationLogHistoricalSegmentsFromDirectory()).length
+    });
     communicationLogDisarmDirectoryGesture();
     document.getElementById('tm-communication-directory-required')?.remove();
     communicationLogPromptShown = false;
@@ -54,6 +81,7 @@
       core_version: CORE_VERSION,
       conversation_id: currentConversationId(),
       conversation_name: conversationName,
+      project_name: conversationProjectName(),
       file_name: communicationLogFileName,
       page_url: stockNetworkSafeUrl(location.href),
       navigation_type: navigation?.type ?? null,
@@ -61,6 +89,12 @@
       dropped_before_ready: communicationLogDroppedBeforeReady
     });
     communicationLogDroppedBeforeReady = 0;
+    if (recoveredDuplicateRequest) {
+      queueMicrotask(() => {
+        void communicationLogArchiveDuplicate(recoveredDuplicateRequest)
+          .catch(error => communicationLogReportFailure('duplicate-restart', error));
+      });
+    }
     return true;
   }
 
@@ -186,19 +220,42 @@
    * @returns {Promise<boolean>} True when a saved writable directory was activated.
    */
   async function initializeCommunicationDiskRecorder() {
+    logDiagnostic('debug', 'communication-log-startup-entered', {});
     try {
       const handle = await communicationLogLoadDirectoryHandle();
+      logDiagnostic('debug', 'communication-log-directory-restore-completed', {
+        handle_present: Boolean(handle)
+      });
       if (!handle) {
         communicationLogShowDirectoryPrompt('No log folder has been authorized for this browser profile.');
         return false;
       }
       const permission = await communicationLogPermissionState(handle);
+      logDiagnostic('debug', 'communication-log-directory-permission-checked', {
+        permission
+      });
       if (permission !== 'granted') {
         communicationLogShowDirectoryPrompt('The saved log folder is no longer authorized; choose it again.');
         return false;
       }
-      return communicationLogActivateDirectory(handle);
+      return await communicationLogActivateDirectory(handle);
     } catch (error) {
+      try {
+        logDiagnostic('warnings', 'communication-log-startup-caught', {
+          name: String(error?.name ?? ''),
+          message: String(error?.message ?? error),
+          stack: boundedDiagnosticText(String(error?.stack ?? ''), 6000)
+        });
+      } catch (diagnosticError) {
+        logConsoleDiagnostic(
+          'warnings',
+          '[DownloadConversation] communication recorder startup diagnostic failed',
+          {
+            startup_error: String(error?.message ?? error),
+            diagnostic_error: String(diagnosticError?.message ?? diagnosticError)
+          }
+        );
+      }
       communicationLogReportFailure('startup', error);
       communicationLogShowDirectoryPrompt('The saved log folder could not be restored.');
       return false;
