@@ -1,34 +1,21 @@
 import assert from 'node:assert/strict';
-import { readFile } from 'node:fs/promises';
+import { downloadConversationSource, userscript } from './helpers/userscript-source.mjs';
 import vm from 'node:vm';
 import test from 'node:test';
 
-const source = await readFile(
-  new URL('../src/userscript/06-image-export-tests/02-image-recovery.js', import.meta.url),
-  'utf8'
-);
-const panelSource = await readFile(
-  new URL('../src/userscript/07-panel-launcher/04-launcher-removal.js', import.meta.url),
-  'utf8'
-);
-const bootstrapSource = await readFile(
-  new URL('../src/userscript/07-panel-launcher/05-bootstrap.js', import.meta.url),
-  'utf8'
-);
-
 function runExportSource() {
-  const start = source.indexOf('  async function runExport(');
+  const start = downloadConversationSource.indexOf('  async function runExport(');
   const end = source.indexOf('\n  }', start);
   assert.ok(start >= 0 && end > start, 'Production runExport function is missing.');
   let depth = 0;
   let opened = false;
   for (let index = start; index < source.length; index += 1) {
-    if (source[index] === '{') {
+    if (downloadConversationSource[index] === '{') {
       depth += 1;
       opened = true;
-    } else if (source[index] === '}') {
+    } else if (downloadConversationSource[index] === '}') {
       depth -= 1;
-      if (opened && depth === 0) return source.slice(start, index + 1);
+      if (opened && depth === 0) return downloadConversationSource.slice(start, index + 1);
     }
   }
   throw new Error('Production runExport function is unterminated.');
@@ -118,7 +105,7 @@ for (const [name, compressed, expectedNames, expectedArchiveCalls] of [
         Array.from(new TextEncoder().encode('{"record":"fixture"}\n')),
         Array.from(new TextEncoder().encode('# fixture\n'))
       ];
-      assert.deepEqual(archiveInputs.map(Array.from), expected);
+      assert.deepEqual(archiveInputs.map(bytes => Array.from(bytes)), expected);
       for (const { blob } of downloads) {
         const bytes = new Uint8Array(await blob.arrayBuffer());
         assert.deepEqual(Array.from(bytes.subarray(0, 6)), [0xfd, 0x37, 0x7a, 0x58, 0x5a, 0x00]);
