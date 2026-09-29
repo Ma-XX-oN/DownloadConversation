@@ -6,50 +6,38 @@
   /**
    * Resolves the currently available communication-log timestamp range.
    *
-   * The earliest historical timestamp comes from the filesystem-authoritative
-   * segment filename range already captured by the snapshot plan. The latest
-   * active timestamp comes from the manifest after committing a fresh active
-   * EOF/timestamp checkpoint. If no historical segment exists yet, the first
-   * active record supplies the unavoidable start fallback because there is no
-   * segment filename to consult.
+   * The earliest timestamp is taken only from the filesystem-authoritative first
+   * historical segment filename. The latest timestamp is read from the durable
+   * segment manifest. No historical archive is opened or decompressed merely to
+   * populate the dialog.
    *
    * @returns {Promise<Object>} Inclusive start/end ISO timestamp range.
    */
   async function communicationLogDuplicateAvailableRange() {
-    const queued = communicationLogEnqueue('duplicate-range', async () => {
-      const plan = await communicationLogCaptureSnapshotPlan();
-      try {
-        const segments = plan.segments;
-        let startTimestamp = segments.length > 0
-          ? segments[0].start_timestamp
-          : null;
-        if (!startTimestamp && plan.active_eof > 0) {
-          const activeHandle = await communicationLogSegmentDirectoryHandle.getFileHandle(
-            plan.active_name,
-            { create: false }
-          );
-          const activeFile = await activeHandle.getFile();
-          const activeBytes = new Uint8Array(
-            await activeFile.slice(0, plan.active_eof).arrayBuffer()
-          );
-          startTimestamp = communicationLogFirstTimestampFromJsonl(activeBytes);
-        }
-        const endTimestamp =
-          communicationLogSegmentManifest?.active_last_timestamp
-          ?? segments.at(-1)?.end_timestamp
-          ?? startTimestamp;
-        if (!startTimestamp || !endTimestamp) {
-          throw new Error('Communication log has no trustworthy timestamp range to duplicate.');
-        }
-        return {
-          start_timestamp: startTimestamp,
-          end_timestamp: endTimestamp
-        };
-      } finally {
-        await communicationLogOpenWriter();
-      }
-    });
-    return queued.operation;
+    const segments = await communicationLogHistoricalSegmentsFromDirectory();
+    if (segments.length === 0) {
+      throw new Error(
+        'Duplicate range start is unavailable because no timestamped segment file exists.'
+      );
+    }
+    const manifest = await communicationLogReadSegmentManifest();
+    const startTimestamp = segments[0].start_timestamp;
+    const endTimestamp = manifest.active_last_timestamp;
+    const startMs = Date.parse(startTimestamp);
+    const endMs = Date.parse(endTimestamp);
+    if (!Number.isFinite(startMs)) {
+      throw new Error('Duplicate range start timestamp from segment filename is invalid.');
+    }
+    if (!Number.isFinite(endMs)) {
+      throw new Error('Duplicate range end timestamp is unavailable in the segment manifest.');
+    }
+    if (endMs < startMs) {
+      throw new Error('Communication Duplicate range end precedes its start.');
+    }
+    return {
+      start_timestamp: startTimestamp,
+      end_timestamp: endTimestamp
+    };
   }
 
   /**
@@ -57,7 +45,8 @@
    *
    * Each visible field is local time. The selected start second is inclusive at
    * millisecond 000 and the selected end second is inclusive through millisecond
-   * 999 so the seconds-only control does not accidentally discard the last record.
+   * 999 so a seconds-only control includes every record in the chosen final
+   * second.
    *
    * @returns {Promise<Object|null>} Duplicate bounds, or null when cancelled.
    */
@@ -66,15 +55,9 @@
     const range = await communicationLogDuplicateAvailableRange();
     const minimum = new Date(Date.parse(range.start_timestamp));
     const maximumExact = new Date(Date.parse(range.end_timestamp));
-    if (!Number.isFinite(minimum.getTime()) || !Number.isFinite(maximumExact.getTime())) {
-      throw new Error('Communication Duplicate range contains an invalid timestamp.');
-    }
     minimum.setMilliseconds(0);
     const maximum = new Date(maximumExact.getTime());
     maximum.setMilliseconds(0);
-    if (maximum < minimum) {
-      throw new Error('Communication Duplicate range end precedes its start.');
-    }
 
     injectSingleDateTimeControlStyles();
     const overlay = document.createElement('div');
@@ -92,14 +75,12 @@
         <div class="tm-date-range-error" data-role="duplicate-range-error" aria-live="polite"></div>
       </div>
     `;
-    const dialog = overlay.querySelector('.tm-date-range-dialog');
     const startHost = overlay.querySelector('[data-role="duplicate-range-start"]');
     const endHost = overlay.querySelector('[data-role="duplicate-range-end"]');
     const okButton = overlay.querySelector('[data-role="duplicate-range-ok"]');
     const cancelButton = overlay.querySelector('[data-role="duplicate-range-cancel"]');
     const errorOutput = overlay.querySelector('[data-role="duplicate-range-error"]');
-    if (!(dialog instanceof HTMLElement)
-        || !(startHost instanceof HTMLElement)
+    if (!(startHost instanceof HTMLElement)
         || !(endHost instanceof HTMLElement)
         || !(okButton instanceof HTMLButtonElement)
         || !(cancelButton instanceof HTMLButtonElement)) {
@@ -164,7 +145,9 @@
       okButton.addEventListener('click', () => {
         if (!validate()) return;
         const start = startControl.getDate();
-        const end = new Date(endControl.getDate().getTime() + 999);
+        const end = endControl.getDate();
+        start.setMilliseconds(0);
+        end.setMilliseconds(999);
         finish({
           start_timestamp: start.toISOString(),
           end_timestamp: end.toISOString()
@@ -182,59 +165,3 @@
       });
     });
   }
-
-  /**
-   * Replaces the legacy direct Duplicate click with the range-selection dialog.
-   *
-   * A document capture listener is used so the reusable range UI can remain a
-   * separate module without coupling the general recorder-panel constructor to
-   * communication archive policy.
-   *
-   * @param {MouseEvent} event - Document click event.
-   * @returns {void} No value is returned.
-   */
-  function communicationLogHandleDuplicateRangeClick(event) {
-    const button = event.target instanceof Element
-      ? event.target.closest('[data-role="duplicate-communication-log"]')
-      : null;
-    if (!(button instanceof HTMLButtonElement)) return;
-    event.preventDefault();
-    event.stopImmediatePropagation();
-    if (button.disabled || communicationLogUiActionInProgress || !communicationLogFileName) return;
-
-    button.disabled = true;
-    setStatus('Duplicate: preparing available local date/time range…');
-    void communicationLogShowDuplicateRangeDialog()
-      .then(bounds => {
-        if (!bounds) {
-          updateUi();
-          setStatus('Communication log Duplicate cancelled.');
-          return;
-        }
-        // The shared action runner deliberately rejects an already-disabled
-        // button. Re-enable after range selection so it can establish its own
-        // busy/disabled lifecycle atomically.
-        button.disabled = false;
-        return runCommunicationLogPanelAction(button, {
-          idleLabel: 'Duplicate communication log',
-          busyLabel: 'Duplicating communication log',
-          busyTitle: 'Duplicating…',
-          operation: () => communicationLogArchiveDuplicate({
-            start_timestamp: bounds.start_timestamp,
-            end_timestamp: bounds.end_timestamp
-          }),
-          onSuccess: duplicateName =>
-            setStatus(`Communication log duplicated as ${duplicateName}.`),
-          failurePrefix: 'Communication log duplicate failed'
-        });
-      })
-      .catch(error => {
-        updateUi();
-        setStatus(`Communication log duplicate failed: ${errorMessage(error)}`);
-        logDiagnostic('errors', 'communication-log-duplicate-range-failure', {
-          message: boundedDiagnosticText(errorMessage(error), 2000)
-        });
-      });
-  }
-
-  document.addEventListener('click', communicationLogHandleDuplicateRangeClick, true);
