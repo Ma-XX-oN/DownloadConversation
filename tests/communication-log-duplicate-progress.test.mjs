@@ -115,3 +115,14 @@ test('Issue 166 Duplicate range dialog defaults to filename start and manifest e
   assert.match(rangeDialogSource, /button\.disabled = false;/,
     'the range preflight disable must be cleared before the shared action runner');
 });
+
+test('Issue 166 Duplicate range dialog uses the shared modal contract', () => {
+  assert.match(rangeDialogSource, /installModalContract\(overlay,/);
+  assert.match(rangeDialogSource, /defaultButton:\s*okButton/);
+  assert.match(rangeDialogSource, /onClose:\s*\(\) => finish\(null\)/);
+  assert.doesNotMatch(
+    rangeDialogSource,
+    /overlay\.addEventListener\('keydown',[\s\S]*event\.key === 'Escape'/,
+    'Duplicate must not maintain a second private Escape modal-control path'
+  );
+});
