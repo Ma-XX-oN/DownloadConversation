@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         ChatGPT Conversation Markdown Recorder
 // @namespace    https://chatgpt.com/
-// @version      1.7.2-issue.166.141
+// @version      1.7.2-issue.166.142
 // @description  Exports the current ChatGPT conversation directly from the Conversation API as Markdown or JSONL.
 // @match        https://chatgpt.com/*
 // @match        https://chat.openai.com/*
@@ -18487,9 +18487,10 @@ Image elapsed: ${formatDuration(imageElapsed)} — Completed: ${imageCompleted}/
    * 999 so a seconds-only control includes every record in the chosen final
    * second.
    *
+   * @param {HTMLElement|null} opener - Control that opened the modal.
    * @returns {Promise<Object|null>} Duplicate bounds, or null when cancelled.
    */
-  async function communicationLogShowDuplicateRangeDialog() {
+  async function communicationLogShowDuplicateRangeDialog(opener = null) {
     document.getElementById(COMMUNICATION_LOG_DUPLICATE_RANGE_DIALOG_ID)?.remove();
     const range = await communicationLogDuplicateAvailableRange();
     const minimum = new Date(Date.parse(range.start_timestamp));
@@ -18560,25 +18561,33 @@ Image elapsed: ${formatDuration(imageElapsed)} — Completed: ${imageCompleted}/
     endHost.append(endControl.element);
     validate();
 
-    const previousFocus = document.activeElement instanceof HTMLElement
-      ? document.activeElement
-      : null;
+    const previousFocus = opener instanceof HTMLElement
+      ? opener
+      : document.activeElement instanceof HTMLElement
+        ? document.activeElement
+        : null;
     document.body.append(overlay);
-    startControl.focus();
 
     return new Promise(resolve => {
       let settled = false;
       /**
-       * Closes the range dialog once and restores the previous focus target.
+       * Closes the range dialog once.
+       *
+       * Shared modal-contract closes restore opener focus themselves. Explicit
+       * button/outside closes retain the previous-focus restoration because the
+       * shared modal helper does not own those dialog-specific click semantics.
        *
        * @param {Object|null} value - Selected bounds or cancellation marker.
+       * @param {boolean} restoreFocus - Whether this close path restores focus.
        * @returns {void} No value is returned.
        */
-      const finish = value => {
+      const finish = (value, restoreFocus = true) => {
         if (settled) return;
         settled = true;
         overlay.remove();
-        previousFocus?.focus();
+        if (restoreFocus && previousFocus?.isConnected) {
+          previousFocus.focus({ preventScroll: true });
+        }
         resolve(value);
       };
       okButton.addEventListener('click', () => {
@@ -18596,12 +18605,15 @@ Image elapsed: ${formatDuration(imageElapsed)} — Completed: ${imageCompleted}/
       overlay.addEventListener('click', event => {
         if (event.target === overlay) finish(null);
       });
-      overlay.addEventListener('keydown', event => {
-        if (event.key === 'Escape') {
-          event.preventDefault();
-          finish(null);
-        }
+      installModalContract(overlay, {
+        defaultButton: okButton,
+        onClose: () => finish(null, false),
+        opener: previousFocus
       });
+      // The shared modal contract establishes keyboard/focus behaviour and a
+      // default action. For this editor, place the initial caret in the start
+      // control after that contract is installed.
+      startControl.focus();
     });
   }
 
@@ -18626,7 +18638,7 @@ Image elapsed: ${formatDuration(imageElapsed)} — Completed: ${imageCompleted}/
 
     button.disabled = true;
     setStatus('Duplicate: preparing available local date/time range…');
-    void communicationLogShowDuplicateRangeDialog()
+    void communicationLogShowDuplicateRangeDialog(button)
       .then(bounds => {
         if (!bounds) {
           button.disabled = false;
