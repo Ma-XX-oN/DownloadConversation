@@ -6,6 +6,10 @@ const storagePath = new URL(
   '../src/userscript/02-network-communication/06-segment-storage.js',
   import.meta.url
 );
+const manifestPath = new URL(
+  '../src/userscript/02-network-communication/06-segment-manifest.js',
+  import.meta.url
+);
 const recoveryPath = new URL(
   '../src/userscript/02-network-communication/06-segment-recovery.js',
   import.meta.url
@@ -98,14 +102,16 @@ test('Issue 166 private segment filenames do not repeat the conversation prefix'
 });
 
 test('Issue 166 manifest is control state, not a historical segment catalogue', async () => {
-  const storage = await readFile(storagePath, 'utf8');
+  const manifest = await readFile(manifestPath, 'utf8');
   const snapshot = await readFile(
     new URL('../src/userscript/02-network-communication/06-segment-snapshot.js', import.meta.url),
     'utf8'
   );
-  assert.match(storage, /active_committed_eof/);
-  assert.match(storage, /active_last_timestamp/);
-  assert.doesNotMatch(storage, /next_ordinal|\.segments\.push/);
+  assert.match(manifest, /active_committed_eof/);
+  assert.match(manifest, /conversation_name/);
+  assert.match(manifest, /delete parsed\.active_last_timestamp/);
+  assert.doesNotMatch(manifest, /active_last_timestamp\s*:/);
+  assert.doesNotMatch(manifest, /next_ordinal|\.segments\.push/);
   assert.match(snapshot, /communicationLogSegmentDirectoryHandle\.entries\(\)/);
   assert.match(snapshot, /archive_name\.localeCompare/);
 });
