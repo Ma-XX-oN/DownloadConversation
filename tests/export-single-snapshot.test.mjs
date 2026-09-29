@@ -244,6 +244,7 @@ test('UI submits each checkbox combination as one operation, or none when unsele
           return { checked: kinds.includes(kind) };
         }
       },
+      exportCompressionEnabled: false,
       async runExport(selected) { calls.push(Array.from(selected)); }
     };
     vm.runInNewContext(`${source}\nthis.runSelectedExports = runSelectedExports;`, context);
