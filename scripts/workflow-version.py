@@ -16,10 +16,6 @@ INTEGRATION_BRANCH = "main"
 
 
 def branch_name() -> str:
-  for name in ("GITHUB_HEAD_REF", "GITHUB_REF_NAME"):
-    value = os.environ.get(name, "").strip()
-    if value:
-      return value.removeprefix("refs/heads/")
   result = subprocess.run(
     ["git", "rev-parse", "--abbrev-ref", "HEAD"],
     cwd=ROOT,
@@ -27,7 +23,14 @@ def branch_name() -> str:
     capture_output=True,
     check=False,
   )
-  return result.stdout.strip().removeprefix("refs/heads/")
+  branch = result.stdout.strip().removeprefix("refs/heads/")
+  if branch and branch != "HEAD":
+    return branch
+  for name in ("GITHUB_HEAD_REF", "GITHUB_REF_NAME"):
+    value = os.environ.get(name, "").strip()
+    if value:
+      return value.removeprefix("refs/heads/")
+  return ""
 
 
 def main() -> int:
