@@ -17,7 +17,9 @@
         throw new Error('Invalid communication segment manifest.');
       }
       delete parsed.active_last_timestamp;
-      if (typeof parsed.conversation_name !== 'string') parsed.conversation_name = null;
+      const conversationName = communicationLogConversationName();
+      parsed.conversation_name = conversationName
+        ?? (typeof parsed.conversation_name === 'string' ? parsed.conversation_name : null);
       return parsed;
     } catch (error) {
       if (error?.name !== 'NotFoundError') throw error;
