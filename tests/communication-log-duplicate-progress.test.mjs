@@ -103,9 +103,11 @@ test('Issue 166 date/time spinner carries surrounding local fields correctly', (
 });
 
 test('Issue 166 Duplicate range dialog defaults to filename start and manifest end', () => {
-  assert.match(rangeDialogSource, /const segments = plan\.segments;/);
+  assert.match(rangeDialogSource, /communicationLogHistoricalSegmentsFromDirectory/);
   assert.match(rangeDialogSource, /segments\[0\]\.start_timestamp/);
-  assert.match(rangeDialogSource, /communicationLogSegmentManifest\?\.active_last_timestamp/);
+  assert.match(rangeDialogSource, /communicationLogReadSegmentManifest/);
+  assert.match(rangeDialogSource, /manifest\.active_last_timestamp/);
+  assert.doesNotMatch(rangeDialogSource, /communicationLogFirstTimestampFromJsonl/);
   assert.match(rangeDialogSource, /createSingleDateTimeControl/);
   assert.match(rangeDialogSource, /communicationLogArchiveDuplicate\(\{/);
   assert.match(rangeDialogSource, /start_timestamp: start\.toISOString\(\)/);
