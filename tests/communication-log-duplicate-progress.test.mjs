@@ -45,10 +45,8 @@ test('Issue 166 Duplicate reports real file-count progress and measured ETA', ()
     /\$\{progress\.completed_files\}\/\$\{progress\.total_files\} files /
   );
   assert.match(duplicateSource, /\$\{progress\.percent\.toFixed\(1\)\}% done/);
-  assert.match(
-    duplicateSource,
-    /ETA: \$\{communicationLogFormatDuration\(progress\.eta_ms\)\}/
-  );
+  assert.match(duplicateSource, /communicationLogFormatDuration\(progress\.eta_ms\)/);
+  assert.match(duplicateSource, /ETA: \$\{etaText\}/);
 });
 
 test('Issue 166 Duplicate filters records only when a requested bound cuts through a file', () => {
