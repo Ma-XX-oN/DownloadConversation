@@ -54,6 +54,13 @@ test(
         'panel-launcher'
       ]
     );
+    const runtimeModule = manifest.modules.find(module => {
+      return module.name === 'runtime';
+    });
+    assert.ok(
+      runtimeModule?.files.includes('src/userscript/01-runtime/03-conversation-identity.js'),
+      'runtime must include the canonical conversation/project identity module'
+    );
     const workStackModule = manifest.modules.find(module => {
       return module.name === 'workstack-continuation';
     });
@@ -80,7 +87,7 @@ test(
       ],
       'segment runtime must remain at the verified lifecycle top-level boundary'
     );
-    assert.equal(sourcePaths.length, 58);
+    assert.equal(sourcePaths.length, 59);
     assert.equal(new Set(sourcePaths).size, sourcePaths.length);
     assert.ok(sourcePaths.every(sourcePath => {
       return sourcePath.startsWith('src/userscript/');
