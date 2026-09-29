@@ -54,13 +54,6 @@ test(
         'panel-launcher'
       ]
     );
-    const runtimeModule = manifest.modules.find(module => {
-      return module.name === 'runtime';
-    });
-    assert.ok(
-      runtimeModule?.files.includes('src/userscript/01-runtime/03-conversation-identity.js'),
-      'runtime must include the canonical conversation/project identity module'
-    );
     const workStackModule = manifest.modules.find(module => {
       return module.name === 'workstack-continuation';
     });
@@ -75,17 +68,18 @@ test(
       return module.name === 'network-communication';
     });
     assert.deepEqual(
-      communicationModule?.files.slice(2, 9),
+      communicationModule?.files.slice(2, 10),
       [
         'src/userscript/02-network-communication/03-communication-lifecycle.js',
         'src/userscript/02-network-communication/06-segment-storage.js',
         'src/userscript/02-network-communication/06-segment-manifest.js',
+        'src/userscript/01-runtime/03-conversation-identity.js',
         'src/userscript/02-network-communication/06-segment-recovery.js',
         'src/userscript/02-network-communication/06-segment-snapshot.js',
         'src/userscript/02-network-communication/06-segment-duplicate.js',
         'src/userscript/02-network-communication/04-communication-redaction.js'
       ],
-      'segment runtime must remain at the verified lifecycle top-level boundary'
+      'identity and segment runtime must remain at verified top-level source boundaries'
     );
     assert.equal(sourcePaths.length, 59);
     assert.equal(new Set(sourcePaths).size, sourcePaths.length);
