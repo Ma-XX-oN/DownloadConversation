@@ -1,5 +1,6 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
+import vm from 'node:vm';
 
 import { downloadConversationSource, productionFunctionSource } from './helpers/userscript-source.mjs';
 
@@ -54,4 +55,28 @@ test('Issue 172 JSONL timestamp range rejects null and Unix epoch zero fields', 
   assert.match(source, /update_time/);
   assert.match(source, /value <= 0/);
   assert.doesNotMatch(source, /Number\(record\?\.(?:create_time|update_time)\)/);
+});
+
+
+test('Issue 172 JSONL range cannot turn null or zero into the Unix epoch', () => {
+  const context = {};
+  vm.runInNewContext(
+    `${productionFunctionSource('conversationJsonlTimestampRange')}
+this.range = conversationJsonlTimestampRange;`,
+    context
+  );
+  const jsonl = [
+    JSON.stringify({ record_type: 'chatgpt_conversation_metadata', schema_version: 1 }),
+    JSON.stringify({ id: 'missing', create_time: null, update_time: null }),
+    JSON.stringify({ id: 'zero', create_time: 0, update_time: 0 }),
+    JSON.stringify({ id: 'first', create_time: 1780000000, update_time: null }),
+    JSON.stringify({ id: 'last', create_time: 1780000300, update_time: null })
+  ].join('\n') + '\n';
+  assert.deepEqual(
+    JSON.parse(JSON.stringify(context.range(jsonl))),
+    {
+      start_timestamp: new Date(1780000000 * 1000).toISOString(),
+      end_timestamp: new Date(1780000300 * 1000).toISOString()
+    }
+  );
 });
