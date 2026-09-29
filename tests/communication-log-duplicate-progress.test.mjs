@@ -10,8 +10,8 @@ const snapshotSource = await readFile(
   new URL('../src/userscript/02-network-communication/06-segment-snapshot.js', import.meta.url),
   'utf8'
 );
-const storageSource = await readFile(
-  new URL('../src/userscript/02-network-communication/06-segment-storage.js', import.meta.url),
+const manifestSource = await readFile(
+  new URL('../src/userscript/02-network-communication/06-segment-manifest.js', import.meta.url),
   'utf8'
 );
 const recoverySource = await readFile(
@@ -101,7 +101,7 @@ test('Issue 166 active last timestamp scans backward from EOF in bounded chunks'
 });
 
 test('Issue 166 manifest no longer caches active_last_timestamp', () => {
-  assert.match(storageSource, /delete parsed\.active_last_timestamp/,
+  assert.match(manifestSource, /delete parsed\.active_last_timestamp/,
     'legacy manifests must be cleaned when read');
   assert.doesNotMatch(
     snapshotSource,
@@ -116,9 +116,9 @@ test('Issue 166 manifest no longer caches active_last_timestamp', () => {
 });
 
 test('Issue 166 manifest carries a human-readable conversation name and refreshes on rename', () => {
-  assert.match(storageSource, /conversation_name:/);
-  assert.match(storageSource, /communicationLogSyncManifestConversationName/);
-  assert.match(recoverySource, /communicationLogSegmentManifest\.conversation_name/);
+  assert.match(manifestSource, /conversation_name:/);
+  assert.match(manifestSource, /communicationLogSyncManifestConversationName/);
+  assert.match(manifestSource, /communicationLogConversationName\(\)/);
   assert.match(titleSyncSource, /new MutationObserver/);
   assert.match(titleSyncSource, /observer\.observe\(document\.head/);
   assert.match(titleSyncSource, /communicationLogSyncManifestConversationName/);
