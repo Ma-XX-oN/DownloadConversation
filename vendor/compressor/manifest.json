@@ -4,6 +4,7 @@
   "source_commit": "01b7154f1172432f8abe9b3bb9909e14a1176b7d",
   "toolchain": "emscripten-3.1.51",
   "optimization": "-Os",
+  "wasm_wrapper": "wrapper.c",
   "bridge": "bridge.js",
   "bridge_bytes": 4605,
   "bridge_sha256": "de5f6cbf672e4fe0b7d28b7504d1e91330a9f99e3c503023a8377f3d02237185",
