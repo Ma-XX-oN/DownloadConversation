@@ -17,6 +17,16 @@ export const userscript = await readFile(
 
 export const downloadConversationSource = await readDownloadConversationSource(root, manifest);
 
+const segmentSchemaMatch = downloadConversationSource.match(
+  /const COMMUNICATION_LOG_SEGMENT_SCHEMA = (\d+);/
+);
+assert.ok(segmentSchemaMatch, 'Production communication segment schema constant is missing.');
+
+// Isolated AsyncFunction fixtures execute in the Node global environment.  Give
+// them codec-neutral test dependencies without duplicating the production schema.
+globalThis.COMMUNICATION_LOG_SEGMENT_SCHEMA = Number(segmentSchemaMatch[1]);
+globalThis.compressorExtension = () => '.fixture';
+
 export function markedBlock(startMarker, endMarker) {
   const start = downloadConversationSource.indexOf(startMarker);
   const end = downloadConversationSource.indexOf(endMarker, start);
