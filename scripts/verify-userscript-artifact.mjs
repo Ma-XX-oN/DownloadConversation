@@ -21,7 +21,7 @@ async function main() {
     path.join(root, 'src/userscript-manifest.json'),
     'utf8'
   ));
-  if (manifest?.format_version !== 2) fail('Manifest format_version must be 2.');
+  if (manifest?.format_version !== 3) fail('Manifest format_version must be 3.');
   if (typeof manifest.header !== 'string' || !manifest.header) {
     fail('Manifest header path is required.');
   }
@@ -30,6 +30,9 @@ async function main() {
   }
   if (!Array.isArray(manifest.dependencies) || manifest.dependencies.length === 0) {
     fail('Manifest must declare at least one dependency.');
+  }
+  if (!Array.isArray(manifest.agent_plugins) || manifest.agent_plugins.length === 0) {
+    fail('Manifest must declare at least one agent plugin.');
   }
   if (!Array.isArray(manifest.modules) || manifest.modules.length === 0) {
     fail('Manifest must declare at least one source module.');
@@ -86,10 +89,7 @@ async function main() {
       )
     );
 
-    const dependencyBytes = artifact.subarray(
-      offset,
-      offset + dependency.byte_length
-    );
+    const dependencyBytes = artifact.subarray(offset, offset + dependency.byte_length);
     if (dependencyBytes.length !== dependency.byte_length) {
       fail(`${dependency.name} content is truncated.`);
     }
@@ -131,13 +131,70 @@ async function main() {
   if (!sourceText.startsWith('\n(() => {')) {
     fail('DownloadConversation source does not preserve the userscript IIFE boundary.');
   }
+
   const artifactTail = artifact.subarray(offset).toString('utf8');
   const sourceBody = sourceText.slice('\n(() => {'.length);
+  const iifePrefix = '\n(() => {\n';
+  if (!artifactTail.startsWith(iifePrefix)) {
+    fail('Generated userscript does not preserve the DC IIFE boundary.');
+  }
+
+  const pluginStartMarker = '// BEGIN embedded agent plugin artifacts\n';
+  const pluginEndMarker = '// END embedded agent plugin artifacts\n';
+  const pluginStart = artifactTail.indexOf(pluginStartMarker, iifePrefix.length);
+  if (pluginStart !== iifePrefix.length) {
+    fail('Generated agent plugin artifact table is not scoped first inside the DC IIFE.');
+  }
+  const pluginEnd = artifactTail.indexOf(pluginEndMarker, pluginStart);
+  if (pluginEnd < 0) fail('Generated agent plugin artifact table closing banner is missing.');
+  const pluginPrelude = artifactTail.slice(
+    pluginStart,
+    pluginEnd + pluginEndMarker.length
+  );
+  const pluginSandbox = {};
+  const evaluablePluginPrelude = pluginPrelude.replace(
+    '  const DC_AGENT_PLUGIN_ARTIFACTS =',
+    'globalThis.DC_AGENT_PLUGIN_ARTIFACTS ='
+  );
+  vm.runInNewContext(evaluablePluginPrelude, pluginSandbox, { filename: 'embedded-agent-plugins.js' });
+  const embeddedPlugins = pluginSandbox.DC_AGENT_PLUGIN_ARTIFACTS;
+  if (!embeddedPlugins || typeof embeddedPlugins !== 'object') {
+    fail('Generated agent plugin artifact table is not evaluable.');
+  }
+  for (const plugin of manifest.agent_plugins) {
+    const embedded = embeddedPlugins[plugin.id];
+    if (!embedded) fail(`Embedded agent plugin ${plugin.id} is missing.`);
+    for (const field of [
+      'id', 'repository', 'ref', 'commit', 'version', 'api_version', 'path',
+      'git_blob_sha1', 'byte_length'
+    ]) {
+      if (embedded[field] !== plugin[field]) {
+        fail(`Embedded agent plugin ${plugin.id} ${field} differs from manifest.`);
+      }
+    }
+    if (typeof embedded.source_base64 !== 'string' || !embedded.source_base64) {
+      fail(`Embedded agent plugin ${plugin.id} source bytes are missing.`);
+    }
+    const pluginBytes = Buffer.from(embedded.source_base64, 'base64');
+    if (pluginBytes.length !== plugin.byte_length) {
+      fail(`Embedded agent plugin ${plugin.id} byte length differs from manifest.`);
+    }
+    const pluginSha = gitBlobSha1(pluginBytes);
+    if (pluginSha !== plugin.git_blob_sha1) {
+      fail(
+        `Embedded agent plugin ${plugin.id} Git blob mismatch: expected `
+          + `${plugin.git_blob_sha1}, got ${pluginSha}.`
+      );
+    }
+  }
+
   const compressorStartMarker = '// BEGIN bundled compressor name=';
-  const compressorStart = artifactTail.indexOf(compressorStartMarker);
-  if (!artifactTail.startsWith('\n(() => {\n')
-      || compressorStart !== '\n(() => {\n'.length) {
-    fail('Generated compressor runtime is not scoped immediately inside the DC IIFE.');
+  const compressorStart = artifactTail.indexOf(
+    compressorStartMarker,
+    pluginEnd + pluginEndMarker.length
+  );
+  if (compressorStart !== pluginEnd + pluginEndMarker.length) {
+    fail('Generated compressor runtime does not immediately follow the agent plugin table.');
   }
   const compressorEndMarker = '// END bundled compressor\n';
   const compressorEnd = artifactTail.indexOf(compressorEndMarker, compressorStart);
@@ -159,9 +216,9 @@ async function main() {
   if (/^export\s/m.test(compressorPrelude) || /import\.meta/.test(compressorPrelude)) {
     fail('Generated compressor prelude retains ES-module-only syntax.');
   }
-  const expectedTail = '\n(() => {\n' + compressorPrelude + sourceBody;
+  const expectedTail = iifePrefix + pluginPrelude + compressorPrelude + sourceBody;
   if (artifactTail !== expectedTail) {
-    fail('Generated userscript scoped compressor prelude/source assembly differs from repository source.');
+    fail('Generated userscript plugin/compressor/source assembly differs from repository source.');
   }
   offset = artifact.length;
   if (artifact.length >= 2 * 1024 * 1024) {
