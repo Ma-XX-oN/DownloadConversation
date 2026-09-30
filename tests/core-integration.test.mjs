@@ -5,8 +5,8 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 import vm from 'node:vm';
 
-assert.equal(coreDependency.commit, '1b531a1c92adfa1695db8c644159054e013f0a72');
-assert.equal(coreDependency.git_blob_sha1, '84a1fcf72a8da76f837a791a142c1c95ed37d607');
+assert.equal(coreDependency.commit, '488a2f633910b7ad26e8a89d0e6621d9961f785a');
+assert.equal(coreDependency.git_blob_sha1, 'fcd0fc12c7220257d813c7c0c893426d08437f06');
 
 const bundle = coreBundle;
 const context = {};
@@ -14,6 +14,7 @@ context.globalThis = context;
 vm.runInNewContext(bundle, context, { filename: 'aiconversationcore.chatgpt.browser.js' });
 assert.equal(typeof context.AIConversationCore?.adaptChatGPTRecords, 'function');
 assert.equal(typeof context.AIConversationCore?.renderCanonicalMarkdown, 'function');
+assert.equal(typeof context.AIConversationCore?.AgentPluginRegistry, 'function');
 
 const begin = '  // BEGIN AIConversationCore Phase 5 integration';
 const end = '  // END AIConversationCore Phase 5 integration';
@@ -125,7 +126,7 @@ test('canonical heading controls are Core-owned, independent, ordered, and JSONL
   context.showDebugProvenance = false;
 });
 
-test('canonical plain production slice preserves source heading identity and JSONL provenance', () => {
+test('canonical plain oracle preserves source heading identity and JSONL provenance', () => {
   const user = textRecord('user-source-id', 'user', 'Hello', {
     create_time: 101.25,
     update_time: 102.5,
@@ -191,7 +192,7 @@ test('migrated canonical plain renderer is byte-identical to production legacy q
   assert.ok(commentaryRendered.endsWith(context.__productionQuoteMarkdown(markdown)));
 });
 
-test('literal Markdown footnotes round-trip through the production canonical slice', () => {
+test('literal Markdown footnotes round-trip through the canonical oracle slice', () => {
   const record = textRecord(
     'footnote-source-id',
     'assistant',
