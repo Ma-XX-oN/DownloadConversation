@@ -14,15 +14,28 @@ export function gitBlobSha1(content) {
   return createHash('sha1').update(header).update(bytes).digest('hex');
 }
 
+function validatePinnedArtifact(identity, artifact) {
+  assertManifest(/^[0-9a-f]{40}$/.test(artifact.commit ?? ''),
+    `${identity} commit must be an exact 40-character SHA`);
+  assertManifest(/^[0-9a-f]{40}$/.test(artifact.git_blob_sha1 ?? ''),
+    `${identity} git_blob_sha1 must be an exact SHA-1`);
+  assertManifest(Number.isSafeInteger(artifact.byte_length) && artifact.byte_length > 0,
+    `${identity} byte_length must be a positive integer`);
+  assertManifest(typeof artifact.url === 'string' && artifact.url.includes(artifact.commit),
+    `${identity} URL must contain its pinned commit`);
+}
+
 export async function readUserscriptManifest(root) {
   const manifestPath = path.join(root, MANIFEST_PATH);
   const manifest = JSON.parse(await readFile(manifestPath, 'utf8'));
-  assertManifest(manifest?.format_version === 2, 'format_version must be 2');
+  assertManifest(manifest?.format_version === 3, 'format_version must be 3');
   assertManifest(typeof manifest.header === 'string' && manifest.header, 'header path is required');
   assertManifest(typeof manifest.generated_artifact === 'string' && manifest.generated_artifact,
     'generated_artifact path is required');
   assertManifest(Array.isArray(manifest.dependencies) && manifest.dependencies.length > 0,
     'at least one pinned dependency is required');
+  assertManifest(Array.isArray(manifest.agent_plugins) && manifest.agent_plugins.length > 0,
+    'at least one pinned agent plugin is required');
   assertManifest(Array.isArray(manifest.modules) && manifest.modules.length > 0,
     'at least one source module is required');
 
@@ -44,14 +57,29 @@ export async function readUserscriptManifest(root) {
 
   for (const dependency of manifest.dependencies) {
     assertManifest(typeof dependency?.name === 'string' && dependency.name, 'dependency name is required');
-    assertManifest(/^[0-9a-f]{40}$/.test(dependency.commit ?? ''),
-      `${dependency.name} commit must be an exact 40-character SHA`);
-    assertManifest(/^[0-9a-f]{40}$/.test(dependency.git_blob_sha1 ?? ''),
-      `${dependency.name} git_blob_sha1 must be an exact SHA-1`);
-    assertManifest(Number.isSafeInteger(dependency.byte_length) && dependency.byte_length > 0,
-      `${dependency.name} byte_length must be a positive integer`);
-    assertManifest(typeof dependency.url === 'string' && dependency.url.includes(dependency.commit),
-      `${dependency.name} URL must contain its pinned commit`);
+    if (dependency.ref != null) {
+      assertManifest(typeof dependency.ref === 'string' && dependency.ref.trim(),
+        `${dependency.name} ref must be a non-empty string`);
+    }
+    validatePinnedArtifact(dependency.name, dependency);
+  }
+
+  const pluginIds = new Set();
+  for (const plugin of manifest.agent_plugins) {
+    assertManifest(typeof plugin?.id === 'string' && plugin.id.trim(), 'agent plugin id is required');
+    assertManifest(!pluginIds.has(plugin.id), `duplicate agent plugin id ${plugin.id}`);
+    pluginIds.add(plugin.id);
+    assertManifest(typeof plugin.repository === 'string' && plugin.repository.includes('/'),
+      `${plugin.id} repository is required`);
+    assertManifest(typeof plugin.ref === 'string' && plugin.ref.trim(),
+      `${plugin.id} symbolic ref is required`);
+    assertManifest(typeof plugin.version === 'string' && plugin.version.trim(),
+      `${plugin.id} version is required`);
+    assertManifest(Number.isSafeInteger(plugin.api_version) && plugin.api_version > 0,
+      `${plugin.id} api_version must be a positive integer`);
+    assertManifest(typeof plugin.path === 'string' && plugin.path.endsWith('.mjs'),
+      `${plugin.id} artifact path must be a self-contained ESM module`);
+    validatePinnedArtifact(`agent plugin ${plugin.id}`, plugin);
   }
   return manifest;
 }
@@ -76,13 +104,13 @@ export function validatePinnedDependency(dependency, content) {
   const bytes = Buffer.from(content, 'utf8');
   if (bytes.length !== dependency.byte_length) {
     throw new Error(
-      `${dependency.name} byte length mismatch: expected ${dependency.byte_length}, got ${bytes.length}.`
+      `${dependency.name ?? dependency.id} byte length mismatch: expected ${dependency.byte_length}, got ${bytes.length}.`
     );
   }
   const actualSha = gitBlobSha1(bytes);
   if (actualSha !== dependency.git_blob_sha1) {
     throw new Error(
-      `${dependency.name} Git blob mismatch: expected ${dependency.git_blob_sha1}, got ${actualSha}.`
+      `${dependency.name ?? dependency.id} Git blob mismatch: expected ${dependency.git_blob_sha1}, got ${actualSha}.`
     );
   }
 }
@@ -108,9 +136,8 @@ export function assembleUserscript(header, dependencies, source, prelude = '') {
     validatePinnedDependency(dependency, content);
     result += dependencyBanner(dependency, content);
   }
-  // The archive bridge is part of DownloadConversation, not a page-global
-  // dependency. Inject it immediately inside DC's preserved IIFE so its
-  // functions are in the same lexical scope as diagnostic/communication code.
+  // Build-owned preludes belong inside DownloadConversation's preserved IIFE so
+  // plugin source/cache metadata and the compressor bridge do not leak page globals.
   const scopedSource = prelude
     ? source.replace('\n(() => {', `\n(() => {\n${prelude}`)
     : source;
