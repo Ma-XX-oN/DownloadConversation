@@ -51,13 +51,13 @@ const ordinaryStages = [
   ['Disk communication recorder regression', nodeCommand, ['--test', 'tests/disk-communication-recorder.test.mjs']],
   ['Directory picker gesture regression', nodeCommand, ['--test', 'tests/directory-picker-gesture.test.mjs']],
   ['Console lifecycle and provenance controls', nodeCommand, ['--test', 'tests/console-diagnostics.test.mjs']],
-  ['Canonical final-render regressions', nodeCommand, ['--test', 'tests/core-integration.test.mjs', 'tests/phase5-rich-core-integration.test.mjs', 'tests/fallback-adaptive-fence.test.mjs', 'tests/tool-language-diagnostics.test.mjs', 'tests/sediment-resolver.test.mjs']],
+  ['Canonical final-render regressions', nodeCommand, ['--test', 'tests/core-integration.test.mjs', 'tests/phase5-rich-core-integration.test.mjs', 'tests/cgp2-core-integration.test.mjs', 'tests/fallback-adaptive-fence.test.mjs', 'tests/tool-language-diagnostics.test.mjs', 'tests/sediment-resolver.test.mjs']],
   ['Built-in test list UI regression', nodeCommand, ['--test', 'tests/test-list-ui.test.mjs']],
   ['Recorder panel UI regression', nodeCommand, ['--test', 'tests/recorder-panel-ui.test.mjs', 'tests/modal-focus-retention.test.mjs', 'tests/heading-metadata-controls.test.mjs']]
 ];
 
 const crossConsumerRepositories = [
-  ['Ma-XX-oN/AIConversationCore', '1b531a1c92adfa1695db8c644159054e013f0a72', 'phase7-core'],
+  ['Ma-XX-oN/AIConversationCore', '488a2f633910b7ad26e8a89d0e6621d9961f785a', 'phase7-core'],
   ['Ma-XX-oN/AI-General-Memory', 'b2cc257cb586bd944ebca352e316780841217cc1', 'phase7-aigm'],
   ['Ma-XX-oN/AIConversationCore', '4b1bebe6fd7d82d8bbb15f4ad5c1a59cfd03132a', 'phase7-aigm-core']
 ];
