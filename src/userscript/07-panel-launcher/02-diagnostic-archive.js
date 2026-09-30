@@ -67,17 +67,21 @@
       conversationProjectName(),
       conversationTitle(),
       range
-    )}.log.xz`;
+    )}.log${compressorExtension()}`;
   }
 
   /**
-   * Returns a printable-ASCII member name accepted by the archive bridge.
+   * Returns a printable-ASCII member name accepted by the compressor.
    *
    * @param {string} archiveName - Diagnostic archive filename.
    * @returns {string} Archive member filename.
    */
   function diagnosticLogArchiveMemberName(archiveName) {
-    return archiveName.replace(/\.log\.xz$/i, '.jsonl').replace(/[^\x20-\x7e]/g, '_');
+    const suffix = `.log${compressorExtension()}`;
+    const memberName = archiveName.endsWith(suffix)
+      ? `${archiveName.slice(0, -suffix.length)}.jsonl`
+      : `${archiveName}.jsonl`;
+    return memberName.replace(/[^\x20-\x7e]/g, '_');
   }
 
   /**
@@ -145,7 +149,7 @@
   }
 
   /**
-   * Saves the canonical diagnostic log as one verified XZ archive.
+   * Saves the canonical diagnostic log as one verified archive.
    *
    * @returns {Promise<void>} Resolves after the archive is committed/downloaded.
    */
@@ -198,10 +202,14 @@
           conversationTitle(),
           range
         );
-        archiveName = await unusedFilename(directory, filenamePrefix, '.log.xz');
+        archiveName = await unusedFilename(
+          directory,
+          filenamePrefix,
+          `.log${compressorExtension()}`
+        );
         await diagnosticLogWriteArchive(directory, archiveName, archive);
       } else {
-        downloadBlob(new Blob([archive], { type: 'application/x-xz' }), archiveName);
+        downloadBlob(new Blob([archive], { type: compressorMimeType() }), archiveName);
       }
       setStatus(`Diagnostic log saved as ${archiveName}; ${elapsed()}.`);
     } catch (error) {
