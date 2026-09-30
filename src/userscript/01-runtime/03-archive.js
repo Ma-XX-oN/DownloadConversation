@@ -1,16 +1,16 @@
 
-  /** True after the embedded archive codec has been initialized. */
-  let archiveCodecReady = false;
+  /** True after the embedded compressor has been initialized. */
+  let compressorReady = false;
 
   /**
-   * Initializes the embedded archive codec once.
+   * Initializes the embedded compressor once.
    *
-   * @returns {Promise<void>} Resolves when the codec is ready.
+   * @returns {Promise<void>} Resolves when the compressor is ready.
    */
-  async function archiveCodecModule() {
-    if (archiveCodecReady) return;
-    const bridge = globalThis['__dcArchiveCodec'];
-    if (!bridge) throw new Error('Archive codec runtime bridge is unavailable.');
+  async function compressorModule() {
+    if (compressorReady) return;
+    const bridge = globalThis['__dcCompressor'];
+    if (!bridge) throw new Error('Compressor runtime bridge is unavailable.');
     const binary = atob(bridge.wasmGzipBase64);
     const compressed = new Uint8Array(binary.length);
     for (let index = 0; index < binary.length; index += 1) {
@@ -20,7 +20,25 @@
       .pipeThrough(new DecompressionStream('gzip'));
     const wasmBytes = new Uint8Array(await new Response(stream).arrayBuffer());
     await bridge.init(wasmBytes);
-    archiveCodecReady = true;
+    compressorReady = true;
+  }
+
+  /**
+   * Returns the selected compressor's filename extension.
+   *
+   * @returns {string} Extension including the leading dot.
+   */
+  function compressorExtension() {
+    return globalThis['__dcCompressor']._extension;
+  }
+
+  /**
+   * Returns the selected compressor's MIME type.
+   *
+   * @returns {string} Archive MIME type.
+   */
+  function compressorMimeType() {
+    return globalThis['__dcCompressor']._mime_type;
   }
 
   /**
@@ -46,7 +64,7 @@
   }
 
   /**
-   * Decompresses one or more concatenated archive streams.
+   * Decompresses one or more archive streams.
    *
    * @param {Uint8Array} archiveBytes - Complete archive bytes.
    * @returns {Promise<Uint8Array>} Exact decompressed bytes.
@@ -55,8 +73,8 @@
     if (!(archiveBytes instanceof Uint8Array)) {
       throw new TypeError('Archive input must be Uint8Array.');
     }
-    await archiveCodecModule();
-    return globalThis['__dcArchiveCodec'].decompress(archiveBytes);
+    await compressorModule();
+    return globalThis['__dcCompressor'].decompress(archiveBytes);
   }
 
   /**
@@ -65,13 +83,18 @@
    * @returns {Promise<Object>} Mutable writer state.
    */
   async function streamingArchiveWriterBegin() {
-    await archiveCodecModule();
-    const Encoder = globalThis['__dcArchiveCodec'].Encoder;
-    return { encoder: new Encoder(9), chunks: [], size: 0, finished: false };
+    await compressorModule();
+    const compressor = globalThis['__dcCompressor'];
+    return {
+      encoder: new compressor.Encoder(compressor._compression_level),
+      chunks: [],
+      size: 0,
+      finished: false
+    };
   }
 
   /**
-   * Appends exact uncompressed bytes without resetting the codec dictionary.
+   * Appends exact uncompressed bytes without resetting the compressor dictionary.
    *
    * @param {Object} writer - Open writer state.
    * @param {Uint8Array} bytes - Exact bytes to append.
@@ -94,7 +117,7 @@
    * @returns {number} Exact number of decompressed bytes appended.
    */
   function streamingArchiveWriterAppendArchive(writer, archiveBytes) {
-    const raw = globalThis['__dcArchiveCodec'].decompress(archiveBytes);
+    const raw = globalThis['__dcCompressor'].decompress(archiveBytes);
     streamingArchiveWriterAppendBytes(writer, raw);
     return raw.byteLength;
   }
