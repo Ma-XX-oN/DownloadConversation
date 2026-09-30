@@ -61,9 +61,11 @@ function harness() {
     },
     canonicalFilename() { return 'Canonical'; },
     apiRecordsJsonl() { return '{"record":"fixture"}\n'; },
+    compressorExtension() { return '.fixture'; },
+    compressorMimeType() { return 'application/x-fixture'; },
     async createArchive(bytes) {
       archiveInputs.push(new Uint8Array(bytes));
-      return new Uint8Array([0xfd, 0x37, 0x7a, 0x58, 0x5a, 0x00, ...bytes]);
+      return new Uint8Array([1, 2, 3, ...bytes]);
     },
     downloadBlob(blob, filename) { downloads.push({ blob, filename }); },
     setStatus() {},
@@ -94,7 +96,7 @@ test('Issue 173 toggle exposes large-circle raw and small-circle compressed sema
 
 for (const [name, compressed, expectedNames, expectedArchiveCalls] of [
   ['raw', false, ['Canonical.jsonl', 'Canonical.md'], 0],
-  ['compressed', true, ['Canonical.jsonl.xz', 'Canonical.md.xz'], 2]
+  ['compressed', true, ['Canonical.jsonl.fixture', 'Canonical.md.fixture'], 2]
 ]) {
   test(`Issue 173 ${name} mode projects both selected formats through the requested output boundary`, async () => {
     const { context, downloads, archiveInputs } = harness();
@@ -107,10 +109,10 @@ for (const [name, compressed, expectedNames, expectedArchiveCalls] of [
         Array.from(new TextEncoder().encode('# fixture\n'))
       ];
       assert.deepEqual(archiveInputs.map(bytes => Array.from(bytes)), expected);
-      for (const { blob } of downloads) {
-        const bytes = new Uint8Array(await blob.arrayBuffer());
-        assert.deepEqual(Array.from(bytes.subarray(0, 6)), [0xfd, 0x37, 0x7a, 0x58, 0x5a, 0x00]);
-      }
+      assert.deepEqual(downloads.map(item => item.blob.type), [
+        'application/x-fixture',
+        'application/x-fixture'
+      ]);
     }
   });
 }
@@ -122,7 +124,7 @@ test('Issue 173 repeated mode changes do not retain stale output projection', as
   await context.runExport(['jsonl'], { compressed: false });
   assert.deepEqual(downloads.map(item => item.filename), [
     'Canonical.jsonl',
-    'Canonical.jsonl.xz',
+    'Canonical.jsonl.fixture',
     'Canonical.jsonl'
   ]);
   assert.equal(archiveInputs.length, 1);
