@@ -35,19 +35,24 @@ function parseArguments(argv) {
   return { check, output };
 }
 
+function artifactLabel(artifact) {
+  return artifact.name ?? `agent plugin ${artifact.id}`;
+}
+
 async function fetchPinnedDependency(dependency) {
   let response;
+  const label = artifactLabel(dependency);
   try {
     response = await fetch(dependency.url, { redirect: 'follow' });
   } catch (error) {
     const detail = error instanceof Error ? error.message : String(error);
     throw new InfrastructureError(
-      `Could not reach pinned ${dependency.name} dependency: ${detail}`
+      `Could not reach pinned ${label} dependency: ${detail}`
     );
   }
   if (!response.ok) {
     throw new Error(
-      `Could not fetch pinned ${dependency.name} dependency: HTTP ${response.status} ${response.statusText}.`
+      `Could not fetch pinned ${label} dependency: HTTP ${response.status} ${response.statusText}.`
     );
   }
   const content = await response.text();
@@ -57,6 +62,31 @@ async function fetchPinnedDependency(dependency) {
 
 function sha256(bytes) {
   return createHash('sha256').update(bytes).digest('hex');
+}
+
+async function buildAgentPluginPrelude(agentPlugins) {
+  const entries = [];
+  for (const plugin of agentPlugins) {
+    const { content } = await fetchPinnedDependency(plugin);
+    const embedded = {
+      id: plugin.id,
+      repository: plugin.repository,
+      ref: plugin.ref,
+      commit: plugin.commit,
+      version: plugin.version,
+      api_version: plugin.api_version,
+      path: plugin.path,
+      git_blob_sha1: plugin.git_blob_sha1,
+      byte_length: plugin.byte_length,
+      source_base64: Buffer.from(content, 'utf8').toString('base64')
+    };
+    entries.push(`    ${JSON.stringify(plugin.id)}: Object.freeze(${JSON.stringify(embedded)})`);
+  }
+  return '// BEGIN embedded agent plugin artifacts\n'
+    + '  const DC_AGENT_PLUGIN_ARTIFACTS = Object.freeze({\n'
+    + entries.join(',\n')
+    + '\n  });\n'
+    + '// END embedded agent plugin artifacts\n';
 }
 
 async function buildCompressorPrelude() {
@@ -122,12 +152,13 @@ async function main() {
   for (const dependency of manifest.dependencies) {
     dependencies.push(await fetchPinnedDependency(dependency));
   }
+  const agentPluginPrelude = await buildAgentPluginPrelude(manifest.agent_plugins);
   const compressorPrelude = await buildCompressorPrelude();
   const built = assembleUserscript(
     header,
     dependencies,
     source,
-    compressorPrelude
+    agentPluginPrelude + compressorPrelude
   );
 
   if (args.check) {
