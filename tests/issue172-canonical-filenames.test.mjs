@@ -32,15 +32,15 @@ test('Issue 172 filesystem archive producers share collision resolution', () => 
   assert.match(productionFunctionSource('communicationLogStreamDuplicateArchive'), /unusedFilename/);
 });
 
-test('Issue 172 callers own simple and compound extensions', () => {
+test('Issue 172 callers own role extensions while compressor suffix is derived', () => {
   const runExport = productionFunctionSource('runExport');
   assert.match(runExport, /\.jsonl/);
   assert.match(runExport, /\.md/);
-  assert.match(runExport, /\$\{filename\}\.xz|\$\{rawFilename\}\.xz/);
-  assert.match(productionFunctionSource('diagnosticLogArchiveName'), /\.log\.xz/);
-  assert.match(productionFunctionSource('communicationLogStreamDuplicateArchive'), /\.comm\.xz/);
+  assert.match(runExport, /compressorExtension\(\)/);
+  assert.match(productionFunctionSource('diagnosticLogArchiveName'), /compressorExtension\(\)/);
+  assert.match(productionFunctionSource('communicationLogStreamDuplicateArchive'), /compressorExtension\(\)/);
+  assert.match(productionFunctionSource('communicationLogStreamDuplicateArchive'), /\.comm/);
 });
-
 
 test('Issue 172 export range is derived from exact JSONL database text', () => {
   const source = productionFunctionSource('runExport');
@@ -57,12 +57,10 @@ test('Issue 172 JSONL timestamp range rejects null and Unix epoch zero fields', 
   assert.doesNotMatch(source, /Number\(record\?\.(?:create_time|update_time)\)/);
 });
 
-
 test('Issue 172 JSONL range cannot turn null or zero into the Unix epoch', () => {
   const context = {};
   vm.runInNewContext(
-    `${productionFunctionSource('conversationJsonlTimestampRange')}
-this.range = conversationJsonlTimestampRange;`,
+    `${productionFunctionSource('conversationJsonlTimestampRange')}\nthis.range = conversationJsonlTimestampRange;`,
     context
   );
   const jsonl = [

@@ -13,7 +13,7 @@
         if (compressedOutput) {
           const markdownBytes = new TextEncoder().encode(markdown);
           const archiveBytes = await createArchive(markdownBytes);
-          outputBlob = new Blob([archiveBytes], { type: 'application/x-xz' });
+          outputBlob = new Blob([archiveBytes], { type: compressorMimeType() });
         }
         downloadBlob(outputBlob, filename);
         logDiagnostic('debug', 'conversation-export-phase-complete', {

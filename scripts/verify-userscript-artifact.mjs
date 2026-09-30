@@ -133,31 +133,35 @@ async function main() {
   }
   const artifactTail = artifact.subarray(offset).toString('utf8');
   const sourceBody = sourceText.slice('\n(() => {'.length);
-  const archiveStart = artifactTail.indexOf('// BEGIN bundled archive codec upstream-liblzma=');
+  const compressorStartMarker = '// BEGIN bundled compressor name=';
+  const compressorStart = artifactTail.indexOf(compressorStartMarker);
   if (!artifactTail.startsWith('\n(() => {\n')
-      || archiveStart !== '\n(() => {\n'.length) {
-    fail('Generated archive codec runtime is not scoped immediately inside the DC IIFE.');
+      || compressorStart !== '\n(() => {\n'.length) {
+    fail('Generated compressor runtime is not scoped immediately inside the DC IIFE.');
   }
-  const archiveEndMarker = '// END bundled archive codec\n';
-  const archiveEnd = artifactTail.indexOf(archiveEndMarker, archiveStart);
-  if (archiveEnd < 0) fail('Generated userscript archive codec closing banner is missing.');
-  const archivePrelude = artifactTail.slice(
-    archiveStart,
-    archiveEnd + archiveEndMarker.length
+  const compressorEndMarker = '// END bundled compressor\n';
+  const compressorEnd = artifactTail.indexOf(compressorEndMarker, compressorStart);
+  if (compressorEnd < 0) fail('Generated userscript compressor closing banner is missing.');
+  const compressorPrelude = artifactTail.slice(
+    compressorStart,
+    compressorEnd + compressorEndMarker.length
   );
-  if (!archivePrelude.includes('globalThis.__dcArchiveCodec = {')) {
-    fail('Generated userscript archive codec runtime bridge is missing.');
+  if (!compressorPrelude.includes('globalThis.__dcCompressor = {')) {
+    fail('Generated userscript compressor runtime bridge is missing.');
   }
-  if (!archivePrelude.includes('Encoder: ArchiveEncoder')
-      || !archivePrelude.includes('decompress: __dcArchiveCodecDecompress')) {
-    fail('Generated userscript archive codec contract is incomplete.');
+  if (!compressorPrelude.includes('Encoder: CompressorEncoder')
+      || !compressorPrelude.includes('decompress: __dcCompressorDecompress')
+      || !compressorPrelude.includes('_extension:')
+      || !compressorPrelude.includes('_mime_type:')
+      || !compressorPrelude.includes('_compression_level:')) {
+    fail('Generated userscript compressor contract is incomplete.');
   }
-  if (/^export\s/m.test(archivePrelude) || /import\.meta/.test(archivePrelude)) {
-    fail('Generated archive codec prelude retains ES-module-only syntax.');
+  if (/^export\s/m.test(compressorPrelude) || /import\.meta/.test(compressorPrelude)) {
+    fail('Generated compressor prelude retains ES-module-only syntax.');
   }
-  const expectedTail = '\n(() => {\n' + archivePrelude + sourceBody;
+  const expectedTail = '\n(() => {\n' + compressorPrelude + sourceBody;
   if (artifactTail !== expectedTail) {
-    fail('Generated userscript scoped archive prelude/source assembly differs from repository source.');
+    fail('Generated userscript scoped compressor prelude/source assembly differs from repository source.');
   }
   offset = artifact.length;
   if (artifact.length >= 2 * 1024 * 1024) {

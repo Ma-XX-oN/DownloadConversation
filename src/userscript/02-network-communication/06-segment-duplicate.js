@@ -281,7 +281,7 @@
       const archiveName = await unusedFilename(
         communicationLogDirectoryHandle,
         filenamePrefix,
-        '.comm.xz'
+        `.comm${compressorExtension()}`
       );
       return {
         archive: streamingArchiveWriterFinish(writer),

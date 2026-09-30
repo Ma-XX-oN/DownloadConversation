@@ -5,16 +5,16 @@ import path from 'node:path';
 
 const root = path.resolve(new URL('..', import.meta.url).pathname);
 const userscript = readFileSync(path.join(root, 'chatgpt-conversation-markdown-export.user.js'), 'utf8');
-const begin = userscript.indexOf('// BEGIN bundled archive codec upstream-liblzma=');
-const endMarker = '// END bundled archive codec';
+const begin = userscript.indexOf('// BEGIN bundled compressor name=');
+const endMarker = '// END bundled compressor';
 const end = userscript.indexOf(endMarker, begin);
-const runtimeBegin = userscript.indexOf('  /** True after the embedded archive codec has been initialized. */', end);
+const runtimeBegin = userscript.indexOf('  /** True after the embedded compressor has been initialized. */', end);
 const runtimeEnd = userscript.indexOf(
   '  /**\n   * Installs host-isolation styling for native recorder checkboxes.',
   runtimeBegin
 );
 if (begin < 0 || end < 0 || runtimeBegin < 0 || runtimeEnd < 0) {
-  throw new Error('Could not isolate the exact generated archive bridge.');
+  throw new Error('Could not isolate the exact generated compressor bridge.');
 }
 const prelude = userscript.slice(begin, end + endMarker.length);
 const runtime = userscript.slice(runtimeBegin, runtimeEnd);
@@ -34,7 +34,7 @@ const benchmark = String.raw`
 const benchmarkKeepAlive = setInterval(() => {}, 1000);
 (async () => {
   const output = document.getElementById('output');
-  await archiveCodecModule();
+  await compressorModule();
   const mib = Number(location.hash.slice(1));
   const encoder = new TextEncoder();
   const template = encoder.encode(

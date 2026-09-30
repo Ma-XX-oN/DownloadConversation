@@ -19,7 +19,9 @@ test('Issue 166 archive roles and timestamp ranges are explicit production contr
   assert.match(seal, /'seg'/);
   const duplicate = productionFunctionSource('communicationLogArchiveDuplicate');
   assert.match(duplicate, /communicationLogStreamDuplicateArchive/);
-  assert.match(productionFunctionSource('communicationLogStreamDuplicateArchive'), /'\.comm\.xz'/);
+  const stream = productionFunctionSource('communicationLogStreamDuplicateArchive');
+  assert.match(stream, /\.comm/);
+  assert.match(stream, /compressorExtension\(\)/);
 });
 
 test('Issue 166 user-facing archive naming adds collision suffix only before role suffix', () => {
@@ -27,6 +29,7 @@ test('Issue 166 user-facing archive naming adds collision suffix only before rol
   assert.match(naming, /role/);
   assert.match(naming, /collision/);
   assert.match(naming, /\(\$\{collision\}\)/);
+  assert.match(naming, /compressorExtension\(\)/);
 });
 
 test('Issue 166 duplicate reports every required phase and keeps indeterminate elapsed activity', () => {
@@ -47,7 +50,9 @@ test('Issue 166 duplicate reports every required phase and keeps indeterminate e
 
 test('Issue 166 diagnostic Save uses main communication folder when authorized and browser download otherwise', () => {
   const save = productionFunctionSource('saveDiagnosticLog');
-  assert.match(productionFunctionSource('diagnosticLogArchiveName'), /\.log\.xz/);
+  const name = productionFunctionSource('diagnosticLogArchiveName');
+  assert.match(name, /\.log/);
+  assert.match(name, /compressorExtension\(\)/);
   assert.match(save, /diagnosticLogTimestampRange/);
   assert.match(save, /communicationLogDirectoryHandle/);
   assert.match(save, /diagnosticLogWriteArchive/);
@@ -71,6 +76,7 @@ test('Issue 166 timestamp range and role naming execute against fixed independen
   const roleSource = productionFunctionSource('communicationLogRoleArchiveName');
   const AsyncFunction = Object.getPrototypeOf(async function () {}).constructor;
   const run = new AsyncFunction(`
+    const compressorExtension = () => '.fixture';
     ${rangeSource}
     ${timestampSource}
     ${roleSource}
@@ -100,11 +106,11 @@ test('Issue 166 timestamp range and role naming execute against fixed independen
   const end = local(result.range.end_timestamp);
   assert.equal(
     result.normal,
-    `DownloadConversation_fixture_${start}-${end}.comm.xz`
+    `DownloadConversation_fixture_${start}-${end}.comm.fixture`
   );
   assert.equal(
     result.collision,
-    `DownloadConversation_fixture_${start}-${end}(2).comm.xz`
+    `DownloadConversation_fixture_${start}-${end}(2).comm.fixture`
   );
 });
 
@@ -124,7 +130,8 @@ test('Issue 166 no-trustworthy-timestamp fixture is rejected instead of inventin
 test('Issue 166 duplicate naming is collision-safe and never overwrites an existing archive', () => {
   const stream = productionFunctionSource('communicationLogStreamDuplicateArchive');
   assert.match(stream, /unusedFilename/);
-  assert.match(stream, /'\.comm\.xz'/);
+  assert.match(stream, /\.comm/);
+  assert.match(stream, /compressorExtension\(\)/);
 });
 
 test('Issue 166 selected segment default remains the repository-owned 10 MiB threshold', () => {
@@ -167,9 +174,13 @@ test('Issue 166 diagnostic Save reports the original phase and error without ret
 test('Issue 166 diagnostic member naming preserves printable ASCII exactly', () => {
   const member = productionFunctionSource('diagnosticLogArchiveMemberName');
   assert.match(member, /\\[\\^\\\\x20-\\\\x7e\\]/);
-  const fn = new Function('archiveName', member + '; return diagnosticLogArchiveMemberName(archiveName);');
+  const fn = new Function(
+    'archiveName',
+    `const compressorExtension = () => '.fixture'; ${member}; `
+      + 'return diagnosticLogArchiveMemberName(archiveName);'
+  );
   assert.equal(
-    fn('DownloadConversation_Bind conversation lane_2026,09,27;12,59,34-2026,09,27;14,26,37.log.xz'),
+    fn('DownloadConversation_Bind conversation lane_2026,09,27;12,59,34-2026,09,27;14,26,37.log.fixture'),
     'DownloadConversation_Bind conversation lane_2026,09,27;12,59,34-2026,09,27;14,26,37.jsonl'
   );
 });
@@ -193,7 +204,8 @@ test('Issue 166 diagnostic archive name uses canonical range naming and log exte
   const name = productionFunctionSource('diagnosticLogArchiveName');
   assert.match(name, /canonicalFilename/);
   assert.match(name, /range/);
-  assert.match(name, /\.log\.xz/);
+  assert.match(name, /\.log/);
+  assert.match(name, /compressorExtension\(\)/);
 });
 
 

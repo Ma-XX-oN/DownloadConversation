@@ -88,7 +88,8 @@ function issue134Harness(initialFiles = {}) {
   };
 
   vm.runInNewContext(
-    `${diskHarnessSource()}\ncommunicationLogDirectoryHandle = this.__issue134Directory;\ncommunicationLogFileName = 'DownloadConversation_test.jsonl';\ncommunicationLogReady = true;\ncommunicationLogWriteChain = Promise.resolve();\ncommunicationLogReportFailure = (stage, error) => {\n  this.__issue134Events.push(\`failure:\${stage}:\${error?.message ?? error}\`);\n};\ncommunicationLogBytesEqual = async (left, right) => {\n  if (left.byteLength !== right.byteLength) return false;\n  for (let index = 0; index < left.byteLength; index += 1) {\n    if (left[index] !== right[index]) return false;\n  }\n  return true;\n};\ncommunicationLogSegmentManifest = { segments: [] };
+    `${diskHarnessSource()}\ncommunicationLogDirectoryHandle = this.__issue134Directory;\ncommunicationLogFileName = 'DownloadConversation_test.jsonl';\ncommunicationLogReady = true;\ncommunicationLogWriteChain = Promise.resolve();\ncommunicationLogReportFailure = (stage, error) => {\n  this.__issue134Events.push(\`failure:\${stage}:\${error?.message ?? error}\`);\n};\ncommunicationLogBytesEqual = async (left, right) => {\n  if (left.byteLength !== right.byteLength) return false;\n  for (let index = 0; index < left.byteLength; index += 1) {\n    if (left[index] !== right[index]) return false;\n  }\n  return true;\n};\nconst compressorMimeType = () => 'application/x-fixture';
+communicationLogSegmentManifest = { segments: [] };
 communicationLogDuplicateInProgress = false;
 communicationLogRotationHold = 0;
 communicationLogRotationPending = false;
@@ -108,8 +109,8 @@ communicationLogStreamDuplicateArchive = async plan => {
   const text = new TextDecoder().decode(plan.fixture_bytes);
   this.__issue134Events.push('archive:' + memberName + ':' + text);
   return {
-    archive: new TextEncoder().encode('XZ:' + memberName + ':\\n' + text),
-    archive_name: 'DownloadConversation_test_20260927T010203004Z_20260927T010205006Z.comm.xz'
+    archive: new TextEncoder().encode('ARCHIVE:' + memberName + ':\\n' + text),
+    archive_name: 'DownloadConversation_test_20260927T010203004Z_20260927T010205006Z.comm.fixture'
   };
 };
 setStatus = message => this.__issue134Events.push('status:' + message);
@@ -181,7 +182,7 @@ test('document-departure checkpoint waits for queued writes and commits the dirt
 });
 
 test('timestamped duplicate archive omits (N) unless the complete name collides', async () => {
-  const { api, directory } = issue134Harness({
+  const { api } = issue134Harness({
     'DownloadConversation_test.jsonl': 'source',
     'DownloadConversation_test(1).jsonl': 'one',
     'DownloadConversation_test(2).jsonl': 'two'
@@ -194,7 +195,7 @@ test('timestamped duplicate archive omits (N) unless the complete name collides'
   const duplicated = await api.duplicate();
   assert.equal(
     duplicated,
-    'DownloadConversation_test_20260927T010203004Z_20260927T010205006Z.comm.xz'
+    'DownloadConversation_test_20260927T010203004Z_20260927T010205006Z.comm.fixture'
   );
 });
 
@@ -217,10 +218,10 @@ test('duplicate waits for pending writes, snapshots exact committed bytes, and k
   releasePending();
   const duplicateName = await operation;
 
-  assert.equal(duplicateName, 'DownloadConversation_test_20260927T010203004Z_20260927T010205006Z.comm.xz');
+  assert.equal(duplicateName, 'DownloadConversation_test_20260927T010203004Z_20260927T010205006Z.comm.fixture');
   assert.equal(
     await blobText(files.get(duplicateName)),
-    'XZ:DownloadConversation_test_20260927T010203004Z_20260927T010205006Z.jsonl:\nalpha\nbeta\n'
+    'ARCHIVE:DownloadConversation_test_20260927T010203004Z_20260927T010205006Z.jsonl:\nalpha\nbeta\n'
   );
   assert.ok(events.includes(
     'archive:DownloadConversation_test_20260927T010203004Z_20260927T010205006Z.jsonl:alpha\nbeta\n'
@@ -235,7 +236,7 @@ test('duplicate waits for pending writes, snapshots exact committed bytes, and k
   files.set('DownloadConversation_test.jsonl', new Blob(['changed later']));
   assert.equal(
     await blobText(files.get(duplicateName)),
-    'XZ:DownloadConversation_test_20260927T010203004Z_20260927T010205006Z.jsonl:\nalpha\nbeta\n',
+    'ARCHIVE:DownloadConversation_test_20260927T010203004Z_20260927T010205006Z.jsonl:\nalpha\nbeta\n',
     'Later writes to the active log must not mutate the archived duplicate snapshot.'
   );
 });
@@ -310,7 +311,7 @@ test('Issue 166 Duplicate streams a frozen EOF without rotating the active file'
   assert.match(duplicate, /communicationLogStreamDuplicateArchive\(plan, options\)/);
   assert.doesNotMatch(duplicate, /communicationLogSealActiveSegment\s*\(/);
   assert.doesNotMatch(duplicate, /communicationLogLogicalSnapshot\s*\(/);
-  assert.match(duplicate, /application\/x-xz/);
+  assert.match(duplicate, /compressorMimeType\(\)/);
   assert.match(duplicate, /communicationLogReleaseRotationHold\(\)/);
   assert.doesNotMatch(
     downloadConversationSource,

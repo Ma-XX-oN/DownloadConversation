@@ -161,8 +161,24 @@
 
       phase = 'manifest-read';
       communicationLogSegmentManifest = await communicationLogReadSegmentManifest();
+      if (!communicationLogSegmentManifest) {
+        phase = 'schema-reset';
+        await communicationLogDirectoryHandle.removeEntry(directoryName, { recursive: true });
+        communicationLogSegmentDirectoryHandle =
+          await communicationLogDirectoryHandle.getDirectoryHandle(
+            directoryName,
+            { create: true }
+          );
+        communicationLogSegmentManifest = communicationLogCreateSegmentManifest();
+        await communicationLogWriteSegmentManifest();
+        logDiagnostic('debug', 'communication-log-segment-schema-reset', {
+          segment_directory: directoryName,
+          schema: COMMUNICATION_LOG_SEGMENT_SCHEMA
+        });
+      }
       logDiagnostic('debug', 'communication-log-segment-manifest-ready', {
-        segment_directory: directoryName
+        segment_directory: directoryName,
+        schema: COMMUNICATION_LOG_SEGMENT_SCHEMA
       });
 
       phase = 'duplicate-recovery';

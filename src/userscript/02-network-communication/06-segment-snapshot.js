@@ -148,11 +148,11 @@
     const start = communicationLogArchiveTimestamp(range.start_timestamp);
     const end = communicationLogArchiveTimestamp(range.end_timestamp);
     const suffix = collision > 0 ? `(${collision})` : '';
-    return `${base}_${start}-${end}${suffix}.${role}.xz`;
+    return `${base}_${start}-${end}${suffix}.${role}${compressorExtension()}`;
   }
 
   /**
-   * Converts a user-facing archive-derived member name to the bridge's ASCII contract.
+   * Converts a user-facing archive-derived member name to the compressor's ASCII contract.
    *
    * @param {string} name - Desired member name.
    * @returns {string} Deterministic printable-ASCII member name.
@@ -183,13 +183,28 @@
   }
 
   /**
+   * Escapes one literal string for safe use inside a regular expression.
+   *
+   * @param {string} value - Literal text.
+   * @returns {string} Regular-expression-safe literal text.
+   */
+  function communicationLogEscapeRegex(value) {
+    return String(value).replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+  }
+
+  /**
    * Parses one filesystem-authoritative historical segment archive name.
    *
    * @param {string} name - Candidate private segment filename.
    * @returns {Object|null} Parsed range metadata, or null for another file role.
    */
   function communicationLogParseSegmentArchiveName(name) {
-    const match = /^segment_(\d{4},\d{2},\d{2};\d{2},\d{2},\d{2})-(\d{4},\d{2},\d{2};\d{2},\d{2},\d{2})\.seg\.xz$/.exec(name);
+    const extension = communicationLogEscapeRegex(compressorExtension());
+    const pattern = new RegExp(
+      `^segment_(\\d{4},\\d{2},\\d{2};\\d{2},\\d{2},\\d{2})-`
+      + `(\\d{4},\\d{2},\\d{2};\\d{2},\\d{2},\\d{2})\\.seg${extension}$`
+    );
+    const match = pattern.exec(name);
     if (!match) return null;
     /**
      * Parses one local archive timestamp field.
@@ -291,7 +306,7 @@
     await communicationLogDirectoryHandle.removeEntry(name, { recursive: true });
     communicationLogSegmentDirectoryHandle =
       await communicationLogDirectoryHandle.getDirectoryHandle(name, { create: true });
-    communicationLogSegmentManifest = await communicationLogReadSegmentManifest();
+    communicationLogSegmentManifest = communicationLogCreateSegmentManifest();
     await communicationLogWriteSegmentManifest();
     communicationLogActiveSegmentBytes = 0;
   }
