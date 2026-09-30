@@ -1,16 +1,31 @@
 {
-  "format_version": 2,
+  "format_version": 3,
   "header": "src/userscript-header.js",
   "generated_artifact": "chatgpt-conversation-markdown-export.user.js",
   "dependencies": [
     {
       "name": "AIConversationCore",
       "repository": "Ma-XX-oN/AIConversationCore",
-      "commit": "1b531a1c92adfa1695db8c644159054e013f0a72",
+      "ref": "v1.1.0-issue.104.8",
+      "commit": "488a2f633910b7ad26e8a89d0e6621d9961f785a",
       "path": "dist/aiconversationcore.chatgpt.browser.js",
-      "url": "https://raw.githubusercontent.com/Ma-XX-oN/AIConversationCore/1b531a1c92adfa1695db8c644159054e013f0a72/dist/aiconversationcore.chatgpt.browser.js",
-      "git_blob_sha1": "84a1fcf72a8da76f837a791a142c1c95ed37d607",
-      "byte_length": 265877
+      "url": "https://raw.githubusercontent.com/Ma-XX-oN/AIConversationCore/488a2f633910b7ad26e8a89d0e6621d9961f785a/dist/aiconversationcore.chatgpt.browser.js",
+      "git_blob_sha1": "fcd0fc12c7220257d813c7c0c893426d08437f06",
+      "byte_length": 279239
+    }
+  ],
+  "agent_plugins": [
+    {
+      "id": "chatgpt-web",
+      "repository": "Ma-XX-oN/Chat-Gpt-Plugin-2",
+      "ref": "issue-1-chatgpt-agent-plugin",
+      "commit": "24fdd9ad5bd89568aafe3a123100ff37a45951d6",
+      "version": "0.1.0-issue.1.7",
+      "api_version": 1,
+      "path": "dist/chatgpt-plugin.mjs",
+      "url": "https://raw.githubusercontent.com/Ma-XX-oN/Chat-Gpt-Plugin-2/24fdd9ad5bd89568aafe3a123100ff37a45951d6/dist/chatgpt-plugin.mjs",
+      "git_blob_sha1": "bfe6cac52b5e0c3679c6ef985dff7043abd7ae29",
+      "byte_length": 50206
     }
   ],
   "modules": [
@@ -67,6 +82,7 @@
         "src/userscript/04-conversation-rendering/06-sandbox-links.js",
         "src/userscript/04-conversation-rendering/07-image-pointer-rendering.js",
         "src/userscript/04-conversation-rendering/08-thought-rendering.js",
+        "src/userscript/04-conversation-rendering/08-agent-plugin-bridge.js",
         "src/userscript/04-conversation-rendering/09-canonical-core-rendering.js",
         "src/userscript/04-conversation-rendering/10-markdown-rendering.js"
       ]
@@ -88,7 +104,8 @@
         "src/userscript/06-image-export-tests/02-image-recovery.js",
         "src/userscript/06-image-export-tests/03-export-tests-transition.js",
         "src/userscript/06-image-export-tests/04-tests-modal-transition.js",
-        "src/userscript/06-image-export-tests/05-modal-contract.js"
+        "src/userscript/06-image-export-tests/05-modal-contract.js",
+        "src/userscript/06-image-export-tests/06-agent-plugin-readiness.js"
       ]
     },
     {
