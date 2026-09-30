@@ -37,7 +37,7 @@ class RepoWorkflowValidationTests(unittest.TestCase):
       self.assertEqual(0, rc)
       self.assertFalse((root / "__pycache__").exists())
 
-  def test_workflow_version_accepts_plain_stable_semver(self):
+  def test_workflow_version_accepts_plain_stable_semver_on_main(self):
     provider = load_workflow_version()
     with tempfile.TemporaryDirectory() as td:
       header = Path(td) / "userscript-header.js"
@@ -48,6 +48,35 @@ class RepoWorkflowValidationTests(unittest.TestCase):
         encoding="utf-8",
       )
       provider.HEADER = header
+      provider.branch_name = lambda: "main"
+      self.assertEqual(0, provider.main())
+
+  def test_workflow_version_rejects_issue_version_on_main(self):
+    provider = load_workflow_version()
+    with tempfile.TemporaryDirectory() as td:
+      header = Path(td) / "userscript-header.js"
+      header.write_text(
+        "// ==UserScript==\n"
+        "// @version      1.6.0-issue.186.1\n"
+        "// ==/UserScript==\n",
+        encoding="utf-8",
+      )
+      provider.HEADER = header
+      provider.branch_name = lambda: "main"
+      self.assertEqual(1, provider.main())
+
+  def test_workflow_version_accepts_development_version_on_issue_branch(self):
+    provider = load_workflow_version()
+    with tempfile.TemporaryDirectory() as td:
+      header = Path(td) / "userscript-header.js"
+      header.write_text(
+        "// ==UserScript==\n"
+        "// @version      1.6.0-issue.186.1\n"
+        "// ==/UserScript==\n",
+        encoding="utf-8",
+      )
+      provider.HEADER = header
+      provider.branch_name = lambda: "issue-186-main-version-invariant"
       self.assertEqual(0, provider.main())
 
 

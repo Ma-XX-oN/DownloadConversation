@@ -88,14 +88,24 @@ test('requires exactly one userscript @version metadata entry', async () => {
   assert.match(duplicate.stderr, /Expected exactly one userscript @version entry, found 2/);
 });
 
-test('non-issue branches do not invent an owning issue requirement', async () => {
+test('main requires a plain stable version and rejects issue-qualified versions', async () => {
   const release = await runGuard({
     branch: 'main',
     source: userscript('1.5.0')
   });
   assert.equal(release.status, 0, release.stderr);
-  assert.match(release.stdout, /No issue owner encoded by branch main/);
+  assert.match(release.stdout, /Integration branch main has stable version 1\.5\.0/);
 
+  const development = await runGuard({
+    branch: 'main',
+    source: userscript('1.5.0-issue.148.3')
+  });
+  assert.notEqual(development.status, 0);
+  assert.match(development.stderr,
+    /Integration branch main requires plain x\.y\.z version/);
+});
+
+test('other non-issue branches do not invent an owning issue requirement', async () => {
   const feature = await runGuard({
     branch: 'feature/provider-research',
     source: userscript('1.5.0-issue.148.3')

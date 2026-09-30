@@ -6,7 +6,7 @@ import test from 'node:test';
 import { fileURLToPath } from 'node:url';
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
-const repoWorkflowSha = '0a051ab09200ff2824e7c901d6fe0efa652a912a';
+const repoWorkflowSha = '85991b2f129c88ca71c410b5e5103b39d6342731';
 const sevenZipBenchmarkSha = '8921c1b9d2b1d8b85e5ee5d1c55ea88ecd5737b0';
 
 async function readText(relativePath) {
@@ -31,7 +31,7 @@ function git(...args) {
   return result.stdout.trim();
 }
 
-test('RepoWorkflow is a canonical submodule pinned to released v0.1.0', async () => {
+test('RepoWorkflow is a canonical submodule pinned to released v0.1.1', async () => {
   const modules = await readText('.gitmodules');
   assert.match(modules, /\[submodule "RepoWorkflow"\]/);
   assert.match(modules, /path = RepoWorkflow/);
