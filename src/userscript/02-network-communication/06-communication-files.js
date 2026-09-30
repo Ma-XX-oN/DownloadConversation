@@ -70,16 +70,16 @@
   }
 
   /**
-   * Changes a duplicate JSONL member name to its sibling XZ stream name.
+   * Changes a duplicate JSONL member name to its sibling stream name.
    *
    * @param {string} memberName - Duplicate member filename.
-   * @returns {string} Archive filename with the final extension replaced by .xz.
+   * @returns {string} Archive filename with the final extension replaced by the compressor extension.
    */
   function communicationLogDuplicateArchiveFileName(memberName) {
     const extensionIndex = memberName.lastIndexOf('.');
     return extensionIndex > 0
-      ? `${memberName.slice(0, extensionIndex)}.xz`
-      : `${memberName}.xz`;
+      ? `${memberName.slice(0, extensionIndex)}${compressorExtension()}`
+      : `${memberName}${compressorExtension()}`;
   }
 
   /**
@@ -147,7 +147,7 @@
         writable = await archiveHandle.createWritable();
         await writable.write(new Blob(
           [streamed.archive],
-          { type: 'application/x-xz' }
+          { type: compressorMimeType() }
         ));
         await writable.close();
         writable = null;
