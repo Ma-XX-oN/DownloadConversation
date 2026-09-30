@@ -85,10 +85,10 @@
   /**
    * Production canonicalization strategy for DownloadConversation ChatGPT records.
    *
-   * This assignment intentionally replaces the legacy adapter-backed implementation
-   * declared earlier in the preserved Phase 5 module. The old implementation remains
-   * available only in repository history/tests as a differential oracle; runtime calls
-   * use the registered provider agent and Core-owned canonical session.
+   * This assignment intentionally replaces the adapter-backed implementation declared
+   * earlier in the preserved Phase 5 module. Runtime calls use the registered provider
+   * agent and Core-owned canonical session; the old adapter path is retained only as an
+   * independent repository test oracle.
    *
    * @param {Array<Object>} records - Ordered provider/source records.
    * @param {Map<unknown, unknown>} recoveredImageMap - Recovered images keyed by source record id.
@@ -130,4 +130,34 @@
         event, recoveredImageMap.get(sourceRecordId) ?? []));
     }
     return bySourceRecord;
+  };
+
+  /**
+   * Production canonical image-resource lookup through the same registered agent/session.
+   *
+   * @param {Array<Object>} records - Exact ordered provider/source record set.
+   * @returns {Map<string, Map<number, Object>>} Canonical image resources by record and part index.
+   */
+  canonicalImageResourcesByRecordAndPart = function canonicalImageResourcesViaAgent(records) {
+    assert(Array.isArray(records), 'Canonical image-resource lookup requires the ordered source record set.');
+    const events = canonicalEventsFromChatGPTAgent(records);
+    const byRecord = new Map();
+    for (const event of events) {
+      const recordId = event?.source_record_id;
+      if (typeof recordId !== 'string' || !recordId) continue;
+      const resources = Array.isArray(event?.resources) ? event.resources : [];
+      let byPart = byRecord.get(recordId);
+      for (const resource of resources) {
+        if (resource?.type !== 'image' || resource?.resource_kind !== 'conversation_image') continue;
+        const partIndex = resource?.source?.part_index;
+        if (!Number.isInteger(partIndex)) continue;
+        if (!byPart) {
+          byPart = new Map();
+          byRecord.set(recordId, byPart);
+        }
+        assert(!byPart.has(partIndex), `Duplicate canonical image resource for ${recordId}:${partIndex}.`);
+        byPart.set(partIndex, resource);
+      }
+    }
+    return byRecord;
   };
