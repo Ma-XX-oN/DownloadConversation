@@ -1,0 +1,18 @@
+{
+  "name": "zstd",
+  "source_repository": "facebook/zstd",
+  "source_commit": "01b7154f1172432f8abe9b3bb9909e14a1176b7d",
+  "toolchain": "emscripten-3.1.51",
+  "optimization": "-Os",
+  "bridge": "bridge.js",
+  "bridge_bytes": 4605,
+  "bridge_sha256": "de5f6cbf672e4fe0b7d28b7504d1e91330a9f99e3c503023a8377f3d02237185",
+  "wasm_gzip_base64_directory": "wasm-gzip-base64",
+  "wasm_raw_bytes": 347495,
+  "wasm_raw_sha256": "5bd36b27a17e2adf2fa83b86380b025f237abe99baa15fd4d1d407fa416c7a20",
+  "wasm_gzip_bytes": 95009,
+  "wasm_gzip_sha256": "b39b4b50fcdc425dae6ea69ad761afba07943554d6aced03152377541c073ccb",
+  "extension": ".zst",
+  "mime_type": "application/zstd",
+  "compression_level": 6
+}
