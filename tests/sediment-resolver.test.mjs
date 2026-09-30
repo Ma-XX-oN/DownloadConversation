@@ -1,11 +1,13 @@
 import { coreDependency, coreUrl } from './helpers/core-pin.mjs';
+import { chatGPTPluginArtifact, chatGPTPluginModuleUrl } from './helpers/agent-plugin-pin.mjs';
 import { productionFunctionSource, userscript } from './helpers/userscript-source.mjs';
 import assert from 'node:assert/strict';
+import { readFile } from 'node:fs/promises';
 import test from 'node:test';
 import vm from 'node:vm';
 
-assert.equal(coreDependency.commit, '1b531a1c92adfa1695db8c644159054e013f0a72');
-assert.equal(coreDependency.git_blob_sha1, '84a1fcf72a8da76f837a791a142c1c95ed37d607');
+assert.equal(coreDependency.commit, '488a2f633910b7ad26e8a89d0e6621d9961f785a');
+assert.equal(coreDependency.git_blob_sha1, 'fcd0fc12c7220257d813c7c0c893426d08437f06');
 assert.doesNotMatch(userscript, /^\/\/ @require\s+/m,
   'Generated userscript must not use runtime @require for AIConversationCore.');
 
@@ -15,6 +17,11 @@ const bundle = await response.text();
 const coreContext = {};
 coreContext.globalThis = coreContext;
 vm.runInNewContext(bundle, coreContext, { filename: 'aiconversationcore.chatgpt.browser.js' });
+const pluginModule = await import(chatGPTPluginModuleUrl);
+const bridgeSource = await readFile(
+  new URL('../src/userscript/04-conversation-rendering/08-agent-plugin-bridge.js', import.meta.url),
+  'utf8'
+);
 
 class TestFileReader {
   async readAsDataURL(blob) {
@@ -52,8 +59,8 @@ function installResolverFunctions(context) {
   return context.__resolver;
 }
 
-test('pinned Core supplies sediment source identity and deterministic transport URL', () => {
-  const record = {
+function sedimentRecord() {
+  return {
     id: 'user-image',
     author: { role: 'user' },
     content: {
@@ -66,54 +73,37 @@ test('pinned Core supplies sediment source identity and deterministic transport 
     },
     metadata: {}
   };
-  const [event] = coreContext.AIConversationCore.adaptChatGPTRecords([record]);
+}
+
+test('pinned Core legacy oracle supplies sediment source identity and deterministic transport URL', () => {
+  const [event] = coreContext.AIConversationCore.adaptChatGPTRecords([sedimentRecord()]);
   const image = event.resources.find(resource => resource.type === 'image');
   assert.equal(image.source_pointer, 'sediment://file_fixture-image');
   assert.equal(image.download_url, 'https://chatgpt.com/backend-api/files/download/file_fixture-image');
   assert.equal(image.source.part_index, 1);
 });
 
-test('production canonical image lookup adapts the exact ordered record set once and keys by source identity plus part index', () => {
-  let adaptedRecords = null;
-  const context = {
-    canonicalCore() {
-      return {
-        adaptChatGPTRecords(records) {
-          adaptedRecords = records;
-          return coreContext.AIConversationCore.adaptChatGPTRecords(records);
-        }
-      };
-    },
-    assert(condition, message) {
-      if (!condition) throw new Error(message);
-    }
-  };
-  vm.runInNewContext(`${productionFunctionSource('canonicalImageResourcesByRecordAndPart')}\nthis.__lookup = canonicalImageResourcesByRecordAndPart;`, context);
-  const record = {
-    id: 'user-image',
-    author: { role: 'user' },
-    content: {
-      content_type: 'multimodal_text',
-      parts: [
-        'Before',
-        { content_type: 'image_asset_pointer', asset_pointer: 'sediment://file_fixture-image' },
-        'After'
-      ]
-    },
-    metadata: {}
-  };
-  const earlierRecord = {
-    id: 'context-record',
-    author: { role: 'assistant' },
-    content: { content_type: 'text', parts: ['Context'] },
-    metadata: {}
-  };
-  const orderedRecords = [earlierRecord, record];
-  const byRecord = context.__lookup(orderedRecords);
-  assert.equal(adaptedRecords, orderedRecords);
-  const byPart = byRecord.get('user-image');
-  assert.equal(byPart.get(1).source_pointer, 'sediment://file_fixture-image');
-  assert.equal(byPart.get(1).download_url, 'https://chatgpt.com/backend-api/files/download/file_fixture-image');
+test('registered CGP2 agent publishes identical sediment resource state into the Core session', () => {
+  const record = sedimentRecord();
+  const core = coreContext.AIConversationCore;
+  const legacy = core.adaptChatGPTRecords([record]);
+  const registry = new core.AgentPluginRegistry({ apiVersion: chatGPTPluginArtifact.api_version });
+  registry.registerModule(pluginModule);
+  const agent = registry.create('chatgpt-web', { ref: chatGPTPluginArtifact.ref });
+  const session = registry.session(agent);
+  agent.commTraffic({ type: 'persisted_records', records: [record] });
+  assert.deepEqual(JSON.parse(JSON.stringify(session.events)), JSON.parse(JSON.stringify(legacy)));
+  const image = session.events[0].resources.find(resource => resource.type === 'image');
+  assert.equal(image.source_pointer, 'sediment://file_fixture-image');
+  assert.equal(image.download_url, 'https://chatgpt.com/backend-api/files/download/file_fixture-image');
+  assert.equal(image.source.part_index, 1);
+});
+
+test('production image lookup is overridden by the registered-agent bridge without direct adapter use', () => {
+  assert.match(bridgeSource,
+    /canonicalImageResourcesByRecordAndPart = function canonicalImageResourcesViaAgent/);
+  assert.match(bridgeSource, /canonicalEventsFromChatGPTAgent\(records\)/);
+  assert.doesNotMatch(bridgeSource, /adaptChatGPTRecords/);
 });
 
 test('production resolver follows Core transport to transient image URL and returns image data', async () => {
@@ -207,7 +197,7 @@ test('DownloadConversation does not duplicate sediment-to-download URL construct
   assert.doesNotMatch(
     userscript,
     /sediment:\/\/[^\n]*backend-api\/files\/download/,
-    'Provider sediment-to-download mapping belongs to AIConversationCore, not DownloadConversation.'
+    'Provider sediment-to-download mapping belongs to the ChatGPT plugin/Core boundary, not DownloadConversation.'
   );
   assert.doesNotMatch(userscript, /logDiagnostic\([^\n]*download_url/,
     'Transient signed resolver URLs must not be emitted directly to diagnostics.');
