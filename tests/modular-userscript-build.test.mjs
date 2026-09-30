@@ -19,9 +19,13 @@ const root = path.resolve(
   '..'
 );
 const CORE_COMMIT =
-  '1b531a1c92adfa1695db8c644159054e013f0a72';
+  '488a2f633910b7ad26e8a89d0e6621d9961f785a';
 const CORE_BLOB =
-  '84a1fcf72a8da76f837a791a142c1c95ed37d607';
+  'fcd0fc12c7220257d813c7c0c893426d08437f06';
+const PLUGIN_COMMIT =
+  '24fdd9ad5bd89568aafe3a123100ff37a45951d6';
+const PLUGIN_BLOB =
+  'bfe6cac52b5e0c3679c6ef985dff7043abd7ae29';
 const LEGACY_BLOB =
   '44a4ab373a6515caed5527aeb19cbdff7ce91e07';
 const MIGRATION_SNAPSHOT_COMMIT =
@@ -40,7 +44,7 @@ test(
   'manifest groups ordered small source segments under logical modules',
   async () => {
     const manifest = await readUserscriptManifest(root);
-    assert.equal(manifest.format_version, 2);
+    assert.equal(manifest.format_version, 3);
     assert.deepEqual(
       manifest.modules.map(module => module.name),
       [
@@ -81,7 +85,7 @@ test(
       ],
       'identity and segment runtime must remain at verified top-level source boundaries'
     );
-    assert.equal(sourcePaths.length, 61);
+    assert.equal(sourcePaths.length, 63);
     assert.equal(new Set(sourcePaths).size, sourcePaths.length);
     assert.ok(sourcePaths.every(sourcePath => {
       return sourcePath.startsWith('src/userscript/');
@@ -120,15 +124,16 @@ test(
 );
 
 test(
-  'AIConversationCore build dependency uses exact pinned identity',
+  'AIConversationCore build dependency uses exact issue-qualified pinned identity',
   async () => {
     const manifest = await readUserscriptManifest(root);
     assert.equal(manifest.dependencies.length, 1);
     const [dependency] = manifest.dependencies;
     assert.equal(dependency.name, 'AIConversationCore');
+    assert.equal(dependency.ref, 'v1.1.0-issue.104.8');
     assert.equal(dependency.commit, CORE_COMMIT);
     assert.equal(dependency.git_blob_sha1, CORE_BLOB);
-    assert.equal(dependency.byte_length, 265877);
+    assert.equal(dependency.byte_length, 279239);
     assert.equal(
       dependency.repository,
       'Ma-XX-oN/AIConversationCore'
@@ -138,6 +143,25 @@ test(
       'dist/aiconversationcore.chatgpt.browser.js'
     );
     assert.ok(dependency.url.includes(`/${CORE_COMMIT}/`));
+  }
+);
+
+test(
+  'ChatGPT agent plugin build dependency preserves symbolic ref plus exact resolved bytes',
+  async () => {
+    const manifest = await readUserscriptManifest(root);
+    assert.equal(manifest.agent_plugins.length, 1);
+    const [plugin] = manifest.agent_plugins;
+    assert.equal(plugin.id, 'chatgpt-web');
+    assert.equal(plugin.repository, 'Ma-XX-oN/Chat-Gpt-Plugin-2');
+    assert.equal(plugin.ref, 'issue-1-chatgpt-agent-plugin');
+    assert.equal(plugin.commit, PLUGIN_COMMIT);
+    assert.equal(plugin.version, '0.1.0-issue.1.7');
+    assert.equal(plugin.api_version, 1);
+    assert.equal(plugin.path, 'dist/chatgpt-plugin.mjs');
+    assert.equal(plugin.git_blob_sha1, PLUGIN_BLOB);
+    assert.equal(plugin.byte_length, 50206);
+    assert.ok(plugin.url.includes(`/${PLUGIN_COMMIT}/`));
   }
 );
 
