@@ -1,11 +1,30 @@
 
+  /** Current private communication-segment storage schema. */
+  const COMMUNICATION_LOG_SEGMENT_SCHEMA = 3;
+
   /**
-   * Loads or initializes the small control/recovery manifest.
+   * Creates a fresh small control/recovery manifest for the current schema.
+   *
+   * @returns {Object} New current-schema manifest.
+   */
+  function communicationLogCreateSegmentManifest() {
+    return {
+      schema: COMMUNICATION_LOG_SEGMENT_SCHEMA,
+      logical_log_id: currentConversationId() || crypto.randomUUID(),
+      conversation_name: communicationLogConversationName() ?? null,
+      project_name: conversationProjectName() ?? null,
+      active_committed_eof: 0
+    };
+  }
+
+  /**
+   * Loads the small control/recovery manifest.
    *
    * Historical segment membership is filesystem-derived and is never catalogued
-   * here. Legacy active_last_timestamp cache fields are discarded on read.
+   * here. A missing or different schema returns null so startup can wipe and
+   * recreate the private segment directory as one format-consistent unit.
    *
-   * @returns {Promise<Object>} Current control/recovery manifest.
+   * @returns {Promise<Object|null>} Current control/recovery manifest, or null when reset is required.
    */
   async function communicationLogReadSegmentManifest() {
     const directory = communicationLogSegmentDirectoryHandle;
@@ -13,7 +32,8 @@
     try {
       const handle = await directory.getFileHandle('manifest.json', { create: false });
       const parsed = JSON.parse(await (await handle.getFile()).text());
-      if (parsed?.schema !== 2 || typeof parsed.logical_log_id !== 'string') {
+      if (parsed?.schema !== COMMUNICATION_LOG_SEGMENT_SCHEMA) return null;
+      if (typeof parsed.logical_log_id !== 'string') {
         throw new Error('Invalid communication segment manifest.');
       }
       delete parsed.active_last_timestamp;
@@ -26,14 +46,8 @@
         ?? (inProject && typeof parsed.project_name === 'string' ? parsed.project_name : null);
       return parsed;
     } catch (error) {
-      if (error?.name !== 'NotFoundError') throw error;
-      return {
-        schema: 2,
-        logical_log_id: currentConversationId() || crypto.randomUUID(),
-        conversation_name: communicationLogConversationName() ?? null,
-        project_name: conversationProjectName() ?? null,
-        active_committed_eof: 0
-      };
+      if (error?.name === 'NotFoundError') return null;
+      throw error;
     }
   }
 
