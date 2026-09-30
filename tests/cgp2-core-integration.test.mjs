@@ -108,9 +108,18 @@ test('same provider records are byte-semantically identical through legacy oracl
   assert.equal(identity.ref, chatGPTPluginArtifact.ref);
 });
 
-test('subsequent complete provider inventory replaces Core session state without duplicate retained events', () => {
+test('subsequent complete provider inventory replaces Core session state exactly', () => {
   const first = fixtureRecords().slice(0, 3);
-  const second = fixtureRecords();
+  const second = [
+    textRecord('u9', 'user', 'Replacement question', {
+      create_time: 900,
+      metadata: { turn_exchange_id: 'exchange-9' }
+    }),
+    textRecord('a9', 'assistant', 'Replacement answer', {
+      create_time: 901,
+      metadata: { turn_exchange_id: 'exchange-9' }
+    })
+  ];
   const registry = new core.AgentPluginRegistry({ apiVersion: 1 });
   registry.registerModule(pluginModule);
   const agent = registry.create('chatgpt-web', { ref: chatGPTPluginArtifact.ref });
@@ -120,14 +129,14 @@ test('subsequent complete provider inventory replaces Core session state without
   assert.deepEqual(plain(session.events), plain(core.adaptChatGPTRecords(first)));
   agent.commTraffic({ type: 'persisted_records', records: second });
   assert.deepEqual(plain(session.events), plain(core.adaptChatGPTRecords(second)));
-  assert.equal(
-    new Set(session.events.map(event => event.source_record_id)).size,
-    session.events.length,
-    'Retained canonical session duplicated source records across inventory replacement.'
+  assert.deepEqual(
+    session.events.map(event => event.source_record_id),
+    ['u9', 'a9'],
+    'Events from the previous complete provider inventory must not survive replacement.'
   );
 });
 
-test('DC production bridge has no direct adapter fallback and export waits for plugin readiness', () => {
+test('DC production bridge has no direct adapter fallback and all canonical entry points await plugin readiness', () => {
   assert.doesNotMatch(bridgeSource, /adaptChatGPTRecords/,
     'Production bridge must not call the legacy Core ChatGPT adapter.');
   assert.match(bridgeSource,
@@ -140,4 +149,6 @@ test('DC production bridge has no direct adapter fallback and export waits for p
     'Production registered-agent bridge must not introduce an implicit fallback path.');
   assert.match(readinessSource, /await ensureChatGPTCanonicalAgent\(\)/);
   assert.match(readinessSource, /return runExportWithCanonicalAgent\(kinds, options\)/);
+  assert.match(readinessSource, /return runOneTestWithCanonicalAgent\(name, fn\)/);
+  assert.match(readinessSource, /return runTestsWithCanonicalAgent\(\)/);
 });
