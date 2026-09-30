@@ -100,13 +100,13 @@
    * Acquires one Conversation API snapshot and generates every selected export from that same spine.
    *
    * @param {Array<'jsonl'|'md'>} kinds - Selected output formats; JSONL is generated before Markdown when both are selected.
-   * @param {Object} options - Output projection options; compressed true emits XZ-wrapped format bytes.
+   * @param {Object} options - Output projection options; compressed true emits archived format bytes.
    * @returns {Promise<void>} Resolves after selected exports finish or their failure is reported and export state is released.
    */
   async function runExport(kinds, options = {}) {
     if (exportInProgress || testInProgress || jumpInProgress) return;
     assert(Array.isArray(kinds) && kinds.length > 0, 'At least one export format must be selected.');
-    /** Whether final JSONL/Markdown bytes are wrapped in the shared XZ archive codec. */
+    /** Whether final JSONL/Markdown bytes are wrapped in the shared archive compressor. */
     const compressedOutput = options.compressed === true;
     /** Deduplicated output formats executed from one authoritative Conversation API snapshot. */
     const requestedKinds = [...new Set(kinds)];
@@ -186,13 +186,13 @@
           'conversation-tail-api-jsonl-consistency', jsonlTailComparison);
         const jsonlWarning = jsonlTailWarningText(jsonlTailComparison);
         if (jsonlWarning) tailConsistencyWarnings.push(jsonlWarning);
-        /** Exact UTF-8 JSONL bytes projected either raw or through the shared archive codec. */
+        /** Exact UTF-8 JSONL bytes projected either raw or through the shared compressor. */
         const jsonlBytes = new TextEncoder().encode(jsonl);
-        /** Final JSONL filename, including the XZ suffix only in compressed mode. */
-        const outputFilename = compressedOutput ? `${filename}.xz` : filename;
+        /** Final JSONL filename, including the compressor suffix only in compressed mode. */
+        const outputFilename = compressedOutput ? `${filename}${compressorExtension()}` : filename;
         if (compressedOutput) {
           const archiveBytes = await createArchive(jsonlBytes);
-          downloadBlob(new Blob([archiveBytes], { type: 'application/x-xz' }), outputFilename);
+          downloadBlob(new Blob([archiveBytes], { type: compressorMimeType() }), outputFilename);
         } else {
           downloadBlob(
             new Blob([jsonlBytes], { type: 'application/x-ndjson;charset=utf-8' }),
@@ -230,8 +230,10 @@
         }, recoveredImageMap);
         /** Raw Markdown filename before optional archive wrapping. */
         const rawFilename = `${exportFilenamePrefix}.md`;
-        /** Final Markdown filename, including the XZ suffix only in compressed mode. */
-        const filename = compressedOutput ? `${rawFilename}.xz` : rawFilename;
+        /** Final Markdown filename, including the compressor suffix only in compressed mode. */
+        const filename = compressedOutput
+          ? `${rawFilename}${compressorExtension()}`
+          : rawFilename;
         logDiagnostic('debug', 'conversation-export-phase-complete', {
           phase: 'markdown-render',
           elapsed_ms: Math.round(performance.now() - renderStartedAt),
