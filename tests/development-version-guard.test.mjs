@@ -87,7 +87,7 @@ test('requires exactly one userscript @version metadata entry', async () => {
     source: userscript(['1.5.0-issue.148.3', '1.5.0-issue.148.4'])
   });
   assert.notEqual(duplicate.status, 0);
-  assert.match(result.stderr, /Expected exactly one userscript @version entry, found 2/);
+  assert.match(duplicate.stderr, /Expected exactly one userscript @version entry, found 2/);
 });
 
 test('main requires a plain stable version and rejects issue-qualified versions', async () => {
@@ -105,6 +105,23 @@ test('main requires a plain stable version and rejects issue-qualified versions'
   assert.notEqual(development.status, 0);
   assert.match(development.stderr,
     /Integration branch main requires plain x\.y\.z version/);
+});
+
+test('integration candidate branches require stable versions before main integration', async () => {
+  const stable = await runGuard({
+    branch: 'integrate-175-agent-last-waiting-timers',
+    source: userscript('1.10.0')
+  });
+  assert.equal(stable.status, 0, stable.stderr);
+  assert.match(stable.stdout, /has stable version 1\.10\.0/);
+
+  const development = await runGuard({
+    branch: 'integrate-175-agent-last-waiting-timers',
+    source: userscript('1.9.0-issue.175.3')
+  });
+  assert.notEqual(development.status, 0);
+  assert.match(development.stderr,
+    /requires plain x\.y\.z version before main integration/);
 });
 
 test('other non-issue branches do not invent an owning issue requirement', async () => {
