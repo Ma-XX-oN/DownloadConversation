@@ -69,37 +69,44 @@ test('same userscript reads the authenticated GitHub file view without repositor
   assert.doesNotMatch(brokerSource, /access[_-]?token/i);
   assert.match(brokerSource, /AGENT_PLUGIN_TRACE_PREFIX/);
   assert.match(brokerSource, /publishGitHubAgentPluginTrace/);
+  assert.match(brokerSource, /normalizeGitHubAgentPluginSource/);
   assert.match(bridgeSource, /githubAgentPluginBlobUrl\(descriptor\)/);
 });
 
-test('GitHub broker accepts a textarea wrapper from another realm and transfers its source', async () => {
+test('GitHub broker restores only the one missing terminal LF from the file-view textarea', async () => {
   assert.ok(plugin, 'chatgpt-web plugin descriptor is required.');
-  const source = 'export const marker = "from-github-textarea";\n';
+  const displayedSource = 'export const marker = "from-github-textarea";';
+  const transferredSource = `${displayedSource}\n`;
+  const brokerPlugin = {
+    ...plugin,
+    byte_length: Buffer.byteLength(transferredSource, 'utf8')
+  };
   const textarea = {
     tagName: 'TEXTAREA',
-    value: source
+    value: displayedSource
   };
   const request = {
     request_id: 'request-1',
-    plugin_id: plugin.id,
-    repository: plugin.repository,
-    ref: plugin.ref,
-    path: plugin.path,
-    version: plugin.version,
-    api_version: plugin.api_version,
-    git_blob_sha1: plugin.git_blob_sha1,
-    byte_length: plugin.byte_length,
+    plugin_id: brokerPlugin.id,
+    repository: brokerPlugin.repository,
+    ref: brokerPlugin.ref,
+    path: brokerPlugin.path,
+    version: brokerPlugin.version,
+    api_version: brokerPlugin.api_version,
+    git_blob_sha1: brokerPlugin.git_blob_sha1,
+    byte_length: brokerPlugin.byte_length,
     requested_at: Date.now()
   };
   const values = new Map([
     ['downloadconversation:agent-plugin-request', request]
   ]);
   let fetchCalls = 0;
-  const pathname = `/${plugin.repository}/blob/${plugin.ref}/${plugin.path}`;
+  const pathname = `/${brokerPlugin.repository}/blob/${brokerPlugin.ref}/${brokerPlugin.path}`;
   const context = {
     URL,
     Date,
     Promise,
+    TextEncoder,
     setTimeout,
     clearTimeout,
     console,
@@ -123,7 +130,7 @@ test('GitHub broker accepts a textarea wrapper from another realm and transfers 
       disconnect() {}
     },
     DC_AGENT_PLUGIN_DESCRIPTORS: Object.freeze({
-      'chatgpt-web': Object.freeze({ ...plugin })
+      'chatgpt-web': Object.freeze({ ...brokerPlugin })
     }),
     assert(condition, message) {
       assert.ok(condition, message);
@@ -150,10 +157,12 @@ test('GitHub broker accepts a textarea wrapper from another realm and transfers 
   const response = values.get('downloadconversation:agent-plugin-response:request-1');
   assert.equal(response?.request_id, 'request-1');
   assert.equal(response?.ok, true);
-  assert.equal(response?.source, source);
+  assert.equal(response?.source, transferredSource);
   const trace = values.get('downloadconversation:agent-plugin-trace:request-1');
   assert.equal(trace?.request_id, 'request-1');
   assert.equal(trace?.stage, 'response-published');
+  assert.equal(trace?.transferred_byte_length, brokerPlugin.byte_length);
+  assert.equal(trace?.terminal_lf_restored, true);
 });
 
 test('shared broker constants required by the ChatGPT bridge are defined in runtime scope', () => {
