@@ -143,9 +143,10 @@ export function injectUserscriptPrelude(source, prelude) {
   if (!source.startsWith('\n(() => {')) {
     throw new Error('DownloadConversation source must begin with the preserved userscript IIFE boundary.');
   }
-  return prelude
+  const scopedSource = prelude
     ? source.replace('\n(() => {', `\n(() => {\n${prelude}`)
     : source;
+  return scopedSource;
 }
 
 export function validatePinnedDependency(dependency, content) {
