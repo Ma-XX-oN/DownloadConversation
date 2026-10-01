@@ -25,32 +25,6 @@ function validatePinnedArtifact(identity, artifact) {
     `${identity} URL must contain its pinned commit`);
 }
 
-function validateAgentPluginDescriptor(plugin) {
-  assertManifest(typeof plugin?.id === 'string' && plugin.id.trim(), 'agent plugin id is required');
-  assertManifest(typeof plugin.repository === 'string' && plugin.repository.includes('/'),
-    `${plugin.id} repository is required`);
-  assertManifest(typeof plugin.ref === 'string' && plugin.ref.trim(),
-    `${plugin.id} symbolic ref is required`);
-  assertManifest(typeof plugin.version === 'string' && plugin.version.trim(),
-    `${plugin.id} version is required`);
-  assertManifest(Number.isSafeInteger(plugin.api_version) && plugin.api_version > 0,
-    `${plugin.id} api_version must be a positive integer`);
-  assertManifest(typeof plugin.path === 'string' && plugin.path.endsWith('.mjs'),
-    `${plugin.id} artifact path must be a self-contained ESM module`);
-  assertManifest(/^[0-9a-f]{40}$/.test(plugin.git_blob_sha1 ?? ''),
-    `${plugin.id} git_blob_sha1 must be an exact SHA-1`);
-  assertManifest(Number.isSafeInteger(plugin.byte_length) && plugin.byte_length > 0,
-    `${plugin.id} byte_length must be a positive integer`);
-  if (plugin.commit != null) {
-    assertManifest(/^[0-9a-f]{40}$/.test(plugin.commit),
-      `${plugin.id} optional resolved commit must be an exact 40-character SHA`);
-  }
-  if (plugin.url != null) {
-    assertManifest(typeof plugin.url === 'string' && plugin.url.startsWith('https://'),
-      `${plugin.id} optional provenance URL must use HTTPS`);
-  }
-}
-
 export async function readUserscriptManifest(root) {
   const manifestPath = path.join(root, MANIFEST_PATH);
   const manifest = JSON.parse(await readFile(manifestPath, 'utf8'));
@@ -60,8 +34,6 @@ export async function readUserscriptManifest(root) {
     'generated_artifact path is required');
   assertManifest(Array.isArray(manifest.dependencies) && manifest.dependencies.length > 0,
     'at least one pinned dependency is required');
-  assertManifest(Array.isArray(manifest.agent_plugins) && manifest.agent_plugins.length > 0,
-    'at least one pinned agent plugin is required');
   assertManifest(Array.isArray(manifest.modules) && manifest.modules.length > 0,
     'at least one source module is required');
 
@@ -89,13 +61,6 @@ export async function readUserscriptManifest(root) {
     }
     validatePinnedArtifact(dependency.name, dependency);
   }
-
-  const pluginIds = new Set();
-  for (const plugin of manifest.agent_plugins) {
-    validateAgentPluginDescriptor(plugin);
-    assertManifest(!pluginIds.has(plugin.id), `duplicate agent plugin id ${plugin.id}`);
-    pluginIds.add(plugin.id);
-  }
   return manifest;
 }
 
@@ -115,28 +80,16 @@ export async function readDownloadConversationSource(root, manifest) {
   return result;
 }
 
-export function buildAgentPluginPrelude(agentPlugins, brokerSource, bridgeSource) {
-  const entries = agentPlugins.map(plugin => {
-    const descriptor = {
-      id: plugin.id,
-      repository: plugin.repository,
-      ref: plugin.ref,
-      version: plugin.version,
-      api_version: plugin.api_version,
-      path: plugin.path,
-      git_blob_sha1: plugin.git_blob_sha1,
-      byte_length: plugin.byte_length
-    };
-    if (plugin.commit) descriptor.commit = plugin.commit;
-    return `    ${JSON.stringify(plugin.id)}: Object.freeze(${JSON.stringify(descriptor)})`;
-  });
-  return '// BEGIN agent plugin descriptors\n'
-    + '  const DC_AGENT_PLUGIN_DESCRIPTORS = Object.freeze({\n'
-    + entries.join(',\n')
-    + '\n  });\n'
-    + '// END agent plugin descriptors\n'
-    + brokerSource
-    + bridgeSource;
+/**
+ * Prepends the generic authenticated artifact broker and Core-agent bridge.
+ * Provider selection and artifact identity are supplied by AIConversationCore at runtime.
+ *
+ * @param {string} brokerSource - Generic GitHub artifact transport source.
+ * @param {string} bridgeSource - Generic Core agent-loading bridge source.
+ * @returns {string} Userscript-local prelude source.
+ */
+export function buildAgentPluginPrelude(brokerSource, bridgeSource) {
+  return brokerSource + bridgeSource;
 }
 
 export function injectUserscriptPrelude(source, prelude) {
