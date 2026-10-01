@@ -83,12 +83,17 @@ async function buildAgentPluginPrelude(agentPlugins) {
     path.join(root, 'src', 'userscript', '01-runtime', '02-github-agent-plugin-broker.js'),
     'utf8'
   );
+  const bridge = await readFile(
+    path.join(root, 'src', 'userscript', '04-conversation-rendering', '08-agent-plugin-bridge.js'),
+    'utf8'
+  );
   return '// BEGIN agent plugin descriptors\n'
     + '  const DC_AGENT_PLUGIN_DESCRIPTORS = Object.freeze({\n'
     + entries.join(',\n')
     + '\n  });\n'
     + '// END agent plugin descriptors\n'
-    + broker;
+    + broker
+    + bridge;
 }
 
 async function buildCompressorPrelude() {
