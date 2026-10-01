@@ -108,6 +108,13 @@
       let settled = false;
       let listenerId = null;
       let timer = null;
+      /**
+       * Settles one broker request and releases its shared listener/timer state.
+       *
+       * @param {Error|null} error - Failure to reject with, or null on success.
+       * @param {string|null} source - Plugin source returned on success.
+       * @returns {void} No value is returned.
+       */
       const finish = (error, source = null) => {
         if (settled) return;
         settled = true;
