@@ -3,8 +3,12 @@
   const AGENT_PLUGIN_REQUEST_KEY = 'downloadconversation:agent-plugin-request';
   /** Shared Tampermonkey storage prefix for one private-plugin broker response. */
   const AGENT_PLUGIN_RESPONSE_PREFIX = 'downloadconversation:agent-plugin-response:';
+  /** Shared Tampermonkey storage prefix for verified plugin source cache entries. */
+  const AGENT_PLUGIN_CACHE_PREFIX = 'downloadconversation:agent-plugin-cache:';
   /** Maximum age accepted for a browser-broker request. */
   const AGENT_PLUGIN_REQUEST_MAX_AGE_MS = 2 * 60 * 1000;
+  /** Maximum time the ChatGPT tab waits for one broker response. */
+  const AGENT_PLUGIN_BROKER_TIMEOUT_MS = 2 * 60 * 1000;
 
   /**
    * Constructs the authenticated same-origin GitHub raw-file URL selected by one
