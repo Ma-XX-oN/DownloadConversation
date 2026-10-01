@@ -5,6 +5,7 @@ const DEFAULT_VERSION_SOURCE = 'src/userscript-header.js';
 const STABLE_VERSION_RE = /^\d+\.\d+\.\d+$/;
 const DEVELOPMENT_VERSION_RE = /^(\d+)\.(\d+)\.(\d+)-issue\.(\d+)\.(\d+)$/;
 const ISSUE_BRANCH_RE = /^issue-(\d+)(?:-|$)/;
+const INTEGRATION_BRANCH_RE = /^integrate-(?:.+)$/;
 const INTEGRATION_BRANCH = 'main';
 
 function fail(message) {
@@ -75,6 +76,16 @@ function owningIssue(branch) {
   return match ? Number.parseInt(match[1], 10) : null;
 }
 
+function validateStableIntegrationBranch(branch, version) {
+  if (!STABLE_VERSION_RE.test(version)) {
+    throw new Error(
+      `Integration candidate branch ${branch} requires plain x.y.z version before main integration; `
+      + `found ${version}.`
+    );
+  }
+  return `Integration candidate branch ${branch} has stable version ${version}.`;
+}
+
 function validate(branch, version) {
   if (branch === INTEGRATION_BRANCH) {
     if (!STABLE_VERSION_RE.test(version)) {
@@ -83,6 +94,10 @@ function validate(branch, version) {
       );
     }
     return `Integration branch ${INTEGRATION_BRANCH} has stable version ${version}.`;
+  }
+
+  if (INTEGRATION_BRANCH_RE.test(branch)) {
+    return validateStableIntegrationBranch(branch, version);
   }
 
   const owner = owningIssue(branch);
