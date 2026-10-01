@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         ChatGPT Conversation Markdown Recorder
 // @namespace    https://chatgpt.com/
-// @version      1.9.0-issue.156.16
+// @version      1.9.0-issue.156.17
 // @description  Exports the current ChatGPT conversation directly from the Conversation API as Markdown or JSONL.
 // @match        https://chatgpt.com/*
 // @match        https://chat.openai.com/*
@@ -6536,6 +6536,7 @@ class AgentPluginRegistry {
         transferred_byte_length: normalized.transferred_byte_length,
         terminal_lf_restored: normalized.terminal_lf_restored
       });
+      window.close();
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
       publishGitHubAgentPluginTrace(request, 'file-view-error', { message });
