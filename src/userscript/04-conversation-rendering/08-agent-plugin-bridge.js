@@ -1,3 +1,7 @@
+  /** Shared Tampermonkey key carrying the newest private-plugin request. */
+  const AGENT_PLUGIN_REQUEST_KEY = 'downloadconversation:agent-plugin-request';
+  /** Shared Tampermonkey prefix for one broker response. */
+  const AGENT_PLUGIN_RESPONSE_PREFIX = 'downloadconversation:agent-plugin-response:';
   /** Promise for the one ChatGPT plugin module import in this page realm. */
   let chatGPTPluginModulePromise = null;
   /** Core-owned registry for the ChatGPT agent plugin in this page realm. */
