@@ -14,6 +14,10 @@ const buildSource = await readFile(
   new URL('../scripts/build-userscript.mjs', import.meta.url),
   'utf8'
 );
+const buildLibSource = await readFile(
+  new URL('../scripts/userscript-build-lib.mjs', import.meta.url),
+  'utf8'
+);
 const brokerSource = await readFile(
   new URL('../src/userscript/01-runtime/02-github-agent-plugin-broker.js', import.meta.url),
   'utf8'
@@ -38,7 +42,8 @@ test('public DC describes but does not embed the private CGP2 artifact', () => {
 
   assert.doesNotMatch(buildSource, /source_base64/);
   assert.doesNotMatch(buildSource, /fetchPinnedDependency\(plugin\)/);
-  assert.match(buildSource, /agent plugin descriptors/i);
+  assert.match(buildLibSource, /BEGIN agent plugin descriptors/);
+  assert.match(buildSource, /buildAgentPluginPrelude/);
 });
 
 test('same userscript provides a browser-authenticated GitHub broker without repository credentials', () => {
