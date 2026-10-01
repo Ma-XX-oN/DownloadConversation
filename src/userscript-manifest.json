@@ -83,7 +83,6 @@
         "src/userscript/04-conversation-rendering/07-image-pointer-rendering.js",
         "src/userscript/04-conversation-rendering/08-thought-rendering.js",
         "src/userscript/04-conversation-rendering/09-canonical-core-rendering.js",
-        "src/userscript/04-conversation-rendering/08-agent-plugin-bridge.js",
         "src/userscript/04-conversation-rendering/10-markdown-rendering.js"
       ]
     },
