@@ -11,6 +11,18 @@
   /** Core-owned canonical session associated with `chatGPTAgent`. */
   let chatGPTCanonicalSession = null;
 
+  function agentPluginSourceFromResponse(value) {
+    assert(
+      value?.ok === true,
+      `Plugin unavailable: ${value?.reason ?? 'UNKNOWN'}.`
+    );
+    assert(
+      typeof value.source === 'string',
+      'Plugin response did not contain source text.'
+    );
+    return value.source;
+  }
+
   /**
    * Decodes one build-embedded base64 module payload without reinterpreting it.
    *
