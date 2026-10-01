@@ -18,7 +18,7 @@
     {
       "id": "chatgpt-web",
       "repository": "Ma-XX-oN/Chat-Gpt-Plugin-2",
-      "ref": "v0.1.0-issue.1.9",
+      "ref": "issue-1-chatgpt-agent-plugin",
       "commit": "958a163a3d60be42c98b0197bf85202ff717384f",
       "version": "0.1.0-issue.1.9",
       "api_version": 1,
@@ -82,8 +82,8 @@
         "src/userscript/04-conversation-rendering/06-sandbox-links.js",
         "src/userscript/04-conversation-rendering/07-image-pointer-rendering.js",
         "src/userscript/04-conversation-rendering/08-thought-rendering.js",
-        "src/userscript/04-conversation-rendering/08-agent-plugin-bridge.js",
         "src/userscript/04-conversation-rendering/09-canonical-core-rendering.js",
+        "src/userscript/04-conversation-rendering/08-agent-plugin-bridge.js",
         "src/userscript/04-conversation-rendering/10-markdown-rendering.js"
       ]
     },
