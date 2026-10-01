@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         ChatGPT Conversation Markdown Recorder
 // @namespace    https://chatgpt.com/
-// @version      1.9.0-issue.156.14
+// @version      1.9.0-issue.156.15
 // @description  Exports the current ChatGPT conversation directly from the Conversation API as Markdown or JSONL.
 // @match        https://chatgpt.com/*
 // @match        https://chat.openai.com/*
@@ -6397,7 +6397,7 @@ class AgentPluginRegistry {
    * Reads GitHub's read-only code textarea once the file view has rendered.
    * The textarea value is the browser-decoded file text, not HTML markup.
    * DOM wrappers can cross userscript/page realms, so this deliberately avoids
-   * realm-sensitive `instanceof HTMLTextAreaElement` checks.
+   * realm-sensitive element-class checks.
    *
    * @returns {string|null} Current file source, or null until GitHub renders it.
    */
@@ -6408,6 +6408,30 @@ class AgentPluginRegistry {
     if (!textarea || String(textarea.tagName ?? '').toUpperCase() !== 'TEXTAREA'
         || typeof textarea.value !== 'string') return null;
     return textarea.value.length ? textarea.value : null;
+  }
+
+  /**
+   * Restores GitHub file-view's omitted terminal LF only when the descriptor proves
+   * the displayed UTF-8 text is exactly one byte shorter than the pinned artifact.
+   * The ChatGPT side still verifies the full Git blob SHA-1 before execution, so an
+   * incorrect reconstruction is rejected rather than trusted.
+   *
+   * @param {Object} descriptor - Exact plugin artifact descriptor.
+   * @param {string} source - Source text read from GitHub's file-view textarea.
+   * @returns {{source: string, displayed_byte_length: number, transferred_byte_length: number, terminal_lf_restored: boolean}}
+   *   Source transfer result and non-sensitive byte-length diagnostics.
+   */
+  function normalizeGitHubAgentPluginSource(descriptor, source) {
+    const displayedByteLength = new TextEncoder().encode(source).byteLength;
+    const shouldRestoreTerminalLf = displayedByteLength + 1 === descriptor.byte_length
+      && !source.endsWith('\n');
+    const normalized = shouldRestoreTerminalLf ? `${source}\n` : source;
+    return {
+      source: normalized,
+      displayed_byte_length: displayedByteLength,
+      transferred_byte_length: new TextEncoder().encode(normalized).byteLength,
+      terminal_lf_restored: shouldRestoreTerminalLf
+    };
   }
 
   /**
@@ -6495,16 +6519,23 @@ class AgentPluginRegistry {
         return;
       }
       publishGitHubAgentPluginTrace(request, 'waiting-for-file-content');
-      const source = await waitForGitHubAgentPluginSource();
+      const displayedSource = await waitForGitHubAgentPluginSource();
+      const normalized = normalizeGitHubAgentPluginSource(descriptor, displayedSource);
       publishGitHubAgentPluginTrace(request, 'file-content-read', {
-        character_length: source.length
+        character_length: displayedSource.length,
+        displayed_byte_length: normalized.displayed_byte_length,
+        transferred_byte_length: normalized.transferred_byte_length,
+        terminal_lf_restored: normalized.terminal_lf_restored
       });
       GM_setValue(responseKey, {
         request_id: request.request_id,
         ok: true,
-        source
+        source: normalized.source
       });
-      publishGitHubAgentPluginTrace(request, 'response-published');
+      publishGitHubAgentPluginTrace(request, 'response-published', {
+        transferred_byte_length: normalized.transferred_byte_length,
+        terminal_lf_restored: normalized.terminal_lf_restored
+      });
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
       publishGitHubAgentPluginTrace(request, 'file-view-error', { message });
