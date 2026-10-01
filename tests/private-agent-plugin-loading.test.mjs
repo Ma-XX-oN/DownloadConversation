@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict';
 import { readFile } from 'node:fs/promises';
 import test from 'node:test';
+import vm from 'node:vm';
 
 const manifest = JSON.parse(await readFile(
   new URL('../src/userscript-manifest.json', import.meta.url),
@@ -46,7 +47,7 @@ test('public DC describes but does not embed the private CGP2 artifact', () => {
   assert.match(buildSource, /buildAgentPluginPrelude/);
 });
 
-test('same userscript provides a browser-authenticated GitHub broker without repository credentials', () => {
+test('same userscript reads the authenticated GitHub file view without repository credentials', () => {
   assert.match(header, /^\/\/ @match\s+https:\/\/github\.com\/Ma-XX-oN\/Chat-Gpt-Plugin-2\*/m);
   for (const grant of [
     'GM_getValue',
@@ -57,10 +58,103 @@ test('same userscript provides a browser-authenticated GitHub broker without rep
     assert.match(header, new RegExp(`^// @grant\\s+${grant}$`, 'm'));
   }
   assert.match(brokerSource, /installGitHubAgentPluginBroker/);
-  assert.match(brokerSource, /credentials:\s*'include'/);
-  assert.match(brokerSource, /github\.com\/.*\/raw\//);
+  assert.match(brokerSource, /githubAgentPluginBlobUrl/);
+  assert.match(brokerSource,
+    /textarea\[data-testid="read-only-cursor-text-area"\]\[aria-label="file content"\]/);
+  assert.match(brokerSource, /textarea\.value/);
+  assert.doesNotMatch(brokerSource, /\bfetch\s*\(/);
+  assert.doesNotMatch(brokerSource, /raw\.githubusercontent\.com/);
   assert.doesNotMatch(brokerSource, /Authorization\s*:/i);
   assert.doesNotMatch(brokerSource, /access[_-]?token/i);
+  assert.match(bridgeSource, /githubAgentPluginBlobUrl\(descriptor\)/);
+});
+
+test('GitHub broker transfers the file-view textarea source without a network fetch', async () => {
+  assert.ok(plugin, 'chatgpt-web plugin descriptor is required.');
+  class FakeTextArea {
+    constructor(value) {
+      this.value = value;
+    }
+  }
+  const source = 'export const marker = "from-github-textarea";\n';
+  const textarea = new FakeTextArea(source);
+  const request = {
+    request_id: 'request-1',
+    plugin_id: plugin.id,
+    repository: plugin.repository,
+    ref: plugin.ref,
+    path: plugin.path,
+    version: plugin.version,
+    api_version: plugin.api_version,
+    git_blob_sha1: plugin.git_blob_sha1,
+    byte_length: plugin.byte_length,
+    requested_at: Date.now()
+  };
+  const values = new Map([
+    ['downloadconversation:agent-plugin-request', request]
+  ]);
+  let fetchCalls = 0;
+  const pathname = `/${plugin.repository}/blob/${plugin.ref}/${plugin.path}`;
+  const context = {
+    URL,
+    Date,
+    Promise,
+    setTimeout,
+    clearTimeout,
+    console,
+    location: {
+      origin: 'https://github.com',
+      hostname: 'github.com',
+      pathname
+    },
+    document: {
+      documentElement: {},
+      querySelector(selector) {
+        assert.equal(
+          selector,
+          'textarea[data-testid="read-only-cursor-text-area"][aria-label="file content"]'
+        );
+        return textarea;
+      }
+    },
+    HTMLTextAreaElement: FakeTextArea,
+    MutationObserver: class {
+      observe() {}
+      disconnect() {}
+    },
+    DC_AGENT_PLUGIN_DESCRIPTORS: Object.freeze({
+      'chatgpt-web': Object.freeze({ ...plugin })
+    }),
+    assert(condition, message) {
+      assert.ok(condition, message);
+    },
+    GM_getValue(name, fallback) {
+      return values.has(name) ? values.get(name) : fallback;
+    },
+    GM_setValue(name, value) {
+      values.set(name, value);
+    },
+    GM_addValueChangeListener() {
+      return 1;
+    },
+    fetch() {
+      fetchCalls += 1;
+      throw new Error('broker must not fetch the raw host');
+    }
+  };
+
+  vm.runInNewContext(`(function () {${brokerSource}\n})()`, context);
+  await new Promise(resolve => setImmediate(resolve));
+
+  assert.equal(fetchCalls, 0);
+  assert.deepEqual(
+    values.get('downloadconversation:agent-plugin-response:request-1'),
+    {
+      request_id: 'request-1',
+      ok: true,
+      source
+    }
+  );
 });
 
 test('shared broker constants required by the ChatGPT bridge are defined in runtime scope', () => {
