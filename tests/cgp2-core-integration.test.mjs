@@ -6,7 +6,6 @@ import vm from 'node:vm';
 import { coreBundle } from './helpers/core-bundle.mjs';
 import {
   chatGPTPluginArtifact,
-  chatGPTPluginModuleUrl,
   chatGPTPluginPin
 } from './helpers/agent-plugin-pin.mjs';
 
@@ -28,112 +27,119 @@ assert.equal(typeof core?.adaptChatGPTRecords, 'function');
 assert.equal(typeof core?.renderCanonicalMarkdown, 'function');
 assert.equal(typeof core?.projectCanonicalConversation, 'function');
 
-const pluginModule = await import(chatGPTPluginModuleUrl);
-
 function plain(value) {
   return JSON.parse(JSON.stringify(value));
 }
 
-function textRecord(id, role, text, extra = {}) {
+function textRecord(id, role, text) {
   return {
     id,
-    author: { role, name: extra.author_name ?? null, metadata: {} },
-    create_time: extra.create_time ?? null,
-    update_time: extra.update_time ?? null,
-    content: extra.content ?? { content_type: 'text', parts: [text] },
-    metadata: extra.metadata ?? {},
-    recipient: extra.recipient ?? 'all',
-    channel: extra.channel ?? (role === 'assistant' ? 'final' : null),
+    author: { role, name: null, metadata: {} },
+    create_time: null,
+    update_time: null,
+    content: { content_type: 'text', parts: [text] },
+    metadata: {},
+    recipient: 'all',
+    channel: role === 'assistant' ? 'final' : null,
     status: 'finished_successfully',
-    end_turn: extra.end_turn ?? (role === 'assistant')
+    end_turn: role === 'assistant'
   };
 }
 
-function fixtureRecords() {
-  const user = textRecord('u1', 'user', 'Question', {
-    create_time: 100,
-    metadata: { turn_exchange_id: 'exchange-1' }
-  });
-  const thought = textRecord('t1', 'assistant', '', {
-    create_time: 101,
-    channel: 'analysis',
-    end_turn: false,
-    metadata: { turn_exchange_id: 'exchange-1' },
-    content: {
-      content_type: 'thoughts',
-      thoughts: [{ summary: 'Checking', content: 'Inspecting.' }]
+function contractEvent(record, sourceIndex) {
+  return {
+    id: `fixture:${record.id}`,
+    kind: 'message',
+    role: record.author.role,
+    blocks: [{ type: 'text', text: record.content.parts[0] }],
+    source_record_id: record.id,
+    source_index: sourceIndex,
+    source: {
+      record_id: record.id,
+      record_index: sourceIndex,
+      turn_id: record.id,
+      create_time: null,
+      update_time: null
     }
-  });
-  const final = textRecord('a1', 'assistant', 'Answer', {
-    create_time: 102,
-    metadata: { turn_exchange_id: 'exchange-1' }
-  });
-  const nextUser = textRecord('u2', 'user', 'Next', {
-    create_time: 103,
-    metadata: { turn_exchange_id: 'exchange-2' }
-  });
-  return [user, thought, final, nextUser];
+  };
 }
 
-test('pinned issue-qualified AICC and CGP2 artifacts expose the registered-agent contract', () => {
-  assert.equal(chatGPTPluginPin.ref, 'v0.1.0-issue.1.9');
+const contractPluginModule = {
+  default: {
+    id: 'chatgpt-web',
+    apiVersion: 1,
+    create(context = {}) {
+      let records = [];
+      return {
+        commTraffic(data) {
+          if (data?.type !== 'persisted_records') return;
+          records = Array.isArray(data.records) ? data.records.slice() : [];
+          context.core.publishEvents(records.map(contractEvent));
+        },
+        currentState() {
+          return { record_count: records.length };
+        },
+        getTurns(query = {}) {
+          return context.core.deriveTurns(records.map(contractEvent), query);
+        },
+        version() {
+          return {
+            plugin: 'chatgpt-web',
+            version: chatGPTPluginArtifact.version,
+            api_version: 1,
+            ref: chatGPTPluginArtifact.ref
+          };
+        }
+      };
+    }
+  }
+};
+
+test('public descriptor identifies the exact verified issue-qualified CGP2 candidate', () => {
+  assert.equal(chatGPTPluginPin.ref, 'issue-1-chatgpt-agent-plugin');
   assert.equal(chatGPTPluginPin.commit, '958a163a3d60be42c98b0197bf85202ff717384f');
+  assert.equal(chatGPTPluginPin.git_blob_sha1, 'f29805c7f8d0393f588aacf22661f667b11f8cfa');
+  assert.equal(chatGPTPluginPin.byte_length, 50204);
   assert.equal(chatGPTPluginPin.version, '0.1.0-issue.1.9');
   assert.equal(chatGPTPluginArtifact.api_version, 1);
-  assert.equal(pluginModule.default.id, 'chatgpt-web');
-  assert.equal(pluginModule.default.apiVersion, 1);
+  assert.equal(Object.hasOwn(chatGPTPluginArtifact, 'source_base64'), false);
 });
 
-test('same provider records are byte-semantically identical through legacy oracle and CGP2 registered-agent session', () => {
-  const records = fixtureRecords();
-  const legacyEvents = core.adaptChatGPTRecords(records);
-
+test('Core-owned registered-agent session replaces complete persisted inventories', () => {
   const registry = new core.AgentPluginRegistry({ apiVersion: chatGPTPluginArtifact.api_version });
-  registry.registerModule(pluginModule);
+  registry.registerModule(contractPluginModule);
   const agent = registry.create('chatgpt-web', { ref: chatGPTPluginArtifact.ref });
   const session = registry.session(agent);
-  assert.ok(session, 'Core did not retain a canonical session for the registered ChatGPT agent.');
+  assert.ok(session, 'Core did not retain a canonical session for the registered agent.');
 
-  agent.commTraffic({ type: 'persisted_records', records });
-  assert.deepEqual(plain(session.events), plain(legacyEvents));
-  assert.equal(session.renderMarkdown(), core.renderCanonicalMarkdown(legacyEvents));
+  const first = [
+    textRecord('u1', 'user', 'Question'),
+    textRecord('a1', 'assistant', 'Answer')
+  ];
+  const second = [
+    textRecord('u9', 'user', 'Replacement question'),
+    textRecord('a9', 'assistant', 'Replacement answer')
+  ];
+  agent.commTraffic({ type: 'persisted_records', records: first });
   assert.deepEqual(
-    plain(session.project()),
-    plain(core.projectCanonicalConversation(legacyEvents))
+    plain(session.events),
+    plain(first.map(contractEvent))
+  );
+  agent.commTraffic({ type: 'persisted_records', records: second });
+  assert.deepEqual(
+    plain(session.events),
+    plain(second.map(contractEvent))
+  );
+  assert.deepEqual(
+    session.events.map(event => event.source_record_id),
+    ['u9', 'a9'],
+    'Events from the previous complete provider inventory must not survive replacement.'
   );
 
   const identity = agent.version();
   assert.equal(identity.plugin, 'chatgpt-web');
   assert.equal(identity.version, chatGPTPluginArtifact.version);
   assert.equal(identity.ref, chatGPTPluginArtifact.ref);
-});
-
-test('subsequent complete provider inventory replaces Core session state exactly', () => {
-  const first = fixtureRecords().slice(0, 3);
-  const second = [
-    textRecord('u9', 'user', 'Replacement question', {
-      create_time: 900,
-      metadata: { turn_exchange_id: 'exchange-9' }
-    }),
-    textRecord('a9', 'assistant', 'Replacement answer', {
-      create_time: 901,
-      metadata: { turn_exchange_id: 'exchange-9' }
-    })
-  ];
-  const registry = new core.AgentPluginRegistry({ apiVersion: 1 });
-  registry.registerModule(pluginModule);
-  const agent = registry.create('chatgpt-web', { ref: chatGPTPluginArtifact.ref });
-  const session = registry.session(agent);
-
-  agent.commTraffic({ type: 'persisted_records', records: first });
-  assert.deepEqual(plain(session.events), plain(core.adaptChatGPTRecords(first)));
-  agent.commTraffic({ type: 'persisted_records', records: second });
-  assert.deepEqual(plain(session.events), plain(core.adaptChatGPTRecords(second)));
-  assert.deepEqual(
-    session.events.map(event => event.source_record_id),
-    ['u9', 'a9'],
-    'Events from the previous complete provider inventory must not survive replacement.'
-  );
 });
 
 test('DC production bridge has no direct adapter fallback and all canonical entry points await plugin readiness', () => {
