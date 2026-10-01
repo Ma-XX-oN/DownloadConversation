@@ -6,26 +6,12 @@
     {
       "name": "AIConversationCore",
       "repository": "Ma-XX-oN/AIConversationCore",
-      "ref": "v1.1.0-issue.104.8",
-      "commit": "488a2f633910b7ad26e8a89d0e6621d9961f785a",
+      "ref": "main",
+      "commit": "9e18441a1f68a1cac5ebb6e20dead945dd36d7dd",
       "path": "dist/aiconversationcore.chatgpt.browser.js",
-      "url": "https://raw.githubusercontent.com/Ma-XX-oN/AIConversationCore/488a2f633910b7ad26e8a89d0e6621d9961f785a/dist/aiconversationcore.chatgpt.browser.js",
-      "git_blob_sha1": "fcd0fc12c7220257d813c7c0c893426d08437f06",
-      "byte_length": 279239
-    }
-  ],
-  "agent_plugins": [
-    {
-      "id": "chatgpt-web",
-      "repository": "Ma-XX-oN/Chat-Gpt-Plugin-2",
-      "ref": "issue-1-chatgpt-agent-plugin",
-      "commit": "958a163a3d60be42c98b0197bf85202ff717384f",
-      "version": "0.1.0-issue.1.9",
-      "api_version": 1,
-      "path": "dist/chatgpt-plugin.mjs",
-      "url": "https://raw.githubusercontent.com/Ma-XX-oN/Chat-Gpt-Plugin-2/958a163a3d60be42c98b0197bf85202ff717384f/dist/chatgpt-plugin.mjs",
-      "git_blob_sha1": "f29805c7f8d0393f588aacf22661f667b11f8cfa",
-      "byte_length": 50204
+      "url": "https://raw.githubusercontent.com/Ma-XX-oN/AIConversationCore/9e18441a1f68a1cac5ebb6e20dead945dd36d7dd/dist/aiconversationcore.chatgpt.browser.js",
+      "git_blob_sha1": "47efb4f379f5bb27ae710a53d1cb84388aeeb1a2",
+      "byte_length": 282178
     }
   ],
   "modules": [
@@ -33,7 +19,7 @@
       "name": "runtime",
       "files": [
         "src/userscript/01-runtime/01-bootstrap.js",
-        "src/userscript/01-runtime/02-shared-network-transition.js"
+        "src/userscript/02-network-communication/02-shared-network-transition.js"
       ]
     },
     {
