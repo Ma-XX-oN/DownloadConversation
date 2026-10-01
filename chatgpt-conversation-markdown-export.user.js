@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         ChatGPT Conversation Markdown Recorder
 // @namespace    https://chatgpt.com/
-// @version      1.9.0-issue.156.8
+// @version      1.9.0-issue.156.9
 // @description  Exports the current ChatGPT conversation directly from the Conversation API as Markdown or JSONL.
 // @match        https://chatgpt.com/*
 // @match        https://chat.openai.com/*
@@ -6332,8 +6332,12 @@ class AgentPluginRegistry {
   const AGENT_PLUGIN_REQUEST_KEY = 'downloadconversation:agent-plugin-request';
   /** Shared Tampermonkey storage prefix for one private-plugin broker response. */
   const AGENT_PLUGIN_RESPONSE_PREFIX = 'downloadconversation:agent-plugin-response:';
+  /** Shared Tampermonkey storage prefix for verified plugin source cache entries. */
+  const AGENT_PLUGIN_CACHE_PREFIX = 'downloadconversation:agent-plugin-cache:';
   /** Maximum age accepted for a browser-broker request. */
   const AGENT_PLUGIN_REQUEST_MAX_AGE_MS = 2 * 60 * 1000;
+  /** Maximum time the ChatGPT tab waits for one broker response. */
+  const AGENT_PLUGIN_BROKER_TIMEOUT_MS = 2 * 60 * 1000;
 
   /**
    * Constructs the authenticated same-origin GitHub raw-file URL selected by one
