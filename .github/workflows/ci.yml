@@ -157,7 +157,7 @@ jobs:
           submodules: recursive
       - uses: actions/setup-python@v5
         with:
-          python-version: '3.13'
+          python-version: ${{ matrix.pythonVersion }}
       - uses: actions/setup-dotnet@v4
         if: matrix.dotnetVersion != ''
         with:
