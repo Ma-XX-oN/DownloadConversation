@@ -13,11 +13,27 @@
   const AGENT_PLUGIN_BROKER_TIMEOUT_MS = 2 * 60 * 1000;
 
   /**
-   * Constructs the authenticated GitHub file-page URL selected by one public
-   * plugin descriptor.  The private source remains on github.com and is read from
-   * GitHub's own read-only file textarea; no raw-host token is requested or stored.
+   * Resolves one agent artifact through the AICC catalogue bundled into this build.
+   * DownloadConversation never owns provider repository/ref/version/hash metadata.
    *
-   * @param {Object} descriptor - Public plugin selector and integrity metadata.
+   * @param {string} pluginId - Provider-neutral AICC agent ID.
+   * @returns {Object|null} Core-owned artifact descriptor, or null when unavailable.
+   */
+  function coreAgentPluginArtifact(pluginId) {
+    const core = globalThis.AIConversationCore;
+    if (typeof core?.getAgentPluginArtifact !== 'function') return null;
+    try {
+      return core.getAgentPluginArtifact(pluginId);
+    } catch {
+      return null;
+    }
+  }
+
+  /**
+   * Constructs the authenticated GitHub file-page URL selected by one Core-owned
+   * artifact descriptor.  Browser authentication remains owned by GitHub/Chrome.
+   *
+   * @param {Object} descriptor - Core-owned artifact selector and integrity metadata.
    * @returns {string} HTTPS GitHub file-page URL.
    */
   function githubAgentPluginBlobUrl(descriptor) {
@@ -32,11 +48,11 @@
   }
 
   /**
-   * Returns whether the current GitHub document is the exact configured plugin
-   * file page rather than merely another page in the same private repository.
+   * Returns whether the current GitHub document is the exact Core-selected plugin
+   * file page rather than merely another GitHub page.
    *
-   * @param {Object} descriptor - Build-owned plugin descriptor.
-   * @returns {boolean} `true` only on the configured GitHub file page.
+   * @param {Object} descriptor - Core-owned artifact descriptor.
+   * @returns {boolean} `true` only on the selected GitHub file page.
    */
   function githubAgentPluginPageMatches(descriptor) {
     if (location.origin !== 'https://github.com') return false;
@@ -67,8 +83,6 @@
   /**
    * Reads GitHub's read-only code textarea once the file view has rendered.
    * The textarea value is the browser-decoded file text, not HTML markup.
-   * DOM wrappers can cross userscript/page realms, so this deliberately avoids
-   * realm-sensitive element-class checks.
    *
    * @returns {string|null} Current file source, or null until GitHub renders it.
    */
@@ -82,19 +96,18 @@
   }
 
   /**
-   * Restores GitHub file-view's omitted terminal LF only when the descriptor proves
-   * the displayed UTF-8 text is exactly one byte shorter than the pinned artifact.
-   * The ChatGPT side still verifies the full Git blob SHA-1 before execution, so an
-   * incorrect reconstruction is rejected rather than trusted.
+   * Restores GitHub file-view's omitted terminal LF only when AICC's descriptor
+   * proves the displayed UTF-8 text is exactly one byte shorter than the selected
+   * artifact.  The ChatGPT side still verifies the full Git blob SHA-1.
    *
-   * @param {Object} descriptor - Exact plugin artifact descriptor.
+   * @param {Object} descriptor - Core-owned exact artifact descriptor.
    * @param {string} source - Source text read from GitHub's file-view textarea.
    * @returns {{source: string, displayed_byte_length: number, transferred_byte_length: number, terminal_lf_restored: boolean}}
    *   Source transfer result and non-sensitive byte-length diagnostics.
    */
   function normalizeGitHubAgentPluginSource(descriptor, source) {
     const displayedByteLength = new TextEncoder().encode(source).byteLength;
-    const shouldRestoreTerminalLf = displayedByteLength + 1 === descriptor.byte_length
+    const shouldRestoreTerminalLf = displayedByteLength + 1 === descriptor.byteLength
       && !source.endsWith('\n');
     const normalized = shouldRestoreTerminalLf ? `${source}\n` : source;
     return {
@@ -139,12 +152,12 @@
   }
 
   /**
-   * Returns whether a broker request exactly matches the descriptor compiled into
-   * this public DownloadConversation build.
+   * Returns whether a shared request exactly matches AICC's selected artifact.
+   * This keeps the GitHub-side broker an authenticated transport, not a selector.
    *
-   * @param {Object} request - Shared-storage request from a ChatGPT tab.
-   * @param {Object} descriptor - Build-owned plugin descriptor.
-   * @returns {boolean} `true` only for the exact configured private artifact.
+   * @param {Object} request - Shared-storage request from an AI-agent tab.
+   * @param {Object} descriptor - Core-owned artifact descriptor.
+   * @returns {boolean} `true` only for the exact AICC-selected artifact.
    */
   function githubAgentPluginRequestMatches(request, descriptor) {
     return request?.plugin_id === descriptor?.id
@@ -152,23 +165,22 @@
       && request?.ref === descriptor?.ref
       && request?.path === descriptor?.path
       && request?.version === descriptor?.version
-      && request?.api_version === descriptor?.api_version
-      && request?.git_blob_sha1 === descriptor?.git_blob_sha1
-      && request?.byte_length === descriptor?.byte_length;
+      && request?.api_version === descriptor?.apiVersion
+      && request?.git_blob_sha1 === descriptor?.gitBlobSha1
+      && request?.byte_length === descriptor?.byteLength;
   }
 
   /**
-   * Handles one plugin request inside GitHub's authenticated file-view origin.
-   * Browser session cookies remain owned by GitHub/Chrome and are never copied into
-   * DownloadConversation storage or exposed to ChatGPT.  Only the file text shown
-   * by GitHub is transferred through shared userscript storage.
+   * Handles one Core-selected artifact request inside GitHub's authenticated file
+   * view. Only the file text shown by GitHub is transferred through userscript
+   * storage; browser credentials never leave GitHub/Chrome.
    *
-   * @param {Object} request - Shared-storage request from a ChatGPT tab.
+   * @param {Object} request - Shared-storage request from an AI-agent tab.
    * @returns {Promise<void>} Resolves after a success/failure response is published.
    */
   async function handleGitHubAgentPluginRequest(request) {
     if (!request || typeof request.request_id !== 'string') return;
-    const descriptor = DC_AGENT_PLUGIN_DESCRIPTORS?.[request.plugin_id];
+    const descriptor = coreAgentPluginArtifact(request.plugin_id);
     if (!descriptor || !githubAgentPluginRequestMatches(request, descriptor)) return;
     const age = Date.now() - Number(request.requested_at ?? 0);
     if (!Number.isFinite(age) || age < 0 || age > AGENT_PLUGIN_REQUEST_MAX_AGE_MS) return;
@@ -222,18 +234,13 @@
   }
 
   /**
-   * Installs the GitHub-side broker when this same userscript is running on the
-   * configured private repository page.
+   * Installs the generic GitHub-side artifact broker. The active provider/repository
+   * is resolved from AICC only after a shared request arrives.
    *
    * @returns {boolean} `true` when GitHub broker mode owns this userscript realm.
    */
   function installGitHubAgentPluginBroker() {
     if (location.hostname !== 'github.com') return false;
-    const descriptor = DC_AGENT_PLUGIN_DESCRIPTORS?.['chatgpt-web'];
-    if (!descriptor) return false;
-    const repositoryPath = `/${descriptor.repository}`.toLowerCase();
-    if (!location.pathname.toLowerCase().startsWith(repositoryPath)) return false;
-
     const dispatch = value => {
       handleGitHubAgentPluginRequest(value).catch(error => {
         console.error('[DownloadConversation] GitHub plugin broker failed', error);
