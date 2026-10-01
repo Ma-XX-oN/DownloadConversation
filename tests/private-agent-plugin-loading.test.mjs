@@ -28,27 +28,19 @@ const bridgeSource = await readFile(
   'utf8'
 );
 
-const plugin = manifest.agent_plugins?.find(item => item?.id === 'chatgpt-web');
-
-test('public DC describes but does not embed the private CGP2 artifact', () => {
-  assert.ok(plugin, 'chatgpt-web plugin descriptor is required.');
-  assert.equal(plugin.repository, 'Ma-XX-oN/Chat-Gpt-Plugin-2');
-  assert.equal(plugin.ref, 'issue-1-chatgpt-agent-plugin');
-  assert.equal(plugin.commit, '958a163a3d60be42c98b0197bf85202ff717384f');
-  assert.equal(plugin.version, '0.1.0-issue.1.9');
-  assert.equal(plugin.api_version, 1);
-  assert.equal(plugin.path, 'dist/chatgpt-plugin.mjs');
-  assert.equal(plugin.git_blob_sha1, 'f29805c7f8d0393f588aacf22661f667b11f8cfa');
-  assert.equal(plugin.byte_length, 50204);
-
-  assert.doesNotMatch(buildSource, /source_base64/);
-  assert.doesNotMatch(buildSource, /fetchPinnedDependency\(plugin\)/);
-  assert.match(buildLibSource, /BEGIN agent plugin descriptors/);
+test('public DC carries only AICC dependency metadata, not provider-plugin identity', () => {
+  assert.equal(Object.hasOwn(manifest, 'agent_plugins'), false);
+  assert.deepEqual(manifest.dependencies.map(item => item.name), ['AIConversationCore']);
+  assert.equal(manifest.dependencies[0].ref, 'main');
+  assert.doesNotMatch(JSON.stringify(manifest), /Chat-Gpt-Plugin-2/);
+  assert.doesNotMatch(buildSource, /manifest\.agent_plugins/);
+  assert.doesNotMatch(buildLibSource, /DC_AGENT_PLUGIN_DESCRIPTORS/);
+  assert.doesNotMatch(buildLibSource, /validateAgentPluginDescriptor/);
   assert.match(buildSource, /buildAgentPluginPrelude/);
 });
 
-test('same userscript reads the authenticated GitHub file view without repository credentials', () => {
-  assert.match(header, /^\/\/ @match\s+https:\/\/github\.com\/Ma-XX-oN\/Chat-Gpt-Plugin-2\*/m);
+test('same userscript provides generic authenticated GitHub artifact transport without credentials', () => {
+  assert.match(header, /^\/\/ @match\s+https:\/\/github\.com\/\*$/m);
   for (const grant of [
     'GM_getValue',
     'GM_setValue',
@@ -57,11 +49,14 @@ test('same userscript reads the authenticated GitHub file view without repositor
   ]) {
     assert.match(header, new RegExp(`^// @grant\\s+${grant}$`, 'm'));
   }
+  assert.match(brokerSource, /coreAgentPluginArtifact/);
+  assert.match(brokerSource, /getAgentPluginArtifact/);
   assert.match(brokerSource, /installGitHubAgentPluginBroker/);
   assert.match(brokerSource, /githubAgentPluginBlobUrl/);
   assert.match(brokerSource,
     /textarea\[data-testid="read-only-cursor-text-area"\]\[aria-label="file content"\]/);
   assert.match(brokerSource, /textarea\.value/);
+  assert.doesNotMatch(brokerSource, /DC_AGENT_PLUGIN_DESCRIPTORS/);
   assert.doesNotMatch(brokerSource, /if\s*\([^\n]*instanceof\s+HTMLTextAreaElement/);
   assert.doesNotMatch(brokerSource, /\bfetch\s*\(/);
   assert.doesNotMatch(brokerSource, /raw\.githubusercontent\.com/);
@@ -74,13 +69,20 @@ test('same userscript reads the authenticated GitHub file view without repositor
 });
 
 test('GitHub broker restores the terminal LF and closes only after publishing source', async () => {
-  assert.ok(plugin, 'chatgpt-web plugin descriptor is required.');
   const displayedSource = 'export const marker = "from-github-textarea";';
   const transferredSource = `${displayedSource}\n`;
-  const brokerPlugin = {
-    ...plugin,
-    byte_length: Buffer.byteLength(transferredSource, 'utf8')
-  };
+  const brokerPlugin = Object.freeze({
+    id: 'fixture-agent',
+    repository: 'Example/Private-Agent-Plugin',
+    ref: 'main',
+    commit: '0123456789abcdef0123456789abcdef01234567',
+    version: '1.2.3',
+    apiVersion: 1,
+    path: 'dist/plugin.mjs',
+    url: 'https://example.invalid/plugin.mjs',
+    gitBlobSha1: '89abcdef0123456789abcdef0123456789abcdef',
+    byteLength: Buffer.byteLength(transferredSource, 'utf8')
+  });
   const textarea = {
     tagName: 'TEXTAREA',
     value: displayedSource
@@ -92,9 +94,9 @@ test('GitHub broker restores the terminal LF and closes only after publishing so
     ref: brokerPlugin.ref,
     path: brokerPlugin.path,
     version: brokerPlugin.version,
-    api_version: brokerPlugin.api_version,
-    git_blob_sha1: brokerPlugin.git_blob_sha1,
-    byte_length: brokerPlugin.byte_length,
+    api_version: brokerPlugin.apiVersion,
+    git_blob_sha1: brokerPlugin.gitBlobSha1,
+    byte_length: brokerPlugin.byteLength,
     requested_at: Date.now()
   };
   const values = new Map([
@@ -111,6 +113,7 @@ test('GitHub broker restores the terminal LF and closes only after publishing so
     setTimeout,
     clearTimeout,
     console,
+    globalThis: null,
     location: {
       origin: 'https://github.com',
       hostname: 'github.com',
@@ -135,9 +138,6 @@ test('GitHub broker restores the terminal LF and closes only after publishing so
       observe() {}
       disconnect() {}
     },
-    DC_AGENT_PLUGIN_DESCRIPTORS: Object.freeze({
-      'chatgpt-web': Object.freeze({ ...brokerPlugin })
-    }),
     assert(condition, message) {
       assert.ok(condition, message);
     },
@@ -158,6 +158,13 @@ test('GitHub broker restores the terminal LF and closes only after publishing so
       throw new Error('broker must not fetch the raw host');
     }
   };
+  context.globalThis = context;
+  context.AIConversationCore = {
+    getAgentPluginArtifact(id) {
+      if (id !== brokerPlugin.id) throw new Error('unknown fixture agent');
+      return brokerPlugin;
+    }
+  };
 
   vm.runInNewContext(`(function () {${brokerSource}\n})()`, context);
   await new Promise(resolve => setImmediate(resolve));
@@ -170,7 +177,7 @@ test('GitHub broker restores the terminal LF and closes only after publishing so
   const trace = values.get('downloadconversation:agent-plugin-trace:request-1');
   assert.equal(trace?.request_id, 'request-1');
   assert.equal(trace?.stage, 'response-published');
-  assert.equal(trace?.transferred_byte_length, brokerPlugin.byte_length);
+  assert.equal(trace?.transferred_byte_length, brokerPlugin.byteLength);
   assert.equal(trace?.terminal_lf_restored, true);
   assert.deepEqual(events, ['response-published', 'window.close']);
 });
@@ -184,14 +191,16 @@ test('shared broker constants required by the ChatGPT bridge are defined in runt
   assert.match(bridgeSource, /AGENT_PLUGIN_BROKER_TIMEOUT_MS/);
 });
 
-test('ChatGPT runtime verifies broker bytes before Blob import and shares only verified source cache', () => {
+test('runtime verifies AICC-selected bytes before Blob import and shares only verified source cache', () => {
   assert.match(bridgeSource, /GM_addValueChangeListener/);
   assert.match(bridgeSource, /GM_setValue/);
   assert.match(bridgeSource, /crypto\.subtle\.digest\('SHA-1'/);
-  assert.match(bridgeSource, /git_blob_sha1/);
-  assert.match(bridgeSource, /byte_length/);
+  assert.match(bridgeSource, /gitBlobSha1/);
+  assert.match(bridgeSource, /byteLength/);
   assert.match(bridgeSource, /new Blob\(\[bytes\]/);
   assert.match(bridgeSource, /import\(blobUrl\)/);
+  assert.match(bridgeSource, /core\.loadAgent\('chatgpt-web'/);
+  assert.doesNotMatch(bridgeSource, /DC_AGENT_PLUGIN_DESCRIPTORS/);
   assert.doesNotMatch(bridgeSource, /source_base64/);
   assert.doesNotMatch(bridgeSource, /Authorization\s*:/i);
   assert.doesNotMatch(bridgeSource, /access[_-]?token/i);
