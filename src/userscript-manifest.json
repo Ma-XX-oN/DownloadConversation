@@ -43,6 +43,7 @@
     {
       "name": "agent-lifecycle",
       "files": [
+        "src/userscript/03-agent-lifecycle/12-last-waiting-timers.js",
         "src/userscript/03-agent-lifecycle/01-click-sound-transition.js",
         "src/userscript/03-agent-lifecycle/02-terminal-events.js",
         "src/userscript/03-agent-lifecycle/03-favicon.js",
