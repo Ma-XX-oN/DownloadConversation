@@ -1,10 +1,12 @@
 #!/usr/bin/env node
 import { spawnSync } from 'node:child_process';
-import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import {
+  buildAgentPluginPrelude,
+  injectUserscriptPrelude,
   orderedSourcePaths,
   readDownloadConversationSource,
   readUserscriptManifest
@@ -13,6 +15,9 @@ import {
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const TYPESCRIPT_VERSION = '7.0.2';
 const BROKEN_COMMIT = 'c16c2beb71e210ceb3110b69b61a92de6483deb3';
+const BROKEN_PLUGIN_REF = 'v1.9.0-issue.156.8';
+const BROKER_PATH = 'src/userscript/01-runtime/02-github-agent-plugin-broker.js';
+const BRIDGE_PATH = 'src/userscript/04-conversation-rendering/08-agent-plugin-bridge.js';
 
 function gitShow(commit, relativePath) {
   const result = spawnSync(
@@ -37,6 +42,19 @@ function historicalSource(commit) {
     .join('');
 }
 
+function historicalPluginAssembledSource(ref) {
+  const manifest = JSON.parse(gitShow(ref, 'src/userscript-manifest.json'));
+  const source = orderedSourcePaths(manifest)
+    .map(relativePath => gitShow(ref, relativePath))
+    .join('');
+  const prelude = buildAgentPluginPrelude(
+    manifest.agent_plugins,
+    gitShow(ref, BROKER_PATH),
+    gitShow(ref, BRIDGE_PATH)
+  );
+  return injectUserscriptPrelude(source, prelude);
+}
+
 function runTsc(source, label) {
   const temporaryRoot = mkdtempSync(
     path.join(os.tmpdir(), `dc-typescript-${label}-`)
@@ -54,8 +72,6 @@ function runTsc(source, label) {
         'declare function GM_setValue(name: string, value: any): void;',
         'declare function GM_addValueChangeListener(name: string, callback: (...args: any[]) => void): number;',
         'declare function GM_removeValueChangeListener(listenerId: number): void;',
-        'declare const DC_AGENT_PLUGIN_DESCRIPTORS: Record<string, any>;',
-        'declare function ensureChatGPTCanonicalAgent(): Promise<any>;',
         'declare const STREAM7Z_WASM_GZIP_BASE64: string;',
         'declare const Stream7zModule: any;',
         'declare const STREAMING7Z_WASM_GZIP_BASE64: string;',
@@ -105,7 +121,13 @@ function unresolvedDiagnostics(result) {
 }
 
 const manifest = await readUserscriptManifest(root);
-const currentSource = await readDownloadConversationSource(root, manifest);
+const source = await readDownloadConversationSource(root, manifest);
+const currentPrelude = buildAgentPluginPrelude(
+  manifest.agent_plugins,
+  readFileSync(path.join(root, BROKER_PATH), 'utf8'),
+  readFileSync(path.join(root, BRIDGE_PATH), 'utf8')
+);
+const currentSource = injectUserscriptPrelude(source, currentPrelude);
 const current = runTsc(currentSource, 'current');
 if (current.error) {
   console.error(
@@ -120,6 +142,30 @@ if (currentUnresolved.length > 0) {
     'Current assembled DownloadConversation source has unresolved identifiers.'
   );
   process.exit(1);
+}
+
+const brokenPlugin = runTsc(
+  historicalPluginAssembledSource(BROKEN_PLUGIN_REF),
+  'issue-156.8-plugin-prelude'
+);
+const brokenPluginUnresolved = unresolvedDiagnostics(brokenPlugin);
+if (brokenPlugin.error) {
+  console.error(
+    `Plugin-prelude negative-control TypeScript execution failed: ${brokenPlugin.error.message}`
+  );
+  process.exit(2);
+}
+for (const missingName of [
+  'AGENT_PLUGIN_CACHE_PREFIX',
+  'AGENT_PLUGIN_BROKER_TIMEOUT_MS'
+]) {
+  if (!brokenPluginUnresolved.some(line => line.includes(`Cannot find name '${missingName}'`))) {
+    console.error(brokenPluginUnresolved.join('\n'));
+    console.error(
+      `TypeScript negative control did not detect the .156.8 missing ${missingName}.`
+    );
+    process.exit(1);
+  }
 }
 
 const broken = runTsc(historicalSource(BROKEN_COMMIT), 'issue-166.87');
@@ -143,5 +189,6 @@ if (!brokenUnresolved.some(line => {
 }
 console.log(
   `PASS: TypeScript ${TYPESCRIPT_VERSION} reports zero unresolved identifiers `
-  + 'in current assembled DC source and detects the broken .87 initializer.'
+  + 'in the actual current plugin-prelude + DC runtime assembly, detects the '
+  + '.156.8 missing broker constants, and detects the broken .87 initializer.'
 );
