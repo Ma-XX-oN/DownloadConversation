@@ -71,22 +71,31 @@ const contractPluginModule = {
     create(context = {}) {
       let records = [];
       return {
+        async sendMessage() {
+          return null;
+        },
+        async getResponse() {
+          return null;
+        },
+        getTurns(query = {}) {
+          return context.core.deriveTurns(records.map(contractEvent), query);
+        },
+        currentState() {
+          return { record_count: records.length };
+        },
+        observeState() {
+          return () => {};
+        },
         commTraffic(data) {
           if (data?.type !== 'persisted_records') return;
           records = Array.isArray(data.records) ? data.records.slice() : [];
           context.core.publishEvents(records.map(contractEvent));
         },
-        currentState() {
-          return { record_count: records.length };
-        },
-        getTurns(query = {}) {
-          return context.core.deriveTurns(records.map(contractEvent), query);
-        },
         version() {
           return {
             plugin: 'chatgpt-web',
             version: chatGPTPluginArtifact.version,
-            api_version: 1,
+            apiVersion: 1,
             ref: chatGPTPluginArtifact.ref
           };
         }
