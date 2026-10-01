@@ -115,6 +115,39 @@ export async function readDownloadConversationSource(root, manifest) {
   return result;
 }
 
+export function buildAgentPluginPrelude(agentPlugins, brokerSource, bridgeSource) {
+  const entries = agentPlugins.map(plugin => {
+    const descriptor = {
+      id: plugin.id,
+      repository: plugin.repository,
+      ref: plugin.ref,
+      version: plugin.version,
+      api_version: plugin.api_version,
+      path: plugin.path,
+      git_blob_sha1: plugin.git_blob_sha1,
+      byte_length: plugin.byte_length
+    };
+    if (plugin.commit) descriptor.commit = plugin.commit;
+    return `    ${JSON.stringify(plugin.id)}: Object.freeze(${JSON.stringify(descriptor)})`;
+  });
+  return '// BEGIN agent plugin descriptors\n'
+    + '  const DC_AGENT_PLUGIN_DESCRIPTORS = Object.freeze({\n'
+    + entries.join(',\n')
+    + '\n  });\n'
+    + '// END agent plugin descriptors\n'
+    + brokerSource
+    + bridgeSource;
+}
+
+export function injectUserscriptPrelude(source, prelude) {
+  if (!source.startsWith('\n(() => {')) {
+    throw new Error('DownloadConversation source must begin with the preserved userscript IIFE boundary.');
+  }
+  return prelude
+    ? source.replace('\n(() => {', `\n(() => {\n${prelude}`)
+    : source;
+}
+
 export function validatePinnedDependency(dependency, content) {
   const bytes = Buffer.from(content, 'utf8');
   if (bytes.length !== dependency.byte_length) {
@@ -143,17 +176,11 @@ export function assembleUserscript(header, dependencies, source, prelude = '') {
     throw new Error('Authoritative userscript header must not contain runtime @require directives.');
   }
   if (!header.endsWith('\n')) throw new Error('Userscript header must end with a newline.');
-  if (!source.startsWith('\n(() => {')) {
-    throw new Error('DownloadConversation source must begin with the preserved userscript IIFE boundary.');
-  }
   let result = header;
   for (const { manifest: dependency, content } of dependencies) {
     validatePinnedDependency(dependency, content);
     result += dependencyBanner(dependency, content);
   }
-  const scopedSource = prelude
-    ? source.replace('\n(() => {', `\n(() => {\n${prelude}`)
-    : source;
-  result += scopedSource;
+  result += injectUserscriptPrelude(source, prelude);
   return result;
 }
