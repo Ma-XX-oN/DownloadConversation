@@ -73,7 +73,7 @@ test('same userscript reads the authenticated GitHub file view without repositor
   assert.match(bridgeSource, /githubAgentPluginBlobUrl\(descriptor\)/);
 });
 
-test('GitHub broker restores only the one missing terminal LF from the file-view textarea', async () => {
+test('GitHub broker restores the terminal LF and closes only after publishing source', async () => {
   assert.ok(plugin, 'chatgpt-web plugin descriptor is required.');
   const displayedSource = 'export const marker = "from-github-textarea";';
   const transferredSource = `${displayedSource}\n`;
@@ -100,6 +100,7 @@ test('GitHub broker restores only the one missing terminal LF from the file-view
   const values = new Map([
     ['downloadconversation:agent-plugin-request', request]
   ]);
+  const events = [];
   let fetchCalls = 0;
   const pathname = `/${brokerPlugin.repository}/blob/${brokerPlugin.ref}/${brokerPlugin.path}`;
   const context = {
@@ -114,6 +115,11 @@ test('GitHub broker restores only the one missing terminal LF from the file-view
       origin: 'https://github.com',
       hostname: 'github.com',
       pathname
+    },
+    window: {
+      close() {
+        events.push('window.close');
+      }
     },
     document: {
       documentElement: {},
@@ -140,6 +146,9 @@ test('GitHub broker restores only the one missing terminal LF from the file-view
     },
     GM_setValue(name, value) {
       values.set(name, value);
+      if (name === 'downloadconversation:agent-plugin-response:request-1' && value?.ok) {
+        events.push('response-published');
+      }
     },
     GM_addValueChangeListener() {
       return 1;
@@ -163,6 +172,7 @@ test('GitHub broker restores only the one missing terminal LF from the file-view
   assert.equal(trace?.stage, 'response-published');
   assert.equal(trace?.transferred_byte_length, brokerPlugin.byte_length);
   assert.equal(trace?.terminal_lf_restored, true);
+  assert.deepEqual(events, ['response-published', 'window.close']);
 });
 
 test('shared broker constants required by the ChatGPT bridge are defined in runtime scope', () => {
