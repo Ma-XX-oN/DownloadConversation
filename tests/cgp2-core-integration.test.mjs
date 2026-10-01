@@ -167,3 +167,29 @@ test('DC production bridge has no direct adapter fallback and all canonical entr
   assert.match(readinessSource, /return runOneTestWithCanonicalAgent\(name, fn\)/);
   assert.match(readinessSource, /return runTestsWithCanonicalAgent\(\)/);
 });
+
+test('cache miss opens the GitHub broker before the first asynchronous wait and failures are visible', () => {
+  const loadStart = bridgeSource.indexOf('  async function loadAgentPlugin(descriptor) {');
+  const loadEnd = bridgeSource.indexOf('\n  /**\n   * Imports and registers', loadStart);
+  assert.ok(loadStart >= 0 && loadEnd > loadStart,
+    'Could not isolate the production plugin loading function.');
+  const loadSource = bridgeSource.slice(loadStart, loadEnd);
+  const cacheReadAt = loadSource.indexOf('const cachedSource = cachedAgentPluginSource(descriptor);');
+  const brokerRequestAt = loadSource.indexOf(
+    'const brokerSourcePromise = requestAgentPluginFromGitHub(descriptor);'
+  );
+  const firstAwaitAt = loadSource.indexOf('await ');
+  assert.ok(cacheReadAt >= 0 && brokerRequestAt > cacheReadAt,
+    'Production loader must synchronously inspect the cache before requesting GitHub.');
+  assert.ok(firstAwaitAt > brokerRequestAt,
+    'A cache miss must request/open the GitHub broker before transient click activation is lost.');
+  assert.doesNotMatch(loadSource, /await cachedAgentPluginSource/,
+    'Cache lookup must remain synchronous on the first-use broker path.');
+
+  assert.match(bridgeSource, /chatGPTPluginModulePromise = null;\n      throw error;/,
+    'A failed first load must be retryable without reloading the ChatGPT page.');
+  assert.match(readinessSource, /agent-plugin-readiness-failure/,
+    'Plugin readiness failures must be recorded in diagnostics.');
+  assert.match(readinessSource, /setStatus\(`Export setup failed: \$\{message\}`\)/,
+    'Plugin readiness failures must be visible in the recorder status UI.');
+});
