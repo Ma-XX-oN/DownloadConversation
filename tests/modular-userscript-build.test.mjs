@@ -85,7 +85,7 @@ test(
       ],
       'identity and segment runtime must remain at verified top-level source boundaries'
     );
-    assert.equal(sourcePaths.length, 63);
+    assert.equal(sourcePaths.length, 62);
     assert.equal(new Set(sourcePaths).size, sourcePaths.length);
     assert.ok(sourcePaths.every(sourcePath => {
       return sourcePath.startsWith('src/userscript/');
@@ -93,6 +93,9 @@ test(
     assert.ok(sourcePaths.every(sourcePath => {
       return !sourcePath.includes('/userscript-body/part-');
     }));
+    assert.ok(!sourcePaths.includes(
+      'src/userscript/04-conversation-rendering/08-agent-plugin-bridge.js'
+    ));
     for (const sourcePath of sourcePaths) {
       const info = await stat(path.join(root, sourcePath));
       assert.ok(
