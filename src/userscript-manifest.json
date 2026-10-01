@@ -43,12 +43,12 @@
     {
       "name": "agent-lifecycle",
       "files": [
+        "src/userscript/03-agent-lifecycle/12-last-waiting-timers.js",
         "src/userscript/03-agent-lifecycle/01-click-sound-transition.js",
         "src/userscript/03-agent-lifecycle/02-terminal-events.js",
         "src/userscript/03-agent-lifecycle/03-favicon.js",
         "src/userscript/03-agent-lifecycle/04-stopwatch-live.js",
         "src/userscript/03-agent-lifecycle/05-stopwatch-recovery.js",
-        "src/userscript/03-agent-lifecycle/12-last-waiting-timers.js",
         "src/userscript/03-agent-lifecycle/06-generation-stream-detection.js",
         "src/userscript/03-agent-lifecycle/07-generation-stream-sse.js",
         "src/userscript/03-agent-lifecycle/08-generation-request.js",
