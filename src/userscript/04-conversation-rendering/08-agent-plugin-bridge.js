@@ -1,7 +1,12 @@
-  /** Shared Tampermonkey key carrying the newest private-plugin request. */
+  /** Shared request key used by the browser plugin broker. */
   const AGENT_PLUGIN_REQUEST_KEY = 'downloadconversation:agent-plugin-request';
-  /** Shared Tampermonkey prefix for one broker response. */
+  /** Shared response prefix used by the browser plugin broker. */
   const AGENT_PLUGIN_RESPONSE_PREFIX = 'downloadconversation:agent-plugin-response:';
+  /** Shared verified-source cache prefix. */
+  const AGENT_PLUGIN_CACHE_PREFIX = 'downloadconversation:agent-plugin-cache:';
+  /** Maximum wait for one broker response. */
+  const AGENT_PLUGIN_BROKER_TIMEOUT_MS = 120000;
+
   /** Promise for the one ChatGPT plugin module import in this page realm. */
   let chatGPTPluginModulePromise = null;
   /** Core-owned registry for the ChatGPT agent plugin in this page realm. */
@@ -11,6 +16,53 @@
   /** Core-owned canonical session associated with `chatGPTAgent`. */
   let chatGPTCanonicalSession = null;
 
+  /**
+   * Converts bytes to lowercase hexadecimal text.
+   *
+   * @param {Uint8Array} bytes - Bytes to format.
+   * @returns {string} Lowercase hexadecimal text.
+   */
+  function agentPluginHex(bytes) {
+    return Array.from(bytes, byte => byte.toString(16).padStart(2, '0')).join('');
+  }
+
+  /**
+   * Verifies plugin source against the configured Git object identity.
+   *
+   * @param {Object} descriptor - Plugin selector and integrity metadata.
+   * @param {string} source - Retrieved self-contained ESM source.
+   * @returns {Promise<Uint8Array>} Exact verified UTF-8 source bytes.
+   */
+  async function verifyAgentPluginSource(descriptor, source) {
+    const bytes = new TextEncoder().encode(source);
+    assert(bytes.byteLength === descriptor.byte_length,
+      `Plugin byte length ${bytes.byteLength} differs from configured ${descriptor.byte_length}.`);
+    const header = new TextEncoder().encode(`blob ${bytes.byteLength}\0`);
+    const gitObject = new Uint8Array(header.byteLength + bytes.byteLength);
+    gitObject.set(header, 0);
+    gitObject.set(bytes, header.byteLength);
+    const digest = new Uint8Array(await crypto.subtle.digest('SHA-1', gitObject));
+    assert(agentPluginHex(digest) === descriptor.git_blob_sha1,
+      'Plugin Git blob integrity check failed.');
+    return bytes;
+  }
+
+  /**
+   * Returns the shared cache key for one exact plugin artifact.
+   *
+   * @param {Object} descriptor - Plugin descriptor.
+   * @returns {string} Shared userscript-storage key.
+   */
+  function agentPluginCacheKey(descriptor) {
+    return `${AGENT_PLUGIN_CACHE_PREFIX}${descriptor.id}:${descriptor.git_blob_sha1}`;
+  }
+
+  /**
+   * Extracts plugin source from one successful broker response.
+   *
+   * @param {Object} value - Broker response value.
+   * @returns {string} Plugin source text.
+   */
   function agentPluginSourceFromResponse(value) {
     assert(
       value?.ok === true,
@@ -24,35 +76,117 @@
   }
 
   /**
-   * Decodes one build-embedded base64 module payload without reinterpreting it.
+   * Loads a previously verified artifact from shared userscript storage.
+   * Integrity is rechecked before execution.
    *
-   * @param {string} base64 - Base64-encoded UTF-8 module bytes.
-   * @returns {Uint8Array} Exact decoded module bytes.
+   * @param {Object} descriptor - Plugin descriptor.
+   * @returns {Promise<string|null>} Verified ESM source, or null when unavailable.
    */
-  function decodeEmbeddedModule(base64) {
-    const binary = atob(base64);
-    const bytes = new Uint8Array(binary.length);
-    for (let index = 0; index < binary.length; index += 1) bytes[index] = binary.charCodeAt(index);
-    return bytes;
+  async function cachedAgentPluginSource(descriptor) {
+    const cached = GM_getValue(agentPluginCacheKey(descriptor), null);
+    if (!cached || cached.ref !== descriptor.ref || cached.version !== descriptor.version
+        || typeof cached.source !== 'string') return null;
+    try {
+      await verifyAgentPluginSource(descriptor, cached.source);
+      return cached.source;
+    } catch {
+      GM_setValue(agentPluginCacheKey(descriptor), null);
+      return null;
+    }
   }
 
   /**
-   * Imports and registers the exact ChatGPT plugin artifact pinned by the userscript build.
+   * Requests the configured artifact from the GitHub-side broker.
    *
-   * The source bytes remain the plugin repository's self-contained ESM artifact. DC
-   * supplies transport/lifetime only; Core validates the descriptor and owns the
-   * canonical session.
+   * @param {Object} descriptor - Plugin descriptor.
+   * @returns {Promise<string>} Retrieved ESM source.
+   */
+  function requestAgentPluginFromGitHub(descriptor) {
+    const requestId = crypto.randomUUID();
+    const responseKey = `${AGENT_PLUGIN_RESPONSE_PREFIX}${requestId}`;
+    return new Promise((resolve, reject) => {
+      let settled = false;
+      let listenerId = null;
+      let timer = null;
+      const finish = (error, source = null) => {
+        if (settled) return;
+        settled = true;
+        if (listenerId !== null) GM_removeValueChangeListener(listenerId);
+        if (timer !== null) clearTimeout(timer);
+        GM_setValue(responseKey, null);
+        GM_setValue(AGENT_PLUGIN_REQUEST_KEY, null);
+        if (error) reject(error);
+        else resolve(source);
+      };
+      listenerId = GM_addValueChangeListener(
+        responseKey,
+        (_name, _oldValue, value) => {
+          if (!value || value.request_id !== requestId) return;
+          try {
+            finish(null, agentPluginSourceFromResponse(value));
+          } catch (error) {
+            finish(error);
+          }
+        }
+      );
+      timer = setTimeout(() => {
+        finish(new Error('Timed out waiting for the GitHub plugin broker.'));
+      }, AGENT_PLUGIN_BROKER_TIMEOUT_MS);
+      GM_setValue(AGENT_PLUGIN_REQUEST_KEY, {
+        request_id: requestId,
+        plugin_id: descriptor.id,
+        repository: descriptor.repository,
+        ref: descriptor.ref,
+        path: descriptor.path,
+        version: descriptor.version,
+        api_version: descriptor.api_version,
+        git_blob_sha1: descriptor.git_blob_sha1,
+        byte_length: descriptor.byte_length,
+        requested_at: Date.now()
+      });
+      const brokerUrl = `https://github.com/${descriptor.repository}#downloadconversation-agent-plugin-broker=${requestId}`;
+      const brokerWindow = window.open(
+        brokerUrl,
+        'downloadconversation-agent-plugin-broker',
+        'popup,width=960,height=720'
+      );
+      if (!brokerWindow) finish(new Error('Browser blocked the GitHub plugin window.'));
+    });
+  }
+
+  /**
+   * Retrieves, verifies and caches the configured plugin source.
+   *
+   * @param {Object} descriptor - Plugin descriptor.
+   * @returns {Promise<Uint8Array>} Verified module bytes.
+   */
+  async function loadAgentPlugin(descriptor) {
+    let source = await cachedAgentPluginSource(descriptor);
+    if (!source) {
+      source = await requestAgentPluginFromGitHub(descriptor);
+      await verifyAgentPluginSource(descriptor, source);
+      GM_setValue(agentPluginCacheKey(descriptor), {
+        ref: descriptor.ref,
+        version: descriptor.version,
+        source,
+        verified_at: Date.now()
+      });
+    }
+    return verifyAgentPluginSource(descriptor, source);
+  }
+
+  /**
+   * Imports and registers the configured ChatGPT plugin.
    *
    * @returns {Promise<Object>} The validated ChatGPT agent instance.
    */
   async function ensureChatGPTCanonicalAgent() {
     if (chatGPTAgent) return chatGPTAgent;
+    const descriptor = DC_AGENT_PLUGIN_DESCRIPTORS?.['chatgpt-web'];
+    assert(descriptor, 'ChatGPT agent plugin descriptor is unavailable.');
     if (!chatGPTPluginModulePromise) {
-      const artifact = DC_AGENT_PLUGIN_ARTIFACTS?.['chatgpt-web'];
-      assert(artifact && artifact.source_base64,
-        'Pinned ChatGPT agent plugin artifact is unavailable.');
       chatGPTPluginModulePromise = (async () => {
-        const bytes = decodeEmbeddedModule(artifact.source_base64);
+        const bytes = await loadAgentPlugin(descriptor);
         const blobUrl = URL.createObjectURL(new Blob([bytes], { type: 'text/javascript' }));
         try {
           return await import(blobUrl);
@@ -66,19 +200,18 @@
     const core = canonicalCore();
     assert(typeof core.AgentPluginRegistry === 'function',
       'AIConversationCore agent plugin registry is unavailable.');
-    const artifact = DC_AGENT_PLUGIN_ARTIFACTS['chatgpt-web'];
-    chatGPTPluginRegistry = new core.AgentPluginRegistry({ apiVersion: artifact.api_version });
+    chatGPTPluginRegistry = new core.AgentPluginRegistry({ apiVersion: descriptor.api_version });
     chatGPTPluginRegistry.registerModule(module);
-    chatGPTAgent = chatGPTPluginRegistry.create('chatgpt-web', { ref: artifact.ref });
+    chatGPTAgent = chatGPTPluginRegistry.create('chatgpt-web', { ref: descriptor.ref });
     chatGPTCanonicalSession = chatGPTPluginRegistry.session(chatGPTAgent);
     assert(chatGPTCanonicalSession,
       'AIConversationCore did not create a canonical session for the ChatGPT agent.');
     const identity = chatGPTAgent.version();
     assert(identity?.plugin === 'chatgpt-web', 'Loaded ChatGPT plugin identity is incorrect.');
-    assert(identity?.version === artifact.version,
-      `Loaded ChatGPT plugin version ${identity?.version ?? 'unknown'} differs from pinned ${artifact.version}.`);
-    assert(identity?.ref === artifact.ref,
-      `Loaded ChatGPT plugin ref ${identity?.ref ?? 'unknown'} differs from pinned ${artifact.ref}.`);
+    assert(identity?.version === descriptor.version,
+      `Loaded ChatGPT plugin version ${identity?.version ?? 'unknown'} differs from configured ${descriptor.version}.`);
+    assert(identity?.ref === descriptor.ref,
+      `Loaded ChatGPT plugin ref ${identity?.ref ?? 'unknown'} differs from configured ${descriptor.ref}.`);
     return chatGPTAgent;
   }
 
@@ -100,11 +233,6 @@
 
   /**
    * Production canonicalization strategy for DownloadConversation ChatGPT records.
-   *
-   * This assignment intentionally replaces the adapter-backed implementation declared
-   * earlier in the preserved Phase 5 module. Runtime calls use the registered provider
-   * agent and Core-owned canonical session; the old adapter path is retained only as an
-   * independent repository test oracle.
    *
    * @param {Array<Object>} records - Ordered provider/source records.
    * @param {Map<unknown, unknown>} recoveredImageMap - Recovered images keyed by source record id.
