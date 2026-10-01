@@ -37,7 +37,7 @@ function parseArguments(argv) {
 }
 
 function artifactLabel(artifact) {
-  return artifact.name ?? `agent plugin ${artifact.id}`;
+  return artifact.name ?? artifact.id ?? 'artifact';
 }
 
 async function fetchPinnedDependency(dependency) {
@@ -65,7 +65,7 @@ function sha256(bytes) {
   return createHash('sha256').update(bytes).digest('hex');
 }
 
-async function readAgentPluginPrelude(agentPlugins) {
+async function readAgentPluginPrelude() {
   const broker = await readFile(
     path.join(root, 'src', 'userscript', '01-runtime', '02-github-agent-plugin-broker.js'),
     'utf8'
@@ -74,7 +74,7 @@ async function readAgentPluginPrelude(agentPlugins) {
     path.join(root, 'src', 'userscript', '04-conversation-rendering', '08-agent-plugin-bridge.js'),
     'utf8'
   );
-  return buildAgentPluginPrelude(agentPlugins, broker, bridge);
+  return buildAgentPluginPrelude(broker, bridge);
 }
 
 async function buildCompressorPrelude() {
@@ -140,7 +140,7 @@ async function main() {
   for (const dependency of manifest.dependencies) {
     dependencies.push(await fetchPinnedDependency(dependency));
   }
-  const agentPluginPrelude = await readAgentPluginPrelude(manifest.agent_plugins);
+  const agentPluginPrelude = await readAgentPluginPrelude();
   const compressorPrelude = await buildCompressorPrelude();
   const built = assembleUserscript(
     header,
