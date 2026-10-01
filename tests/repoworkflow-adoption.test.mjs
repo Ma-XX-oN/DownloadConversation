@@ -108,7 +108,13 @@ test('GitHub runner projection and branch ancestry are repository facts', async 
     patterns: [{
       pattern: 'issue-*',
       parent: 'main',
-      allowedDependencies: []
+      allowedDependencies: [],
+      integrationTarget: '__issue-branches-must-not-target-main__'
+    }, {
+      pattern: 'integrate-*',
+      parent: 'main',
+      allowedDependencies: [],
+      integrationTarget: 'main'
     }]
   });
 });
