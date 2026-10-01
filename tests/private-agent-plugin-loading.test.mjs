@@ -14,8 +14,8 @@ const buildSource = await readFile(
   new URL('../scripts/build-userscript.mjs', import.meta.url),
   'utf8'
 );
-const bootstrapSource = await readFile(
-  new URL('../src/userscript/01-runtime/01-bootstrap.js', import.meta.url),
+const brokerSource = await readFile(
+  new URL('../src/userscript/01-runtime/02-github-agent-plugin-broker.js', import.meta.url),
   'utf8'
 );
 const bridgeSource = await readFile(
@@ -28,14 +28,13 @@ const plugin = manifest.agent_plugins?.find(item => item?.id === 'chatgpt-web');
 test('public DC describes but does not embed the private CGP2 artifact', () => {
   assert.ok(plugin, 'chatgpt-web plugin descriptor is required.');
   assert.equal(plugin.repository, 'Ma-XX-oN/Chat-Gpt-Plugin-2');
-  assert.equal(plugin.ref, 'v0.1.0-issue.1.9');
+  assert.equal(plugin.ref, 'issue-1-chatgpt-agent-plugin');
+  assert.equal(plugin.commit, '958a163a3d60be42c98b0197bf85202ff717384f');
   assert.equal(plugin.version, '0.1.0-issue.1.9');
   assert.equal(plugin.api_version, 1);
   assert.equal(plugin.path, 'dist/chatgpt-plugin.mjs');
-  assert.match(plugin.git_blob_sha1 ?? '', /^[0-9a-f]{40}$/);
-  assert.ok(Number.isSafeInteger(plugin.byte_length) && plugin.byte_length > 0);
-  assert.equal(Object.hasOwn(plugin, 'commit'), false);
-  assert.equal(Object.hasOwn(plugin, 'url'), false);
+  assert.equal(plugin.git_blob_sha1, 'f29805c7f8d0393f588aacf22661f667b11f8cfa');
+  assert.equal(plugin.byte_length, 50204);
 
   assert.doesNotMatch(buildSource, /source_base64/);
   assert.doesNotMatch(buildSource, /fetchPinnedDependency\(plugin\)/);
@@ -52,11 +51,11 @@ test('same userscript provides a browser-authenticated GitHub broker without rep
   ]) {
     assert.match(header, new RegExp(`^// @grant\\s+${grant}$`, 'm'));
   }
-  assert.match(bootstrapSource, /installGitHubAgentPluginBroker/);
-  assert.match(bootstrapSource, /credentials:\s*'include'/);
-  assert.match(bootstrapSource, /github\.com\/.*\/raw\//);
-  assert.doesNotMatch(bootstrapSource, /Authorization\s*:/i);
-  assert.doesNotMatch(bootstrapSource, /access[_-]?token/i);
+  assert.match(brokerSource, /installGitHubAgentPluginBroker/);
+  assert.match(brokerSource, /credentials:\s*'include'/);
+  assert.match(brokerSource, /github\.com\/.*\/raw\//);
+  assert.doesNotMatch(brokerSource, /Authorization\s*:/i);
+  assert.doesNotMatch(brokerSource, /access[_-]?token/i);
 });
 
 test('ChatGPT runtime verifies broker bytes before Blob import and shares only verified source cache', () => {
