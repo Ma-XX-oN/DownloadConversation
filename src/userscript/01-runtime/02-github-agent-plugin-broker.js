@@ -207,6 +207,7 @@
         transferred_byte_length: normalized.transferred_byte_length,
         terminal_lf_restored: normalized.terminal_lf_restored
       });
+      window.close();
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
       publishGitHubAgentPluginTrace(request, 'file-view-error', { message });
