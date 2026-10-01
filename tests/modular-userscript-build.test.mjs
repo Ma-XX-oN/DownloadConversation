@@ -23,9 +23,9 @@ const CORE_COMMIT =
 const CORE_BLOB =
   'fcd0fc12c7220257d813c7c0c893426d08437f06';
 const PLUGIN_COMMIT =
-  '24fdd9ad5bd89568aafe3a123100ff37a45951d6';
+  '958a163a3d60be42c98b0197bf85202ff717384f';
 const PLUGIN_BLOB =
-  'bfe6cac52b5e0c3679c6ef985dff7043abd7ae29';
+  'f29805c7f8d0393f588aacf22661f667b11f8cfa';
 const LEGACY_BLOB =
   '44a4ab373a6515caed5527aeb19cbdff7ce91e07';
 const MIGRATION_SNAPSHOT_COMMIT =
@@ -147,7 +147,7 @@ test(
 );
 
 test(
-  'ChatGPT agent plugin build dependency preserves symbolic ref plus exact resolved bytes',
+  'ChatGPT agent plugin selector preserves symbolic ref plus exact verified bytes',
   async () => {
     const manifest = await readUserscriptManifest(root);
     assert.equal(manifest.agent_plugins.length, 1);
@@ -156,11 +156,11 @@ test(
     assert.equal(plugin.repository, 'Ma-XX-oN/Chat-Gpt-Plugin-2');
     assert.equal(plugin.ref, 'issue-1-chatgpt-agent-plugin');
     assert.equal(plugin.commit, PLUGIN_COMMIT);
-    assert.equal(plugin.version, '0.1.0-issue.1.7');
+    assert.equal(plugin.version, '0.1.0-issue.1.9');
     assert.equal(plugin.api_version, 1);
     assert.equal(plugin.path, 'dist/chatgpt-plugin.mjs');
     assert.equal(plugin.git_blob_sha1, PLUGIN_BLOB);
-    assert.equal(plugin.byte_length, 50206);
+    assert.equal(plugin.byte_length, 50204);
     assert.ok(plugin.url.includes(`/${PLUGIN_COMMIT}/`));
   }
 );
@@ -267,7 +267,6 @@ test(
     );
   }
 );
-
 
 test(
   'assembled communication startup resolves the segment runtime contract',
