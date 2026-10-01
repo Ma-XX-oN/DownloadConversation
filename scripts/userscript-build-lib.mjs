@@ -25,6 +25,32 @@ function validatePinnedArtifact(identity, artifact) {
     `${identity} URL must contain its pinned commit`);
 }
 
+function validateAgentPluginDescriptor(plugin) {
+  assertManifest(typeof plugin?.id === 'string' && plugin.id.trim(), 'agent plugin id is required');
+  assertManifest(typeof plugin.repository === 'string' && plugin.repository.includes('/'),
+    `${plugin.id} repository is required`);
+  assertManifest(typeof plugin.ref === 'string' && plugin.ref.trim(),
+    `${plugin.id} symbolic ref is required`);
+  assertManifest(typeof plugin.version === 'string' && plugin.version.trim(),
+    `${plugin.id} version is required`);
+  assertManifest(Number.isSafeInteger(plugin.api_version) && plugin.api_version > 0,
+    `${plugin.id} api_version must be a positive integer`);
+  assertManifest(typeof plugin.path === 'string' && plugin.path.endsWith('.mjs'),
+    `${plugin.id} artifact path must be a self-contained ESM module`);
+  assertManifest(/^[0-9a-f]{40}$/.test(plugin.git_blob_sha1 ?? ''),
+    `${plugin.id} git_blob_sha1 must be an exact SHA-1`);
+  assertManifest(Number.isSafeInteger(plugin.byte_length) && plugin.byte_length > 0,
+    `${plugin.id} byte_length must be a positive integer`);
+  if (plugin.commit != null) {
+    assertManifest(/^[0-9a-f]{40}$/.test(plugin.commit),
+      `${plugin.id} optional resolved commit must be an exact 40-character SHA`);
+  }
+  if (plugin.url != null) {
+    assertManifest(typeof plugin.url === 'string' && plugin.url.startsWith('https://'),
+      `${plugin.id} optional provenance URL must use HTTPS`);
+  }
+}
+
 export async function readUserscriptManifest(root) {
   const manifestPath = path.join(root, MANIFEST_PATH);
   const manifest = JSON.parse(await readFile(manifestPath, 'utf8'));
@@ -66,20 +92,9 @@ export async function readUserscriptManifest(root) {
 
   const pluginIds = new Set();
   for (const plugin of manifest.agent_plugins) {
-    assertManifest(typeof plugin?.id === 'string' && plugin.id.trim(), 'agent plugin id is required');
+    validateAgentPluginDescriptor(plugin);
     assertManifest(!pluginIds.has(plugin.id), `duplicate agent plugin id ${plugin.id}`);
     pluginIds.add(plugin.id);
-    assertManifest(typeof plugin.repository === 'string' && plugin.repository.includes('/'),
-      `${plugin.id} repository is required`);
-    assertManifest(typeof plugin.ref === 'string' && plugin.ref.trim(),
-      `${plugin.id} symbolic ref is required`);
-    assertManifest(typeof plugin.version === 'string' && plugin.version.trim(),
-      `${plugin.id} version is required`);
-    assertManifest(Number.isSafeInteger(plugin.api_version) && plugin.api_version > 0,
-      `${plugin.id} api_version must be a positive integer`);
-    assertManifest(typeof plugin.path === 'string' && plugin.path.endsWith('.mjs'),
-      `${plugin.id} artifact path must be a self-contained ESM module`);
-    validatePinnedArtifact(`agent plugin ${plugin.id}`, plugin);
   }
   return manifest;
 }
@@ -136,8 +151,6 @@ export function assembleUserscript(header, dependencies, source, prelude = '') {
     validatePinnedDependency(dependency, content);
     result += dependencyBanner(dependency, content);
   }
-  // Build-owned preludes belong inside DownloadConversation's preserved IIFE so
-  // plugin source/cache metadata and the compressor bridge do not leak page globals.
   const scopedSource = prelude
     ? source.replace('\n(() => {', `\n(() => {\n${prelude}`)
     : source;
