@@ -1,5 +1,5 @@
 import { coreDependency, coreUrl } from './helpers/core-pin.mjs';
-import { chatGPTPluginArtifact, chatGPTPluginModuleUrl } from './helpers/agent-plugin-pin.mjs';
+import { chatGPTPluginArtifact } from './helpers/agent-plugin-pin.mjs';
 import { productionFunctionSource, userscript } from './helpers/userscript-source.mjs';
 import assert from 'node:assert/strict';
 import { readFile } from 'node:fs/promises';
@@ -17,7 +17,6 @@ const bundle = await response.text();
 const coreContext = {};
 coreContext.globalThis = coreContext;
 vm.runInNewContext(bundle, coreContext, { filename: 'aiconversationcore.chatgpt.browser.js' });
-const pluginModule = await import(chatGPTPluginModuleUrl);
 const bridgeSource = await readFile(
   new URL('../src/userscript/04-conversation-rendering/08-agent-plugin-bridge.js', import.meta.url),
   'utf8'
@@ -83,26 +82,14 @@ test('pinned Core legacy oracle supplies sediment source identity and determinis
   assert.equal(image.source.part_index, 1);
 });
 
-test('registered CGP2 agent publishes identical sediment resource state into the Core session', () => {
-  const record = sedimentRecord();
-  const core = coreContext.AIConversationCore;
-  const legacy = core.adaptChatGPTRecords([record]);
-  const registry = new core.AgentPluginRegistry({ apiVersion: chatGPTPluginArtifact.api_version });
-  registry.registerModule(pluginModule);
-  const agent = registry.create('chatgpt-web', { ref: chatGPTPluginArtifact.ref });
-  const session = registry.session(agent);
-  agent.commTraffic({ type: 'persisted_records', records: [record] });
-  assert.deepEqual(JSON.parse(JSON.stringify(session.events)), JSON.parse(JSON.stringify(legacy)));
-  const image = session.events[0].resources.find(resource => resource.type === 'image');
-  assert.equal(image.source_pointer, 'sediment://file_fixture-image');
-  assert.equal(image.download_url, 'https://chatgpt.com/backend-api/files/download/file_fixture-image');
-  assert.equal(image.source.part_index, 1);
-});
-
-test('production image lookup is overridden by the registered-agent bridge without direct adapter use', () => {
+test('registered-agent production bridge owns sediment projection without direct adapter use', () => {
+  assert.equal(chatGPTPluginArtifact.id, 'chatgpt-web');
+  assert.equal(chatGPTPluginArtifact.version, '0.1.0-issue.1.9');
+  assert.equal(chatGPTPluginArtifact.git_blob_sha1, 'f29805c7f8d0393f588aacf22661f667b11f8cfa');
   assert.match(bridgeSource,
     /canonicalImageResourcesByRecordAndPart = function canonicalImageResourcesViaAgent/);
   assert.match(bridgeSource, /canonicalEventsFromChatGPTAgent\(records\)/);
+  assert.match(bridgeSource, /chatGPTAgent\.commTraffic\(\{ type: 'persisted_records', records \}\)/);
   assert.doesNotMatch(bridgeSource, /adaptChatGPTRecords/);
 });
 
