@@ -50,6 +50,12 @@ function runTsc(source, label) {
       [
         'declare const GM_info: any;',
         'declare const unsafeWindow: any;',
+        'declare function GM_getValue(name: string, defaultValue?: any): any;',
+        'declare function GM_setValue(name: string, value: any): void;',
+        'declare function GM_addValueChangeListener(name: string, callback: (...args: any[]) => void): number;',
+        'declare function GM_removeValueChangeListener(listenerId: number): void;',
+        'declare const DC_AGENT_PLUGIN_DESCRIPTORS: Record<string, any>;',
+        'declare function ensureChatGPTCanonicalAgent(): Promise<any>;',
         'declare const STREAM7Z_WASM_GZIP_BASE64: string;',
         'declare const Stream7zModule: any;',
         'declare const STREAMING7Z_WASM_GZIP_BASE64: string;',
