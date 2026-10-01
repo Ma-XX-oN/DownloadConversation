@@ -48,7 +48,6 @@ function historicalPluginAssembledSource(ref) {
     .map(relativePath => gitShow(ref, relativePath))
     .join('');
   const prelude = buildAgentPluginPrelude(
-    manifest.agent_plugins,
     gitShow(ref, BROKER_PATH),
     gitShow(ref, BRIDGE_PATH)
   );
@@ -123,7 +122,6 @@ function unresolvedDiagnostics(result) {
 const manifest = await readUserscriptManifest(root);
 const source = await readDownloadConversationSource(root, manifest);
 const currentPrelude = buildAgentPluginPrelude(
-  manifest.agent_plugins,
   readFileSync(path.join(root, BROKER_PATH), 'utf8'),
   readFileSync(path.join(root, BRIDGE_PATH), 'utf8')
 );
@@ -189,6 +187,6 @@ if (!brokenUnresolved.some(line => {
 }
 console.log(
   `PASS: TypeScript ${TYPESCRIPT_VERSION} reports zero unresolved identifiers `
-  + 'in the actual current plugin-prelude + DC runtime assembly, detects the '
-  + '.156.8 missing broker constants, and detects the broken .87 initializer.'
+  + 'in the actual current generic-plugin-prelude + DC runtime assembly, detects '
+  + 'the .156.8 missing broker constants, and detects the broken .87 initializer.'
 );
