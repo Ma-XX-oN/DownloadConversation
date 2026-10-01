@@ -76,10 +76,7 @@ async function main() {
       fail(`${dependency.name} URL must contain its pinned commit.`);
     }
 
-    consume(
-      `${dependency.name} provenance`,
-      Buffer.from(`// source ${dependency.url}\n`, 'utf8')
-    );
+    consume(`${dependency.name} provenance`, Buffer.from(`// source ${dependency.url}\n`, 'utf8'));
     consume(
       `${dependency.name} opening banner`,
       Buffer.from(
@@ -88,32 +85,21 @@ async function main() {
         'utf8'
       )
     );
-
     const dependencyBytes = artifact.subarray(offset, offset + dependency.byte_length);
-    if (dependencyBytes.length !== dependency.byte_length) {
-      fail(`${dependency.name} content is truncated.`);
-    }
+    if (dependencyBytes.length !== dependency.byte_length) fail(`${dependency.name} content is truncated.`);
     const actualSha = gitBlobSha1(dependencyBytes);
     if (actualSha !== dependency.git_blob_sha1) {
-      fail(
-        `${dependency.name} Git blob mismatch: expected `
-          + `${dependency.git_blob_sha1}, got ${actualSha}.`
-      );
+      fail(`${dependency.name} Git blob mismatch: expected ${dependency.git_blob_sha1}, got ${actualSha}.`);
     }
     offset += dependencyBytes.length;
     if (dependencyBytes.at(-1) !== 0x0a) consume(`${dependency.name} separator`, Buffer.from('\n'));
-    consume(
-      `${dependency.name} closing banner`,
-      Buffer.from(`// END bundled ${dependency.name}\n`, 'utf8')
-    );
+    consume(`${dependency.name} closing banner`, Buffer.from(`// END bundled ${dependency.name}\n`, 'utf8'));
   }
 
   const sourcePaths = new Set();
   const sourceParts = [];
   for (const module of manifest.modules) {
-    if (typeof module?.name !== 'string' || !module.name) {
-      fail('Every source module requires a name.');
-    }
+    if (typeof module?.name !== 'string' || !module.name) fail('Every source module requires a name.');
     if (!Array.isArray(module.files) || module.files.length === 0) {
       fail(`Source module ${module.name} must contain at least one file.`);
     }
@@ -139,62 +125,71 @@ async function main() {
     fail('Generated userscript does not preserve the DC IIFE boundary.');
   }
 
-  const pluginStartMarker = '// BEGIN embedded agent plugin artifacts\n';
-  const pluginEndMarker = '// END embedded agent plugin artifacts\n';
-  const pluginStart = artifactTail.indexOf(pluginStartMarker, iifePrefix.length);
-  if (pluginStart !== iifePrefix.length) {
-    fail('Generated agent plugin artifact table is not scoped first inside the DC IIFE.');
+  const descriptorStartMarker = '// BEGIN agent plugin descriptors\n';
+  const descriptorEndMarker = '// END agent plugin descriptors\n';
+  const descriptorStart = artifactTail.indexOf(descriptorStartMarker, iifePrefix.length);
+  if (descriptorStart !== iifePrefix.length) {
+    fail('Generated agent plugin descriptor table is not scoped first inside the DC IIFE.');
   }
-  const pluginEnd = artifactTail.indexOf(pluginEndMarker, pluginStart);
-  if (pluginEnd < 0) fail('Generated agent plugin artifact table closing banner is missing.');
-  const pluginPrelude = artifactTail.slice(
-    pluginStart,
-    pluginEnd + pluginEndMarker.length
+  const descriptorEnd = artifactTail.indexOf(descriptorEndMarker, descriptorStart);
+  if (descriptorEnd < 0) fail('Generated agent plugin descriptor table closing banner is missing.');
+  const descriptorPrelude = artifactTail.slice(
+    descriptorStart,
+    descriptorEnd + descriptorEndMarker.length
   );
-  const pluginSandbox = {};
-  const evaluablePluginPrelude = pluginPrelude.replace(
-    '  const DC_AGENT_PLUGIN_ARTIFACTS =',
-    'globalThis.DC_AGENT_PLUGIN_ARTIFACTS ='
+  const descriptorSandbox = {};
+  vm.runInNewContext(
+    descriptorPrelude.replace(
+      '  const DC_AGENT_PLUGIN_DESCRIPTORS =',
+      'globalThis.DC_AGENT_PLUGIN_DESCRIPTORS ='
+    ),
+    descriptorSandbox,
+    { filename: 'agent-plugin-descriptors.js' }
   );
-  vm.runInNewContext(evaluablePluginPrelude, pluginSandbox, { filename: 'embedded-agent-plugins.js' });
-  const embeddedPlugins = pluginSandbox.DC_AGENT_PLUGIN_ARTIFACTS;
-  if (!embeddedPlugins || typeof embeddedPlugins !== 'object') {
-    fail('Generated agent plugin artifact table is not evaluable.');
+  const descriptors = descriptorSandbox.DC_AGENT_PLUGIN_DESCRIPTORS;
+  if (!descriptors || typeof descriptors !== 'object') {
+    fail('Generated agent plugin descriptor table is not evaluable.');
   }
   for (const plugin of manifest.agent_plugins) {
-    const embedded = embeddedPlugins[plugin.id];
-    if (!embedded) fail(`Embedded agent plugin ${plugin.id} is missing.`);
+    const descriptor = descriptors[plugin.id];
+    if (!descriptor) fail(`Agent plugin descriptor ${plugin.id} is missing.`);
     for (const field of [
       'id', 'repository', 'ref', 'commit', 'version', 'api_version', 'path',
       'git_blob_sha1', 'byte_length'
     ]) {
-      if (embedded[field] !== plugin[field]) {
-        fail(`Embedded agent plugin ${plugin.id} ${field} differs from manifest.`);
+      if (descriptor[field] !== plugin[field]) {
+        fail(`Agent plugin descriptor ${plugin.id} ${field} differs from manifest.`);
       }
     }
-    if (typeof embedded.source_base64 !== 'string' || !embedded.source_base64) {
-      fail(`Embedded agent plugin ${plugin.id} source bytes are missing.`);
-    }
-    const pluginBytes = Buffer.from(embedded.source_base64, 'base64');
-    if (pluginBytes.length !== plugin.byte_length) {
-      fail(`Embedded agent plugin ${plugin.id} byte length differs from manifest.`);
-    }
-    const pluginSha = gitBlobSha1(pluginBytes);
-    if (pluginSha !== plugin.git_blob_sha1) {
-      fail(
-        `Embedded agent plugin ${plugin.id} Git blob mismatch: expected `
-          + `${plugin.git_blob_sha1}, got ${pluginSha}.`
-      );
+    if (Object.hasOwn(descriptor, 'source_base64')) {
+      fail(`Agent plugin descriptor ${plugin.id} must not embed provider source bytes.`);
     }
   }
 
-  const compressorStartMarker = '// BEGIN bundled compressor name=';
-  const compressorStart = artifactTail.indexOf(
-    compressorStartMarker,
-    pluginEnd + pluginEndMarker.length
+  const broker = await readFile(
+    path.join(root, 'src/userscript/01-runtime/02-github-agent-plugin-broker.js'),
+    'utf8'
   );
-  if (compressorStart !== pluginEnd + pluginEndMarker.length) {
-    fail('Generated compressor runtime does not immediately follow the agent plugin table.');
+  const bridge = await readFile(
+    path.join(root, 'src/userscript/04-conversation-rendering/08-agent-plugin-bridge.js'),
+    'utf8'
+  );
+  const descriptorEndOffset = descriptorEnd + descriptorEndMarker.length;
+  const brokerText = broker.toString('utf8');
+  const bridgeText = bridge.toString('utf8');
+  if (!artifactTail.startsWith(brokerText, descriptorEndOffset)) {
+    fail('Generated browser plugin broker differs from repository source.');
+  }
+  const bridgeOffset = descriptorEndOffset + brokerText.length;
+  if (!artifactTail.startsWith(bridgeText, bridgeOffset)) {
+    fail('Generated plugin bridge differs from repository source.');
+  }
+
+  const compressorStartMarker = '// BEGIN bundled compressor name=';
+  const compressorExpectedOffset = bridgeOffset + bridgeText.length;
+  const compressorStart = artifactTail.indexOf(compressorStartMarker, compressorExpectedOffset);
+  if (compressorStart !== compressorExpectedOffset) {
+    fail('Generated compressor runtime does not immediately follow the plugin runtime prelude.');
   }
   const compressorEndMarker = '// END bundled compressor\n';
   const compressorEnd = artifactTail.indexOf(compressorEndMarker, compressorStart);
@@ -216,15 +211,23 @@ async function main() {
   if (/^export\s/m.test(compressorPrelude) || /import\.meta/.test(compressorPrelude)) {
     fail('Generated compressor prelude retains ES-module-only syntax.');
   }
-  const expectedTail = iifePrefix + pluginPrelude + compressorPrelude + sourceBody;
+
+  const expectedTail = iifePrefix
+    + descriptorPrelude
+    + brokerText
+    + bridgeText
+    + compressorPrelude
+    + sourceBody;
   if (artifactTail !== expectedTail) {
     fail('Generated userscript plugin/compressor/source assembly differs from repository source.');
   }
-  offset = artifact.length;
   if (artifact.length >= 2 * 1024 * 1024) {
     fail(`Generated userscript unexpectedly exceeds 2 MiB: ${artifact.length} bytes.`);
   }
   const artifactText = artifact.toString('utf8');
+  if (/source_base64/.test(artifactText)) {
+    fail('Generated userscript contains embedded provider source bytes.');
+  }
   if (/import\.meta/.test(artifactText)) {
     fail('Generated userscript contains import.meta and is not Tampermonkey classic-script compatible.');
   }
