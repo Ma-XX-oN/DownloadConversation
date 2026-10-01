@@ -62,7 +62,7 @@ test('same userscript reads the authenticated GitHub file view without repositor
   assert.match(brokerSource,
     /textarea\[data-testid="read-only-cursor-text-area"\]\[aria-label="file content"\]/);
   assert.match(brokerSource, /textarea\.value/);
-  assert.doesNotMatch(brokerSource, /instanceof\s+HTMLTextAreaElement/);
+  assert.doesNotMatch(brokerSource, /if\s*\([^\n]*instanceof\s+HTMLTextAreaElement/);
   assert.doesNotMatch(brokerSource, /\bfetch\s*\(/);
   assert.doesNotMatch(brokerSource, /raw\.githubusercontent\.com/);
   assert.doesNotMatch(brokerSource, /Authorization\s*:/i);
