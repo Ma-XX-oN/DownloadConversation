@@ -64,7 +64,7 @@ function sha256(bytes) {
   return createHash('sha256').update(bytes).digest('hex');
 }
 
-function buildAgentPluginPrelude(agentPlugins) {
+async function buildAgentPluginPrelude(agentPlugins) {
   const entries = agentPlugins.map(plugin => {
     const descriptor = {
       id: plugin.id,
@@ -79,11 +79,16 @@ function buildAgentPluginPrelude(agentPlugins) {
     if (plugin.commit) descriptor.commit = plugin.commit;
     return `    ${JSON.stringify(plugin.id)}: Object.freeze(${JSON.stringify(descriptor)})`;
   });
+  const broker = await readFile(
+    path.join(root, 'src', 'userscript', '01-runtime', '02-github-agent-plugin-broker.js'),
+    'utf8'
+  );
   return '// BEGIN agent plugin descriptors\n'
     + '  const DC_AGENT_PLUGIN_DESCRIPTORS = Object.freeze({\n'
     + entries.join(',\n')
     + '\n  });\n'
-    + '// END agent plugin descriptors\n';
+    + '// END agent plugin descriptors\n'
+    + broker;
 }
 
 async function buildCompressorPrelude() {
@@ -149,7 +154,7 @@ async function main() {
   for (const dependency of manifest.dependencies) {
     dependencies.push(await fetchPinnedDependency(dependency));
   }
-  const agentPluginPrelude = buildAgentPluginPrelude(manifest.agent_plugins);
+  const agentPluginPrelude = await buildAgentPluginPrelude(manifest.agent_plugins);
   const compressorPrelude = await buildCompressorPrelude();
   const built = assembleUserscript(
     header,
