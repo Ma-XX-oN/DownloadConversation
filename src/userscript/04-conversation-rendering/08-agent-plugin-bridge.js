@@ -145,7 +145,8 @@
         ref: descriptor.ref,
         version: descriptor.version
       });
-      const brokerUrl = `https://github.com/${descriptor.repository}#downloadconversation-agent-plugin-broker=${requestId}`;
+      const brokerUrl = `${githubAgentPluginBlobUrl(descriptor)}`
+        + `#downloadconversation-agent-plugin-broker=${requestId}`;
       const brokerWindow = window.open(
         brokerUrl,
         'downloadconversation-agent-plugin-broker',
