@@ -1,12 +1,3 @@
-  /** Shared request key used by the browser plugin broker. */
-  const AGENT_PLUGIN_REQUEST_KEY = 'downloadconversation:agent-plugin-request';
-  /** Shared response prefix used by the browser plugin broker. */
-  const AGENT_PLUGIN_RESPONSE_PREFIX = 'downloadconversation:agent-plugin-response:';
-  /** Shared verified-source cache prefix. */
-  const AGENT_PLUGIN_CACHE_PREFIX = 'downloadconversation:agent-plugin-cache:';
-  /** Maximum wait for one broker response. */
-  const AGENT_PLUGIN_BROKER_TIMEOUT_MS = 120000;
-
   /** Promise for the one ChatGPT plugin module import in this page realm. */
   let chatGPTPluginModulePromise = null;
   /** Core-owned registry for the ChatGPT agent plugin in this page realm. */
@@ -219,6 +210,8 @@
       `Loaded ChatGPT plugin version ${identity?.version ?? 'unknown'} differs from configured ${descriptor.version}.`);
     assert(identity?.ref === descriptor.ref,
       `Loaded ChatGPT plugin ref ${identity?.ref ?? 'unknown'} differs from configured ${descriptor.ref}.`);
+    assert(identity?.apiVersion === descriptor.api_version,
+      `Loaded ChatGPT plugin API ${identity?.apiVersion ?? 'unknown'} differs from configured ${descriptor.api_version}.`);
     return chatGPTAgent;
   }
 
