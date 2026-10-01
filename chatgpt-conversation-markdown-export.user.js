@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         ChatGPT Conversation Markdown Recorder
 // @namespace    https://chatgpt.com/
-// @version      1.9.0-issue.156.11
+// @version      1.9.0-issue.156.12
 // @description  Exports the current ChatGPT conversation directly from the Conversation API as Markdown or JSONL.
 // @match        https://chatgpt.com/*
 // @match        https://chat.openai.com/*
@@ -6340,21 +6340,82 @@ class AgentPluginRegistry {
   const AGENT_PLUGIN_BROKER_TIMEOUT_MS = 2 * 60 * 1000;
 
   /**
-   * Constructs the authenticated same-origin GitHub raw-file URL selected by one
-   * public plugin descriptor.
+   * Constructs the authenticated GitHub file-page URL selected by one public
+   * plugin descriptor.  The private source remains on github.com and is read from
+   * GitHub's own read-only file textarea; no raw-host token is requested or stored.
    *
    * @param {Object} descriptor - Public plugin selector and integrity metadata.
-   * @returns {string} HTTPS GitHub URL fetched inside the authenticated GitHub tab.
+   * @returns {string} HTTPS GitHub file-page URL.
    */
-  function githubAgentPluginRawUrl(descriptor) {
+  function githubAgentPluginBlobUrl(descriptor) {
     const [owner, repository] = String(descriptor.repository).split('/');
     assert(owner && repository, 'Agent plugin repository identity is invalid.');
-    const ref = encodeURIComponent(descriptor.ref);
     const artifactPath = String(descriptor.path)
       .split('/')
       .map(segment => encodeURIComponent(segment))
       .join('/');
-    return `https://github.com/${encodeURIComponent(owner)}/${encodeURIComponent(repository)}/raw/${ref}/${artifactPath}`;
+    return `https://github.com/${encodeURIComponent(owner)}/${encodeURIComponent(repository)}`
+      + `/blob/${encodeURIComponent(descriptor.ref)}/${artifactPath}`;
+  }
+
+  /**
+   * Returns whether the current GitHub document is the exact configured plugin
+   * file page rather than merely another page in the same private repository.
+   *
+   * @param {Object} descriptor - Build-owned plugin descriptor.
+   * @returns {boolean} `true` only on the configured GitHub file page.
+   */
+  function githubAgentPluginPageMatches(descriptor) {
+    if (location.origin !== 'https://github.com') return false;
+    const expected = new URL(githubAgentPluginBlobUrl(descriptor));
+    return location.pathname === expected.pathname;
+  }
+
+  /**
+   * Reads GitHub's read-only code textarea once the file view has rendered.
+   * The textarea value is the browser-decoded file text, not HTML markup.
+   *
+   * @returns {string|null} Current file source, or null until GitHub renders it.
+   */
+  function githubAgentPluginSourceFromPage() {
+    const textarea = document.querySelector(
+      'textarea[data-testid="read-only-cursor-text-area"][aria-label="file content"]'
+    );
+    if (!(textarea instanceof HTMLTextAreaElement)) return null;
+    return textarea.value.length ? textarea.value : null;
+  }
+
+  /**
+   * Waits for GitHub's file viewer to materialize its read-only source textarea.
+   *
+   * @returns {Promise<string>} Exact source text displayed by GitHub.
+   */
+  function waitForGitHubAgentPluginSource() {
+    const immediate = githubAgentPluginSourceFromPage();
+    if (immediate !== null) return Promise.resolve(immediate);
+    return new Promise((resolve, reject) => {
+      let settled = false;
+      let observer = null;
+      let timer = null;
+      const finish = (error, source = null) => {
+        if (settled) return;
+        settled = true;
+        observer?.disconnect();
+        if (timer !== null) clearTimeout(timer);
+        if (error) reject(error);
+        else resolve(source);
+      };
+      const check = () => {
+        const source = githubAgentPluginSourceFromPage();
+        if (source !== null) finish(null, source);
+      };
+      observer = new MutationObserver(check);
+      observer.observe(document.documentElement, { childList: true, subtree: true });
+      timer = setTimeout(() => {
+        finish(new Error('GitHub file content did not become available.'));
+      }, AGENT_PLUGIN_BROKER_TIMEOUT_MS);
+      check();
+    });
   }
 
   /**
@@ -6377,9 +6438,10 @@ class AgentPluginRegistry {
   }
 
   /**
-   * Handles one private-plugin request inside GitHub's own authenticated origin.
+   * Handles one plugin request inside GitHub's authenticated file-view origin.
    * Browser session cookies remain owned by GitHub/Chrome and are never copied into
-   * DownloadConversation storage or exposed to ChatGPT.
+   * DownloadConversation storage or exposed to ChatGPT.  Only the file text shown
+   * by GitHub is transferred through shared userscript storage.
    *
    * @param {Object} request - Shared-storage request from a ChatGPT tab.
    * @returns {Promise<void>} Resolves after a success/failure response is published.
@@ -6393,21 +6455,15 @@ class AgentPluginRegistry {
 
     const responseKey = `${AGENT_PLUGIN_RESPONSE_PREFIX}${request.request_id}`;
     try {
-      const response = await fetch(githubAgentPluginRawUrl(descriptor), {
-        credentials: 'include',
-        cache: 'no-store',
-        redirect: 'follow'
-      });
-      if (!response.ok) {
+      if (!githubAgentPluginPageMatches(descriptor)) {
         GM_setValue(responseKey, {
           request_id: request.request_id,
           ok: false,
-          status: response.status,
-          reason: response.status === 404 ? 'ACCESS_DENIED_OR_NOT_FOUND' : 'HTTP_ERROR'
+          reason: 'WRONG_GITHUB_FILE_PAGE'
         });
         return;
       }
-      const source = await response.text();
+      const source = await waitForGitHubAgentPluginSource();
       GM_setValue(responseKey, {
         request_id: request.request_id,
         ok: true,
@@ -6418,7 +6474,7 @@ class AgentPluginRegistry {
         request_id: request.request_id,
         ok: false,
         status: null,
-        reason: 'NETWORK_ERROR',
+        reason: 'FILE_VIEW_ERROR',
         message: error instanceof Error ? error.message : String(error)
       });
     }
@@ -6597,7 +6653,8 @@ class AgentPluginRegistry {
         ref: descriptor.ref,
         version: descriptor.version
       });
-      const brokerUrl = `https://github.com/${descriptor.repository}#downloadconversation-agent-plugin-broker=${requestId}`;
+      const brokerUrl = `${githubAgentPluginBlobUrl(descriptor)}`
+        + `#downloadconversation-agent-plugin-broker=${requestId}`;
       const brokerWindow = window.open(
         brokerUrl,
         'downloadconversation-agent-plugin-broker',
