@@ -168,7 +168,7 @@ test('DC production bridge has no direct adapter fallback and all canonical entr
   assert.match(readinessSource, /return runTestsWithCanonicalAgent\(\)/);
 });
 
-test('cache miss opens the GitHub broker before the first asynchronous wait and failures are visible', () => {
+test('cache miss opens the GitHub broker before its first asynchronous wait and failures are visible', () => {
   const loadStart = bridgeSource.indexOf('  async function loadAgentPlugin(descriptor) {');
   const loadEnd = bridgeSource.indexOf('\n  /**\n   * Imports and registers', loadStart);
   assert.ok(loadStart >= 0 && loadEnd > loadStart,
@@ -178,11 +178,11 @@ test('cache miss opens the GitHub broker before the first asynchronous wait and 
   const brokerRequestAt = loadSource.indexOf(
     'const brokerSourcePromise = requestAgentPluginFromGitHub(descriptor);'
   );
-  const firstAwaitAt = loadSource.indexOf('await ');
+  const cacheMissAwaitAt = loadSource.indexOf('await ', brokerRequestAt);
   assert.ok(cacheReadAt >= 0 && brokerRequestAt > cacheReadAt,
     'Production loader must synchronously inspect the cache before requesting GitHub.');
-  assert.ok(firstAwaitAt > brokerRequestAt,
-    'A cache miss must request/open the GitHub broker before transient click activation is lost.');
+  assert.ok(cacheMissAwaitAt > brokerRequestAt,
+    'A cache miss must request/open the GitHub broker before that path first waits asynchronously.');
   assert.doesNotMatch(loadSource, /await cachedAgentPluginSource/,
     'Cache lookup must remain synchronous on the first-use broker path.');
 
