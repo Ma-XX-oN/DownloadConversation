@@ -76,9 +76,9 @@ function fixtureRecords() {
 }
 
 test('pinned issue-qualified AICC and CGP2 artifacts expose the registered-agent contract', () => {
-  assert.equal(chatGPTPluginPin.ref, 'issue-1-chatgpt-agent-plugin');
-  assert.equal(chatGPTPluginPin.commit, '24fdd9ad5bd89568aafe3a123100ff37a45951d6');
-  assert.equal(chatGPTPluginPin.version, '0.1.0-issue.1.7');
+  assert.equal(chatGPTPluginPin.ref, 'v0.1.0-issue.1.9');
+  assert.equal(chatGPTPluginPin.commit, '958a163a3d60be42c98b0197bf85202ff717384f');
+  assert.equal(chatGPTPluginPin.version, '0.1.0-issue.1.9');
   assert.equal(chatGPTPluginArtifact.api_version, 1);
   assert.equal(pluginModule.default.id, 'chatgpt-web');
   assert.equal(pluginModule.default.apiVersion, 1);
