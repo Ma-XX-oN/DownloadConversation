@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         ChatGPT Conversation Markdown Recorder
 // @namespace    https://chatgpt.com/
-// @version      1.9.0-issue.156.6
+// @version      1.9.0-issue.156.7
 // @description  Exports the current ChatGPT conversation directly from the Conversation API as Markdown or JSONL.
 // @match        https://chatgpt.com/*
 // @match        https://chat.openai.com/*
@@ -6515,23 +6515,21 @@ class AgentPluginRegistry {
   }
 
   /**
-   * Loads a previously verified artifact from shared userscript storage.
-   * Integrity is rechecked before execution.
+   * Reads a previously verified artifact candidate from shared userscript storage.
+   * Integrity is rechecked asynchronously by `loadAgentPlugin` before execution.
+   *
+   * This lookup deliberately stays synchronous so a cache miss can open the
+   * authenticated GitHub broker while the Extract click still owns transient
+   * browser user activation.
    *
    * @param {Object} descriptor - Plugin descriptor.
-   * @returns {Promise<string|null>} Verified ESM source, or null when unavailable.
+   * @returns {string|null} Cached ESM source candidate, or null when unavailable.
    */
-  async function cachedAgentPluginSource(descriptor) {
+  function cachedAgentPluginSource(descriptor) {
     const cached = GM_getValue(agentPluginCacheKey(descriptor), null);
     if (!cached || cached.ref !== descriptor.ref || cached.version !== descriptor.version
         || typeof cached.source !== 'string') return null;
-    try {
-      await verifyAgentPluginSource(descriptor, cached.source);
-      return cached.source;
-    } catch {
-      GM_setValue(agentPluginCacheKey(descriptor), null);
-      return null;
-    }
+    return cached.source;
   }
 
   /**
@@ -6590,13 +6588,26 @@ class AgentPluginRegistry {
         byte_length: descriptor.byte_length,
         requested_at: Date.now()
       });
+      logDiagnostic('debug', 'agent-plugin-broker-requested', {
+        plugin_id: descriptor.id,
+        ref: descriptor.ref,
+        version: descriptor.version
+      });
       const brokerUrl = `https://github.com/${descriptor.repository}#downloadconversation-agent-plugin-broker=${requestId}`;
       const brokerWindow = window.open(
         brokerUrl,
         'downloadconversation-agent-plugin-broker',
         'popup,width=960,height=720'
       );
-      if (!brokerWindow) finish(new Error('Browser blocked the GitHub plugin window.'));
+      if (!brokerWindow) {
+        finish(new Error('Browser blocked the GitHub plugin window.'));
+        return;
+      }
+      logDiagnostic('debug', 'agent-plugin-broker-window-opened', {
+        plugin_id: descriptor.id,
+        ref: descriptor.ref,
+        version: descriptor.version
+      });
     });
   }
 
@@ -6607,18 +6618,41 @@ class AgentPluginRegistry {
    * @returns {Promise<Uint8Array>} Verified module bytes.
    */
   async function loadAgentPlugin(descriptor) {
-    let source = await cachedAgentPluginSource(descriptor);
-    if (!source) {
-      source = await requestAgentPluginFromGitHub(descriptor);
-      await verifyAgentPluginSource(descriptor, source);
-      GM_setValue(agentPluginCacheKey(descriptor), {
-        ref: descriptor.ref,
-        version: descriptor.version,
-        source,
-        verified_at: Date.now()
-      });
+    const cachedSource = cachedAgentPluginSource(descriptor);
+    if (cachedSource) {
+      try {
+        const bytes = await verifyAgentPluginSource(descriptor, cachedSource);
+        logDiagnostic('debug', 'agent-plugin-cache-hit', {
+          plugin_id: descriptor.id,
+          ref: descriptor.ref,
+          version: descriptor.version
+        });
+        return bytes;
+      } catch (error) {
+        GM_setValue(agentPluginCacheKey(descriptor), null);
+        throw new Error(
+          `Cached ChatGPT plugin failed integrity verification; retry Extract to reacquire it. ${errorMessage(error)}`
+        );
+      }
     }
-    return verifyAgentPluginSource(descriptor, source);
+
+    // This call must happen before the first await on the cache-miss path so
+    // window.open() still executes inside the Extract click's user activation.
+    const brokerSourcePromise = requestAgentPluginFromGitHub(descriptor);
+    const source = await brokerSourcePromise;
+    const bytes = await verifyAgentPluginSource(descriptor, source);
+    GM_setValue(agentPluginCacheKey(descriptor), {
+      ref: descriptor.ref,
+      version: descriptor.version,
+      source,
+      verified_at: Date.now()
+    });
+    logDiagnostic('debug', 'agent-plugin-cache-stored', {
+      plugin_id: descriptor.id,
+      ref: descriptor.ref,
+      version: descriptor.version
+    });
+    return bytes;
   }
 
   /**
@@ -6642,7 +6676,13 @@ class AgentPluginRegistry {
       })();
     }
 
-    const module = await chatGPTPluginModulePromise;
+    let module;
+    try {
+      module = await chatGPTPluginModulePromise;
+    } catch (error) {
+      chatGPTPluginModulePromise = null;
+      throw error;
+    }
     const core = canonicalCore();
     assert(typeof core.AgentPluginRegistry === 'function',
       'AIConversationCore agent plugin registry is unavailable.');
@@ -6660,6 +6700,12 @@ class AgentPluginRegistry {
       `Loaded ChatGPT plugin ref ${identity?.ref ?? 'unknown'} differs from configured ${descriptor.ref}.`);
     assert(identity?.apiVersion === descriptor.api_version,
       `Loaded ChatGPT plugin API ${identity?.apiVersion ?? 'unknown'} differs from configured ${descriptor.api_version}.`);
+    logDiagnostic('debug', 'agent-plugin-ready', {
+      plugin_id: identity.plugin,
+      ref: identity.ref,
+      version: identity.version,
+      api_version: identity.apiVersion
+    });
     return chatGPTAgent;
   }
 
@@ -18447,7 +18493,17 @@ Image elapsed: ${formatDuration(imageElapsed)} — Completed: ${imageCompleted}/
    * @returns {Promise<void>} Resolves after the underlying export completes.
    */
   runExport = async function runExportAfterChatGPTPluginReady(kinds, options = {}) {
-    await ensureChatGPTCanonicalAgent();
+    try {
+      await ensureChatGPTCanonicalAgent();
+    } catch (error) {
+      const message = errorMessage(error);
+      logDiagnostic('errors', 'agent-plugin-readiness-failure', {
+        operation: 'export',
+        message
+      });
+      setStatus(`Export setup failed: ${message}`);
+      return;
+    }
     return runExportWithCanonicalAgent(kinds, options);
   };
 
