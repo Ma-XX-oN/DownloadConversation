@@ -14,7 +14,17 @@
    * @returns {Promise<void>} Resolves after the underlying export completes.
    */
   runExport = async function runExportAfterChatGPTPluginReady(kinds, options = {}) {
-    await ensureChatGPTCanonicalAgent();
+    try {
+      await ensureChatGPTCanonicalAgent();
+    } catch (error) {
+      const message = errorMessage(error);
+      logDiagnostic('errors', 'agent-plugin-readiness-failure', {
+        operation: 'export',
+        message
+      });
+      setStatus(`Export setup failed: ${message}`);
+      return;
+    }
     return runExportWithCanonicalAgent(kinds, options);
   };
 
