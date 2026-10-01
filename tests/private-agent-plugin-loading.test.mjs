@@ -62,22 +62,23 @@ test('same userscript reads the authenticated GitHub file view without repositor
   assert.match(brokerSource,
     /textarea\[data-testid="read-only-cursor-text-area"\]\[aria-label="file content"\]/);
   assert.match(brokerSource, /textarea\.value/);
+  assert.doesNotMatch(brokerSource, /instanceof\s+HTMLTextAreaElement/);
   assert.doesNotMatch(brokerSource, /\bfetch\s*\(/);
   assert.doesNotMatch(brokerSource, /raw\.githubusercontent\.com/);
   assert.doesNotMatch(brokerSource, /Authorization\s*:/i);
   assert.doesNotMatch(brokerSource, /access[_-]?token/i);
+  assert.match(brokerSource, /AGENT_PLUGIN_TRACE_PREFIX/);
+  assert.match(brokerSource, /publishGitHubAgentPluginTrace/);
   assert.match(bridgeSource, /githubAgentPluginBlobUrl\(descriptor\)/);
 });
 
-test('GitHub broker transfers the file-view textarea source without a network fetch', async () => {
+test('GitHub broker accepts a textarea wrapper from another realm and transfers its source', async () => {
   assert.ok(plugin, 'chatgpt-web plugin descriptor is required.');
-  class FakeTextArea {
-    constructor(value) {
-      this.value = value;
-    }
-  }
   const source = 'export const marker = "from-github-textarea";\n';
-  const textarea = new FakeTextArea(source);
+  const textarea = {
+    tagName: 'TEXTAREA',
+    value: source
+  };
   const request = {
     request_id: 'request-1',
     plugin_id: plugin.id,
@@ -117,7 +118,6 @@ test('GitHub broker transfers the file-view textarea source without a network fe
         return textarea;
       }
     },
-    HTMLTextAreaElement: FakeTextArea,
     MutationObserver: class {
       observe() {}
       disconnect() {}
@@ -151,6 +151,9 @@ test('GitHub broker transfers the file-view textarea source without a network fe
   assert.equal(response?.request_id, 'request-1');
   assert.equal(response?.ok, true);
   assert.equal(response?.source, source);
+  const trace = values.get('downloadconversation:agent-plugin-trace:request-1');
+  assert.equal(trace?.request_id, 'request-1');
+  assert.equal(trace?.stage, 'response-published');
 });
 
 test('shared broker constants required by the ChatGPT bridge are defined in runtime scope', () => {
