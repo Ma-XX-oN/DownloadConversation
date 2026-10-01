@@ -48,13 +48,13 @@
         "src/userscript/03-agent-lifecycle/03-favicon.js",
         "src/userscript/03-agent-lifecycle/04-stopwatch-live.js",
         "src/userscript/03-agent-lifecycle/05-stopwatch-recovery.js",
+        "src/userscript/03-agent-lifecycle/12-last-waiting-timers.js",
         "src/userscript/03-agent-lifecycle/06-generation-stream-detection.js",
         "src/userscript/03-agent-lifecycle/07-generation-stream-sse.js",
         "src/userscript/03-agent-lifecycle/08-generation-request.js",
         "src/userscript/03-agent-lifecycle/09-network-install-api-transition.js",
         "src/userscript/03-agent-lifecycle/10-conversation-api-rate-limit.js",
-        "src/userscript/03-agent-lifecycle/11-network-api-transition-tail.js",
-        "src/userscript/03-agent-lifecycle/12-last-waiting-timers.js"
+        "src/userscript/03-agent-lifecycle/11-network-api-transition-tail.js"
       ]
     },
     {
