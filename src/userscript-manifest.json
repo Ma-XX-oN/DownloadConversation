@@ -18,14 +18,14 @@
     {
       "id": "chatgpt-web",
       "repository": "Ma-XX-oN/Chat-Gpt-Plugin-2",
-      "ref": "issue-1-chatgpt-agent-plugin",
-      "commit": "24fdd9ad5bd89568aafe3a123100ff37a45951d6",
-      "version": "0.1.0-issue.1.7",
+      "ref": "v0.1.0-issue.1.9",
+      "commit": "958a163a3d60be42c98b0197bf85202ff717384f",
+      "version": "0.1.0-issue.1.9",
       "api_version": 1,
       "path": "dist/chatgpt-plugin.mjs",
-      "url": "https://raw.githubusercontent.com/Ma-XX-oN/Chat-Gpt-Plugin-2/24fdd9ad5bd89568aafe3a123100ff37a45951d6/dist/chatgpt-plugin.mjs",
-      "git_blob_sha1": "bfe6cac52b5e0c3679c6ef985dff7043abd7ae29",
-      "byte_length": 50206
+      "url": "https://raw.githubusercontent.com/Ma-XX-oN/Chat-Gpt-Plugin-2/958a163a3d60be42c98b0197bf85202ff717384f/dist/chatgpt-plugin.mjs",
+      "git_blob_sha1": "f29805c7f8d0393f588aacf22661f667b11f8cfa",
+      "byte_length": 50204
     }
   ],
   "modules": [
