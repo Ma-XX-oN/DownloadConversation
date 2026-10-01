@@ -33,6 +33,7 @@
       "name": "runtime",
       "files": [
         "src/userscript/01-runtime/01-bootstrap.js",
+        "src/userscript/01-runtime/02-github-agent-plugin-broker.js",
         "src/userscript/01-runtime/02-shared-network-transition.js"
       ]
     },
