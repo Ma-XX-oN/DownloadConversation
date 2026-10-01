@@ -5,6 +5,7 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import {
   assembleUserscript,
+  buildAgentPluginPrelude,
   readDownloadConversationSource,
   readUserscriptHeader,
   readUserscriptManifest,
@@ -64,21 +65,7 @@ function sha256(bytes) {
   return createHash('sha256').update(bytes).digest('hex');
 }
 
-async function buildAgentPluginPrelude(agentPlugins) {
-  const entries = agentPlugins.map(plugin => {
-    const descriptor = {
-      id: plugin.id,
-      repository: plugin.repository,
-      ref: plugin.ref,
-      version: plugin.version,
-      api_version: plugin.api_version,
-      path: plugin.path,
-      git_blob_sha1: plugin.git_blob_sha1,
-      byte_length: plugin.byte_length
-    };
-    if (plugin.commit) descriptor.commit = plugin.commit;
-    return `    ${JSON.stringify(plugin.id)}: Object.freeze(${JSON.stringify(descriptor)})`;
-  });
+async function readAgentPluginPrelude(agentPlugins) {
   const broker = await readFile(
     path.join(root, 'src', 'userscript', '01-runtime', '02-github-agent-plugin-broker.js'),
     'utf8'
@@ -87,13 +74,7 @@ async function buildAgentPluginPrelude(agentPlugins) {
     path.join(root, 'src', 'userscript', '04-conversation-rendering', '08-agent-plugin-bridge.js'),
     'utf8'
   );
-  return '// BEGIN agent plugin descriptors\n'
-    + '  const DC_AGENT_PLUGIN_DESCRIPTORS = Object.freeze({\n'
-    + entries.join(',\n')
-    + '\n  });\n'
-    + '// END agent plugin descriptors\n'
-    + broker
-    + bridge;
+  return buildAgentPluginPrelude(agentPlugins, broker, bridge);
 }
 
 async function buildCompressorPrelude() {
@@ -159,7 +140,7 @@ async function main() {
   for (const dependency of manifest.dependencies) {
     dependencies.push(await fetchPinnedDependency(dependency));
   }
-  const agentPluginPrelude = await buildAgentPluginPrelude(manifest.agent_plugins);
+  const agentPluginPrelude = await readAgentPluginPrelude(manifest.agent_plugins);
   const compressorPrelude = await buildCompressorPrelude();
   const built = assembleUserscript(
     header,
