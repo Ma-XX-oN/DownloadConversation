@@ -58,6 +58,15 @@ test('same userscript provides a browser-authenticated GitHub broker without rep
   assert.doesNotMatch(brokerSource, /access[_-]?token/i);
 });
 
+test('shared broker constants required by the ChatGPT bridge are defined in runtime scope', () => {
+  assert.match(brokerSource,
+    /const AGENT_PLUGIN_CACHE_PREFIX = 'downloadconversation:agent-plugin-cache:';/);
+  assert.match(brokerSource,
+    /const AGENT_PLUGIN_BROKER_TIMEOUT_MS = 2 \* 60 \* 1000;/);
+  assert.match(bridgeSource, /AGENT_PLUGIN_CACHE_PREFIX/);
+  assert.match(bridgeSource, /AGENT_PLUGIN_BROKER_TIMEOUT_MS/);
+});
+
 test('ChatGPT runtime verifies broker bytes before Blob import and shares only verified source cache', () => {
   assert.match(bridgeSource, /GM_addValueChangeListener/);
   assert.match(bridgeSource, /GM_setValue/);
