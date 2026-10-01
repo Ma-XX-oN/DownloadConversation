@@ -64,29 +64,26 @@ function sha256(bytes) {
   return createHash('sha256').update(bytes).digest('hex');
 }
 
-async function buildAgentPluginPrelude(agentPlugins) {
-  const entries = [];
-  for (const plugin of agentPlugins) {
-    const { content } = await fetchPinnedDependency(plugin);
-    const embedded = {
+function buildAgentPluginPrelude(agentPlugins) {
+  const entries = agentPlugins.map(plugin => {
+    const descriptor = {
       id: plugin.id,
       repository: plugin.repository,
       ref: plugin.ref,
-      commit: plugin.commit,
       version: plugin.version,
       api_version: plugin.api_version,
       path: plugin.path,
       git_blob_sha1: plugin.git_blob_sha1,
-      byte_length: plugin.byte_length,
-      source_base64: Buffer.from(content, 'utf8').toString('base64')
+      byte_length: plugin.byte_length
     };
-    entries.push(`    ${JSON.stringify(plugin.id)}: Object.freeze(${JSON.stringify(embedded)})`);
-  }
-  return '// BEGIN embedded agent plugin artifacts\n'
-    + '  const DC_AGENT_PLUGIN_ARTIFACTS = Object.freeze({\n'
+    if (plugin.commit) descriptor.commit = plugin.commit;
+    return `    ${JSON.stringify(plugin.id)}: Object.freeze(${JSON.stringify(descriptor)})`;
+  });
+  return '// BEGIN agent plugin descriptors\n'
+    + '  const DC_AGENT_PLUGIN_DESCRIPTORS = Object.freeze({\n'
     + entries.join(',\n')
     + '\n  });\n'
-    + '// END embedded agent plugin artifacts\n';
+    + '// END agent plugin descriptors\n';
 }
 
 async function buildCompressorPrelude() {
@@ -152,7 +149,7 @@ async function main() {
   for (const dependency of manifest.dependencies) {
     dependencies.push(await fetchPinnedDependency(dependency));
   }
-  const agentPluginPrelude = await buildAgentPluginPrelude(manifest.agent_plugins);
+  const agentPluginPrelude = buildAgentPluginPrelude(manifest.agent_plugins);
   const compressorPrelude = await buildCompressorPrelude();
   const built = assembleUserscript(
     header,
