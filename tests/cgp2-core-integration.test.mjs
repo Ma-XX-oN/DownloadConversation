@@ -4,10 +4,7 @@ import test from 'node:test';
 import vm from 'node:vm';
 
 import { coreBundle } from './helpers/core-bundle.mjs';
-import {
-  chatGPTPluginArtifact,
-  chatGPTPluginPin
-} from './helpers/agent-plugin-pin.mjs';
+import { chatGPTPluginArtifact } from './helpers/agent-plugin-pin.mjs';
 
 const bridgeSource = await readFile(
   new URL('../src/userscript/04-conversation-rendering/08-agent-plugin-bridge.js', import.meta.url),
@@ -22,7 +19,8 @@ const coreContext = { URL };
 coreContext.globalThis = coreContext;
 vm.runInNewContext(coreBundle, coreContext, { filename: 'aiconversationcore.chatgpt.browser.js' });
 const core = coreContext.AIConversationCore;
-assert.equal(typeof core?.AgentPluginRegistry, 'function');
+assert.equal(typeof core?.loadAgent, 'function');
+assert.equal(typeof core?.getAgentPluginArtifact, 'function');
 assert.equal(typeof core?.adaptChatGPTRecords, 'function');
 assert.equal(typeof core?.renderCanonicalMarkdown, 'function');
 assert.equal(typeof core?.projectCanonicalConversation, 'function');
@@ -95,7 +93,7 @@ const contractPluginModule = {
           return {
             plugin: 'chatgpt-web',
             version: chatGPTPluginArtifact.version,
-            apiVersion: 1,
+            apiVersion: chatGPTPluginArtifact.apiVersion,
             ref: chatGPTPluginArtifact.ref
           };
         }
@@ -104,22 +102,27 @@ const contractPluginModule = {
   }
 };
 
-test('public descriptor identifies the exact verified issue-qualified CGP2 candidate', () => {
-  assert.equal(chatGPTPluginPin.ref, 'issue-1-chatgpt-agent-plugin');
-  assert.equal(chatGPTPluginPin.commit, '958a163a3d60be42c98b0197bf85202ff717384f');
-  assert.equal(chatGPTPluginPin.git_blob_sha1, 'f29805c7f8d0393f588aacf22661f667b11f8cfa');
-  assert.equal(chatGPTPluginPin.byte_length, 50204);
-  assert.equal(chatGPTPluginPin.version, '0.1.0-issue.1.9');
-  assert.equal(chatGPTPluginArtifact.api_version, 1);
+test('AICC owns the complete artifact identity used by DC transport', () => {
+  assert.equal(chatGPTPluginArtifact.id, 'chatgpt-web');
+  assert.equal(chatGPTPluginArtifact.ref, 'main');
+  assert.match(chatGPTPluginArtifact.commit, /^[0-9a-f]{40}$/);
+  assert.match(chatGPTPluginArtifact.gitBlobSha1, /^[0-9a-f]{40}$/);
+  assert.ok(Number.isSafeInteger(chatGPTPluginArtifact.byteLength));
+  assert.equal(chatGPTPluginArtifact.apiVersion, 1);
   assert.equal(Object.hasOwn(chatGPTPluginArtifact, 'source_base64'), false);
 });
 
-test('Core-owned registered-agent session replaces complete persisted inventories', () => {
-  const registry = new core.AgentPluginRegistry({ apiVersion: chatGPTPluginArtifact.api_version });
-  registry.registerModule(contractPluginModule);
-  const agent = registry.create('chatgpt-web', { ref: chatGPTPluginArtifact.ref });
-  const session = registry.session(agent);
-  assert.ok(session, 'Core did not retain a canonical session for the registered agent.');
+test('Core loadAgent owns registration and complete persisted-inventory replacement', async () => {
+  let transported = null;
+  const loaded = await core.loadAgent('chatgpt-web', {
+    async loadModule(artifact) {
+      transported = artifact;
+      return contractPluginModule;
+    }
+  });
+  assert.deepEqual(plain(transported), plain(chatGPTPluginArtifact));
+  const { agent, session } = loaded;
+  assert.ok(session, 'Core did not retain a canonical session for the loaded agent.');
 
   const first = [
     textRecord('u1', 'user', 'Question'),
@@ -130,36 +133,27 @@ test('Core-owned registered-agent session replaces complete persisted inventorie
     textRecord('a9', 'assistant', 'Replacement answer')
   ];
   agent.commTraffic({ type: 'persisted_records', records: first });
-  assert.deepEqual(
-    plain(session.events),
-    plain(first.map(contractEvent))
-  );
+  assert.deepEqual(plain(session.events), plain(first.map(contractEvent)));
   agent.commTraffic({ type: 'persisted_records', records: second });
-  assert.deepEqual(
-    plain(session.events),
-    plain(second.map(contractEvent))
-  );
+  assert.deepEqual(plain(session.events), plain(second.map(contractEvent)));
   assert.deepEqual(
     plain(session.events.map(event => event.source_record_id)),
     ['u9', 'a9'],
     'Events from the previous complete provider inventory must not survive replacement.'
   );
-
-  const identity = agent.version();
-  assert.equal(identity.plugin, 'chatgpt-web');
-  assert.equal(identity.version, chatGPTPluginArtifact.version);
-  assert.equal(identity.ref, chatGPTPluginArtifact.ref);
 });
 
-test('DC production bridge has no direct adapter fallback and all canonical entry points await plugin readiness', () => {
+test('DC production bridge delegates agent orchestration to AICC with no direct adapter fallback', () => {
   assert.doesNotMatch(bridgeSource, /adaptChatGPTRecords/,
     'Production bridge must not call the legacy Core ChatGPT adapter.');
+  assert.match(bridgeSource, /await core\.loadAgent\('chatgpt-web'/);
+  assert.doesNotMatch(bridgeSource, /new core\.AgentPluginRegistry/);
+  assert.doesNotMatch(bridgeSource, /\.registerModule\(/);
   assert.match(bridgeSource,
     /canonicalEventsBySourceRecord = function canonicalEventsBySourceRecordViaAgent/);
   assert.match(bridgeSource,
     /canonicalImageResourcesByRecordAndPart = function canonicalImageResourcesViaAgent/);
   assert.match(bridgeSource, /chatGPTAgent\.commTraffic\(\{ type: 'persisted_records', records \}\)/);
-  assert.match(bridgeSource, /chatGPTPluginRegistry\.session\(chatGPTAgent\)/);
   assert.doesNotMatch(bridgeSource, /fallback/i,
     'Production registered-agent bridge must not introduce an implicit fallback path.');
   assert.match(readinessSource, /await ensureChatGPTCanonicalAgent\(\)/);
@@ -170,7 +164,7 @@ test('DC production bridge has no direct adapter fallback and all canonical entr
 
 test('cache miss opens the GitHub broker before its first asynchronous wait and failures are visible', () => {
   const loadStart = bridgeSource.indexOf('  async function loadAgentPlugin(descriptor) {');
-  const loadEnd = bridgeSource.indexOf('\n  /**\n   * Imports and registers', loadStart);
+  const loadEnd = bridgeSource.indexOf('\n  /**\n   * Imports one AICC-selected ESM artifact', loadStart);
   assert.ok(loadStart >= 0 && loadEnd > loadStart,
     'Could not isolate the production plugin loading function.');
   const loadSource = bridgeSource.slice(loadStart, loadEnd);
