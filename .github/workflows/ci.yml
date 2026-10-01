@@ -26,6 +26,17 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: '3.13'
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - name: Verify main integration guard regression
+        run: node --test tests/integration/main-integration-guard.test.mjs
+      - name: Enforce main integration pre-merge contract
+        if: github.event_name == 'pull_request'
+        run: >-
+          node scripts/check-main-integration-pr.mjs
+          --base "${{ github.base_ref }}"
+          --head "${{ github.head_ref }}"
       - name: Enforce repository automation policy
         run: python RepoWorkflow/repo_workflow.py repository-policy
       - name: Enforce branch policy
@@ -146,7 +157,7 @@ jobs:
           submodules: recursive
       - uses: actions/setup-python@v5
         with:
-          python-version: ${{ matrix.pythonVersion }}
+          python-version: '3.13'
       - uses: actions/setup-dotnet@v4
         if: matrix.dotnetVersion != ''
         with:
