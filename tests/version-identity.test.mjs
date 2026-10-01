@@ -16,9 +16,9 @@ const OLD_CORE_COMMIT = '1b531a1c92adfa1695db8c644159054e013f0a72';
 const CORE_COMMIT = '488a2f633910b7ad26e8a89d0e6621d9961f785a';
 const CORE_BLOB_SHA1 = 'fcd0fc12c7220257d813c7c0c893426d08437f06';
 const CORE_VERSION = '1.1.0-issue.104.8';
-const PLUGIN_COMMIT = '24fdd9ad5bd89568aafe3a123100ff37a45951d6';
-const PLUGIN_BLOB_SHA1 = 'bfe6cac52b5e0c3679c6ef985dff7043abd7ae29';
-const PLUGIN_VERSION = '0.1.0-issue.1.7';
+const PLUGIN_COMMIT = '958a163a3d60be42c98b0197bf85202ff717384f';
+const PLUGIN_BLOB_SHA1 = 'f29805c7f8d0393f588aacf22661f667b11f8cfa';
+const PLUGIN_VERSION = '0.1.0-issue.1.9';
 
 test('DownloadConversation keeps one caller-version authority in userscript metadata and shows it at the top of general status', () => {
   const metadataVersion = userscript.match(/^\/\/ @version\s+(\S+)$/m);
@@ -50,8 +50,10 @@ test('build manifest is the issue-qualified Core and ChatGPT plugin pin authorit
     new RegExp(`^// BEGIN bundled AIConversationCore commit=${CORE_COMMIT} blob=${CORE_BLOB_SHA1}$`, 'm'),
     'Generated userscript must record the exact build-time Core commit and blob provenance.'
   );
-  assert.match(userscript, /\/\/ BEGIN embedded agent plugin artifacts/,
-    'Generated userscript must contain the verified ChatGPT plugin artifact table.');
+  assert.match(userscript, /\/\/ BEGIN agent plugin descriptors/,
+    'Generated userscript must contain the verified ChatGPT plugin descriptor table.');
+  assert.doesNotMatch(userscript, /source_base64/,
+    'Public generated userscript must not embed provider source bytes.');
 
   const pinnedConsumers = [
     ['CI environment', ciEnvironment],
