@@ -31,8 +31,8 @@ async function main() {
   if (!Array.isArray(manifest.dependencies) || manifest.dependencies.length === 0) {
     fail('Manifest must declare at least one dependency.');
   }
-  if (!Array.isArray(manifest.agent_plugins) || manifest.agent_plugins.length === 0) {
-    fail('Manifest must declare at least one agent plugin.');
+  if (Object.hasOwn(manifest, 'agent_plugins')) {
+    fail('DownloadConversation manifest must not declare provider agent plugins.');
   }
   if (!Array.isArray(manifest.modules) || manifest.modules.length === 0) {
     fail('Manifest must declare at least one source module.');
@@ -125,47 +125,6 @@ async function main() {
     fail('Generated userscript does not preserve the DC IIFE boundary.');
   }
 
-  const descriptorStartMarker = '// BEGIN agent plugin descriptors\n';
-  const descriptorEndMarker = '// END agent plugin descriptors\n';
-  const descriptorStart = artifactTail.indexOf(descriptorStartMarker, iifePrefix.length);
-  if (descriptorStart !== iifePrefix.length) {
-    fail('Generated agent plugin descriptor table is not scoped first inside the DC IIFE.');
-  }
-  const descriptorEnd = artifactTail.indexOf(descriptorEndMarker, descriptorStart);
-  if (descriptorEnd < 0) fail('Generated agent plugin descriptor table closing banner is missing.');
-  const descriptorPrelude = artifactTail.slice(
-    descriptorStart,
-    descriptorEnd + descriptorEndMarker.length
-  );
-  const descriptorSandbox = {};
-  vm.runInNewContext(
-    descriptorPrelude.replace(
-      '  const DC_AGENT_PLUGIN_DESCRIPTORS =',
-      'globalThis.DC_AGENT_PLUGIN_DESCRIPTORS ='
-    ),
-    descriptorSandbox,
-    { filename: 'agent-plugin-descriptors.js' }
-  );
-  const descriptors = descriptorSandbox.DC_AGENT_PLUGIN_DESCRIPTORS;
-  if (!descriptors || typeof descriptors !== 'object') {
-    fail('Generated agent plugin descriptor table is not evaluable.');
-  }
-  for (const plugin of manifest.agent_plugins) {
-    const descriptor = descriptors[plugin.id];
-    if (!descriptor) fail(`Agent plugin descriptor ${plugin.id} is missing.`);
-    for (const field of [
-      'id', 'repository', 'ref', 'commit', 'version', 'api_version', 'path',
-      'git_blob_sha1', 'byte_length'
-    ]) {
-      if (descriptor[field] !== plugin[field]) {
-        fail(`Agent plugin descriptor ${plugin.id} ${field} differs from manifest.`);
-      }
-    }
-    if (Object.hasOwn(descriptor, 'source_base64')) {
-      fail(`Agent plugin descriptor ${plugin.id} must not embed provider source bytes.`);
-    }
-  }
-
   const broker = await readFile(
     path.join(root, 'src/userscript/01-runtime/02-github-agent-plugin-broker.js'),
     'utf8'
@@ -174,22 +133,22 @@ async function main() {
     path.join(root, 'src/userscript/04-conversation-rendering/08-agent-plugin-bridge.js'),
     'utf8'
   );
-  const descriptorEndOffset = descriptorEnd + descriptorEndMarker.length;
   const brokerText = broker.toString('utf8');
   const bridgeText = bridge.toString('utf8');
-  if (!artifactTail.startsWith(brokerText, descriptorEndOffset)) {
-    fail('Generated browser plugin broker differs from repository source.');
+  const brokerOffset = iifePrefix.length;
+  if (!artifactTail.startsWith(brokerText, brokerOffset)) {
+    fail('Generated generic browser plugin broker differs from repository source.');
   }
-  const bridgeOffset = descriptorEndOffset + brokerText.length;
+  const bridgeOffset = brokerOffset + brokerText.length;
   if (!artifactTail.startsWith(bridgeText, bridgeOffset)) {
-    fail('Generated plugin bridge differs from repository source.');
+    fail('Generated generic Core agent bridge differs from repository source.');
   }
 
   const compressorStartMarker = '// BEGIN bundled compressor name=';
   const compressorExpectedOffset = bridgeOffset + bridgeText.length;
   const compressorStart = artifactTail.indexOf(compressorStartMarker, compressorExpectedOffset);
   if (compressorStart !== compressorExpectedOffset) {
-    fail('Generated compressor runtime does not immediately follow the plugin runtime prelude.');
+    fail('Generated compressor runtime does not immediately follow the generic plugin runtime prelude.');
   }
   const compressorEndMarker = '// END bundled compressor\n';
   const compressorEnd = artifactTail.indexOf(compressorEndMarker, compressorStart);
@@ -213,18 +172,20 @@ async function main() {
   }
 
   const expectedTail = iifePrefix
-    + descriptorPrelude
     + brokerText
     + bridgeText
     + compressorPrelude
     + sourceBody;
   if (artifactTail !== expectedTail) {
-    fail('Generated userscript plugin/compressor/source assembly differs from repository source.');
+    fail('Generated userscript generic-plugin/compressor/source assembly differs from repository source.');
   }
   if (artifact.length >= 2 * 1024 * 1024) {
     fail(`Generated userscript unexpectedly exceeds 2 MiB: ${artifact.length} bytes.`);
   }
   const artifactText = artifact.toString('utf8');
+  if (/DC_AGENT_PLUGIN_DESCRIPTORS/.test(artifactText)) {
+    fail('Generated userscript contains a DownloadConversation-owned provider descriptor table.');
+  }
   if (/source_base64/.test(artifactText)) {
     fail('Generated userscript contains embedded provider source bytes.');
   }
