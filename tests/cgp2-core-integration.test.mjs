@@ -140,7 +140,7 @@ test('Core-owned registered-agent session replaces complete persisted inventorie
     plain(second.map(contractEvent))
   );
   assert.deepEqual(
-    session.events.map(event => event.source_record_id),
+    plain(session.events.map(event => event.source_record_id)),
     ['u9', 'a9'],
     'Events from the previous complete provider inventory must not survive replacement.'
   );
