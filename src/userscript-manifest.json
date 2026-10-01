@@ -53,7 +53,8 @@
         "src/userscript/03-agent-lifecycle/08-generation-request.js",
         "src/userscript/03-agent-lifecycle/09-network-install-api-transition.js",
         "src/userscript/03-agent-lifecycle/10-conversation-api-rate-limit.js",
-        "src/userscript/03-agent-lifecycle/11-network-api-transition-tail.js"
+        "src/userscript/03-agent-lifecycle/11-network-api-transition-tail.js",
+        "src/userscript/03-agent-lifecycle/12-last-waiting-timers.js"
       ]
     },
     {
