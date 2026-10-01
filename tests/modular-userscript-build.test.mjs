@@ -19,13 +19,9 @@ const root = path.resolve(
   '..'
 );
 const CORE_COMMIT =
-  '488a2f633910b7ad26e8a89d0e6621d9961f785a';
+  '9e18441a1f68a1cac5ebb6e20dead945dd36d7dd';
 const CORE_BLOB =
-  'fcd0fc12c7220257d813c7c0c893426d08437f06';
-const PLUGIN_COMMIT =
-  '958a163a3d60be42c98b0197bf85202ff717384f';
-const PLUGIN_BLOB =
-  'f29805c7f8d0393f588aacf22661f667b11f8cfa';
+  '47efb4f379f5bb27ae710a53d1cb84388aeeb1a2';
 const LEGACY_BLOB =
   '44a4ab373a6515caed5527aeb19cbdff7ce91e07';
 const MIGRATION_SNAPSHOT_COMMIT =
@@ -127,16 +123,16 @@ test(
 );
 
 test(
-  'AIConversationCore build dependency uses exact issue-qualified pinned identity',
+  'AIConversationCore build dependency pins the exact current main head artifact',
   async () => {
     const manifest = await readUserscriptManifest(root);
     assert.equal(manifest.dependencies.length, 1);
     const [dependency] = manifest.dependencies;
     assert.equal(dependency.name, 'AIConversationCore');
-    assert.equal(dependency.ref, 'v1.1.0-issue.104.8');
+    assert.equal(dependency.ref, 'main');
     assert.equal(dependency.commit, CORE_COMMIT);
     assert.equal(dependency.git_blob_sha1, CORE_BLOB);
-    assert.equal(dependency.byte_length, 279239);
+    assert.equal(dependency.byte_length, 282178);
     assert.equal(
       dependency.repository,
       'Ma-XX-oN/AIConversationCore'
@@ -150,21 +146,11 @@ test(
 );
 
 test(
-  'ChatGPT agent plugin selector preserves symbolic ref plus exact verified bytes',
+  'DownloadConversation manifest contains no provider-plugin selector',
   async () => {
     const manifest = await readUserscriptManifest(root);
-    assert.equal(manifest.agent_plugins.length, 1);
-    const [plugin] = manifest.agent_plugins;
-    assert.equal(plugin.id, 'chatgpt-web');
-    assert.equal(plugin.repository, 'Ma-XX-oN/Chat-Gpt-Plugin-2');
-    assert.equal(plugin.ref, 'issue-1-chatgpt-agent-plugin');
-    assert.equal(plugin.commit, PLUGIN_COMMIT);
-    assert.equal(plugin.version, '0.1.0-issue.1.9');
-    assert.equal(plugin.api_version, 1);
-    assert.equal(plugin.path, 'dist/chatgpt-plugin.mjs');
-    assert.equal(plugin.git_blob_sha1, PLUGIN_BLOB);
-    assert.equal(plugin.byte_length, 50204);
-    assert.ok(plugin.url.includes(`/${PLUGIN_COMMIT}/`));
+    assert.equal(Object.hasOwn(manifest, 'agent_plugins'), false);
+    assert.doesNotMatch(JSON.stringify(manifest), /Chat-Gpt-Plugin-2/);
   }
 );
 
