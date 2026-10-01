@@ -6,6 +6,8 @@ import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import test from 'node:test';
 
+await import('./integration/main-integration-guard.test.mjs');
+
 const guardPath = fileURLToPath(new URL('../scripts/check-development-version.mjs', import.meta.url));
 const ciEnvironment = await readFile(new URL('../scripts/ci-environment.mjs', import.meta.url), 'utf8');
 
@@ -85,7 +87,7 @@ test('requires exactly one userscript @version metadata entry', async () => {
     source: userscript(['1.5.0-issue.148.3', '1.5.0-issue.148.4'])
   });
   assert.notEqual(duplicate.status, 0);
-  assert.match(duplicate.stderr, /Expected exactly one userscript @version entry, found 2/);
+  assert.match(result.stderr, /Expected exactly one userscript @version entry, found 2/);
 });
 
 test('main requires a plain stable version and rejects issue-qualified versions', async () => {
