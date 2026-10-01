@@ -3,6 +3,8 @@
   const AGENT_PLUGIN_REQUEST_KEY = 'downloadconversation:agent-plugin-request';
   /** Shared Tampermonkey storage prefix for one private-plugin broker response. */
   const AGENT_PLUGIN_RESPONSE_PREFIX = 'downloadconversation:agent-plugin-response:';
+  /** Shared Tampermonkey storage prefix for GitHub-side broker progress diagnostics. */
+  const AGENT_PLUGIN_TRACE_PREFIX = 'downloadconversation:agent-plugin-trace:';
   /** Shared Tampermonkey storage prefix for verified plugin source cache entries. */
   const AGENT_PLUGIN_CACHE_PREFIX = 'downloadconversation:agent-plugin-cache:';
   /** Maximum age accepted for a browser-broker request. */
@@ -43,8 +45,30 @@
   }
 
   /**
+   * Publishes one GitHub-side broker progress event to shared userscript storage.
+   * This carries only stage metadata; plugin source and GitHub credentials are
+   * never included in diagnostic events.
+   *
+   * @param {Object} request - Active broker request.
+   * @param {string} stage - Stable broker progress stage.
+   * @param {Object} [detail={}] - Non-sensitive diagnostic detail.
+   * @returns {void} No value is returned.
+   */
+  function publishGitHubAgentPluginTrace(request, stage, detail = {}) {
+    if (!request || typeof request.request_id !== 'string') return;
+    GM_setValue(`${AGENT_PLUGIN_TRACE_PREFIX}${request.request_id}`, {
+      request_id: request.request_id,
+      stage,
+      at: Date.now(),
+      ...detail
+    });
+  }
+
+  /**
    * Reads GitHub's read-only code textarea once the file view has rendered.
    * The textarea value is the browser-decoded file text, not HTML markup.
+   * DOM wrappers can cross userscript/page realms, so this deliberately avoids
+   * realm-sensitive `instanceof HTMLTextAreaElement` checks.
    *
    * @returns {string|null} Current file source, or null until GitHub renders it.
    */
@@ -52,7 +76,8 @@
     const textarea = document.querySelector(
       'textarea[data-testid="read-only-cursor-text-area"][aria-label="file content"]'
     );
-    if (!(textarea instanceof HTMLTextAreaElement)) return null;
+    if (!textarea || String(textarea.tagName ?? '').toUpperCase() !== 'TEXTAREA'
+        || typeof textarea.value !== 'string') return null;
     return textarea.value.length ? textarea.value : null;
   }
 
@@ -125,8 +150,14 @@
     if (!Number.isFinite(age) || age < 0 || age > AGENT_PLUGIN_REQUEST_MAX_AGE_MS) return;
 
     const responseKey = `${AGENT_PLUGIN_RESPONSE_PREFIX}${request.request_id}`;
+    publishGitHubAgentPluginTrace(request, 'request-accepted', {
+      pathname: location.pathname
+    });
     try {
       if (!githubAgentPluginPageMatches(descriptor)) {
+        publishGitHubAgentPluginTrace(request, 'wrong-file-page', {
+          pathname: location.pathname
+        });
         GM_setValue(responseKey, {
           request_id: request.request_id,
           ok: false,
@@ -134,19 +165,26 @@
         });
         return;
       }
+      publishGitHubAgentPluginTrace(request, 'waiting-for-file-content');
       const source = await waitForGitHubAgentPluginSource();
+      publishGitHubAgentPluginTrace(request, 'file-content-read', {
+        character_length: source.length
+      });
       GM_setValue(responseKey, {
         request_id: request.request_id,
         ok: true,
         source
       });
+      publishGitHubAgentPluginTrace(request, 'response-published');
     } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      publishGitHubAgentPluginTrace(request, 'file-view-error', { message });
       GM_setValue(responseKey, {
         request_id: request.request_id,
         ok: false,
         status: null,
         reason: 'FILE_VIEW_ERROR',
-        message: error instanceof Error ? error.message : String(error)
+        message
       });
     }
   }
