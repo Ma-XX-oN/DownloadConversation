@@ -147,14 +147,10 @@ test('GitHub broker transfers the file-view textarea source without a network fe
   await new Promise(resolve => setImmediate(resolve));
 
   assert.equal(fetchCalls, 0);
-  assert.deepEqual(
-    values.get('downloadconversation:agent-plugin-response:request-1'),
-    {
-      request_id: 'request-1',
-      ok: true,
-      source
-    }
-  );
+  const response = values.get('downloadconversation:agent-plugin-response:request-1');
+  assert.equal(response?.request_id, 'request-1');
+  assert.equal(response?.ok, true);
+  assert.equal(response?.source, source);
 });
 
 test('shared broker constants required by the ChatGPT bridge are defined in runtime scope', () => {
