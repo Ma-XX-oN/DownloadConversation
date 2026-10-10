@@ -186,7 +186,7 @@ test('reload redraws the recovered five-minute step rather than zero', async () 
     ok: true,
     async json() { return { conversation_id: 'conversation-A' }; }
   });
-  assert.deepEqual(events, [
+  assert.deepEqual(JSON.parse(JSON.stringify(events)), [
     ['recovered', true],
     ['favicon', 'IS_STREAMING', 2]
   ]);
@@ -226,7 +226,7 @@ test('completed reload preserves the final elapsed step without restarting', asy
     ok: true,
     async json() { return { conversation_id: 'conversation-A' }; }
   });
-  assert.deepEqual(events, [
+  assert.deepEqual(JSON.parse(JSON.stringify(events)), [
     ['recovered', false],
     ['render', 'completed', 2]
   ]);
