@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         ChatGPT Conversation Markdown Recorder
 // @namespace    https://chatgpt.com/
-// @version      1.10.2-issue.197.2
+// @version      1.10.2-issue.197.3
 // @description  Exports the current ChatGPT conversation directly from the Conversation API as Markdown or JSONL.
 // @match        https://chatgpt.com/*
 // @match        https://chat.openai.com/*
@@ -10097,6 +10097,53 @@ globalThis.__dcCompressor = {
       ...item
     });
   }
+
+  /** Current authoritative Agent lifecycle state, distinct from timing state. */
+  let agentLifecycleState = 'unknown';
+  /** Sequence allocated only when authoritative Agent state changes. */
+  let agentLifecycleTransitionSequence = 0;
+  /** Correlation identifier for the latest authoritative Agent transition. */
+  let agentLifecycleTransitionId = null;
+
+  /**
+   * Records one authoritative Agent state transition, suppressing unchanged states.
+   *
+   * @param {string} nextState - Newly observed authoritative state.
+   * @param {Object} details - Conversation and exchange correlation details.
+   * @returns {number|null} Transition identifier, or null before first change.
+   */
+  function agentLifecycleTransition(nextState, details = {}) {
+    if (agentLifecycleState === nextState) return agentLifecycleTransitionId;
+    const previousState = agentLifecycleState;
+    agentLifecycleState = nextState;
+    agentLifecycleTransitionId = ++agentLifecycleTransitionSequence;
+    logDiagnostic('lifecycle', 'agent-lifecycle-state-changed', {
+      transition_id: agentLifecycleTransitionId,
+      previous_state: previousState,
+      state: nextState,
+      ...details
+    });
+    return agentLifecycleTransitionId;
+  }
+
+  /**
+   * Records one actual consumer action for its initiating transition.
+   *
+   * @param {string} component - Consumer name.
+   * @param {string} action - Attempt or completed action outcome.
+   * @param {Object} details - Associated action metadata.
+   * @param {number|null} transitionId - Initiating transition identifier.
+   * @returns {void} No value is returned.
+   */
+  function agentLifecycleAction(component, action, details = {}, transitionId = agentLifecycleTransitionId) {
+    logDiagnostic('lifecycle', 'agent-lifecycle-action', {
+      transition_id: transitionId,
+      component,
+      action,
+      ...details
+    });
+  }
+
   /** Shared listeners for authoritative Agent timing transitions. */
   const agentTimingListeners = new Set();
   /** Monotonic timestamp of the newest Assistant message received from the stream. */
@@ -12933,34 +12980,6 @@ globalThis.__dcCompressor = {
     };
 
     if (!response.ok) {
-  /** Lifecycle transitions and consumer outcomes are retained at every diagnostic level. */
-  let agentLifecycleState = 'unknown';
-  let agentLifecycleTransitionSequence = 0;
-  let agentLifecycleTransitionId = null;
-
-  function agentLifecycleTransition(nextState, details = {}) {
-    if (agentLifecycleState === nextState) return agentLifecycleTransitionId;
-    const previousState = agentLifecycleState;
-    agentLifecycleState = nextState;
-    agentLifecycleTransitionId = ++agentLifecycleTransitionSequence;
-    logDiagnostic('lifecycle', 'agent-lifecycle-state-changed', {
-      transition_id: agentLifecycleTransitionId,
-      previous_state: previousState,
-      state: nextState,
-      ...details
-    });
-    return agentLifecycleTransitionId;
-  }
-
-  /** Records a consumer action against the transition that initiated it. */
-  function agentLifecycleAction(component, action, details = {}, transitionId = agentLifecycleTransitionId) {
-    logDiagnostic('lifecycle', 'agent-lifecycle-action', {
-      transition_id: transitionId,
-      component,
-      action,
-      ...details
-    });
-  }
       let bodyPreview = '';
       try {
         bodyPreview = boundedDiagnosticText(await response.clone().text());
@@ -17809,7 +17828,8 @@ Image elapsed: ${formatDuration(imageElapsed)} — Completed: ${imageCompleted}/
    * @returns {boolean} `true` when `diagnosticEnabled` succeeds or its predicate is satisfied; otherwise `false`.
    */
   function diagnosticEnabled(level) {
-    return (DIAGNOSTIC_LEVELS[level] ?? 0) <= (DIAGNOSTIC_LEVELS[diagnosticsLevel] ?? 0);
+    return level === 'lifecycle' ||
+      (DIAGNOSTIC_LEVELS[level] ?? 0) <= (DIAGNOSTIC_LEVELS[diagnosticsLevel] ?? 0);
   }
 
   /**
@@ -19961,7 +19981,7 @@ Image elapsed: ${formatDuration(imageElapsed)} — Completed: ${imageCompleted}/
    */
   function logDiagnostic(level, message, data = null) {
     logConsoleDiagnostic(level, `[ChatGPT Recorder ${level}] ${message}`, data);
-    if (level !== 'lifecycle' && !diagnosticEnabled(level)) return;
+    if (!diagnosticEnabled(level)) return;
     const safeData = redactDiagnosticSignedTokens(data);
     const entry = {
       timestamp: new Date().toISOString(),
