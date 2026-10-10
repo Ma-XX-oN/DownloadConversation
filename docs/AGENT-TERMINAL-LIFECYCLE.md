@@ -74,3 +74,17 @@ The watcher must not:
 - create consumer-specific terminal observers.
 
 These invariants are covered by `tests/agent-terminal-conversation-turn-complete.test.mjs` together with the existing shared-terminal, sound, stopwatch, favicon, polling-timeout, and stream integration regressions.
+
+## Retained lifecycle audit
+
+A genuine state transition is recorded as `agent-lifecycle-state-changed` with a
+monotonic transition identifier and the previous/new state. The stopwatch,
+flower/favicon, and sound consumers record their actual outcomes as
+`agent-lifecycle-action`, using that transition identifier. Favicon rendering
+records a request and then an applied, failed, or superseded outcome; an
+asynchronous request is not treated as applied merely because it was issued.
+Lifecycle records are retained independently of the user-selected diagnostic
+severity threshold, subject to the existing bounded diagnostic-log retention.
+Repeated observations of the same state do not create duplicate transitions.
+The audit records actions; it does not infer consistency or introduce another
+provider-state detector.
