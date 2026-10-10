@@ -128,7 +128,7 @@ test(
     assert.equal(dependency.name, 'AIConversationCore');
     assert.equal(dependency.commit, CORE_COMMIT);
     assert.equal(dependency.git_blob_sha1, CORE_BLOB);
-    assert.equal(dependency.byte_length, 265877);
+    assert.equal(dependency.byte_length, 282178);
     assert.equal(
       dependency.repository,
       'Ma-XX-oN/AIConversationCore'
