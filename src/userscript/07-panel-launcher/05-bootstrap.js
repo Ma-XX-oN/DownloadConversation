@@ -178,7 +178,9 @@
   }
   communicationLogInitializationPromise = initializeCommunicationDiskRecorder();
   installLiveTailTracking();
+  /** Persisted scalar volume present when the userscript was initialized. */
   const initialSoundVolume = localStorage.getItem(AGENT_SOUND_VOLUME_STORAGE_KEY);
+  /** Legacy boolean setting used only when no explicit volume was saved. */
   const legacySoundPreference = localStorage.getItem(LEGACY_AGENT_SOUNDS_STORAGE_KEY);
   logDiagnostic('lifecycle', 'agent-sound-volume-initialized', {
     volume: agentSoundVolume,
