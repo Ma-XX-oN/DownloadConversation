@@ -7,6 +7,9 @@ function lifecycleHarness() {
   const context = { rendered: [] };
   vm.runInNewContext(`
     let agentFaviconProcessingObserved = false;
+    let agentFaviconRingRenderedStep = 0;
+    let agentStopwatchState = null;
+    function agentFaviconRingStep() { return 0; }
     function agentFaviconRenderState(state) { this.rendered.push(state); return Promise.resolve(true); }
     ${productionFunctionSource('agentStopwatchStreamIsActive')}
     ${productionFunctionSource('agentFaviconObserveProcessing')}
@@ -102,6 +105,7 @@ function renderHarness() {
     document,
     Image: FakeImage,
     Uint8ClampedArray,
+    performance: { now: () => 0 },
     queueMicrotask,
     imageSources,
     renderedUrls,
@@ -113,11 +117,15 @@ function renderHarness() {
     const AGENT_FAVICON_ERROR_RGB = Object.freeze([255, 0, 0]);
     const agentFaviconOriginalSources = new Map();
     let agentFaviconRenderGeneration = 0;
+    let agentStopwatchState = null;
     function logDiagnostic(level, name, details) { this.diagnostics.push({ level, name, details }); }
     ${productionFunctionSource('errorMessage')}
     ${productionFunctionSource('agentFaviconCurrentCandidates')}
     ${productionFunctionSource('agentFaviconRecolorPixels')}
     ${productionFunctionSource('agentFaviconRenderCandidate')}
+    ${productionFunctionSource('agentFaviconRingStep')}
+    ${productionFunctionSource('agentFaviconRingColor')}
+    ${productionFunctionSource('agentFaviconDrawRing')}
     ${productionFunctionSource('agentFaviconRenderState')}
     this.api = {
       render: agentFaviconRenderState,

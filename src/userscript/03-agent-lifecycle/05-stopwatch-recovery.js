@@ -116,14 +116,13 @@
     if (!recovery.ready || agentStopwatchState) return;
 
     const streamStatus = await agentStopwatchFetchStreamStatus(conversationId);
-    agentFaviconObserveStreamStatus(streamStatus);
     if (agentStopwatchState) return;
-    agentStopwatchApplyRecovery(
-      recovery,
-      agentStopwatchStreamIsActive(streamStatus),
-      Date.now(),
-      performance.now()
-    );
+    const isStreaming = agentStopwatchStreamIsActive(streamStatus);
+    agentStopwatchApplyRecovery(recovery, isStreaming, Date.now(), performance.now());
+    // Recovery must establish the canonical stopwatch clock BEFORE favicon projection.
+    // Otherwise the reload favicon is initially drawn at zero elapsed time.
+    if (isStreaming) agentFaviconObserveStreamStatus(streamStatus);
+    else if (recovery.final_message) void agentFaviconRenderState('completed');
   }
 
   /**

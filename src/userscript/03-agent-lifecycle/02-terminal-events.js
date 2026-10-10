@@ -345,6 +345,17 @@
           const pixels = context.getImageData(0, 0, width, height);
           const changed = agentFaviconRecolorPixels(pixels.data, targetRgb);
           context.putImageData(pixels, 0, 0);
+          const ringStep = state === 'processing' || state === 'completed'
+            ? agentFaviconRingStep() : 0;
+          if (ringStep > 0) {
+            context.globalCompositeOperation = 'destination-over';
+            try {
+              agentFaviconDrawPieSlice(context, width, height, ringStep);
+            } finally {
+              context.globalCompositeOperation = 'source-over';
+            }
+            agentFaviconDrawRing(context, width, height, ringStep);
+          }
           if (generation !== agentFaviconRenderGeneration) {
             resolve({ applied: false, stale: true, recolored_pixels: changed, width, height });
             return;

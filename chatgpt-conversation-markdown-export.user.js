@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         ChatGPT Conversation Markdown Recorder
 // @namespace    https://chatgpt.com/
-// @version      1.11.1
+// @version      1.11.2-issue.174.2
 // @description  Exports the current ChatGPT conversation directly from the Conversation API as Markdown or JSONL.
 // @match        https://chatgpt.com/*
 // @match        https://chat.openai.com/*
@@ -12116,6 +12116,17 @@ globalThis.__dcCompressor = {
           const pixels = context.getImageData(0, 0, width, height);
           const changed = agentFaviconRecolorPixels(pixels.data, targetRgb);
           context.putImageData(pixels, 0, 0);
+          const ringStep = state === 'processing' || state === 'completed'
+            ? agentFaviconRingStep() : 0;
+          if (ringStep > 0) {
+            context.globalCompositeOperation = 'destination-over';
+            try {
+              agentFaviconDrawPieSlice(context, width, height, ringStep);
+            } finally {
+              context.globalCompositeOperation = 'source-over';
+            }
+            agentFaviconDrawRing(context, width, height, ringStep);
+          }
           if (generation !== agentFaviconRenderGeneration) {
             resolve({ applied: false, stale: true, recolored_pixels: changed, width, height });
             return;
@@ -12155,11 +12166,94 @@ globalThis.__dcCompressor = {
     });
   }
 
+  /** Five-minute thresholds comprising one thirty-minute Agent working interval. */
+  const AGENT_FAVICON_RING_STEP_MS = 5 * 60 * 1000;
+  /** The last projected progress step; reset whenever processing begins again. */
+  let agentFaviconRingRenderedStep = 0;
+
   /**
-   * Renders one Agent favicon state across every stock favicon candidate the browser may select.
+   * Derives the step from the stopwatch.
+   *
+   * @param {number} nowMs - Monotonic current time.
+   * @returns {number} Clamped step from zero through six.
+   */
+  function agentFaviconRingStep(nowMs = performance.now()) {
+    if (!agentStopwatchState || !Number.isFinite(agentStopwatchState.started_at_ms)) return 0;
+    const elapsed = agentStopwatchState.active
+      ? Math.max(0, nowMs - agentStopwatchState.started_at_ms)
+      : Math.max(0, agentStopwatchState.total_ms ?? 0);
+    return Math.min(6, Math.floor(elapsed / AGENT_FAVICON_RING_STEP_MS));
+  }
+
+  /**
+   * Returns the step colour.
+   *
+   * @param {number} step - Completed five-minute intervals, one through six.
+   * @returns {string} A CSS colour for the visible progress arc.
+   */
+  function agentFaviconRingColor(step) {
+    return ['#00cc00', '#55cc00', '#aacc00', '#ffcc00', '#ff7700', '#ff0000'][
+      Math.min(6, Math.max(1, step)) - 1
+    ];
+  }
+
+  /**
+   * Fill the pie beneath the logo.
+   * @param {CanvasRenderingContext2D} context - Canvas.
+   * @param {number} width - Width.
+   * @param {number} height - Height.
+   * @param {number} step - Step.
+   * @returns {void} No result.
+   */
+  function agentFaviconDrawPieSlice(context, width, height, step) {
+    if (step < 1) return;
+    const size = Math.min(width, height);
+    context.beginPath();
+    context.moveTo(width / 2, height / 2);
+    context.fillStyle = agentFaviconRingColor(step);
+    context.arc(width / 2, height / 2, size * 0.49,
+      -Math.PI / 2, -Math.PI / 2 + Math.PI * 2 * step / 6);
+    context.closePath();
+    context.fill();
+  }
+
+  /**
+   * Draw ring above logo.
+   * @param {CanvasRenderingContext2D} context - Canvas.
+   * @param {number} width - Width.
+   * @param {number} height - Height.
+   * @param {number} step - Step.
+   * @returns {void} No result.
+   */
+  function agentFaviconDrawRing(context, width, height, step) {
+    if (step < 1) return;
+    const size = Math.min(width, height);
+    context.beginPath();
+    context.strokeStyle = agentFaviconRingColor(step);
+    context.lineWidth = Math.max(1, size * 0.12);
+    context.arc(width / 2, height / 2, size * 0.43,
+      -Math.PI / 2, -Math.PI / 2 + Math.PI * 2 * step / 6);
+    context.stroke();
+  }
+
+  /**
+   * Refresh on stopwatch ticks.
+   * @param {number} nowMs - Monotonic time.
+   * @returns {void} No result.
+   */
+  function agentFaviconRingObserveTime(nowMs) {
+    if (!agentFaviconProcessingObserved || !agentStopwatchState?.active) return;
+    const step = agentFaviconRingStep(nowMs);
+    if (step === agentFaviconRingRenderedStep) return;
+    agentFaviconRingRenderedStep = step;
+    void agentFaviconRenderState('processing');
+  }
+
+  /**
+   * Renders every stock favicon candidate.
    *
    * @param {string} state - `processing`, `completed`, `error`, or `original`.
-   * @returns {Promise<boolean>} True only when the requested state is applied to every current candidate.
+   * @returns {Promise<boolean>} Whether every candidate updated.
    */
   function agentFaviconRenderState(state) {
     const generation = ++agentFaviconRenderGeneration;
@@ -12239,6 +12333,7 @@ globalThis.__dcCompressor = {
    * @returns {void} No value is returned.
    */
   function agentFaviconObserveProcessing() {
+    if (!agentFaviconProcessingObserved) agentFaviconRingRenderedStep = agentFaviconRingStep();
     agentFaviconProcessingObserved = true;
     if (typeof agentLifecycleTransition === 'function') {
       agentLifecycleTransition('processing', { source: 'generation-or-reload' });
@@ -12498,6 +12593,7 @@ globalThis.__dcCompressor = {
       }
     }
     control.textContent = lines.join('\n');
+    if (typeof agentFaviconRingObserveTime === 'function') agentFaviconRingObserveTime(nowMs);
     if (typeof agentSoundPositionInitializationIndicator === 'function') {
       agentSoundPositionInitializationIndicator();
     }
@@ -12866,14 +12962,13 @@ globalThis.__dcCompressor = {
     if (!recovery.ready || agentStopwatchState) return;
 
     const streamStatus = await agentStopwatchFetchStreamStatus(conversationId);
-    agentFaviconObserveStreamStatus(streamStatus);
     if (agentStopwatchState) return;
-    agentStopwatchApplyRecovery(
-      recovery,
-      agentStopwatchStreamIsActive(streamStatus),
-      Date.now(),
-      performance.now()
-    );
+    const isStreaming = agentStopwatchStreamIsActive(streamStatus);
+    agentStopwatchApplyRecovery(recovery, isStreaming, Date.now(), performance.now());
+    // Recovery must establish the canonical stopwatch clock BEFORE favicon projection.
+    // Otherwise the reload favicon is initially drawn at zero elapsed time.
+    if (isStreaming) agentFaviconObserveStreamStatus(streamStatus);
+    else if (recovery.final_message) void agentFaviconRenderState('completed');
   }
 
   /**
