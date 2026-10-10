@@ -161,7 +161,8 @@
    * @returns {boolean} `true` when `diagnosticEnabled` succeeds or its predicate is satisfied; otherwise `false`.
    */
   function diagnosticEnabled(level) {
-    return (DIAGNOSTIC_LEVELS[level] ?? 0) <= (DIAGNOSTIC_LEVELS[diagnosticsLevel] ?? 0);
+    return level === 'lifecycle' ||
+      (DIAGNOSTIC_LEVELS[level] ?? 0) <= (DIAGNOSTIC_LEVELS[diagnosticsLevel] ?? 0);
   }
 
   /**
