@@ -74,7 +74,8 @@ function stopwatchHarness() {
       },
       render: agentStopwatchRender,
       state: () => agentStopwatchState,
-      text: () => document.getElementById(AGENT_STOPWATCH_ID)?.textContent ?? ''
+      text: () => document.getElementById(AGENT_STOPWATCH_ID)?.textContent ?? '',
+      background: () => document.getElementById(AGENT_STOPWATCH_ID)?.style.background ?? null
     };
   `, context);
   return {
@@ -277,4 +278,56 @@ test('stopwatch is wired to local POST time, enriched input_message state, and s
   assert.match(terminal, /channel === 'final'/);
   assert.match(terminal, /status === 'finished_successfully'/);
   assert.match(terminal, /end_turn === true/);
+});
+
+test('stopwatch retains dark green on completed exchange and resets on new work', () => {
+  const h = stopwatchHarness();
+  const first = requestCapture('user-1', 1000);
+  h.api.request(first);
+  h.api.event(first, inputEvent('user-1', 'exchange-A'));
+  assert.equal(h.api.background(), 'rgba(32, 32, 32, 0.92)');
+  h.setNow(31000);
+  h.api.terminal(finalCapture('exchange-A'));
+  assert.equal(h.api.background(), 'darkgreen');
+  assert.equal(h.api.state().terminal_kind, 'success');
+  h.api.render();
+  assert.equal(h.api.background(), 'darkgreen');
+  const next = requestCapture('user-2', 40000);
+  h.api.request(next);
+  h.api.event(next, inputEvent('user-2', 'exchange-B'));
+  assert.equal(h.api.background(), 'rgba(32, 32, 32, 0.92)');
+  assert.equal(h.api.state().terminal_kind, null);
+});
+
+test('terminal error recolours only matching stopwatch and persists through rerenders', () => {
+  const h = stopwatchHarness();
+  const first = requestCapture('user-1', 1000);
+  h.api.request(first);
+  h.api.event(first, inputEvent('user-1', 'exchange-A'));
+  h.setNow(31000);
+  h.api.terminal(finalCapture('exchange-B'));
+  assert.equal(h.api.background(), 'rgba(32, 32, 32, 0.92)');
+  const error = finalCapture('exchange-A');
+  h.api.terminal(error, { type: 'error', error_code: 'conversation_too_large' });
+  assert.equal(h.api.state().active, false);
+  assert.equal(h.api.state().terminal_kind, 'error');
+  assert.equal(h.api.background(), 'darkred');
+  h.api.render();
+  assert.equal(h.api.background(), 'darkred');
+});
+
+test('later error upgrades a frozen success but duplicate success cannot erase it', () => {
+  const h = stopwatchHarness();
+  const first = requestCapture('user-1', 1000);
+  h.api.request(first);
+  h.api.event(first, inputEvent('user-1', 'exchange-A'));
+  h.setNow(31000);
+  h.api.terminal(finalCapture('exchange-A'));
+  assert.equal(h.api.background(), 'darkgreen');
+  h.api.terminal(finalCapture('exchange-A'), {
+    type: 'error', error_code: 'conversation_too_large'
+  });
+  assert.equal(h.api.background(), 'darkred');
+  h.api.terminal(finalCapture('exchange-A'));
+  assert.equal(h.api.background(), 'darkred');
 });

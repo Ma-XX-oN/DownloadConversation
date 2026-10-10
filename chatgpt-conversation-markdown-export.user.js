@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         ChatGPT Conversation Markdown Recorder
 // @namespace    https://chatgpt.com/
-// @version      1.10.2
+// @version      1.10.2-issue.197.10
 // @description  Exports the current ChatGPT conversation directly from the Conversation API as Markdown or JSONL.
 // @match        https://chatgpt.com/*
 // @match        https://chat.openai.com/*
@@ -10097,6 +10097,53 @@ globalThis.__dcCompressor = {
       ...item
     });
   }
+
+  /** Current authoritative Agent lifecycle state, distinct from timing state. */
+  let agentLifecycleState = 'unknown';
+  /** Sequence allocated only when authoritative Agent state changes. */
+  let agentLifecycleTransitionSequence = 0;
+  /** Correlation identifier for the latest authoritative Agent transition. */
+  let agentLifecycleTransitionId = null;
+
+  /**
+   * Records one authoritative Agent state transition, suppressing unchanged states.
+   *
+   * @param {string} nextState - Newly observed authoritative state.
+   * @param {Object} details - Conversation and exchange correlation details.
+   * @returns {number|null} Transition identifier, or null before first change.
+   */
+  function agentLifecycleTransition(nextState, details = {}) {
+    if (agentLifecycleState === nextState) return agentLifecycleTransitionId;
+    const previousState = agentLifecycleState;
+    agentLifecycleState = nextState;
+    agentLifecycleTransitionId = ++agentLifecycleTransitionSequence;
+    logDiagnostic('lifecycle', 'agent-lifecycle-state-changed', {
+      transition_id: agentLifecycleTransitionId,
+      previous_state: previousState,
+      state: nextState,
+      ...details
+    });
+    return agentLifecycleTransitionId;
+  }
+
+  /**
+   * Records one actual consumer action for its initiating transition.
+   *
+   * @param {string} component - Consumer name.
+   * @param {string} action - Attempt or completed action outcome.
+   * @param {Object} details - Associated action metadata.
+   * @param {number|null} transitionId - Initiating transition identifier.
+   * @returns {void} No value is returned.
+   */
+  function agentLifecycleAction(component, action, details = {}, transitionId = agentLifecycleTransitionId) {
+    logDiagnostic('lifecycle', 'agent-lifecycle-action', {
+      transition_id: transitionId,
+      component,
+      action,
+      ...details
+    });
+  }
+
   /** Shared listeners for authoritative Agent timing transitions. */
   const agentTimingListeners = new Set();
   /** Monotonic timestamp of the newest Assistant message received from the stream. */
@@ -10947,9 +10994,17 @@ globalThis.__dcCompressor = {
    */
   function agentFaviconRenderState(state) {
     const generation = ++agentFaviconRenderGeneration;
+    const transitionId = typeof agentLifecycleTransitionId === 'undefined'
+      ? null : agentLifecycleTransitionId;
+    if (typeof agentLifecycleAction === 'function') {
+      agentLifecycleAction('favicon', 'requested', { state }, transitionId);
+    }
     const candidates = agentFaviconCurrentCandidates();
     if (!candidates.length) {
       logDiagnostic('warnings', 'agent-favicon-original-missing', { state });
+      if (typeof agentLifecycleAction === 'function') {
+        agentLifecycleAction('favicon', 'failed', { state, reason: 'no-candidates' }, transitionId);
+      }
       return Promise.resolve(false);
     }
     if (state === 'original') {
@@ -10960,6 +11015,9 @@ globalThis.__dcCompressor = {
         applied_candidate_count: candidates.length,
         recolored_pixels: 0
       });
+      if (typeof agentLifecycleAction === 'function') {
+        agentLifecycleAction('favicon', 'applied', { state }, transitionId);
+      }
       return Promise.resolve(true);
     }
     const targetRgb = state === 'processing'
@@ -10980,7 +11038,12 @@ globalThis.__dcCompressor = {
         candidates.length
       )
     )).then(results => {
-      if (generation !== agentFaviconRenderGeneration) return false;
+      if (generation !== agentFaviconRenderGeneration) {
+        if (typeof agentLifecycleAction === 'function') {
+          agentLifecycleAction('favicon', 'superseded', { state }, transitionId);
+        }
+        return false;
+      }
       const applied = results.filter(result => result.applied).length;
       const recoloredPixels = results.reduce(
         (total, result) => total + (Number(result.recolored_pixels) || 0),
@@ -10992,6 +11055,11 @@ globalThis.__dcCompressor = {
         applied_candidate_count: applied,
         recolored_pixels: recoloredPixels
       });
+      if (typeof agentLifecycleAction === 'function') {
+        agentLifecycleAction('favicon', applied === candidates.length ? 'applied' : 'failed', {
+          state, candidate_count: candidates.length, applied_candidate_count: applied
+        }, transitionId);
+      }
       return applied === candidates.length;
     });
   }
@@ -11003,6 +11071,9 @@ globalThis.__dcCompressor = {
    */
   function agentFaviconObserveProcessing() {
     agentFaviconProcessingObserved = true;
+    if (typeof agentLifecycleTransition === 'function') {
+      agentLifecycleTransition('processing', { source: 'generation-or-reload' });
+    }
     void agentFaviconRenderState('processing');
   }
 
@@ -11086,6 +11157,9 @@ globalThis.__dcCompressor = {
     if (!playAgentSound(pending.kind)) return false;
     agentSoundClearPendingTerminal();
     agentSoundRememberTerminalKey(pending.sound_key);
+    if (typeof agentLifecycleAction === 'function') {
+      agentLifecycleAction('sound', 'played', { kind: pending.kind, terminal_key: pending.terminal_key, replayed: true });
+    }
     logDiagnostic('debug', 'agent-sound-pending-replayed', {
       kind: pending.kind,
       terminal_key: pending.terminal_key,
@@ -11125,6 +11199,10 @@ globalThis.__dcCompressor = {
     }
     if (agentSoundVolume <= 0) {
       agentSoundClearPendingTerminal();
+      agentSoundRememberTerminalKey(soundKey);
+      if (typeof agentLifecycleAction === 'function') {
+        agentLifecycleAction('sound', 'suppressed', { kind, reason: 'volume-zero', terminal_key: key });
+      }
       logDiagnostic('debug', 'agent-sound-volume-zero-suppressed', {
         kind,
         terminal_key: key,
@@ -11133,11 +11211,17 @@ globalThis.__dcCompressor = {
       return;
     }
     if (playAgentSound(kind)) {
+      if (typeof agentLifecycleAction === 'function') {
+        agentLifecycleAction('sound', 'played', { kind, terminal_key: key });
+      }
       agentSoundClearPendingTerminal();
       agentSoundRememberTerminalKey(soundKey);
       return;
     }
     agentSoundRememberPendingTerminal(kind, key, soundKey);
+    if (typeof agentLifecycleAction === 'function') {
+      agentLifecycleAction('sound', 'pending', { kind, terminal_key: key });
+    }
   }
 
   document.addEventListener('pointerdown', agentSoundHandleUserGesture, true);
@@ -11229,7 +11313,22 @@ globalThis.__dcCompressor = {
       totalMs = agentStopwatchState.total_ms;
     }
     lines.push(`Total: ${agentStopwatchFormatDuration(totalMs)}`);
-    ensureAgentStopwatchControl().textContent = lines.join('\n');
+    const control = ensureAgentStopwatchControl();
+    const background = agentStopwatchState.terminal_kind === 'success'
+      ? 'darkgreen'
+      : agentStopwatchState.terminal_kind === 'error'
+        ? 'darkred'
+        : 'rgba(32, 32, 32, 0.92)';
+    if (control.style.background !== background) {
+      control.style.background = background;
+      if (typeof agentLifecycleAction === 'function') {
+        agentLifecycleAction('stopwatch', 'background-applied', {
+          background,
+          terminal_kind: agentStopwatchState.terminal_kind ?? null
+        });
+      }
+    }
+    control.textContent = lines.join('\n');
   }
 
   /**
@@ -11267,6 +11366,7 @@ globalThis.__dcCompressor = {
     agentStopwatchStopTimer();
     agentStopwatchState = {
       active: true,
+      terminal_kind: null,
       started_at_ms: submittedAtMs,
       lap_started_at_ms: submittedAtMs,
       laps_ms: [],
@@ -11277,6 +11377,9 @@ globalThis.__dcCompressor = {
     };
     agentStopwatchRender(submittedAtMs);
     agentStopwatchStartTimer();
+    if (typeof agentLifecycleAction === 'function') {
+      agentLifecycleAction('stopwatch', 'started', { submitted_at_ms: submittedAtMs });
+    }
   }
 
   /**
@@ -11496,6 +11599,7 @@ globalThis.__dcCompressor = {
     if (isStreaming) {
       agentStopwatchState = {
         active: true,
+        terminal_kind: null,
         started_at_ms: monotonicNowMs - Math.max(0, wallNowMs - firstWallMs),
         lap_started_at_ms: monotonicNowMs - Math.max(0, wallNowMs - currentLapWallMs),
         laps_ms: completedLaps,
@@ -11519,6 +11623,7 @@ globalThis.__dcCompressor = {
     completedLaps.push(completedWallMs - currentLapWallMs);
     agentStopwatchState = {
       active: false,
+      terminal_kind: 'success',
       started_at_ms: monotonicNowMs - Math.max(0, wallNowMs - firstWallMs),
       lap_started_at_ms: null,
       laps_ms: completedLaps,
@@ -11668,18 +11773,28 @@ globalThis.__dcCompressor = {
    * @returns {void} No value is returned.
    */
   function agentStopwatchHandleTerminal(terminal) {
-    if (!agentStopwatchState?.active) return;
+    if (!agentStopwatchState) return;
     const exchangeId = terminal?.exchange_id ?? null;
     if (!exchangeId || exchangeId !== agentStopwatchState.exchange_id) return;
     const completedAtMs = terminal.completed_at_ms;
     if (!Number.isFinite(completedAtMs)) return;
+    if (!agentStopwatchState.active) {
+      if (terminal.kind !== 'error' || agentStopwatchState.terminal_kind === 'error') return;
+      agentStopwatchState.terminal_kind = 'error';
+      agentStopwatchRender(completedAtMs);
+      return;
+    }
     agentStopwatchRecordLap(completedAtMs);
     agentStopwatchState.active = false;
+    agentStopwatchState.terminal_kind = terminal.kind;
     agentStopwatchState.total_ms = completedAtMs - agentStopwatchState.started_at_ms;
     agentStopwatchState.pending_submission_at_ms = null;
     agentStopwatchState.pending_message_id = null;
     agentStopwatchStopTimer();
     agentStopwatchRender(completedAtMs);
+    if (typeof agentLifecycleAction === 'function') {
+      agentLifecycleAction('stopwatch', 'stopped', { exchange_id: exchangeId, total_ms: agentStopwatchState.total_ms });
+    }
   }
 
   /** Ordered consumers of one shared normalized terminal event. */
@@ -11699,6 +11814,15 @@ globalThis.__dcCompressor = {
   function agentTerminalObserve(capture, event = null) {
     const terminal = agentTerminalNormalize(capture, event);
     if (!terminal) return;
+    if (terminal.kind === 'success' && capture.agent_terminal_success_observed === true) return;
+    if (terminal.kind === 'error' && capture.agent_terminal_error_observed === true) return;
+    if (typeof agentLifecycleTransition === 'function') {
+      agentLifecycleTransition(terminal.kind === 'success' ? 'completed' : 'error', {
+        conversation_id: terminal.conversation_id,
+        exchange_id: terminal.exchange_id,
+        terminal_key: terminal.terminal_key
+      });
+    }
     if (terminal.kind === 'success') capture.agent_terminal_success_observed = true;
     if (terminal.kind === 'error') capture.agent_terminal_error_observed = true;
     logDiagnostic('debug', 'agent-terminal-normalized', {
@@ -17732,7 +17856,8 @@ Image elapsed: ${formatDuration(imageElapsed)} — Completed: ${imageCompleted}/
    * @returns {boolean} `true` when `diagnosticEnabled` succeeds or its predicate is satisfied; otherwise `false`.
    */
   function diagnosticEnabled(level) {
-    return (DIAGNOSTIC_LEVELS[level] ?? 0) <= (DIAGNOSTIC_LEVELS[diagnosticsLevel] ?? 0);
+    return level === 'lifecycle' ||
+      (DIAGNOSTIC_LEVELS[level] ?? 0) <= (DIAGNOSTIC_LEVELS[diagnosticsLevel] ?? 0);
   }
 
   /**
@@ -19900,6 +20025,8 @@ Image elapsed: ${formatDuration(imageElapsed)} — Completed: ${imageCompleted}/
     refreshDiagnosticLog();
   }
 
+
+
   /**
    * Handles inject styles.
    *
@@ -20810,7 +20937,10 @@ Image elapsed: ${formatDuration(imageElapsed)} — Completed: ${imageCompleted}/
       agentSoundVolume = Number.isFinite(parsed) ? Math.max(0, Math.min(10, parsed)) : 0;
       localStorage.setItem(AGENT_SOUND_VOLUME_STORAGE_KEY, String(agentSoundVolume));
       renderSoundVolume();
-      logDiagnostic('debug', 'agent-sound-volume-changed', { volume: agentSoundVolume });
+      logDiagnostic('lifecycle', 'agent-sound-volume-changed', {
+        volume: agentSoundVolume,
+        source: 'user-input'
+      });
       if (agentSoundVolume > 0) void unlockAgentSoundAudio();
       else agentSoundClearPendingTerminal();
     });
@@ -20966,6 +21096,20 @@ Image elapsed: ${formatDuration(imageElapsed)} — Completed: ${imageCompleted}/
   }
   communicationLogInitializationPromise = initializeCommunicationDiskRecorder();
   installLiveTailTracking();
+  /** Persisted scalar volume present when the userscript was initialized. */
+  const initialSoundVolume = localStorage.getItem(AGENT_SOUND_VOLUME_STORAGE_KEY);
+  /** Legacy boolean setting used only when no explicit volume was saved. */
+  const legacySoundPreference = localStorage.getItem(LEGACY_AGENT_SOUNDS_STORAGE_KEY);
+  logDiagnostic('lifecycle', 'agent-sound-volume-initialized', {
+    volume: agentSoundVolume,
+    source: initialSoundVolume !== null
+      ? 'saved-volume'
+      : legacySoundPreference === 'true' || legacySoundPreference === 'false'
+        ? 'legacy-preference'
+        : 'default',
+    valid_saved_value: initialSoundVolume === null ||
+      /^\d+$/.test(initialSoundVolume)
+  });
   installNetworkCapture();
   bootstrapUi();
 })();

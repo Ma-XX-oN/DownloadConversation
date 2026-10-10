@@ -21,6 +21,7 @@
     if (isStreaming) {
       agentStopwatchState = {
         active: true,
+        terminal_kind: null,
         started_at_ms: monotonicNowMs - Math.max(0, wallNowMs - firstWallMs),
         lap_started_at_ms: monotonicNowMs - Math.max(0, wallNowMs - currentLapWallMs),
         laps_ms: completedLaps,
@@ -44,6 +45,7 @@
     completedLaps.push(completedWallMs - currentLapWallMs);
     agentStopwatchState = {
       active: false,
+      terminal_kind: 'success',
       started_at_ms: monotonicNowMs - Math.max(0, wallNowMs - firstWallMs),
       lap_started_at_ms: null,
       laps_ms: completedLaps,
@@ -193,18 +195,28 @@
    * @returns {void} No value is returned.
    */
   function agentStopwatchHandleTerminal(terminal) {
-    if (!agentStopwatchState?.active) return;
+    if (!agentStopwatchState) return;
     const exchangeId = terminal?.exchange_id ?? null;
     if (!exchangeId || exchangeId !== agentStopwatchState.exchange_id) return;
     const completedAtMs = terminal.completed_at_ms;
     if (!Number.isFinite(completedAtMs)) return;
+    if (!agentStopwatchState.active) {
+      if (terminal.kind !== 'error' || agentStopwatchState.terminal_kind === 'error') return;
+      agentStopwatchState.terminal_kind = 'error';
+      agentStopwatchRender(completedAtMs);
+      return;
+    }
     agentStopwatchRecordLap(completedAtMs);
     agentStopwatchState.active = false;
+    agentStopwatchState.terminal_kind = terminal.kind;
     agentStopwatchState.total_ms = completedAtMs - agentStopwatchState.started_at_ms;
     agentStopwatchState.pending_submission_at_ms = null;
     agentStopwatchState.pending_message_id = null;
     agentStopwatchStopTimer();
     agentStopwatchRender(completedAtMs);
+    if (typeof agentLifecycleAction === 'function') {
+      agentLifecycleAction('stopwatch', 'stopped', { exchange_id: exchangeId, total_ms: agentStopwatchState.total_ms });
+    }
   }
 
   /** Ordered consumers of one shared normalized terminal event. */
@@ -224,6 +236,15 @@
   function agentTerminalObserve(capture, event = null) {
     const terminal = agentTerminalNormalize(capture, event);
     if (!terminal) return;
+    if (terminal.kind === 'success' && capture.agent_terminal_success_observed === true) return;
+    if (terminal.kind === 'error' && capture.agent_terminal_error_observed === true) return;
+    if (typeof agentLifecycleTransition === 'function') {
+      agentLifecycleTransition(terminal.kind === 'success' ? 'completed' : 'error', {
+        conversation_id: terminal.conversation_id,
+        exchange_id: terminal.exchange_id,
+        terminal_key: terminal.terminal_key
+      });
+    }
     if (terminal.kind === 'success') capture.agent_terminal_success_observed = true;
     if (terminal.kind === 'error') capture.agent_terminal_error_observed = true;
     logDiagnostic('debug', 'agent-terminal-normalized', {

@@ -1,3 +1,50 @@
+
+  /** Current authoritative Agent lifecycle state, distinct from timing state. */
+  let agentLifecycleState = 'unknown';
+  /** Sequence allocated only when authoritative Agent state changes. */
+  let agentLifecycleTransitionSequence = 0;
+  /** Correlation identifier for the latest authoritative Agent transition. */
+  let agentLifecycleTransitionId = null;
+
+  /**
+   * Records one authoritative Agent state transition, suppressing unchanged states.
+   *
+   * @param {string} nextState - Newly observed authoritative state.
+   * @param {Object} details - Conversation and exchange correlation details.
+   * @returns {number|null} Transition identifier, or null before first change.
+   */
+  function agentLifecycleTransition(nextState, details = {}) {
+    if (agentLifecycleState === nextState) return agentLifecycleTransitionId;
+    const previousState = agentLifecycleState;
+    agentLifecycleState = nextState;
+    agentLifecycleTransitionId = ++agentLifecycleTransitionSequence;
+    logDiagnostic('lifecycle', 'agent-lifecycle-state-changed', {
+      transition_id: agentLifecycleTransitionId,
+      previous_state: previousState,
+      state: nextState,
+      ...details
+    });
+    return agentLifecycleTransitionId;
+  }
+
+  /**
+   * Records one actual consumer action for its initiating transition.
+   *
+   * @param {string} component - Consumer name.
+   * @param {string} action - Attempt or completed action outcome.
+   * @param {Object} details - Associated action metadata.
+   * @param {number|null} transitionId - Initiating transition identifier.
+   * @returns {void} No value is returned.
+   */
+  function agentLifecycleAction(component, action, details = {}, transitionId = agentLifecycleTransitionId) {
+    logDiagnostic('lifecycle', 'agent-lifecycle-action', {
+      transition_id: transitionId,
+      component,
+      action,
+      ...details
+    });
+  }
+
   /** Shared listeners for authoritative Agent timing transitions. */
   const agentTimingListeners = new Set();
   /** Monotonic timestamp of the newest Assistant message received from the stream. */

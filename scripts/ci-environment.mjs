@@ -35,7 +35,7 @@ const ordinaryStages = [
   ['Issue 172 canonical filename regression', nodeCommand, ['--test', 'tests/issue172-canonical-filenames.test.mjs']],
   ['Export compression toggle regression', nodeCommand, ['--test', 'tests/export-compression-toggle.test.mjs']],
   ['Agent completion sound regression', nodeCommand, ['--test', 'tests/agent-completion-sounds.test.mjs', 'tests/agent-completion-sound-pending.test.mjs']],
-  ['Agent terminal shared dispatch regression', nodeCommand, ['--test', 'tests/agent-terminal-dispatch.test.mjs', 'tests/agent-terminal-dry-contract.test.mjs', 'tests/agent-terminal-conversation-turn-complete.test.mjs']],
+  ['Agent terminal shared dispatch regression', nodeCommand, ['--test', 'tests/agent-terminal-dispatch.test.mjs', 'tests/agent-terminal-dry-contract.test.mjs', 'tests/agent-terminal-conversation-turn-complete.test.mjs', 'tests/agent-lifecycle-audit.test.mjs']],
   ['Agent turn stopwatch regression', nodeCommand, ['--test', 'tests/agent-turn-stopwatch.test.mjs']],
   ['Agent turn stopwatch stream integration', nodeCommand, ['--test', 'tests/agent-resume-metadata-patch.test.mjs', 'tests/agent-turn-stopwatch-stream.test.mjs']],
   ['Agent turn stopwatch live total', nodeCommand, ['--test', 'tests/agent-turn-stopwatch-live-total.test.mjs']],

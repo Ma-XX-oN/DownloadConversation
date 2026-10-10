@@ -104,6 +104,8 @@
     refreshDiagnosticLog();
   }
 
+
+
   /**
    * Handles inject styles.
    *
