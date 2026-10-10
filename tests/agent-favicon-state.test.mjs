@@ -113,11 +113,15 @@ function renderHarness() {
     const AGENT_FAVICON_ERROR_RGB = Object.freeze([255, 0, 0]);
     const agentFaviconOriginalSources = new Map();
     let agentFaviconRenderGeneration = 0;
+    let agentStopwatchState = null;
     function logDiagnostic(level, name, details) { this.diagnostics.push({ level, name, details }); }
     ${productionFunctionSource('errorMessage')}
     ${productionFunctionSource('agentFaviconCurrentCandidates')}
     ${productionFunctionSource('agentFaviconRecolorPixels')}
     ${productionFunctionSource('agentFaviconRenderCandidate')}
+    ${productionFunctionSource('agentFaviconRingStep')}
+    ${productionFunctionSource('agentFaviconRingColor')}
+    ${productionFunctionSource('agentFaviconDrawRing')}
     ${productionFunctionSource('agentFaviconRenderState')}
     this.api = {
       render: agentFaviconRenderState,
