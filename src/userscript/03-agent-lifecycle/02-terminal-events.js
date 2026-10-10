@@ -345,7 +345,18 @@
           const pixels = context.getImageData(0, 0, width, height);
           const changed = agentFaviconRecolorPixels(pixels.data, targetRgb);
           context.putImageData(pixels, 0, 0);
-          agentFaviconDrawRing(context, width, height, agentFaviconRingStep());
+          // Composite behind the transparent openings without covering the logo.
+          // Restore source-over before stroking the ring in the foreground.
+          const ringStep = state === 'processing' ? agentFaviconRingStep() : 0;
+          if (ringStep > 0) {
+            context.globalCompositeOperation = 'destination-over';
+            try {
+              agentFaviconDrawPieSlice(context, width, height, ringStep);
+            } finally {
+              context.globalCompositeOperation = 'source-over';
+            }
+            agentFaviconDrawRing(context, width, height, ringStep);
+          }
           if (generation !== agentFaviconRenderGeneration) {
             resolve({ applied: false, stale: true, recolored_pixels: changed, width, height });
             return;
