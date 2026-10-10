@@ -124,6 +124,7 @@
     return agentLifecycleTransitionId;
   }
 
+  /** Records a consumer action against the transition that initiated it. */
   function agentLifecycleAction(component, action, details = {}, transitionId = agentLifecycleTransitionId) {
     logDiagnostic('lifecycle', 'agent-lifecycle-action', {
       transition_id: transitionId,
