@@ -15,7 +15,9 @@
       }
     }
     control.textContent = lines.join('\n');
-    agentSoundSyncInitializationIndicator();
+    if (typeof agentSoundPositionInitializationIndicator === 'function') {
+      agentSoundPositionInitializationIndicator();
+    }
   }
 
   /**
