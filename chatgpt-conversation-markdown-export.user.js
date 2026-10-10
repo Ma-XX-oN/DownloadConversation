@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         ChatGPT Conversation Markdown Recorder
 // @namespace    https://chatgpt.com/
-// @version      1.10.2
+// @version      1.10.2-issue.197.1
 // @description  Exports the current ChatGPT conversation directly from the Conversation API as Markdown or JSONL.
 // @match        https://chatgpt.com/*
 // @match        https://chat.openai.com/*
@@ -10947,9 +10947,17 @@ globalThis.__dcCompressor = {
    */
   function agentFaviconRenderState(state) {
     const generation = ++agentFaviconRenderGeneration;
+    const transitionId = typeof agentLifecycleTransitionId === 'undefined'
+      ? null : agentLifecycleTransitionId;
+    if (typeof agentLifecycleAction === 'function') {
+      agentLifecycleAction('favicon', 'requested', { state }, transitionId);
+    }
     const candidates = agentFaviconCurrentCandidates();
     if (!candidates.length) {
       logDiagnostic('warnings', 'agent-favicon-original-missing', { state });
+      if (typeof agentLifecycleAction === 'function') {
+        agentLifecycleAction('favicon', 'failed', { state, reason: 'no-candidates' }, transitionId);
+      }
       return Promise.resolve(false);
     }
     if (state === 'original') {
@@ -10960,6 +10968,9 @@ globalThis.__dcCompressor = {
         applied_candidate_count: candidates.length,
         recolored_pixels: 0
       });
+      if (typeof agentLifecycleAction === 'function') {
+        agentLifecycleAction('favicon', 'applied', { state }, transitionId);
+      }
       return Promise.resolve(true);
     }
     const targetRgb = state === 'processing'
@@ -10980,7 +10991,12 @@ globalThis.__dcCompressor = {
         candidates.length
       )
     )).then(results => {
-      if (generation !== agentFaviconRenderGeneration) return false;
+      if (generation !== agentFaviconRenderGeneration) {
+        if (typeof agentLifecycleAction === 'function') {
+          agentLifecycleAction('favicon', 'superseded', { state }, transitionId);
+        }
+        return false;
+      }
       const applied = results.filter(result => result.applied).length;
       const recoloredPixels = results.reduce(
         (total, result) => total + (Number(result.recolored_pixels) || 0),
@@ -10992,6 +11008,11 @@ globalThis.__dcCompressor = {
         applied_candidate_count: applied,
         recolored_pixels: recoloredPixels
       });
+      if (typeof agentLifecycleAction === 'function') {
+        agentLifecycleAction('favicon', applied === candidates.length ? 'applied' : 'failed', {
+          state, candidate_count: candidates.length, applied_candidate_count: applied
+        }, transitionId);
+      }
       return applied === candidates.length;
     });
   }
@@ -11003,6 +11024,9 @@ globalThis.__dcCompressor = {
    */
   function agentFaviconObserveProcessing() {
     agentFaviconProcessingObserved = true;
+    if (typeof agentLifecycleTransition === 'function') {
+      agentLifecycleTransition('processing', { source: 'generation-or-reload' });
+    }
     void agentFaviconRenderState('processing');
   }
 
@@ -11086,6 +11110,9 @@ globalThis.__dcCompressor = {
     if (!playAgentSound(pending.kind)) return false;
     agentSoundClearPendingTerminal();
     agentSoundRememberTerminalKey(pending.sound_key);
+    if (typeof agentLifecycleAction === 'function') {
+      agentLifecycleAction('sound', 'played', { kind: pending.kind, terminal_key: pending.terminal_key, replayed: true });
+    }
     logDiagnostic('debug', 'agent-sound-pending-replayed', {
       kind: pending.kind,
       terminal_key: pending.terminal_key,
@@ -11125,6 +11152,9 @@ globalThis.__dcCompressor = {
     }
     if (agentSoundVolume <= 0) {
       agentSoundClearPendingTerminal();
+      if (typeof agentLifecycleAction === 'function') {
+        agentLifecycleAction('sound', 'suppressed', { kind, reason: 'volume-zero', terminal_key: key });
+      }
       logDiagnostic('debug', 'agent-sound-volume-zero-suppressed', {
         kind,
         terminal_key: key,
@@ -11133,11 +11163,17 @@ globalThis.__dcCompressor = {
       return;
     }
     if (playAgentSound(kind)) {
+      if (typeof agentLifecycleAction === 'function') {
+        agentLifecycleAction('sound', 'played', { kind, terminal_key: key });
+      }
       agentSoundClearPendingTerminal();
       agentSoundRememberTerminalKey(soundKey);
       return;
     }
     agentSoundRememberPendingTerminal(kind, key, soundKey);
+    if (typeof agentLifecycleAction === 'function') {
+      agentLifecycleAction('sound', 'pending', { kind, terminal_key: key });
+    }
   }
 
   document.addEventListener('pointerdown', agentSoundHandleUserGesture, true);
@@ -11277,6 +11313,9 @@ globalThis.__dcCompressor = {
     };
     agentStopwatchRender(submittedAtMs);
     agentStopwatchStartTimer();
+    if (typeof agentLifecycleAction === 'function') {
+      agentLifecycleAction('stopwatch', 'started', { submitted_at_ms: submittedAtMs });
+    }
   }
 
   /**
@@ -11680,6 +11719,9 @@ globalThis.__dcCompressor = {
     agentStopwatchState.pending_message_id = null;
     agentStopwatchStopTimer();
     agentStopwatchRender(completedAtMs);
+    if (typeof agentLifecycleAction === 'function') {
+      agentLifecycleAction('stopwatch', 'stopped', { exchange_id: exchangeId, total_ms: agentStopwatchState.total_ms });
+    }
   }
 
   /** Ordered consumers of one shared normalized terminal event. */
@@ -11699,6 +11741,13 @@ globalThis.__dcCompressor = {
   function agentTerminalObserve(capture, event = null) {
     const terminal = agentTerminalNormalize(capture, event);
     if (!terminal) return;
+    if (typeof agentLifecycleTransition === 'function') {
+      agentLifecycleTransition(terminal.kind === 'success' ? 'completed' : 'error', {
+        conversation_id: terminal.conversation_id,
+        exchange_id: terminal.exchange_id,
+        terminal_key: terminal.terminal_key
+      });
+    }
     if (terminal.kind === 'success') capture.agent_terminal_success_observed = true;
     if (terminal.kind === 'error') capture.agent_terminal_error_observed = true;
     logDiagnostic('debug', 'agent-terminal-normalized', {
@@ -19884,7 +19933,7 @@ Image elapsed: ${formatDuration(imageElapsed)} — Completed: ${imageCompleted}/
    */
   function logDiagnostic(level, message, data = null) {
     logConsoleDiagnostic(level, `[ChatGPT Recorder ${level}] ${message}`, data);
-    if (!diagnosticEnabled(level)) return;
+    if (level !== 'lifecycle' && !diagnosticEnabled(level)) return;
     const safeData = redactDiagnosticSignedTokens(data);
     const entry = {
       timestamp: new Date().toISOString(),
@@ -19898,6 +19947,36 @@ Image elapsed: ${formatDuration(imageElapsed)} — Completed: ${imageCompleted}/
     }
     schedulePersistDiagnosticLog();
     refreshDiagnosticLog();
+  }
+
+
+  /** Lifecycle transitions and consumer outcomes are retained at every diagnostic level. */
+  let agentLifecycleState = 'unknown';
+  let agentLifecycleTransitionSequence = 0;
+  let agentLifecycleTransitionId = null;
+
+  function agentLifecycleTransition(nextState, details = {}) {
+    if (agentLifecycleState === nextState) return agentLifecycleTransitionId;
+    const previousState = agentLifecycleState;
+    agentLifecycleState = nextState;
+    agentLifecycleTransitionId = ++agentLifecycleTransitionSequence;
+    logDiagnostic('lifecycle', 'agent-lifecycle-state-changed', {
+      transition_id: agentLifecycleTransitionId,
+      previous_state: previousState,
+      state: nextState,
+      ...details
+    });
+    return agentLifecycleTransitionId;
+  }
+
+  /** Records a consumer action against the transition that initiated it. */
+  function agentLifecycleAction(component, action, details = {}, transitionId = agentLifecycleTransitionId) {
+    logDiagnostic('lifecycle', 'agent-lifecycle-action', {
+      transition_id: transitionId,
+      component,
+      action,
+      ...details
+    });
   }
 
   /**
