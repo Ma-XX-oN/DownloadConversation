@@ -345,6 +345,7 @@
           const pixels = context.getImageData(0, 0, width, height);
           const changed = agentFaviconRecolorPixels(pixels.data, targetRgb);
           context.putImageData(pixels, 0, 0);
+          agentFaviconDrawRing(context, width, height, agentFaviconRingStep());
           if (generation !== agentFaviconRenderGeneration) {
             resolve({ applied: false, stale: true, recolored_pixels: changed, width, height });
             return;
