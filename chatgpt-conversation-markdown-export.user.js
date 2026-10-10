@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         ChatGPT Conversation Markdown Recorder
 // @namespace    https://chatgpt.com/
-// @version      1.10.2-issue.197.3
+// @version      1.10.2-issue.197.4
 // @description  Exports the current ChatGPT conversation directly from the Conversation API as Markdown or JSONL.
 // @match        https://chatgpt.com/*
 // @match        https://chat.openai.com/*
@@ -11148,6 +11148,7 @@ globalThis.__dcCompressor = {
     if (!pending) return false;
     if (agentSoundVolume <= 0) {
       agentSoundClearPendingTerminal();
+      agentSoundRememberTerminalKey(soundKey);
       return false;
     }
     if (!pending.sound_key || agentSoundTerminalKeys.has(pending.sound_key)) {
@@ -11312,7 +11313,22 @@ globalThis.__dcCompressor = {
       totalMs = agentStopwatchState.total_ms;
     }
     lines.push(`Total: ${agentStopwatchFormatDuration(totalMs)}`);
-    ensureAgentStopwatchControl().textContent = lines.join('\n');
+    const control = ensureAgentStopwatchControl();
+    const background = agentStopwatchState.terminal_kind === 'success'
+      ? 'darkgreen'
+      : agentStopwatchState.terminal_kind === 'error'
+        ? 'darkred'
+        : 'rgba(32, 32, 32, 0.92)';
+    if (control.style.background !== background) {
+      control.style.background = background;
+      if (typeof agentLifecycleAction === 'function') {
+        agentLifecycleAction('stopwatch', 'background-applied', {
+          background,
+          terminal_kind: agentStopwatchState.terminal_kind ?? null
+        });
+      }
+    }
+    control.textContent = lines.join('\n');
   }
 
   /**
@@ -11350,6 +11366,7 @@ globalThis.__dcCompressor = {
     agentStopwatchStopTimer();
     agentStopwatchState = {
       active: true,
+      terminal_kind: null,
       started_at_ms: submittedAtMs,
       lap_started_at_ms: submittedAtMs,
       laps_ms: [],
@@ -11582,6 +11599,7 @@ globalThis.__dcCompressor = {
     if (isStreaming) {
       agentStopwatchState = {
         active: true,
+        terminal_kind: null,
         started_at_ms: monotonicNowMs - Math.max(0, wallNowMs - firstWallMs),
         lap_started_at_ms: monotonicNowMs - Math.max(0, wallNowMs - currentLapWallMs),
         laps_ms: completedLaps,
@@ -11605,6 +11623,7 @@ globalThis.__dcCompressor = {
     completedLaps.push(completedWallMs - currentLapWallMs);
     agentStopwatchState = {
       active: false,
+      terminal_kind: 'success',
       started_at_ms: monotonicNowMs - Math.max(0, wallNowMs - firstWallMs),
       lap_started_at_ms: null,
       laps_ms: completedLaps,
@@ -11754,13 +11773,20 @@ globalThis.__dcCompressor = {
    * @returns {void} No value is returned.
    */
   function agentStopwatchHandleTerminal(terminal) {
-    if (!agentStopwatchState?.active) return;
+    if (!agentStopwatchState) return;
     const exchangeId = terminal?.exchange_id ?? null;
     if (!exchangeId || exchangeId !== agentStopwatchState.exchange_id) return;
     const completedAtMs = terminal.completed_at_ms;
     if (!Number.isFinite(completedAtMs)) return;
+    if (!agentStopwatchState.active) {
+      if (terminal.kind !== 'error' || agentStopwatchState.terminal_kind === 'error') return;
+      agentStopwatchState.terminal_kind = 'error';
+      agentStopwatchRender(completedAtMs);
+      return;
+    }
     agentStopwatchRecordLap(completedAtMs);
     agentStopwatchState.active = false;
+    agentStopwatchState.terminal_kind = terminal.kind;
     agentStopwatchState.total_ms = completedAtMs - agentStopwatchState.started_at_ms;
     agentStopwatchState.pending_submission_at_ms = null;
     agentStopwatchState.pending_message_id = null;
@@ -11788,6 +11814,8 @@ globalThis.__dcCompressor = {
   function agentTerminalObserve(capture, event = null) {
     const terminal = agentTerminalNormalize(capture, event);
     if (!terminal) return;
+    if (terminal.kind === 'success' && capture.agent_terminal_success_observed === true) return;
+    if (terminal.kind === 'error' && capture.agent_terminal_error_observed === true) return;
     if (typeof agentLifecycleTransition === 'function') {
       agentLifecycleTransition(terminal.kind === 'success' ? 'completed' : 'error', {
         conversation_id: terminal.conversation_id,
@@ -20909,7 +20937,10 @@ Image elapsed: ${formatDuration(imageElapsed)} — Completed: ${imageCompleted}/
       agentSoundVolume = Number.isFinite(parsed) ? Math.max(0, Math.min(10, parsed)) : 0;
       localStorage.setItem(AGENT_SOUND_VOLUME_STORAGE_KEY, String(agentSoundVolume));
       renderSoundVolume();
-      logDiagnostic('debug', 'agent-sound-volume-changed', { volume: agentSoundVolume });
+      logDiagnostic('lifecycle', 'agent-sound-volume-changed', {
+        volume: agentSoundVolume,
+        source: 'user-input'
+      });
       if (agentSoundVolume > 0) void unlockAgentSoundAudio();
       else agentSoundClearPendingTerminal();
     });
@@ -21065,6 +21096,18 @@ Image elapsed: ${formatDuration(imageElapsed)} — Completed: ${imageCompleted}/
   }
   communicationLogInitializationPromise = initializeCommunicationDiskRecorder();
   installLiveTailTracking();
+  const initialSoundVolume = localStorage.getItem(AGENT_SOUND_VOLUME_STORAGE_KEY);
+  const legacySoundPreference = localStorage.getItem(LEGACY_AGENT_SOUNDS_STORAGE_KEY);
+  logDiagnostic('lifecycle', 'agent-sound-volume-initialized', {
+    volume: agentSoundVolume,
+    source: initialSoundVolume !== null
+      ? 'saved-volume'
+      : legacySoundPreference === 'true' || legacySoundPreference === 'false'
+        ? 'legacy-preference'
+        : 'default',
+    valid_saved_value: initialSoundVolume === null ||
+      /^\\d+$/.test(initialSoundVolume)
+  });
   installNetworkCapture();
   bootstrapUi();
 })();
