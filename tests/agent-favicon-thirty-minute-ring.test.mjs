@@ -107,7 +107,7 @@ test('ring only draws over favicon canvas, preserving the source image and initi
   const source = productionFunctionSource('agentFaviconRenderCandidate');
   assert.match(source, /context\.drawImage\(image, 0, 0, width, height\)/);
   assert.match(source, /agentFaviconRecolorPixels\(pixels\.data, targetRgb\)/);
-  assert.match(source, /agentFaviconDrawRing\(context, width, height, agentFaviconRingStep\(\)\)/);
+  assert.match(source, /agentFaviconDrawRing\(context, width, height, ringStep\)/);
   assert.match(source, /candidate\.link\.href = canvas\.toDataURL\('image\/png'\)/);
   assert.doesNotMatch(productionFunctionSource('agentFaviconRingObserveTime'),
     /setInterval|setTimeout|addEventListener/);
@@ -140,11 +140,94 @@ test('pie underlay has matching six sectors and never draws at zero', () => {
   }
 });
 
-test('pie behind logo applies only while processing and ring remains foreground', () => {
+test('pie behind logo persists at completion and ring remains foreground', () => {
   const source = productionFunctionSource('agentFaviconRenderCandidate');
-  assert.match(source, /state === 'processing' \? agentFaviconRingStep\(\) : 0/);
+  assert.match(source, /state === 'processing' \|\| state === 'completed'/);
   assert.match(source, /context\.globalCompositeOperation = 'destination-over'/);
   assert.match(source, /finally\s*\{\s*context\.globalCompositeOperation = 'source-over'/);
   assert.ok(source.indexOf('agentFaviconDrawPieSlice(') <
     source.indexOf('agentFaviconDrawRing('));
+});
+
+test('reload redraws the recovered five-minute step rather than zero', async () => {
+  const events = [];
+  const context = {
+    Date: { now: () => 960000 },
+    performance: { now: () => 1000 },
+    events
+  };
+  vm.runInNewContext(`
+    let agentStopwatchState = null;
+    const recovery = {
+      ready: true, exchange_id: 'exchange-A', final_message: { id: 'final' }
+    };
+    function currentConversationId() { return 'conversation-A'; }
+    async function agentStopwatchCollectRecovery() { return recovery; }
+    function fetchOneConversationPage() { throw new Error('unexpected'); }
+    function pageUrl() { throw new Error('unexpected'); }
+    function conversationSpineFromPages() { return null; }
+    async function agentStopwatchFetchStreamStatus() { return { status: 'IS_STREAMING' }; }
+    function agentStopwatchStreamIsActive(p) { return p?.status === 'IS_STREAMING'; }
+    function agentStopwatchApplyRecovery(r, active, wallNow, now) {
+      agentStopwatchState = {
+        active, started_at_ms: now - 600000, total_ms: null
+      };
+      events.push(['recovered', active]);
+    }
+    function agentFaviconObserveStreamStatus(status) {
+      events.push(['favicon', status.status,
+        Math.floor((performance.now() - agentStopwatchState.started_at_ms) / 300000)]);
+    }
+    function agentFaviconRenderState(state) { events.push(['render', state]); }
+    ${productionFunctionSource('agentStopwatchObserveConversationResponse')}
+    this.restore = agentStopwatchObserveConversationResponse;
+  `, context);
+  await context.restore({
+    ok: true,
+    async json() { return { conversation_id: 'conversation-A' }; }
+  });
+  assert.deepEqual(events, [
+    ['recovered', true],
+    ['favicon', 'IS_STREAMING', 2]
+  ]);
+});
+
+test('completed reload preserves the final elapsed step without restarting', async () => {
+  const events = [];
+  const context = {
+    Date: { now: () => 960000 },
+    performance: { now: () => 1000 },
+    events
+  };
+  vm.runInNewContext(`
+    let agentStopwatchState = null;
+    const recovery = {
+      ready: true, exchange_id: 'exchange-A', final_message: { id: 'final' }
+    };
+    function currentConversationId() { return 'conversation-A'; }
+    async function agentStopwatchCollectRecovery() { return recovery; }
+    function fetchOneConversationPage() { throw new Error('unexpected'); }
+    function pageUrl() { throw new Error('unexpected'); }
+    function conversationSpineFromPages() { return null; }
+    async function agentStopwatchFetchStreamStatus() { return { status: 'NOT_STREAMING' }; }
+    function agentStopwatchStreamIsActive(p) { return p?.status === 'IS_STREAMING'; }
+    function agentStopwatchApplyRecovery(r, active, wallNow, now) {
+      agentStopwatchState = { active, started_at_ms: now - 600000, total_ms: 600000 };
+      events.push(['recovered', active]);
+    }
+    function agentFaviconObserveStreamStatus() { throw new Error('not streaming'); }
+    function agentFaviconRenderState(state) {
+      events.push(['render', state, Math.floor(agentStopwatchState.total_ms / 300000)]);
+    }
+    ${productionFunctionSource('agentStopwatchObserveConversationResponse')}
+    this.restore = agentStopwatchObserveConversationResponse;
+  `, context);
+  await context.restore({
+    ok: true,
+    async json() { return { conversation_id: 'conversation-A' }; }
+  });
+  assert.deepEqual(events, [
+    ['recovered', false],
+    ['render', 'completed', 2]
+  ]);
 });
