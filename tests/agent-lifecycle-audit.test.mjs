@@ -94,6 +94,7 @@ test('muted terminal sound is suppressed and recorded once per terminal kind', (
       this.entries.push({ level: 'lifecycle', name: component + ':' + action, details });
     }
     function playAgentSound() { throw new Error('Muted sound must never play'); }
+    function agentSoundHandleUserGesture() {}
     ${productionFunctionSource('agentSoundRememberTerminalKey')}
     ${productionFunctionSource('agentSoundClearPendingTerminal')}
     ${productionFunctionSource('agentSoundHandleTerminal')}
