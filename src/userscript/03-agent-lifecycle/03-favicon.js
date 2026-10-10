@@ -236,6 +236,7 @@
     }
     if (agentSoundVolume <= 0) {
       agentSoundClearPendingTerminal();
+      agentSoundRememberTerminalKey(soundKey);
       if (typeof agentLifecycleAction === 'function') {
         agentLifecycleAction('sound', 'suppressed', { kind, reason: 'volume-zero', terminal_key: key });
       }
