@@ -120,12 +120,12 @@
     const stored = localStorage.getItem(AGENT_SOUND_VOLUME_STORAGE_KEY);
     if (stored !== null) {
       const parsed = Number.parseInt(stored, 10);
-      return Number.isFinite(parsed) ? Math.max(0, Math.min(10, parsed)) : 0;
+      return /^\\d+$/.test(stored) && Number.isFinite(parsed) && parsed >= 0 && parsed <= 10 ? parsed : 10;
     }
     const legacy = localStorage.getItem(LEGACY_AGENT_SOUNDS_STORAGE_KEY);
     if (legacy === 'true') return 10;
     if (legacy === 'false') return 0;
-    return 0;
+    return 10;
   }
 
   /** Persisted integer terminal-sound volume; zero is the only disabled state. */
