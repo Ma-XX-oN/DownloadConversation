@@ -21,7 +21,8 @@ function auditHarness() {
     ${productionFunctionSource('agentLifecycleAction')}
     this.api = {
       transition: agentLifecycleTransition,
-      action: agentLifecycleAction
+      action: agentLifecycleAction,
+      debug: () => logDiagnostic('debug', 'suppressed-debug')
     };
   `, context);
   return context;
@@ -63,12 +64,6 @@ test('late asynchronous consumer outcome retains its initiating transition', () 
 
 test('unrelated debug records are still filtered', () => {
   const harness = auditHarness();
-  vm.runInNewContext(`${productionFunctionSource('logDiagnostic')}`, {
-    logConsoleDiagnostic() {},
-    diagnosticEnabled() { return false; },
-    entries: [],
-    diagnosticLog: [],
-    redactDiagnosticSignedTokens(value) { return value; }
-  });
+  harness.api.debug();
   assert.equal(harness.entries.length, 0);
 });
