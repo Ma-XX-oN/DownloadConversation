@@ -205,6 +205,9 @@
     agentStopwatchState.pending_message_id = null;
     agentStopwatchStopTimer();
     agentStopwatchRender(completedAtMs);
+    if (typeof agentLifecycleAction === 'function') {
+      agentLifecycleAction('stopwatch', 'stopped', { exchange_id: exchangeId, total_ms: agentStopwatchState.total_ms });
+    }
   }
 
   /** Ordered consumers of one shared normalized terminal event. */
@@ -224,6 +227,13 @@
   function agentTerminalObserve(capture, event = null) {
     const terminal = agentTerminalNormalize(capture, event);
     if (!terminal) return;
+    if (typeof agentLifecycleTransition === 'function') {
+      agentLifecycleTransition(terminal.kind === 'success' ? 'completed' : 'error', {
+        conversation_id: terminal.conversation_id,
+        exchange_id: terminal.exchange_id,
+        terminal_key: terminal.terminal_key
+      });
+    }
     if (terminal.kind === 'success') capture.agent_terminal_success_observed = true;
     if (terminal.kind === 'error') capture.agent_terminal_error_observed = true;
     logDiagnostic('debug', 'agent-terminal-normalized', {
