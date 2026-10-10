@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         ChatGPT Conversation Markdown Recorder
 // @namespace    https://chatgpt.com/
-// @version      1.10.2-issue.197.10
+// @version      1.10.3-issue.174.1
 // @description  Exports the current ChatGPT conversation directly from the Conversation API as Markdown or JSONL.
 // @match        https://chatgpt.com/*
 // @match        https://chat.openai.com/*
@@ -10947,6 +10947,7 @@ globalThis.__dcCompressor = {
           const pixels = context.getImageData(0, 0, width, height);
           const changed = agentFaviconRecolorPixels(pixels.data, targetRgb);
           context.putImageData(pixels, 0, 0);
+          agentFaviconDrawRing(context, width, height, agentFaviconRingStep());
           if (generation !== agentFaviconRenderGeneration) {
             resolve({ applied: false, stale: true, recolored_pixels: changed, width, height });
             return;
@@ -10986,6 +10987,72 @@ globalThis.__dcCompressor = {
     });
   }
 
+  /** Five-minute thresholds comprising one thirty-minute Agent working interval. */
+  const AGENT_FAVICON_RING_STEP_MS = 5 * 60 * 1000;
+  /** The last projected progress step; reset whenever processing begins again. */
+  let agentFaviconRingRenderedStep = 0;
+
+  /**
+   * Returns the discrete progress step from the authoritative stopwatch exchange clock.
+   *
+   * @param {number} nowMs - Monotonic current time.
+   * @returns {number} Clamped step from zero through six.
+   */
+  function agentFaviconRingStep(nowMs = performance.now()) {
+    if (!agentStopwatchState || !Number.isFinite(agentStopwatchState.started_at_ms)) return 0;
+    const elapsed = agentStopwatchState.active
+      ? Math.max(0, nowMs - agentStopwatchState.started_at_ms)
+      : Math.max(0, agentStopwatchState.total_ms ?? 0);
+    return Math.min(6, Math.floor(elapsed / AGENT_FAVICON_RING_STEP_MS));
+  }
+
+  /**
+   * Returns a green-to-yellow-to-red fixed colour for the requested progress step.
+   *
+   * @param {number} step - Completed five-minute intervals, one through six.
+   * @returns {string} A CSS colour for the visible progress arc.
+   */
+  function agentFaviconRingColor(step) {
+    return ['#00cc00', '#55cc00', '#aacc00', '#ffcc00', '#ff7700', '#ff0000'][
+      Math.min(6, Math.max(1, step)) - 1
+    ];
+  }
+
+  /**
+   * Draws the ring over the newly recoloured original favicon, never an earlier generated image.
+   *
+   * @param {CanvasRenderingContext2D} context - Candidate favicon canvas context.
+   * @param {number} width - Candidate width.
+   * @param {number} height - Candidate height.
+   * @param {number} step - Completed five-minute steps.
+   * @returns {void} No value is returned.
+   */
+  function agentFaviconDrawRing(context, width, height, step) {
+    if (step < 1) return;
+    const size = Math.min(width, height);
+    context.beginPath();
+    context.strokeStyle = agentFaviconRingColor(step);
+    context.lineWidth = Math.max(1, size * 0.12);
+    context.arc(width / 2, height / 2, size * 0.43,
+      -Math.PI / 2, -Math.PI / 2 + Math.PI * 2 * step / 6);
+    context.stroke();
+  }
+
+  /**
+   * Refreshes favicon progress only when its discrete step changes, using the existing
+   * stopwatch render cadence rather than creating another lifecycle observer or timer.
+   *
+   * @param {number} nowMs - Authoritative stopwatch render time.
+   * @returns {void} No value is returned.
+   */
+  function agentFaviconRingObserveTime(nowMs) {
+    if (!agentFaviconProcessingObserved || !agentStopwatchState?.active) return;
+    const step = agentFaviconRingStep(nowMs);
+    if (step === agentFaviconRingRenderedStep) return;
+    agentFaviconRingRenderedStep = step;
+    void agentFaviconRenderState('processing');
+  }
+
   /**
    * Renders one Agent favicon state across every stock favicon candidate the browser may select.
    *
@@ -10994,6 +11061,7 @@ globalThis.__dcCompressor = {
    */
   function agentFaviconRenderState(state) {
     const generation = ++agentFaviconRenderGeneration;
+    const ringStep = agentFaviconRingStep();
     const transitionId = typeof agentLifecycleTransitionId === 'undefined'
       ? null : agentLifecycleTransitionId;
     if (typeof agentLifecycleAction === 'function') {
@@ -11070,6 +11138,7 @@ globalThis.__dcCompressor = {
    * @returns {void} No value is returned.
    */
   function agentFaviconObserveProcessing() {
+    if (!agentFaviconProcessingObserved) agentFaviconRingRenderedStep = agentFaviconRingStep();
     agentFaviconProcessingObserved = true;
     if (typeof agentLifecycleTransition === 'function') {
       agentLifecycleTransition('processing', { source: 'generation-or-reload' });
@@ -11329,6 +11398,7 @@ globalThis.__dcCompressor = {
       }
     }
     control.textContent = lines.join('\n');
+    if (typeof agentFaviconRingObserveTime === 'function') agentFaviconRingObserveTime(nowMs);
   }
 
   /**
