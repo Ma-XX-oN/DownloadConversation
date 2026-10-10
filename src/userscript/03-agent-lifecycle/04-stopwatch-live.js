@@ -15,6 +15,7 @@
       }
     }
     control.textContent = lines.join('\n');
+    agentSoundSyncInitializationIndicator();
   }
 
   /**
