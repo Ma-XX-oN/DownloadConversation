@@ -7,6 +7,9 @@ function lifecycleHarness() {
   const context = { rendered: [] };
   vm.runInNewContext(`
     let agentFaviconProcessingObserved = false;
+    let agentFaviconRingRenderedStep = 0;
+    let agentStopwatchState = null;
+    function agentFaviconRingStep() { return 0; }
     function agentFaviconRenderState(state) { this.rendered.push(state); return Promise.resolve(true); }
     ${productionFunctionSource('agentStopwatchStreamIsActive')}
     ${productionFunctionSource('agentFaviconObserveProcessing')}
