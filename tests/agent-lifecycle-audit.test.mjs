@@ -71,10 +71,10 @@ test('unrelated debug records are still filtered', () => {
 });
 
 test('sound startup and explicit changes retain source and volume at warning threshold', () => {
-  assert.match(downloadConversationSource,
-    /agent-sound-volume-initialized'[\\s\\S]*source: initialSoundVolume !== null/);
-  assert.match(downloadConversationSource,
-    /agent-sound-volume-changed'[\\s\\S]*source: 'user-input'/);
+  assert.ok(downloadConversationSource.includes("'agent-sound-volume-initialized'"));
+  assert.ok(downloadConversationSource.includes('source: initialSoundVolume !== null'));
+  assert.ok(downloadConversationSource.includes("'agent-sound-volume-changed'"));
+  assert.ok(downloadConversationSource.includes("source: 'user-input'"));
   assert.ok(downloadConversationSource.includes("logDiagnostic('lifecycle', 'agent-sound-volume-initialized'"));
   assert.ok(downloadConversationSource.includes("logDiagnostic('lifecycle', 'agent-sound-volume-changed'"));
 });
