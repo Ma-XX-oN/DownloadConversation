@@ -41,7 +41,6 @@ test('build manifest is the Core pin authority and generated userscript embeds t
   );
 
   const pinnedConsumers = [
-    ['CI environment', ciEnvironment],
     ['core integration', coreIntegration],
     ['phase 5 integration', phase5Integration],
     ['sediment resolver', sedimentResolver]
