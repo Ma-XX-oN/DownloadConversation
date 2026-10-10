@@ -47,6 +47,9 @@
     };
     agentStopwatchRender(submittedAtMs);
     agentStopwatchStartTimer();
+    if (typeof agentLifecycleAction === 'function') {
+      agentLifecycleAction('stopwatch', 'started', { submitted_at_ms: submittedAtMs });
+    }
   }
 
   /**
