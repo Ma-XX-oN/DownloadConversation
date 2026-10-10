@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         ChatGPT Conversation Markdown Recorder
 // @namespace    https://chatgpt.com/
-// @version      1.10.2-issue.197.9
+// @version      1.10.2-issue.197.10
 // @description  Exports the current ChatGPT conversation directly from the Conversation API as Markdown or JSONL.
 // @match        https://chatgpt.com/*
 // @match        https://chat.openai.com/*
@@ -21108,7 +21108,7 @@ Image elapsed: ${formatDuration(imageElapsed)} — Completed: ${imageCompleted}/
         ? 'legacy-preference'
         : 'default',
     valid_saved_value: initialSoundVolume === null ||
-      /^\\d+$/.test(initialSoundVolume)
+      /^\d+$/.test(initialSoundVolume)
   });
   installNetworkCapture();
   bootstrapUi();
