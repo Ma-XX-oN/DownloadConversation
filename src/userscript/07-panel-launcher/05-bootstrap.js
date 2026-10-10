@@ -19,7 +19,10 @@
       agentSoundVolume = Number.isFinite(parsed) ? Math.max(0, Math.min(10, parsed)) : 0;
       localStorage.setItem(AGENT_SOUND_VOLUME_STORAGE_KEY, String(agentSoundVolume));
       renderSoundVolume();
-      logDiagnostic('debug', 'agent-sound-volume-changed', { volume: agentSoundVolume });
+      logDiagnostic('lifecycle', 'agent-sound-volume-changed', {
+        volume: agentSoundVolume,
+        source: 'user-input'
+      });
       if (agentSoundVolume > 0) void unlockAgentSoundAudio();
       else agentSoundClearPendingTerminal();
     });
@@ -175,6 +178,18 @@
   }
   communicationLogInitializationPromise = initializeCommunicationDiskRecorder();
   installLiveTailTracking();
+  const initialSoundVolume = localStorage.getItem(AGENT_SOUND_VOLUME_STORAGE_KEY);
+  const legacySoundPreference = localStorage.getItem(LEGACY_AGENT_SOUNDS_STORAGE_KEY);
+  logDiagnostic('lifecycle', 'agent-sound-volume-initialized', {
+    volume: agentSoundVolume,
+    source: initialSoundVolume !== null
+      ? 'saved-volume'
+      : legacySoundPreference === 'true' || legacySoundPreference === 'false'
+        ? 'legacy-preference'
+        : 'default',
+    valid_saved_value: initialSoundVolume === null ||
+      /^\\d+$/.test(initialSoundVolume)
+  });
   installNetworkCapture();
   bootstrapUi();
 })();
