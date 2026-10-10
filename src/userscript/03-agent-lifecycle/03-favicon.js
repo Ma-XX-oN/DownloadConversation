@@ -185,6 +185,7 @@
     if (!pending) return false;
     if (agentSoundVolume <= 0) {
       agentSoundClearPendingTerminal();
+      agentSoundRememberTerminalKey(soundKey);
       return false;
     }
     if (!pending.sound_key || agentSoundTerminalKeys.has(pending.sound_key)) {
