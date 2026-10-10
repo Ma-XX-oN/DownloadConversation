@@ -120,7 +120,7 @@
     const stored = localStorage.getItem(AGENT_SOUND_VOLUME_STORAGE_KEY);
     if (stored !== null) {
       const parsed = Number.parseInt(stored, 10);
-      return /^\\d+$/.test(stored) && Number.isFinite(parsed) && parsed >= 0 && parsed <= 10 ? parsed : 10;
+      return /^(?:10|[0-9])$/.test(stored) && Number.isFinite(parsed) && parsed >= 0 && parsed <= 10 ? parsed : 10;
     }
     const legacy = localStorage.getItem(LEGACY_AGENT_SOUNDS_STORAGE_KEY);
     if (legacy === 'true') return 10;
