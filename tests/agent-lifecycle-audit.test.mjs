@@ -79,6 +79,50 @@ test('sound startup and explicit changes retain source and volume at warning thr
   assert.ok(downloadConversationSource.includes("logDiagnostic('lifecycle', 'agent-sound-volume-changed'"));
 });
 
+test('sound initialization resolves saved, legacy, default and malformed preferences', () => {
+  const cases = [
+    { saved: null, legacy: null, volume: 0, source: 'default', valid: true },
+    { saved: null, legacy: 'true', volume: 10, source: 'legacy-preference', valid: true },
+    { saved: null, legacy: 'false', volume: 0, source: 'legacy-preference', valid: true },
+    { saved: '7', legacy: 'false', volume: 7, source: 'saved-volume', valid: true },
+    { saved: '0', legacy: 'true', volume: 0, source: 'saved-volume', valid: true },
+    { saved: '12', legacy: null, volume: 10, source: 'saved-volume', valid: true },
+    { saved: 'invalid', legacy: 'true', volume: 0, source: 'saved-volume', valid: false }
+  ];
+  const begin = downloadConversationSource.indexOf(
+    '  const initialSoundVolume = localStorage.getItem(AGENT_SOUND_VOLUME_STORAGE_KEY);'
+  );
+  const end = downloadConversationSource.indexOf('  installNetworkCapture();', begin);
+  assert.ok(begin >= 0 && end > begin, 'actual startup logging source must be present');
+  const startup = downloadConversationSource.slice(begin, end);
+  for (const item of cases) {
+    const records = [];
+    const storage = new Map();
+    if (item.saved !== null) storage.set('volume', item.saved);
+    if (item.legacy !== null) storage.set('legacy', item.legacy);
+    const context = {
+      localStorage: { getItem: key => storage.get(key) ?? null },
+      records,
+      AGENT_SOUND_VOLUME_STORAGE_KEY: 'volume',
+      LEGACY_AGENT_SOUNDS_STORAGE_KEY: 'legacy',
+      logDiagnostic(level, message, data) { records.push({ level, message, data }); }
+    };
+    vm.runInNewContext(`
+      ${productionFunctionSource('loadAgentSoundVolume')}
+      const agentSoundVolume = loadAgentSoundVolume();
+      ${startup}
+      this.resolvedVolume = agentSoundVolume;
+    `, context);
+    assert.equal(context.resolvedVolume, item.volume);
+    assert.equal(records.length, 1);
+    assert.equal(records[0].level, 'lifecycle');
+    assert.equal(records[0].message, 'agent-sound-volume-initialized');
+    assert.equal(records[0].data.volume, item.volume);
+    assert.equal(records[0].data.source, item.source);
+    assert.equal(records[0].data.valid_saved_value, item.valid);
+  }
+});
+
 test('muted terminal sound is suppressed and recorded once per terminal kind', () => {
   const context = { entries: [], document: { addEventListener() {} } };
   vm.runInNewContext(`
