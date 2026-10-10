@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         ChatGPT Conversation Markdown Recorder
 // @namespace    https://chatgpt.com/
-// @version      1.10.2-issue.197.4
+// @version      1.10.2-issue.197.5
 // @description  Exports the current ChatGPT conversation directly from the Conversation API as Markdown or JSONL.
 // @match        https://chatgpt.com/*
 // @match        https://chat.openai.com/*
@@ -11148,7 +11148,6 @@ globalThis.__dcCompressor = {
     if (!pending) return false;
     if (agentSoundVolume <= 0) {
       agentSoundClearPendingTerminal();
-      agentSoundRememberTerminalKey(soundKey);
       return false;
     }
     if (!pending.sound_key || agentSoundTerminalKeys.has(pending.sound_key)) {
@@ -21096,7 +21095,9 @@ Image elapsed: ${formatDuration(imageElapsed)} — Completed: ${imageCompleted}/
   }
   communicationLogInitializationPromise = initializeCommunicationDiskRecorder();
   installLiveTailTracking();
+  /** Persisted scalar volume present when the userscript was initialized. */
   const initialSoundVolume = localStorage.getItem(AGENT_SOUND_VOLUME_STORAGE_KEY);
+  /** Legacy boolean setting used only when no explicit volume was saved. */
   const legacySoundPreference = localStorage.getItem(LEGACY_AGENT_SOUNDS_STORAGE_KEY);
   logDiagnostic('lifecycle', 'agent-sound-volume-initialized', {
     volume: agentSoundVolume,
