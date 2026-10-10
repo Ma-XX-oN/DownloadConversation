@@ -54,16 +54,7 @@
     ];
   }
 
-  /**
-   * Fills the elapsed portion behind transparent openings in the original logo.
-   * The renderer uses destination-over so this wedge never obscures logo pixels.
-   *
-   * @param {CanvasRenderingContext2D} context - Favicon canvas context.
-   * @param {number} width - Candidate favicon width.
-   * @param {number} height - Candidate favicon height.
-   * @param {number} step - Completed five-minute steps.
-   * @returns {void} No value is returned.
-   */
+  /** Draws a coloured pie wedge behind transparent logo pixels. */
   function agentFaviconDrawPieSlice(context, width, height, step) {
     if (step < 1) return;
     const size = Math.min(width, height);
@@ -76,15 +67,7 @@
     context.fill();
   }
 
-  /**
-   * Draws the ring over the newly recoloured original favicon, never an earlier generated image.
-   *
-   * @param {CanvasRenderingContext2D} context - Candidate favicon canvas context.
-   * @param {number} width - Candidate width.
-   * @param {number} height - Candidate height.
-   * @param {number} step - Completed five-minute steps.
-   * @returns {void} No value is returned.
-   */
+  /** Draws the foreground ring over the source favicon. */
   function agentFaviconDrawRing(context, width, height, step) {
     if (step < 1) return;
     const size = Math.min(width, height);
@@ -96,13 +79,7 @@
     context.stroke();
   }
 
-  /**
-   * Refreshes favicon progress only when its discrete step changes, using the existing
-   * stopwatch render cadence rather than creating another lifecycle observer or timer.
-   *
-   * @param {number} nowMs - Authoritative stopwatch render time.
-   * @returns {void} No value is returned.
-   */
+  /** Refreshes only on five-minute transitions, using the existing timer. */
   function agentFaviconRingObserveTime(nowMs) {
     if (!agentFaviconProcessingObserved || !agentStopwatchState?.active) return;
     const step = agentFaviconRingStep(nowMs);
