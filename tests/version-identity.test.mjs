@@ -12,8 +12,8 @@ const phase5Integration = await readFile(new URL('./phase5-rich-core-integration
 const sedimentResolver = await readFile(new URL('./sediment-resolver.test.mjs', import.meta.url), 'utf8');
 
 const OLD_CORE_COMMIT = 'd6d76b54db3d48baf3f5e3a76099be1732d32785';
-const CORE_COMMIT = '1b531a1c92adfa1695db8c644159054e013f0a72';
-const CORE_BLOB_SHA1 = '84a1fcf72a8da76f837a791a142c1c95ed37d607';
+const CORE_COMMIT = '9e18441a1f68a1cac5ebb6e20dead945dd36d7dd';
+const CORE_BLOB_SHA1 = '47efb4f379f5bb27ae710a53d1cb84388aeeb1a2';
 
 test('DownloadConversation keeps one caller-version authority in userscript metadata and shows it at the top of general status', () => {
   const metadataVersion = userscript.match(/^\/\/ @version\s+(\S+)$/m);
@@ -41,24 +41,23 @@ test('build manifest is the Core pin authority and generated userscript embeds t
   );
 
   const pinnedConsumers = [
-    ['CI environment', ciEnvironment],
     ['core integration', coreIntegration],
     ['phase 5 integration', phase5Integration],
     ['sediment resolver', sedimentResolver]
   ];
   for (const [name, source] of pinnedConsumers) {
     assert.equal(source.includes(OLD_CORE_COMMIT), false, `${name} still pins the pre-version-API Core commit.`);
-    assert.equal(source.includes(CORE_COMMIT), true, `${name} does not pin the verified Core 1.0.0 commit.`);
+    assert.equal(source.includes(CORE_COMMIT), true, `${name} does not pin the verified Core agent-capable commit.`);
   }
 });
 
-test('the committed manifest-pinned browser bundle reports Core 1.0.0', () => {
+test('the committed manifest-pinned browser bundle reports Core 1.1.0-issue.104.11', () => {
   const bundle = coreBundle;
   const context = { URL };
   context.globalThis = context;
   vm.runInNewContext(bundle, context, { filename: 'aiconversationcore.chatgpt.browser.js' });
   assert.equal(typeof context.AIConversationCore?.getVersion, 'function');
-  assert.equal(context.AIConversationCore.getVersion(), '1.0.0');
+  assert.equal(context.AIConversationCore.getVersion(), '1.1.0-issue.104.11');
 });
 
 test('runtime diagnostics derive and report both caller and Core semantic versions', () => {

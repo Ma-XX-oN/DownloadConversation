@@ -6,6 +6,11 @@
       "parent": "issue-162-ci-request-gating",
       "allowedDependencies": [],
       "integrationTarget": "main"
+    },
+    "integrate-156-provider-core-isolation": {
+      "parent": "main",
+      "allowedDependencies": [],
+      "integrationTarget": "main"
     }
   },
   "patterns": [
