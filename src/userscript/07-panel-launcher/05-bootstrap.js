@@ -190,7 +190,7 @@
         ? 'legacy-preference'
         : 'default',
     valid_saved_value: initialSoundVolume === null ||
-      /^\\d+$/.test(initialSoundVolume)
+      /^\d+$/.test(initialSoundVolume)
   });
   installNetworkCapture();
   bootstrapUi();
