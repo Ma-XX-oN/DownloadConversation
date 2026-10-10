@@ -75,6 +75,7 @@ function multiCandidateHarness() {
     document,
     Image: FakeImage,
     Uint8ClampedArray,
+    performance: { now: () => 0 },
     queueMicrotask,
     diagnostics: []
   };
