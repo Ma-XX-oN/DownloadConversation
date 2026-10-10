@@ -21,7 +21,7 @@ async function main() {
     path.join(root, 'src/userscript-manifest.json'),
     'utf8'
   ));
-  if (manifest?.format_version !== 2) fail('Manifest format_version must be 2.');
+  if (manifest?.format_version !== 3) fail('Manifest format_version must be 3.');
   if (typeof manifest.header !== 'string' || !manifest.header) {
     fail('Manifest header path is required.');
   }
@@ -30,6 +30,9 @@ async function main() {
   }
   if (!Array.isArray(manifest.dependencies) || manifest.dependencies.length === 0) {
     fail('Manifest must declare at least one dependency.');
+  }
+  if (Object.hasOwn(manifest, 'agent_plugins')) {
+    fail('DownloadConversation manifest must not declare provider agent plugins.');
   }
   if (!Array.isArray(manifest.modules) || manifest.modules.length === 0) {
     fail('Manifest must declare at least one source module.');
@@ -73,10 +76,7 @@ async function main() {
       fail(`${dependency.name} URL must contain its pinned commit.`);
     }
 
-    consume(
-      `${dependency.name} provenance`,
-      Buffer.from(`// source ${dependency.url}\n`, 'utf8')
-    );
+    consume(`${dependency.name} provenance`, Buffer.from(`// source ${dependency.url}\n`, 'utf8'));
     consume(
       `${dependency.name} opening banner`,
       Buffer.from(
@@ -85,35 +85,21 @@ async function main() {
         'utf8'
       )
     );
-
-    const dependencyBytes = artifact.subarray(
-      offset,
-      offset + dependency.byte_length
-    );
-    if (dependencyBytes.length !== dependency.byte_length) {
-      fail(`${dependency.name} content is truncated.`);
-    }
+    const dependencyBytes = artifact.subarray(offset, offset + dependency.byte_length);
+    if (dependencyBytes.length !== dependency.byte_length) fail(`${dependency.name} content is truncated.`);
     const actualSha = gitBlobSha1(dependencyBytes);
     if (actualSha !== dependency.git_blob_sha1) {
-      fail(
-        `${dependency.name} Git blob mismatch: expected `
-          + `${dependency.git_blob_sha1}, got ${actualSha}.`
-      );
+      fail(`${dependency.name} Git blob mismatch: expected ${dependency.git_blob_sha1}, got ${actualSha}.`);
     }
     offset += dependencyBytes.length;
     if (dependencyBytes.at(-1) !== 0x0a) consume(`${dependency.name} separator`, Buffer.from('\n'));
-    consume(
-      `${dependency.name} closing banner`,
-      Buffer.from(`// END bundled ${dependency.name}\n`, 'utf8')
-    );
+    consume(`${dependency.name} closing banner`, Buffer.from(`// END bundled ${dependency.name}\n`, 'utf8'));
   }
 
   const sourcePaths = new Set();
   const sourceParts = [];
   for (const module of manifest.modules) {
-    if (typeof module?.name !== 'string' || !module.name) {
-      fail('Every source module requires a name.');
-    }
+    if (typeof module?.name !== 'string' || !module.name) fail('Every source module requires a name.');
     if (!Array.isArray(module.files) || module.files.length === 0) {
       fail(`Source module ${module.name} must contain at least one file.`);
     }
@@ -131,13 +117,38 @@ async function main() {
   if (!sourceText.startsWith('\n(() => {')) {
     fail('DownloadConversation source does not preserve the userscript IIFE boundary.');
   }
+
   const artifactTail = artifact.subarray(offset).toString('utf8');
   const sourceBody = sourceText.slice('\n(() => {'.length);
+  const iifePrefix = '\n(() => {\n';
+  if (!artifactTail.startsWith(iifePrefix)) {
+    fail('Generated userscript does not preserve the DC IIFE boundary.');
+  }
+
+  const broker = await readFile(
+    path.join(root, 'src/userscript/01-runtime/02-github-agent-plugin-broker.js'),
+    'utf8'
+  );
+  const bridge = await readFile(
+    path.join(root, 'src/userscript/04-conversation-rendering/08-agent-plugin-bridge.js'),
+    'utf8'
+  );
+  const brokerText = broker.toString('utf8');
+  const bridgeText = bridge.toString('utf8');
+  const brokerOffset = iifePrefix.length;
+  if (!artifactTail.startsWith(brokerText, brokerOffset)) {
+    fail('Generated generic browser plugin broker differs from repository source.');
+  }
+  const bridgeOffset = brokerOffset + brokerText.length;
+  if (!artifactTail.startsWith(bridgeText, bridgeOffset)) {
+    fail('Generated generic Core agent bridge differs from repository source.');
+  }
+
   const compressorStartMarker = '// BEGIN bundled compressor name=';
-  const compressorStart = artifactTail.indexOf(compressorStartMarker);
-  if (!artifactTail.startsWith('\n(() => {\n')
-      || compressorStart !== '\n(() => {\n'.length) {
-    fail('Generated compressor runtime is not scoped immediately inside the DC IIFE.');
+  const compressorExpectedOffset = bridgeOffset + bridgeText.length;
+  const compressorStart = artifactTail.indexOf(compressorStartMarker, compressorExpectedOffset);
+  if (compressorStart !== compressorExpectedOffset) {
+    fail('Generated compressor runtime does not immediately follow the generic plugin runtime prelude.');
   }
   const compressorEndMarker = '// END bundled compressor\n';
   const compressorEnd = artifactTail.indexOf(compressorEndMarker, compressorStart);
@@ -159,15 +170,25 @@ async function main() {
   if (/^export\s/m.test(compressorPrelude) || /import\.meta/.test(compressorPrelude)) {
     fail('Generated compressor prelude retains ES-module-only syntax.');
   }
-  const expectedTail = '\n(() => {\n' + compressorPrelude + sourceBody;
+
+  const expectedTail = iifePrefix
+    + brokerText
+    + bridgeText
+    + compressorPrelude
+    + sourceBody;
   if (artifactTail !== expectedTail) {
-    fail('Generated userscript scoped compressor prelude/source assembly differs from repository source.');
+    fail('Generated userscript generic-plugin/compressor/source assembly differs from repository source.');
   }
-  offset = artifact.length;
   if (artifact.length >= 2 * 1024 * 1024) {
     fail(`Generated userscript unexpectedly exceeds 2 MiB: ${artifact.length} bytes.`);
   }
   const artifactText = artifact.toString('utf8');
+  if (/DC_AGENT_PLUGIN_DESCRIPTORS/.test(artifactText)) {
+    fail('Generated userscript contains a DownloadConversation-owned provider descriptor table.');
+  }
+  if (/source_base64/.test(artifactText)) {
+    fail('Generated userscript contains embedded provider source bytes.');
+  }
   if (/import\.meta/.test(artifactText)) {
     fail('Generated userscript contains import.meta and is not Tampermonkey classic-script compatible.');
   }
