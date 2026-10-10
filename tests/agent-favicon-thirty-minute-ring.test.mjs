@@ -27,6 +27,7 @@ function ringHarness() {
           active: true, started_at_ms: atMs, total_ms: null
         };
         agentFaviconRingRenderedStep = 0;
+        agentFaviconProcessingObserved = true;
       },
       finish(totalMs) {
         agentStopwatchState.active = false;
