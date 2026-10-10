@@ -12,7 +12,9 @@ function auditHarness() {
     const diagnosticLog = this.entries;
     const MAX_DIAGNOSTIC_LOG_ITEMS = 100;
     function logConsoleDiagnostic() {}
-    function diagnosticEnabled(level) { return level === 'warnings'; }
+    const DIAGNOSTIC_LEVELS = Object.freeze({ errors: 0, warnings: 1, debug: 2, verbose: 3 });
+    let diagnosticsLevel = 'warnings';
+    ${productionFunctionSource('diagnosticEnabled')}
     function redactDiagnosticSignedTokens(value) { return value; }
     function schedulePersistDiagnosticLog() { this.persisted += 1; }
     function refreshDiagnosticLog() { this.refreshed += 1; }
