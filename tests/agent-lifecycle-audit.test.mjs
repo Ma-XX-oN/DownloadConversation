@@ -75,10 +75,8 @@ test('sound startup and explicit changes retain source and volume at warning thr
     /agent-sound-volume-initialized'[\\s\\S]*source: initialSoundVolume !== null/);
   assert.match(downloadConversationSource,
     /agent-sound-volume-changed'[\\s\\S]*source: 'user-input'/);
-  assert.match(downloadConversationSource,
-    /logDiagnostic\\('lifecycle', 'agent-sound-volume-initialized'/);
-  assert.match(downloadConversationSource,
-    /logDiagnostic\\('lifecycle', 'agent-sound-volume-changed'/);
+  assert.ok(downloadConversationSource.includes("logDiagnostic('lifecycle', 'agent-sound-volume-initialized'"));
+  assert.ok(downloadConversationSource.includes("logDiagnostic('lifecycle', 'agent-sound-volume-changed'"));
 });
 
 test('muted terminal sound is suppressed and recorded once per terminal kind', () => {
