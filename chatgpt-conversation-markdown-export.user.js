@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         ChatGPT Conversation Markdown Recorder
 // @namespace    https://chatgpt.com/
-// @version      1.10.2-issue.197.1
+// @version      1.10.2-issue.197.2
 // @description  Exports the current ChatGPT conversation directly from the Conversation API as Markdown or JSONL.
 // @match        https://chatgpt.com/*
 // @match        https://chat.openai.com/*
@@ -12933,6 +12933,34 @@ globalThis.__dcCompressor = {
     };
 
     if (!response.ok) {
+  /** Lifecycle transitions and consumer outcomes are retained at every diagnostic level. */
+  let agentLifecycleState = 'unknown';
+  let agentLifecycleTransitionSequence = 0;
+  let agentLifecycleTransitionId = null;
+
+  function agentLifecycleTransition(nextState, details = {}) {
+    if (agentLifecycleState === nextState) return agentLifecycleTransitionId;
+    const previousState = agentLifecycleState;
+    agentLifecycleState = nextState;
+    agentLifecycleTransitionId = ++agentLifecycleTransitionSequence;
+    logDiagnostic('lifecycle', 'agent-lifecycle-state-changed', {
+      transition_id: agentLifecycleTransitionId,
+      previous_state: previousState,
+      state: nextState,
+      ...details
+    });
+    return agentLifecycleTransitionId;
+  }
+
+  /** Records a consumer action against the transition that initiated it. */
+  function agentLifecycleAction(component, action, details = {}, transitionId = agentLifecycleTransitionId) {
+    logDiagnostic('lifecycle', 'agent-lifecycle-action', {
+      transition_id: transitionId,
+      component,
+      action,
+      ...details
+    });
+  }
       let bodyPreview = '';
       try {
         bodyPreview = boundedDiagnosticText(await response.clone().text());
@@ -19950,34 +19978,6 @@ Image elapsed: ${formatDuration(imageElapsed)} — Completed: ${imageCompleted}/
   }
 
 
-  /** Lifecycle transitions and consumer outcomes are retained at every diagnostic level. */
-  let agentLifecycleState = 'unknown';
-  let agentLifecycleTransitionSequence = 0;
-  let agentLifecycleTransitionId = null;
-
-  function agentLifecycleTransition(nextState, details = {}) {
-    if (agentLifecycleState === nextState) return agentLifecycleTransitionId;
-    const previousState = agentLifecycleState;
-    agentLifecycleState = nextState;
-    agentLifecycleTransitionId = ++agentLifecycleTransitionSequence;
-    logDiagnostic('lifecycle', 'agent-lifecycle-state-changed', {
-      transition_id: agentLifecycleTransitionId,
-      previous_state: previousState,
-      state: nextState,
-      ...details
-    });
-    return agentLifecycleTransitionId;
-  }
-
-  /** Records a consumer action against the transition that initiated it. */
-  function agentLifecycleAction(component, action, details = {}, transitionId = agentLifecycleTransitionId) {
-    logDiagnostic('lifecycle', 'agent-lifecycle-action', {
-      transition_id: transitionId,
-      component,
-      action,
-      ...details
-    });
-  }
 
   /**
    * Handles inject styles.
