@@ -345,8 +345,6 @@
           const pixels = context.getImageData(0, 0, width, height);
           const changed = agentFaviconRecolorPixels(pixels.data, targetRgb);
           context.putImageData(pixels, 0, 0);
-          // Composite behind the transparent openings without covering the logo.
-          // Restore source-over before stroking the ring in the foreground.
           const ringStep = state === 'processing' ? agentFaviconRingStep() : 0;
           if (ringStep > 0) {
             context.globalCompositeOperation = 'destination-over';
