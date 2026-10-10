@@ -79,7 +79,7 @@ These invariants are covered by `tests/agent-terminal-conversation-turn-complete
 
 A genuine state transition is recorded as `agent-lifecycle-state-changed` with a
 monotonic transition identifier and the previous/new state. The stopwatch,
-flower/favicon, and sound consumers record their actual outcomes as
+favicon, and sound consumers record their actual outcomes as
 `agent-lifecycle-action`, using that transition identifier. Favicon rendering
 records a request and then an applied, failed, or superseded outcome; an
 asynchronous request is not treated as applied merely because it was issued.
