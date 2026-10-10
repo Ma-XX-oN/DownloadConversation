@@ -80,7 +80,7 @@ test('sound startup and explicit changes retain source and volume at warning thr
 });
 
 test('muted terminal sound is suppressed and recorded once per terminal kind', () => {
-  const context = { entries: [] };
+  const context = { entries: [], document: { addEventListener() {} } };
   vm.runInNewContext(`
     let agentSoundVolume = 0;
     let agentSoundAudioContext = null;
