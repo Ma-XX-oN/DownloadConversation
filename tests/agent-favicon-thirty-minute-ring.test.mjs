@@ -16,11 +16,13 @@ function ringHarness() {
     ${productionFunctionSource('agentFaviconRingStep')}
     ${productionFunctionSource('agentFaviconRingColor')}
     ${productionFunctionSource('agentFaviconDrawRing')}
+    ${productionFunctionSource('agentFaviconDrawPieSlice')}
     ${productionFunctionSource('agentFaviconRingObserveTime')}
     this.api = {
       step: agentFaviconRingStep,
       color: agentFaviconRingColor,
       draw: agentFaviconDrawRing,
+      drawPie: agentFaviconDrawPieSlice,
       tick: agentFaviconRingObserveTime,
       restart(atMs) {
         agentStopwatchState = {
@@ -109,4 +111,40 @@ test('ring only draws over favicon canvas, preserving the source image and initi
   assert.match(source, /candidate\.link\.href = canvas\.toDataURL\('image\/png'\)/);
   assert.doesNotMatch(productionFunctionSource('agentFaviconRingObserveTime'),
     /setInterval|setTimeout|addEventListener/);
+});
+
+test('pie underlay has matching six sectors and never draws at zero', () => {
+  const h = ringHarness();
+  const colours = ['#00cc00', '#55cc00', '#aacc00',
+    '#ffcc00', '#ff7700', '#ff0000'];
+  for (let step = 0; step <= 6; step += 1) {
+    const calls = [];
+    const context = {
+      beginPath() { calls.push(['begin']); },
+      moveTo(...args) { calls.push(['move', ...args]); },
+      arc(...args) { calls.push(['arc', ...args]); },
+      closePath() { calls.push(['close']); },
+      fill() { calls.push(['fill', this.fillStyle]); }
+    };
+    h.api.drawPie(context, 32, 32, step);
+    if (step === 0) {
+      assert.equal(calls.length, 0);
+      continue;
+    }
+    assert.deepEqual(calls.map(c => c[0]),
+      ['begin', 'move', 'arc', 'close', 'fill']);
+    assert.equal(calls[4][1], colours[step - 1]);
+    assert.ok(Math.abs(
+      (calls[2][5] - calls[2][4]) / (Math.PI * 2) - step / 6
+    ) < 1e-9);
+  }
+});
+
+test('pie behind logo applies only while processing and ring remains foreground', () => {
+  const source = productionFunctionSource('agentFaviconRenderCandidate');
+  assert.match(source, /state === 'processing' \? agentFaviconRingStep\(\) : 0/);
+  assert.match(source, /context\.globalCompositeOperation = 'destination-over'/);
+  assert.match(source, /finally\s*\{\s*context\.globalCompositeOperation = 'source-over'/);
+  assert.ok(source.indexOf('agentFaviconDrawPieSlice(') <
+    source.indexOf('agentFaviconDrawRing('));
 });
