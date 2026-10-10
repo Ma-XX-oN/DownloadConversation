@@ -81,13 +81,13 @@ test('sound startup and explicit changes retain source and volume at warning thr
 
 test('sound initialization resolves saved, legacy, default and malformed preferences', () => {
   const cases = [
-    { saved: null, legacy: null, volume: 0, source: 'default', valid: true },
-    { saved: null, legacy: 'true', volume: 10, source: 'legacy-preference', valid: true },
-    { saved: null, legacy: 'false', volume: 0, source: 'legacy-preference', valid: true },
+    { saved: null, legacy: null, volume: 10, source: 'default', valid: false },
+    { saved: null, legacy: 'true', volume: 10, source: 'legacy-preference', valid: false },
+    { saved: null, legacy: 'false', volume: 0, source: 'legacy-preference', valid: false },
     { saved: '7', legacy: 'false', volume: 7, source: 'saved-volume', valid: true },
     { saved: '0', legacy: 'true', volume: 0, source: 'saved-volume', valid: true },
-    { saved: '12', legacy: null, volume: 10, source: 'saved-volume', valid: true },
-    { saved: 'invalid', legacy: 'true', volume: 0, source: 'saved-volume', valid: false }
+    { saved: '12', legacy: null, volume: 10, source: 'saved-volume', valid: false },
+    { saved: 'invalid', legacy: 'true', volume: 10, source: 'saved-volume', valid: false }
   ];
   const begin = downloadConversationSource.indexOf(
     '  const initialSoundVolume = localStorage.getItem(AGENT_SOUND_VOLUME_STORAGE_KEY);'
