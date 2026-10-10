@@ -84,11 +84,15 @@ function multiCandidateHarness() {
     const AGENT_FAVICON_COMPLETED_RGB = Object.freeze([144, 238, 144]);
     const agentFaviconOriginalSources = new Map();
     let agentFaviconRenderGeneration = 0;
+    let agentStopwatchState = null;
     function logDiagnostic(level, name, details) { this.diagnostics.push({ level, name, details }); }
     ${productionFunctionSource('errorMessage')}
     ${productionFunctionSource('agentFaviconCurrentCandidates')}
     ${productionFunctionSource('agentFaviconRecolorPixels')}
     ${productionFunctionSource('agentFaviconRenderCandidate')}
+    ${productionFunctionSource('agentFaviconRingStep')}
+    ${productionFunctionSource('agentFaviconRingColor')}
+    ${productionFunctionSource('agentFaviconDrawRing')}
     ${productionFunctionSource('agentFaviconRenderState')}
     this.render = agentFaviconRenderState;
   `, context);
