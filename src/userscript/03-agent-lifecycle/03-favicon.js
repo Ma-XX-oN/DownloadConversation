@@ -29,7 +29,7 @@
   let agentFaviconRingRenderedStep = 0;
 
   /**
-   * Returns the discrete progress step from the authoritative stopwatch exchange clock.
+   * Derives the step from the stopwatch.
    *
    * @param {number} nowMs - Monotonic current time.
    * @returns {number} Clamped step from zero through six.
@@ -43,7 +43,7 @@
   }
 
   /**
-   * Returns a green-to-yellow-to-red fixed colour for the requested progress step.
+   * Returns the step colour.
    *
    * @param {number} step - Completed five-minute intervals, one through six.
    * @returns {string} A CSS colour for the visible progress arc.
@@ -54,7 +54,14 @@
     ];
   }
 
-  /** Draws a coloured pie wedge behind transparent logo pixels. */
+  /**
+   * Fill the pie beneath the logo.
+   * @param {CanvasRenderingContext2D} context - Canvas.
+   * @param {number} width - Width.
+   * @param {number} height - Height.
+   * @param {number} step - Step.
+   * @returns {void} No result.
+   */
   function agentFaviconDrawPieSlice(context, width, height, step) {
     if (step < 1) return;
     const size = Math.min(width, height);
@@ -67,7 +74,14 @@
     context.fill();
   }
 
-  /** Draws the foreground ring over the source favicon. */
+  /**
+   * Draw ring above logo.
+   * @param {CanvasRenderingContext2D} context - Canvas.
+   * @param {number} width - Width.
+   * @param {number} height - Height.
+   * @param {number} step - Step.
+   * @returns {void} No result.
+   */
   function agentFaviconDrawRing(context, width, height, step) {
     if (step < 1) return;
     const size = Math.min(width, height);
@@ -79,7 +93,11 @@
     context.stroke();
   }
 
-  /** Refreshes only on five-minute transitions, using the existing timer. */
+  /**
+   * Refresh on stopwatch ticks.
+   * @param {number} nowMs - Monotonic time.
+   * @returns {void} No result.
+   */
   function agentFaviconRingObserveTime(nowMs) {
     if (!agentFaviconProcessingObserved || !agentStopwatchState?.active) return;
     const step = agentFaviconRingStep(nowMs);
@@ -89,14 +107,13 @@
   }
 
   /**
-   * Renders one Agent favicon state across every stock favicon candidate the browser may select.
+   * Renders every stock favicon candidate.
    *
    * @param {string} state - `processing`, `completed`, `error`, or `original`.
-   * @returns {Promise<boolean>} True only when the requested state is applied to every current candidate.
+   * @returns {Promise<boolean>} Whether every candidate updated.
    */
   function agentFaviconRenderState(state) {
     const generation = ++agentFaviconRenderGeneration;
-    const ringStep = agentFaviconRingStep();
     const transitionId = typeof agentLifecycleTransitionId === 'undefined'
       ? null : agentLifecycleTransitionId;
     if (typeof agentLifecycleAction === 'function') {
