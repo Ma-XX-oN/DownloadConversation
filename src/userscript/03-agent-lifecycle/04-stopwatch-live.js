@@ -15,6 +15,7 @@
       }
     }
     control.textContent = lines.join('\n');
+    if (typeof agentFaviconRingObserveTime === 'function') agentFaviconRingObserveTime(nowMs);
     if (typeof agentSoundPositionInitializationIndicator === 'function') {
       agentSoundPositionInitializationIndicator();
     }
