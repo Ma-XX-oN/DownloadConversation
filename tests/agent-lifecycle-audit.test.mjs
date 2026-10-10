@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import vm from 'node:vm';
-import { productionFunctionSource } from './helpers/userscript-source.mjs';
+import { downloadConversationSource, productionFunctionSource } from './helpers/userscript-source.mjs';
 
 function auditHarness() {
   const context = { entries: [], persisted: 0, refreshed: 0 };
@@ -68,4 +68,47 @@ test('unrelated debug records are still filtered', () => {
   const harness = auditHarness();
   harness.api.debug();
   assert.equal(harness.entries.length, 0);
+});
+
+test('sound startup and explicit changes retain source and volume at warning threshold', () => {
+  assert.match(downloadConversationSource,
+    /agent-sound-volume-initialized'[\\s\\S]*source: initialSoundVolume !== null/);
+  assert.match(downloadConversationSource,
+    /agent-sound-volume-changed'[\\s\\S]*source: 'user-input'/);
+  assert.match(downloadConversationSource,
+    /logDiagnostic\\('lifecycle', 'agent-sound-volume-initialized'/);
+  assert.match(downloadConversationSource,
+    /logDiagnostic\\('lifecycle', 'agent-sound-volume-changed'/);
+});
+
+test('muted terminal sound is suppressed and recorded once per terminal kind', () => {
+  const context = { entries: [] };
+  vm.runInNewContext(`
+    let agentSoundVolume = 0;
+    let agentSoundAudioContext = null;
+    let agentSoundPendingTerminal = null;
+    const AGENT_SOUND_TERMINAL_KEY_LIMIT = 128;
+    const agentSoundTerminalKeys = new Set();
+    function logDiagnostic(level, name, details) {
+      this.entries.push({ level, name, details });
+    }
+    function agentLifecycleAction(component, action, details) {
+      this.entries.push({ level: 'lifecycle', name: component + ':' + action, details });
+    }
+    function playAgentSound() { throw new Error('Muted sound must never play'); }
+    ${productionFunctionSource('agentSoundRememberTerminalKey')}
+    ${productionFunctionSource('agentSoundClearPendingTerminal')}
+    ${productionFunctionSource('agentSoundHandleTerminal')}
+    this.observe = agentSoundHandleTerminal;
+    this.keys = () => Array.from(agentSoundTerminalKeys);
+  `, context);
+  const terminal = { kind: 'success', terminal_key: 'conversation-1:exchange-A' };
+  context.observe(terminal);
+  context.observe(terminal);
+  assert.equal(context.entries.filter(entry =>
+    entry.name === 'sound:suppressed').length, 1);
+  assert.equal(context.keys().length, 1);
+  context.observe({ ...terminal, kind: 'error' });
+  assert.equal(context.entries.filter(entry =>
+    entry.name === 'sound:suppressed').length, 2);
 });
