@@ -102,6 +102,7 @@ function renderHarness() {
     document,
     Image: FakeImage,
     Uint8ClampedArray,
+    performance: { now: () => 0 },
     queueMicrotask,
     imageSources,
     renderedUrls,
