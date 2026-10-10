@@ -31,9 +31,17 @@
    */
   function agentFaviconRenderState(state) {
     const generation = ++agentFaviconRenderGeneration;
+    const transitionId = typeof agentLifecycleTransitionId === 'undefined'
+      ? null : agentLifecycleTransitionId;
+    if (typeof agentLifecycleAction === 'function') {
+      agentLifecycleAction('favicon', 'requested', { state }, transitionId);
+    }
     const candidates = agentFaviconCurrentCandidates();
     if (!candidates.length) {
       logDiagnostic('warnings', 'agent-favicon-original-missing', { state });
+      if (typeof agentLifecycleAction === 'function') {
+        agentLifecycleAction('favicon', 'failed', { state, reason: 'no-candidates' }, transitionId);
+      }
       return Promise.resolve(false);
     }
     if (state === 'original') {
@@ -44,6 +52,9 @@
         applied_candidate_count: candidates.length,
         recolored_pixels: 0
       });
+      if (typeof agentLifecycleAction === 'function') {
+        agentLifecycleAction('favicon', 'applied', { state }, transitionId);
+      }
       return Promise.resolve(true);
     }
     const targetRgb = state === 'processing'
@@ -64,7 +75,12 @@
         candidates.length
       )
     )).then(results => {
-      if (generation !== agentFaviconRenderGeneration) return false;
+      if (generation !== agentFaviconRenderGeneration) {
+        if (typeof agentLifecycleAction === 'function') {
+          agentLifecycleAction('favicon', 'superseded', { state }, transitionId);
+        }
+        return false;
+      }
       const applied = results.filter(result => result.applied).length;
       const recoloredPixels = results.reduce(
         (total, result) => total + (Number(result.recolored_pixels) || 0),
@@ -76,6 +92,11 @@
         applied_candidate_count: applied,
         recolored_pixels: recoloredPixels
       });
+      if (typeof agentLifecycleAction === 'function') {
+        agentLifecycleAction('favicon', applied === candidates.length ? 'applied' : 'failed', {
+          state, candidate_count: candidates.length, applied_candidate_count: applied
+        }, transitionId);
+      }
       return applied === candidates.length;
     });
   }
@@ -87,6 +108,9 @@
    */
   function agentFaviconObserveProcessing() {
     agentFaviconProcessingObserved = true;
+    if (typeof agentLifecycleTransition === 'function') {
+      agentLifecycleTransition('processing', { source: 'generation-or-reload' });
+    }
     void agentFaviconRenderState('processing');
   }
 
@@ -170,6 +194,9 @@
     if (!playAgentSound(pending.kind)) return false;
     agentSoundClearPendingTerminal();
     agentSoundRememberTerminalKey(pending.sound_key);
+    if (typeof agentLifecycleAction === 'function') {
+      agentLifecycleAction('sound', 'played', { kind: pending.kind, terminal_key: pending.terminal_key, replayed: true });
+    }
     logDiagnostic('debug', 'agent-sound-pending-replayed', {
       kind: pending.kind,
       terminal_key: pending.terminal_key,
@@ -209,6 +236,9 @@
     }
     if (agentSoundVolume <= 0) {
       agentSoundClearPendingTerminal();
+      if (typeof agentLifecycleAction === 'function') {
+        agentLifecycleAction('sound', 'suppressed', { kind, reason: 'volume-zero', terminal_key: key });
+      }
       logDiagnostic('debug', 'agent-sound-volume-zero-suppressed', {
         kind,
         terminal_key: key,
@@ -217,11 +247,17 @@
       return;
     }
     if (playAgentSound(kind)) {
+      if (typeof agentLifecycleAction === 'function') {
+        agentLifecycleAction('sound', 'played', { kind, terminal_key: key });
+      }
       agentSoundClearPendingTerminal();
       agentSoundRememberTerminalKey(soundKey);
       return;
     }
     agentSoundRememberPendingTerminal(kind, key, soundKey);
+    if (typeof agentLifecycleAction === 'function') {
+      agentLifecycleAction('sound', 'pending', { kind, terminal_key: key });
+    }
   }
 
   document.addEventListener('pointerdown', agentSoundHandleUserGesture, true);
