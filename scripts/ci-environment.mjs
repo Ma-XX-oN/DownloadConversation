@@ -41,6 +41,7 @@ const ordinaryStages = [
   ['Agent turn stopwatch live total', nodeCommand, ['--test', 'tests/agent-turn-stopwatch-live-total.test.mjs']],
   ['Agent turn stopwatch reload restoration', nodeCommand, ['--test', 'tests/agent-turn-stopwatch-reload.test.mjs']],
   ['Agent favicon state regression', nodeCommand, ['--test', 'tests/agent-favicon-state.test.mjs', 'tests/agent-favicon-browser-selection.test.mjs']],
+  ['Agent sound readiness regression', nodeCommand, ['--test', 'tests/agent-sound-initialization-indicator.test.mjs']],
   ['Agent terminal polling-timeout regression', nodeCommand, ['--test', 'tests/agent-terminal-polling-timeout.test.mjs', 'tests/agent-terminal-polling-timeout-observer.test.mjs', 'tests/agent-terminal-polling-timeout-integration.test.mjs']],
   ['Communication log file controls regression', nodeCommand, ['--test', 'tests/communication-log-file-controls.test.mjs', 'tests/communication-log-layout-contract.test.mjs', 'tests/communication-log-reset.test.mjs', 'tests/dry-contract.test.mjs']],
   ['Issue 166 archive runtime regression', nodeCommand, ['--test', 'tests/archive-runtime.test.mjs', 'tests/issue188-compressor-contract.test.mjs', 'tests/issue166-segment-archive-integration.test.mjs', 'tests/issue166-remaining-acceptance.test.mjs', 'tests/issue166-dual-active-rotation.test.mjs', 'tests/communication-log-duplicate-progress.test.mjs', 'tests/local-datetime-range-dialog.test.mjs']],
