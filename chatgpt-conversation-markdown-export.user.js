@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         ChatGPT Conversation Markdown Recorder
 // @namespace    https://chatgpt.com/
-// @version      1.10.3-issue.174.3
+// @version      1.10.3-issue.174.4
 // @description  Exports the current ChatGPT conversation directly from the Conversation API as Markdown or JSONL.
 // @match        https://chatgpt.com/*
 // @match        https://chat.openai.com/*
@@ -10947,7 +10947,18 @@ globalThis.__dcCompressor = {
           const pixels = context.getImageData(0, 0, width, height);
           const changed = agentFaviconRecolorPixels(pixels.data, targetRgb);
           context.putImageData(pixels, 0, 0);
-          agentFaviconDrawRing(context, width, height, agentFaviconRingStep());
+          // Composite behind the transparent openings without covering the logo.
+          // Restore source-over before stroking the ring in the foreground.
+          const ringStep = state === 'processing' ? agentFaviconRingStep() : 0;
+          if (ringStep > 0) {
+            context.globalCompositeOperation = 'destination-over';
+            try {
+              agentFaviconDrawPieSlice(context, width, height, ringStep);
+            } finally {
+              context.globalCompositeOperation = 'source-over';
+            }
+            agentFaviconDrawRing(context, width, height, ringStep);
+          }
           if (generation !== agentFaviconRenderGeneration) {
             resolve({ applied: false, stale: true, recolored_pixels: changed, width, height });
             return;
@@ -11016,6 +11027,28 @@ globalThis.__dcCompressor = {
     return ['#00cc00', '#55cc00', '#aacc00', '#ffcc00', '#ff7700', '#ff0000'][
       Math.min(6, Math.max(1, step)) - 1
     ];
+  }
+
+  /**
+   * Fills the elapsed portion behind transparent openings in the original logo.
+   * The renderer uses destination-over so this wedge never obscures logo pixels.
+   *
+   * @param {CanvasRenderingContext2D} context - Favicon canvas context.
+   * @param {number} width - Candidate favicon width.
+   * @param {number} height - Candidate favicon height.
+   * @param {number} step - Completed five-minute steps.
+   * @returns {void} No value is returned.
+   */
+  function agentFaviconDrawPieSlice(context, width, height, step) {
+    if (step < 1) return;
+    const size = Math.min(width, height);
+    context.beginPath();
+    context.moveTo(width / 2, height / 2);
+    context.fillStyle = agentFaviconRingColor(step);
+    context.arc(width / 2, height / 2, size * 0.49,
+      -Math.PI / 2, -Math.PI / 2 + Math.PI * 2 * step / 6);
+    context.closePath();
+    context.fill();
   }
 
   /**
