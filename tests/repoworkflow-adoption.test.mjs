@@ -99,7 +99,7 @@ test('GitHub runner projection and branch ancestry are repository facts', async 
     schema: 1,
     integrationBranch: 'main',
     branches: {
-      'issue-165-repoworkflow-adoption': {
+      'integrate-156-provider-core-isolation': {\n        parent: 'main',\n        allowedDependencies: [],\n        integrationTarget: 'main'\n      },\n      'issue-165-repoworkflow-adoption': {
         parent: 'issue-162-ci-request-gating',
         allowedDependencies: [],
         integrationTarget: 'main'
