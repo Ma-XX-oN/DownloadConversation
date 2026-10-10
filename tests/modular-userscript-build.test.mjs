@@ -19,9 +19,9 @@ const root = path.resolve(
   '..'
 );
 const CORE_COMMIT =
-  '1b531a1c92adfa1695db8c644159054e013f0a72';
+  '9e18441a1f68a1cac5ebb6e20dead945dd36d7dd';
 const CORE_BLOB =
-  '84a1fcf72a8da76f837a791a142c1c95ed37d607';
+  '47efb4f379f5bb27ae710a53d1cb84388aeeb1a2';
 const LEGACY_BLOB =
   '44a4ab373a6515caed5527aeb19cbdff7ce91e07';
 const MIGRATION_SNAPSHOT_COMMIT =
@@ -40,7 +40,7 @@ test(
   'manifest groups ordered small source segments under logical modules',
   async () => {
     const manifest = await readUserscriptManifest(root);
-    assert.equal(manifest.format_version, 2);
+    assert.equal(manifest.format_version, 3);
     assert.deepEqual(
       manifest.modules.map(module => module.name),
       [
@@ -81,7 +81,7 @@ test(
       ],
       'identity and segment runtime must remain at verified top-level source boundaries'
     );
-    assert.equal(sourcePaths.length, 62);
+    assert.equal(sourcePaths.length, 63);
     assert.equal(new Set(sourcePaths).size, sourcePaths.length);
     assert.ok(sourcePaths.every(sourcePath => {
       return sourcePath.startsWith('src/userscript/');
@@ -128,7 +128,7 @@ test(
     assert.equal(dependency.name, 'AIConversationCore');
     assert.equal(dependency.commit, CORE_COMMIT);
     assert.equal(dependency.git_blob_sha1, CORE_BLOB);
-    assert.equal(dependency.byte_length, 265877);
+    assert.equal(dependency.byte_length, 282178);
     assert.equal(
       dependency.repository,
       'Ma-XX-oN/AIConversationCore'

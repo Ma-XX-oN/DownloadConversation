@@ -14,10 +14,21 @@ export function gitBlobSha1(content) {
   return createHash('sha1').update(header).update(bytes).digest('hex');
 }
 
+function validatePinnedArtifact(identity, artifact) {
+  assertManifest(/^[0-9a-f]{40}$/.test(artifact.commit ?? ''),
+    `${identity} commit must be an exact 40-character SHA`);
+  assertManifest(/^[0-9a-f]{40}$/.test(artifact.git_blob_sha1 ?? ''),
+    `${identity} git_blob_sha1 must be an exact SHA-1`);
+  assertManifest(Number.isSafeInteger(artifact.byte_length) && artifact.byte_length > 0,
+    `${identity} byte_length must be a positive integer`);
+  assertManifest(typeof artifact.url === 'string' && artifact.url.includes(artifact.commit),
+    `${identity} URL must contain its pinned commit`);
+}
+
 export async function readUserscriptManifest(root) {
   const manifestPath = path.join(root, MANIFEST_PATH);
   const manifest = JSON.parse(await readFile(manifestPath, 'utf8'));
-  assertManifest(manifest?.format_version === 2, 'format_version must be 2');
+  assertManifest(manifest?.format_version === 3, 'format_version must be 3');
   assertManifest(typeof manifest.header === 'string' && manifest.header, 'header path is required');
   assertManifest(typeof manifest.generated_artifact === 'string' && manifest.generated_artifact,
     'generated_artifact path is required');
@@ -44,14 +55,11 @@ export async function readUserscriptManifest(root) {
 
   for (const dependency of manifest.dependencies) {
     assertManifest(typeof dependency?.name === 'string' && dependency.name, 'dependency name is required');
-    assertManifest(/^[0-9a-f]{40}$/.test(dependency.commit ?? ''),
-      `${dependency.name} commit must be an exact 40-character SHA`);
-    assertManifest(/^[0-9a-f]{40}$/.test(dependency.git_blob_sha1 ?? ''),
-      `${dependency.name} git_blob_sha1 must be an exact SHA-1`);
-    assertManifest(Number.isSafeInteger(dependency.byte_length) && dependency.byte_length > 0,
-      `${dependency.name} byte_length must be a positive integer`);
-    assertManifest(typeof dependency.url === 'string' && dependency.url.includes(dependency.commit),
-      `${dependency.name} URL must contain its pinned commit`);
+    if (dependency.ref != null) {
+      assertManifest(typeof dependency.ref === 'string' && dependency.ref.trim(),
+        `${dependency.name} ref must be a non-empty string`);
+    }
+    validatePinnedArtifact(dependency.name, dependency);
   }
   return manifest;
 }
@@ -72,17 +80,39 @@ export async function readDownloadConversationSource(root, manifest) {
   return result;
 }
 
+/**
+ * Prepends the generic authenticated artifact broker and Core-agent bridge.
+ * Provider selection and artifact identity are supplied by AIConversationCore at runtime.
+ *
+ * @param {string} brokerSource - Generic GitHub artifact transport source.
+ * @param {string} bridgeSource - Generic Core agent-loading bridge source.
+ * @returns {string} Userscript-local prelude source.
+ */
+export function buildAgentPluginPrelude(brokerSource, bridgeSource) {
+  return brokerSource + bridgeSource;
+}
+
+export function injectUserscriptPrelude(source, prelude) {
+  if (!source.startsWith('\n(() => {')) {
+    throw new Error('DownloadConversation source must begin with the preserved userscript IIFE boundary.');
+  }
+  const scopedSource = prelude
+    ? source.replace('\n(() => {', `\n(() => {\n${prelude}`)
+    : source;
+  return scopedSource;
+}
+
 export function validatePinnedDependency(dependency, content) {
   const bytes = Buffer.from(content, 'utf8');
   if (bytes.length !== dependency.byte_length) {
     throw new Error(
-      `${dependency.name} byte length mismatch: expected ${dependency.byte_length}, got ${bytes.length}.`
+      `${dependency.name ?? dependency.id} byte length mismatch: expected ${dependency.byte_length}, got ${bytes.length}.`
     );
   }
   const actualSha = gitBlobSha1(bytes);
   if (actualSha !== dependency.git_blob_sha1) {
     throw new Error(
-      `${dependency.name} Git blob mismatch: expected ${dependency.git_blob_sha1}, got ${actualSha}.`
+      `${dependency.name ?? dependency.id} Git blob mismatch: expected ${dependency.git_blob_sha1}, got ${actualSha}.`
     );
   }
 }
@@ -100,20 +130,11 @@ export function assembleUserscript(header, dependencies, source, prelude = '') {
     throw new Error('Authoritative userscript header must not contain runtime @require directives.');
   }
   if (!header.endsWith('\n')) throw new Error('Userscript header must end with a newline.');
-  if (!source.startsWith('\n(() => {')) {
-    throw new Error('DownloadConversation source must begin with the preserved userscript IIFE boundary.');
-  }
   let result = header;
   for (const { manifest: dependency, content } of dependencies) {
     validatePinnedDependency(dependency, content);
     result += dependencyBanner(dependency, content);
   }
-  // The archive bridge is part of DownloadConversation, not a page-global
-  // dependency. Inject it immediately inside DC's preserved IIFE so its
-  // functions are in the same lexical scope as diagnostic/communication code.
-  const scopedSource = prelude
-    ? source.replace('\n(() => {', `\n(() => {\n${prelude}`)
-    : source;
-  result += scopedSource;
+  result += injectUserscriptPrelude(source, prelude);
   return result;
 }

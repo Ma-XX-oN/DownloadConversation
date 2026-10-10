@@ -5,6 +5,7 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import {
   assembleUserscript,
+  buildAgentPluginPrelude,
   readDownloadConversationSource,
   readUserscriptHeader,
   readUserscriptManifest,
@@ -35,19 +36,24 @@ function parseArguments(argv) {
   return { check, output };
 }
 
+function artifactLabel(artifact) {
+  return artifact.name ?? artifact.id ?? 'artifact';
+}
+
 async function fetchPinnedDependency(dependency) {
   let response;
+  const label = artifactLabel(dependency);
   try {
     response = await fetch(dependency.url, { redirect: 'follow' });
   } catch (error) {
     const detail = error instanceof Error ? error.message : String(error);
     throw new InfrastructureError(
-      `Could not reach pinned ${dependency.name} dependency: ${detail}`
+      `Could not reach pinned ${label} dependency: ${detail}`
     );
   }
   if (!response.ok) {
     throw new Error(
-      `Could not fetch pinned ${dependency.name} dependency: HTTP ${response.status} ${response.statusText}.`
+      `Could not fetch pinned ${label} dependency: HTTP ${response.status} ${response.statusText}.`
     );
   }
   const content = await response.text();
@@ -57,6 +63,18 @@ async function fetchPinnedDependency(dependency) {
 
 function sha256(bytes) {
   return createHash('sha256').update(bytes).digest('hex');
+}
+
+async function readAgentPluginPrelude() {
+  const broker = await readFile(
+    path.join(root, 'src', 'userscript', '01-runtime', '02-github-agent-plugin-broker.js'),
+    'utf8'
+  );
+  const bridge = await readFile(
+    path.join(root, 'src', 'userscript', '04-conversation-rendering', '08-agent-plugin-bridge.js'),
+    'utf8'
+  );
+  return buildAgentPluginPrelude(broker, bridge);
 }
 
 async function buildCompressorPrelude() {
@@ -122,12 +140,13 @@ async function main() {
   for (const dependency of manifest.dependencies) {
     dependencies.push(await fetchPinnedDependency(dependency));
   }
+  const agentPluginPrelude = await readAgentPluginPrelude();
   const compressorPrelude = await buildCompressorPrelude();
   const built = assembleUserscript(
     header,
     dependencies,
     source,
-    compressorPrelude
+    agentPluginPrelude + compressorPrelude
   );
 
   if (args.check) {

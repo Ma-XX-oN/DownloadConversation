@@ -1,16 +1,17 @@
 {
-  "format_version": 2,
+  "format_version": 3,
   "header": "src/userscript-header.js",
   "generated_artifact": "chatgpt-conversation-markdown-export.user.js",
   "dependencies": [
     {
       "name": "AIConversationCore",
       "repository": "Ma-XX-oN/AIConversationCore",
-      "commit": "1b531a1c92adfa1695db8c644159054e013f0a72",
+      "ref": "main",
+      "commit": "9e18441a1f68a1cac5ebb6e20dead945dd36d7dd",
       "path": "dist/aiconversationcore.chatgpt.browser.js",
-      "url": "https://raw.githubusercontent.com/Ma-XX-oN/AIConversationCore/1b531a1c92adfa1695db8c644159054e013f0a72/dist/aiconversationcore.chatgpt.browser.js",
-      "git_blob_sha1": "84a1fcf72a8da76f837a791a142c1c95ed37d607",
-      "byte_length": 265877
+      "url": "https://raw.githubusercontent.com/Ma-XX-oN/AIConversationCore/9e18441a1f68a1cac5ebb6e20dead945dd36d7dd/dist/aiconversationcore.chatgpt.browser.js",
+      "git_blob_sha1": "47efb4f379f5bb27ae710a53d1cb84388aeeb1a2",
+      "byte_length": 282178
     }
   ],
   "modules": [
@@ -89,7 +90,8 @@
         "src/userscript/06-image-export-tests/02-image-recovery.js",
         "src/userscript/06-image-export-tests/03-export-tests-transition.js",
         "src/userscript/06-image-export-tests/04-tests-modal-transition.js",
-        "src/userscript/06-image-export-tests/05-modal-contract.js"
+        "src/userscript/06-image-export-tests/05-modal-contract.js",
+        "src/userscript/06-image-export-tests/06-agent-plugin-readiness.js"
       ]
     },
     {
