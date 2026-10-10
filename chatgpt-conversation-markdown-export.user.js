@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         ChatGPT Conversation Markdown Recorder
 // @namespace    https://chatgpt.com/
-// @version      1.11.0
+// @version      1.11.0-issue.151.3
 // @description  Exports the current ChatGPT conversation directly from the Conversation API as Markdown or JSONL.
 // @match        https://chatgpt.com/*
 // @match        https://chat.openai.com/*
@@ -7245,12 +7245,12 @@ globalThis.__dcCompressor = {
     const stored = localStorage.getItem(AGENT_SOUND_VOLUME_STORAGE_KEY);
     if (stored !== null) {
       const parsed = Number.parseInt(stored, 10);
-      return Number.isFinite(parsed) ? Math.max(0, Math.min(10, parsed)) : 0;
+      return /^(?:10|[0-9])$/.test(stored) && Number.isFinite(parsed) && parsed >= 0 && parsed <= 10 ? parsed : 10;
     }
     const legacy = localStorage.getItem(LEGACY_AGENT_SOUNDS_STORAGE_KEY);
     if (legacy === 'true') return 10;
     if (legacy === 'false') return 0;
-    return 0;
+    return 10;
   }
 
   /** Persisted integer terminal-sound volume; zero is the only disabled state. */
@@ -11509,6 +11509,100 @@ globalThis.__dcCompressor = {
   }
 
 
+  /** DOM id of the stopwatch-owned sound-readiness indicator. */
+  const AGENT_SOUND_INITIALIZATION_INDICATOR_ID = 'tm-agent-sound-uninitialized';
+  /** Horizontal gap between the sound-readiness indicator and the stopwatch. */
+  const AGENT_SOUND_INITIALIZATION_GAP_PX = 8;
+
+  /**
+   * Tests the same AudioContext state that production playback requires.
+   *
+   * @returns {boolean} True only when terminal audio can be scheduled immediately.
+   */
+  function agentSoundAudioReady() {
+    return agentSoundAudioContext?.state === 'running';
+  }
+
+  /**
+   * Keeps the sound-readiness indicator owned by the stopwatch and positions it immediately
+   * to the stopwatch's left. If no stopwatch exists yet, no independent page-level indicator
+   * is deployed.
+   *
+   * @param {HTMLElement|null} indicator - Existing readiness indicator, when already resolved.
+   * @returns {void} No value is returned.
+   */
+  function agentSoundPositionInitializationIndicator(
+    indicator = document.getElementById(AGENT_SOUND_INITIALIZATION_INDICATOR_ID)
+  ) {
+    const stopwatch = document.getElementById(AGENT_STOPWATCH_ID);
+    if (!stopwatch) {
+      indicator?.remove();
+      return;
+    }
+    if (agentSoundAudioReady()) {
+      indicator?.remove();
+      return;
+    }
+    const visibleIndicator = indicator || ensureAgentSoundInitializationIndicator();
+    if (!visibleIndicator) return;
+    if (visibleIndicator.parentNode !== stopwatch) stopwatch.append(visibleIndicator);
+    visibleIndicator.style.position = 'absolute';
+    visibleIndicator.style.top = '5px';
+    visibleIndicator.style.right = `calc(100% + ${AGENT_SOUND_INITIALIZATION_GAP_PX}px)`;
+  }
+
+  /**
+   * Returns the single disabled-speaker sound-readiness indicator owned by the stopwatch.
+   *
+   * @returns {HTMLElement|null} Existing/new indicator, or null until the stopwatch exists.
+   */
+  function ensureAgentSoundInitializationIndicator() {
+    const stopwatch = document.getElementById(AGENT_STOPWATCH_ID);
+    if (!stopwatch) return null;
+    let indicator = document.getElementById(AGENT_SOUND_INITIALIZATION_INDICATOR_ID);
+    if (!indicator) {
+      indicator = document.createElement('div');
+      indicator.id = AGENT_SOUND_INITIALIZATION_INDICATOR_ID;
+      indicator.setAttribute('aria-hidden', 'true');
+      indicator.style.zIndex = '2147483647';
+      indicator.style.width = '24px';
+      indicator.style.height = '24px';
+      indicator.style.boxSizing = 'border-box';
+      indicator.style.border = 'none';
+      indicator.style.borderRadius = '50%';
+      indicator.style.backgroundColor = 'rgba(32, 32, 32, 0.92)';
+      indicator.style.backgroundImage = "url(\"data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24'%3E%3Ccircle cx='12' cy='12' r='10.5' fill='none' stroke='%23d93025' stroke-width='2.1'/%3E%3Cpath fill='%23f5f5f5' d='M4 9h4l5-4v14l-5-4H4z'/%3E%3Cpath d='M4.6 19.4L19.4 4.6' stroke='%23d93025' stroke-width='2.1' stroke-linecap='round'/%3E%3C/svg%3E\")";
+      indicator.style.backgroundPosition = 'center';
+      indicator.style.backgroundRepeat = 'no-repeat';
+      indicator.style.backgroundSize = '24px 24px';
+      indicator.style.pointerEvents = 'none';
+      indicator.style.boxShadow = '0 2px 8px rgba(0, 0, 0, 0.25)';
+    }
+    if (indicator.parentNode !== stopwatch) stopwatch.append(indicator);
+    agentSoundPositionInitializationIndicator(indicator);
+    return indicator;
+  }
+
+  /**
+   * Projects authoritative AudioContext readiness onto the stopwatch-owned status icon.
+   *
+   * @returns {boolean} True when audio is ready and the uninitialized status is absent.
+   */
+  function agentSoundSyncInitializationIndicator() {
+    const ready = agentSoundAudioReady();
+    const indicator = document.getElementById(AGENT_SOUND_INITIALIZATION_INDICATOR_ID);
+    if (ready) {
+      indicator?.remove();
+      return true;
+    }
+    const visibleIndicator = indicator || ensureAgentSoundInitializationIndicator();
+    agentSoundPositionInitializationIndicator(visibleIndicator);
+    return false;
+  }
+
+  agentSoundSyncInitializationIndicator();
+  document.addEventListener('DOMContentLoaded', agentSoundSyncInitializationIndicator, { once: true });
+
   /**
    * Unlocks the browser Web Audio context from a user gesture when sounds are enabled.
    *
@@ -11519,6 +11613,7 @@ globalThis.__dcCompressor = {
     const beforeState = agentSoundAudioContext?.state ?? 'absent';
     if (volume <= 0) {
       agentSoundClearPendingTerminal();
+      agentSoundSyncInitializationIndicator();
       logDiagnostic('debug', 'agent-sound-audio-unlock', {
         volume,
         before_state: beforeState,
@@ -11543,13 +11638,17 @@ globalThis.__dcCompressor = {
         });
         return false;
       }
-      if (!agentSoundAudioContext) agentSoundAudioContext = new AudioContextClass();
+      if (!agentSoundAudioContext) {
+        agentSoundAudioContext = new AudioContextClass();
+        agentSoundAudioContext.addEventListener('statechange', agentSoundSyncInitializationIndicator);
+      }
       if (agentSoundAudioContext.state === 'suspended') {
         resumeAttempted = true;
         await agentSoundAudioContext.resume();
       }
       const afterState = agentSoundAudioContext.state;
       const ready = afterState === 'running';
+      agentSoundSyncInitializationIndicator();
       logDiagnostic('debug', 'agent-sound-audio-unlock', {
         volume,
         before_state: beforeState,
@@ -11560,6 +11659,7 @@ globalThis.__dcCompressor = {
       if (ready) agentSoundRetryPendingTerminal();
       return ready;
     } catch (error) {
+      agentSoundSyncInitializationIndicator();
       logDiagnostic('warnings', 'agent-sound-audio-unlock', {
         volume,
         before_state: beforeState,
@@ -12398,6 +12498,9 @@ globalThis.__dcCompressor = {
       }
     }
     control.textContent = lines.join('\n');
+    if (typeof agentSoundPositionInitializationIndicator === 'function') {
+      agentSoundPositionInitializationIndicator();
+    }
   }
 
   /**
@@ -13552,6 +13655,92 @@ globalThis.__dcCompressor = {
   }
 
   /**
+   * Returns one structured exchange identity carried by a provider message.
+   *
+   * @param {Object|null} message - Provider message from a conversation WebSocket update.
+   * @returns {string|null} Exchange identity, or null when the message does not carry one.
+   */
+  function agentTerminalWebSocketMessageExchangeId(message) {
+    const metadata = message?.metadata ?? {};
+    if (typeof metadata.turn_exchange_id === 'string' && metadata.turn_exchange_id) {
+      return metadata.turn_exchange_id;
+    }
+    if (typeof metadata.working_turn_id === 'string' && metadata.working_turn_id) {
+      return metadata.working_turn_id;
+    }
+    return null;
+  }
+
+  /**
+   * Tests whether one lifecycle capture contains structured evidence for an exchange identity.
+   *
+   * @param {Object|null} capture - Candidate unresolved lifecycle capture.
+   * @param {string} exchangeId - Exchange identity carried by a WebSocket message.
+   * @returns {boolean} True when request or streamed records identify the same exchange.
+   */
+  function agentTerminalCaptureHasExchange(capture, exchangeId) {
+    if (!capture || !exchangeId) return false;
+    return [
+      ...(capture.request_messages ?? []),
+      ...(capture.stream_messages ?? [])
+    ].some(message => agentTerminalWebSocketMessageExchangeId(message) === exchangeId);
+  }
+
+  /**
+   * Projects exact `conversation-update` / `add-messages` WebSocket Assistant records into the
+   * matching unresolved lifecycle capture so the existing shared terminal normalizer can classify
+   * a final that arrived after the original generation SSE ended.
+   *
+   * @param {Object} frame - Parsed top-level ChatGPT WebSocket conversation-update frame.
+   * @returns {boolean} True when at least one Assistant message was projected to one capture.
+   */
+  function agentTerminalObserveConversationUpdateFrame(frame) {
+    if (frame?.type !== 'conversation-update') return false;
+    const payload = frame?.payload;
+    const conversationId = payload?.conversation_id;
+    if (typeof conversationId !== 'string' || !conversationId ||
+        payload?.update_type !== 'add-messages') return false;
+    const messages = payload?.update_content?.messages;
+    if (!Array.isArray(messages)) return false;
+    let observed = false;
+    for (const message of messages) {
+      if (message?.author?.role !== 'assistant') continue;
+      const exchangeId = agentTerminalWebSocketMessageExchangeId(message);
+      if (!exchangeId) continue;
+      const matching = agentTerminalLifecycleCaptures.filter(capture =>
+        capture?.conversation_id === conversationId &&
+        capture?.agent_terminal_success_observed !== true &&
+        capture?.agent_terminal_error_observed !== true &&
+        agentTerminalCaptureHasExchange(capture, exchangeId)
+      );
+      if (matching.length !== 1) {
+        logDiagnostic('debug', 'agent-terminal-conversation-update-ignored', {
+          conversation_id: conversationId,
+          exchange_id: exchangeId,
+          unresolved_capture_count: matching.length,
+          reason: matching.length === 0
+            ? 'no-matching-lifecycle-capture'
+            : 'ambiguous-matching-lifecycle-captures'
+        });
+        continue;
+      }
+      const capture = matching[0];
+      if (!streamTailUpsertMessage(capture, message)) continue;
+      logDiagnostic('debug', 'agent-terminal-conversation-update-observed', {
+        conversation_id: conversationId,
+        exchange_id: exchangeId,
+        assistant_message_id: message.id ?? null,
+        assistant_channel: message.channel ?? null,
+        assistant_status: message.status ?? null,
+        assistant_end_turn: message.end_turn === true
+      });
+      agentTerminalObserve(capture, null);
+      observed = true;
+    }
+    return observed;
+  }
+
+  /**
    * Passively observes page WebSocket frames for both the active streamed-tail handoff topic and
    * the exact global provider turn-completion lifecycle notification.
    *
@@ -13566,6 +13755,9 @@ globalThis.__dcCompressor = {
     const capture = streamTailCapture;
     for (const frame of frames) {
       if (!frame || typeof frame !== 'object') continue;
+      if (frame.type === 'conversation-update') {
+        agentTerminalObserveConversationUpdateFrame(frame);
+      }
       if (frame.type === 'message') {
         if (frame.topic_id === 'conversations' &&
             frame?.payload?.type === 'conversation-turn-complete') {
@@ -22228,8 +22420,8 @@ Image elapsed: ${formatDuration(imageElapsed)} — Completed: ${imageCompleted}/
       : legacySoundPreference === 'true' || legacySoundPreference === 'false'
         ? 'legacy-preference'
         : 'default',
-    valid_saved_value: initialSoundVolume === null ||
-      /^\d+$/.test(initialSoundVolume)
+    valid_saved_value: initialSoundVolume !== null &&
+      /^(?:10|[0-9])$/.test(initialSoundVolume)
   });
   installNetworkCapture();
   bootstrapUi();

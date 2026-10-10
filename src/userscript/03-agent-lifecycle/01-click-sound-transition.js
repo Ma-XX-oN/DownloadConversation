@@ -85,6 +85,100 @@
   }
 
 
+  /** DOM id of the stopwatch-owned sound-readiness indicator. */
+  const AGENT_SOUND_INITIALIZATION_INDICATOR_ID = 'tm-agent-sound-uninitialized';
+  /** Horizontal gap between the sound-readiness indicator and the stopwatch. */
+  const AGENT_SOUND_INITIALIZATION_GAP_PX = 8;
+
+  /**
+   * Tests the same AudioContext state that production playback requires.
+   *
+   * @returns {boolean} True only when terminal audio can be scheduled immediately.
+   */
+  function agentSoundAudioReady() {
+    return agentSoundAudioContext?.state === 'running';
+  }
+
+  /**
+   * Keeps the sound-readiness indicator owned by the stopwatch and positions it immediately
+   * to the stopwatch's left. If no stopwatch exists yet, no independent page-level indicator
+   * is deployed.
+   *
+   * @param {HTMLElement|null} indicator - Existing readiness indicator, when already resolved.
+   * @returns {void} No value is returned.
+   */
+  function agentSoundPositionInitializationIndicator(
+    indicator = document.getElementById(AGENT_SOUND_INITIALIZATION_INDICATOR_ID)
+  ) {
+    const stopwatch = document.getElementById(AGENT_STOPWATCH_ID);
+    if (!stopwatch) {
+      indicator?.remove();
+      return;
+    }
+    if (agentSoundAudioReady()) {
+      indicator?.remove();
+      return;
+    }
+    const visibleIndicator = indicator || ensureAgentSoundInitializationIndicator();
+    if (!visibleIndicator) return;
+    if (visibleIndicator.parentNode !== stopwatch) stopwatch.append(visibleIndicator);
+    visibleIndicator.style.position = 'absolute';
+    visibleIndicator.style.top = '5px';
+    visibleIndicator.style.right = `calc(100% + ${AGENT_SOUND_INITIALIZATION_GAP_PX}px)`;
+  }
+
+  /**
+   * Returns the single disabled-speaker sound-readiness indicator owned by the stopwatch.
+   *
+   * @returns {HTMLElement|null} Existing/new indicator, or null until the stopwatch exists.
+   */
+  function ensureAgentSoundInitializationIndicator() {
+    const stopwatch = document.getElementById(AGENT_STOPWATCH_ID);
+    if (!stopwatch) return null;
+    let indicator = document.getElementById(AGENT_SOUND_INITIALIZATION_INDICATOR_ID);
+    if (!indicator) {
+      indicator = document.createElement('div');
+      indicator.id = AGENT_SOUND_INITIALIZATION_INDICATOR_ID;
+      indicator.setAttribute('aria-hidden', 'true');
+      indicator.style.zIndex = '2147483647';
+      indicator.style.width = '24px';
+      indicator.style.height = '24px';
+      indicator.style.boxSizing = 'border-box';
+      indicator.style.border = 'none';
+      indicator.style.borderRadius = '50%';
+      indicator.style.backgroundColor = 'rgba(32, 32, 32, 0.92)';
+      indicator.style.backgroundImage = "url(\"data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24'%3E%3Ccircle cx='12' cy='12' r='10.5' fill='none' stroke='%23d93025' stroke-width='2.1'/%3E%3Cpath fill='%23f5f5f5' d='M4 9h4l5-4v14l-5-4H4z'/%3E%3Cpath d='M4.6 19.4L19.4 4.6' stroke='%23d93025' stroke-width='2.1' stroke-linecap='round'/%3E%3C/svg%3E\")";
+      indicator.style.backgroundPosition = 'center';
+      indicator.style.backgroundRepeat = 'no-repeat';
+      indicator.style.backgroundSize = '24px 24px';
+      indicator.style.pointerEvents = 'none';
+      indicator.style.boxShadow = '0 2px 8px rgba(0, 0, 0, 0.25)';
+    }
+    if (indicator.parentNode !== stopwatch) stopwatch.append(indicator);
+    agentSoundPositionInitializationIndicator(indicator);
+    return indicator;
+  }
+
+  /**
+   * Projects authoritative AudioContext readiness onto the stopwatch-owned status icon.
+   *
+   * @returns {boolean} True when audio is ready and the uninitialized status is absent.
+   */
+  function agentSoundSyncInitializationIndicator() {
+    const ready = agentSoundAudioReady();
+    const indicator = document.getElementById(AGENT_SOUND_INITIALIZATION_INDICATOR_ID);
+    if (ready) {
+      indicator?.remove();
+      return true;
+    }
+    const visibleIndicator = indicator || ensureAgentSoundInitializationIndicator();
+    agentSoundPositionInitializationIndicator(visibleIndicator);
+    return false;
+  }
+
+  agentSoundSyncInitializationIndicator();
+  document.addEventListener('DOMContentLoaded', agentSoundSyncInitializationIndicator, { once: true });
+
   /**
    * Unlocks the browser Web Audio context from a user gesture when sounds are enabled.
    *
@@ -95,6 +189,7 @@
     const beforeState = agentSoundAudioContext?.state ?? 'absent';
     if (volume <= 0) {
       agentSoundClearPendingTerminal();
+      agentSoundSyncInitializationIndicator();
       logDiagnostic('debug', 'agent-sound-audio-unlock', {
         volume,
         before_state: beforeState,
@@ -119,13 +214,17 @@
         });
         return false;
       }
-      if (!agentSoundAudioContext) agentSoundAudioContext = new AudioContextClass();
+      if (!agentSoundAudioContext) {
+        agentSoundAudioContext = new AudioContextClass();
+        agentSoundAudioContext.addEventListener('statechange', agentSoundSyncInitializationIndicator);
+      }
       if (agentSoundAudioContext.state === 'suspended') {
         resumeAttempted = true;
         await agentSoundAudioContext.resume();
       }
       const afterState = agentSoundAudioContext.state;
       const ready = afterState === 'running';
+      agentSoundSyncInitializationIndicator();
       logDiagnostic('debug', 'agent-sound-audio-unlock', {
         volume,
         before_state: beforeState,
@@ -136,6 +235,7 @@
       if (ready) agentSoundRetryPendingTerminal();
       return ready;
     } catch (error) {
+      agentSoundSyncInitializationIndicator();
       logDiagnostic('warnings', 'agent-sound-audio-unlock', {
         volume,
         before_state: beforeState,

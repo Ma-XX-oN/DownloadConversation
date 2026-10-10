@@ -189,8 +189,8 @@
       : legacySoundPreference === 'true' || legacySoundPreference === 'false'
         ? 'legacy-preference'
         : 'default',
-    valid_saved_value: initialSoundVolume === null ||
-      /^\d+$/.test(initialSoundVolume)
+    valid_saved_value: initialSoundVolume !== null &&
+      /^(?:10|[0-9])$/.test(initialSoundVolume)
   });
   installNetworkCapture();
   bootstrapUi();

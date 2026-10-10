@@ -15,6 +15,9 @@
       }
     }
     control.textContent = lines.join('\n');
+    if (typeof agentSoundPositionInitializationIndicator === 'function') {
+      agentSoundPositionInitializationIndicator();
+    }
   }
 
   /**
