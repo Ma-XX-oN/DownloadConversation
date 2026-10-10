@@ -345,7 +345,8 @@
           const pixels = context.getImageData(0, 0, width, height);
           const changed = agentFaviconRecolorPixels(pixels.data, targetRgb);
           context.putImageData(pixels, 0, 0);
-          const ringStep = state === 'processing' ? agentFaviconRingStep() : 0;
+          const ringStep = state === 'processing' || state === 'completed'
+            ? agentFaviconRingStep() : 0;
           if (ringStep > 0) {
             context.globalCompositeOperation = 'destination-over';
             try {
