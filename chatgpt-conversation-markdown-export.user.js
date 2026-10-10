@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         ChatGPT Conversation Markdown Recorder
 // @namespace    https://chatgpt.com/
-// @version      1.10.3-issue.174.4
+// @version      1.10.3-issue.174.5
 // @description  Exports the current ChatGPT conversation directly from the Conversation API as Markdown or JSONL.
 // @match        https://chatgpt.com/*
 // @match        https://chat.openai.com/*
@@ -10947,8 +10947,6 @@ globalThis.__dcCompressor = {
           const pixels = context.getImageData(0, 0, width, height);
           const changed = agentFaviconRecolorPixels(pixels.data, targetRgb);
           context.putImageData(pixels, 0, 0);
-          // Composite behind the transparent openings without covering the logo.
-          // Restore source-over before stroking the ring in the foreground.
           const ringStep = state === 'processing' ? agentFaviconRingStep() : 0;
           if (ringStep > 0) {
             context.globalCompositeOperation = 'destination-over';
@@ -11029,16 +11027,7 @@ globalThis.__dcCompressor = {
     ];
   }
 
-  /**
-   * Fills the elapsed portion behind transparent openings in the original logo.
-   * The renderer uses destination-over so this wedge never obscures logo pixels.
-   *
-   * @param {CanvasRenderingContext2D} context - Favicon canvas context.
-   * @param {number} width - Candidate favicon width.
-   * @param {number} height - Candidate favicon height.
-   * @param {number} step - Completed five-minute steps.
-   * @returns {void} No value is returned.
-   */
+  /** Draws a coloured pie wedge behind transparent logo pixels. */
   function agentFaviconDrawPieSlice(context, width, height, step) {
     if (step < 1) return;
     const size = Math.min(width, height);
@@ -11051,15 +11040,7 @@ globalThis.__dcCompressor = {
     context.fill();
   }
 
-  /**
-   * Draws the ring over the newly recoloured original favicon, never an earlier generated image.
-   *
-   * @param {CanvasRenderingContext2D} context - Candidate favicon canvas context.
-   * @param {number} width - Candidate width.
-   * @param {number} height - Candidate height.
-   * @param {number} step - Completed five-minute steps.
-   * @returns {void} No value is returned.
-   */
+  /** Draws the foreground ring over the source favicon. */
   function agentFaviconDrawRing(context, width, height, step) {
     if (step < 1) return;
     const size = Math.min(width, height);
@@ -11071,13 +11052,7 @@ globalThis.__dcCompressor = {
     context.stroke();
   }
 
-  /**
-   * Refreshes favicon progress only when its discrete step changes, using the existing
-   * stopwatch render cadence rather than creating another lifecycle observer or timer.
-   *
-   * @param {number} nowMs - Authoritative stopwatch render time.
-   * @returns {void} No value is returned.
-   */
+  /** Refreshes only on five-minute transitions, using the existing timer. */
   function agentFaviconRingObserveTime(nowMs) {
     if (!agentFaviconProcessingObserved || !agentStopwatchState?.active) return;
     const step = agentFaviconRingStep(nowMs);
