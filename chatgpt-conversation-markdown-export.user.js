@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         ChatGPT Conversation Markdown Recorder
 // @namespace    https://chatgpt.com/
-// @version      1.11.0-issue.151.2
+// @version      1.11.0-issue.151.3
 // @description  Exports the current ChatGPT conversation directly from the Conversation API as Markdown or JSONL.
 // @match        https://chatgpt.com/*
 // @match        https://chat.openai.com/*
@@ -7245,7 +7245,7 @@ globalThis.__dcCompressor = {
     const stored = localStorage.getItem(AGENT_SOUND_VOLUME_STORAGE_KEY);
     if (stored !== null) {
       const parsed = Number.parseInt(stored, 10);
-      return /^\\d+$/.test(stored) && Number.isFinite(parsed) && parsed >= 0 && parsed <= 10 ? parsed : 10;
+      return /^(?:10|[0-9])$/.test(stored) && Number.isFinite(parsed) && parsed >= 0 && parsed <= 10 ? parsed : 10;
     }
     const legacy = localStorage.getItem(LEGACY_AGENT_SOUNDS_STORAGE_KEY);
     if (legacy === 'true') return 10;
@@ -12498,7 +12498,9 @@ globalThis.__dcCompressor = {
       }
     }
     control.textContent = lines.join('\n');
-    agentSoundSyncInitializationIndicator();
+    if (typeof agentSoundPositionInitializationIndicator === 'function') {
+      agentSoundPositionInitializationIndicator();
+    }
   }
 
   /**
