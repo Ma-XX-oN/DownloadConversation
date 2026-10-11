@@ -156,8 +156,9 @@ test('explicitly disabled audio shows no misleading interaction warning', () => 
 });
 
 test('volume control updates the readiness warning after an explicit mute', () => {
-  assert.ok(userscript.includes(
-    "else agentSoundClearPendingTerminal();\\n      agentSoundSyncInitializationIndicator();"
+  const compact = userscript.replace(/\s+/g, ' ');
+  assert.ok(compact.includes(
+    'else agentSoundClearPendingTerminal(); agentSoundSyncInitializationIndicator();'
   ));
 });
 
