@@ -9,6 +9,8 @@
   const RECORDING_GROUP_CLAIM_MS = 450;
   /** Grace period allowing a replaced page document to emit pagehide. */
   const RECORDING_GROUP_RELEASE_GRACE_MS = 150;
+  /** Wall-clock creation time used to preserve the older live tab on collision. */
+  const recordingGroupDocumentStartedAt = performance.timeOrigin || Date.now();
   /** Fresh identity for this document only; never persisted with the tab. */
   const recordingGroupInstanceId = crypto.randomUUID();
   /** Currently active recording-group UUID, or null when disabled. */
@@ -34,7 +36,9 @@
   function recordingGroupSend(kind, group = recordingGroupUuid) {
     if (!recordingGroupChannel || !group) return;
     recordingGroupChannel.postMessage({
-      kind, group, instance: recordingGroupInstanceId
+      kind, group, instance: recordingGroupInstanceId,
+      started_at: recordingGroupDocumentStartedAt,
+      ready: recordingGroupReady
     });
   }
 
@@ -98,12 +102,18 @@
       recordingGroupPeers.delete(message.instance);
       return;
     }
-    recordingGroupPeers.set(message.instance, message.kind);
-    if (message.kind === 'probe') recordingGroupSend('owner');
-    if (recordingGroupReady) {
-      // An earlier owner continues with its UUID; the challenger must rekey.
-      // If two documents independently became ready, settle deterministically.
-      if (message.kind === 'owner' && message.instance < recordingGroupInstanceId) {
+    recordingGroupPeers.set(message.instance, {
+      ready: message.ready === true,
+      started_at: Number.isFinite(message.started_at)
+        ? message.started_at : Number.POSITIVE_INFINITY
+    });
+    if (message.kind === 'probe' && recordingGroupReady) recordingGroupSend('owner');
+    if (recordingGroupReady && message.ready === true) {
+      // Retain the older live document on collision, even when its UUID sorts later.
+      const otherIsOlder = message.started_at < recordingGroupDocumentStartedAt
+        || (message.started_at === recordingGroupDocumentStartedAt
+          && message.instance < recordingGroupInstanceId);
+      if (otherIsOlder) {
         recordingGroupReady = false;
         recordingGroupNewUuid();
         void recordingGroupClaim();
@@ -137,8 +147,10 @@
     });
     recordingGroupClaimTimer = null;
     if (epoch !== recordingGroupClaimEpoch) return false;
-    const competitor = [...recordingGroupPeers.entries()].some(([instance, kind]) =>
-      kind === 'owner' && instance < recordingGroupInstanceId
+    const competitor = [...recordingGroupPeers.entries()].some(([instance, peer]) =>
+      peer.ready && (peer.started_at < recordingGroupDocumentStartedAt
+        || (peer.started_at === recordingGroupDocumentStartedAt
+          && instance < recordingGroupInstanceId))
     );
     if (competitor) {
       recordingGroupNewUuid();
