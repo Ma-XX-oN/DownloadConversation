@@ -18,6 +18,7 @@ const pythonCommand = process.env.PYTHON ?? 'python';
 
 const ordinaryStages = [
   ['Modular userscript build regression', nodeCommand, ['--test', 'tests/modular-userscript-build.test.mjs', 'tests/development-version-source.test.mjs']],
+  ['Recording-group per-tab identity regression', nodeCommand, ['--test', 'tests/recording-group-tab-identity.test.mjs']],
   ['CI test inventory regression', nodeCommand, ['--test', 'tests/ci-test-inventory.test.mjs']],
   ['Actions policy regression', nodeCommand, ['--test', 'tests/actions-policy.test.mjs']],
   ['RepoWorkflow adoption contract', nodeCommand, ['--test', 'tests/repoworkflow-adoption.test.mjs']],
