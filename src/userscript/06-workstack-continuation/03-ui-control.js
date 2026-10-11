@@ -326,6 +326,9 @@
     }
     workStackObserveStopwatch(control);
     workStackPositionControl(control);
+    if (typeof agentSoundPositionInitializationIndicator === 'function') {
+      agentSoundPositionInitializationIndicator();
+    }
   }
 
   /**
