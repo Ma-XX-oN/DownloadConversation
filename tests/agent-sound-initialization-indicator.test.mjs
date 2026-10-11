@@ -170,6 +170,18 @@ test('running audio removes the uninitialized indicator even without a stopwatch
   assert.equal(elements.has(INDICATOR_ID), false);
 });
 
+test('audio suspension restores the warning after a successful unlock', () => {
+  const { context, elements } = indicatorHarness({ audioState: 'running' });
+  assert.equal(context.syncIndicator(), true);
+  assert.equal(elements.has(INDICATOR_ID), false);
+  context.agentSoundAudioContext.state = 'suspended';
+  assert.equal(context.syncIndicator(), false);
+  assert.ok(elements.has(INDICATOR_ID));
+  context.agentSoundAudioContext.state = 'running';
+  assert.equal(context.syncIndicator(), true);
+  assert.equal(elements.has(INDICATOR_ID), false);
+});
+
 test('running audio removes the stopwatch-owned uninitialized indicator immediately', () => {
   const { context, elements } = indicatorHarness({ withStopwatch: true });
 
