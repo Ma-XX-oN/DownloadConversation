@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         ChatGPT Conversation Markdown Recorder
 // @namespace    https://chatgpt.com/
-// @version      1.11.4-issue.219.1
+// @version      1.11.4-issue.220.1
 // @description  Exports the current ChatGPT conversation directly from the Conversation API as Markdown or JSONL.
 // @match        https://chatgpt.com/*
 // @match        https://chat.openai.com/*
@@ -9514,9 +9514,9 @@ globalThis.__dcCompressor = {
   /**
    * Filters exact JSONL record bytes by inclusive timestamp bounds.
    *
-   * Records are chronological.  Once a trustworthy record is later than the
-   * requested upper bound, no following record can be accepted and scanning
-   * stops immediately.
+   * Preserve original file order without assuming wall-clock monotonicity.
+   * Out-of-range records never terminate scanning because the clock can move
+   * backward and subsequent records can fall within the selected range.
    *
    * @param {Uint8Array} bytes - Complete JSONL bytes.
    * @param {number|null} lowerMs - Inclusive lower bound.
@@ -9546,7 +9546,7 @@ globalThis.__dcCompressor = {
         : null;
       const time = timestamp ? Date.parse(timestamp) : NaN;
       if (!Number.isFinite(time)) continue;
-      if (upperMs !== null && time > upperMs) break;
+      if (upperMs !== null && time > upperMs) continue;
       if (lowerMs !== null && time < lowerMs) continue;
       parts.push(complete);
       total += complete.byteLength;
