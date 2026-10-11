@@ -67,8 +67,8 @@ test('Issue 166 Duplicate filters records only when a requested bound cuts throu
   assert.match(duplicateSource, /communicationLogFilterJsonlBytes\(raw, lowerMs, upperMs\)/);
 });
 
-test('Issue 166 upper-bound filtering stops after the first record beyond the bound', () => {
-  assert.match(duplicateSource, /if \(upperMs !== null && time > upperMs\) break;/);
+test('Issue 220 upper-bound filtering scans through nonmonotonic records', () => {
+  assert.match(duplicateSource, /if \(upperMs !== null && time > upperMs\) continue;/);
 });
 
 test('Issue 166 active last timestamp scans backward from EOF in bounded chunks', async () => {
