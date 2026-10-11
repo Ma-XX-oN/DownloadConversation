@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         ChatGPT Conversation Markdown Recorder
 // @namespace    https://chatgpt.com/
-// @version      1.11.4-issue.220.3
+// @version      1.11.4-issue.220.4
 // @description  Exports the current ChatGPT conversation directly from the Conversation API as Markdown or JSONL.
 // @match        https://chatgpt.com/*
 // @match        https://chat.openai.com/*
@@ -10574,6 +10574,7 @@ globalThis.__dcCompressor = {
     const record = {
       timestamp: new Date().toISOString(),
       capture_order: logCapturePosition(),
+      recording_group_uuid: recordingGroupTrackConversation(),
       monotonic_ms: Math.round(performance.now() * 1000) / 1000,
       time_origin: performance.timeOrigin,
       session_id: communicationLogSessionId,
@@ -21112,7 +21113,8 @@ Image elapsed: ${formatDuration(imageElapsed)} — Completed: ${imageCompleted}/
     const panel = document.getElementById(PANEL_ID);
     const selectedGen = panel?.querySelector('[data-role="record-general"]')?.checked ?? true;
     const selectedComm = panel?.querySelector('[data-role="record-communication"]')?.checked ?? true;
-    const range = await logExtractionAvailableRange(selectedGen, selectedComm);
+    // Availability spans existing stored history, not only active capture toggles.
+    const range = await logExtractionAvailableRange(true, true);
     const minimum = new Date(range.start_timestamp);
     const maximum = new Date(range.end_timestamp);
     minimum.setMilliseconds(0);
@@ -21511,7 +21513,8 @@ Image elapsed: ${formatDuration(imageElapsed)} — Completed: ${imageCompleted}/
    * @returns {Object} Document epoch and per-document insertion sequence.
    */
   function logCapturePosition() {
-    return { epoch: logCaptureEpoch, ordinal: ++logCaptureSequence };
+    return { epoch: logCaptureEpoch, ordinal: ++logCaptureSequence,
+      document: recordingGroupInstanceId };
   }
 
   /**
@@ -21572,6 +21575,43 @@ Image elapsed: ${formatDuration(imageElapsed)} — Completed: ${imageCompleted}/
   }
 
   /**
+   * Reads earlier conversations visited by this recording tab from the
+   * existing per-conversation segment directories without changing storage.
+   *
+   * @returns {Promise<Object[][]>} Original file-order communication blocks.
+   */
+  async function mergedLogPreviousConversationBlocks() {
+    const current = communicationLogSegmentDirectoryHandle?.name ?? null;
+    const groups = [];
+    for (const directoryName of recordingGroupDirectoryNames()) {
+      if (directoryName === current) continue;
+      let directory;
+      try {
+        directory = await communicationLogDirectoryHandle.getDirectoryHandle(
+          directoryName, { create: false }
+        );
+      } catch (error) {
+        if (error?.name === 'NotFoundError') {
+          throw new Error('Recorded communication directory is missing: '
+            + directoryName);
+        }
+        throw error;
+      }
+      for await (const [name, handle] of directory.entries()) {
+        if (handle?.kind !== 'file') continue;
+        const archived = communicationLogParseSegmentArchiveName(name);
+        const isActive = COMMUNICATION_LOG_ACTIVE_FILE_NAMES.includes(name);
+        if (!archived && !isActive) continue;
+        const file = await handle.getFile();
+        const bytes = new Uint8Array(await file.arrayBuffer());
+        const plain = archived ? await extractArchive(bytes) : bytes;
+        groups.push(mergedLogParseJsonl(plain));
+      }
+    }
+    return groups;
+  }
+
+  /**
    * Freezes and reads existing disk archives without altering their storage.
    *
    * @returns {Promise<Object[]>} Captured communication events in file order.
@@ -21599,11 +21639,23 @@ Image elapsed: ${formatDuration(imageElapsed)} — Completed: ${imageCompleted}/
       await file.slice(0, plan.active_eof).arrayBuffer()
     );
     blocks.push(mergedLogParseJsonl(bytes));
+    const group = recordingGroupState();
+    if (group.ready && group.uuid) {
+      blocks.push(...await mergedLogPreviousConversationBlocks());
+      // A group starts at explicit enablement. Historical entries from
+      // before enablement and other tabs must never leak into the output.
+      for (let i = 0; i < blocks.length; i += 1) {
+        blocks[i] = blocks[i].filter(event =>
+          event.recording_group_uuid === group.uuid
+        );
+      }
+    }
     // The older segment naming scheme sorts by timestamps, not source order.
     // New records carry capture_order; sort whole archived blocks by their
     // capture position when every block has comparable evidence.
-    const positioned = blocks.every(block => !block.length ||
-      mergedLogValidPosition(block[0]?.capture_order));
+    const positioned = group.ready && group.uuid
+      && blocks.every(block => block.every(event =>
+      mergedLogValidPosition(event?.capture_order)));
     if (positioned) {
       blocks.sort((left, right) => {
         if (!left.length || !right.length) return 0;
@@ -21612,7 +21664,16 @@ Image elapsed: ${formatDuration(imageElapsed)} — Completed: ${imageCompleted}/
         );
       });
     }
-    return blocks.flat();
+    const records = blocks.flat();
+    const seen = new Set();
+    return records.filter(event => {
+      if (!mergedLogValidPosition(event?.capture_order)) return true;
+      const key = String(event.recording_group_uuid) + ':'
+        + event.capture_order.epoch + ':' + event.capture_order.ordinal;
+      if (seen.has(key)) return false;
+      seen.add(key);
+      return true;
+    });
   }
 
   /**
@@ -21623,7 +21684,8 @@ Image elapsed: ${formatDuration(imageElapsed)} — Completed: ${imageCompleted}/
    */
   function mergedLogValidPosition(value) {
     return value && Number.isSafeInteger(value.epoch) && value.epoch > 0
-      && Number.isSafeInteger(value.ordinal) && value.ordinal > 0;
+      && Number.isSafeInteger(value.ordinal) && value.ordinal > 0
+      && typeof value.document === 'string' && value.document.length > 0;
   }
 
   /**
@@ -21649,9 +21711,15 @@ Image elapsed: ${formatDuration(imageElapsed)} — Completed: ${imageCompleted}/
    */
   function mergedLogInterleave(general, communication) {
     const tagged = [];
-    const isPositioned = [...general, ...communication].every(event =>
+    const all = [...general, ...communication];
+    const isPositioned = all.every(event =>
       mergedLogValidPosition(event?.capture_order));
-    if (!isPositioned) {
+    const documents = new Set(all.map(event =>
+      event?.capture_order?.document));
+    const groupIds = new Set(all.map(event => event?.recording_group_uuid));
+    const sameGroup = groupIds.size === 1
+      && !groupIds.has(null) && !groupIds.has(undefined);
+    if (!isPositioned || (documents.size > 1 && !sameGroup)) {
       for (const event of general) tagged.push({ source: 'gen', record: event });
       for (const event of communication) {
         tagged.push({ source: 'comm', record: event });
@@ -21699,9 +21767,16 @@ Image elapsed: ${formatDuration(imageElapsed)} — Completed: ${imageCompleted}/
    * @returns {Promise<string>} Verified archive filename.
    */
   async function saveMergedLogs(selection) {
+    const ownership = recordingGroupState();
+    if (ownership.enabled && !ownership.ready) {
+      throw new Error('Recording group ownership is not yet verified.');
+    }
     const bounds = mergedLogValidateSelection(selection);
+    const group = recordingGroupState();
     const general = bounds.general ? mergedLogRangeFilter(
-      diagnosticLog, bounds.lower, bounds.upper
+      group.ready && group.uuid
+        ? diagnosticLog.filter(e => e.recording_group_uuid === group.uuid)
+        : diagnosticLog, bounds.lower, bounds.upper
     ) : [];
     const communication = bounds.communication ? mergedLogRangeFilter(
       await mergedLogReadCommunication(), bounds.lower, bounds.upper
@@ -21817,6 +21892,89 @@ Image elapsed: ${formatDuration(imageElapsed)} — Completed: ${imageCompleted}/
       uuid: recordingGroupUuid,
       ready: recordingGroupReady
     };
+  }
+
+  /** Registry of physical segment directories already used by this tab. */
+  const RECORDING_GROUP_DIRECTORIES_PREFIX = 'tm-recorder-group-directories:';
+
+  /**
+   * Lists only physical directories where this tab actually recorded Comm.
+   *
+   * @returns {string[]} Existing segment folder names in registration order.
+   */
+  function recordingGroupDirectoryNames() {
+    const state = recordingGroupState();
+    if (!state.ready || !state.uuid) return [];
+    const stored = sessionStorage.getItem(
+      RECORDING_GROUP_DIRECTORIES_PREFIX + state.uuid
+    );
+    if (!stored) return [];
+    try {
+      const names = JSON.parse(stored);
+      return Array.isArray(names)
+        ? names.filter(name => typeof name === 'string' && name.length > 0)
+        : [];
+    } catch {
+      return [];
+    }
+  }
+
+  /** Metadata-only list of conversations recorded under a group. */
+  const RECORDING_GROUP_CHATS_PREFIX = 'tm-recorder-group-chats:';
+
+  /**
+   * Returns the already-recorded conversation IDs for this tab's group.
+   *
+   * @returns {string[]} Distinct conversation identifiers in visit order.
+   */
+  function recordingGroupConversationIds() {
+    const state = recordingGroupState();
+    if (!state.ready || !state.uuid) return [];
+    const stored = sessionStorage.getItem(RECORDING_GROUP_CHATS_PREFIX + state.uuid);
+    if (!stored) return [];
+    try {
+      const ids = JSON.parse(stored);
+      return Array.isArray(ids)
+        ? ids.filter(id => typeof id === 'string' && id.length > 0) : [];
+    } catch {
+      return [];
+    }
+  }
+
+  /**
+   * Associates the current conversation with this tab's active recording.
+   *
+   * Only the small conversation registry is persisted here; event buffering,
+   * segmented disk recording, compression and rotation remain unchanged.
+   *
+   * @returns {string|null} Current active group's UUID or null.
+   */
+  function recordingGroupTrackConversation() {
+    const state = recordingGroupState();
+    if (!state.ready || !state.uuid) return null;
+    const id = typeof currentConversationId === 'function'
+      ? currentConversationId() : null;
+    const directory = typeof communicationLogSegmentDirectoryHandle
+      !== 'undefined' ? communicationLogSegmentDirectoryHandle?.name : null;
+    if (directory) {
+      const names = recordingGroupDirectoryNames();
+      if (!names.includes(directory)) {
+        names.push(directory);
+        sessionStorage.setItem(
+          RECORDING_GROUP_DIRECTORIES_PREFIX + state.uuid,
+          JSON.stringify(names)
+        );
+      }
+    }
+    if (!id) return state.uuid;
+    const ids = recordingGroupConversationIds();
+    if (!ids.includes(id)) {
+      ids.push(id);
+      sessionStorage.setItem(
+        RECORDING_GROUP_CHATS_PREFIX + state.uuid, JSON.stringify(ids)
+      );
+    }
+    return state.uuid;
   }
 
   /**
@@ -22076,6 +22234,8 @@ Image elapsed: ${formatDuration(imageElapsed)} — Completed: ${imageCompleted}/
     const entry = {
       timestamp: new Date().toISOString(),
       capture_order: logCapturePosition(),
+      recording_group_uuid: recordingGroupState().ready
+        ? recordingGroupState().uuid : null,
       level,
       message,
       data: safeData
