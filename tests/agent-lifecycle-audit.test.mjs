@@ -15,6 +15,7 @@ function auditHarness() {
     const diagnosticLog = this.entries;
     const MAX_DIAGNOSTIC_LOG_ITEMS = 100;
     function logConsoleDiagnostic() {}
+    function logCapturePosition() { return { epoch: 1, ordinal: 1 }; }
     const DIAGNOSTIC_LEVELS = Object.freeze({ errors: 0, warnings: 1, debug: 2, verbose: 3 });
     let diagnosticsLevel = 'warnings';
     ${productionFunctionSource('diagnosticEnabled')}
