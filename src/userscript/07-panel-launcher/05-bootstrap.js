@@ -25,6 +25,7 @@
       });
       if (agentSoundVolume > 0) void unlockAgentSoundAudio();
       else agentSoundClearPendingTerminal();
+      agentSoundSyncInitializationIndicator();
     });
     document.addEventListener('click', event => {
       if (!soundPopup || soundPopup.hidden) return;
