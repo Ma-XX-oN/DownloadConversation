@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         ChatGPT Conversation Markdown Recorder
 // @namespace    https://chatgpt.com/
-// @version      1.11.2
+// @version      1.11.3-issue.151.4
 // @description  Exports the current ChatGPT conversation directly from the Conversation API as Markdown or JSONL.
 // @match        https://chatgpt.com/*
 // @match        https://chat.openai.com/*
@@ -11524,9 +11524,8 @@ globalThis.__dcCompressor = {
   }
 
   /**
-   * Keeps the sound-readiness indicator owned by the stopwatch and positions it immediately
-   * to the stopwatch's left. If no stopwatch exists yet, no independent page-level indicator
-   * is deployed.
+   * Positions the readiness indicator to the stopwatch's left, or at the fixed
+   * upper-right page location before the stopwatch exists.
    *
    * @param {HTMLElement|null} indicator - Existing readiness indicator, when already resolved.
    * @returns {void} No value is returned.
@@ -11535,30 +11534,30 @@ globalThis.__dcCompressor = {
     indicator = document.getElementById(AGENT_SOUND_INITIALIZATION_INDICATOR_ID)
   ) {
     const stopwatch = document.getElementById(AGENT_STOPWATCH_ID);
-    if (!stopwatch) {
-      indicator?.remove();
-      return;
-    }
     if (agentSoundAudioReady()) {
       indicator?.remove();
       return;
     }
     const visibleIndicator = indicator || ensureAgentSoundInitializationIndicator();
     if (!visibleIndicator) return;
-    if (visibleIndicator.parentNode !== stopwatch) stopwatch.append(visibleIndicator);
-    visibleIndicator.style.position = 'absolute';
-    visibleIndicator.style.top = '5px';
-    visibleIndicator.style.right = `calc(100% + ${AGENT_SOUND_INITIALIZATION_GAP_PX}px)`;
+    const parent = stopwatch || document.body || document.documentElement;
+    if (visibleIndicator.parentNode !== parent) parent.append(visibleIndicator);
+    visibleIndicator.style.position = stopwatch ? 'absolute' : 'fixed';
+    visibleIndicator.style.top = stopwatch ? '5px' : '56px';
+    visibleIndicator.style.right = stopwatch
+      ? `calc(100% + ${AGENT_SOUND_INITIALIZATION_GAP_PX}px)`
+      : '16px';
   }
 
   /**
-   * Returns the single disabled-speaker sound-readiness indicator owned by the stopwatch.
+   * Returns the single disabled-speaker sound-readiness indicator for the page.
    *
-   * @returns {HTMLElement|null} Existing/new indicator, or null until the stopwatch exists.
+   * @returns {HTMLElement|null} Existing/new indicator, or null before the document root exists.
    */
   function ensureAgentSoundInitializationIndicator() {
     const stopwatch = document.getElementById(AGENT_STOPWATCH_ID);
-    if (!stopwatch) return null;
+    const parent = stopwatch || document.body || document.documentElement;
+    if (!parent) return null;
     let indicator = document.getElementById(AGENT_SOUND_INITIALIZATION_INDICATOR_ID);
     if (!indicator) {
       indicator = document.createElement('div');
@@ -11578,7 +11577,7 @@ globalThis.__dcCompressor = {
       indicator.style.pointerEvents = 'none';
       indicator.style.boxShadow = '0 2px 8px rgba(0, 0, 0, 0.25)';
     }
-    if (indicator.parentNode !== stopwatch) stopwatch.append(indicator);
+    if (indicator.parentNode !== parent) parent.append(indicator);
     agentSoundPositionInitializationIndicator(indicator);
     return indicator;
   }
