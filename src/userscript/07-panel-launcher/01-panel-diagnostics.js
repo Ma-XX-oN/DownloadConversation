@@ -103,6 +103,7 @@
     const entry = {
       timestamp: new Date().toISOString(),
       capture_order: logCapturePosition(),
+      recording_group_uuid: recordingGroupTrackConversation(),
       level,
       message,
       data: safeData
