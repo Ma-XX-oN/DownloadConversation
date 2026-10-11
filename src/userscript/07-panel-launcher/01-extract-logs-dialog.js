@@ -97,7 +97,11 @@
     comm.checked = selectedComm && range.communication_available;
     let fromControl;
     let toControl;
-    /** @returns {boolean} Whether at least one source and a valid date range are selected. */
+    /**
+     * Validates selected sources and ordered bounds before allowing Save.
+     *
+     * @returns {boolean} Whether at least one source and a valid range are selected.
+     */
     const validate = () => {
       const chronological = !fromControl || !toControl
         || fromControl.getDate().getTime() <= toControl.getDate().getTime();
