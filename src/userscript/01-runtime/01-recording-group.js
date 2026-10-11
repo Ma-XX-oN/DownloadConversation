@@ -195,6 +195,13 @@
     recordingGroupChannel = null;
   });
 
+  /** Revalidate when Chrome restores this document from the back-forward cache. */
+  window.addEventListener('pageshow', event => {
+    if (event.persisted && sessionStorage.getItem(RECORDING_GROUP_ENABLED_KEY) === 'true') {
+      void recordingGroupClaim();
+    }
+  });
+
   // A restored tab retains its UUID, but must revalidate live ownership.
   if (sessionStorage.getItem(RECORDING_GROUP_ENABLED_KEY) === 'true') {
     recordingGroupUuid = sessionStorage.getItem(RECORDING_GROUP_UUID_KEY);
