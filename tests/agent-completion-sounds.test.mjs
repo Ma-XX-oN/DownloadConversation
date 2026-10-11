@@ -336,3 +336,13 @@ test('audio gesture listeners attach only until unlock and re-arm on suspension'
   api.sync();
   assert.equal(listeners.size, 2, 'unmuting while suspended re-arms listeners');
 });
+
+test('sound popup and volume changes do not unlock an already running AudioContext', () => {
+  const moduleText = userscript;
+  assert.match(moduleText,
+    /if \(open && agentSoundVolume > 0 && !agentSoundAudioReady\(\)\) void unlockAgentSoundAudio\(\);/);
+  assert.match(moduleText,
+    /if \(agentSoundVolume > 0 && !agentSoundAudioReady\(\)\) void unlockAgentSoundAudio\(\);/);
+  assert.match(moduleText,
+    /else if \(agentSoundVolume <= 0\) agentSoundClearPendingTerminal\(\);/);
+});
