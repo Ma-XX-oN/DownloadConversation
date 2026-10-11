@@ -17,7 +17,8 @@
    * @returns {Object} Document epoch and per-document insertion sequence.
    */
   function logCapturePosition() {
-    return { epoch: logCaptureEpoch, ordinal: ++logCaptureSequence };
+    return { epoch: logCaptureEpoch, ordinal: ++logCaptureSequence,
+      document: recordingGroupInstanceId };
   }
 
   /**
@@ -156,7 +157,8 @@
     // The older segment naming scheme sorts by timestamps, not source order.
     // New records carry capture_order; sort whole archived blocks by their
     // capture position when every block has comparable evidence.
-    const positioned = blocks.every(block => block.every(event =>
+    const positioned = group.ready && group.uuid
+      && blocks.every(block => block.every(event =>
       mergedLogValidPosition(event?.capture_order)));
     if (positioned) {
       blocks.sort((left, right) => {
@@ -186,7 +188,8 @@
    */
   function mergedLogValidPosition(value) {
     return value && Number.isSafeInteger(value.epoch) && value.epoch > 0
-      && Number.isSafeInteger(value.ordinal) && value.ordinal > 0;
+      && Number.isSafeInteger(value.ordinal) && value.ordinal > 0
+      && typeof value.document === 'string' && value.document.length > 0;
   }
 
   /**
@@ -212,9 +215,15 @@
    */
   function mergedLogInterleave(general, communication) {
     const tagged = [];
-    const isPositioned = [...general, ...communication].every(event =>
+    const all = [...general, ...communication];
+    const isPositioned = all.every(event =>
       mergedLogValidPosition(event?.capture_order));
-    if (!isPositioned) {
+    const documents = new Set(all.map(event =>
+      event?.capture_order?.document));
+    const groupIds = new Set(all.map(event => event?.recording_group_uuid));
+    const sameGroup = groupIds.size === 1
+      && !groupIds.has(null) && !groupIds.has(undefined);
+    if (!isPositioned || (documents.size > 1 && !sameGroup)) {
       for (const event of general) tagged.push({ source: 'gen', record: event });
       for (const event of communication) {
         tagged.push({ source: 'comm', record: event });
@@ -262,6 +271,10 @@
    * @returns {Promise<string>} Verified archive filename.
    */
   async function saveMergedLogs(selection) {
+    const ownership = recordingGroupState();
+    if (ownership.enabled && !ownership.ready) {
+      throw new Error('Recording group ownership is not yet verified.');
+    }
     const bounds = mergedLogValidateSelection(selection);
     const group = recordingGroupState();
     const general = bounds.general ? mergedLogRangeFilter(
