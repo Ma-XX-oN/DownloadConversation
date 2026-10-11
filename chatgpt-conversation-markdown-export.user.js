@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         ChatGPT Conversation Markdown Recorder
 // @namespace    https://chatgpt.com/
-// @version      1.11.4-issue.213.1
+// @version      1.11.4-issue.213.2
 // @description  Exports the current ChatGPT conversation directly from the Conversation API as Markdown or JSONL.
 // @match        https://chatgpt.com/*
 // @match        https://chat.openai.com/*
@@ -22344,7 +22344,7 @@ Image elapsed: ${formatDuration(imageElapsed)} — Completed: ${imageCompleted}/
       event.stopPropagation();
       const open = Boolean(soundPopup?.hidden);
       setSoundPopupOpen(open);
-      if (open && agentSoundVolume > 0) void unlockAgentSoundAudio();
+      if (open && agentSoundVolume > 0 && !agentSoundAudioReady()) void unlockAgentSoundAudio();
     });
     soundPopup?.addEventListener('click', event => event.stopPropagation());
     soundVolumeInput?.addEventListener('input', () => {
@@ -22357,8 +22357,8 @@ Image elapsed: ${formatDuration(imageElapsed)} — Completed: ${imageCompleted}/
         volume: agentSoundVolume,
         source: 'user-input'
       });
-      if (agentSoundVolume > 0) void unlockAgentSoundAudio();
-      else agentSoundClearPendingTerminal();
+      if (agentSoundVolume > 0 && !agentSoundAudioReady()) void unlockAgentSoundAudio();
+      else if (agentSoundVolume <= 0) agentSoundClearPendingTerminal();
     });
     document.addEventListener('click', event => {
       if (!soundPopup || soundPopup.hidden) return;
