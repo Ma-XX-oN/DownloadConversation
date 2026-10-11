@@ -78,6 +78,44 @@
   }
 
   /**
+   * Reads earlier conversations visited by this recording tab from the
+   * existing per-conversation segment directories without changing storage.
+   *
+   * @returns {Promise<Object[][]>} Original file-order communication blocks.
+   */
+  async function mergedLogPreviousConversationBlocks() {
+    const current = currentConversationId();
+    const groups = [];
+    for (const id of recordingGroupConversationIds()) {
+      if (id === current) continue;
+      const directoryName = '.DownloadConversation-'
+        + sanitizeFileName(id) + '-segments';
+      let directory;
+      try {
+        directory = await communicationLogDirectoryHandle.getDirectoryHandle(
+          directoryName, { create: false }
+        );
+      } catch (error) {
+        if (error?.name === 'NotFoundError') {
+          throw new Error('Recorded conversation directory is missing: ' + id);
+        }
+        throw error;
+      }
+      for await (const [name, handle] of directory.entries()) {
+        if (handle?.kind !== 'file') continue;
+        const archived = communicationLogParseSegmentArchiveName(name);
+        const isActive = COMMUNICATION_LOG_ACTIVE_FILE_NAMES.includes(name);
+        if (!archived && !isActive) continue;
+        const file = await handle.getFile();
+        const bytes = new Uint8Array(await file.arrayBuffer());
+        const plain = archived ? await extractArchive(bytes) : bytes;
+        groups.push(mergedLogParseJsonl(plain));
+      }
+    }
+    return groups;
+  }
+
+  /**
    * Freezes and reads existing disk archives without altering their storage.
    *
    * @returns {Promise<Object[]>} Captured communication events in file order.
@@ -105,11 +143,22 @@
       await file.slice(0, plan.active_eof).arrayBuffer()
     );
     blocks.push(mergedLogParseJsonl(bytes));
+    const group = recordingGroupState();
+    if (group.ready && group.uuid) {
+      blocks.push(...await mergedLogPreviousConversationBlocks());
+      // A group starts at explicit enablement. Historical entries from
+      // before enablement and other tabs must never leak into the output.
+      for (let i = 0; i < blocks.length; i += 1) {
+        blocks[i] = blocks[i].filter(event =>
+          event.recording_group_uuid === group.uuid
+        );
+      }
+    }
     // The older segment naming scheme sorts by timestamps, not source order.
     // New records carry capture_order; sort whole archived blocks by their
     // capture position when every block has comparable evidence.
-    const positioned = blocks.every(block => !block.length ||
-      mergedLogValidPosition(block[0]?.capture_order));
+    const positioned = blocks.every(block => block.every(event =>
+      mergedLogValidPosition(event?.capture_order)));
     if (positioned) {
       blocks.sort((left, right) => {
         if (!left.length || !right.length) return 0;
@@ -118,7 +167,16 @@
         );
       });
     }
-    return blocks.flat();
+    const records = blocks.flat();
+    const seen = new Set();
+    return records.filter(event => {
+      if (!mergedLogValidPosition(event?.capture_order)) return true;
+      const key = String(event.recording_group_uuid) + ':'
+        + event.capture_order.epoch + ':' + event.capture_order.ordinal;
+      if (seen.has(key)) return false;
+      seen.add(key);
+      return true;
+    });
   }
 
   /**
@@ -206,8 +264,11 @@
    */
   async function saveMergedLogs(selection) {
     const bounds = mergedLogValidateSelection(selection);
+    const group = recordingGroupState();
     const general = bounds.general ? mergedLogRangeFilter(
-      diagnosticLog, bounds.lower, bounds.upper
+      group.ready && group.uuid
+        ? diagnosticLog.filter(e => e.recording_group_uuid === group.uuid)
+        : diagnosticLog, bounds.lower, bounds.upper
     ) : [];
     const communication = bounds.communication ? mergedLogRangeFilter(
       await mergedLogReadCommunication(), bounds.lower, bounds.upper
