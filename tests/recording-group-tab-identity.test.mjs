@@ -66,7 +66,8 @@ function harness() {
       api: context.recordingApi,
       storage: stored,
       diagnostics,
-      close() { listeners.get('pagehide')?.(); }
+      close() { listeners.get('pagehide')?.(); },
+      restore() { listeners.get('pageshow')?.({ persisted: true }); }
     };
   }
   return { tab, channels };
@@ -117,6 +118,20 @@ test('independent tabs and re-enabled groups receive different UUIDs', async () 
   assert.notEqual(first.api.state().uuid, initial);
   first.close();
   second.close();
+});
+
+test('back-forward cache restoration reclaims the unchanged recording UUID', async () => {
+  const bus = harness();
+  const original = bus.tab({}, 1000);
+  assert.equal(await original.api.enable(), true);
+  const initial = original.api.state().uuid;
+  original.close();
+  assert.equal(original.api.state().ready, false);
+  original.restore();
+  await new Promise(resolve => setTimeout(resolve, 680));
+  assert.equal(original.api.state().uuid, initial);
+  assert.equal(original.api.state().ready, true);
+  original.close();
 });
 
 test('missing BroadcastChannel does not declare ownership ready', async () => {
