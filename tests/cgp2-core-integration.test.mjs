@@ -170,13 +170,15 @@ test('cache miss uses direct GitHub raw retrieval and failures remain visible', 
   const loadSource = bridgeSource.slice(loadStart, loadEnd);
   const cacheReadAt = loadSource.indexOf('const cachedSource = cachedAgentPluginSource(descriptor);');
   assert.ok(cacheReadAt >= 0, 'Production loader must read the cache first.');
-  assert.match(loadSource, /await requestAgentPluginFromGitHub\\(descriptor\\)/);
-  assert.doesNotMatch(loadSource, /window\\.open|brokerSourcePromise/,
+  assert.ok(loadSource.includes('await requestAgentPluginFromGitHub(descriptor)'),
+    'Cache misses must use background retrieval.');
+  assert.ok(!loadSource.includes('window.open') && !loadSource.includes('brokerSourcePromise'),
     'A cache miss must not open GitHub.');
-  assert.match(bridgeSource, /GM_xmlhttpRequest\\(\\{/);
-  assert.match(bridgeSource, /\\/raw\\//,
+  assert.ok(bridgeSource.includes('GM_xmlhttpRequest({'),
+    'Background transport must use the Tampermonkey request API.');
+  assert.ok(bridgeSource.includes('/raw/'),
     'The authenticated GitHub-origin raw endpoint must be used.');
-  assert.match(bridgeSource, /verifyAgentPluginSource\\(descriptor, source\\)/,
+  assert.ok(bridgeSource.includes('verifyAgentPluginSource(descriptor, source)'),
     'Downloaded source must be verified before being cached.');
 
   assert.match(bridgeSource, /chatGPTPluginModulePromise = null;\n      throw error;/,
