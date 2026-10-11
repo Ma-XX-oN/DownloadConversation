@@ -175,6 +175,7 @@
     const rect = stopwatch?.getBoundingClientRect?.() ?? null;
     control.style.top = `${Math.round(rect?.bottom ?? 108) + 8}px`;
     control.style.right = '16px';
+    agentSoundPositionInitializationIndicator();
   }
 
   /**

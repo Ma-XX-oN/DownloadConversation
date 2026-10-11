@@ -85,9 +85,9 @@
   }
 
 
-  /** DOM id of the stopwatch-owned sound-readiness indicator. */
+  /** DOM id of the WorkStack-owned sound-readiness indicator. */
   const AGENT_SOUND_INITIALIZATION_INDICATOR_ID = 'tm-agent-sound-uninitialized';
-  /** Horizontal gap between the sound-readiness indicator and the stopwatch. */
+  /** Horizontal gap between the sound-readiness indicator and its adjacent control. */
   const AGENT_SOUND_INITIALIZATION_GAP_PX = 8;
 
   /**
@@ -100,41 +100,41 @@
   }
 
   /**
-   * Keeps the sound-readiness indicator owned by the stopwatch and positions it immediately
-   * to the stopwatch's left. If no stopwatch exists yet, no independent page-level indicator
-   * is deployed.
+   * Places the warning immediately left of the WorkStack control.
+   * WorkStack owns its position, so scrolling and resizing preserve alignment.
    *
-   * @param {HTMLElement|null} indicator - Existing readiness indicator, when already resolved.
+   * @param {HTMLElement|null} indicator - Existing warning, if any.
    * @returns {void} No value is returned.
    */
   function agentSoundPositionInitializationIndicator(
     indicator = document.getElementById(AGENT_SOUND_INITIALIZATION_INDICATOR_ID)
   ) {
-    const stopwatch = document.getElementById(AGENT_STOPWATCH_ID);
-    if (!stopwatch) {
+    if (agentSoundAudioReady() || agentSoundVolume <= 0) {
       indicator?.remove();
       return;
     }
-    if (agentSoundAudioReady()) {
+    const workStack = document.getElementById(WORKSTACK_CONTROL_ID);
+    if (!workStack) {
       indicator?.remove();
       return;
     }
     const visibleIndicator = indicator || ensureAgentSoundInitializationIndicator();
     if (!visibleIndicator) return;
-    if (visibleIndicator.parentNode !== stopwatch) stopwatch.append(visibleIndicator);
+    if (visibleIndicator.parentNode !== workStack) workStack.append(visibleIndicator);
     visibleIndicator.style.position = 'absolute';
-    visibleIndicator.style.top = '5px';
-    visibleIndicator.style.right = `calc(100% + ${AGENT_SOUND_INITIALIZATION_GAP_PX}px)`;
+    visibleIndicator.style.top = '50%';
+    visibleIndicator.style.right = `calc(100% + ${AGENT_SOUND_INITIALIZATION_GAP_PX + 1}px)`;
+    visibleIndicator.style.transform = 'translateY(-50%)';
   }
 
   /**
-   * Returns the single disabled-speaker sound-readiness indicator owned by the stopwatch.
+   * Returns the single disabled-speaker sound-readiness indicator for the page.
    *
-   * @returns {HTMLElement|null} Existing/new indicator, or null until the stopwatch exists.
+   * @returns {HTMLElement|null} Existing/new indicator, or null before the document root exists.
    */
   function ensureAgentSoundInitializationIndicator() {
-    const stopwatch = document.getElementById(AGENT_STOPWATCH_ID);
-    if (!stopwatch) return null;
+    const parent = document.getElementById(WORKSTACK_CONTROL_ID);
+    if (!parent) return null;
     let indicator = document.getElementById(AGENT_SOUND_INITIALIZATION_INDICATOR_ID);
     if (!indicator) {
       indicator = document.createElement('div');
@@ -154,7 +154,7 @@
       indicator.style.pointerEvents = 'none';
       indicator.style.boxShadow = '0 2px 8px rgba(0, 0, 0, 0.25)';
     }
-    if (indicator.parentNode !== stopwatch) stopwatch.append(indicator);
+    if (indicator.parentNode !== parent) parent.append(indicator);
     agentSoundPositionInitializationIndicator(indicator);
     return indicator;
   }
@@ -165,7 +165,7 @@
    * @returns {boolean} True when audio is ready and the uninitialized status is absent.
    */
   function agentSoundSyncInitializationIndicator() {
-    const ready = agentSoundAudioReady();
+    const ready = agentSoundAudioReady() || agentSoundVolume <= 0;
     const indicator = document.getElementById(AGENT_SOUND_INITIALIZATION_INDICATOR_ID);
     if (ready) {
       indicator?.remove();
@@ -175,9 +175,6 @@
     agentSoundPositionInitializationIndicator(visibleIndicator);
     return false;
   }
-
-  agentSoundSyncInitializationIndicator();
-  document.addEventListener('DOMContentLoaded', agentSoundSyncInitializationIndicator, { once: true });
 
   /**
    * Unlocks the browser Web Audio context from a user gesture when sounds are enabled.
