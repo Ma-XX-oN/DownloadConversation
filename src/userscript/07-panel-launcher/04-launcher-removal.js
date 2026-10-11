@@ -120,7 +120,7 @@
     panel.innerHTML = `
       <button class="tm-close" type="button" aria-label="Close">×</button>
       <div class="tm-title" data-role="title"></div>
-      <div class="tm-log-head"><span class="tm-label" data-role="log-count">Log: 0 items</span><button class="tm-icon-button" data-role="save-log" type="button" aria-label="Save diagnostic log" title="Save log"></button><button class="tm-icon-button" data-role="copy-log" type="button" aria-label="Copy diagnostic log" title="Copy log"></button><button class="tm-icon-button" data-role="toggle-log" type="button" aria-label="Show diagnostic log" aria-expanded="false" title="Show log">+</button></div>
+      <div class="tm-log-head"><span class="tm-label" data-role="log-count">Log: 0 items</span><button class="tm-icon-button" data-role="save-log" type="button" aria-label="Extract merged logs" title="Extract logs"></button><button class="tm-icon-button" data-role="copy-log" type="button" aria-label="Copy diagnostic log" title="Copy log"></button><button class="tm-icon-button" data-role="toggle-log" type="button" aria-label="Show diagnostic log" aria-expanded="false" title="Show log">+</button></div>
       <div class="tm-last-log-problem" data-role="last-log-problem" role="status" hidden></div>
       <div class="tm-log-output" data-role="log-output" hidden></div>
       <div class="tm-status" data-role="status"></div>
@@ -196,12 +196,12 @@
     if (saveLogButton) saveLogButton.innerHTML = saveIconMarkup();
     const copyLogButton = panel.querySelector('[data-role="copy-log"]');
     if (copyLogButton) copyLogButton.innerHTML = copyIconMarkup();
-    panel.querySelector('[data-role="save-log"]').addEventListener('click', () => {
-      void saveDiagnosticLog().catch(error => {
-        logDiagnostic('errors', 'diagnostic-log-save-failure', {
+    panel.querySelector('[data-role="save-log"]').addEventListener('click', event => {
+      void runMergedLogExtraction(event.currentTarget).catch(error => {
+        logDiagnostic('errors', 'merged-log-dialog-failure', {
           message: errorMessage(error)
         });
-        setStatus(`Diagnostic log save failed: ${errorMessage(error)}`);
+        setStatus('Log extraction dialog failed: ' + errorMessage(error));
       });
     });
     panel.querySelector('[data-role="toggle-log"]').addEventListener('click', () => {
