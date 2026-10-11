@@ -122,3 +122,11 @@ test('restored documents in the same group retain verifiable epoch order', () =>
   assert.equal(merged.ordering, 'capture-sequence');
   assert.deepEqual(merged.entries.map(row => row.source), ['gen', 'comm']);
 });
+
+test('malformed complete communication records fail instead of silently disappearing', () => {
+  const complete = new TextEncoder().encode(
+    '{"timestamp":"' + timestamp(1) + '"}\n' + '{"broken":}\n'
+  );
+  assert.throws(() => call('mergedLogParseJsonl', complete),
+    /Malformed complete communication JSONL/);
+});
