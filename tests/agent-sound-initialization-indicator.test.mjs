@@ -90,12 +90,36 @@ test('sound readiness is exactly the running AudioContext state', () => {
   assert.equal(audioReady('running'), true);
 });
 
-test('uninitialized indicator is deployed only with the stopwatch', () => {
+test('uninitialized indicator appears before a stopwatch exists', () => {
   const withoutStopwatch = indicatorHarness();
   assert.equal(withoutStopwatch.context.syncIndicator(), false);
-  assert.equal(withoutStopwatch.elements.has(INDICATOR_ID), false,
-    'the readiness icon must not be deployed as an independent page-level control');
+  const indicator = withoutStopwatch.elements.get(INDICATOR_ID);
+  assert.ok(indicator, 'audio blocked before a stopwatch must display a warning');
+  assert.equal(indicator.parentNode, withoutStopwatch.body);
+  assert.equal(indicator.style.position, 'fixed');
+  assert.equal(indicator.style.top, '56px');
+  assert.equal(indicator.style.right, '16px');
+  withoutStopwatch.context.syncIndicator();
+  assert.equal(withoutStopwatch.body.children.filter(child => child.id === INDICATOR_ID).length, 1);
+});
 
+test('uninitialized indicator moves beside the stopwatch when one appears', () => {
+  const withoutStopwatch = indicatorHarness();
+  withoutStopwatch.context.syncIndicator();
+  const indicator = withoutStopwatch.elements.get(INDICATOR_ID);
+  const stopwatch = withoutStopwatch.context.document.createElement('div');
+  stopwatch.id = STOPWATCH_ID;
+  withoutStopwatch.body.append(stopwatch);
+  withoutStopwatch.context.syncIndicator();
+  assert.equal(withoutStopwatch.elements.get(INDICATOR_ID), indicator);
+  assert.equal(indicator.parentNode, stopwatch);
+  assert.equal(indicator.style.position, 'absolute');
+  assert.equal(indicator.style.top, '5px');
+  assert.equal(indicator.style.right, 'calc(100% + 8px)');
+  assert.equal(withoutStopwatch.body.children.includes(indicator), false);
+});
+
+test('uninitialized indicator is positioned beside an existing stopwatch', () => {
   const withStopwatch = indicatorHarness({ withStopwatch: true });
   assert.equal(withStopwatch.context.syncIndicator(), false);
   const indicator = withStopwatch.elements.get(INDICATOR_ID);
@@ -135,6 +159,15 @@ test('repeated readiness projection keeps one stopwatch-owned indicator', () => 
   context.syncIndicator();
   assert.equal(elements.get(INDICATOR_ID), first);
   assert.equal(stopwatch.children.filter(child => child.id === INDICATOR_ID).length, 1);
+});
+
+test('running audio removes the uninitialized indicator even without a stopwatch', () => {
+  const { context, elements } = indicatorHarness();
+  context.syncIndicator();
+  assert.ok(elements.has(INDICATOR_ID));
+  context.agentSoundAudioContext = { state: 'running' };
+  assert.equal(context.syncIndicator(), true);
+  assert.equal(elements.has(INDICATOR_ID), false);
 });
 
 test('running audio removes the stopwatch-owned uninitialized indicator immediately', () => {
