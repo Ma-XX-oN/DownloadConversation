@@ -155,6 +155,11 @@ test('explicitly disabled audio shows no misleading interaction warning', () => 
   assert.equal(elements.has(INDICATOR_ID), false);
 });
 
+test('volume control updates the readiness warning after an explicit mute', () => {
+  assert.match(userscript,
+    /else agentSoundClearPendingTerminal\\(\\);\\s+agentSoundSyncInitializationIndicator\\(\\);/);
+});
+
 test('the warning artwork remains the red crossed-out speaker', () => {
   const { context, elements } = harness({ withWorkStack: true });
   context.syncIndicator();
