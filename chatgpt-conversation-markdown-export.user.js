@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         ChatGPT Conversation Markdown Recorder
 // @namespace    https://chatgpt.com/
-// @version      1.11.4
+// @version      1.11.4-issue.213.1
 // @description  Exports the current ChatGPT conversation directly from the Conversation API as Markdown or JSONL.
 // @match        https://chatgpt.com/*
 // @match        https://chat.openai.com/*
@@ -11533,6 +11533,28 @@ globalThis.__dcCompressor = {
     return indicator;
   }
 
+  /** True while gesture listeners are registered to unlock the sound context. */
+  let agentSoundGestureListenersAttached = false;
+
+  /**
+   * Attaches gesture listeners only when audio is enabled but not running.
+   * Removes them after unlock or when sound is muted.
+   *
+   * @returns {void} No value is returned.
+   */
+  function agentSoundSyncGestureListeners() {
+    const needed = agentSoundVolume > 0 && !agentSoundAudioReady();
+    if (needed === agentSoundGestureListenersAttached) return;
+    agentSoundGestureListenersAttached = needed;
+    if (needed) {
+      document.addEventListener('pointerdown', agentSoundHandleUserGesture, true);
+      document.addEventListener('keydown', agentSoundHandleUserGesture, true);
+    } else {
+      document.removeEventListener('pointerdown', agentSoundHandleUserGesture, true);
+      document.removeEventListener('keydown', agentSoundHandleUserGesture, true);
+    }
+  }
+
   /**
    * Projects authoritative AudioContext readiness onto the stopwatch-owned status icon.
    *
@@ -11540,6 +11562,7 @@ globalThis.__dcCompressor = {
    */
   function agentSoundSyncInitializationIndicator() {
     const ready = agentSoundAudioReady();
+    agentSoundSyncGestureListeners();
     const indicator = document.getElementById(AGENT_SOUND_INITIALIZATION_INDICATOR_ID);
     if (ready) {
       indicator?.remove();
@@ -11628,7 +11651,7 @@ globalThis.__dcCompressor = {
    * @returns {void} No value is returned.
    */
   function agentSoundHandleUserGesture() {
-    if (agentSoundVolume > 0) void unlockAgentSoundAudio();
+    if (agentSoundVolume > 0 && !agentSoundAudioReady()) void unlockAgentSoundAudio();
   }
 
   /**
@@ -12474,9 +12497,6 @@ globalThis.__dcCompressor = {
       agentLifecycleAction('sound', 'pending', { kind, terminal_key: key });
     }
   }
-
-  document.addEventListener('pointerdown', agentSoundHandleUserGesture, true);
-  document.addEventListener('keydown', agentSoundHandleUserGesture, true);
 
 
   /**
@@ -22332,6 +22352,7 @@ Image elapsed: ${formatDuration(imageElapsed)} — Completed: ${imageCompleted}/
       agentSoundVolume = Number.isFinite(parsed) ? Math.max(0, Math.min(10, parsed)) : 0;
       localStorage.setItem(AGENT_SOUND_VOLUME_STORAGE_KEY, String(agentSoundVolume));
       renderSoundVolume();
+      agentSoundSyncGestureListeners();
       logDiagnostic('lifecycle', 'agent-sound-volume-changed', {
         volume: agentSoundVolume,
         source: 'user-input'
