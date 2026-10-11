@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         ChatGPT Conversation Markdown Recorder
 // @namespace    https://chatgpt.com/
-// @version      1.11.4-issue.220.2
+// @version      1.11.4-issue.220.3
 // @description  Exports the current ChatGPT conversation directly from the Conversation API as Markdown or JSONL.
 // @match        https://chatgpt.com/*
 // @match        https://chat.openai.com/*
@@ -10573,6 +10573,7 @@ globalThis.__dcCompressor = {
     }
     const record = {
       timestamp: new Date().toISOString(),
+      capture_order: logCapturePosition(),
       monotonic_ms: Math.round(performance.now() * 1000) / 1000,
       time_origin: performance.timeOrigin,
       session_id: communicationLogSessionId,
@@ -21492,6 +21493,276 @@ Image elapsed: ${formatDuration(imageElapsed)} — Completed: ${imageCompleted}/
     }, 800);
   }
 
+  /** Per-tab document-epoch counter, incremented once per page initialization. */
+  const LOG_CAPTURE_EPOCH_KEY = 'tm-recorder-capture-epoch';
+  /** Document epoch for comparing Gen and Comm events without using clocks. */
+  const logCaptureEpoch = (() => {
+    const prior = Number(sessionStorage.getItem(LOG_CAPTURE_EPOCH_KEY));
+    const next = Number.isSafeInteger(prior) && prior >= 0 ? prior + 1 : 1;
+    sessionStorage.setItem(LOG_CAPTURE_EPOCH_KEY, String(next));
+    return next;
+  })();
+  /** Per-document capture position shared by both event sources. */
+  let logCaptureSequence = 0;
+
+  /**
+   * Assigns a relative capture order without sorting by wall-clock time.
+   *
+   * @returns {Object} Document epoch and per-document insertion sequence.
+   */
+  function logCapturePosition() {
+    return { epoch: logCaptureEpoch, ordinal: ++logCaptureSequence };
+  }
+
+  /**
+   * Validates exact timestamp bounds and one-or-more source selection.
+   *
+   * @param {Object} selection - UI's inclusive timestamp and source selection.
+   * @returns {Object} Numeric boundaries and selected source switches.
+   */
+  function mergedLogValidateSelection(selection) {
+    if (!selection || (!selection.general && !selection.communication)) {
+      throw new Error('Select Gen or Comm before extracting logs.');
+    }
+    const lower = Date.parse(selection.start_timestamp);
+    const upper = Date.parse(selection.end_timestamp);
+    if (!Number.isFinite(lower) || !Number.isFinite(upper) || lower > upper) {
+      throw new Error('Log extraction requires an ordered, valid date/time range.');
+    }
+    return { lower, upper, general: selection.general === true,
+      communication: selection.communication === true };
+  }
+
+  /**
+   * Filters one source by time while retaining original insertion order.
+   *
+   * @param {Object[]} entries - Source events in existing source order.
+   * @param {number} lower - Inclusive start epoch milliseconds.
+   * @param {number} upper - Inclusive end epoch milliseconds.
+   * @returns {Object[]} Filtered events without any reordering.
+   */
+  function mergedLogRangeFilter(entries, lower, upper) {
+    return entries.filter(entry => {
+      const timestamp = entry?.timestamp;
+      const time = typeof timestamp === 'string' ? Date.parse(timestamp) : NaN;
+      return Number.isFinite(time) && time >= lower && time <= upper;
+    });
+  }
+
+  /**
+   * Parses retained communication JSONL in its original file order.
+   *
+   * @param {Uint8Array} bytes - Exact recorded bytes.
+   * @returns {Object[]} Complete JSONL objects without timestamp ordering.
+   */
+  function mergedLogParseJsonl(bytes) {
+    const results = [];
+    for (const line of new TextDecoder().decode(bytes).split('\n')) {
+      if (!line.trim()) continue;
+      let event;
+      try {
+        event = JSON.parse(line);
+      } catch {
+        // A partial/truncated last record is not a committed JSONL event.
+        continue;
+      }
+      if (event && typeof event === 'object') results.push(event);
+    }
+    return results;
+  }
+
+  /**
+   * Freezes and reads existing disk archives without altering their storage.
+   *
+   * @returns {Promise<Object[]>} Captured communication events in file order.
+   */
+  async function mergedLogReadCommunication() {
+    if (!communicationLogReady || !communicationLogSegmentDirectoryHandle) {
+      throw new Error('Communication recording directory is not ready.');
+    }
+    const queued = communicationLogEnqueue('merged-log-extract-snapshot',
+      async () => communicationLogCaptureSnapshotPlan());
+    const plan = await queued.operation;
+    const blocks = [];
+    for (const segment of plan.segments) {
+      const bytes = await communicationLogReadHistoricalSegment(segment);
+      blocks.push(mergedLogParseJsonl(bytes));
+    }
+    const active = await communicationLogSegmentDirectoryHandle.getFileHandle(
+      plan.active_name, { create: false }
+    );
+    const file = await active.getFile();
+    if (file.size < plan.active_eof) {
+      throw new Error('Communication active file changed below frozen EOF.');
+    }
+    const bytes = new Uint8Array(
+      await file.slice(0, plan.active_eof).arrayBuffer()
+    );
+    blocks.push(mergedLogParseJsonl(bytes));
+    // The older segment naming scheme sorts by timestamps, not source order.
+    // New records carry capture_order; sort whole archived blocks by their
+    // capture position when every block has comparable evidence.
+    const positioned = blocks.every(block => !block.length ||
+      mergedLogValidPosition(block[0]?.capture_order));
+    if (positioned) {
+      blocks.sort((left, right) => {
+        if (!left.length || !right.length) return 0;
+        return mergedLogComparePosition(
+          left[0].capture_order, right[0].capture_order
+        );
+      });
+    }
+    return blocks.flat();
+  }
+
+  /**
+   * Checks a source's explicit capture-order evidence.
+   *
+   * @param {Object} value - Candidate order marker.
+   * @returns {boolean} Whether the marker is structurally valid.
+   */
+  function mergedLogValidPosition(value) {
+    return value && Number.isSafeInteger(value.epoch) && value.epoch > 0
+      && Number.isSafeInteger(value.ordinal) && value.ordinal > 0;
+  }
+
+  /**
+   * Compares cross-stream capture markers, never wall-clock timestamps.
+   *
+   * @param {Object} left - First capture position.
+   * @param {Object} right - Second capture position.
+   * @returns {number} Negative when first event was captured earlier.
+   */
+  function mergedLogComparePosition(left, right) {
+    return left.epoch - right.epoch || left.ordinal - right.ordinal;
+  }
+
+  /**
+   * Merges two source streams without changing either stream's event order.
+   *
+   * For legacy entries without shared order markers, sources stay in separate
+   * intact ranges and an explicit uncertainty declaration accompanies export.
+   *
+   * @param {Object[]} general - Filtered Gen events in insertion order.
+   * @param {Object[]} communication - Filtered Comm events in insertion order.
+   * @returns {Object} Combined source-tagged events plus order provenance.
+   */
+  function mergedLogInterleave(general, communication) {
+    const tagged = [];
+    const isPositioned = [...general, ...communication].every(event =>
+      mergedLogValidPosition(event?.capture_order));
+    if (!isPositioned) {
+      for (const event of general) tagged.push({ source: 'gen', record: event });
+      for (const event of communication) {
+        tagged.push({ source: 'comm', record: event });
+      }
+      return { entries: tagged, ordering: 'legacy-source-ranges' };
+    }
+    let g = 0;
+    let c = 0;
+    while (g < general.length || c < communication.length) {
+      const takeGeneral = c >= communication.length || (
+        g < general.length && mergedLogComparePosition(
+          general[g].capture_order, communication[c].capture_order
+        ) <= 0
+      );
+      if (takeGeneral) tagged.push({ source: 'gen', record: general[g++] });
+      else tagged.push({ source: 'comm', record: communication[c++] });
+    }
+    return { entries: tagged, ordering: 'capture-sequence' };
+  }
+
+  /**
+   * Renders a source-marked merged JSONL stream and a provenance header.
+   *
+   * @param {Object} merge - Selected interleaved event stream.
+   * @param {Object} selection - Original export bounds.
+   * @returns {string} Newline-terminated canonical JSONL.
+   */
+  function mergedLogJsonl(merge, selection) {
+    const header = {
+      kind: 'downloadconversation-merged-log',
+      schema: 1,
+      ordering: merge.ordering,
+      start_timestamp: selection.start_timestamp,
+      end_timestamp: selection.end_timestamp,
+      group_uuid: recordingGroupState().uuid
+    };
+    return [JSON.stringify(header), ...merge.entries.map(JSON.stringify)].join('\n')
+      + '\n';
+  }
+
+  /**
+   * Saves a combined Gen/Comm snapshot using the existing archive primitives.
+   *
+   * @param {Object} selection - User-selected inclusive bounds and source flags.
+   * @returns {Promise<string>} Verified archive filename.
+   */
+  async function saveMergedLogs(selection) {
+    const bounds = mergedLogValidateSelection(selection);
+    const general = bounds.general ? mergedLogRangeFilter(
+      diagnosticLog, bounds.lower, bounds.upper
+    ) : [];
+    const communication = bounds.communication ? mergedLogRangeFilter(
+      await mergedLogReadCommunication(), bounds.lower, bounds.upper
+    ) : [];
+    const merge = mergedLogInterleave(general, communication);
+    if (!merge.entries.length) {
+      throw new Error('No recorded events exist within the selected range.');
+    }
+    const text = mergedLogJsonl(merge, selection);
+    const source = new TextEncoder().encode(text);
+    const archive = await createArchive(source);
+    const restored = await extractArchive(archive);
+    if (!diagnosticLogBytesEqual(source, restored)) {
+      throw new Error('Merged-log archive round-trip verification failed.');
+    }
+    const range = {
+      start_timestamp: selection.start_timestamp,
+      end_timestamp: selection.end_timestamp
+    };
+    const prefix = canonicalFilename(
+      conversationProjectName(), conversationTitle(), range
+    );
+    const suffix = '.merged.log' + compressorExtension();
+    const directory = communicationLogReady
+      ? communicationLogDirectoryHandle : null;
+    let name = prefix + suffix;
+    if (directory) {
+      name = await unusedFilename(directory, prefix, suffix);
+      await diagnosticLogWriteArchive(directory, name, archive);
+    } else {
+      downloadBlob(new Blob([archive], { type: compressorMimeType() }), name);
+    }
+    setStatus('Merged logs: ' + merge.entries.length + ' records saved as '
+      + name + ' (' + merge.ordering + ').');
+    return name;
+  }
+
+  /**
+   * Opens one extraction dialog and saves exactly the selected sources/range.
+   *
+   * @param {HTMLButtonElement} button - Disk action origin.
+   * @returns {Promise<void>} Resolves after completion or cancellation.
+   */
+  async function runMergedLogExtraction(button) {
+    const selection = await showLogExtractionDialog(button);
+    if (!selection) return;
+    button.disabled = true;
+    button.setAttribute('aria-busy', 'true');
+    try {
+      await saveMergedLogs(selection);
+    } catch (error) {
+      logDiagnostic('errors', 'merged-log-save-failed', {
+        message: errorMessage(error)
+      });
+      setStatus('Merged log extraction failed: ' + errorMessage(error));
+    } finally {
+      button.disabled = false;
+      button.removeAttribute('aria-busy');
+    }
+  }
+
   /** Session-storage key for the per-tab single recording-group preference. */
   const RECORDING_GROUP_ENABLED_KEY = 'tm-downloadconversation-one-group-enabled';
   /** Session-storage key for the stable per-tab recording-group UUID. */
@@ -21804,6 +22075,7 @@ Image elapsed: ${formatDuration(imageElapsed)} — Completed: ${imageCompleted}/
     const safeData = redactDiagnosticSignedTokens(data);
     const entry = {
       timestamp: new Date().toISOString(),
+      capture_order: logCapturePosition(),
       level,
       message,
       data: safeData
@@ -22554,7 +22826,7 @@ Image elapsed: ${formatDuration(imageElapsed)} — Completed: ${imageCompleted}/
     panel.innerHTML = `
       <button class="tm-close" type="button" aria-label="Close">×</button>
       <div class="tm-title" data-role="title"></div>
-      <div class="tm-log-head"><span class="tm-label" data-role="log-count">Log: 0 items</span><button class="tm-icon-button" data-role="save-log" type="button" aria-label="Save diagnostic log" title="Save log"></button><button class="tm-icon-button" data-role="copy-log" type="button" aria-label="Copy diagnostic log" title="Copy log"></button><button class="tm-icon-button" data-role="toggle-log" type="button" aria-label="Show diagnostic log" aria-expanded="false" title="Show log">+</button></div>
+      <div class="tm-log-head"><span class="tm-label" data-role="log-count">Log: 0 items</span><button class="tm-icon-button" data-role="save-log" type="button" aria-label="Extract merged logs" title="Extract logs"></button><button class="tm-icon-button" data-role="copy-log" type="button" aria-label="Copy diagnostic log" title="Copy log"></button><button class="tm-icon-button" data-role="toggle-log" type="button" aria-label="Show diagnostic log" aria-expanded="false" title="Show log">+</button></div>
       <div class="tm-last-log-problem" data-role="last-log-problem" role="status" hidden></div>
       <div class="tm-log-output" data-role="log-output" hidden></div>
       <div class="tm-status" data-role="status"></div>
@@ -22630,12 +22902,12 @@ Image elapsed: ${formatDuration(imageElapsed)} — Completed: ${imageCompleted}/
     if (saveLogButton) saveLogButton.innerHTML = saveIconMarkup();
     const copyLogButton = panel.querySelector('[data-role="copy-log"]');
     if (copyLogButton) copyLogButton.innerHTML = copyIconMarkup();
-    panel.querySelector('[data-role="save-log"]').addEventListener('click', () => {
-      void saveDiagnosticLog().catch(error => {
-        logDiagnostic('errors', 'diagnostic-log-save-failure', {
+    panel.querySelector('[data-role="save-log"]').addEventListener('click', event => {
+      void runMergedLogExtraction(event.currentTarget).catch(error => {
+        logDiagnostic('errors', 'merged-log-dialog-failure', {
           message: errorMessage(error)
         });
-        setStatus(`Diagnostic log save failed: ${errorMessage(error)}`);
+        setStatus('Log extraction dialog failed: ' + errorMessage(error));
       });
     });
     panel.querySelector('[data-role="toggle-log"]').addEventListener('click', () => {
