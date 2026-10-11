@@ -50,7 +50,8 @@
     const panel = document.getElementById(PANEL_ID);
     const selectedGen = panel?.querySelector('[data-role="record-general"]')?.checked ?? true;
     const selectedComm = panel?.querySelector('[data-role="record-communication"]')?.checked ?? true;
-    const range = await logExtractionAvailableRange(selectedGen, selectedComm);
+    // Availability spans existing stored history, not only active capture toggles.
+    const range = await logExtractionAvailableRange(true, true);
     const minimum = new Date(range.start_timestamp);
     const maximum = new Date(range.end_timestamp);
     minimum.setMilliseconds(0);
