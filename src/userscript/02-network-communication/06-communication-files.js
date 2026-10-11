@@ -260,6 +260,7 @@
     const record = {
       timestamp: new Date().toISOString(),
       capture_order: logCapturePosition(),
+      recording_group_uuid: recordingGroupTrackConversation(),
       monotonic_ms: Math.round(performance.now() * 1000) / 1000,
       time_origin: performance.timeOrigin,
       session_id: communicationLogSessionId,
