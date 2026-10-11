@@ -79,7 +79,8 @@ function lifecycleHarness(capture = commentaryCapture()) {
     sounds: [],
     stopwatch: [],
     favicon: [],
-    diagnostics: []
+    diagnostics: [],
+    streamStatus: { status: 'COMPLETE' }
   };
   vm.runInNewContext(`
     let streamTailCapture = this.capture;
@@ -98,6 +99,9 @@ function lifecycleHarness(capture = commentaryCapture()) {
       agentFaviconHandleTerminal
     ]);
     function streamTailConsumeWebSocketMessage() {}
+    function agentStopwatchFetchStreamStatus() {
+      return Promise.resolve(this.streamStatus);
+    }
     ${terminalSourceBlock()}
     ${productionFunctionSource('agentTerminalObserve')}
     ${optionalProductionFunctionSource(
@@ -224,4 +228,44 @@ test('generation and resume capture paths register shared lifecycle captures bef
 
   assert.match(generation, registerCall);
   assert.match(resume, registerCall);
+});
+
+test('provider COMPLETE status corroborates WebSocket completion when final Assistant evidence is absent', async () => {
+  const capture = commentaryCapture();
+  capture.stream_messages[0].status = 'in_progress';
+  const context = lifecycleHarness(capture);
+  context.receive(providerFrame());
+  await new Promise(resolve => setImmediate(resolve));
+  assert.equal(context.sounds.length, 1);
+  assert.equal(context.stopwatch.length, 1);
+  assert.equal(context.favicon.length, 1);
+  assert.equal(context.stopwatch[0].kind, 'success');
+  assert.equal(capture.agent_terminal_success_observed, true);
+});
+
+test('provider IS_STREAMING does not complete a capture lacking finished Assistant evidence', async () => {
+  const capture = commentaryCapture();
+  capture.stream_messages[0].status = 'in_progress';
+  const context = lifecycleHarness(capture);
+  context.streamStatus = { status: 'IS_STREAMING' };
+  context.receive(providerFrame());
+  await new Promise(resolve => setImmediate(resolve));
+  assert.equal(context.sounds.length, 0);
+  assert.equal(context.stopwatch.length, 0);
+  assert.equal(context.favicon.length, 0);
+  assert.equal(capture.agent_terminal_success_observed, false);
+});
+
+test('ambiguous unresolved captures never initiate a provider completion fallback', async () => {
+  const older = commentaryCapture('exchange-A');
+  const newer = commentaryCapture('exchange-B');
+  older.stream_messages[0].status = 'in_progress';
+  newer.stream_messages[0].status = 'in_progress';
+  const context = lifecycleHarness(older);
+  context.register(newer);
+  context.receive(providerFrame());
+  await new Promise(resolve => setImmediate(resolve));
+  assert.equal(context.sounds.length, 0);
+  assert.equal(context.stopwatch.length, 0);
+  assert.equal(context.favicon.length, 0);
 });
