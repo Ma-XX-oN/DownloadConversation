@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         ChatGPT Conversation Markdown Recorder
 // @namespace    https://chatgpt.com/
-// @version      1.11.4
+// @version      1.11.4-issue.218.2
 // @description  Exports the current ChatGPT conversation directly from the Conversation API as Markdown or JSONL.
 // @match        https://chatgpt.com/*
 // @match        https://chat.openai.com/*
@@ -10566,6 +10566,7 @@ globalThis.__dcCompressor = {
    * @returns {Promise<boolean>} True when the record committed to disk.
    */
   async function communicationLogRecord(type, data = {}) {
+    if (localStorage.getItem('tm-recorder-communication-capture') === 'false') return false;
     if (!communicationLogReady) {
       communicationLogDroppedBeforeReady += 1;
       return false;
@@ -21315,6 +21316,215 @@ Image elapsed: ${formatDuration(imageElapsed)} — Completed: ${imageCompleted}/
     }, 800);
   }
 
+  /** Session-storage key for the per-tab single recording-group preference. */
+  const RECORDING_GROUP_ENABLED_KEY = 'tm-downloadconversation-one-group-enabled';
+  /** Session-storage key for the stable per-tab recording-group UUID. */
+  const RECORDING_GROUP_UUID_KEY = 'tm-downloadconversation-one-group-uuid';
+  /** Origin-scoped cross-document channel for live recording-group ownership. */
+  const RECORDING_GROUP_CHANNEL = 'tm-downloadconversation-recording-group-ownership-v1';
+  /** Startup claim-response window, in milliseconds. */
+  const RECORDING_GROUP_CLAIM_MS = 450;
+  /** Grace period allowing a replaced page document to emit pagehide. */
+  const RECORDING_GROUP_RELEASE_GRACE_MS = 150;
+  /** Wall-clock creation time used to preserve the older live tab on collision. */
+  const recordingGroupDocumentStartedAt = performance.timeOrigin || Date.now();
+  /** Fresh identity for this document only; never persisted with the tab. */
+  const recordingGroupInstanceId = crypto.randomUUID();
+  /** Currently active recording-group UUID, or null when disabled. */
+  let recordingGroupUuid = null;
+  /** Ownership channel, retained only while one-group recording is enabled. */
+  let recordingGroupChannel = null;
+  /** Whether this document has exclusive asserted group ownership. */
+  let recordingGroupReady = false;
+  /** Epoch invalidating pending asynchronous ownership claims. */
+  let recordingGroupClaimEpoch = 0;
+  /** Competing instance identities observed during the current claim. */
+  let recordingGroupPeers = new Map();
+  /** Current claim timer, cleared when a claim is cancelled. */
+  let recordingGroupClaimTimer = null;
+
+  /**
+   * Publishes a bounded ownership message; payloads contain no log data.
+   *
+   * @param {string} kind - Protocol message type.
+   * @param {string|null} group - Recording-group UUID.
+   * @returns {void} Nothing.
+   */
+  function recordingGroupSend(kind, group = recordingGroupUuid) {
+    if (!recordingGroupChannel || !group) return;
+    recordingGroupChannel.postMessage({
+      kind, group, instance: recordingGroupInstanceId,
+      started_at: recordingGroupDocumentStartedAt,
+      ready: recordingGroupReady
+    });
+  }
+
+  /**
+   * Returns the current one-group ownership state without exposing its writer.
+   *
+   * @returns {Object} Enabled state, identifier, and claim readiness.
+   */
+  function recordingGroupState() {
+    return {
+      enabled: sessionStorage.getItem(RECORDING_GROUP_ENABLED_KEY) === 'true',
+      uuid: recordingGroupUuid,
+      ready: recordingGroupReady
+    };
+  }
+
+  /**
+   * Clears one pending ownership claim and invalidates its callback.
+   *
+   * @returns {void} Nothing.
+   */
+  function recordingGroupCancelClaim() {
+    recordingGroupClaimEpoch += 1;
+    if (recordingGroupClaimTimer !== null) clearTimeout(recordingGroupClaimTimer);
+    recordingGroupClaimTimer = null;
+    recordingGroupReady = false;
+    recordingGroupPeers.clear();
+  }
+
+  /**
+   * Commits a newly generated group identity for this tab.
+   *
+   * @returns {string} Fresh group UUID.
+   */
+  function recordingGroupNewUuid() {
+    const next = crypto.randomUUID();
+    sessionStorage.setItem(RECORDING_GROUP_UUID_KEY, next);
+    recordingGroupUuid = next;
+    return next;
+  }
+
+  /**
+   * Resolves another live claim without ever allowing shared group writers.
+   *
+   * Lower lexical instance UUID wins symmetric startup conflicts. A ready
+   * incumbent also wins against a verifying newcomer. A stale document's
+   * pagehide release is honored during the claim grace period.
+   *
+   * @param {MessageEvent} event - Ownership channel message.
+   * @returns {void} Nothing.
+   */
+  function recordingGroupOnMessage(event) {
+    const message = event?.data;
+    if (!message || !['probe', 'owner', 'release'].includes(message.kind)
+      || typeof message.group !== 'string'
+      || typeof message.instance !== 'string'
+      || message.instance === recordingGroupInstanceId
+      || message.group !== recordingGroupUuid) return;
+
+    if (message.kind === 'release') {
+      recordingGroupPeers.delete(message.instance);
+      return;
+    }
+    recordingGroupPeers.set(message.instance, {
+      ready: message.ready === true,
+      started_at: Number.isFinite(message.started_at)
+        ? message.started_at : Number.POSITIVE_INFINITY
+    });
+    if (message.kind === 'probe' && recordingGroupReady) recordingGroupSend('owner');
+    if (recordingGroupReady && message.ready === true) {
+      // Retain the older live document on collision, even when its UUID sorts later.
+      const otherIsOlder = message.started_at < recordingGroupDocumentStartedAt
+        || (message.started_at === recordingGroupDocumentStartedAt
+          && message.instance < recordingGroupInstanceId);
+      if (otherIsOlder) {
+        recordingGroupReady = false;
+        recordingGroupNewUuid();
+        void recordingGroupClaim();
+      }
+    }
+  }
+
+  /**
+   * Verifies live group ownership before allowing any group-specific writer.
+   *
+   * @returns {Promise<boolean>} True only after this instance owns a group.
+   */
+  async function recordingGroupClaim() {
+    recordingGroupCancelClaim();
+    if (sessionStorage.getItem(RECORDING_GROUP_ENABLED_KEY) !== 'true') return false;
+    if (!recordingGroupUuid) recordingGroupNewUuid();
+    if (typeof BroadcastChannel !== 'function') {
+      logConsoleDiagnostic('warnings',
+        '[DownloadConversation] One-group mode unavailable: BroadcastChannel unsupported.');
+      return false;
+    }
+    if (!recordingGroupChannel) {
+      recordingGroupChannel = new BroadcastChannel(RECORDING_GROUP_CHANNEL);
+      recordingGroupChannel.onmessage = recordingGroupOnMessage;
+    }
+    const epoch = recordingGroupClaimEpoch;
+    recordingGroupSend('probe');
+    await new Promise(resolve => {
+      recordingGroupClaimTimer = setTimeout(resolve,
+        RECORDING_GROUP_CLAIM_MS + RECORDING_GROUP_RELEASE_GRACE_MS);
+    });
+    recordingGroupClaimTimer = null;
+    if (epoch !== recordingGroupClaimEpoch) return false;
+    const competitor = [...recordingGroupPeers.entries()].some(([instance, peer]) =>
+      peer.ready && (peer.started_at < recordingGroupDocumentStartedAt
+        || (peer.started_at === recordingGroupDocumentStartedAt
+          && instance < recordingGroupInstanceId))
+    );
+    if (competitor) {
+      recordingGroupNewUuid();
+      return recordingGroupClaim();
+    }
+    recordingGroupReady = true;
+    recordingGroupSend('owner');
+    return true;
+  }
+
+  /**
+   * Starts a new tab-scoped recording group at the user's explicit request.
+   *
+   * @returns {Promise<boolean>} Whether new-group ownership was established.
+   */
+  function recordingGroupEnable() {
+    sessionStorage.setItem(RECORDING_GROUP_ENABLED_KEY, 'true');
+    recordingGroupNewUuid();
+    return recordingGroupClaim();
+  }
+
+  /**
+   * Ends the active one-group mode without deleting any retained log data.
+   *
+   * @returns {void} Nothing.
+   */
+  function recordingGroupDisable() {
+    recordingGroupSend('release');
+    recordingGroupCancelClaim();
+    sessionStorage.removeItem(RECORDING_GROUP_ENABLED_KEY);
+    sessionStorage.removeItem(RECORDING_GROUP_UUID_KEY);
+    recordingGroupUuid = null;
+    if (recordingGroupChannel) recordingGroupChannel.close();
+    recordingGroupChannel = null;
+  }
+
+  /** Release live ownership before this document unloads or is replaced. */
+  window.addEventListener('pagehide', () => {
+    recordingGroupSend('release');
+    recordingGroupCancelClaim();
+    if (recordingGroupChannel) recordingGroupChannel.close();
+    recordingGroupChannel = null;
+  });
+
+  /** Revalidate when Chrome restores this document from the back-forward cache. */
+  window.addEventListener('pageshow', event => {
+    if (event.persisted && sessionStorage.getItem(RECORDING_GROUP_ENABLED_KEY) === 'true') {
+      void recordingGroupClaim();
+    }
+  });
+
+  // A restored tab retains its UUID, but must revalidate live ownership.
+  if (sessionStorage.getItem(RECORDING_GROUP_ENABLED_KEY) === 'true') {
+    recordingGroupUuid = sessionStorage.getItem(RECORDING_GROUP_UUID_KEY);
+    void recordingGroupClaim();
+  }
+
   /**
    * Returns the AgentPanelSpeaker config-reset icon using its exact PNG bytes.
    *
@@ -21339,6 +21549,15 @@ Image elapsed: ${formatDuration(imageElapsed)} — Completed: ${imageCompleted}/
     const output = panel.querySelector('[data-role="log-output"]');
     const toggle = panel.querySelector('[data-role="toggle-log"]');
     if (count) count.textContent = `Log: ${diagnosticLog.length} item${diagnosticLog.length === 1 ? '' : 's'}`;
+    const lastProblem = panel.querySelector('[data-role="last-log-problem"]');
+    if (lastProblem) {
+      const problem = diagnosticLog.findLast(entry =>
+        ['errors', 'warnings'].includes(entry?.level)
+      );
+      lastProblem.textContent = problem
+        ? `${problem.level}: ${problem.message}` : '';
+      lastProblem.hidden = !problem;
+    }
     if (output && diagnosticLogExpanded) {
       output.replaceChildren(...diagnosticLog.map(entry => {
         const row = document.createElement('div');
@@ -21404,6 +21623,7 @@ Image elapsed: ${formatDuration(imageElapsed)} — Completed: ${imageCompleted}/
    */
   function logDiagnostic(level, message, data = null) {
     logConsoleDiagnostic(level, `[ChatGPT Recorder ${level}] ${message}`, data);
+    if (localStorage.getItem('tm-recorder-general-capture') === 'false') return;
     if (!diagnosticEnabled(level)) return;
     const safeData = redactDiagnosticSignedTokens(data);
     const entry = {
@@ -22159,9 +22379,11 @@ Image elapsed: ${formatDuration(imageElapsed)} — Completed: ${imageCompleted}/
       <button class="tm-close" type="button" aria-label="Close">×</button>
       <div class="tm-title" data-role="title"></div>
       <div class="tm-log-head"><span class="tm-label" data-role="log-count">Log: 0 items</span><button class="tm-icon-button" data-role="save-log" type="button" aria-label="Save diagnostic log" title="Save log"></button><button class="tm-icon-button" data-role="copy-log" type="button" aria-label="Copy diagnostic log" title="Copy log"></button><button class="tm-icon-button" data-role="toggle-log" type="button" aria-label="Show diagnostic log" aria-expanded="false" title="Show log">+</button></div>
+      <div class="tm-last-log-problem" data-role="last-log-problem" role="status" hidden></div>
       <div class="tm-log-output" data-role="log-output" hidden></div>
       <div class="tm-status" data-role="status"></div>
-      <div class="tm-row"><span class="tm-label">Diagnostics</span><select data-role="diagnostics"><option value="errors">Errors</option><option value="warnings">Warnings</option><option value="debug">Debug</option><option value="verbose">Verbose</option></select><label><input data-role="console-diagnostics" type="checkbox"> console</label><button data-role="test" type="button">Test</button></div>
+      <div class="tm-row"><span class="tm-label">Diagnostics</span><select data-role="diagnostics"><option value="errors">Errors</option><option value="warnings">Warnings</option><option value="debug">Debug</option><option value="verbose">Verbose</option></select></div>
+      <div class="tm-row tm-recording-modes"><label><input data-role="record-general" type="checkbox" checked> Gen</label><label><input data-role="record-communication" type="checkbox" checked> Comm</label><label><input data-role="console-diagnostics" type="checkbox"> Con</label><label><input data-role="record-one-group" type="checkbox"> 1</label></div>
       <div class="tm-row"><span class="tm-label">Communication log</span></div>
       <div class="tm-row tm-communication-log-row"><div class="tm-log-name-viewport" data-role="communication-log-name-viewport" role="textbox" aria-readonly="true" aria-label="Current communication log filename" title="Current communication log filename"><span class="tm-log-name-text" data-role="communication-log-name"></span></div><button class="tm-icon-button" data-role="rename-communication-log" type="button" aria-label="Rename communication log" title="Rename communication log"></button><button class="tm-icon-button" data-role="duplicate-communication-log" type="button" aria-label="Duplicate communication log" title="Duplicate communication log"></button><button class="tm-icon-button" data-role="reset-communication-log" type="button" aria-label="Reset communication log" title="Reset communication log"></button></div>
       <div class="tm-row"><span class="tm-label">Screen on when extracting</span><button class="tm-switch" data-role="screen-on" type="button" role="switch" aria-checked="false" aria-label="Keep screen on while extracting"><span class="tm-switch-thumb"></span></button></div>
@@ -22189,6 +22411,44 @@ Image elapsed: ${formatDuration(imageElapsed)} — Completed: ${imageCompleted}/
       consoleDiagnostics = consoleOutput.checked;
       localStorage.setItem(CONSOLE_DIAGNOSTICS_STORAGE_KEY, String(consoleDiagnostics));
       logDiagnostic('debug', 'console-diagnostics-changed', { enabled: consoleDiagnostics });
+    });
+    const oneGroup = panel.querySelector('[data-role="record-one-group"]');
+    oneGroup.checked = recordingGroupState().enabled;
+    oneGroup.addEventListener('change', () => {
+      if (!oneGroup.checked) {
+        recordingGroupDisable();
+        setStatus('Single-tab recording group ended.');
+        return;
+      }
+      oneGroup.disabled = true;
+      void recordingGroupEnable().then(ready => {
+        if (!ready) {
+          oneGroup.checked = false;
+          recordingGroupDisable();
+          setStatus('Single-tab recording group could not acquire ownership.');
+        } else {
+          setStatus('Single-tab recording group started.');
+        }
+      }).catch(error => {
+        oneGroup.checked = false;
+        recordingGroupDisable();
+        logDiagnostic('errors', 'recording-group-enable-failed', {
+          message: errorMessage(error)
+        });
+        setStatus('Single-tab recording group could not start.');
+      }).finally(() => {
+        oneGroup.disabled = false;
+      });
+    });
+    const generalCapture = panel.querySelector('[data-role="record-general"]');
+    const communicationCapture = panel.querySelector('[data-role="record-communication"]');
+    generalCapture.checked = localStorage.getItem('tm-recorder-general-capture') !== 'false';
+    communicationCapture.checked = localStorage.getItem('tm-recorder-communication-capture') !== 'false';
+    generalCapture.addEventListener('change', () => {
+      localStorage.setItem('tm-recorder-general-capture', String(generalCapture.checked));
+    });
+    communicationCapture.addEventListener('change', () => {
+      localStorage.setItem('tm-recorder-communication-capture', String(communicationCapture.checked));
     });
     const saveLogButton = panel.querySelector('[data-role="save-log"]');
     if (saveLogButton) saveLogButton.innerHTML = saveIconMarkup();
