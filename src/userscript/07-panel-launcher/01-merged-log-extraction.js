@@ -64,16 +64,27 @@
    */
   function mergedLogParseJsonl(bytes) {
     const results = [];
-    for (const line of new TextDecoder().decode(bytes).split('\n')) {
+    const text = new TextDecoder().decode(bytes);
+    const lines = text.split('\n');
+    for (let index = 0; index < lines.length; index += 1) {
+      const line = lines[index];
       if (!line.trim()) continue;
       let event;
       try {
         event = JSON.parse(line);
       } catch {
-        // A partial/truncated last record is not a committed JSONL event.
-        continue;
+        if (index === lines.length - 1 && !text.endsWith('\n')) {
+          // An incomplete final line is not a committed JSONL record.
+          continue;
+        }
+        throw new Error('Malformed complete communication JSONL record at line '
+          + (index + 1));
       }
-      if (event && typeof event === 'object') results.push(event);
+      if (!event || typeof event !== 'object' || Array.isArray(event)) {
+        throw new Error('Communication JSONL record is not an object at line '
+          + (index + 1));
+      }
+      results.push(event);
     }
     return results;
   }
