@@ -11,7 +11,7 @@
       event.stopPropagation();
       const open = Boolean(soundPopup?.hidden);
       setSoundPopupOpen(open);
-      if (open && agentSoundVolume > 0) void unlockAgentSoundAudio();
+      if (open && agentSoundVolume > 0 && !agentSoundAudioReady()) void unlockAgentSoundAudio();
     });
     soundPopup?.addEventListener('click', event => event.stopPropagation());
     soundVolumeInput?.addEventListener('input', () => {
@@ -24,8 +24,8 @@
         volume: agentSoundVolume,
         source: 'user-input'
       });
-      if (agentSoundVolume > 0) void unlockAgentSoundAudio();
-      else agentSoundClearPendingTerminal();
+      if (agentSoundVolume > 0 && !agentSoundAudioReady()) void unlockAgentSoundAudio();
+      else if (agentSoundVolume <= 0) agentSoundClearPendingTerminal();
     });
     document.addEventListener('click', event => {
       if (!soundPopup || soundPopup.hidden) return;
