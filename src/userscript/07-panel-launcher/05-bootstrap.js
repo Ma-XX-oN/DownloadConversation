@@ -19,6 +19,7 @@
       agentSoundVolume = Number.isFinite(parsed) ? Math.max(0, Math.min(10, parsed)) : 0;
       localStorage.setItem(AGENT_SOUND_VOLUME_STORAGE_KEY, String(agentSoundVolume));
       renderSoundVolume();
+      agentSoundSyncGestureListeners();
       logDiagnostic('lifecycle', 'agent-sound-volume-changed', {
         volume: agentSoundVolume,
         source: 'user-input'
