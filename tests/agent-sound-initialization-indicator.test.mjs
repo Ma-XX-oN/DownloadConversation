@@ -89,7 +89,7 @@ test('locked audio warning is a child of WS and stays immediately to its left', 
   assert.equal(body.children.includes(icon), false);
   assert.equal(icon.style.position, 'absolute');
   assert.equal(icon.style.top, '50%');
-  assert.equal(icon.style.right, 'calc(100% + 8px)');
+  assert.equal(icon.style.right, 'calc(100% + 9px)');
   assert.equal(icon.style.transform, 'translateY(-50%)');
 });
 
