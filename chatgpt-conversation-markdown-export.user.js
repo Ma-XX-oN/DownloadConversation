@@ -11808,7 +11808,7 @@ globalThis.__dcCompressor = {
     return event?.type === 'provider_conversation_turn_complete' &&
       typeof event?.conversation_id === 'string' &&
       event.conversation_id === capture?.conversation_id &&
-      Boolean(agentTerminalHasFinishedAssistant(capture));
+      (Boolean(agentTerminalHasFinishedAssistant(capture)) || event.stream_status === 'COMPLETE');
   }
 
   /**
@@ -11845,9 +11845,46 @@ globalThis.__dcCompressor = {
     const capture = unresolved[0];
     const finishedAssistant = agentTerminalHasFinishedAssistant(capture);
     if (!finishedAssistant) {
-      logDiagnostic('debug', 'agent-terminal-conversation-turn-complete-ignored', {
-        conversation_id: conversationId,
-        reason: 'no-finished-assistant-evidence'
+      // A resumed/recovered turn can complete without its final Assistant record
+      // ever reaching this capture. Require both the exact provider completion
+      // notification and a fresh, authoritative COMPLETE stream status.
+      if (capture.agent_terminal_completion_check_pending === true) return false;
+      capture.agent_terminal_completion_check_pending = true;
+      void agentStopwatchFetchStreamStatus(conversationId).then(streamStatus => {
+        if (streamStatus?.status !== 'COMPLETE' ||
+            capture.agent_terminal_success_observed === true ||
+            capture.agent_terminal_error_observed === true) {
+          logDiagnostic('debug', 'agent-terminal-conversation-turn-complete-ignored', {
+            conversation_id: conversationId,
+            reason: 'no-finished-assistant-evidence',
+            stream_status: streamStatus?.status ?? null
+          });
+          return;
+        }
+        // Do not complete an older turn if another unresolved capture appeared
+        // while the asynchronous provider status check was in flight.
+        const unresolvedNow = agentTerminalLifecycleCaptures.filter(candidate =>
+          candidate?.conversation_id === conversationId &&
+          candidate?.agent_terminal_success_observed !== true &&
+          candidate?.agent_terminal_error_observed !== true
+        );
+        if (unresolvedNow.length !== 1 || unresolvedNow[0] !== capture) return;
+        logDiagnostic('debug', 'agent-terminal-conversation-turn-complete-verified', {
+          conversation_id: conversationId,
+          evidence: 'provider-websocket-and-stream-status'
+        });
+        agentTerminalObserve(capture, {
+          type: 'provider_conversation_turn_complete',
+          conversation_id: conversationId,
+          stream_status: 'COMPLETE'
+        });
+      }).catch(error => {
+        logDiagnostic('warnings', 'agent-terminal-completion-status-check-failed', {
+          conversation_id: conversationId,
+          message: boundedDiagnosticText(errorMessage(error), 1000)
+        });
+      }).finally(() => {
+        capture.agent_terminal_completion_check_pending = false;
       });
       return false;
     }
