@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         ChatGPT Conversation Markdown Recorder
 // @namespace    https://chatgpt.com/
-// @version      1.11.3-issue.151.5
+// @version      1.11.3-issue.151.6
 // @description  Exports the current ChatGPT conversation directly from the Conversation API as Markdown or JSONL.
 // @match        https://chatgpt.com/*
 // @match        https://chat.openai.com/*
@@ -11509,7 +11509,7 @@ globalThis.__dcCompressor = {
   }
 
 
-  /** DOM id of the stopwatch-owned sound-readiness indicator. */
+  /** DOM id of the WorkStack-owned sound-readiness indicator. */
   const AGENT_SOUND_INITIALIZATION_INDICATOR_ID = 'tm-agent-sound-uninitialized';
   /** Horizontal gap between the sound-readiness indicator and its adjacent control. */
   const AGENT_SOUND_INITIALIZATION_GAP_PX = 8;
@@ -11524,34 +11524,31 @@ globalThis.__dcCompressor = {
   }
 
   /**
-   * Positions the readiness indicator immediately left of the WorkStack control.
-   * Before that control exists, preserves a fixed upper-right fallback.
+   * Places the warning immediately left of the WorkStack control.
+   * WorkStack owns its position, so scrolling and resizing preserve alignment.
    *
-   * @param {HTMLElement|null} indicator - Existing readiness indicator, when already resolved.
+   * @param {HTMLElement|null} indicator - Existing warning, if any.
    * @returns {void} No value is returned.
    */
   function agentSoundPositionInitializationIndicator(
     indicator = document.getElementById(AGENT_SOUND_INITIALIZATION_INDICATOR_ID)
   ) {
-    if (agentSoundAudioReady()) {
+    if (agentSoundAudioReady() || agentSoundVolume <= 0) {
+      indicator?.remove();
+      return;
+    }
+    const workStack = document.getElementById(WORKSTACK_CONTROL_ID);
+    if (!workStack) {
       indicator?.remove();
       return;
     }
     const visibleIndicator = indicator || ensureAgentSoundInitializationIndicator();
     if (!visibleIndicator) return;
-    const parent = document.body || document.documentElement;
-    if (visibleIndicator.parentNode !== parent) parent.append(visibleIndicator);
-    const workStack = document.getElementById(WORKSTACK_CONTROL_ID);
-    const rect = workStack?.style.display !== 'none'
-      ? workStack?.getBoundingClientRect?.()
-      : null;
-    visibleIndicator.style.position = 'fixed';
-    visibleIndicator.style.top = rect && rect.width > 0 && rect.height > 0
-      ? `${Math.round(rect.top + (rect.height - 24) / 2)}px`
-      : '56px';
-    visibleIndicator.style.right = rect && rect.width > 0 && rect.height > 0
-      ? `${Math.round(window.innerWidth - rect.left + AGENT_SOUND_INITIALIZATION_GAP_PX)}px`
-      : '16px';
+    if (visibleIndicator.parentNode !== workStack) workStack.append(visibleIndicator);
+    visibleIndicator.style.position = 'absolute';
+    visibleIndicator.style.top = '50%';
+    visibleIndicator.style.right = `calc(100% + ${AGENT_SOUND_INITIALIZATION_GAP_PX}px)`;
+    visibleIndicator.style.transform = 'translateY(-50%)';
   }
 
   /**
@@ -11560,7 +11557,7 @@ globalThis.__dcCompressor = {
    * @returns {HTMLElement|null} Existing/new indicator, or null before the document root exists.
    */
   function ensureAgentSoundInitializationIndicator() {
-    const parent = document.body || document.documentElement;
+    const parent = document.getElementById(WORKSTACK_CONTROL_ID);
     if (!parent) return null;
     let indicator = document.getElementById(AGENT_SOUND_INITIALIZATION_INDICATOR_ID);
     if (!indicator) {
@@ -11592,7 +11589,7 @@ globalThis.__dcCompressor = {
    * @returns {boolean} True when audio is ready and the uninitialized status is absent.
    */
   function agentSoundSyncInitializationIndicator() {
-    const ready = agentSoundAudioReady();
+    const ready = agentSoundAudioReady() || agentSoundVolume <= 0;
     const indicator = document.getElementById(AGENT_SOUND_INITIALIZATION_INDICATOR_ID);
     if (ready) {
       indicator?.remove();
@@ -11603,7 +11600,7 @@ globalThis.__dcCompressor = {
     return false;
   }
 
-  agentSoundSyncInitializationIndicator();
+  // Avoid accessing WORKSTACK_CONTROL_ID before its later declaration executes.
   document.addEventListener('DOMContentLoaded', agentSoundSyncInitializationIndicator, { once: true });
 
   /**
