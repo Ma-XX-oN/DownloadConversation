@@ -1,166 +1,181 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import vm from 'node:vm';
-import { productionFunctionSource } from './helpers/userscript-source.mjs';
+import { productionFunctionSource, userscript } from './helpers/userscript-source.mjs';
 
 const INDICATOR_ID = 'tm-agent-sound-uninitialized';
-const STOPWATCH_ID = 'tm-agent-turn-stopwatch';
+const WORKSTACK_ID = 'tm-workstack-continuation';
 
-function audioReady(state) {
-  const context = {
-    agentSoundAudioContext: state === null ? null : { state }
-  };
-  vm.runInNewContext(`
-    ${productionFunctionSource('agentSoundAudioReady')}
-    this.result = agentSoundAudioReady();
-  `, context);
-  return context.result;
-}
-
-function indicatorHarness({ audioState = null, withStopwatch = false } = {}) {
+function harness({ audioState = null, volume = 10, withWorkStack = false } = {}) {
   const elements = new Map();
-  const makeContainer = (id = '') => ({
+  const createElement = (id = '') => ({
     id,
     style: {},
     children: [],
     parentNode: null,
-    append(element) {
-      if (element.parentNode?.children) {
-        element.parentNode.children = element.parentNode.children.filter(child => child !== element);
+    attributes: new Map(),
+    setAttribute(name, value) { this.attributes.set(name, value); },
+    append(child) {
+      if (child.parentNode) {
+        child.parentNode.children = child.parentNode.children.filter(item => item !== child);
       }
-      element.parentNode = this;
-      this.children.push(element);
-      if (element.id) elements.set(element.id, element);
+      child.parentNode = this;
+      this.children.push(child);
+      if (child.id) elements.set(child.id, child);
+    },
+    remove() {
+      if (this.parentNode) {
+        this.parentNode.children = this.parentNode.children.filter(item => item !== this);
+      }
+      elements.delete(this.id);
+      this.parentNode = null;
     }
   });
-  const body = makeContainer();
+  const body = createElement();
   const document = {
     body,
     documentElement: body,
-    addEventListener() {},
-    getElementById(id) {
-      return elements.get(id) ?? null;
-    },
-    createElement(tagName) {
-      const element = makeContainer();
-      element.tagName = tagName;
-      element.attributes = new Map();
-      element.setAttribute = function setAttribute(name, value) {
-        this.attributes.set(name, value);
-      };
-      element.remove = function remove() {
-        if (this.parentNode?.children) {
-          this.parentNode.children = this.parentNode.children.filter(child => child !== this);
-        }
-        if (elements.get(this.id) === this) elements.delete(this.id);
-        this.parentNode = null;
-      };
-      return element;
-    }
+    getElementById(id) { return elements.get(id) ?? null; },
+    createElement() { return createElement(); },
+    addEventListener() {}
   };
-
-  let stopwatch = null;
-  if (withStopwatch) {
-    stopwatch = makeContainer(STOPWATCH_ID);
-    stopwatch.style.position = 'fixed';
-    elements.set(STOPWATCH_ID, stopwatch);
-    body.append(stopwatch);
+  let workStack = null;
+  if (withWorkStack) {
+    workStack = createElement(WORKSTACK_ID);
+    body.append(workStack);
   }
-
+  class MockAudioContext {
+    constructor() { this.state = 'running'; }
+    addEventListener() {}
+  }
   const context = {
     document,
+    window: { AudioContext: MockAudioContext },
+    logDiagnostic() {},
+    agentSoundClearPendingTerminal() {},
+    agentSoundRetryPendingTerminal() {},
+    errorMessage(error) { return String(error); },
+    agentSoundVolume: volume,
     agentSoundAudioContext: audioState === null ? null : { state: audioState },
     AGENT_SOUND_INITIALIZATION_INDICATOR_ID: INDICATOR_ID,
     AGENT_SOUND_INITIALIZATION_GAP_PX: 8,
-    AGENT_STOPWATCH_ID: STOPWATCH_ID
+    WORKSTACK_CONTROL_ID: WORKSTACK_ID
   };
   vm.runInNewContext(`
     ${productionFunctionSource('agentSoundAudioReady')}
     ${productionFunctionSource('agentSoundPositionInitializationIndicator')}
     ${productionFunctionSource('ensureAgentSoundInitializationIndicator')}
     ${productionFunctionSource('agentSoundSyncInitializationIndicator')}
+    ${productionFunctionSource('unlockAgentSoundAudio')}
+    ${productionFunctionSource('agentSoundHandleUserGesture')}
     this.syncIndicator = agentSoundSyncInitializationIndicator;
+    this.handleGesture = agentSoundHandleUserGesture;
   `, context);
-  return { context, elements, body, stopwatch };
+  return { context, document, body, workStack, elements };
 }
 
-test('sound readiness is exactly the running AudioContext state', () => {
-  assert.equal(audioReady(null), false);
-  assert.equal(audioReady('suspended'), false);
-  assert.equal(audioReady('running'), true);
+test('locked audio without WS creates no misplaced page-level icon', () => {
+  const { context, elements } = harness();
+  assert.equal(context.syncIndicator(), false);
+  assert.equal(elements.has(INDICATOR_ID), false);
 });
 
-test('uninitialized indicator is deployed only with the stopwatch', () => {
-  const withoutStopwatch = indicatorHarness();
-  assert.equal(withoutStopwatch.context.syncIndicator(), false);
-  assert.equal(withoutStopwatch.elements.has(INDICATOR_ID), false,
-    'the readiness icon must not be deployed as an independent page-level control');
-
-  const withStopwatch = indicatorHarness({ withStopwatch: true });
-  assert.equal(withStopwatch.context.syncIndicator(), false);
-  const indicator = withStopwatch.elements.get(INDICATOR_ID);
-  assert.ok(indicator, 'uninitialized audio must deploy the readiness icon with the stopwatch');
-  assert.equal(indicator.parentNode, withStopwatch.stopwatch);
-  assert.equal(indicator.style.position, 'absolute');
-  assert.equal(indicator.style.top, '5px');
-  assert.equal(indicator.style.right, 'calc(100% + 8px)');
-  assert.equal(withStopwatch.body.children.includes(indicator), false,
-    'the readiness icon must not be a body-level sibling of the stopwatch');
+test('locked audio warning is a child of WS and stays immediately to its left', () => {
+  const { context, body, workStack, elements } = harness({ withWorkStack: true });
+  assert.equal(context.syncIndicator(), false);
+  const icon = elements.get(INDICATOR_ID);
+  assert.ok(icon);
+  assert.equal(icon.parentNode, workStack);
+  assert.equal(body.children.includes(icon), false);
+  assert.equal(icon.style.position, 'absolute');
+  assert.equal(icon.style.top, '50%');
+  assert.equal(icon.style.right, 'calc(100% + 8px)');
+  assert.equal(icon.style.transform, 'translateY(-50%)');
 });
 
-test('disabled-speaker artwork uses a red prohibition circle and slash over a white speaker', () => {
-  const { context, elements } = indicatorHarness({ withStopwatch: true });
+test('repeated placement does not duplicate the warning', () => {
+  const { context, workStack, elements } = harness({ withWorkStack: true });
   context.syncIndicator();
-  const indicator = elements.get(INDICATOR_ID);
-  assert.ok(indicator);
-  assert.equal(indicator.style.border, 'none',
-    'the circle must come from the SVG so its stroke and slash endpoints share one coordinate system');
-  assert.match(indicator.style.backgroundImage,
-    /%3Ccircle cx='12' cy='12' r='10\.5' fill='none' stroke='%23d93025' stroke-width='2\.1'\/%3E/,
-    'the prohibition circle must be red');
-  assert.match(indicator.style.backgroundImage,
-    /%3Cpath fill='%23f5f5f5' d='M4 9h4l5-4v14l-5-4H4z'\/%3E/,
-    'the speaker must remain white');
-  assert.match(indicator.style.backgroundImage,
-    /%3Cpath d='M4\.6 19\.4L19\.4 4\.6' stroke='%23d93025' stroke-width='2\.1' stroke-linecap='round'\/%3E/,
-    'the slash must be red, run bottom-left to top-right, and terminate at the circle');
-  assert.equal(indicator.style.backgroundSize, '24px 24px');
+  const icon = elements.get(INDICATOR_ID);
+  context.syncIndicator();
+  assert.equal(elements.get(INDICATOR_ID), icon);
+  assert.equal(workStack.children.filter(child => child.id === INDICATOR_ID).length, 1);
 });
 
-test('repeated readiness projection keeps one stopwatch-owned indicator', () => {
-  const { context, elements, stopwatch } = indicatorHarness({ withStopwatch: true });
-
+test('WS is mounted after startup and warning is then created', () => {
+  const { context, body, document, elements } = harness();
   context.syncIndicator();
-  const first = elements.get(INDICATOR_ID);
+  const workStack = document.createElement('div');
+  workStack.id = WORKSTACK_ID;
+  body.append(workStack);
   context.syncIndicator();
-  assert.equal(elements.get(INDICATOR_ID), first);
-  assert.equal(stopwatch.children.filter(child => child.id === INDICATOR_ID).length, 1);
+  assert.equal(elements.get(INDICATOR_ID)?.parentNode, workStack);
 });
 
-test('running audio removes the stopwatch-owned uninitialized indicator immediately', () => {
-  const { context, elements } = indicatorHarness({ withStopwatch: true });
+test('warning follows WS reparenting and is removed if WS disappears', () => {
+  const { context, document, body, workStack, elements } = harness({ withWorkStack: true });
+  context.syncIndicator();
+  const icon = elements.get(INDICATOR_ID);
+  const replacement = document.createElement('div');
+  replacement.id = WORKSTACK_ID;
+  workStack.remove();
+  body.append(replacement);
+  context.syncIndicator();
+  assert.equal(elements.get(INDICATOR_ID), icon);
+  assert.equal(icon.parentNode, replacement);
+  replacement.remove();
+  context.syncIndicator();
+  assert.equal(elements.has(INDICATOR_ID), false);
+});
 
+test('successful user-gesture unlock removes warning; suspension restores it', () => {
+  const { context, elements } = harness({ withWorkStack: true });
   context.syncIndicator();
   assert.ok(elements.has(INDICATOR_ID));
   context.agentSoundAudioContext = { state: 'running' };
   assert.equal(context.syncIndicator(), true);
   assert.equal(elements.has(INDICATOR_ID), false);
+  context.agentSoundAudioContext.state = 'suspended';
+  assert.equal(context.syncIndicator(), false);
+  assert.ok(elements.has(INDICATOR_ID));
 });
 
-test('stopwatch rendering redeploys its indicator after text rendering and readiness adds no polling', () => {
-  const render = productionFunctionSource('agentStopwatchRender');
-  const position = productionFunctionSource('agentSoundPositionInitializationIndicator');
-  const sync = productionFunctionSource('agentSoundSyncInitializationIndicator');
-  const unlock = productionFunctionSource('unlockAgentSoundAudio');
+test('a user gesture creates a running AudioContext and removes the warning', () => {
+  const { context, elements } = harness({ withWorkStack: true });
+  context.syncIndicator();
+  assert.ok(elements.has(INDICATOR_ID));
+  context.handleGesture();
+  assert.equal(context.agentSoundAudioContext.state, 'running');
+  assert.equal(elements.has(INDICATOR_ID), false);
+});
 
-  assert.match(render, /agentSoundPositionInitializationIndicator\(\)/,
-    'stopwatch rendering must redeploy/align the indicator after replacing stopwatch text');
-  assert.match(position, /ensureAgentSoundInitializationIndicator\(\)/,
-    'stopwatch-owned positioning must recreate the indicator when text rendering removed it');
-  assert.match(unlock, /agentSoundSyncInitializationIndicator\(\)/,
-    'audio unlock must immediately refresh the readiness projection');
-  assert.match(unlock, /addEventListener\(['"]statechange['"]\s*,\s*agentSoundSyncInitializationIndicator/,
-    'later AudioContext readiness changes must use the same state projection');
-  assert.doesNotMatch(sync, /setInterval|setTimeout|MutationObserver/,
-    'indicator must not add polling or an alternate readiness detector');
+test('explicitly disabled audio shows no misleading interaction warning', () => {
+  const { context, elements } = harness({ volume: 0, withWorkStack: true });
+  assert.equal(context.syncIndicator(), true);
+  assert.equal(elements.has(INDICATOR_ID), false);
+});
+
+test('the warning artwork remains the red crossed-out speaker', () => {
+  const { context, elements } = harness({ withWorkStack: true });
+  context.syncIndicator();
+  const icon = elements.get(INDICATOR_ID);
+  assert.match(icon.style.backgroundImage, /%3Ccircle/);
+  assert.match(icon.style.backgroundImage, /stroke='%23d93025'/);
+  assert.match(icon.style.backgroundImage, /fill='%23f5f5f5'/);
+});
+
+test('initialization is driven by WS lifecycle after declarations', () => {
+  const indicatorSource = productionFunctionSource('agentSoundSyncInitializationIndicator');
+  const workStackSource = productionFunctionSource('workStackPositionControl');
+  const unlockSource = productionFunctionSource('unlockAgentSoundAudio');
+  assert.doesNotMatch(indicatorSource, /setInterval|setTimeout|MutationObserver/);
+  assert.doesNotMatch(userscript, /^  agentSoundSyncInitializationIndicator\(\);$/m,
+    'eager readiness call before WorkStack declaration aborts startup');
+  assert.doesNotMatch(userscript, /document.addEventListener\('DOMContentLoaded', agentSoundSyncInitializationIndicator/,
+    'readiness must be initialised by WS mounting, not document timing');
+  assert.match(userscript,
+    /document.addEventListener\('pointerdown', agentSoundHandleUserGesture, true\)/);
+  assert.match(workStackSource, /agentSoundPositionInitializationIndicator\(\)/);
+  assert.match(unlockSource, /agentSoundSyncInitializationIndicator\(\)/);
+  assert.match(unlockSource, /addEventListener\(['"]statechange['"], agentSoundSyncInitializationIndicator/);
 });
