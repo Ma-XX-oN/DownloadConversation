@@ -5,6 +5,7 @@ import { productionFunctionSource } from './helpers/userscript-source.mjs';
 
 const INDICATOR_ID = 'tm-agent-sound-uninitialized';
 const STOPWATCH_ID = 'tm-agent-turn-stopwatch';
+const WORKSTACK_ID = 'tm-workstack-continuation';
 
 function audioReady(state) {
   const context = {
@@ -17,12 +18,13 @@ function audioReady(state) {
   return context.result;
 }
 
-function indicatorHarness({ audioState = null, withStopwatch = false } = {}) {
+function indicatorHarness({ audioState = null, withStopwatch = false, withWorkStack = false } = {}) {
   const elements = new Map();
   const makeContainer = (id = '') => ({
     id,
     style: {},
     children: [],
+    getBoundingClientRect() { return { top: 130, left: 120, width: 175, height: 45 }; },
     parentNode: null,
     append(element) {
       if (element.parentNode?.children) {
@@ -67,8 +69,11 @@ function indicatorHarness({ audioState = null, withStopwatch = false } = {}) {
     body.append(stopwatch);
   }
 
+  if (withWorkStack) body.append(makeContainer(WORKSTACK_ID));
   const context = {
+    window: { innerWidth: 312 },
     document,
+    WORKSTACK_CONTROL_ID: WORKSTACK_ID,
     agentSoundAudioContext: audioState === null ? null : { state: audioState },
     AGENT_SOUND_INITIALIZATION_INDICATOR_ID: INDICATOR_ID,
     AGENT_SOUND_INITIALIZATION_GAP_PX: 8,
@@ -103,7 +108,7 @@ test('uninitialized indicator appears before a stopwatch exists', () => {
   assert.equal(withoutStopwatch.body.children.filter(child => child.id === INDICATOR_ID).length, 1);
 });
 
-test('uninitialized indicator moves beside the stopwatch when one appears', () => {
+test('uninitialized indicator stays body-fixed when a stopwatch appears without WS', () => {
   const withoutStopwatch = indicatorHarness();
   withoutStopwatch.context.syncIndicator();
   const indicator = withoutStopwatch.elements.get(INDICATOR_ID);
@@ -112,24 +117,41 @@ test('uninitialized indicator moves beside the stopwatch when one appears', () =
   withoutStopwatch.body.append(stopwatch);
   withoutStopwatch.context.syncIndicator();
   assert.equal(withoutStopwatch.elements.get(INDICATOR_ID), indicator);
-  assert.equal(indicator.parentNode, stopwatch);
-  assert.equal(indicator.style.position, 'absolute');
-  assert.equal(indicator.style.top, '5px');
-  assert.equal(indicator.style.right, 'calc(100% + 8px)');
-  assert.equal(withoutStopwatch.body.children.includes(indicator), false);
+  assert.equal(indicator.parentNode, withoutStopwatch.body);
+  assert.equal(indicator.style.position, 'fixed');
+  assert.equal(indicator.style.top, '56px');
+  assert.equal(indicator.style.right, '16px');
 });
 
-test('uninitialized indicator is positioned beside an existing stopwatch', () => {
+test('uninitialized indicator does not attach to an existing stopwatch', () => {
   const withStopwatch = indicatorHarness({ withStopwatch: true });
   assert.equal(withStopwatch.context.syncIndicator(), false);
   const indicator = withStopwatch.elements.get(INDICATOR_ID);
   assert.ok(indicator, 'uninitialized audio must deploy the readiness icon with the stopwatch');
-  assert.equal(indicator.parentNode, withStopwatch.stopwatch);
-  assert.equal(indicator.style.position, 'absolute');
-  assert.equal(indicator.style.top, '5px');
-  assert.equal(indicator.style.right, 'calc(100% + 8px)');
-  assert.equal(withStopwatch.body.children.includes(indicator), false,
-    'the readiness icon must not be a body-level sibling of the stopwatch');
+  assert.equal(indicator.parentNode, withStopwatch.body);
+  assert.equal(indicator.style.position, 'fixed');
+  assert.equal(indicator.style.top, '56px');
+  assert.equal(indicator.style.right, '16px');
+});
+
+test('warning aligns with visible WS control independently of stopwatch', () => {
+  const { context, elements, body } = indicatorHarness({ withWorkStack: true });
+  assert.equal(context.syncIndicator(), false);
+  const indicator = elements.get(INDICATOR_ID);
+  assert.ok(indicator);
+  assert.equal(indicator.parentNode, body);
+  assert.equal(indicator.style.position, 'fixed');
+  assert.equal(indicator.style.top, '141px');
+  assert.equal(indicator.style.right, '200px');
+  const workStack = elements.get(WORKSTACK_ID);
+  workStack.getBoundingClientRect = () => ({ top: 200, left: 80, width: 150, height: 30 });
+  context.syncIndicator();
+  assert.equal(indicator.style.top, '203px');
+  assert.equal(indicator.style.right, '240px');
+  workStack.style.display = 'none';
+  context.syncIndicator();
+  assert.equal(indicator.style.top, '56px');
+  assert.equal(indicator.style.right, '16px');
 });
 
 test('disabled-speaker artwork uses a red prohibition circle and slash over a white speaker', () => {
@@ -151,14 +173,15 @@ test('disabled-speaker artwork uses a red prohibition circle and slash over a wh
   assert.equal(indicator.style.backgroundSize, '24px 24px');
 });
 
-test('repeated readiness projection keeps one stopwatch-owned indicator', () => {
-  const { context, elements, stopwatch } = indicatorHarness({ withStopwatch: true });
+test('repeated readiness projection keeps one body-owned indicator', () => {
+  const { context, elements, stopwatch, body } = indicatorHarness({ withStopwatch: true });
 
   context.syncIndicator();
   const first = elements.get(INDICATOR_ID);
   context.syncIndicator();
   assert.equal(elements.get(INDICATOR_ID), first);
-  assert.equal(stopwatch.children.filter(child => child.id === INDICATOR_ID).length, 1);
+  assert.equal(body.children.filter(child => child.id === INDICATOR_ID).length, 1);
+  assert.equal(stopwatch.children.filter(child => child.id === INDICATOR_ID).length, 0);
 });
 
 test('running audio removes the uninitialized indicator even without a stopwatch', () => {
@@ -192,8 +215,8 @@ test('running audio removes the stopwatch-owned uninitialized indicator immediat
   assert.equal(elements.has(INDICATOR_ID), false);
 });
 
-test('stopwatch rendering redeploys its indicator after text rendering and readiness adds no polling', () => {
-  const render = productionFunctionSource('agentStopwatchRender');
+test('WS positioning updates the indicator and audio readiness adds no polling', () => {
+  const render = productionFunctionSource('workStackPositionControl');
   const position = productionFunctionSource('agentSoundPositionInitializationIndicator');
   const sync = productionFunctionSource('agentSoundSyncInitializationIndicator');
   const unlock = productionFunctionSource('unlockAgentSoundAudio');
@@ -201,7 +224,7 @@ test('stopwatch rendering redeploys its indicator after text rendering and readi
   assert.match(render, /agentSoundPositionInitializationIndicator\(\)/,
     'stopwatch rendering must redeploy/align the indicator after replacing stopwatch text');
   assert.match(position, /ensureAgentSoundInitializationIndicator\(\)/,
-    'stopwatch-owned positioning must recreate the indicator when text rendering removed it');
+    'positioning must recreate the indicator if removed');
   assert.match(unlock, /agentSoundSyncInitializationIndicator\(\)/,
     'audio unlock must immediately refresh the readiness projection');
   assert.match(unlock, /addEventListener\(['"]statechange['"]\s*,\s*agentSoundSyncInitializationIndicator/,
