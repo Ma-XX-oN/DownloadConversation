@@ -162,23 +162,22 @@ test('DC production bridge delegates agent orchestration to AICC with no direct 
   assert.match(readinessSource, /return runTestsWithCanonicalAgent\(\)/);
 });
 
-test('cache miss opens the GitHub broker before its first asynchronous wait and failures are visible', () => {
+test('cache miss uses direct GitHub raw retrieval and failures remain visible', () => {
   const loadStart = bridgeSource.indexOf('  async function loadAgentPlugin(descriptor) {');
   const loadEnd = bridgeSource.indexOf('\n  /**\n   * Imports one AICC-selected ESM artifact', loadStart);
   assert.ok(loadStart >= 0 && loadEnd > loadStart,
     'Could not isolate the production plugin loading function.');
   const loadSource = bridgeSource.slice(loadStart, loadEnd);
   const cacheReadAt = loadSource.indexOf('const cachedSource = cachedAgentPluginSource(descriptor);');
-  const brokerRequestAt = loadSource.indexOf(
-    'const brokerSourcePromise = requestAgentPluginFromGitHub(descriptor);'
-  );
-  const cacheMissAwaitAt = loadSource.indexOf('await ', brokerRequestAt);
-  assert.ok(cacheReadAt >= 0 && brokerRequestAt > cacheReadAt,
-    'Production loader must synchronously inspect the cache before requesting GitHub.');
-  assert.ok(cacheMissAwaitAt > brokerRequestAt,
-    'A cache miss must request/open the GitHub broker before that path first waits asynchronously.');
-  assert.doesNotMatch(loadSource, /await cachedAgentPluginSource/,
-    'Cache lookup must remain synchronous on the first-use broker path.');
+  assert.ok(cacheReadAt >= 0, 'Production loader must read the cache first.');
+  assert.match(loadSource, /await requestAgentPluginFromGitHub\\(descriptor\\)/);
+  assert.doesNotMatch(loadSource, /window\\.open|brokerSourcePromise/,
+    'A cache miss must not open GitHub.');
+  assert.match(bridgeSource, /GM_xmlhttpRequest\\(\\{/);
+  assert.match(bridgeSource, /\\/raw\\//,
+    'The authenticated GitHub-origin raw endpoint must be used.');
+  assert.match(bridgeSource, /verifyAgentPluginSource\\(descriptor, source\\)/,
+    'Downloaded source must be verified before being cached.');
 
   assert.match(bridgeSource, /chatGPTPluginModulePromise = null;\n      throw error;/,
     'A failed first load must be retryable without reloading the ChatGPT page.');
