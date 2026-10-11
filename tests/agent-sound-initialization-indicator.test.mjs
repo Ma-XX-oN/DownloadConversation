@@ -101,10 +101,10 @@ test('WS is mounted after startup and warning is then created', () => {
 });
 
 test('warning follows WS reparenting and is removed if WS disappears', () => {
-  const { context, body, workStack, elements } = harness({ withWorkStack: true });
+  const { context, document, body, workStack, elements } = harness({ withWorkStack: true });
   context.syncIndicator();
   const icon = elements.get(INDICATOR_ID);
-  const replacement = documentElementFor(body);
+  const replacement = document.createElement('div');
   replacement.id = WORKSTACK_ID;
   workStack.remove();
   body.append(replacement);
@@ -115,28 +115,6 @@ test('warning follows WS reparenting and is removed if WS disappears', () => {
   context.syncIndicator();
   assert.equal(elements.has(INDICATOR_ID), false);
 });
-
-function documentElementFor(body) {
-  return {
-    id: '',
-    style: {},
-    children: [],
-    parentNode: null,
-    append(child) {
-      if (child.parentNode) {
-        child.parentNode.children = child.parentNode.children.filter(item => item !== child);
-      }
-      child.parentNode = this;
-      this.children.push(child);
-    },
-    remove() {
-      if (this.parentNode) {
-        this.parentNode.children = this.parentNode.children.filter(item => item !== this);
-      }
-      this.parentNode = null;
-    }
-  };
-}
 
 test('successful user-gesture unlock removes warning; suspension restores it', () => {
   const { context, elements } = harness({ withWorkStack: true });
