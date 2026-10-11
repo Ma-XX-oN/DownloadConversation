@@ -159,6 +159,28 @@
     return indicator;
   }
 
+  /** True while gesture listeners are registered to unlock the sound context. */
+  let agentSoundGestureListenersAttached = false;
+
+  /**
+   * Attaches gesture listeners only when audio is enabled but not running.
+   * Removes them after unlock or when sound is muted.
+   *
+   * @returns {void} No value is returned.
+   */
+  function agentSoundSyncGestureListeners() {
+    const needed = agentSoundVolume > 0 && !agentSoundAudioReady();
+    if (needed === agentSoundGestureListenersAttached) return;
+    agentSoundGestureListenersAttached = needed;
+    if (needed) {
+      document.addEventListener('pointerdown', agentSoundHandleUserGesture, true);
+      document.addEventListener('keydown', agentSoundHandleUserGesture, true);
+    } else {
+      document.removeEventListener('pointerdown', agentSoundHandleUserGesture, true);
+      document.removeEventListener('keydown', agentSoundHandleUserGesture, true);
+    }
+  }
+
   /**
    * Projects authoritative AudioContext readiness onto the stopwatch-owned status icon.
    *
@@ -166,6 +188,7 @@
    */
   function agentSoundSyncInitializationIndicator() {
     const ready = agentSoundAudioReady();
+    agentSoundSyncGestureListeners();
     const indicator = document.getElementById(AGENT_SOUND_INITIALIZATION_INDICATOR_ID);
     if (ready) {
       indicator?.remove();
@@ -254,7 +277,7 @@
    * @returns {void} No value is returned.
    */
   function agentSoundHandleUserGesture() {
-    if (agentSoundVolume > 0) void unlockAgentSoundAudio();
+    if (agentSoundVolume > 0 && !agentSoundAudioReady()) void unlockAgentSoundAudio();
   }
 
   /**
