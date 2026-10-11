@@ -55,6 +55,52 @@
     };
   }
 
+  /** Metadata-only list of conversations recorded under a group. */
+  const RECORDING_GROUP_CHATS_PREFIX = 'tm-recorder-group-chats:';
+
+  /**
+   * Returns the already-recorded conversation IDs for this tab's group.
+   *
+   * @returns {string[]} Distinct conversation identifiers in visit order.
+   */
+  function recordingGroupConversationIds() {
+    const state = recordingGroupState();
+    if (!state.ready || !state.uuid) return [];
+    const stored = sessionStorage.getItem(RECORDING_GROUP_CHATS_PREFIX + state.uuid);
+    if (!stored) return [];
+    try {
+      const ids = JSON.parse(stored);
+      return Array.isArray(ids)
+        ? ids.filter(id => typeof id === 'string' && id.length > 0) : [];
+    } catch {
+      return [];
+    }
+  }
+
+  /**
+   * Associates the current conversation with this tab's active recording.
+   *
+   * Only the small conversation registry is persisted here; event buffering,
+   * segmented disk recording, compression and rotation remain unchanged.
+   *
+   * @returns {string|null} Current active group's UUID or null.
+   */
+  function recordingGroupTrackConversation() {
+    const state = recordingGroupState();
+    if (!state.ready || !state.uuid) return null;
+    const id = typeof currentConversationId === 'function'
+      ? currentConversationId() : null;
+    if (!id) return state.uuid;
+    const ids = recordingGroupConversationIds();
+    if (!ids.includes(id)) {
+      ids.push(id);
+      sessionStorage.setItem(
+        RECORDING_GROUP_CHATS_PREFIX + state.uuid, JSON.stringify(ids)
+      );
+    }
+    return state.uuid;
+  }
+
   /**
    * Clears one pending ownership claim and invalidates its callback.
    *
