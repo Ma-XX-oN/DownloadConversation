@@ -22,6 +22,7 @@ const ordinaryStages = [
   ['Recorder logging-mode regression', nodeCommand, ['--test', 'tests/recording-panel-modes.test.mjs']],
   ['Combined log time-control regression', nodeCommand, ['--test', 'tests/log-extraction-dialog.test.mjs']],
   ['Merged Gen/Comm extraction regression', nodeCommand, ['--test', 'tests/merged-log-extraction.test.mjs']],
+  ['Grouped log filesystem regression', nodeCommand, ['--test', 'tests/merged-log-storage-integration.test.mjs']],
   ['Nonmonotonic communication order regression', nodeCommand, ['--test', 'tests/nonmonotonic-log-filter-order.test.mjs']],
   ['CI test inventory regression', nodeCommand, ['--test', 'tests/ci-test-inventory.test.mjs']],
   ['Actions policy regression', nodeCommand, ['--test', 'tests/actions-policy.test.mjs']],
