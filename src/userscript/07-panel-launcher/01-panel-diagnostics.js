@@ -23,6 +23,15 @@
     const output = panel.querySelector('[data-role="log-output"]');
     const toggle = panel.querySelector('[data-role="toggle-log"]');
     if (count) count.textContent = `Log: ${diagnosticLog.length} item${diagnosticLog.length === 1 ? '' : 's'}`;
+    const lastProblem = panel.querySelector('[data-role="last-log-problem"]');
+    if (lastProblem) {
+      const problem = diagnosticLog.findLast(entry =>
+        ['errors', 'warnings'].includes(entry?.level)
+      );
+      lastProblem.textContent = problem
+        ? `${problem.level}: ${problem.message}` : '';
+      lastProblem.hidden = !problem;
+    }
     if (output && diagnosticLogExpanded) {
       output.replaceChildren(...diagnosticLog.map(entry => {
         const row = document.createElement('div');
@@ -88,6 +97,7 @@
    */
   function logDiagnostic(level, message, data = null) {
     logConsoleDiagnostic(level, `[ChatGPT Recorder ${level}] ${message}`, data);
+    if (localStorage.getItem('tm-recorder-general-capture') === 'false') return;
     if (!diagnosticEnabled(level)) return;
     const safeData = redactDiagnosticSignedTokens(data);
     const entry = {

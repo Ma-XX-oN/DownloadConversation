@@ -4,7 +4,10 @@ import vm from 'node:vm';
 import { downloadConversationSource, productionFunctionSource } from './helpers/userscript-source.mjs';
 
 function auditHarness() {
-  const context = { entries: [], persisted: 0, refreshed: 0 };
+  const context = {
+    entries: [], persisted: 0, refreshed: 0,
+    localStorage: { getItem: () => null }
+  };
   vm.runInNewContext(`
     let agentLifecycleState = 'unknown';
     let agentLifecycleTransitionSequence = 0;

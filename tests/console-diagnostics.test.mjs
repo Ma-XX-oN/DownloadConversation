@@ -55,7 +55,7 @@ test('hidden panel creation does not end startup; first display is a one-way bou
 });
 
 test('console checkbox controls continued mirroring independently and persists', () => {
-  assert.match(downloadConversationSource, /data-role="console-diagnostics" type="checkbox"> console/);
+  assert.match(downloadConversationSource, /data-role="console-diagnostics" type="checkbox"> Con/);
   assert.match(downloadConversationSource, /consoleDiagnostics = localStorage\.getItem\(CONSOLE_DIAGNOSTICS_STORAGE_KEY\) === 'true'/);
   assert.match(downloadConversationSource, /consoleOutput\.checked = consoleDiagnostics/);
   assert.match(downloadConversationSource, /consoleDiagnostics = consoleOutput\.checked/);

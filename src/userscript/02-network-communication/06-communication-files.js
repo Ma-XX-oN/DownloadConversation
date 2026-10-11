@@ -252,6 +252,7 @@
    * @returns {Promise<boolean>} True when the record committed to disk.
    */
   async function communicationLogRecord(type, data = {}) {
+    if (localStorage.getItem('tm-recorder-communication-capture') === 'false') return false;
     if (!communicationLogReady) {
       communicationLogDroppedBeforeReady += 1;
       return false;
