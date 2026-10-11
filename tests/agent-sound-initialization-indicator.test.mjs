@@ -38,6 +38,7 @@ function indicatorHarness({ audioState = null, withStopwatch = false } = {}) {
     body,
     documentElement: body,
     addEventListener() {},
+    removeEventListener() {},
     getElementById(id) {
       return elements.get(id) ?? null;
     },
@@ -70,12 +71,16 @@ function indicatorHarness({ audioState = null, withStopwatch = false } = {}) {
   const context = {
     document,
     agentSoundAudioContext: audioState === null ? null : { state: audioState },
+    agentSoundVolume: 10,
     AGENT_SOUND_INITIALIZATION_INDICATOR_ID: INDICATOR_ID,
     AGENT_SOUND_INITIALIZATION_GAP_PX: 8,
     AGENT_STOPWATCH_ID: STOPWATCH_ID
   };
   vm.runInNewContext(`
     ${productionFunctionSource('agentSoundAudioReady')}
+    let agentSoundGestureListenersAttached = false;
+    function agentSoundHandleUserGesture() {}
+    ${productionFunctionSource('agentSoundSyncGestureListeners')}
     ${productionFunctionSource('agentSoundPositionInitializationIndicator')}
     ${productionFunctionSource('ensureAgentSoundInitializationIndicator')}
     ${productionFunctionSource('agentSoundSyncInitializationIndicator')}

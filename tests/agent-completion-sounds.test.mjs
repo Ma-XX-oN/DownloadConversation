@@ -282,3 +282,67 @@ test('sound detection remains wired to structured SSE and does not scan visible 
   assert.doesNotMatch(userscript, /Message delivery timed out/,
     'Visible timeout text must not become a terminal-state detector.');
 });
+
+test('audio gesture listeners attach only until unlock and re-arm on suspension', () => {
+  const listeners = new Map();
+  const events = [];
+  const document = {
+    addEventListener(name, callback) {
+      listeners.set(name, callback);
+      events.push(['add', name]);
+    },
+    removeEventListener(name, callback) {
+      assert.equal(listeners.get(name), callback);
+      listeners.delete(name);
+      events.push(['remove', name]);
+    }
+  };
+  const context = { document, events, listeners };
+  vm.runInNewContext(`
+    let agentSoundVolume = 10;
+    let agentSoundAudioContext = null;
+    let agentSoundGestureListenersAttached = false;
+    function agentSoundAudioReady() {
+      return agentSoundAudioContext?.state === 'running';
+    }
+    function unlockAgentSoundAudio() { this.unlocks = (this.unlocks || 0) + 1; }
+    ${productionFunctionSource('agentSoundHandleUserGesture')}
+    ${productionFunctionSource('agentSoundSyncGestureListeners')}
+    this.api = {
+      sync: agentSoundSyncGestureListeners,
+      setAudio(state) { agentSoundAudioContext = { state }; },
+      setVolume(value) { agentSoundVolume = value; }
+    };
+  `, context);
+  const { api } = context;
+  api.sync();
+  assert.deepEqual([...listeners.keys()], ['pointerdown', 'keydown']);
+  listeners.get('keydown')();
+  assert.equal(context.unlocks, 1);
+  api.setAudio('running');
+  api.sync();
+  assert.equal(listeners.size, 0, 'running context removes both gesture handlers');
+  api.sync();
+  assert.equal(events.length, 4, 'repeated readiness sync changes no listeners');
+  api.setAudio('suspended');
+  api.sync();
+  assert.equal(listeners.size, 2, 'suspension re-arms both gesture handlers');
+  listeners.get('pointerdown')();
+  assert.equal(context.unlocks, 2);
+  api.setVolume(0);
+  api.sync();
+  assert.equal(listeners.size, 0, 'muting removes gesture handlers');
+  api.setVolume(10);
+  api.sync();
+  assert.equal(listeners.size, 2, 'unmuting while suspended re-arms listeners');
+});
+
+test('sound popup and volume changes do not unlock an already running AudioContext', () => {
+  const moduleText = userscript;
+  assert.match(moduleText,
+    /if \(open && agentSoundVolume > 0 && !agentSoundAudioReady\(\)\) void unlockAgentSoundAudio\(\);/);
+  assert.match(moduleText,
+    /if \(agentSoundVolume > 0 && !agentSoundAudioReady\(\)\) void unlockAgentSoundAudio\(\);/);
+  assert.match(moduleText,
+    /else if \(agentSoundVolume <= 0\) agentSoundClearPendingTerminal\(\);/);
+});
