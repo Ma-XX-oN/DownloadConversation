@@ -38,8 +38,10 @@ function harness() {
     const stored = new Map(Object.entries(data));
     const listeners = new Map();
     const diagnostics = [];
+    const conversation = { id: 'conversation-a' };
     const context = {
       crypto: fakeCrypto,
+      currentConversationId: () => conversation.id,
       BroadcastChannel: Channel,
       performance: { timeOrigin: startedAt },
       sessionStorage: {
@@ -60,12 +62,15 @@ function harness() {
       this.recordingApi = {
         enable: recordingGroupEnable,
         disable: recordingGroupDisable,
-        state: recordingGroupState
+        state: recordingGroupState,
+        track: recordingGroupTrackConversation,
+        chats: recordingGroupConversationIds
       };`, context);
     return {
       api: context.recordingApi,
       storage: stored,
       diagnostics,
+      navigate(id) { conversation.id = id; },
       close() { listeners.get('pagehide')?.(); },
       restore() { listeners.get('pageshow')?.({ persisted: true }); }
     };
@@ -140,4 +145,43 @@ test('missing BroadcastChannel does not declare ownership ready', async () => {
   // Test the active production handler while transport is disconnected.
   instance.close();
   assert.equal(instance.api.state().ready, false);
+});
+
+test('single-tab group retains a distinct visited-chat inventory across reloads', async () => {
+  const bus = harness();
+  const first = bus.tab({}, 1000);
+  await first.api.enable();
+  const group = first.api.state().uuid;
+  assert.equal(first.api.track(), group);
+  first.navigate('conversation-b');
+  first.api.track();
+  first.navigate('conversation-a');
+  first.api.track();
+  assert.deepEqual(Array.from(first.api.chats()), [
+    'conversation-a', 'conversation-b'
+  ]);
+  const saved = Object.fromEntries(first.storage);
+  first.close();
+  const restored = bus.tab(saved, 2000);
+  await new Promise(resolve => setTimeout(resolve, 680));
+  assert.equal(restored.api.state().uuid, group);
+  assert.deepEqual(Array.from(restored.api.chats()), [
+    'conversation-a', 'conversation-b'
+  ]);
+  restored.close();
+});
+
+test('duplicated tab starts an independent conversation inventory', async () => {
+  const bus = harness();
+  const first = bus.tab({}, 1000);
+  await first.api.enable();
+  first.api.track();
+  const second = bus.tab(Object.fromEntries(first.storage), 2000);
+  await new Promise(resolve => setTimeout(resolve, 1400));
+  assert.notEqual(second.api.state().uuid, first.api.state().uuid);
+  assert.deepEqual(Array.from(second.api.chats()), []);
+  second.api.track();
+  assert.deepEqual(Array.from(second.api.chats()), ['conversation-a']);
+  first.close();
+  second.close();
 });
