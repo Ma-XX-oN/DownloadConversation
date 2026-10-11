@@ -119,14 +119,14 @@ test('recorder panel restores dialog/log/switch/extract UI contracts', () => {
 });
 
 
-test('Issue 166 diagnostic Save is immediately left of Copy', () => {
+test('Issue 220 merged Log Save is immediately left of Copy', () => {
   const head = userscript.match(/<div class="tm-log-head">[^\n]+<\/div>/)?.[0] ?? '';
-  assert.match(head, /data-role="save-log"[^>]*aria-label="Save diagnostic log"[^>]*title="Save log"/);
+  assert.match(head, /data-role="save-log"[^>]*aria-label="Extract merged logs"[^>]*title="Extract logs"/);
   const saveAt = head.indexOf('data-role="save-log"');
   const copyAt = head.indexOf('data-role="copy-log"');
   const toggleAt = head.indexOf('data-role="toggle-log"');
   assert.ok(saveAt >= 0 && copyAt > saveAt && toggleAt > copyAt,
-    'Diagnostic controls must be ordered Save, Copy, Expand.');
+    'Log controls must be ordered Extract, Copy, Expand.');
 });
 
 
