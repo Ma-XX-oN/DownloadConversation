@@ -102,6 +102,7 @@
     const safeData = redactDiagnosticSignedTokens(data);
     const entry = {
       timestamp: new Date().toISOString(),
+      capture_order: logCapturePosition(),
       level,
       message,
       data: safeData
