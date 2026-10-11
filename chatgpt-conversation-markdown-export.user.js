@@ -1,11 +1,14 @@
 // ==UserScript==
 // @name         ChatGPT Conversation Markdown Recorder
 // @namespace    https://chatgpt.com/
-// @version      1.11.2
+// @version      1.11.3
 // @description  Exports the current ChatGPT conversation directly from the Conversation API as Markdown or JSONL.
 // @match        https://chatgpt.com/*
 // @match        https://chat.openai.com/*
 // @match        https://github.com/*
+// @connect      github.com
+// @connect      raw.githubusercontent.com
+// @grant        GM_xmlhttpRequest
 // @grant        GM_getValue
 // @grant        GM_setValue
 // @grant        GM_addValueChangeListener
@@ -6698,24 +6701,6 @@ async function loadAgent(id, { loadModule, context = {} } = {}) {
   }
 
   /**
-   * Extracts plugin source from one successful broker response.
-   *
-   * @param {Object} value - Broker response value.
-   * @returns {string} Plugin source text.
-   */
-  function agentPluginSourceFromResponse(value) {
-    assert(
-      value?.ok === true,
-      `Plugin unavailable: ${value?.reason ?? 'UNKNOWN'}.`
-    );
-    assert(
-      typeof value.source === 'string',
-      'Plugin response did not contain source text.'
-    );
-    return value.source;
-  }
-
-  /**
    * Reads a previously verified artifact candidate from shared userscript storage.
    * Integrity is rechecked asynchronously before execution.
    *
@@ -6730,74 +6715,42 @@ async function loadAgent(id, { loadModule, context = {} } = {}) {
   }
 
   /**
-   * Requests one AICC-selected artifact from the generic authenticated GitHub broker.
+   * Fetches the Core-selected private artifact through authenticated GitHub raw.
+   * The GitHub-origin request uses the user's browser session; GitHub may redirect
+   * to the raw CDN after checking access. The caller verifies exact Git identity.
    *
    * @param {Object} descriptor - Core-owned artifact descriptor.
-   * @returns {Promise<string>} Retrieved ESM source.
+   * @returns {Promise<string>} Unmodified UTF-8 source for integrity validation.
    */
   function requestAgentPluginFromGitHub(descriptor) {
-    const requestId = crypto.randomUUID();
-    const responseKey = `${AGENT_PLUGIN_RESPONSE_PREFIX}${requestId}`;
+    const [owner, repository] = String(descriptor.repository).split('/');
+    assert(owner && repository, 'Invalid plugin repository.');
+    const encodePath = value => String(value).split('/').map(encodeURIComponent).join('/');
+    const url = `https://github.com/${encodeURIComponent(owner)}/${encodeURIComponent(repository)}`
+      + `/raw/${encodeURIComponent(descriptor.ref)}/${encodePath(descriptor.path)}`;
     return new Promise((resolve, reject) => {
-      let settled = false;
-      let listenerId = null;
-      let timer = null;
-      const finish = (error, source = null) => {
-        if (settled) return;
-        settled = true;
-        if (listenerId !== null) GM_removeValueChangeListener(listenerId);
-        if (timer !== null) clearTimeout(timer);
-        GM_setValue(responseKey, null);
-        GM_setValue(AGENT_PLUGIN_REQUEST_KEY, null);
-        if (error) reject(error);
-        else resolve(source);
-      };
-      listenerId = GM_addValueChangeListener(
-        responseKey,
-        (_name, _oldValue, value) => {
-          if (!value || value.request_id !== requestId) return;
-          try {
-            finish(null, agentPluginSourceFromResponse(value));
-          } catch (error) {
-            finish(error);
+      GM_xmlhttpRequest({
+        method: 'GET',
+        url,
+        timeout: AGENT_PLUGIN_BROKER_TIMEOUT_MS,
+        onload(response) {
+          if (response.status !== 200) {
+            reject(new Error(`Private plugin download returned HTTP ${response.status}.`));
+            return;
           }
+          const source = response.responseText;
+          if (typeof source !== 'string') {
+            reject(new Error('Private plugin download returned no UTF-8 source.'));
+            return;
+          }
+          resolve(source);
+        },
+        onerror() {
+          reject(new Error('Private plugin download failed.'));
+        },
+        ontimeout() {
+          reject(new Error('Private plugin download timed out.'));
         }
-      );
-      timer = setTimeout(() => {
-        finish(new Error('Timed out waiting for the GitHub plugin broker.'));
-      }, AGENT_PLUGIN_BROKER_TIMEOUT_MS);
-      GM_setValue(AGENT_PLUGIN_REQUEST_KEY, {
-        request_id: requestId,
-        plugin_id: descriptor.id,
-        repository: descriptor.repository,
-        ref: descriptor.ref,
-        path: descriptor.path,
-        version: descriptor.version,
-        api_version: descriptor.apiVersion,
-        git_blob_sha1: descriptor.gitBlobSha1,
-        byte_length: descriptor.byteLength,
-        requested_at: Date.now()
-      });
-      logDiagnostic('debug', 'agent-plugin-broker-requested', {
-        plugin_id: descriptor.id,
-        ref: descriptor.ref,
-        version: descriptor.version
-      });
-      const brokerUrl = `${githubAgentPluginBlobUrl(descriptor)}`
-        + `#downloadconversation-agent-plugin-broker=${requestId}`;
-      const brokerWindow = window.open(
-        brokerUrl,
-        'downloadconversation-agent-plugin-broker',
-        'popup,width=960,height=720'
-      );
-      if (!brokerWindow) {
-        finish(new Error('Browser blocked the GitHub plugin window.'));
-        return;
-      }
-      logDiagnostic('debug', 'agent-plugin-broker-window-opened', {
-        plugin_id: descriptor.id,
-        ref: descriptor.ref,
-        version: descriptor.version
       });
     });
   }
@@ -6827,10 +6780,7 @@ async function loadAgent(id, { loadModule, context = {} } = {}) {
       }
     }
 
-    // This call must happen before the first await on the cache-miss path so
-    // window.open() still executes inside the Extract click's user activation.
-    const brokerSourcePromise = requestAgentPluginFromGitHub(descriptor);
-    const source = await brokerSourcePromise;
+    const source = await requestAgentPluginFromGitHub(descriptor);
     const bytes = await verifyAgentPluginSource(descriptor, source);
     GM_setValue(agentPluginCacheKey(descriptor), {
       ref: descriptor.ref,
