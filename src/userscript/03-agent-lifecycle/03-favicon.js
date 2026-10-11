@@ -345,9 +345,6 @@
     }
   }
 
-  document.addEventListener('pointerdown', agentSoundHandleUserGesture, true);
-  document.addEventListener('keydown', agentSoundHandleUserGesture, true);
-
 
   /**
    * Formats one non-negative stopwatch duration as whole minutes and seconds.
