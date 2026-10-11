@@ -23,7 +23,8 @@ const timestamp = (minutes) =>
   '2026-10-11T15:' + String(minutes).padStart(2, '0') + ':00.000Z';
 const event = (source, ordinal, minute, epoch = 1) => ({
   source, timestamp: timestamp(minute),
-  capture_order: { epoch, ordinal }
+  capture_order: { epoch, ordinal, document: 'doc-1' },
+  recording_group_uuid: 'group-1'
 });
 
 test('selected source and time bounds are required', () => {
@@ -99,4 +100,25 @@ test('communication JSONL parser keeps source order and skips torn tail', () => 
   );
   const rows = call('mergedLogParseJsonl', source);
   assert.deepEqual(rows.map(row => row.sequence), [2, 1]);
+});
+
+test('different live documents without a shared group never claim exact ordering', () => {
+  const general = [event('g', 1, 2)];
+  const other = { ...event('c', 2, 1),
+    capture_order: { epoch: 1, ordinal: 2, document: 'doc-2' },
+    recording_group_uuid: null
+  };
+  const merged = call('mergedLogInterleave', general, [other]);
+  assert.equal(merged.ordering, 'legacy-source-ranges');
+  assert.deepEqual(merged.entries.map(row => row.source), ['gen', 'comm']);
+});
+
+test('restored documents in the same group retain verifiable epoch order', () => {
+  const first = event('g', 3, 30);
+  const second = { ...event('c', 1, 1, 2),
+    capture_order: { epoch: 2, ordinal: 1, document: 'doc-2' }
+  };
+  const merged = call('mergedLogInterleave', [first], [second]);
+  assert.equal(merged.ordering, 'capture-sequence');
+  assert.deepEqual(merged.entries.map(row => row.source), ['gen', 'comm']);
 });
