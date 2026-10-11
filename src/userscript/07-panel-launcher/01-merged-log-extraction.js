@@ -84,12 +84,10 @@
    * @returns {Promise<Object[][]>} Original file-order communication blocks.
    */
   async function mergedLogPreviousConversationBlocks() {
-    const current = currentConversationId();
+    const current = communicationLogSegmentDirectoryHandle?.name ?? null;
     const groups = [];
-    for (const id of recordingGroupConversationIds()) {
-      if (id === current) continue;
-      const directoryName = '.DownloadConversation-'
-        + sanitizeFileName(id) + '-segments';
+    for (const directoryName of recordingGroupDirectoryNames()) {
+      if (directoryName === current) continue;
       let directory;
       try {
         directory = await communicationLogDirectoryHandle.getDirectoryHandle(
@@ -97,7 +95,8 @@
         );
       } catch (error) {
         if (error?.name === 'NotFoundError') {
-          throw new Error('Recorded conversation directory is missing: ' + id);
+          throw new Error('Recorded communication directory is missing: '
+            + directoryName);
         }
         throw error;
       }
