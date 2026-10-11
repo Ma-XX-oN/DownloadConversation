@@ -11497,7 +11497,7 @@ globalThis.__dcCompressor = {
     if (visibleIndicator.parentNode !== workStack) workStack.append(visibleIndicator);
     visibleIndicator.style.position = 'absolute';
     visibleIndicator.style.top = '50%';
-    visibleIndicator.style.right = `calc(100% + ${AGENT_SOUND_INITIALIZATION_GAP_PX}px)`;
+    visibleIndicator.style.right = `calc(100% + ${AGENT_SOUND_INITIALIZATION_GAP_PX + 1}px)`;
     visibleIndicator.style.transform = 'translateY(-50%)';
   }
 
