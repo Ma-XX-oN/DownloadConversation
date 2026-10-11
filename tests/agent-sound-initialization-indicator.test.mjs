@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import vm from 'node:vm';
-import { productionFunctionSource } from './helpers/userscript-source.mjs';
+import { productionFunctionSource, userscript } from './helpers/userscript-source.mjs';
 
 const INDICATOR_ID = 'tm-agent-sound-uninitialized';
 const WORKSTACK_ID = 'tm-workstack-continuation';
@@ -44,8 +44,17 @@ function harness({ audioState = null, volume = 10, withWorkStack = false } = {})
     workStack = createElement(WORKSTACK_ID);
     body.append(workStack);
   }
+  class MockAudioContext {
+    constructor() { this.state = 'running'; }
+    addEventListener() {}
+  }
   const context = {
     document,
+    window: { AudioContext: MockAudioContext },
+    logDiagnostic() {},
+    agentSoundClearPendingTerminal() {},
+    agentSoundRetryPendingTerminal() {},
+    errorMessage(error) { return String(error); },
     agentSoundVolume: volume,
     agentSoundAudioContext: audioState === null ? null : { state: audioState },
     AGENT_SOUND_INITIALIZATION_INDICATOR_ID: INDICATOR_ID,
@@ -57,7 +66,10 @@ function harness({ audioState = null, volume = 10, withWorkStack = false } = {})
     ${productionFunctionSource('agentSoundPositionInitializationIndicator')}
     ${productionFunctionSource('ensureAgentSoundInitializationIndicator')}
     ${productionFunctionSource('agentSoundSyncInitializationIndicator')}
+    ${productionFunctionSource('unlockAgentSoundAudio')}
+    ${productionFunctionSource('agentSoundHandleUserGesture')}
     this.syncIndicator = agentSoundSyncInitializationIndicator;
+    this.handleGesture = agentSoundHandleUserGesture;
   `, context);
   return { context, document, body, workStack, elements };
 }
@@ -128,6 +140,15 @@ test('successful user-gesture unlock removes warning; suspension restores it', (
   assert.ok(elements.has(INDICATOR_ID));
 });
 
+test('a user gesture creates a running AudioContext and removes the warning', () => {
+  const { context, elements } = harness({ withWorkStack: true });
+  context.syncIndicator();
+  assert.ok(elements.has(INDICATOR_ID));
+  context.handleGesture();
+  assert.equal(context.agentSoundAudioContext.state, 'running');
+  assert.equal(elements.has(INDICATOR_ID), false);
+});
+
 test('explicitly disabled audio shows no misleading interaction warning', () => {
   const { context, elements } = harness({ volume: 0, withWorkStack: true });
   assert.equal(context.syncIndicator(), true);
@@ -148,6 +169,10 @@ test('startup is deferred until all declarations exist and WS positioning drives
   const workStackSource = productionFunctionSource('workStackPositionControl');
   const unlockSource = productionFunctionSource('unlockAgentSoundAudio');
   assert.doesNotMatch(indicatorSource, /setInterval|setTimeout|MutationObserver/);
+  assert.doesNotMatch(userscript, /^  agentSoundSyncInitializationIndicator\(\);$/m,
+    'eager readiness call before WorkStack declaration aborts startup');
+  assert.match(userscript,
+    /document.addEventListener\('pointerdown', agentSoundHandleUserGesture, true\)/);
   assert.match(workStackSource, /agentSoundPositionInitializationIndicator\(\)/);
   assert.match(unlockSource, /agentSoundSyncInitializationIndicator\(\)/);
   assert.match(unlockSource, /addEventListener\(['"]statechange['"], agentSoundSyncInitializationIndicator/);
