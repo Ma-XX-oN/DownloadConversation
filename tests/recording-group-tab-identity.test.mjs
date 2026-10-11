@@ -42,6 +42,7 @@ function harness() {
     const context = {
       crypto: fakeCrypto,
       currentConversationId: () => conversation.id,
+      communicationLogSegmentDirectoryHandle: { name: 'segments-a' },
       BroadcastChannel: Channel,
       performance: { timeOrigin: startedAt },
       sessionStorage: {
@@ -64,13 +65,17 @@ function harness() {
         disable: recordingGroupDisable,
         state: recordingGroupState,
         track: recordingGroupTrackConversation,
-        chats: recordingGroupConversationIds
+        chats: recordingGroupConversationIds,
+        directories: recordingGroupDirectoryNames
       };`, context);
     return {
       api: context.recordingApi,
       storage: stored,
       diagnostics,
-      navigate(id) { conversation.id = id; },
+      navigate(id, directory = 'segments-a') {
+        conversation.id = id;
+        context.communicationLogSegmentDirectoryHandle.name = directory;
+      },
       close() { listeners.get('pagehide')?.(); },
       restore() { listeners.get('pageshow')?.({ persisted: true }); }
     };
@@ -153,12 +158,15 @@ test('single-tab group retains a distinct visited-chat inventory across reloads'
   await first.api.enable();
   const group = first.api.state().uuid;
   assert.equal(first.api.track(), group);
-  first.navigate('conversation-b');
+  first.navigate('conversation-b', 'segments-b');
   first.api.track();
   first.navigate('conversation-a');
   first.api.track();
   assert.deepEqual(Array.from(first.api.chats()), [
     'conversation-a', 'conversation-b'
+  ]);
+  assert.deepEqual(Array.from(first.api.directories()), [
+    'segments-a', 'segments-b'
   ]);
   const saved = Object.fromEntries(first.storage);
   first.close();
@@ -167,6 +175,9 @@ test('single-tab group retains a distinct visited-chat inventory across reloads'
   assert.equal(restored.api.state().uuid, group);
   assert.deepEqual(Array.from(restored.api.chats()), [
     'conversation-a', 'conversation-b'
+  ]);
+  assert.deepEqual(Array.from(restored.api.directories()), [
+    'segments-a', 'segments-b'
   ]);
   restored.close();
 });
@@ -180,6 +191,7 @@ test('duplicated tab starts an independent conversation inventory', async () => 
   await new Promise(resolve => setTimeout(resolve, 1400));
   assert.notEqual(second.api.state().uuid, first.api.state().uuid);
   assert.deepEqual(Array.from(second.api.chats()), []);
+  assert.deepEqual(Array.from(second.api.directories()), []);
   second.api.track();
   assert.deepEqual(Array.from(second.api.chats()), ['conversation-a']);
   first.close();
