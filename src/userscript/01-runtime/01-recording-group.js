@@ -55,6 +55,31 @@
     };
   }
 
+  /** Registry of physical segment directories already used by this tab. */
+  const RECORDING_GROUP_DIRECTORIES_PREFIX = 'tm-recorder-group-directories:';
+
+  /**
+   * Lists only physical directories where this tab actually recorded Comm.
+   *
+   * @returns {string[]} Existing segment folder names in registration order.
+   */
+  function recordingGroupDirectoryNames() {
+    const state = recordingGroupState();
+    if (!state.ready || !state.uuid) return [];
+    const stored = sessionStorage.getItem(
+      RECORDING_GROUP_DIRECTORIES_PREFIX + state.uuid
+    );
+    if (!stored) return [];
+    try {
+      const names = JSON.parse(stored);
+      return Array.isArray(names)
+        ? names.filter(name => typeof name === 'string' && name.length > 0)
+        : [];
+    } catch {
+      return [];
+    }
+  }
+
   /** Metadata-only list of conversations recorded under a group. */
   const RECORDING_GROUP_CHATS_PREFIX = 'tm-recorder-group-chats:';
 
@@ -90,6 +115,18 @@
     if (!state.ready || !state.uuid) return null;
     const id = typeof currentConversationId === 'function'
       ? currentConversationId() : null;
+    const directory = typeof communicationLogSegmentDirectoryHandle
+      !== 'undefined' ? communicationLogSegmentDirectoryHandle?.name : null;
+    if (directory) {
+      const names = recordingGroupDirectoryNames();
+      if (!names.includes(directory)) {
+        names.push(directory);
+        sessionStorage.setItem(
+          RECORDING_GROUP_DIRECTORIES_PREFIX + state.uuid,
+          JSON.stringify(names)
+        );
+      }
+    }
     if (!id) return state.uuid;
     const ids = recordingGroupConversationIds();
     if (!ids.includes(id)) {
