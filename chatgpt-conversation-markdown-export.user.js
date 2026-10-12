@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         ChatGPT Conversation Markdown Recorder
 // @namespace    https://chatgpt.com/
-// @version      1.11.4-issue.220.27
+// @version      1.11.4-issue.220.28
 // @description  Exports the current ChatGPT conversation directly from the Conversation API as Markdown or JSONL.
 // @match        https://chatgpt.com/*
 // @match        https://chat.openai.com/*
@@ -6845,8 +6845,11 @@ globalThis.__dcCompressor = {
   const MAX_PAGES = 10000;
   /** Local-storage key for the keep-screen-on capture preference. */
   const SCREEN_ON_STORAGE_KEY = 'tm-conversation-recorder-screen-on-when-capturing';
+  /** Persistent checkbox choice for JSONL conversation export. */
   const EXPORT_JSONL_STORAGE_KEY = 'tm-conversation-recorder-export-jsonl';
+  /** Persistent checkbox choice for Markdown conversation export. */
   const EXPORT_MD_STORAGE_KEY = 'tm-conversation-recorder-export-md';
+  /** Persistent compressed-versus-raw conversation export preference. */
   const EXPORT_COMPRESSION_STORAGE_KEY = 'tm-conversation-recorder-export-compressed';
   /** Whether selected JSONL/Markdown exports are compressed as archives. */
   let exportCompressionEnabled = localStorage.getItem(EXPORT_COMPRESSION_STORAGE_KEY) === 'true';
@@ -22841,7 +22844,11 @@ Image elapsed: ${formatDuration(imageElapsed)} — Completed: ${imageCompleted}/
     });
   }
 
-  /** Renders the export arrow in a centred SVG coordinate system. */
+  /**
+   * Renders an export arrow centred inside its SVG viewport.
+   *
+   * @returns {string} Inline SVG markup for the export button.
+   */
   function exportArrowIconMarkup() {
     return '<svg viewBox="0 0 24 24" aria-hidden="true" focusable="false">'
       + '<path d="M4 12h16m-6-6 6 6-6 6" fill="none" '
