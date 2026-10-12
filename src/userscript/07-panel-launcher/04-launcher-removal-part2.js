@@ -59,25 +59,12 @@
     });
     const saveLogButton = panel.querySelector('[data-role="save-log"]');
     if (saveLogButton) saveLogButton.innerHTML = saveIconMarkup();
-    const copyLogButton = panel.querySelector('[data-role="copy-log"]');
-    if (copyLogButton) copyLogButton.innerHTML = copyIconMarkup();
     panel.querySelector('[data-role="save-log"]').addEventListener('click', event => {
       void runMergedLogExtraction(event.currentTarget).catch(error => {
         logDiagnostic('errors', 'merged-log-dialog-failure', {
           message: errorMessage(error)
         });
         setStatus('Log extraction dialog failed: ' + errorMessage(error));
-      });
-    });
-    panel.querySelector('[data-role="toggle-log"]').addEventListener('click', () => {
-      diagnosticLogExpanded = !diagnosticLogExpanded;
-      refreshDiagnosticLog();
-    });
-    panel.querySelector('[data-role="copy-log"]').addEventListener('click', () => {
-      void copyDiagnosticLog().catch(error => {
-        logDiagnostic('errors', 'diagnostic-log-copy-failure', {
-          message: errorMessage(error)
-        });
       });
     });
     panel.querySelector('[data-role="test"]').addEventListener('click', event => openTestMatrix(event.currentTarget));
@@ -90,7 +77,8 @@
     } = communicationLogPanelControls(panel);
     if (renameCommunicationLogButton) renameCommunicationLogButton.innerHTML = renameIconMarkup();
     if (duplicateCommunicationLogButton) duplicateCommunicationLogButton.innerHTML = duplicateIconMarkup();
-    if (resetCommunicationLogButton) resetCommunicationLogButton.innerHTML = resetIconMarkup();
+    if (resetCommunicationLogButton) resetCommunicationLogButton.innerHTML =
+      '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 6v5h5"/><path d="M5.5 11a8 8 0 1 1 .8 5"/></svg>';
     communicationLogNameViewport?.addEventListener('pointerenter', refreshCommunicationLogNameOverflow);
     renameCommunicationLogButton?.addEventListener('click', () => {
       if (renameCommunicationLogButton.disabled || communicationLogUiActionInProgress || !communicationLogFileName) return;
@@ -131,13 +119,6 @@
         },
         failurePrefix: 'Communication log reset failed'
       });
-    });
-    panel.querySelector('[data-role="screen-on"]').addEventListener('click', () => {
-      screenOnWhenCapturing = !screenOnWhenCapturing;
-      localStorage.setItem(SCREEN_ON_STORAGE_KEY, String(screenOnWhenCapturing));
-      if (screenOnWhenCapturing) void acquireWakeLock();
-      else void releaseWakeLock();
-      updateUi();
     });
     bindStoredCheckbox(panel, 'show-timestamps', SHOW_TIMESTAMPS_STORAGE_KEY, showTimestamps, value => {
       showTimestamps = value;
