@@ -38,6 +38,8 @@ function scenario(options = {}) {
     let diagnosticLogBaselineVersion = null;
     let VERSION = options.version || 'v1';
     const localStorage = { getItem: () => null };
+    const logCapturePosition = () => ({epoch:1,ordinal:1,document:'test'});
+    const recordingGroupState = () => ({ready:false,uuid:null});
     let stored = options.stored ?? null;
     const sessionStorage = {
       getItem: () => stored,
