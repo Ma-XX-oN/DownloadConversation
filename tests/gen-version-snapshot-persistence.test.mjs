@@ -64,7 +64,7 @@ test('transition in persisted window remains in window, baseline unchanged', () 
   events[1] = entry('new');
   const output = persist(events, 'old');
   assert.equal(output.snapshot.version_before_persisted, 'old');
-  assert.equal(output.snapshot.records[0].data.i, 1);
+  assert.equal(output.snapshot.records[0].message, 'dc-version-transition');
   assert.equal(output.snapshot.records[0].data.version, 'new');
 });
 
