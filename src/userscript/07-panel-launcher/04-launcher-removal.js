@@ -93,7 +93,11 @@
     });
   }
 
-  /** Renders the export arrow in a centred SVG coordinate system. */
+  /**
+   * Renders an export arrow centred inside its SVG viewport.
+   *
+   * @returns {string} Inline SVG markup for the export button.
+   */
   function exportArrowIconMarkup() {
     return '<svg viewBox="0 0 24 24" aria-hidden="true" focusable="false">'
       + '<path d="M4 12h16m-6-6 6 6-6 6" fill="none" '
