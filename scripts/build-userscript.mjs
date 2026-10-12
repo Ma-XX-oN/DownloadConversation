@@ -5,7 +5,6 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import {
   assembleUserscript,
-  buildAgentPluginPrelude,
   readDownloadConversationSource,
   readUserscriptHeader,
   readUserscriptManifest,
@@ -66,15 +65,10 @@ function sha256(bytes) {
 }
 
 async function readAgentPluginPrelude() {
-  const broker = await readFile(
-    path.join(root, 'src', 'userscript', '01-runtime', '02-github-agent-plugin-broker.js'),
-    'utf8'
-  );
-  const bridge = await readFile(
+  return readFile(
     path.join(root, 'src', 'userscript', '04-conversation-rendering', '08-agent-plugin-bridge.js'),
     'utf8'
   );
-  return buildAgentPluginPrelude(broker, bridge);
 }
 
 async function buildCompressorPrelude() {
