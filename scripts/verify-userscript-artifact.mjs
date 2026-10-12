@@ -125,21 +125,12 @@ async function main() {
     fail('Generated userscript does not preserve the DC IIFE boundary.');
   }
 
-  const broker = await readFile(
-    path.join(root, 'src/userscript/01-runtime/02-github-agent-plugin-broker.js'),
-    'utf8'
-  );
   const bridge = await readFile(
     path.join(root, 'src/userscript/04-conversation-rendering/08-agent-plugin-bridge.js'),
     'utf8'
   );
-  const brokerText = broker.toString('utf8');
   const bridgeText = bridge.toString('utf8');
-  const brokerOffset = iifePrefix.length;
-  if (!artifactTail.startsWith(brokerText, brokerOffset)) {
-    fail('Generated generic browser plugin broker differs from repository source.');
-  }
-  const bridgeOffset = brokerOffset + brokerText.length;
+  const bridgeOffset = iifePrefix.length;
   if (!artifactTail.startsWith(bridgeText, bridgeOffset)) {
     fail('Generated generic Core agent bridge differs from repository source.');
   }
@@ -172,12 +163,11 @@ async function main() {
   }
 
   const expectedTail = iifePrefix
-    + brokerText
     + bridgeText
     + compressorPrelude
     + sourceBody;
   if (artifactTail !== expectedTail) {
-    fail('Generated userscript generic-plugin/compressor/source assembly differs from repository source.');
+    fail('Generated userscript direct-plugin/compressor/source assembly differs from repository source.');
   }
   if (artifact.length >= 2 * 1024 * 1024) {
     fail(`Generated userscript unexpectedly exceeds 2 MiB: ${artifact.length} bytes.`);

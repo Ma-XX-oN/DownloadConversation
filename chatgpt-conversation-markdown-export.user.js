@@ -1,11 +1,10 @@
 // ==UserScript==
 // @name         ChatGPT Conversation Markdown Recorder
 // @namespace    https://chatgpt.com/
-// @version      1.11.4
+// @version      1.11.4-issue.226.3
 // @description  Exports the current ChatGPT conversation directly from the Conversation API as Markdown or JSONL.
 // @match        https://chatgpt.com/*
 // @match        https://chat.openai.com/*
-// @match        https://github.com/*
 // @connect      github.com
 // @connect      raw.githubusercontent.com
 // @grant        GM_xmlhttpRequest
@@ -6396,262 +6395,11 @@ async function loadAgent(id, { loadModule, context = {} } = {}) {
 // END bundled AIConversationCore
 
 (() => {
-
-  /** Shared Tampermonkey storage key carrying the newest private-plugin request. */
-  const AGENT_PLUGIN_REQUEST_KEY = 'downloadconversation:agent-plugin-request';
-  /** Shared Tampermonkey storage prefix for one private-plugin broker response. */
-  const AGENT_PLUGIN_RESPONSE_PREFIX = 'downloadconversation:agent-plugin-response:';
-  /** Shared Tampermonkey storage prefix for GitHub-side broker progress diagnostics. */
-  const AGENT_PLUGIN_TRACE_PREFIX = 'downloadconversation:agent-plugin-trace:';
-  /** Shared Tampermonkey storage prefix for verified plugin source cache entries. */
+  /** Shared cache prefix for verified direct-download artifacts. */
   const AGENT_PLUGIN_CACHE_PREFIX = 'downloadconversation:agent-plugin-cache:';
-  /** Maximum age accepted for a browser-broker request. */
-  const AGENT_PLUGIN_REQUEST_MAX_AGE_MS = 2 * 60 * 1000;
-  /** Maximum time the ChatGPT tab waits for one broker response. */
-  const AGENT_PLUGIN_BROKER_TIMEOUT_MS = 2 * 60 * 1000;
+  /** Direct GitHub-origin retrieval timeout in milliseconds. */
+  const AGENT_PLUGIN_DOWNLOAD_TIMEOUT_MS = 2 * 60 * 1000;
 
-  /**
-   * Resolves one agent artifact through the AICC catalogue bundled into this build.
-   * DownloadConversation never owns provider repository/ref/version/hash metadata.
-   *
-   * @param {string} pluginId - Provider-neutral AICC agent ID.
-   * @returns {Object|null} Core-owned artifact descriptor, or null when unavailable.
-   */
-  function coreAgentPluginArtifact(pluginId) {
-    const core = globalThis.AIConversationCore;
-    if (typeof core?.getAgentPluginArtifact !== 'function') return null;
-    try {
-      return core.getAgentPluginArtifact(pluginId);
-    } catch {
-      return null;
-    }
-  }
-
-  /**
-   * Constructs the authenticated GitHub file-page URL selected by one Core-owned
-   * artifact descriptor.  Browser authentication remains owned by GitHub/Chrome.
-   *
-   * @param {Object} descriptor - Core-owned artifact selector and integrity metadata.
-   * @returns {string} HTTPS GitHub file-page URL.
-   */
-  function githubAgentPluginBlobUrl(descriptor) {
-    const [owner, repository] = String(descriptor.repository).split('/');
-    assert(owner && repository, 'Agent plugin repository identity is invalid.');
-    const artifactPath = String(descriptor.path)
-      .split('/')
-      .map(segment => encodeURIComponent(segment))
-      .join('/');
-    return `https://github.com/${encodeURIComponent(owner)}/${encodeURIComponent(repository)}`
-      + `/blob/${encodeURIComponent(descriptor.ref)}/${artifactPath}`;
-  }
-
-  /**
-   * Returns whether the current GitHub document is the exact Core-selected plugin
-   * file page rather than merely another GitHub page.
-   *
-   * @param {Object} descriptor - Core-owned artifact descriptor.
-   * @returns {boolean} `true` only on the selected GitHub file page.
-   */
-  function githubAgentPluginPageMatches(descriptor) {
-    if (location.origin !== 'https://github.com') return false;
-    const expected = new URL(githubAgentPluginBlobUrl(descriptor));
-    return location.pathname === expected.pathname;
-  }
-
-  /**
-   * Publishes one GitHub-side broker progress event to shared userscript storage.
-   * This carries only stage metadata; plugin source and GitHub credentials are
-   * never included in diagnostic events.
-   *
-   * @param {Object} request - Active broker request.
-   * @param {string} stage - Stable broker progress stage.
-   * @param {Object} [detail={}] - Non-sensitive diagnostic detail.
-   * @returns {void} No value is returned.
-   */
-  function publishGitHubAgentPluginTrace(request, stage, detail = {}) {
-    if (!request || typeof request.request_id !== 'string') return;
-    GM_setValue(`${AGENT_PLUGIN_TRACE_PREFIX}${request.request_id}`, {
-      request_id: request.request_id,
-      stage,
-      at: Date.now(),
-      ...detail
-    });
-  }
-
-  /**
-   * Reads GitHub's read-only code textarea once the file view has rendered.
-   * The textarea value is the browser-decoded file text, not HTML markup.
-   *
-   * @returns {string|null} Current file source, or null until GitHub renders it.
-   */
-  function githubAgentPluginSourceFromPage() {
-    const textarea = document.querySelector(
-      'textarea[data-testid="read-only-cursor-text-area"][aria-label="file content"]'
-    );
-    if (!textarea || String(textarea.tagName ?? '').toUpperCase() !== 'TEXTAREA'
-        || typeof textarea.value !== 'string') return null;
-    return textarea.value.length ? textarea.value : null;
-  }
-
-  /**
-   * Restores GitHub file-view's omitted terminal LF only when AICC's descriptor
-   * proves the displayed UTF-8 text is exactly one byte shorter than the selected
-   * artifact.  The ChatGPT side still verifies the full Git blob SHA-1.
-   *
-   * @param {Object} descriptor - Core-owned exact artifact descriptor.
-   * @param {string} source - Source text read from GitHub's file-view textarea.
-   * @returns {{source: string, displayed_byte_length: number, transferred_byte_length: number, terminal_lf_restored: boolean}}
-   *   Source transfer result and non-sensitive byte-length diagnostics.
-   */
-  function normalizeGitHubAgentPluginSource(descriptor, source) {
-    const displayedByteLength = new TextEncoder().encode(source).byteLength;
-    const shouldRestoreTerminalLf = displayedByteLength + 1 === descriptor.byteLength
-      && !source.endsWith('\n');
-    const normalized = shouldRestoreTerminalLf ? `${source}\n` : source;
-    return {
-      source: normalized,
-      displayed_byte_length: displayedByteLength,
-      transferred_byte_length: new TextEncoder().encode(normalized).byteLength,
-      terminal_lf_restored: shouldRestoreTerminalLf
-    };
-  }
-
-  /**
-   * Waits for GitHub's file viewer to materialize its read-only source textarea.
-   *
-   * @returns {Promise<string>} Exact source text displayed by GitHub.
-   */
-  function waitForGitHubAgentPluginSource() {
-    const immediate = githubAgentPluginSourceFromPage();
-    if (immediate !== null) return Promise.resolve(immediate);
-    return new Promise((resolve, reject) => {
-      let settled = false;
-      let observer = null;
-      let timer = null;
-      const finish = (error, source = null) => {
-        if (settled) return;
-        settled = true;
-        observer?.disconnect();
-        if (timer !== null) clearTimeout(timer);
-        if (error) reject(error);
-        else resolve(source);
-      };
-      const check = () => {
-        const source = githubAgentPluginSourceFromPage();
-        if (source !== null) finish(null, source);
-      };
-      observer = new MutationObserver(check);
-      observer.observe(document.documentElement, { childList: true, subtree: true });
-      timer = setTimeout(() => {
-        finish(new Error('GitHub file content did not become available.'));
-      }, AGENT_PLUGIN_BROKER_TIMEOUT_MS);
-      check();
-    });
-  }
-
-  /**
-   * Returns whether a shared request exactly matches AICC's selected artifact.
-   * This keeps the GitHub-side broker an authenticated transport, not a selector.
-   *
-   * @param {Object} request - Shared-storage request from an AI-agent tab.
-   * @param {Object} descriptor - Core-owned artifact descriptor.
-   * @returns {boolean} `true` only for the exact AICC-selected artifact.
-   */
-  function githubAgentPluginRequestMatches(request, descriptor) {
-    return request?.plugin_id === descriptor?.id
-      && request?.repository === descriptor?.repository
-      && request?.ref === descriptor?.ref
-      && request?.path === descriptor?.path
-      && request?.version === descriptor?.version
-      && request?.api_version === descriptor?.apiVersion
-      && request?.git_blob_sha1 === descriptor?.gitBlobSha1
-      && request?.byte_length === descriptor?.byteLength;
-  }
-
-  /**
-   * Handles one Core-selected artifact request inside GitHub's authenticated file
-   * view. Only the file text shown by GitHub is transferred through userscript
-   * storage; browser credentials never leave GitHub/Chrome.
-   *
-   * @param {Object} request - Shared-storage request from an AI-agent tab.
-   * @returns {Promise<void>} Resolves after a success/failure response is published.
-   */
-  async function handleGitHubAgentPluginRequest(request) {
-    if (!request || typeof request.request_id !== 'string') return;
-    const descriptor = coreAgentPluginArtifact(request.plugin_id);
-    if (!descriptor || !githubAgentPluginRequestMatches(request, descriptor)) return;
-    const age = Date.now() - Number(request.requested_at ?? 0);
-    if (!Number.isFinite(age) || age < 0 || age > AGENT_PLUGIN_REQUEST_MAX_AGE_MS) return;
-
-    const responseKey = `${AGENT_PLUGIN_RESPONSE_PREFIX}${request.request_id}`;
-    publishGitHubAgentPluginTrace(request, 'request-accepted', {
-      pathname: location.pathname
-    });
-    try {
-      if (!githubAgentPluginPageMatches(descriptor)) {
-        publishGitHubAgentPluginTrace(request, 'wrong-file-page', {
-          pathname: location.pathname
-        });
-        GM_setValue(responseKey, {
-          request_id: request.request_id,
-          ok: false,
-          reason: 'WRONG_GITHUB_FILE_PAGE'
-        });
-        return;
-      }
-      publishGitHubAgentPluginTrace(request, 'waiting-for-file-content');
-      const displayedSource = await waitForGitHubAgentPluginSource();
-      const normalized = normalizeGitHubAgentPluginSource(descriptor, displayedSource);
-      publishGitHubAgentPluginTrace(request, 'file-content-read', {
-        character_length: displayedSource.length,
-        displayed_byte_length: normalized.displayed_byte_length,
-        transferred_byte_length: normalized.transferred_byte_length,
-        terminal_lf_restored: normalized.terminal_lf_restored
-      });
-      GM_setValue(responseKey, {
-        request_id: request.request_id,
-        ok: true,
-        source: normalized.source
-      });
-      publishGitHubAgentPluginTrace(request, 'response-published', {
-        transferred_byte_length: normalized.transferred_byte_length,
-        terminal_lf_restored: normalized.terminal_lf_restored
-      });
-      window.close();
-    } catch (error) {
-      const message = error instanceof Error ? error.message : String(error);
-      publishGitHubAgentPluginTrace(request, 'file-view-error', { message });
-      GM_setValue(responseKey, {
-        request_id: request.request_id,
-        ok: false,
-        status: null,
-        reason: 'FILE_VIEW_ERROR',
-        message
-      });
-    }
-  }
-
-  /**
-   * Installs the generic GitHub-side artifact broker. The active provider/repository
-   * is resolved from AICC only after a shared request arrives.
-   *
-   * @returns {boolean} `true` when GitHub broker mode owns this userscript realm.
-   */
-  function installGitHubAgentPluginBroker() {
-    if (location.hostname !== 'github.com') return false;
-    const dispatch = value => {
-      handleGitHubAgentPluginRequest(value).catch(error => {
-        console.error('[DownloadConversation] GitHub plugin broker failed', error);
-      });
-    };
-    GM_addValueChangeListener(AGENT_PLUGIN_REQUEST_KEY, (_name, _oldValue, newValue) => {
-      dispatch(newValue);
-    });
-    dispatch(GM_getValue(AGENT_PLUGIN_REQUEST_KEY, null));
-    return true;
-  }
-
-  if (installGitHubAgentPluginBroker()) return;
   /** Promise for the one AICC-selected ChatGPT plugin module import in this page realm. */
   let chatGPTPluginModulePromise = null;
   /** Provider-owned ChatGPT agent instance created through AICC. */
@@ -6732,7 +6480,7 @@ async function loadAgent(id, { loadModule, context = {} } = {}) {
       GM_xmlhttpRequest({
         method: 'GET',
         url,
-        timeout: AGENT_PLUGIN_BROKER_TIMEOUT_MS,
+        timeout: AGENT_PLUGIN_DOWNLOAD_TIMEOUT_MS,
         onload(response) {
           if (response.status !== 200) {
             reject(new Error(`Private plugin download returned HTTP ${response.status}.`));
