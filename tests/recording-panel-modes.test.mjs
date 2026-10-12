@@ -111,7 +111,7 @@ test('export format settings and compression are persistent with independent def
   assert.match(panel, /EXPORT_JSONL_STORAGE_KEY = 'tm-conversation-recorder-export-jsonl'/);
   assert.match(panel, /EXPORT_MD_STORAGE_KEY = 'tm-conversation-recorder-export-md'/);
   assert.match(panel, /EXPORT_COMPRESSION_STORAGE_KEY = 'tm-conversation-recorder-export-compressed'/);
-  assert.match(panel, /exportCompressionEnabled = localStorage\.getItem\(EXPORT_COMPRESSION_STORAGE_KEY\) === 'true'/);
+  assert.match(panel, /exportCompressionEnabled =\s*localStorage\.getItem\(EXPORT_COMPRESSION_STORAGE_KEY\) === 'true'/);
   assert.match(panel, /\['format-jsonl', EXPORT_JSONL_STORAGE_KEY, false\]/);
   assert.match(panel, /\['format-md', EXPORT_MD_STORAGE_KEY, true\]/);
   assert.match(panel, /input\.checked = stored === null \? fallback : stored === 'true'/);
