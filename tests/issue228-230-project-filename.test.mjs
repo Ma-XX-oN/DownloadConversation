@@ -24,7 +24,7 @@ test('saved name is project__conversation with no fixed product prefix', () => {
 });
 
 test('the checked-in userscript has matching canonical generator and header', () => {
-  assert.match(userscript, /@version\s+1\.11\.4-issue\.220\.37/);
+  assert.match(userscript, /@version\s+1\.11\.4-issue\.220\.38/);
   assert.match(userscript, /return `\$\{identity\}_\$\{start\}-\$\{end\}`;/);
   assert.doesNotMatch(productionFunctionSource('canonicalFilename'), /DownloadConversation_/);
 });
