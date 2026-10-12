@@ -100,7 +100,21 @@ test('the volume markers and user-specified icons are explicitly styled', () => 
   assert.match(panel, /tm-sound-volume-slider::-webkit-slider-thumb/);
   assert.match(panel, /background:#b2d8ff/);
   assert.match(panel, /const radius = compressed \? 4 : 8/);
-  assert.match(panel, /extract.textContent = exportInProgress \? '…' : '→'/);
+  assert.match(panel, /extract.innerHTML = exportInProgress \? '…' : exportArrowIconMarkup\(\)/);
+  assert.match(panel, /\.tm-export-action\{display:grid;place-items:center/);
+  assert.match(panel, /function exportArrowIconMarkup\(\)/);
   assert.match(panel, /test.textContent = testInProgress \? '…' : '🧪'/);
   assert.match(panel, /jump.textContent = jumpInProgress \? '…' : '🪂'/);
+});
+
+test('export format settings and compression are persistent with independent defaults', () => {
+  assert.match(panel, /EXPORT_JSONL_STORAGE_KEY = 'tm-conversation-recorder-export-jsonl'/);
+  assert.match(panel, /EXPORT_MD_STORAGE_KEY = 'tm-conversation-recorder-export-md'/);
+  assert.match(panel, /EXPORT_COMPRESSION_STORAGE_KEY = 'tm-conversation-recorder-export-compressed'/);
+  assert.match(panel, /exportCompressionEnabled = localStorage\.getItem\(EXPORT_COMPRESSION_STORAGE_KEY\) === 'true'/);
+  assert.match(panel, /\['format-jsonl', EXPORT_JSONL_STORAGE_KEY, false\]/);
+  assert.match(panel, /\['format-md', EXPORT_MD_STORAGE_KEY, true\]/);
+  assert.match(panel, /input\.checked = stored === null \? fallback : stored === 'true'/);
+  assert.match(panel, /localStorage\.setItem\(key, String\(input\.checked\)\)/);
+  assert.match(panel, /localStorage\.setItem\(EXPORT_COMPRESSION_STORAGE_KEY, String\(exportCompressionEnabled\)\)/);
 });
