@@ -21,6 +21,7 @@ const ordinaryStages = [
   ['Recording-group per-tab identity regression', nodeCommand, ['--test', 'tests/recording-group-tab-identity.test.mjs']],
   ['Real Chromium tab ownership acceptance', nodeCommand, ['--test', 'tests/recording-group-chromium.test.mjs']],
   ['Recorder logging-mode regression', nodeCommand, ['--test', 'tests/recording-panel-modes.test.mjs']],
+  ['Chromium recorder popup visual geometry acceptance', nodeCommand, ['--test', 'tests/recording-panel-chromium-layout.test.mjs']],
   ['Combined log time-control regression', nodeCommand, ['--test', 'tests/log-extraction-dialog.test.mjs']],
   ['Merged Gen/Comm extraction regression', nodeCommand, ['--test', 'tests/merged-log-extraction.test.mjs']],
   ['Grouped log filesystem regression', nodeCommand, ['--test', 'tests/merged-log-storage-integration.test.mjs']],
