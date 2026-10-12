@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         ChatGPT Conversation Markdown Recorder
 // @namespace    https://chatgpt.com/
-// @version      1.11.4-issue.220.8
+// @version      1.11.4-issue.220.9
 // @description  Exports the current ChatGPT conversation directly from the Conversation API as Markdown or JSONL.
 // @match        https://chatgpt.com/*
 // @match        https://chat.openai.com/*
@@ -21889,6 +21889,10 @@ Image elapsed: ${formatDuration(imageElapsed)} — Completed: ${imageCompleted}/
   let recordingGroupPeers = new Map();
   /** Current claim timer, cleared when a claim is cancelled. */
   let recordingGroupClaimTimer = null;
+  /** Low-frequency liveness repeat when an earlier tab missed one probe. */
+  const RECORDING_GROUP_HEARTBEAT_MS = 2000;
+  /** Heartbeat timer owned only by a confirmed live recording group. */
+  let recordingGroupHeartbeatTimer = null;
 
   /**
    * Publishes a bounded ownership message; payloads contain no log data.
@@ -22012,6 +22016,10 @@ Image elapsed: ${formatDuration(imageElapsed)} — Completed: ${imageCompleted}/
     if (recordingGroupClaimTimer !== null) clearTimeout(recordingGroupClaimTimer);
     recordingGroupClaimTimer = null;
     recordingGroupReady = false;
+    if (recordingGroupHeartbeatTimer !== null) {
+      clearInterval(recordingGroupHeartbeatTimer);
+      recordingGroupHeartbeatTimer = null;
+    }
     recordingGroupPeers.clear();
   }
 
@@ -22105,6 +22113,11 @@ Image elapsed: ${formatDuration(imageElapsed)} — Completed: ${imageCompleted}/
     }
     recordingGroupReady = true;
     recordingGroupSend('owner');
+    // Periodic owner evidence repairs missed startup messages and suspended
+    // tab wakeups without logging or reading the page DOM.
+    recordingGroupHeartbeatTimer = setInterval(() => {
+      if (recordingGroupReady) recordingGroupSend('owner');
+    }, RECORDING_GROUP_HEARTBEAT_MS);
     return true;
   }
 
