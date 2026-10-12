@@ -1,0 +1,75 @@
+<!doctype html>
+<meta charset="utf-8">
+<title>#251 Browser storage microbenchmark</title>
+<h1>#251 Browser storage microbenchmark</h1>
+<p>Serve this file from a localhost HTTP origin; it does not measure ChatGPT startup.</p>
+<button id="run" type="button">Run 12 trials</button>
+<pre id="output">Not run.</pre>
+<script>
+'use strict';
+const STORAGE_KEY = 'dc251-browser-benchmark';
+const TRIALS = 12;
+const OPERATIONS = 80;
+const RECORDS = 5000;
+const entries = Array.from({length: RECORDS}, (_, i) => ({
+  timestamp: new Date(1700000000000 + i * 1000).toISOString(),
+  level: 'lifecycle', message: i ? 'noop' : 'dc-version-transition',
+  data: {version: 'v1', i}
+}));
+const inputs = [
+  {name: 'baseline-array', payload: JSON.stringify(entries)},
+  {name: 'candidate-object', payload: JSON.stringify({
+    version_before_persisted: 'v1', records: entries
+  })}
+];
+function median(values) {
+  const ordered = [...values].sort((a, b) => a - b);
+  return (ordered[(ordered.length - 1) >> 1] +
+    ordered[ordered.length >> 1]) / 2;
+}
+function measureOne({name, payload}) {
+  const writeMs = [];
+  const readParseMs = [];
+  for (let trial = 0; trial < TRIALS; trial += 1) {
+    let start = performance.now();
+    for (let i = 0; i < OPERATIONS; i += 1) {
+      sessionStorage.setItem(STORAGE_KEY, payload);
+    }
+    writeMs.push(performance.now() - start);
+    start = performance.now();
+    for (let i = 0; i < OPERATIONS; i += 1) {
+      const snapshot = JSON.parse(sessionStorage.getItem(STORAGE_KEY));
+      const records = Array.isArray(snapshot) ? snapshot : snapshot.records;
+      if (records.length !== RECORDS) throw new Error('Missing records');
+    }
+    readParseMs.push(performance.now() - start);
+  }
+  return {
+    name, bytes: new TextEncoder().encode(payload).length,
+    writeBatchMedianMs: median(writeMs),
+    readParseBatchMedianMs: median(readParseMs),
+    writeMs, readParseMs
+  };
+}
+document.getElementById('run').addEventListener('click', () => {
+  const output = document.getElementById('output');
+  try {
+    if (location.protocol !== 'http:' && location.protocol !== 'https:') {
+      throw new Error('Run from an HTTP(S) origin, not file: or about:');
+    }
+    const report = {
+      environment: navigator.userAgent,
+      origin: location.origin,
+      candidateSource: '8be04b6200449de12ae78e9405e697d9093701bb',
+      scope: 'Native browser sessionStorage write and read+JSON.parse only; not userscript startup',
+      records: RECORDS, operationsPerTrial: OPERATIONS, trials: TRIALS,
+      results: inputs.map(measureOne)
+    };
+    output.textContent = JSON.stringify(report, null, 2);
+  } catch (error) {
+    output.textContent = 'FAIL: ' + String(error);
+  } finally {
+    try { sessionStorage.removeItem(STORAGE_KEY); } catch {}
+  }
+});
+</script>
