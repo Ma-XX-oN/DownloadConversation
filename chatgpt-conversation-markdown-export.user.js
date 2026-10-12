@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         ChatGPT Conversation Markdown Recorder
 // @namespace    https://chatgpt.com/
-// @version      1.11.4-issue.243.2
+// @version      1.11.4-issue.243.3
 // @description  Exports the current ChatGPT conversation directly from the Conversation API as Markdown or JSONL.
 // @match        https://chatgpt.com/*
 // @match        https://chat.openai.com/*
@@ -7227,14 +7227,42 @@ globalThis.__dcCompressor = {
   }
 
   /**
-   * Handles conversation title.
+   * Rejects UI labels that cannot identify a conversation.
    *
-   * @returns {string} The string produced by `conversationTitle`.
+   * @param {string|null} value - Candidate visible conversation title.
+   * @returns {boolean} True only for a usable conversation title.
+   */
+  function usableConversationTitle(value) {
+    const text = String(value ?? '').trim();
+    return Boolean(text) && !/^(?:skip to content|chatgpt|chatgpt conversation|unknown(?:__\\d+)?)$/i.test(text);
+  }
+
+  /**
+   * Resolves the current conversation from its active sidebar row first.
+   * The saved ChatGPT DOM identifies the row by aria-current and data-thread-title.
+   * Ignore headings and unrelated sidebar rows; document.title is the fallback.
+   *
+   * @returns {string} Current conversation name or a neutral fallback.
    */
   function conversationTitle() {
-    const heading = document.querySelector('h1')?.textContent?.trim();
-    const title = heading || document.title || 'ChatGPT conversation';
-    return title.replace(/\s*[-–—]\s*ChatGPT\s*$/i, '').trim() || 'ChatGPT conversation';
+    const conversationId = currentConversationId();
+    if (conversationId) {
+      for (const anchor of document.querySelectorAll(
+        'a[data-interactive-row-link][aria-current="page"][href]'
+      )) {
+        try {
+          const url = new URL(anchor.href, location.href);
+          if (url.origin !== location.origin
+              || url.pathname.match(/\\/c\\/([^/]+)$/)?.[1] !== conversationId) continue;
+          const text = anchor.querySelector('[data-thread-title]')?.textContent?.trim()
+            || anchor.getAttribute('aria-label')?.trim();
+          if (usableConversationTitle(text)) return text;
+        } catch {}
+      }
+    }
+    const pageTitle = String(document.title ?? '')
+      .replace(/\\s*[-–—]\\s*ChatGPT\\s*$/i, '').trim();
+    return usableConversationTitle(pageTitle) ? pageTitle : 'ChatGPT conversation';
   }
 
   /**
@@ -7808,14 +7836,14 @@ globalThis.__dcCompressor = {
     const conversationId = currentConversationId();
     const storageKey = `${COMMUNICATION_LOG_TITLE_STORAGE_PREFIX}${conversationId ?? 'unknown'}`;
     const current = sanitizeFileName(conversationTitle());
-    const currentUsable = !/^(?:ChatGPT|ChatGPT conversation)$/i.test(current);
+    const currentUsable = usableConversationTitle(current);
     if (currentUsable) {
       try { localStorage.setItem(storageKey, current); } catch {}
       return current;
     }
     try {
       const stored = localStorage.getItem(storageKey);
-      return stored ? sanitizeFileName(stored) : null;
+      return stored && usableConversationTitle(stored) ? sanitizeFileName(stored) : null;
     } catch {
       return null;
     }
@@ -8647,46 +8675,36 @@ globalThis.__dcCompressor = {
   }
 
   /**
-   * Resolves the project name using project navigation, tab title, or route slug.
+   * Resolves the active project by its stable route ID, using the breadcrumb
+   * visible in the saved ChatGPT DOM. Project routes may include or omit
+   * the human-readable slug while referring to the same project.
    *
-   * @returns {string|null} Current visible or route-derived project name.
+   * @returns {string|null} Current project name or null outside a project.
    */
   function conversationProjectName() {
+    const route = location.pathname.match(/^\\/g\\/(g-p-[0-9a-f]{32})(?:-[^/]+)?(?:\\/|$)/i);
+    if (!route) return null;
+    const projectId = route[1].toLowerCase();
     const namesByRoute = conversationProjectName.byRoute ??= new Map();
-    const projectSegment = location.pathname.match(/^\/g\/([^/]+)(?:\/|$)/)?.[1] ?? null;
-    if (!projectSegment) return null;
-    const projectPath = `/g/${projectSegment}/project`;
-    const projectRoot = `/g/${projectSegment}`;
-    for (const anchor of document.querySelectorAll('a[href]')) {
+    for (const anchor of document.querySelectorAll(
+      'nav[aria-label="Breadcrumb"] a[href]'
+    )) {
       try {
-        const target = new URL(anchor.href, location.href);
-        if (target.origin !== location.origin || ![projectPath, projectRoot].includes(target.pathname.replace(/\/$/, ''))) continue;
-        const visibleName = anchor.textContent?.trim();
-        if (visibleName) {
-          namesByRoute.set(projectSegment, visibleName);
-          return visibleName;
+        const url = new URL(anchor.href, location.href);
+        const match = url.pathname.match(
+          /^\\/g\\/(g-p-[0-9a-f]{32})(?:-[^/]+)?\\/project\\/?$/i
+        );
+        if (url.origin !== location.origin || !match
+            || match[1].toLowerCase() !== projectId) continue;
+        const name = anchor.textContent?.trim();
+        if (name) {
+          namesByRoute.set(projectId, name);
+          return name;
         }
       } catch {}
     }
-
-    const heading = document.querySelector('h1')?.textContent?.trim();
-    const pageTitle = String(document.title ?? '')
-      .replace(/\s*[-–—]\s*ChatGPT\s*$/i, '')
-      .trim();
-    if (!heading || !pageTitle || pageTitle === heading) return namesByRoute.get(projectSegment) ?? null;
-    for (const separator of [' - ', ' – ', ' — ']) {
-      if (pageTitle.endsWith(`${separator}${heading}`)) {
-        const resolved = pageTitle.slice(0, -(`${separator}${heading}`).length).trim();
-        if (resolved) namesByRoute.set(projectSegment, resolved);
-        return resolved || namesByRoute.get(projectSegment) || null;
-      }
-      if (pageTitle.startsWith(`${heading}${separator}`)) {
-        const resolved = pageTitle.slice(`${heading}${separator}`.length).trim();
-        if (resolved) namesByRoute.set(projectSegment, resolved);
-        return resolved || namesByRoute.get(projectSegment) || null;
-      }
-    }
-    return namesByRoute.get(projectSegment) ?? null;
+    return namesByRoute.get(projectId)
+      ?? projectNameFromRouteSlug(location.pathname.split('/')[2]) ?? null;
   }
 
   /**
