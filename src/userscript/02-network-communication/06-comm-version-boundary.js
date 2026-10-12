@@ -47,6 +47,12 @@
               ? pendingHeader : null;
           }
         }
+        if (record.type === 'communication_session_start'
+            && Object.hasOwn(record, 'script_version')) {
+          const next = record.script_version;
+          if (next === null || next === 'unknown') version = null;
+          else if (typeof next === 'string' && next) version = next;
+        }
         if (record.version && Object.hasOwn(record.version, 'comm')) {
           const next = record.version.comm;
           if (next === null) version = null;
