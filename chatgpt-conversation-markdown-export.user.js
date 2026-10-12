@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         ChatGPT Conversation Markdown Recorder
 // @namespace    https://chatgpt.com/
-// @version      1.11.4-issue.226.3
+// @version      1.11.4-issue.249.1
 // @description  Exports the current ChatGPT conversation directly from the Conversation API as Markdown or JSONL.
 // @match        https://chatgpt.com/*
 // @match        https://chat.openai.com/*
@@ -8199,6 +8199,29 @@ globalThis.__dcCompressor = {
   }
 
   /**
+   * Prefixes one new physical fragment with immutable, timestamp-free version
+   * provenance. Existing nonempty fragments are never rewritten on upgrade.
+   *
+   * @returns {Promise<void>} Resolves after the unique header is accepted.
+   */
+  async function communicationLogEnsureFragmentHeader() {
+    if (communicationLogActiveSegmentBytes !== 0) return;
+    const snapshot = await communicationLogActiveFileSnapshot();
+    if (snapshot.file.size !== 0) {
+      communicationLogActiveSegmentBytes = snapshot.file.size;
+      return;
+    }
+    await communicationLogOpenWriter();
+    const currentVersion = VERSION === 'unknown' ? null : VERSION;
+    const line = `${JSON.stringify({
+      version: { gen: currentVersion, comm: currentVersion }
+    })}\n`;
+    await communicationLogWritable.write(line);
+    communicationLogWriterDirty = true;
+    communicationLogActiveSegmentBytes += new TextEncoder().encode(line).byteLength;
+  }
+
+  /**
    * Returns the stable internal segment-directory name for this logical log.
    *
    * @returns {string} Stable internal directory name.
@@ -8409,6 +8432,7 @@ globalThis.__dcCompressor = {
     };
     await communicationLogSwitchActiveFile(alternate);
     await communicationLogOpenWriter();
+    await communicationLogEnsureFragmentHeader();
     void communicationLogQueueSegmentCompression(segment).catch(() => {});
     return segment;
   }
@@ -8440,6 +8464,7 @@ globalThis.__dcCompressor = {
     const lineBytes = new TextEncoder().encode(line).byteLength;
     const queued = communicationLogEnqueue('storage-append', async () => {
       await communicationLogOpenWriter();
+      await communicationLogEnsureFragmentHeader();
       await communicationLogWritable.write(line);
       communicationLogWriterDirty = true;
       communicationLogActiveSegmentBytes += lineBytes;
@@ -9277,18 +9302,32 @@ globalThis.__dcCompressor = {
     let startTimestamp = null;
     let endTimestamp = null;
     let lineStart = 0;
+    let fragmentHeader = null;
+    let firstLine = true;
     for (let index = 0; index < bytes.byteLength; index += 1) {
       if (bytes[index] !== 10) continue;
       const line = bytes.subarray(lineStart, index);
       const complete = bytes.subarray(lineStart, index + 1);
       lineStart = index + 1;
-      if (!line.byteLength) continue;
+      if (!line.byteLength) {
+        firstLine = false;
+        continue;
+      }
       let record;
       try {
         record = JSON.parse(new TextDecoder().decode(line));
       } catch {
+        firstLine = false;
         continue;
       }
+      if (firstLine && record && typeof record === 'object'
+          && !Array.isArray(record) && Object.keys(record).length === 1
+          && Object.hasOwn(record, 'version')) {
+        fragmentHeader = complete;
+        firstLine = false;
+        continue;
+      }
+      firstLine = false;
       const timestamp = typeof record?.timestamp === 'string'
         ? record.timestamp
         : null;
@@ -9300,6 +9339,11 @@ globalThis.__dcCompressor = {
       total += complete.byteLength;
       startTimestamp ??= timestamp;
       endTimestamp = timestamp;
+    }
+    // No selected records means no output, including no orphan header.
+    if (total > 0 && fragmentHeader) {
+      parts.unshift(fragmentHeader);
+      total += fragmentHeader.byteLength;
     }
     const accepted = new Uint8Array(total);
     let offset = 0;
