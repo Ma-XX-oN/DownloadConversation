@@ -25,6 +25,7 @@ jobs:
           node --check chatgpt-conversation-markdown-export.user.js
           node scripts/check-jsdoc.mjs
           node scripts/build-userscript.mjs --check
+          node --test tests/modular-userscript-build.test.mjs
       - name: Verify 16KiB source-segment cap
         run: |
           node --input-type=module -e "import {readFileSync,statSync} from 'node:fs';const m=JSON.parse(readFileSync('src/userscript-manifest.json'));for(const f of m.modules.flatMap(x=>x.files)){if(statSync(f).size>=16384)throw Error(f+' exceeds 16KiB');}"
