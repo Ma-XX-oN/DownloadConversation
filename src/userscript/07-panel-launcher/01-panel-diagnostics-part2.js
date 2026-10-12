@@ -154,7 +154,7 @@
       const description = compressed ? 'Save compressed' : 'Save uncompressed';
       exportCompression.disabled = exportInProgress || testInProgress || jumpInProgress;
       exportCompression.setAttribute('aria-checked', String(compressed));
-      exportCompression.setAttribute('aria-label', compressed ? 'Compressed export output' : 'Raw export output');
+      exportCompression.setAttribute('aria-label', compressed ? 'Save compressed' : 'Save uncompressed');
       exportCompression.title = description;
       exportCompression.innerHTML = exportCompressionIconMarkup(compressed);
     }
