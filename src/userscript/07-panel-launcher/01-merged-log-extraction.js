@@ -68,6 +68,7 @@
     const lines = text.split('\n');
     for (let index = 0; index < lines.length; index += 1) {
       const line = lines[index];
+      if (index === lines.length - 1 && !text.endsWith('\n')) break;
       if (!line.trim()) continue;
       let event;
       try {
@@ -83,6 +84,10 @@
       if (!event || typeof event !== 'object' || Array.isArray(event)) {
         throw new Error('Communication JSONL record is not an object at line '
           + (index + 1));
+      }
+      if (index === 0 && Object.keys(event).length === 1
+          && Object.hasOwn(event, 'version') && !Object.hasOwn(event, 'timestamp')) {
+        continue;
       }
       results.push(event);
     }
@@ -120,7 +125,7 @@
         const file = await handle.getFile();
         const bytes = new Uint8Array(await file.arrayBuffer());
         const plain = archived ? await extractArchive(bytes) : bytes;
-        groups.push(mergedLogParseJsonl(plain));
+        groups.push({ bytes: plain, records: mergedLogParseJsonl(plain) });
       }
     }
     return groups;
@@ -131,7 +136,7 @@
    *
    * @returns {Promise<Object[]>} Captured communication events in file order.
    */
-  async function mergedLogReadCommunication() {
+  async function mergedLogReadCommunication(includeVersions = false) {
     if (!communicationLogReady || !communicationLogSegmentDirectoryHandle) {
       throw new Error('Communication recording directory is not ready.');
     }
@@ -141,7 +146,7 @@
     const blocks = [];
     for (const segment of plan.segments) {
       const bytes = await communicationLogReadHistoricalSegment(segment);
-      blocks.push(mergedLogParseJsonl(bytes));
+      blocks.push({ bytes, records: mergedLogParseJsonl(bytes) });
     }
     const active = await communicationLogSegmentDirectoryHandle.getFileHandle(
       plan.active_name, { create: false }
@@ -153,14 +158,14 @@
     const bytes = new Uint8Array(
       await file.slice(0, plan.active_eof).arrayBuffer()
     );
-    blocks.push(mergedLogParseJsonl(bytes));
+    blocks.push({ bytes, records: mergedLogParseJsonl(bytes) });
     const group = recordingGroupState();
     if (group.ready && group.uuid) {
       blocks.push(...await mergedLogPreviousConversationBlocks());
       // A group starts at explicit enablement. Historical entries from
       // before enablement and other tabs must never leak into the output.
       for (let i = 0; i < blocks.length; i += 1) {
-        blocks[i] = blocks[i].filter(event =>
+        blocks[i].records = blocks[i].records.filter(event =>
           event.recording_group_uuid === group.uuid
         );
       }
@@ -169,19 +174,19 @@
     // New records carry capture_order; sort whole archived blocks by their
     // capture position when every block has comparable evidence.
     const positioned = group.ready && group.uuid
-      && blocks.every(block => block.every(event =>
+      && blocks.every(block => block.records.every(event =>
       mergedLogValidPosition(event?.capture_order)));
     if (positioned) {
       blocks.sort((left, right) => {
-        if (!left.length || !right.length) return 0;
+        if (!left.records.length || !right.records.length) return 0;
         return mergedLogComparePosition(
-          left[0].capture_order, right[0].capture_order
+          left.records[0].capture_order, right.records[0].capture_order
         );
       });
     }
-    const records = blocks.flat();
+    const records = blocks.flatMap(block => block.records);
     const seen = new Set();
-    return records.filter(event => {
+    const unique = records.filter(event => {
       if (!mergedLogValidPosition(event?.capture_order)) return true;
       const key = String(event.recording_group_uuid) + ':'
         + event.capture_order.epoch + ':' + event.capture_order.ordinal;
@@ -189,6 +194,26 @@
       seen.add(key);
       return true;
     });
+    if (!includeVersions) return unique;
+    const encoder = new TextEncoder();
+    const fragments = blocks.filter(block => block.records.length > 0)
+      .map(block => {
+        const original = new TextDecoder().decode(block.bytes);
+        const headerLine = original.split('\n', 1)[0];
+        let header = null;
+        try {
+          const candidate = JSON.parse(headerLine);
+          if (candidate && typeof candidate === 'object'
+              && !Array.isArray(candidate)
+              && Object.keys(candidate).length === 1
+              && Object.hasOwn(candidate, 'version')) {
+            header = candidate;
+          }
+        } catch {}
+        const physical = header ? [header, ...block.records] : block.records;
+        return encoder.encode(physical.map(JSON.stringify).join('\n') + '\n');
+      });
+    return { records: unique, fragments };
   }
 
   /**
@@ -336,19 +361,24 @@
     }
     const bounds = mergedLogValidateSelection(selection);
     const group = recordingGroupState();
-    const general = bounds.general ? mergedLogRangeFilter(
-      group.ready && group.uuid
-        ? diagnosticLog.filter(e => e.recording_group_uuid === group.uuid)
-        : diagnosticLog, bounds.lower, bounds.upper
-    ) : [];
-    const communication = bounds.communication ? mergedLogRangeFilter(
-      await mergedLogReadCommunication(), bounds.lower, bounds.upper
-    ) : [];
+    const generalSource = group.ready && group.uuid
+      ? diagnosticLog.filter(e => e.recording_group_uuid === group.uuid)
+      : diagnosticLog;
+    const general = bounds.general
+      ? mergedLogRangeFilter(generalSource, bounds.lower, bounds.upper) : [];
+    const commSource = bounds.communication
+      ? await mergedLogReadCommunication(true) : { records: [], fragments: [] };
+    const communication = bounds.communication
+      ? mergedLogRangeFilter(commSource.records, bounds.lower, bounds.upper) : [];
     const merge = mergedLogInterleave(general, communication);
     if (!merge.entries.length) {
       throw new Error('No recorded events exist within the selected range.');
     }
-    const text = mergedLogJsonl(merge, selection);
+    const provenance = mergedLogBoundaryVersionRecord(
+      generalSource, diagnosticLogBaselineVersion, commSource.fragments,
+      selection
+    );
+    const text = mergedLogJsonlWithVersions(merge, selection, provenance);
     const source = new TextEncoder().encode(text);
     const archive = await createArchive(source);
     const restored = await extractArchive(archive);
