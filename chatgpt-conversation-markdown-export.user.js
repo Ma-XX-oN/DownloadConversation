@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         ChatGPT Conversation Markdown Recorder
 // @namespace    https://chatgpt.com/
-// @version      1.11.4-issue.251.7
+// @version      1.11.4-issue.251.8
 // @description  Exports the current ChatGPT conversation directly from the Conversation API as Markdown or JSONL.
 // @match        https://chatgpt.com/*
 // @match        https://chat.openai.com/*
@@ -7025,6 +7025,8 @@ globalThis.__dcCompressor = {
   let streamTailCapture = null;
   /** Monotonic sequence assigned to stock page fetch/XHR diagnostics in this page lifetime. */
   let stockNetworkSequence = 0;
+  /** Unique identity correlating all communication records produced by this page lifetime. */
+  const communicationLogSessionId = crypto.randomUUID();
   /**
    * Restores the GEN diagnostic tail and its historical version baseline.
    * Older plain-array snapshots have no trustworthy prior version.
@@ -8148,8 +8150,6 @@ globalThis.__dcCompressor = {
   let communicationLogLifecycleInstalled = false;
   /** Whether one communication-log file-management action is currently updating panel state. */
   let communicationLogUiActionInProgress = false;
-  /** Unique identity correlating all communication records produced by this page lifetime. */
-  const communicationLogSessionId = crypto.randomUUID();
 
   /** Internal directory containing sealed/compressed segments for the logical log. */
   let communicationLogSegmentDirectoryHandle = null;
