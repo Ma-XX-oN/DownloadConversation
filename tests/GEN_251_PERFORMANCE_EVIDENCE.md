@@ -43,3 +43,24 @@ These readings are environment-specific and do not establish a browser-performan
 Additional browser probe in this run: Debian Chromium 144 invoked headlessly on minimal `file:` and `data:` documents returned no DOM output within timeout. A second launch with `--single-process --no-zygote` also timed out after 8 seconds, reporting DBus connection errors. Previous worker observed `ERR_BLOCKED_BY_ADMINISTRATOR` for test origins. There is still **no actual browser-origin sessionStorage or end-to-end startup timing**. Do not mark those acceptance gates passed.
 
 Remaining exact requirements: (1) execute the script on the actual checkout at candidate/base refs, rather than reconstructed fixtures; (2) capture Chromium/Chrome origin-backed storage-read/write timing, event-loop blocking, 5,000-record restore/startup distributions, and compare to baseline; (3) post an acceptance verdict tied to exact candidate and browser environment. The prior canonical CI run validated policy only, not the benchmark. Issue remains OPEN; no merge.
+
+## Reproducer and acceptance ledger (2026-10-12)
+
+Browser microbenchmark source: `tests/gen-browser-storage.bench.html` added at commit `205a784e4df917d2f130a9e8b9a66b7239308e71`. JavaScript content syntax was locally checked with Node.js `--check` before publication. Serve the repository directory with `python -m http.server 8765`, then open `http://127.0.0.1:8765/tests/gen-browser-storage.bench.html` in Chrome and select **Run 12 trials**. Save the JSON output with Chrome build, machine specifications, and navigation origin. This tests **native browser storage write and read+parse throughput**, not a real ChatGPT userscript startup; do not substitute these microbenchmark results for end-to-end acceptance.
+
+A concrete CDP retry launched Chromium 144 with `--remote-debugging-port=9333`, successfully queried `/json/version`, and used `Page.navigate` for `http://127.0.0.1:8765/gen-browser-storage.bench.html`. Navigation returned `net::ERR_BLOCKED_BY_ADMINISTRATOR`. Browser runtime reported URL `chrome-error://chromewebdata/`, origin `null`, page text "Your organization doesn’t allow you to view this site", and `sessionStorage` raised `SecurityError`. This independently confirms policy denial rather than merely a Chrome startup timeout. No attempt was made to bypass the configured administrative block.
+
+Latest existing canonical CI after adding browser benchmark: run `38298591433`, commit `205a784e4df917d2f130a9e8b9a66b7239308e71`. **Policy job PASS only**. Jobs `prepare`, `validate`, and `finalize` were SKIPPED; the benchmark and browser harness were **not executed by CI**.
+
+| Acceptance requirement | Evidence | Status |
+|---|---|---|
+| Frozen prerequisite #237 and source provenance | Closed #237, SHA `8be04b6200449de12ae78e9405e697d9093701bb` | PASS |
+| GEN 10,000-memory / 5,000-persisted bounds | 12-trial candidate isolated Node VM fixture, assertions PASS | PASS (fixture only) |
+| Node benchmark executes with exact extracted GEN functions | Copied benchmark ran Node.js 22.16.0 on reconstructed source-function fixture, 12 trials | PASS (fixture only); exact checkout INCOMPLETE |
+| Candidate vs baseline isolated serialization overhead | 12-trial comparison and separate timings above | PASS (measurement only; no browser verdict) |
+| Chrome origin-backed `sessionStorage` I/O | CDP navigation explicitly blocked by administrator | INCOMPLETE |
+| Real ChatGPT userscript startup responsiveness | No accessible browser origin / no actual ChatGPT runtime | INCOMPLETE |
+| Repository CI sanity | run `38298591433` policy PASS, all validation jobs skipped | PASS (policy only) |
+| Final overall #251 performance acceptance | Native browser and exact-checkout gates outstanding | INCOMPLETE |
+
+No production source changed, no merge, no DONE marker, and no claim that a simulated fixture proves whole-repository performance.
