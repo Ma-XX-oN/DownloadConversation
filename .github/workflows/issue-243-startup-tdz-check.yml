@@ -1,0 +1,24 @@
+name: Issue 243 startup TDZ regression verification
+on:
+  push:
+    branches:
+      - issue-243-startup-version-tdz-fix
+  workflow_dispatch:
+jobs:
+  startup-regression:
+    runs-on: ubuntu-latest
+    timeout-minutes: 12
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - name: Verify startup ordering regression
+        run: node --test tests/issue-243-startup-tdz-regression.test.mjs
+      - name: Verify generated JavaScript parses
+        run: node --check chatgpt-conversation-markdown-export.user.js
+      - name: Verify generated artifact is reproducible
+        run: node scripts/build-userscript.mjs --check
+      - name: Source size and JSDoc
+        run: |
+          node scripts/check-jsdoc.mjs
