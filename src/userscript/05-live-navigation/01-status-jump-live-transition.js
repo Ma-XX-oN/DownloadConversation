@@ -12,6 +12,7 @@
     } else {
       status.textContent = statusText;
     }
+    status.title = status.textContent;
   }
 
   /**
