@@ -24,7 +24,7 @@ test('saved name is project__conversation with no fixed product prefix', () => {
 });
 
 test('the checked-in userscript has matching canonical generator and header', () => {
-  assert.match(userscript, /@version\s+1\.11\.4-issue\.220\.32/);
+  assert.match(userscript, /@version\s+1\.11\.4-issue\.220\.33/);
   assert.match(userscript, /return `\$\{identity\}_\$\{start\}-\$\{end\}`;/);
   assert.doesNotMatch(productionFunctionSource('canonicalFilename'), /DownloadConversation_/);
 });
@@ -45,7 +45,7 @@ test('project navigation source caches names by route, not current tab', () => {
     href: 'https://chatgpt.com/g/project-a',
     textContent: projectName
   }];
-  vm.runInNewContext('const conversationProjectNamesByRoute = new Map();\n' +
+  vm.runInNewContext('' +
     productionFunctionSource('conversationProjectName') +
     '\nthis.projectName = conversationProjectName;', context);
   assert.equal(context.projectName(), 'Download Conversation');
