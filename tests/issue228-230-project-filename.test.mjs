@@ -5,7 +5,8 @@ import { productionFunctionSource, userscript } from './helpers/userscript-sourc
 
 const context = {
   sanitizeFileName: name => String(name).replace(/[<>:"/\\|?*\x00-\x1f]/g, '_').trim(),
-  canonicalFilenameTimestamp: () => '2026,10,12;00,00,00'
+  canonicalFilenameTimestamp: () => '2026,10,12;00,00,00',
+  conversationFilenameOverride: () => null
 };
 vm.runInNewContext(
   productionFunctionSource('canonicalFilename') +
@@ -20,7 +21,7 @@ test('saved name is project__conversation with no fixed product prefix', () => {
   assert.equal(context.canonicalFilename('Download Conversation', 'Filename Layout Revision', range),
     'Download-Conversation__Filename Layout Revision_2026,10,12;00,00,00-2026,10,12;00,00,00');
   assert.equal(context.canonicalFilename(null, 'Standalone', range),
-    'Standalone_2026,10,12;00,00,00-2026,10,12;00,00,00');
+    'Unknown__Standalone_2026,10,12;00,00,00-2026,10,12;00,00,00');
 });
 
 test('the checked-in userscript has matching canonical generator and header', () => {
