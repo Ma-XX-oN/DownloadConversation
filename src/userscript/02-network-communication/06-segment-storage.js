@@ -104,7 +104,7 @@
     const currentVersion = VERSION === 'unknown' ? null : VERSION;
     const line = `${JSON.stringify({
       version: { gen: currentVersion, comm: currentVersion }
-    })}\\n`;
+    })}\n`;
     await communicationLogWritable.write(line);
     communicationLogWriterDirty = true;
     communicationLogActiveSegmentBytes += new TextEncoder().encode(line).byteLength;
