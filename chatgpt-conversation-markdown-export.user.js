@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         ChatGPT Conversation Markdown Recorder
 // @namespace    https://chatgpt.com/
-// @version      1.11.4-issue.238.1
+// @version      1.11.4-issue.249.1
 // @description  Exports the current ChatGPT conversation directly from the Conversation API as Markdown or JSONL.
 // @match        https://chatgpt.com/*
 // @match        https://chat.openai.com/*
@@ -9302,18 +9302,32 @@ globalThis.__dcCompressor = {
     let startTimestamp = null;
     let endTimestamp = null;
     let lineStart = 0;
+    let fragmentHeader = null;
+    let firstLine = true;
     for (let index = 0; index < bytes.byteLength; index += 1) {
       if (bytes[index] !== 10) continue;
       const line = bytes.subarray(lineStart, index);
       const complete = bytes.subarray(lineStart, index + 1);
       lineStart = index + 1;
-      if (!line.byteLength) continue;
+      if (!line.byteLength) {
+        firstLine = false;
+        continue;
+      }
       let record;
       try {
         record = JSON.parse(new TextDecoder().decode(line));
       } catch {
+        firstLine = false;
         continue;
       }
+      if (firstLine && record && typeof record === 'object'
+          && !Array.isArray(record) && Object.keys(record).length === 1
+          && Object.hasOwn(record, 'version')) {
+        fragmentHeader = complete;
+        firstLine = false;
+        continue;
+      }
+      firstLine = false;
       const timestamp = typeof record?.timestamp === 'string'
         ? record.timestamp
         : null;
@@ -9325,6 +9339,11 @@ globalThis.__dcCompressor = {
       total += complete.byteLength;
       startTimestamp ??= timestamp;
       endTimestamp = timestamp;
+    }
+    // No selected records means no output, including no orphan header.
+    if (total > 0 && fragmentHeader) {
+      parts.unshift(fragmentHeader);
+      total += fragmentHeader.byteLength;
     }
     const accepted = new Uint8Array(total);
     let offset = 0;
