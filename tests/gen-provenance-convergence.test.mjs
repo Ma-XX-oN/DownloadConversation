@@ -6,6 +6,7 @@ const read = path => readFileSync(
   new URL('../src/userscript/' + path, import.meta.url), 'utf8'
 );
 const bootstrap = read('01-runtime/01-bootstrap.js');
+const restoration = read('01-runtime/01-bootstrap-restore.js');
 const diagnostics = read('07-panel-launcher/01-panel-diagnostics.js');
 const serializer = read('06-image-export-tests/05-modal-contract.js');
 const pick = (source, begin, end) => {
@@ -20,8 +21,8 @@ const assemble = [
     '  /**\n   * Handles inject styles.'),
   pick(serializer, '  function persistDiagnosticLog() {',
     '  /**\n   * Schedules a bounded diagnostic-log persistence write.'),
-  pick(bootstrap, '  function restoreDiagnosticLog() {',
-    '  /**\n   * Handles assert.')
+  pick(restoration, '  function restoreDiagnosticLog() {',
+    '  restoreDiagnosticLog();')
 ].join('\n');
 
 function scenario(options = {}) {
