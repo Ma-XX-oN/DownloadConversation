@@ -2,6 +2,8 @@ name: Issue 243 Full Integration Verification
 on:
   push:
     branches: [issue-243-final-version-integration-v3]
+  pull_request:
+    branches: [main]
 permissions:
   contents: write
 jobs:
