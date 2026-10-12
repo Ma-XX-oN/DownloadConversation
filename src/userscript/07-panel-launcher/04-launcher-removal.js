@@ -100,9 +100,8 @@
    * @returns {string} Inline SVG markup for the export-mode toggle.
    */
   function exportCompressionIconMarkup(compressed) {
-    const radius = compressed ? 4 : 7;
-    const circleX = compressed ? 18 : 17;
-    return `<svg viewBox="0 0 28 20" aria-hidden="true" focusable="false"><circle cx="${circleX}" cy="10" r="${radius}" fill="none" stroke="currentColor" stroke-width="2"/><path d="M2 10h10M8 6l4 4-4 4" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>`;
+    const radius = compressed ? 4 : 8;
+    return `<svg viewBox="0 0 28 20" aria-hidden="true" focusable="false"><circle cx="14" cy="10" r="${radius}" fill="none" stroke="currentColor" stroke-width="2"/></svg>`;
   }
 
   /**
