@@ -22,8 +22,9 @@ function fixture(entries, { directory = true } = {}) {
     recordingGroupState: () => ({ enabled: false, ready: false, uuid: null }),
     mergedLogReadCommunication: async () => {
       commReads += 1;
-      return [];
+      return { records: [], fragments: [] };
     },
+    communicationLogResolveCommVersionAtBoundary: () => null,
     createArchive: async bytes => bytes,
     extractArchive: async bytes => bytes,
     diagnosticLogBytesEqual: (left, right) =>
