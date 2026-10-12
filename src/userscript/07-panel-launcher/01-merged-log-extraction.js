@@ -234,6 +234,12 @@
     const groupIds = new Set(all.map(event => event?.recording_group_uuid));
     const sameGroup = groupIds.size === 1
       && !groupIds.has(null) && !groupIds.has(undefined);
+    /**
+     * Checks whether one source remains monotonic in capture ordinals.
+     *
+     * @param {Object[]} stream - Original ordered source entries.
+     * @returns {boolean} Whether source event order agrees with capture order.
+     */
     const ordered = stream => stream.every((event, index) =>
       index === 0 || mergedLogComparePosition(
         stream[index - 1].capture_order, event.capture_order
