@@ -24,6 +24,7 @@ const ordinaryStages = [
   ['Combined log time-control regression', nodeCommand, ['--test', 'tests/log-extraction-dialog.test.mjs']],
   ['Merged Gen/Comm extraction regression', nodeCommand, ['--test', 'tests/merged-log-extraction.test.mjs']],
   ['Grouped log filesystem regression', nodeCommand, ['--test', 'tests/merged-log-storage-integration.test.mjs']],
+  ['Merged export archive-and-disk integration', nodeCommand, ['--test', 'tests/merged-log-save-integration.test.mjs']],
   ['Nonmonotonic communication order regression', nodeCommand, ['--test', 'tests/nonmonotonic-log-filter-order.test.mjs']],
   ['Agent plugin authenticated background fetch regression', nodeCommand, ['--test', 'tests/agent-plugin-background-fetch.test.mjs']],
   ['CI test inventory regression', nodeCommand, ['--test', 'tests/ci-test-inventory.test.mjs']],
