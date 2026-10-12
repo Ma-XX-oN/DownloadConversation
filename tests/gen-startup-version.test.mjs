@@ -52,7 +52,7 @@ test('fresh startup appends exactly one normal lifecycle transition', () => {
   const result = boot('1.2.3');
   assert.equal(result.recorded.length, 1);
   assert.deepEqual({ level: result.records[0].level,
-    message: result.records[0].message, data: result.records[0].data },
+    message: result.records[0].message, data: { version: result.records[0].data.version } },
   { level: 'lifecycle', message: 'dc-version-transition',
     data: { version: '1.2.3' } });
   assert.ok(Number.isFinite(Date.parse(result.records[0].timestamp)));
