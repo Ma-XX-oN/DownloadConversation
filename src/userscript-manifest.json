@@ -26,7 +26,6 @@
       "name": "network-communication",
       "files": [
         "src/userscript/02-network-communication/01-stock-network-identities.js",
-        "src/userscript/01-runtime/01-communication-state.js",
         "src/userscript/02-network-communication/02-stock-network-responses.js",
         "src/userscript/02-network-communication/03-communication-lifecycle.js",
         "src/userscript/02-network-communication/06-segment-storage.js",
