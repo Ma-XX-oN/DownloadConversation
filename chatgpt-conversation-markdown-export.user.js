@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         ChatGPT Conversation Markdown Recorder
 // @namespace    https://chatgpt.com/
-// @version      1.11.4-issue.241.1
+// @version      1.11.4-issue.242.1
 // @description  Exports the current ChatGPT conversation directly from the Conversation API as Markdown or JSONL.
 // @match        https://chatgpt.com/*
 // @match        https://chat.openai.com/*
@@ -9367,6 +9367,12 @@ globalThis.__dcCompressor = {
             version = typeof pendingHeader === 'string' && pendingHeader
               ? pendingHeader : null;
           }
+        }
+        if (record.type === 'communication_session_start'
+            && Object.hasOwn(record, 'script_version')) {
+          const next = record.script_version;
+          if (next === null || next === 'unknown') version = null;
+          else if (typeof next === 'string' && next) version = next;
         }
         if (record.version && Object.hasOwn(record.version, 'comm')) {
           const next = record.version.comm;
@@ -19167,6 +19173,34 @@ Image elapsed: ${formatDuration(imageElapsed)} — Completed: ${imageCompleted}/
   function duplicateIconMarkup() {
     return '<svg viewBox="0 0 24 24" aria-hidden="true"><rect x="1.5" y="8" width="6" height="8" rx="1.5"></rect><rect x="16.5" y="2" width="6" height="7" rx="1.5"></rect><rect x="16.5" y="15" width="6" height="7" rx="1.5"></rect><path d="M7.5 12h3c2.8 0 2.8-6.5 6-6.5"></path><path d="M7.5 12h3c2.8 0 2.8 6.5 6 6.5"></path><path d="m14.5 4 2 1.5-2 1.5"></path><path d="m14.5 17 2 1.5-2 1.5"></path></svg>';
   }
+  /**
+   * Resolves the GEN version at the inclusive first selected event.
+   * The retained baseline is the version before the first retained event.
+   * This function reads but never changes the input log or version entries.
+   *
+   * @param {Array<Object>} records - Chronologically ordered GEN diagnostics.
+   * @param {number} startIndex - Inclusive first selected record index.
+   * @param {string|null} baselineVersion - Pre-window effective version.
+   * @returns {string|null} Effective DC version or unknown provenance.
+   */
+  function resolveGenVersionAtBoundary(records, startIndex, baselineVersion) {
+    if (!Array.isArray(records) || !Number.isInteger(startIndex) ||
+        startIndex < 0 || startIndex >= records.length ||
+        !(baselineVersion === null || typeof baselineVersion === 'string')) {
+      throw new TypeError('Invalid GEN version boundary');
+    }
+    let version = baselineVersion;
+    for (let i = 0; i <= startIndex; i++) {
+      const item = records[i];
+      if (item?.level === 'lifecycle' && item.message === 'dc-version-transition' &&
+          item.data && typeof item.data === 'object' &&
+          Object.prototype.hasOwnProperty.call(item.data, 'version') &&
+          (item.data.version === null || typeof item.data.version === 'string')) {
+        version = item.data.version;
+      }
+    }
+    return version;
+  }
   /** Original export implementation after source acquisition/render assembly. */
   const runExportWithCanonicalAgent = runExport;
   /** Original single built-in test runner. */
@@ -20676,6 +20710,65 @@ Image elapsed: ${formatDuration(imageElapsed)} — Completed: ${imageCompleted}/
         fields.year.select();
       }
     };
+  }
+  /**
+   * Resolve both versions at the selected inclusive export boundary.
+   * Inputs are source-order GEN diagnostics and exact physical COMM fragments.
+   * No source event or immutable fragment header is changed.
+   *
+   * @param {Object[]} general - Unfiltered, source-order GEN diagnostics.
+   * @param {string|null} genBaseline - Effective GEN version before general[0].
+   * @param {Uint8Array[]} fragments - Ordered physical COMM JSONL fragments.
+   * @param {Object} selection - Inclusive selected start/end and source flags.
+   * @returns {Object} Version record with gen and comm fields, each nullable.
+   */
+  function mergedLogBoundaryVersionRecord(general, genBaseline, fragments, selection) {
+    const lower = Date.parse(selection.start_timestamp);
+    const upper = Date.parse(selection.end_timestamp);
+    if (!Number.isFinite(lower) || !Number.isFinite(upper) || lower > upper) {
+      throw new Error('Invalid combined log version range.');
+    }
+    let gen = null;
+    if (selection.general === true) {
+      const first = general.findIndex(entry => {
+        const ms = typeof entry?.timestamp === 'string'
+          ? Date.parse(entry.timestamp) : NaN;
+        return Number.isFinite(ms) && ms >= lower && ms <= upper;
+      });
+      gen = first < 0 ? genBaseline
+        : resolveGenVersionAtBoundary(general, first, genBaseline);
+    }
+    const comm = selection.communication === true
+      ? communicationLogResolveCommVersionAtBoundary(fragments, lower)
+      : null;
+    return { version: { gen, comm } };
+  }
+
+  /**
+   * Prefix exactly one timestamp-free provenance record before #220's grouped
+   * source-order export. Fragment metadata must never appear as an event.
+   *
+   * @param {Object} merge - #220's tagged, ordered GEN/COMM event stream.
+   * @param {Object} selection - Original export selection.
+   * @param {Object} provenance - Resolver-produced version record.
+   * @returns {string} Newline-terminated JSONL, unchanged event order/count.
+   */
+  function mergedLogJsonlWithVersions(merge, selection, provenance) {
+    const fields = provenance?.version;
+    if (!fields || !(fields.gen === null || typeof fields.gen === 'string')
+        || !(fields.comm === null || typeof fields.comm === 'string')) {
+      throw new TypeError('Invalid combined version provenance.');
+    }
+    const entries = merge.entries.filter(item => {
+      const value = item?.record;
+      return !(item?.source === 'comm' && value
+        && typeof value === 'object' && !Array.isArray(value)
+        && !Object.hasOwn(value, 'timestamp')
+        && Object.keys(value).length === 1
+        && Object.hasOwn(value, 'version'));
+    });
+    return JSON.stringify({ version: { gen: fields.gen, comm: fields.comm } })
+      + '\n' + mergedLogJsonl({ ...merge, entries }, selection);
   }
 
   /** ID of the communication Duplicate range dialog overlay. */
