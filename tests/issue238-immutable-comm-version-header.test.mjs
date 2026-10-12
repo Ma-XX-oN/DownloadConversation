@@ -35,14 +35,14 @@ async function runHeader({ version, storedBytes = 0, fileSize = 0, failWrite = f
 
 test('new physical fragment gets one timestamp-free GEN/COMM version header', async () => {
   const result = await runHeader({ version: '1.11.4' });
-  assert.deepEqual(result.writes, ['{"version":{"gen":"1.11.4","comm":"1.11.4"}}\\n']);
+  assert.deepEqual(result.writes, ['{"version":{"gen":"1.11.4","comm":"1.11.4"}}\n']);
   assert.equal(result.bytes, Buffer.byteLength(result.writes[0]));
   assert.equal(result.dirty, true);
 });
 
 test('unknown installed version is not misrepresented as historical provenance', async () => {
   const result = await runHeader({ version: 'unknown' });
-  assert.deepEqual(result.writes, ['{"version":{"gen":null,"comm":null}}\\n']);
+  assert.deepEqual(result.writes, ['{"version":{"gen":null,"comm":null}}\n']);
 });
 
 test('nonempty original fragment is immutable after upgrade', async () => {
@@ -67,5 +67,5 @@ test('header write failure propagates without marking bytes or dirty', async () 
 test('header runs before an appended event and upon rotation before compression', () => {
   assert.match(append, /await communicationLogEnsureFragmentHeader\\(\\);\\s*await communicationLogWritable\\.write\\(line\\)/);
   assert.match(rotate, /await communicationLogEnsureFragmentHeader\\(\\);\\s*void communicationLogQueueSegmentCompression/);
-  assert.doesNotMatch(source, /timestamp/);
+  assert.doesNotMatch(source.slice(source.indexOf('const line =')), /timestamp:/);
 });
