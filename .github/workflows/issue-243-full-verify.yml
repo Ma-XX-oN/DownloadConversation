@@ -35,5 +35,7 @@ jobs:
           git add chatgpt-conversation-markdown-export.user.js
           if ! git diff --cached --quiet; then
             git commit -m "build(#243): regenerate integrated provenance and grouped export"
+            git fetch origin issue-243-final-version-integration-v3
+            git rebase origin/issue-243-final-version-integration-v3
             git push origin HEAD:issue-243-final-version-integration-v3
           fi
