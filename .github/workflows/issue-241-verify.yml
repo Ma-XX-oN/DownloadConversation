@@ -1,0 +1,34 @@
+name: Issue 241 COMM boundary verification
+on:
+  push:
+    branches: [issue-241-comm-boundary-version-v3]
+permissions:
+  contents: write
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: true
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - name: Focused tests and source regression
+        run: |
+          node --test tests/issue-241-comm-boundary.test.cjs
+          node --test tests/issue-239-comm-integration.test.cjs
+      - name: Rebuild and verify userscript
+        run: |
+          node scripts/build-userscript.mjs
+          node --check chatgpt-conversation-markdown-export.user.js
+          node scripts/build-userscript.mjs --check
+      - name: Commit regenerated artifact
+        run: |
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git config user.name "github-actions[bot]"
+          git add chatgpt-conversation-markdown-export.user.js
+          if ! git diff --cached --quiet; then
+            git commit -m "build(#241): regenerate artifact after COMM session regression"
+            git push origin HEAD:issue-241-comm-boundary-version-v3
+          fi
