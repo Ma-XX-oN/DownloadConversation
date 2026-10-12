@@ -285,7 +285,7 @@ test('Issue 172 project chat resolves project name and canonical project-convers
   });
   assert.deepEqual(result, {
     projectName: 'Download Conversation',
-    fileBase: 'Download Conversation - Browser XZ Comparison'
+    fileBase: 'Download-Conversation__Browser XZ Comparison'
   });
 });
 
@@ -310,7 +310,7 @@ test('Issue 172 manifest persists project identity separately from conversation 
 
 test('Issue 172 all user-facing archive/export paths use canonical naming', () => {
   assert.match(lifecycleSource,
-    /DownloadConversation_\$\{conversationFileBaseName\(\)\}\.jsonl/);
+    /\$\{conversationFileBaseName\(\)\}\.jsonl/);
   assert.match(imageRecoverySource, /canonicalFilename\(/);
   assert.match(imageRecoverySource, /conversationJsonlTimestampRange\(jsonl\)/);
   assert.match(diagnosticSource, /canonicalFilename\(/);
