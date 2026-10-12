@@ -31,9 +31,33 @@
       if (empty.length === 1) {
         active = empty[0];
       } else {
-        active = [...existing].sort((left, right) =>
-          right.modified - left.modified || left.name.localeCompare(right.name)
-        )[0];
+        // A crash can leave a header-only new active fragment beside the
+        // previous sealed source. Resume that exact header rather than
+        // treating it as a closed segment without any content timestamps.
+        const headerOnly = [];
+        for (const state of existing) {
+          if (state.size > 512) continue;
+          const handle = await communicationLogSegmentDirectoryHandle.getFileHandle(
+            state.name,
+            { create: false }
+          );
+          const content = await (await handle.getFile()).text();
+          const lines = content.trimEnd().split('\\n');
+          if (lines.length !== 1) continue;
+          let record;
+          try { record = JSON.parse(lines[0]); } catch { continue; }
+          if (record && Object.keys(record).length === 1
+              && record.version && typeof record.version === 'object'
+              && !Array.isArray(record.version)
+              && Object.hasOwn(record.version, 'gen')
+              && Object.hasOwn(record.version, 'comm')) {
+            headerOnly.push(state);
+          }
+        }
+        active = headerOnly.length === 1 ? headerOnly[0]
+          : [...existing].sort((left, right) =>
+            right.modified - left.modified || left.name.localeCompare(right.name)
+          )[0];
       }
     }
     communicationLogActiveFileName = active.name;
