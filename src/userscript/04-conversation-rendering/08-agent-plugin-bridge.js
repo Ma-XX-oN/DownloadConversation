@@ -1,3 +1,8 @@
+  /** Shared cache prefix for verified direct-download artifacts. */
+  const AGENT_PLUGIN_CACHE_PREFIX = 'downloadconversation:agent-plugin-cache:';
+  /** Direct GitHub-origin retrieval timeout in milliseconds. */
+  const AGENT_PLUGIN_DOWNLOAD_TIMEOUT_MS = 2 * 60 * 1000;
+
   /** Promise for the one AICC-selected ChatGPT plugin module import in this page realm. */
   let chatGPTPluginModulePromise = null;
   /** Provider-owned ChatGPT agent instance created through AICC. */
@@ -78,7 +83,7 @@
       GM_xmlhttpRequest({
         method: 'GET',
         url,
-        timeout: AGENT_PLUGIN_BROKER_TIMEOUT_MS,
+        timeout: AGENT_PLUGIN_DOWNLOAD_TIMEOUT_MS,
         onload(response) {
           if (response.status !== 200) {
             reject(new Error(`Private plugin download returned HTTP ${response.status}.`));
