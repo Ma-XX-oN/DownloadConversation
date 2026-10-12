@@ -80,18 +80,6 @@ export async function readDownloadConversationSource(root, manifest) {
   return result;
 }
 
-/**
- * Prepends the generic authenticated artifact broker and Core-agent bridge.
- * Provider selection and artifact identity are supplied by AIConversationCore at runtime.
- *
- * @param {string} brokerSource - Generic GitHub artifact transport source.
- * @param {string} bridgeSource - Generic Core agent-loading bridge source.
- * @returns {string} Userscript-local prelude source.
- */
-export function buildAgentPluginPrelude(brokerSource, bridgeSource) {
-  return brokerSource + bridgeSource;
-}
-
 export function injectUserscriptPrelude(source, prelude) {
   if (!source.startsWith('\n(() => {')) {
     throw new Error('DownloadConversation source must begin with the preserved userscript IIFE boundary.');
