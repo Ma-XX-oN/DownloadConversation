@@ -84,3 +84,22 @@ test('invalid discriminators do not change a trimmed baseline', () => {
   const result = reload(JSON.stringify({ records, version_before_persisted: null }));
   assert.equal(result.baseline, null);
 });
+
+test('bootstrap emits exactly one ordinary startup transition after restore', () => {
+  const startup = source.slice(source.indexOf('  restoreDiagnosticLog();'));
+  assert.match(startup, /restoreDiagnosticLog\(\);\s*\/\/ #234 provenance:[^\n]*\n[^\n]*\n\s*logDiagnostic\('lifecycle', 'dc-version-transition', \{ version: VERSION \}\)/);
+  assert.equal(source.match(/logDiagnostic\('lifecycle', 'dc-version-transition', \{ version: VERSION \}\)/g)?.length, 1);
+});
+
+test('session storage access failures preserve unknown historical provenance', () => {
+  const context = vm.createContext({
+    diagnosticLog: [{ message: 'stale' }],
+    diagnosticLogBaselineVersion: 'stale',
+    DIAGNOSTIC_LOG_STORAGE_KEY: 'diagnostics',
+    MAX_PERSISTED_DIAGNOSTIC_LOG_ITEMS: 5000,
+    sessionStorage: { getItem() { throw new Error('blocked'); } }
+  });
+  vm.runInContext(restore + '\nrestoreDiagnosticLog();', context);
+  assert.deepEqual(JSON.parse(JSON.stringify(context.diagnosticLog)), []);
+  assert.equal(context.diagnosticLogBaselineVersion, null);
+});
