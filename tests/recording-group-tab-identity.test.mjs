@@ -34,7 +34,7 @@ function harness() {
     }
   }
 
-  function tab(data = {}, startedAt = 1000) {
+  function tab(data = {}, startedAt = 1000, supportsChannel = true) {
     const stored = new Map(Object.entries(data));
     const listeners = new Map();
     const diagnostics = [];
@@ -43,7 +43,7 @@ function harness() {
       crypto: fakeCrypto,
       currentConversationId: () => conversation.id,
       communicationLogSegmentDirectoryHandle: { name: 'segments-a' },
-      BroadcastChannel: Channel,
+      BroadcastChannel: supportsChannel ? Channel : undefined,
       performance: { timeOrigin: startedAt },
       sessionStorage: {
         getItem: key => stored.get(key) ?? null,
@@ -146,10 +146,12 @@ test('back-forward cache restoration reclaims the unchanged recording UUID', asy
 
 test('missing BroadcastChannel does not declare ownership ready', async () => {
   const bus = harness();
-  const instance = bus.tab();
-  // Test the active production handler while transport is disconnected.
-  instance.close();
+  const instance = bus.tab({}, 1000, false);
+  assert.equal(await instance.api.enable(), false);
   assert.equal(instance.api.state().ready, false);
+  assert.ok(instance.diagnostics.some(entry =>
+    String(entry[1]).includes('BroadcastChannel unsupported')));
+  instance.close();
 });
 
 test('single-tab group retains a distinct visited-chat inventory across reloads', async () => {
@@ -196,4 +198,34 @@ test('duplicated tab starts an independent conversation inventory', async () => 
   assert.deepEqual(Array.from(second.api.chats()), ['conversation-a']);
   first.close();
   second.close();
+});
+
+test('simultaneous restored copies never retain the same live group', async () => {
+  const bus = harness();
+  const copied = {
+    'tm-downloadconversation-one-group-enabled': 'true',
+    'tm-downloadconversation-one-group-uuid': 'group-original'
+  };
+  const first = bus.tab(copied, 1000);
+  const second = bus.tab(copied, 2000);
+  await new Promise(resolve => setTimeout(resolve, 2100));
+  assert.equal(first.api.state().ready, true);
+  assert.equal(second.api.state().ready, true);
+  assert.notEqual(first.api.state().uuid, second.api.state().uuid);
+  assert.equal(first.api.state().uuid, 'group-original');
+  first.close();
+  second.close();
+});
+
+test('old document releasing during refresh preserves the inherited group', async () => {
+  const bus = harness();
+  const previous = bus.tab({}, 1000);
+  await previous.api.enable();
+  const id = previous.api.state().uuid;
+  const fresh = bus.tab(Object.fromEntries(previous.storage), 2000);
+  previous.close();
+  await new Promise(resolve => setTimeout(resolve, 680));
+  assert.equal(fresh.api.state().uuid, id);
+  assert.equal(fresh.api.state().ready, true);
+  fresh.close();
 });
