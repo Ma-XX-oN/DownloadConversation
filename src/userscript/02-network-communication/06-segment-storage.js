@@ -320,8 +320,9 @@
       end_timestamp: range.end_timestamp
     };
     await communicationLogSwitchActiveFile(alternate);
-    await communicationLogOpenWriter();
-    await communicationLogEnsureFragmentHeader();
+    // Leave the new physical fragment empty until its first content append.
+    // Append creates its immutable header; sealing must not make a header-only
+    // fragment that recovery could confuse with an active recording.
     void communicationLogQueueSegmentCompression(segment).catch(() => {});
     return segment;
   }
