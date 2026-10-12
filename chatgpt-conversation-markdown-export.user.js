@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         ChatGPT Conversation Markdown Recorder
 // @namespace    https://chatgpt.com/
-// @version      1.11.4-issue.241.1
+// @version      1.11.4-issue.241.2
 // @description  Exports the current ChatGPT conversation directly from the Conversation API as Markdown or JSONL.
 // @match        https://chatgpt.com/*
 // @match        https://chat.openai.com/*
@@ -9367,6 +9367,12 @@ globalThis.__dcCompressor = {
             version = typeof pendingHeader === 'string' && pendingHeader
               ? pendingHeader : null;
           }
+        }
+        if (record.type === 'communication_session_start'
+            && Object.hasOwn(record, 'script_version')) {
+          const next = record.script_version;
+          if (next === null || next === 'unknown') version = null;
+          else if (typeof next === 'string' && next) version = next;
         }
         if (record.version && Object.hasOwn(record.version, 'comm')) {
           const next = record.version.comm;
