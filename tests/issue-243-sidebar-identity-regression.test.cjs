@@ -98,3 +98,11 @@ test('valid conversation title replaces bad cached name', () => {
   assert.equal(api.communicationLogConversationName(), 'Version provenance design');
   assert.equal(state.localStorage.value, 'Version provenance design');
 });
+
+test('navigation to another conversation does not reuse old sidebar title', () => {
+  const {api} = environment({
+    route:'/g/g-p-6a74170dd7ac8191b0f5bc2147af1f33-download-conversation/c/12345678-1111-2222-3333-444444444444',
+    title:'New chat title'
+  });
+  assert.equal(api.conversationTitle(), 'New chat title');
+});
