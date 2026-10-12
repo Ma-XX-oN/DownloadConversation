@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict';
+import { createHash, webcrypto } from 'node:crypto';
 import { readFile } from 'node:fs/promises';
 import test from 'node:test';
 import vm from 'node:vm';
@@ -57,4 +58,60 @@ test('missing source is rejected', async () => {
   await assert.rejects(runWith(request => {
     request.onload({ status: 200, responseText: undefined });
   }), /no UTF-8 source/);
+});
+
+test('verified GM cache survives a simulated page reload without another download', async () => {
+  const sourceText = 'export const plugin = 1;\n';
+  const bytes = Buffer.from(sourceText, 'utf8');
+  const gitBlobSha1 = createHash('sha1')
+    .update('blob ' + bytes.length + '\\0').update(bytes).digest('hex');
+  const descriptor = {
+    id: 'chatgpt-web',
+    repository: 'Example/Private-Plugin',
+    ref: 'main',
+    version: '1.2.3',
+    path: 'dist/plugin.mjs',
+    gitBlobSha1,
+    byteLength: bytes.byteLength
+  };
+  const cache = new Map();
+  let downloads = 0;
+  const functionNames = [
+    'agentPluginHex', 'verifyAgentPluginSource',
+    'agentPluginCacheKey', 'cachedAgentPluginSource',
+    'requestAgentPluginFromGitHub', 'loadAgentPlugin'
+  ];
+  const sourceBlocks = functionNames.map(name => {
+    const expression = new RegExp(
+      '  (?:async )?function ' + name + '\\('
+    );
+    const match = expression.exec(source);
+    assert.ok(match, 'Missing production function: ' + name);
+    const end = source.indexOf('\n  /**', match.index + 5);
+    assert.ok(end > match.index);
+    return source.slice(match.index, end);
+  });
+  async function loadInNewDocument() {
+    const context = {
+      assert, Buffer, Uint8Array, TextEncoder, crypto: webcrypto,
+      Date, Promise,
+      AGENT_PLUGIN_CACHE_PREFIX: 'downloadconversation:agent-plugin-cache:',
+      AGENT_PLUGIN_DOWNLOAD_TIMEOUT_MS: 120000,
+      GM_getValue: (key, fallback) => cache.get(key) ?? fallback,
+      GM_setValue: (key, value) => cache.set(key, value),
+      GM_xmlhttpRequest(request) {
+        downloads += 1;
+        request.onload({ status: 200, responseText: sourceText });
+      },
+      logDiagnostic() {}
+    };
+    vm.runInNewContext(sourceBlocks.join('\n\n')
+      + '\nthis.load = loadAgentPlugin;', context);
+    return Buffer.from(await context.load(descriptor));
+  }
+  assert.deepEqual(await loadInNewDocument(), bytes);
+  assert.equal(downloads, 1);
+  assert.deepEqual(await loadInNewDocument(), bytes);
+  assert.equal(downloads, 1,
+    'A second ChatGPT page document must reuse verified persistent cache');
 });
