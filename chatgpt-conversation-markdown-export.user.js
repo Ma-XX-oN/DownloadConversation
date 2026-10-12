@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         ChatGPT Conversation Markdown Recorder
 // @namespace    https://chatgpt.com/
-// @version      1.11.4-issue.220.6
+// @version      1.11.4-issue.220.7
 // @description  Exports the current ChatGPT conversation directly from the Conversation API as Markdown or JSONL.
 // @match        https://chatgpt.com/*
 // @match        https://chat.openai.com/*
@@ -21730,12 +21730,20 @@ Image elapsed: ${formatDuration(imageElapsed)} — Completed: ${imageCompleted}/
     const groupIds = new Set(all.map(event => event?.recording_group_uuid));
     const sameGroup = groupIds.size === 1
       && !groupIds.has(null) && !groupIds.has(undefined);
-    if (!isPositioned || (documents.size > 1 && !sameGroup)) {
+    const ordered = stream => stream.every((event, index) =>
+      index === 0 || mergedLogComparePosition(
+        stream[index - 1].capture_order, event.capture_order
+      ) <= 0);
+    const orderConflict = isPositioned
+      && (!ordered(general) || !ordered(communication));
+    if (!isPositioned || orderConflict
+        || (documents.size > 1 && !sameGroup)) {
       for (const event of general) tagged.push({ source: 'gen', record: event });
       for (const event of communication) {
         tagged.push({ source: 'comm', record: event });
       }
-      return { entries: tagged, ordering: 'legacy-source-ranges' };
+      return { entries: tagged, ordering: orderConflict
+        ? 'source-order-conflict' : 'legacy-source-ranges' };
     }
     let g = 0;
     let c = 0;
