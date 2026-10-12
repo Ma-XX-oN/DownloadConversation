@@ -7,6 +7,7 @@ const read = name => readFileSync(new URL(
   '../src/userscript/' + name, import.meta.url
 ), 'utf8');
 const bootstrap = read('01-runtime/01-bootstrap.js');
+const restoration = read('01-runtime/01-bootstrap-restore.js');
 const diagnostics = read('07-panel-launcher/01-panel-diagnostics.js');
 const persistence = read('06-image-export-tests/05-modal-contract.js');
 
@@ -23,8 +24,8 @@ const functions = [
     '  /**\n   * Handles inject styles.'),
   block(persistence, '  function persistDiagnosticLog() {',
     '  /**\n   * Schedules a bounded diagnostic-log persistence write.'),
-  block(bootstrap, '  function restoreDiagnosticLog() {',
-    '  /**\n   * Handles assert.')
+  block(restoration, '  function restoreDiagnosticLog() {',
+    '  restoreDiagnosticLog();')
 ].join('\n');
 
 function harness({ storage = null, level = 'errors' } = {}) {
