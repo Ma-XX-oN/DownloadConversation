@@ -74,6 +74,31 @@ const rename = box(panel.querySelector('[data-role="rename-communication-log"]')
 if (filename.right > rename.left + 1 || filename.width < 24) {
   result.issues.push('filename overlaps action buttons');
 }
+const orderedRoles = ['title','log-count','last-log-problem','diagnostics',
+  'communication-log-name-viewport','rename-communication-log',
+  'record-general','record-communication','console-diagnostics','record-one-group',
+  'save-log','reset-communication-log','show-timestamps','show-record-numbers',
+  'show-turn-ids','show-debug-provenance','format-jsonl','format-md',
+  'extract','export-compression','agent-sound-control','jump','test'];
+for (let index = 1; index < orderedRoles.length; index++) {
+  const previous = panel.querySelector('[data-role="' + orderedRoles[index - 1] + '"]');
+  const current = panel.querySelector('[data-role="' + orderedRoles[index] + '"]');
+  if (!previous || !current ||
+      !(previous.compareDocumentPosition(current) & Node.DOCUMENT_POSITION_FOLLOWING)) {
+    result.issues.push('wrong markup order: ' + orderedRoles[index]);
+  }
+}
+const slider = panel.querySelector('[data-role="agent-sound-volume"]');
+const sliderColor = getComputedStyle(slider).accentColor;
+if (sliderColor === 'auto' || sliderColor === 'rgb(0, 0, 0)') {
+  result.issues.push('slider has no contrasting accent color');
+}
+const bottom = ['agent-sound-control','jump','test']
+  .map(role => panel.querySelector('[data-role="' + role + '"]'))
+  .map(box);
+if (Math.max(...bottom.map(b => b.top)) - Math.min(...bottom.map(b => b.top)) > 3) {
+  result.issues.push('sound, jump and test are not on the same bottom row');
+}
 const rows = [...panel.querySelectorAll('.tm-row')];
 const warning = box(panel.querySelector('[data-role="last-log-problem"]'));
 const status = box(panel.querySelector('[data-role="status"]'));
