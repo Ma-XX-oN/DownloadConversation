@@ -130,3 +130,12 @@ test('malformed complete communication records fail instead of silently disappea
   assert.throws(() => call('mergedLogParseJsonl', complete),
     /Malformed complete communication JSONL/);
 });
+
+test('inconsistent original source ordering remains unchanged and explicitly flagged', () => {
+  const general = [event('g', 9, 1), event('g', 2, 3)];
+  const communication = [event('c', 3, 2)];
+  const result = call('mergedLogInterleave', general, communication);
+  assert.equal(result.ordering, 'source-order-conflict');
+  assert.deepEqual(result.entries.map(item => item.record.capture_order.ordinal),
+    [9, 2, 3]);
+});
