@@ -8,7 +8,10 @@
     const text = new TextDecoder().decode(bytes);
     let start = null;
     let end = null;
-    for (const line of text.split('\n')) {
+    // Only newline-terminated JSONL records belong to a committed snapshot.
+    const complete = text.lastIndexOf('\n');
+    if (complete < 0) return null;
+    for (const line of text.slice(0, complete).split('\n')) {
       if (!line) continue;
       let record;
       try { record = JSON.parse(line); } catch { continue; }
