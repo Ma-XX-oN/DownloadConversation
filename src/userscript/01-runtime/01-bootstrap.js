@@ -241,6 +241,3 @@
     if (!condition) throw new Error(message);
   }
 
-  /**
-   * Normalizes one thrown value to readable diagnostic text.
-   *
