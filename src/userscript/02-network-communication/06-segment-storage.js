@@ -24,8 +24,6 @@
   let communicationLogLifecycleInstalled = false;
   /** Whether one communication-log file-management action is currently updating panel state. */
   let communicationLogUiActionInProgress = false;
-  /** Unique identity correlating all communication records produced by this page lifetime. */
-  const communicationLogSessionId = crypto.randomUUID();
 
   /** Internal directory containing sealed/compressed segments for the logical log. */
   let communicationLogSegmentDirectoryHandle = null;
