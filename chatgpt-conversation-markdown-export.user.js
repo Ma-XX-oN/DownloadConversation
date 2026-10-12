@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         ChatGPT Conversation Markdown Recorder
 // @namespace    https://chatgpt.com/
-// @version      1.11.4-issue.220.7
+// @version      1.11.4-issue.220.8
 // @description  Exports the current ChatGPT conversation directly from the Conversation API as Markdown or JSONL.
 // @match        https://chatgpt.com/*
 // @match        https://chat.openai.com/*
@@ -21730,6 +21730,12 @@ Image elapsed: ${formatDuration(imageElapsed)} — Completed: ${imageCompleted}/
     const groupIds = new Set(all.map(event => event?.recording_group_uuid));
     const sameGroup = groupIds.size === 1
       && !groupIds.has(null) && !groupIds.has(undefined);
+    /**
+     * Checks whether one source remains monotonic in capture ordinals.
+     *
+     * @param {Object[]} stream - Original ordered source entries.
+     * @returns {boolean} Whether source event order agrees with capture order.
+     */
     const ordered = stream => stream.every((event, index) =>
       index === 0 || mergedLogComparePosition(
         stream[index - 1].capture_order, event.capture_order
