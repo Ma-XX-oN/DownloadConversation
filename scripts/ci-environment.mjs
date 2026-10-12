@@ -54,6 +54,7 @@ const ordinaryStages = [
   ['Disk communication recorder regression', nodeCommand, ['--test', 'tests/disk-communication-recorder.test.mjs']],
   ['Directory picker gesture regression', nodeCommand, ['--test', 'tests/directory-picker-gesture.test.mjs']],
   ['Console lifecycle and provenance controls', nodeCommand, ['--test', 'tests/console-diagnostics.test.mjs']],
+  ['GEN version and persistence convergence regressions', nodeCommand, ['--test', 'tests/gen-provenance-convergence.test.mjs', 'tests/gen-snapshot-restore.test.mjs', 'tests/gen-startup-version.test.mjs', 'tests/gen-version-convergence.test.mjs']],
   ['CGP2 provider/Core integration', nodeCommand, ['--test', 'tests/cgp2-core-integration.test.mjs', 'tests/issue156-core-plugin-boundary.test.mjs', 'tests/private-agent-plugin-loading.test.mjs']],
   ['Canonical final-render regressions', nodeCommand, ['--test', 'tests/core-integration.test.mjs', 'tests/phase5-rich-core-integration.test.mjs', 'tests/fallback-adaptive-fence.test.mjs', 'tests/tool-language-diagnostics.test.mjs', 'tests/sediment-resolver.test.mjs']],
   ['Built-in test list UI regression', nodeCommand, ['--test', 'tests/test-list-ui.test.mjs']],
