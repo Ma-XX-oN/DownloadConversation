@@ -89,7 +89,10 @@
     const panel = document.getElementById(PANEL_ID);
     if (!panel) return;
     const title = panel.querySelector('[data-role="title"]');
-    if (title) title.textContent = `ChatGPT Recorder v${VERSION}`;
+    if (title) {
+      title.textContent = `ChatGPT Recorder v${VERSION}`;
+      title.title = title.textContent;
+    }
     const extract = panel.querySelector('[data-role="extract"]');
     const jsonl = panel.querySelector('[data-role="format-jsonl"]');
     const md = panel.querySelector('[data-role="format-md"]');
