@@ -108,6 +108,22 @@ for (let i = 1; i < rows.length; i++) {
     result.issues.push('vertically overlapping rows ' + i);
   }
 }
+const popup = panel.querySelector('[data-role="agent-sound-popup"]');
+popup.hidden = false;
+const tickLabels = [...panel.querySelectorAll('.tm-volume-ticks span')];
+if (tickLabels.map(tick => tick.textContent).join(',') !== '10,5,0') {
+  result.issues.push('sound volume markers missing');
+}
+for (const tick of tickLabels) {
+  const color = getComputedStyle(tick).color;
+  if (color !== 'rgb(255, 255, 255)') {
+    result.issues.push('low contrast sound marker: ' + color);
+  }
+}
+const popupBox = box(popup);
+if (popupBox.width < 40 || popupBox.height < 120) {
+  result.issues.push('volume popup collapsed');
+}
 const output = document.getElementById('layout-result');
 output.textContent = JSON.stringify(result);
 <\/script>`;
