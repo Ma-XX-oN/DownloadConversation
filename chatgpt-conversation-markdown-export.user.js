@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         ChatGPT Conversation Markdown Recorder
 // @namespace    https://chatgpt.com/
-// @version      1.11.4-issue.220.22
+// @version      1.11.4-issue.220.23
 // @description  Exports the current ChatGPT conversation directly from the Conversation API as Markdown or JSONL.
 // @match        https://chatgpt.com/*
 // @match        https://chat.openai.com/*
@@ -22226,7 +22226,7 @@ Image elapsed: ${formatDuration(imageElapsed)} — Completed: ${imageCompleted}/
       const description = compressed ? 'Save compressed' : 'Save uncompressed';
       exportCompression.disabled = exportInProgress || testInProgress || jumpInProgress;
       exportCompression.setAttribute('aria-checked', String(compressed));
-      exportCompression.setAttribute('aria-label', compressed ? 'Compressed export output' : 'Raw export output');
+      exportCompression.setAttribute('aria-label', compressed ? 'Save compressed' : 'Save uncompressed');
       exportCompression.title = description;
       exportCompression.innerHTML = exportCompressionIconMarkup(compressed);
     }
