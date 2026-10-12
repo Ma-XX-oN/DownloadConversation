@@ -252,12 +252,15 @@
    * @returns {Promise<boolean>} True when the record committed to disk.
    */
   async function communicationLogRecord(type, data = {}) {
+    if (localStorage.getItem('tm-recorder-communication-capture') === 'false') return false;
     if (!communicationLogReady) {
       communicationLogDroppedBeforeReady += 1;
       return false;
     }
     const record = {
       timestamp: new Date().toISOString(),
+      capture_order: logCapturePosition(),
+      recording_group_uuid: recordingGroupTrackConversation(),
       monotonic_ms: Math.round(performance.now() * 1000) / 1000,
       time_origin: performance.timeOrigin,
       session_id: communicationLogSessionId,
