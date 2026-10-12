@@ -37,7 +37,7 @@ test('Chromium retains an owner across reload and rekeys a cloned session tab',
         }
         const child = window.open(location.href + '#duplicate', '_blank');
         if (!child) throw new Error('duplicate tab window could not open');
-        await wait(1700);
+        await wait(3500);
         if (!child.recordingGroupState) {
           throw new Error('duplicate did not initialize');
         }
@@ -45,7 +45,8 @@ test('Chromium retains an owner across reload and rekeys a cloned session tab',
         const ours = recordingGroupState();
         if (!ours.ready || !theirs.ready
           || ours.uuid !== original || theirs.uuid === original) {
-          throw new Error('live duplicate group collision not resolved');
+          throw new Error('live duplicate group collision not resolved: '
+            + JSON.stringify({ original, ours, theirs }));
         }
         document.getElementById('result').textContent = JSON.stringify({
           reload_retained_uuid: true, duplicate_rekeyed: true,
@@ -81,8 +82,11 @@ test('Chromium retains an owner across reload and rekeys a cloned session tab',
       const args = [
         '--headless=new', '--no-sandbox', '--disable-gpu',
         '--disable-dev-shm-usage', '--disable-popup-blocking',
+        '--disable-background-timer-throttling',
+        '--disable-renderer-backgrounding',
+        '--disable-backgrounding-occluded-windows',
         '--no-first-run', '--no-default-browser-check',
-        '--virtual-time-budget=12000', '--dump-dom',
+        '--virtual-time-budget=20000', '--dump-dom',
         '--user-data-dir=' + userData,
         'http://127.0.0.1:' + port + '/'
       ];
