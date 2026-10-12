@@ -6,7 +6,8 @@ import { productionFunctionSource } from './helpers/userscript-source.mjs';
 const names = [
   'mergedLogValidateSelection', 'mergedLogRangeFilter',
   'mergedLogParseJsonl', 'mergedLogValidPosition',
-  'mergedLogComparePosition', 'mergedLogInterleave', 'mergedLogJsonl'
+  'mergedLogComparePosition', 'mergedLogInterleave',
+  'mergedLogGroupEntries', 'mergedLogJsonl'
 ];
 const source = names.map(productionFunctionSource).join('\n\n');
 
@@ -89,7 +90,9 @@ test('JSONL export identifies sources, bounds, grouping and ordering', () => {
   assert.equal(lines[0].group_uuid, 'recording-1');
   assert.equal(lines[0].start_timestamp, start_timestamp);
   assert.equal(lines[0].end_timestamp, end_timestamp);
+  assert.equal(lines[0].schema, 2);
   assert.deepEqual(lines.slice(1).map(r => r.source), ['gen', 'comm']);
+  assert.deepEqual(lines.slice(1).map(r => r.records.length), [1, 1]);
 });
 
 test('communication JSONL parser keeps source order and skips torn tail', () => {
@@ -145,4 +148,82 @@ test('merged exports use the mlog extension with the existing compressor', () =>
   const exporter = productionFunctionSource('saveMergedLogs');
   assert.match(exporter, /const suffix = '\.mlog' \+ compressorExtension\(\);/);
   assert.doesNotMatch(exporter, /\.merged\.log/);
+});
+
+test('consecutive Gen events with equal severity share one outer group', () => {
+  const first = { level: 'debug', message: 'first', timestamp: timestamp(1) };
+  const second = { level: 'debug', message: 'second', timestamp: timestamp(2) };
+  const grouped = call('mergedLogGroupEntries', [
+    { source: 'gen', record: first },
+    { source: 'gen', record: second }
+  ]);
+  assert.deepEqual(grouped, [{
+    source: 'gen', level: 'debug',
+    records: [
+      { message: 'first', timestamp: timestamp(1) },
+      { message: 'second', timestamp: timestamp(2) }
+    ]
+  }]);
+  assert.equal(first.level, 'debug', 'source must not be mutated');
+});
+
+test('changing severity starts another Gen group even without source change', () => {
+  const levels = ['debug', 'debug', 'warnings', 'errors', 'debug'];
+  const entries = levels.map((level, i) => ({
+    source: 'gen', record: { level, sequence: i + 1 }
+  }));
+  const groups = call('mergedLogGroupEntries', entries);
+  assert.deepEqual(groups.map(g => g.level),
+    ['debug', 'warnings', 'errors', 'debug']);
+  assert.deepEqual(groups.map(g => g.records.map(r => r.sequence)),
+    [[1, 2], [3], [4], [5]]);
+  assert.ok(groups.every(g => g.records.every(r => !('level' in r))));
+});
+
+test('source transitions split groups even at the same severity', () => {
+  const input = [
+    { source: 'gen', record: { level: 'debug', sequence: 1 } },
+    { source: 'comm', record: { level: 'debug', sequence: 2 } },
+    { source: 'comm', record: { level: 'debug', sequence: 3 } },
+    { source: 'gen', record: { level: 'debug', sequence: 4 } }
+  ];
+  const groups = call('mergedLogGroupEntries', input);
+  assert.deepEqual(groups.map(g => g.source), ['gen', 'comm', 'gen']);
+  assert.deepEqual(groups.map(g => g.records.map(r => r.sequence)),
+    [[1], [2, 3], [4]]);
+});
+
+test('missing severity is distinct from explicit null and does not insert level', () => {
+  const input = [
+    { source: 'comm', record: { sequence: 1 } },
+    { source: 'comm', record: { sequence: 2, level: null } },
+    { source: 'comm', record: { sequence: 3 } }
+  ];
+  const groups = call('mergedLogGroupEntries', input);
+  assert.equal(groups.length, 3);
+  assert.equal(Object.hasOwn(groups[0], 'level'), false);
+  assert.equal(groups[1].level, null);
+  assert.equal(Object.hasOwn(groups[2], 'level'), false);
+});
+
+test('grouped JSONL retains interleaved event order and reconstructs exact levels', () => {
+  const sequence = [
+    { source: 'gen', record: { level: 'debug', sequence: 1 } },
+    { source: 'gen', record: { level: 'warnings', sequence: 2 } },
+    { source: 'comm', record: { sequence: 3 } },
+    { source: 'comm', record: { sequence: 4 } },
+    { source: 'gen', record: { level: 'warnings', sequence: 5 } }
+  ];
+  const merged = { entries: sequence, ordering: 'capture-sequence' };
+  const text = call('mergedLogJsonl', merged, {
+    start_timestamp: timestamp(1), end_timestamp: timestamp(5)
+  });
+  const lines = text.trim().split('\n').map(JSON.parse);
+  const restored = lines.slice(1).flatMap(group => group.records.map(record => ({
+    source: group.source,
+    record: Object.hasOwn(group, 'level')
+      ? { ...record, level: group.level } : record
+  })));
+  assert.deepEqual(restored, sequence);
+  assert.deepEqual(lines.slice(1).map(g => g.records.length), [1, 1, 2, 1]);
 });
