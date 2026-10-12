@@ -176,10 +176,25 @@
    */
   function persistDiagnosticLog() {
     try {
-      sessionStorage.setItem(
-        DIAGNOSTIC_LOG_STORAGE_KEY,
-        JSON.stringify(diagnosticLog.slice(-MAX_PERSISTED_DIAGNOSTIC_LOG_ITEMS))
+      const tailStart = Math.max(
+        0, diagnosticLog.length - MAX_PERSISTED_DIAGNOSTIC_LOG_ITEMS
       );
+      let versionBeforeTail = diagnosticLogBaselineVersion;
+      // Resolve only at the debounced persistence boundary, never per append.
+      for (let index = 0; index < tailStart; index += 1) {
+        const entry = diagnosticLog[index];
+        if (entry?.level === 'lifecycle' &&
+            entry.message === 'dc-version-transition' &&
+            entry.data && Object.hasOwn(entry.data, 'version') &&
+            (typeof entry.data.version === 'string' || entry.data.version === null)) {
+          versionBeforeTail = entry.data.version;
+        }
+      }
+      const snapshot = {
+        version_before_persisted: versionBeforeTail,
+        records: diagnosticLog.slice(tailStart)
+      };
+      sessionStorage.setItem(DIAGNOSTIC_LOG_STORAGE_KEY, JSON.stringify(snapshot));
     } catch {}
   }
 
