@@ -65,7 +65,9 @@ test('same userscript provides generic authenticated GitHub artifact transport w
   assert.match(brokerSource, /AGENT_PLUGIN_TRACE_PREFIX/);
   assert.match(brokerSource, /publishGitHubAgentPluginTrace/);
   assert.match(brokerSource, /normalizeGitHubAgentPluginSource/);
-  assert.match(bridgeSource, /githubAgentPluginBlobUrl\(descriptor\)/);
+  assert.match(bridgeSource, /requestAgentPluginFromGitHub\(descriptor\)/);
+  assert.match(bridgeSource, /verifyAgentPluginSource\(descriptor, source\)/);
+  assert.doesNotMatch(bridgeSource, /githubAgentPluginBlobUrl\(descriptor\)/);
 });
 
 test('GitHub broker restores the terminal LF and closes only after publishing source', async () => {
@@ -192,7 +194,8 @@ test('shared broker constants required by the ChatGPT bridge are defined in runt
 });
 
 test('runtime verifies AICC-selected bytes before Blob import and shares only verified source cache', () => {
-  assert.match(bridgeSource, /GM_addValueChangeListener/);
+  assert.match(bridgeSource, /GM_xmlhttpRequest\(\{/);
+  assert.match(bridgeSource, /requestAgentPluginFromGitHub\(descriptor\)/);
   assert.match(bridgeSource, /GM_setValue/);
   assert.match(bridgeSource, /crypto\.subtle\.digest\('SHA-1'/);
   assert.match(bridgeSource, /gitBlobSha1/);
