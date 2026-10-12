@@ -92,19 +92,25 @@ test('production append places header before the only timestamped event', async 
       await communicationLogStorageAppendRecord({
         timestamp: '2026-10-12T18:00:00Z', type: 'fixture'
       });
+      await communicationLogStorageAppendRecord({
+        timestamp: '2026-10-12T18:01:00Z', type: 'fixture2'
+      });
       return { writes, bytes: communicationLogActiveSegmentBytes,
         lastTimestamp: communicationLogActiveLastTimestamp, seals };
     };
   `)();
   const result = await execute();
-  assert.equal(result.writes.length, 2);
+  assert.equal(result.writes.length, 3);
   assert.deepEqual(JSON.parse(result.writes[0]), {
     version: { gen: '1.11.4', comm: '1.11.4' }
   });
   assert.deepEqual(JSON.parse(result.writes[1]), {
     timestamp: '2026-10-12T18:00:00Z', type: 'fixture'
   });
-  assert.equal(result.lastTimestamp, '2026-10-12T18:00:00Z');
+  assert.deepEqual(JSON.parse(result.writes[2]), {
+    timestamp: '2026-10-12T18:01:00Z', type: 'fixture2'
+  });
+  assert.equal(result.lastTimestamp, '2026-10-12T18:01:00Z');
   assert.equal(result.seals, 0);
   assert.equal(result.bytes, Buffer.byteLength(result.writes.join('')));
 });
