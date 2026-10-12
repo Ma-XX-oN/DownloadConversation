@@ -47,8 +47,8 @@ panel.querySelector('[data-role="last-log-problem"]').textContent =
   'warnings: communication-log-response-body-incomplete after repeated requests and retries';
 panel.querySelector('[data-role="user-feedback"]').textContent =
   'Merged logs: 989 records saved';
-panel.querySelector('[data-role="extract"]').innerHTML = `${arrowMarkup}`;
-panel.querySelector('[data-role="export-compression"]').innerHTML = `${circleMarkup}`;
+panel.querySelector('[data-role="extract"]').innerHTML = ${JSON.stringify(arrowMarkup)};
+panel.querySelector('[data-role="export-compression"]').innerHTML = ${JSON.stringify(circleMarkup)};
 panel.querySelector('[data-role="status"]').textContent =
   'segment_2026,10,11;22,31,25-2026,10,11;22,31,26.seg.zst verified; recording continues';
 panel.querySelector('[data-role="communication-log-name"]').textContent =
