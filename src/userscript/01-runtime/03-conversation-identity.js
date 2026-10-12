@@ -8,6 +8,12 @@
    *
    * @returns {string|null} Visible project name, or null for standalone/unresolved chats.
    */
+  function projectNameFromRouteSlug(projectSegment) {
+    const slug = projectSegment?.match(/^g-p-[0-9a-f]{32}-(.+)$/i)?.[1];
+    return slug ? slug.split('-').filter(Boolean)
+      .map(word => word.charAt(0).toUpperCase() + word.slice(1)).join(' ') : null;
+  }
+
   function conversationProjectName() {
     const namesByRoute = conversationProjectName.byRoute ??= new Map();
     const projectSegment = location.pathname.match(/^\/g\/([^/]+)(?:\/|$)/)?.[1] ?? null;
@@ -30,7 +36,7 @@
     const pageTitle = String(document.title ?? '')
       .replace(/\s*[-–—]\s*ChatGPT\s*$/i, '')
       .trim();
-    if (!heading || !pageTitle || pageTitle === heading) return namesByRoute.get(projectSegment) ?? null;
+    if (!heading || !pageTitle || pageTitle === heading) return namesByRoute.get(projectSegment) ?? projectNameFromRouteSlug(projectSegment);
     for (const separator of [' - ', ' – ', ' — ']) {
       if (pageTitle.endsWith(`${separator}${heading}`)) {
         const resolved = pageTitle.slice(0, -(`${separator}${heading}`).length).trim();
@@ -43,7 +49,7 @@
         return resolved || namesByRoute.get(projectSegment) || null;
       }
     }
-    return namesByRoute.get(projectSegment) ?? null;
+    return namesByRoute.get(projectSegment) ?? projectNameFromRouteSlug(projectSegment);
   }
 
   /**
