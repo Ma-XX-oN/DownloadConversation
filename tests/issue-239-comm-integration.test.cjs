@@ -62,13 +62,14 @@ test('recovery preserves historical and legacy raw source', async () => {
       },
       async removeEntry(name) { removed.push(name); }
     };
-    const api = new Function('directory', 'queue', source + '\n' +
+    const api = new Function('directory', 'queue', 'compressorExtension', source + '\n' +
       'communicationLogSegmentDirectoryHandle = directory;\n' +
       'communicationLogActiveFileName = "active-a.jsonl";\n' +
       'communicationLogSha256 = async () => "verified";\n' +
       'communicationLogQueueSegmentCompression = queue;\n' +
       'return communicationLogRecoverSegmentState;')(
-      directory, segment => { queued = segment; return Promise.resolve(); }
+      directory, segment => { queued = segment; return Promise.resolve(); },
+      () => '.zst'
     );
     await api();
     assert.equal(queued.raw_bytes, raw.length);
