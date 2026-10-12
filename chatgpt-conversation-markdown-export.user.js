@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         ChatGPT Conversation Markdown Recorder
 // @namespace    https://chatgpt.com/
-// @version      1.11.4-issue.226.3
+// @version      1.11.4-issue.240.1
 // @description  Exports the current ChatGPT conversation directly from the Conversation API as Markdown or JSONL.
 // @match        https://chatgpt.com/*
 // @match        https://chat.openai.com/*
@@ -6991,6 +6991,8 @@ globalThis.__dcCompressor = {
   let activeClickDiagnostic = null;
   /** In-memory diagnostic history mirrored to session storage for the panel. */
   let diagnosticLog = [];
+  /** Effective DC version immediately before the first retained GEN record. */
+  let diagnosticLogBaselineVersion = null;
   /** Pending debounced diagnostic-log persistence timer, or null when no write is scheduled. */
   let diagnosticPersistTimer = null;
   /** Whether the recorder panel currently shows the expanded diagnostic history. */
@@ -7051,11 +7053,48 @@ globalThis.__dcCompressor = {
   let communicationLogUiActionInProgress = false;
   /** Unique identity correlating all communication records produced by this page lifetime. */
   const communicationLogSessionId = crypto.randomUUID();
-  try {
-    const storedDiagnosticLog = JSON.parse(sessionStorage.getItem(DIAGNOSTIC_LOG_STORAGE_KEY) || '[]');
-    if (Array.isArray(storedDiagnosticLog)) diagnosticLog = storedDiagnosticLog.slice(-MAX_DIAGNOSTIC_LOG_ITEMS);
-  } catch {}
+  /**
+   * Restores the GEN diagnostic tail and its historical version baseline.
+   * Older plain-array snapshots have no trustworthy prior version.
+   * Corrupt snapshots are discarded together with their metadata.
+   */
+  function restoreDiagnosticLog() {
+    diagnosticLog = [];
+    diagnosticLogBaselineVersion = null;
+    try {
+      const raw = sessionStorage.getItem(DIAGNOSTIC_LOG_STORAGE_KEY);
+      if (raw === null) return;
+      const stored = JSON.parse(raw);
+      const legacy = Array.isArray(stored);
+      const records = legacy ? stored : stored?.records;
+      const baseline = legacy ? null : stored?.version_before_persisted;
+      if (!Array.isArray(records) ||
+          (!legacy && !(baseline === null || typeof baseline === 'string'))) return;
+      if (records.some(entry => !entry || typeof entry !== 'object' ||
+          Array.isArray(entry))) return;
+      const omitted = Math.max(0, records.length - MAX_PERSISTED_DIAGNOSTIC_LOG_ITEMS);
+      let effective = baseline;
+      for (let i = 0; i < omitted; i++) {
+        const entry = records[i];
+        if (entry.level === 'lifecycle' && entry.message === 'dc-version-transition' &&
+            entry.data && typeof entry.data === 'object' &&
+            Object.prototype.hasOwnProperty.call(entry.data, 'version') &&
+            (entry.data.version === null || typeof entry.data.version === 'string')) {
+          effective = entry.data.version;
+        }
+      }
+      diagnosticLog = records.slice(-MAX_PERSISTED_DIAGNOSTIC_LOG_ITEMS);
+      diagnosticLogBaselineVersion = effective;
+    } catch {
+      // Storage access and malformed JSON are nonfatal: start with unknown history.
+    }
+  }
 
+  restoreDiagnosticLog();
+
+  // #234 provenance: one ordinary timestamped lifecycle event per startup.
+  // #236 guarantees this specific lifecycle event bypasses severity filtering.
+  logDiagnostic('lifecycle', 'dc-version-transition', { version: VERSION });
   logConsoleDiagnostic('debug', `[DownloadConversation v${VERSION} | AIConversationCore v${CORE_VERSION}] version identity`);
 
   /**
@@ -18962,10 +19001,25 @@ Image elapsed: ${formatDuration(imageElapsed)} — Completed: ${imageCompleted}/
    */
   function persistDiagnosticLog() {
     try {
-      sessionStorage.setItem(
-        DIAGNOSTIC_LOG_STORAGE_KEY,
-        JSON.stringify(diagnosticLog.slice(-MAX_PERSISTED_DIAGNOSTIC_LOG_ITEMS))
+      const tailStart = Math.max(
+        0, diagnosticLog.length - MAX_PERSISTED_DIAGNOSTIC_LOG_ITEMS
       );
+      let versionBeforeTail = diagnosticLogBaselineVersion;
+      // Resolve only at the debounced persistence boundary, never per append.
+      for (let index = 0; index < tailStart; index += 1) {
+        const entry = diagnosticLog[index];
+        if (entry?.level === 'lifecycle' &&
+            entry.message === 'dc-version-transition' &&
+            entry.data && Object.hasOwn(entry.data, 'version') &&
+            (typeof entry.data.version === 'string' || entry.data.version === null)) {
+          versionBeforeTail = entry.data.version;
+        }
+      }
+      const snapshot = {
+        version_before_persisted: versionBeforeTail,
+        records: diagnosticLog.slice(tailStart)
+      };
+      sessionStorage.setItem(DIAGNOSTIC_LOG_STORAGE_KEY, JSON.stringify(snapshot));
     } catch {}
   }
 
@@ -19030,6 +19084,37 @@ Image elapsed: ${formatDuration(imageElapsed)} — Completed: ${imageCompleted}/
   function duplicateIconMarkup() {
     return '<svg viewBox="0 0 24 24" aria-hidden="true"><rect x="1.5" y="8" width="6" height="8" rx="1.5"></rect><rect x="16.5" y="2" width="6" height="7" rx="1.5"></rect><rect x="16.5" y="15" width="6" height="7" rx="1.5"></rect><path d="M7.5 12h3c2.8 0 2.8-6.5 6-6.5"></path><path d="M7.5 12h3c2.8 0 2.8 6.5 6 6.5"></path><path d="m14.5 4 2 1.5-2 1.5"></path><path d="m14.5 17 2 1.5-2 1.5"></path></svg>';
   }
+
+
+  /**
+   * Resolves the GEN version at the inclusive first selected event.
+   * The retained baseline is the version before the first retained event.
+   * This function reads but never changes the input log or version entries.
+   *
+   * @param {Array<Object>} records - Chronologically ordered GEN diagnostics.
+   * @param {number} startIndex - Inclusive first selected record index.
+   * @param {string|null} baselineVersion - Pre-window effective version.
+   * @returns {string|null} Effective DC version or unknown provenance.
+   */
+  function resolveGenVersionAtBoundary(records, startIndex, baselineVersion) {
+    if (!Array.isArray(records) || !Number.isInteger(startIndex) ||
+        startIndex < 0 || startIndex >= records.length ||
+        !(baselineVersion === null || typeof baselineVersion === 'string')) {
+      throw new TypeError('Invalid GEN version boundary');
+    }
+    let version = baselineVersion;
+    for (let i = 0; i <= startIndex; i++) {
+      const item = records[i];
+      if (item?.level === 'lifecycle' && item.message === 'dc-version-transition' &&
+          item.data && typeof item.data === 'object' &&
+          Object.prototype.hasOwnProperty.call(item.data, 'version') &&
+          (item.data.version === null || typeof item.data.version === 'string')) {
+        version = item.data.version;
+      }
+    }
+    return version;
+  }
+
   /** Original export implementation after source acquisition/render assembly. */
   const runExportWithCanonicalAgent = runExport;
   /** Original single built-in test runner. */
@@ -21162,7 +21247,15 @@ Image elapsed: ${formatDuration(imageElapsed)} — Completed: ${imageCompleted}/
     };
     diagnosticLog.push(entry);
     if (diagnosticLog.length > MAX_DIAGNOSTIC_LOG_ITEMS) {
-      diagnosticLog.splice(0, diagnosticLog.length - MAX_DIAGNOSTIC_LOG_ITEMS);
+      const evicted = diagnosticLog.splice(0, diagnosticLog.length - MAX_DIAGNOSTIC_LOG_ITEMS);
+      for (const item of evicted) {
+        if (item?.level === 'lifecycle' &&
+            item.message === 'dc-version-transition' &&
+            item.data && Object.hasOwn(item.data, 'version') &&
+            (typeof item.data.version === 'string' || item.data.version === null)) {
+          diagnosticLogBaselineVersion = item.data.version;
+        }
+      }
     }
     schedulePersistDiagnosticLog();
     refreshDiagnosticLog();
