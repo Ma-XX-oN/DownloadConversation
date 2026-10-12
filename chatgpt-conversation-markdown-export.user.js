@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         ChatGPT Conversation Markdown Recorder
 // @namespace    https://chatgpt.com/
-// @version      1.11.4-issue.220.21
+// @version      1.11.4-issue.220.22
 // @description  Exports the current ChatGPT conversation directly from the Conversation API as Markdown or JSONL.
 // @match        https://chatgpt.com/*
 // @match        https://chat.openai.com/*
@@ -22179,6 +22179,10 @@ Image elapsed: ${formatDuration(imageElapsed)} — Completed: ${imageCompleted}/
       #${PANEL_ID} .tm-sound-volume-slider::-webkit-slider-runnable-track{background:repeating-linear-gradient(to top,#8192a8 0 2px,#323b49 2px 15px);border-radius:6px;border:1px solid #a4b1c3;width:12px}
       #${PANEL_ID} .tm-sound-volume-slider::-webkit-slider-thumb{appearance:none;background:#b2d8ff;border:2px solid #fff;box-shadow:0 0 0 2px #296ca8;width:22px;height:14px;border-radius:5px}
       #${PANEL_ID} .tm-sound-volume-value{font-size:14px;font-weight:700;color:#fff}
+      #${PANEL_ID} .tm-sound-popup{flex-direction:row;align-items:center;flex-wrap:wrap;justify-content:center}
+      #${PANEL_ID} .tm-volume-ticks{height:145px;display:flex;flex-direction:column;justify-content:space-between;font:700 12px/1 system-ui,sans-serif;color:#fff;text-shadow:0 1px 2px #000}
+      #${PANEL_ID} .tm-sound-volume-value{flex:0 0 100%;text-align:center}
+
       #${PANEL_ID} .tm-status{margin:0;max-height:0;overflow:hidden}
       #${PANEL_ID} .tm-status:not(:empty){max-height:2px}
       @media(max-width:390px){#${PANEL_ID} .tm-md-metadata{font-size:11px;gap:2px}#${PANEL_ID} .tm-recording-modes{gap:2px}#${PANEL_ID} .tm-extract-formats{gap:8px}}
@@ -22873,7 +22877,7 @@ Image elapsed: ${formatDuration(imageElapsed)} — Completed: ${imageCompleted}/
         <div class="tm-row tm-extract-formats"><label><input data-role="format-jsonl" type="checkbox"> JSONL</label><label><input data-role="format-md" type="checkbox" checked> MD</label><button class="tm-icon-button tm-export-action" data-role="extract" type="button" aria-label="Export conversation" title="Export conversation">→</button><button class="tm-export-compression" data-role="export-compression" type="button" role="switch" aria-checked="false" aria-label="Save uncompressed" title="Save uncompressed"></button></div>
       </div>
       <div class="tm-row tm-tool-actions">
-        <div class="tm-sound-control-row"><button class="tm-sound-control" data-role="agent-sound-control" type="button" aria-haspopup="dialog" aria-expanded="false" aria-label="Sound volume">🔊 <span data-role="agent-sound-control-value"></span></button><div class="tm-sound-popup" data-role="agent-sound-popup" hidden role="dialog" aria-label="Agent sound volume"><input class="tm-sound-volume-slider" data-role="agent-sound-volume" type="range" min="0" max="10" step="1" aria-label="Agent sound volume"><output class="tm-sound-volume-value" data-role="agent-sound-volume-value"></output></div></div>
+        <div class="tm-sound-control-row"><button class="tm-sound-control" data-role="agent-sound-control" type="button" aria-haspopup="dialog" aria-expanded="false" aria-label="Sound volume">🔊 <span data-role="agent-sound-control-value"></span></button><div class="tm-sound-popup" data-role="agent-sound-popup" hidden role="dialog" aria-label="Agent sound volume"><span class="tm-volume-ticks" aria-hidden="true"><span>10</span><span>5</span><span>0</span></span><input class="tm-sound-volume-slider" data-role="agent-sound-volume" type="range" min="0" max="10" step="1" aria-label="Agent sound volume"><output class="tm-sound-volume-value" data-role="agent-sound-volume-value"></output></div></div>
         <button class="tm-tool-button" data-role="jump" type="button" aria-label="Jump to entry" title="Jump to entry">🪂</button>
         <button class="tm-tool-button" data-role="test" type="button" aria-label="Run tests" title="Run tests">🧪</button>
       </div>
