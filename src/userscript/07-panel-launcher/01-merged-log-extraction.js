@@ -328,7 +328,7 @@
     const prefix = canonicalFilename(
       conversationProjectName(), conversationTitle(), range
     );
-    const suffix = '.merged.log' + compressorExtension();
+    const suffix = '.mlog' + compressorExtension();
     const directory = communicationLogReady
       ? communicationLogDirectoryHandle : null;
     let name = prefix + suffix;
