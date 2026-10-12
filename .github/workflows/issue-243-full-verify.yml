@@ -25,6 +25,7 @@ jobs:
           node --check chatgpt-conversation-markdown-export.user.js
           node scripts/check-jsdoc.mjs
           node scripts/build-userscript.mjs --check
+          git fetch origin 62571e15af8f7f3e4472258e7a18bb2f2d48cef5
           node --test tests/modular-userscript-build.test.mjs
       - name: Verify 16KiB source-segment cap
         run: |
