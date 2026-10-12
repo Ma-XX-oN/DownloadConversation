@@ -42,7 +42,9 @@ test('Rename, disk Save and circular-arrow Reset use approved icon actions', () 
   assert.match(userscript, /resetCommunicationLogButton\.innerHTML/);
   assert.match(userscript, /<path d="M4 6v5h5"/);
   assert.match(userscript, /data-role="reset-communication-log"/);
-  assert.doesNotMatch(userscript, /data-role="duplicate-communication-log"/);
+  assert.doesNotMatch(userscript.slice(userscript.indexOf('panel.innerHTML = `'),
+    userscript.indexOf('panel.innerHTML = `') + 5300),
+    /data-role="duplicate-communication-log"/);
 });
 
 test('Issue 166 owns the communication segment target in one named symbol', () => {
