@@ -218,6 +218,25 @@ Image elapsed: ${formatDuration(imageElapsed)} — Completed: ${imageCompleted}/
   }
 
   /**
+   * Displays the actual selected recording folder, not a hard-coded prefix.
+   * The logical filename retains its original bytes for disk operations.
+   *
+   * @param {FileSystemDirectoryHandle|null} directory - Selected storage folder.
+   * @param {string|null} filename - Current logical communication-log filename.
+   * @returns {Object} Short display location and exact folder/filename.
+   */
+  function communicationLogDisplayLocation(directory, filename) {
+    if (!filename) return { display: 'Not configured', exact: 'Not configured' };
+    const folderName = typeof directory?.name === 'string'
+      ? directory.name.trim() : '';
+    const shortName = filename.replace(/^DownloadConversation_/, '');
+    return {
+      display: folderName ? `${folderName} / ${shortName}` : filename,
+      exact: folderName ? `${folderName} / ${filename}` : filename
+    };
+  }
+
+  /**
    * Refreshes status.
    *
    * @returns {void} No value is returned.
@@ -233,13 +252,16 @@ Image elapsed: ${formatDuration(imageElapsed)} — Completed: ${imageCompleted}/
       resetCommunicationLogButton
     } = communicationLogPanelControls();
     const communicationLogAvailable = Boolean(communicationLogReady && communicationLogFileName);
-    const communicationLogDisplayName = communicationLogAvailable ? communicationLogFileName : 'Not configured';
-    if (communicationLogNameText) communicationLogNameText.textContent = communicationLogDisplayName;
+    const location = communicationLogDisplayLocation(
+      communicationLogDirectoryHandle,
+      communicationLogAvailable ? communicationLogFileName : null
+    );
+    if (communicationLogNameText) communicationLogNameText.textContent = location.display;
     if (communicationLogNameViewport) {
-      communicationLogNameViewport.title = communicationLogDisplayName;
+      communicationLogNameViewport.title = location.exact;
       communicationLogNameViewport.setAttribute(
         'aria-label',
         communicationLogAvailable
-          ? `Current communication log filename: ${communicationLogFileName}`
-          : 'Current communication log filename: not configured'
+          ? `Current communication log location: ${location.exact}`
+          : 'Current communication log location: not configured'
       );
