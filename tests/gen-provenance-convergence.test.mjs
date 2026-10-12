@@ -109,7 +109,8 @@ test('quota failure preserves in-memory diagnostics', () => {
   const app = scenario({ quota:true });
   app.transition('v1');
   app.save();
-  assert.equal(app.current().records.length, 2);
+  assert.equal(app.current().records.length, 1);
+  assert.equal(app.current().records[0].data.version, 'v1');
   assert.equal(app.current().stored, null);
 });
 
