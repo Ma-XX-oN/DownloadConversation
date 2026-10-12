@@ -52,7 +52,7 @@ panel.querySelector('[data-role="export-compression"]').innerHTML = ${JSON.strin
 panel.querySelector('[data-role="status"]').textContent =
   'segment_2026,10,11;22,31,25-2026,10,11;22,31,26.seg.zst verified; recording continues';
 panel.querySelector('[data-role="communication-log-name"]').textContent =
-  'DownloadConversation_' + 'LongConversationName_'.repeat(14) + '.comm.zst';
+  'Repo-Workflow__' + 'LongConversationName_'.repeat(14) + '.jsonl';
 const box = element => element.getBoundingClientRect();
 const result = { width: innerWidth, height: innerHeight,
   panel: {left:box(panel).left,right:box(panel).right,top:box(panel).top,
@@ -194,3 +194,12 @@ for (const [width, height] of [[430, 800], [800, 600], [900, 450]]) {
       assert.ok(result.panel.height > 100);
     });
 }
+
+
+test('separate warning and export-feedback render contracts are connected', () => {
+  const refresh = productionFunctionSource('refreshStatus');
+  assert.match(refresh, /data-role="user-feedback"/);
+  assert.match(refresh, /feedback\.textContent/);
+  assert.match(refresh, /progressStatus/);
+  assert.match(refresh, /statusText/);
+});
