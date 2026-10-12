@@ -37,6 +37,8 @@ function harness({ storage = null, level = 'errors' } = {}) {
     DIAGNOSTIC_LEVELS: { errors: 0, warnings: 1, debug: 2, verbose: 3 },
     diagnosticsLevel: level,
     localStorage: { getItem: () => null },
+    logCapturePosition: () => ({epoch:1,ordinal:1,document:'test'}),
+    recordingGroupState: () => ({ready:false,uuid:null}),
     diagnosticLog: [],
     diagnosticLogBaselineVersion: null,
     VERSION: 'v1',
