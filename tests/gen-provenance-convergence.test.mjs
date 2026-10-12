@@ -37,6 +37,7 @@ function scenario(options = {}) {
     let diagnosticLog = [];
     let diagnosticLogBaselineVersion = null;
     let VERSION = options.version || 'v1';
+    const localStorage = { getItem: () => null };
     let stored = options.stored ?? null;
     const sessionStorage = {
       getItem: () => stored,
