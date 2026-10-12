@@ -16,18 +16,31 @@
     let startTimestamp = null;
     let endTimestamp = null;
     let lineStart = 0;
+    let fragmentHeader = null;
+    let firstLine = true;
     for (let index = 0; index < bytes.byteLength; index += 1) {
       if (bytes[index] !== 10) continue;
       const line = bytes.subarray(lineStart, index);
       const complete = bytes.subarray(lineStart, index + 1);
       lineStart = index + 1;
-      if (!line.byteLength) continue;
+      if (!line.byteLength) {
+        firstLine = false;
+        continue;
+      }
       let record;
       try {
         record = JSON.parse(new TextDecoder().decode(line));
       } catch {
         continue;
       }
+      if (firstLine && record && typeof record === 'object'
+          && !Array.isArray(record) && Object.keys(record).length === 1
+          && Object.hasOwn(record, 'version')) {
+        fragmentHeader = complete;
+        firstLine = false;
+        continue;
+      }
+      firstLine = false;
       const timestamp = typeof record?.timestamp === 'string'
         ? record.timestamp
         : null;
@@ -39,6 +52,11 @@
       total += complete.byteLength;
       startTimestamp ??= timestamp;
       endTimestamp = timestamp;
+    }
+    // No selected records means no output, including no orphan header.
+    if (total > 0 && fragmentHeader) {
+      parts.unshift(fragmentHeader);
+      total += fragmentHeader.byteLength;
     }
     const accepted = new Uint8Array(total);
     let offset = 0;
