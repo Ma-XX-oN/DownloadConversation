@@ -13,25 +13,26 @@ test('recorder panel restores dialog/log/switch/extract UI contracts', () => {
   assert.doesNotMatch(userscript, /setStatus\(currentTestStatusLines\(\)\.join/,
     'Test results belong in the test dialog, not general status.');
 
-  const titleAt = userscript.indexOf('<div class="tm-title" data-role="title"></div>');
-  const logAt = userscript.indexOf('<div class="tm-log-head">', titleAt);
-  const statusAt = userscript.indexOf('<div class="tm-status" data-role="status"></div>', titleAt);
-  assert.ok(titleAt >= 0 && logAt > titleAt && statusAt > logAt, 'Log must be directly below title, before status/other controls.');
-  assert.match(userscript, /data-role="copy-log"[^>]*aria-label="Copy diagnostic log"/);
+  const htmlStart = userscript.indexOf('panel.innerHTML = `');
+  const htmlEnd = userscript.indexOf('`;', htmlStart);
+  const ui = userscript.slice(htmlStart, htmlEnd);
+  const titleAt = ui.indexOf('data-role="title"');
+  const logAt = ui.indexOf('data-role="log-count"');
+  const diagnosticsAt = ui.indexOf('data-role="diagnostics"');
+  assert.ok(titleAt >= 0 && logAt > titleAt && diagnosticsAt > logAt,
+    'Version, log count and diagnostics must retain approved order.');
+  assert.match(ui, /data-role="last-log-problem"/);
+  assert.match(ui, /data-role="save-log"/);
+  assert.match(ui, /data-role="reset-communication-log"/);
+  assert.doesNotMatch(ui, /data-role="copy-log"|data-role="toggle-log"|data-role="screen-on"/);
   assert.match(userscript, /checkIconMarkup\(\)/);
-  assert.match(userscript, /button\.classList\.add\('tm-copy-fade'\)/,
-    'Copy confirmation must fade before the copy icon returns.');
-  assert.match(userscript, /requestAnimationFrame\(\(\) => button\.classList\.remove\('tm-copy-fade'\)\)/,
-    'Copy icon must fade back in after the confirmation checkmark.');
-  assert.match(userscript, /data-role="toggle-log"/);
   assert.match(userscript, /data-role="log-output" hidden/);
   assert.match(userscript, /\.tm-log-row:nth-child\(even\)/);
+  assert.match(ui, /tm-recorder-section tm-recording-section/);
+  assert.match(ui, /tm-recorder-section tm-export-section/);
+  assert.match(ui, /tm-row tm-tool-actions/);
 
-  assert.match(userscript, /data-role="screen-on"[^>]*role="switch"[^>]*aria-checked="false"/);
-  assert.match(userscript, /class="tm-switch-thumb"/);
-  assert.match(userscript, /screen\.setAttribute\('aria-checked', String\(screenOnWhenCapturing\)\)/);
-
-  assert.match(userscript, /data-role="extract" type="button">Extract<\/button>/);
+  assert.match(ui, /data-role="extract" type="button" aria-label="Export conversation"/);
   assert.match(userscript, /data-role="format-jsonl" type="checkbox"> JSONL/);
   assert.doesNotMatch(userscript, /data-role="format-jsonl" type="checkbox" checked/);
   assert.match(userscript, /data-role="format-md" type="checkbox" checked> MD/);
@@ -119,16 +120,18 @@ test('recorder panel restores dialog/log/switch/extract UI contracts', () => {
 });
 
 
-test('Issue 220 merged Log Save is immediately left of Copy', () => {
-  const head = userscript.match(/<div class="tm-log-head">[^\n]+<\/div>/)?.[0] ?? '';
-  assert.match(head, /data-role="save-log"[^>]*aria-label="Extract merged logs"[^>]*title="Extract logs"/);
-  const saveAt = head.indexOf('data-role="save-log"');
-  const copyAt = head.indexOf('data-role="copy-log"');
-  const toggleAt = head.indexOf('data-role="toggle-log"');
-  assert.ok(saveAt >= 0 && copyAt > saveAt && toggleAt > copyAt,
-    'Log controls must be ordered Extract, Copy, Expand.');
+test('Issue 220 Save and Reset are beneath recording modes, not in the log header', () => {
+  const markup = userscript.slice(userscript.indexOf('panel.innerHTML = `'),
+    userscript.indexOf('`;', userscript.indexOf('panel.innerHTML = `')));
+  const modesAt = markup.indexOf('tm-row tm-recording-modes');
+  const buttonsAt = markup.indexOf('tm-row tm-recording-actions');
+  const saveAt = markup.indexOf('data-role="save-log"');
+  const resetAt = markup.indexOf('data-role="reset-communication-log"');
+  const exportAt = markup.indexOf('tm-recorder-section tm-export-section');
+  assert.ok(modesAt >= 0 && buttonsAt > modesAt && saveAt > buttonsAt
+    && resetAt > saveAt && exportAt > resetAt);
+  assert.match(markup, /aria-label="Save merged log"/);
 });
-
 
 test('Issue 166 diagnostic Save uses a supported deterministic archive member and reports failures', () => {
   assert.ok(downloadConversationSource.includes('diagnosticLogArchiveName('),
