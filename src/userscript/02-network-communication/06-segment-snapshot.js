@@ -77,13 +77,20 @@
   async function communicationLogLastTimestampFromJsonlFile(file, end = file.size) {
     const limit = Math.min(file.size, Math.max(0, end));
     let lineEnd = limit;
+    // A frozen EOF inside an unfinished JSONL line must not count as an event.
+    const tail = limit > 0
+      ? new Uint8Array(await file.slice(limit - 1, limit).arrayBuffer())[0]
+      : 10;
+    let skipTrailingLine = tail !== 10;
     for (let cursor = limit; cursor > 0;) {
       const start = Math.max(0, cursor - COMMUNICATION_LOG_COMPARE_CHUNK_BYTES);
       const bytes = new Uint8Array(await file.slice(start, cursor).arrayBuffer());
       for (let index = bytes.byteLength - 1; index >= 0; index -= 1) {
         if (bytes[index] !== 10) continue;
         const lineStart = start + index + 1;
-        if (lineStart < lineEnd) {
+        if (skipTrailingLine) {
+          skipTrailingLine = false;
+        } else if (lineStart < lineEnd) {
           const timestamp = await communicationLogTimestampFromJsonlLine(
             file.slice(lineStart, lineEnd)
           );
@@ -93,7 +100,7 @@
       }
       cursor = start;
     }
-    return lineEnd > 0
+    return !skipTrailingLine && lineEnd > 0
       ? communicationLogTimestampFromJsonlLine(file.slice(0, lineEnd))
       : null;
   }
