@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         ChatGPT Conversation Markdown Recorder
 // @namespace    https://chatgpt.com/
-// @version      1.11.4-issue.220.39
+// @version      1.11.4-issue.220.40
 // @description  Exports the current ChatGPT conversation directly from the Conversation API as Markdown or JSONL.
 // @match        https://chatgpt.com/*
 // @match        https://chat.openai.com/*
@@ -8623,7 +8623,7 @@ globalThis.__dcCompressor = {
     const pageTitle = String(document.title ?? '')
       .replace(/\s*[-–—]\s*ChatGPT\s*$/i, '')
       .trim();
-    if (!heading || !pageTitle || pageTitle === heading) return namesByRoute.get(projectSegment) ?? projectNameFromRouteSlug(projectSegment);
+    if (!heading || !pageTitle || pageTitle === heading) return namesByRoute.get(projectSegment) ?? null;
     for (const separator of [' - ', ' – ', ' — ']) {
       if (pageTitle.endsWith(`${separator}${heading}`)) {
         const resolved = pageTitle.slice(0, -(`${separator}${heading}`).length).trim();
@@ -8636,7 +8636,35 @@ globalThis.__dcCompressor = {
         return resolved || namesByRoute.get(projectSegment) || null;
       }
     }
-    return namesByRoute.get(projectSegment) ?? projectNameFromRouteSlug(projectSegment);
+    return namesByRoute.get(projectSegment) ?? null;
+  }
+
+  /**
+   * Returns one conversation-scoped manual filename override across reloads.
+   *
+   * @returns {string|null} Explicit basename or null for automatic naming.
+   */
+  function conversationFilenameOverride() {
+    const id = currentConversationId();
+    if (!id) return null;
+    try {
+      const value = localStorage.getItem('tm-recorder-filename-override:' + id);
+      return value ? sanitizeFileName(value) : null;
+    } catch { return null; }
+  }
+
+  /**
+   * Stores or resets an explicit filename base for the current conversation.
+   *
+   * @param {string|null} value - Manual basename or null to restore automatic naming.
+   * @returns {void} No value is returned.
+   */
+  function conversationFilenameSetOverride(value) {
+    const id = currentConversationId();
+    if (!id) throw new Error('Conversation identity is unavailable.');
+    const key = 'tm-recorder-filename-override:' + id;
+    if (value === null) localStorage.removeItem(key);
+    else localStorage.setItem(key, sanitizeFileName(value));
   }
 
   /**
@@ -8646,10 +8674,10 @@ globalThis.__dcCompressor = {
    */
   function conversationFileBaseName() {
     const conversationName = sanitizeFileName(conversationTitle());
+    const manual = conversationFilenameOverride();
+    if (manual) return manual;
     const projectName = conversationProjectName();
-    return projectName
-      ? `${sanitizeFileName(projectName).replace(/\s+/g, '-')}__${conversationName}`
-      : conversationName;
+    return `${projectName ? sanitizeFileName(projectName).replace(/\s+/g, '-') : 'Unknown'}__${conversationName}`;
   }
 
 
@@ -8689,9 +8717,8 @@ globalThis.__dcCompressor = {
       throw new Error('Filename content has no trustworthy timestamp range.');
     }
     const chatName = sanitizeFileName(chat);
-    const identity = project
-      ? `${sanitizeFileName(project).replace(/\s+/g, '-')}__${chatName}`
-      : chatName;
+    const manual = conversationFilenameOverride();
+    const identity = manual || `${project ? sanitizeFileName(project).replace(/\s+/g, '-') : 'Unknown'}__${chatName}`;
     const start = canonicalFilenameTimestamp(timestampRange.start_timestamp);
     const end = canonicalFilenameTimestamp(timestampRange.end_timestamp);
     return `${identity}_${start}-${end}`;
@@ -16522,6 +16549,7 @@ Image elapsed: ${formatDuration(imageElapsed)} — Completed: ${imageCompleted}/
       communicationLogNameViewport: root?.querySelector('[data-role="communication-log-name-viewport"]') ?? null,
       communicationLogNameText: root?.querySelector('[data-role="communication-log-name"]') ?? null,
       renameCommunicationLogButton: root?.querySelector('[data-role="rename-communication-log"]') ?? null,
+      resetCommunicationLogFilenameButton: root?.querySelector('[data-role="reset-communication-log-filename"]') ?? null,
       duplicateCommunicationLogButton: root?.querySelector('[data-role="duplicate-communication-log"]') ?? null,
       resetCommunicationLogButton: root?.querySelector('[data-role="reset-communication-log"]') ?? null
     };
@@ -16597,10 +16625,20 @@ Image elapsed: ${formatDuration(imageElapsed)} — Completed: ${imageCompleted}/
       communicationLogNameViewport,
       communicationLogNameText,
       renameCommunicationLogButton,
+      resetCommunicationLogFilenameButton,
       duplicateCommunicationLogButton,
       resetCommunicationLogButton
     } = communicationLogPanelControls();
     const communicationLogAvailable = Boolean(communicationLogReady && communicationLogFileName);
+    if (communicationLogAvailable && !conversationFilenameOverride()) {
+      const automaticName = conversationFileBaseName() + '.jsonl';
+      if (communicationLogFileName !== automaticName) communicationLogFileName = automaticName;
+    }
+    if (resetCommunicationLogFilenameButton) {
+      resetCommunicationLogFilenameButton.disabled =
+        communicationLogUiActionInProgress || !communicationLogAvailable
+          || !conversationFilenameOverride();
+    }
     const location = communicationLogDisplayLocation(
       communicationLogDirectoryHandle,
       communicationLogAvailable ? communicationLogFileName : null
@@ -22957,7 +22995,7 @@ Image elapsed: ${formatDuration(imageElapsed)} — Completed: ${imageCompleted}/
       <div class="tm-log-output" data-role="log-output" hidden></div>
       <div class="tm-row tm-diagnostics-row"><label for="tm-recorder-diagnostics">Diagnostics:</label><select id="tm-recorder-diagnostics" data-role="diagnostics"><option value="errors">Errors</option><option value="warnings">Warnings</option><option value="debug">Debug</option><option value="verbose">Verbose</option></select></div>
       <div class="tm-recorder-section tm-recording-section">
-        <div class="tm-recording-location"><div class="tm-row tm-communication-log-row"><div class="tm-log-name-viewport" data-role="communication-log-directory" aria-label="Destination directory"></div><button class="tm-icon-button" data-role="change-communication-log-directory" type="button" aria-label="Change destination directory" title="Change destination directory"></button></div><div class="tm-row tm-communication-log-row"><div class="tm-log-name-viewport" data-role="communication-log-name-viewport" role="textbox" aria-readonly="true" aria-label="Current communication log filename base" title="Current communication log filename base"><span class="tm-log-name-text" data-role="communication-log-name"></span></div><button class="tm-icon-button" data-role="rename-communication-log" type="button" aria-label="Rename communication log" title="Rename communication log"></button></div></div>
+        <div class="tm-recording-location"><div class="tm-row tm-communication-log-row"><div class="tm-log-name-viewport" data-role="communication-log-directory" aria-label="Destination directory"></div><button class="tm-icon-button" data-role="change-communication-log-directory" type="button" aria-label="Change destination directory" title="Change destination directory"></button></div><div class="tm-row tm-communication-log-row"><div class="tm-log-name-viewport" data-role="communication-log-name-viewport" role="textbox" aria-readonly="true" aria-label="Current communication log filename base" title="Current communication log filename base"><span class="tm-log-name-text" data-role="communication-log-name"></span></div><button class="tm-icon-button" data-role="rename-communication-log" type="button" aria-label="Rename communication log" title="Rename communication log"></button><button class="tm-icon-button" data-role="reset-communication-log-filename" type="button" aria-label="Reset filename to project and conversation" title="Reset filename to project and conversation"></button></div></div>
         <div class="tm-row tm-recording-modes"><label><input data-role="record-general" type="checkbox" checked> Gen</label><label><input data-role="record-communication" type="checkbox" checked> Comm</label><label><input data-role="console-diagnostics" type="checkbox"> Con</label><label><input data-role="record-one-group" type="checkbox"> 1</label></div>
         <div class="tm-row tm-recording-actions"><button class="tm-icon-button" data-role="save-log" type="button" aria-label="Save merged log" title="Save merged log"></button><button class="tm-icon-button" data-role="reset-communication-log" type="button" aria-label="Reset communication log" title="Reset communication log"></button></div>
       </div>
@@ -23046,11 +23084,14 @@ Image elapsed: ${formatDuration(imageElapsed)} — Completed: ${imageCompleted}/
       communicationLogNameViewport,
       changeCommunicationLogDirectoryButton,
       renameCommunicationLogButton,
+      resetCommunicationLogFilenameButton,
       duplicateCommunicationLogButton,
       resetCommunicationLogButton
     } = communicationLogPanelControls(panel);
     if (changeCommunicationLogDirectoryButton) changeCommunicationLogDirectoryButton.innerHTML = renameIconMarkup();
     if (renameCommunicationLogButton) renameCommunicationLogButton.innerHTML = renameIconMarkup();
+    if (resetCommunicationLogFilenameButton) resetCommunicationLogFilenameButton.innerHTML =
+      '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M3 12a9 9 0 1 1 3 6.7"/><path d="M3 4v8h8"/></svg>';
     if (duplicateCommunicationLogButton) duplicateCommunicationLogButton.innerHTML = duplicateIconMarkup();
     if (resetCommunicationLogButton) resetCommunicationLogButton.innerHTML =
       '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 6v5h5"/><path d="M5.5 11a8 8 0 1 1 .8 5"/></svg>';
@@ -23097,8 +23138,29 @@ Image elapsed: ${formatDuration(imageElapsed)} — Completed: ${imageCompleted}/
         busyLabel: 'Renaming communication log',
         busyTitle: 'Renaming…',
         operation: () => communicationLogRename(requestedName),
-        onSuccess: newFileName => setStatus(`Communication log renamed to ${newFileName}.`),
+        onSuccess: newFileName => {
+          conversationFilenameSetOverride(newFileName.replace(/\.jsonl$/, ''));
+          setStatus(`Communication log renamed to ${newFileName}.`);
+        },
         failurePrefix: 'Communication log rename failed'
+      });
+    });
+    resetCommunicationLogFilenameButton?.addEventListener('click', () => {
+      if (communicationLogUiActionInProgress || !conversationFilenameOverride()) return;
+      const automaticBase = `${conversationProjectName()
+        ? sanitizeFileName(conversationProjectName()).replace(/\s+/g, '-') : 'Unknown'}__${sanitizeFileName(conversationTitle())}`;
+      void runCommunicationLogPanelAction(resetCommunicationLogFilenameButton, {
+        idleLabel: 'Reset filename',
+        busyLabel: 'Resetting filename',
+        busyTitle: 'Resetting filename…',
+        operation: async () => {
+          // Reset the explicit override only once the logical rename succeeds.
+          const name = await communicationLogRename(automaticBase + '.jsonl');
+          conversationFilenameSetOverride(null);
+          return name;
+        },
+        onSuccess: name => setStatus(`Filename reset to ${name}.`),
+        failurePrefix: 'Filename reset failed'
       });
     });
     duplicateCommunicationLogButton?.addEventListener('click', () => {
