@@ -49,3 +49,11 @@ test('invalid boundary and baseline fail explicitly', () => {
   assert.throws(() => resolve([ordinary], 1, null), { name: 'TypeError' });
   assert.throws(() => resolve([ordinary], 0, undefined), { name: 'TypeError' });
 });
+
+
+test('evicted-memory version and upgrade at first selected event', () => {
+  const rows = [ordinary, version('v6'), ordinary, version('v7')];
+  assert.equal(resolve(rows, 0, 'v5'), 'v5');
+  assert.equal(resolve(rows, 2, 'v5'), 'v6');
+  assert.equal(resolve(rows, 3, 'v5'), 'v7');
+});
