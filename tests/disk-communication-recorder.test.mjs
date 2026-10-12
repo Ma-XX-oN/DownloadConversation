@@ -42,8 +42,8 @@ test('disk communication recorder production block exists', () => {
 
 test('communication log filename is project plus sanitized conversation title', () => {
   const block = diskBlock();
-  assert.match(block, /DownloadConversation_/);
-  assert.match(block, /sanitizeFileName\(conversationTitle\(\)\)/);
+  assert.match(block, /conversationFileBaseName\(\)/);
+  assert.doesNotMatch(block, /communicationLogFileName = \`DownloadConversation_/);
   assert.match(block, /\.jsonl/);
 });
 

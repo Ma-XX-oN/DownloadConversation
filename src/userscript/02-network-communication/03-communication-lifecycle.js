@@ -41,13 +41,13 @@
       return false;
     }
     communicationLogDirectoryHandle = handle;
-    communicationLogFileName = `DownloadConversation_${conversationFileBaseName()}.jsonl`;
-    if (/^DownloadConversation_(?:ChatGPT|ChatGPT conversation)\.jsonl$/i.test(communicationLogFileName)) {
+    communicationLogFileName = `${conversationFileBaseName()}.jsonl`;
+    if (/^(?:ChatGPT|ChatGPT conversation)\.jsonl$/i.test(communicationLogFileName)) {
       const projectName = conversationProjectName();
       const fallbackBase = projectName
-        ? `${sanitizeFileName(projectName)} - ${conversationName}`
+        ? `${sanitizeFileName(projectName).replace(/\s+/g, '-')}__${conversationName}`
         : conversationName;
-      communicationLogFileName = `DownloadConversation_${fallbackBase}.jsonl`;
+      communicationLogFileName = `${fallbackBase}.jsonl`;
     }
     logDiagnostic('debug', 'communication-log-segment-initialize-call-started', {
       initializer_type: typeof communicationLogInitializeSegmentStorage

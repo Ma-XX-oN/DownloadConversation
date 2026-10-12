@@ -61,6 +61,8 @@ function functionSource(source, name) {
 function identityHarness({ pathname, heading, title, links }) {
   const conversationTitle = functionSource(identitySource, 'conversationTitle');
   const sanitizeFileName = functionSource(identitySource, 'sanitizeFileName');
+  const currentConversationId = functionSource(identitySource, 'currentConversationId');
+  const projectSlug = functionSource(identitySource, 'projectNameFromRouteSlug');
   const projectName = functionSource(identitySource, 'conversationProjectName');
   const fileBase = functionSource(identitySource, 'conversationFileBaseName');
   const location = {
@@ -73,16 +75,19 @@ function identityHarness({ pathname, heading, title, links }) {
     querySelector: selector => selector === 'h1' ? { textContent: heading } : null,
     querySelectorAll: selector => selector === 'a[href]' ? links : []
   };
-  return new Function('document', 'location', 'URL', `
+  return new Function('document', 'location', 'URL', 'localStorage', `
     ${conversationTitle}
     ${sanitizeFileName}
+    ${currentConversationId}
+    ${projectSlug}
     ${projectName}
+    ${functionSource(identitySource, 'conversationFilenameOverride')}
     ${fileBase}
     return {
       projectName: conversationProjectName(),
       fileBase: conversationFileBaseName()
     };
-  `)(document, location, URL);
+  `)(document, location, URL, { getItem() { return null; } });
 }
 
 function exportHarness() {
@@ -285,7 +290,7 @@ test('Issue 172 project chat resolves project name and canonical project-convers
   });
   assert.deepEqual(result, {
     projectName: 'Download Conversation',
-    fileBase: 'Download Conversation - Browser XZ Comparison'
+    fileBase: 'Download-Conversation__Browser XZ Comparison'
   });
 });
 
@@ -298,7 +303,7 @@ test('Issue 172 standalone chat keeps conversation-only filename base', () => {
   });
   assert.deepEqual(result, {
     projectName: null,
-    fileBase: 'Browser XZ Comparison'
+    fileBase: 'Unknown__Browser XZ Comparison'
   });
 });
 
@@ -310,10 +315,24 @@ test('Issue 172 manifest persists project identity separately from conversation 
 
 test('Issue 172 all user-facing archive/export paths use canonical naming', () => {
   assert.match(lifecycleSource,
-    /DownloadConversation_\$\{conversationFileBaseName\(\)\}\.jsonl/);
+    /\$\{conversationFileBaseName\(\)\}\.jsonl/);
   assert.match(imageRecoverySource, /canonicalFilename\(/);
   assert.match(imageRecoverySource, /conversationJsonlTimestampRange\(jsonl\)/);
   assert.match(diagnosticSource, /canonicalFilename\(/);
   assert.doesNotMatch(imageRecoverySource,
     /sanitizeFileName\(conversationTitle\(\)\)\.(?:jsonl|md)/);
+});
+
+test('filename uses conversation identity and not unrelated numeric page heading', () => {
+  const projectSegment = 'g-p-6a74170dd7ac8191b0f5bc2147af1f33-download-conversation';
+  const result = identityHarness({
+    pathname: `/g/${projectSegment}/c/6acc61bf-7524-83ea-8120-0b0dccab3e24`,
+    heading: '58',
+    title: 'Filename Layout Revision - ChatGPT',
+    links: []
+  });
+  assert.deepEqual(result, {
+    projectName: null,
+    fileBase: 'Unknown__Filename Layout Revision'
+  });
 });

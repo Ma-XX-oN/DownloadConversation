@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         ChatGPT Conversation Markdown Recorder
 // @namespace    https://chatgpt.com/
-// @version      1.11.4-issue.226.3
+// @version      1.11.4-issue.220.40
 // @description  Exports the current ChatGPT conversation directly from the Conversation API as Markdown or JSONL.
 // @match        https://chatgpt.com/*
 // @match        https://chat.openai.com/*
@@ -6845,8 +6845,14 @@ globalThis.__dcCompressor = {
   const MAX_PAGES = 10000;
   /** Local-storage key for the keep-screen-on capture preference. */
   const SCREEN_ON_STORAGE_KEY = 'tm-conversation-recorder-screen-on-when-capturing';
+  /** Persistent checkbox choice for JSONL conversation export. */
+  const EXPORT_JSONL_STORAGE_KEY = 'tm-conversation-recorder-export-jsonl';
+  /** Persistent checkbox choice for Markdown conversation export. */
+  const EXPORT_MD_STORAGE_KEY = 'tm-conversation-recorder-export-md';
+  /** Persistent compressed-versus-raw conversation export preference. */
+  const EXPORT_COMPRESSION_STORAGE_KEY = 'tm-conversation-recorder-export-compressed';
   /** Whether selected JSONL/Markdown exports are compressed as archives. */
-  let exportCompressionEnabled = false;
+  let exportCompressionEnabled = localStorage.getItem(EXPORT_COMPRESSION_STORAGE_KEY) === 'true';
   /** Local-storage key for Markdown heading timestamp visibility. */
   const SHOW_TIMESTAMPS_STORAGE_KEY = 'tm-conversation-recorder-show-timestamps';
   /** Local-storage key for Markdown JSONL record-number visibility. */
@@ -7187,9 +7193,24 @@ globalThis.__dcCompressor = {
    * @returns {string} The string produced by `conversationTitle`.
    */
   function conversationTitle() {
-    const heading = document.querySelector('h1')?.textContent?.trim();
-    const title = heading || document.title || 'ChatGPT conversation';
-    return title.replace(/\s*[-–—]\s*ChatGPT\s*$/i, '').trim() || 'ChatGPT conversation';
+    const conversationId = currentConversationId();
+    if (conversationId) {
+      for (const anchor of document.querySelectorAll('a[href]')) {
+        try {
+          const target = new URL(anchor.href, location.href);
+          if (target.origin !== location.origin
+              || target.pathname.match(/\/c\/([^/]+)$/)?.[1] !== conversationId) continue;
+          const label = anchor.getAttribute?.('aria-label')?.trim()
+            || anchor.querySelector?.('[title]')?.getAttribute('title')?.trim()
+            || anchor.textContent?.trim();
+          if (label && !/^\d+$/.test(label) && label !== 'ChatGPT') return label;
+        } catch {}
+      }
+    }
+    const tabTitle = String(document.title ?? '')
+      .replace(/\s*[-–—]\s*ChatGPT\s*$/i, '').trim();
+    if (tabTitle && tabTitle !== 'ChatGPT' && !/^\d+$/.test(tabTitle)) return tabTitle;
+    return 'ChatGPT conversation';
   }
 
   /**
@@ -7850,13 +7871,13 @@ globalThis.__dcCompressor = {
       return false;
     }
     communicationLogDirectoryHandle = handle;
-    communicationLogFileName = `DownloadConversation_${conversationFileBaseName()}.jsonl`;
-    if (/^DownloadConversation_(?:ChatGPT|ChatGPT conversation)\.jsonl$/i.test(communicationLogFileName)) {
+    communicationLogFileName = `${conversationFileBaseName()}.jsonl`;
+    if (/^(?:ChatGPT|ChatGPT conversation)\.jsonl$/i.test(communicationLogFileName)) {
       const projectName = conversationProjectName();
       const fallbackBase = projectName
-        ? `${sanitizeFileName(projectName)} - ${conversationName}`
+        ? `${sanitizeFileName(projectName).replace(/\s+/g, '-')}__${conversationName}`
         : conversationName;
-      communicationLogFileName = `DownloadConversation_${fallbackBase}.jsonl`;
+      communicationLogFileName = `${fallbackBase}.jsonl`;
     }
     logDiagnostic('debug', 'communication-log-segment-initialize-call-started', {
       initializer_type: typeof communicationLogInitializeSegmentStorage
@@ -8564,24 +8585,37 @@ globalThis.__dcCompressor = {
   }
 
   /**
-   * Resolves the containing ChatGPT project name for a project conversation.
+   * Provides a readable project name from a route UUID suffix as a fallback.
    *
-   * The project route segment supplies stable identity while the matching project
-   * navigation link supplies the user-visible name. A document-title split is a
-   * secondary source when ChatGPT has not mounted that navigation link yet.
+   * @param {string|null} projectSegment - Full project route identifier.
+   * @returns {string|null} Capitalized slug, or null if the route has no slug.
+   */
+  function projectNameFromRouteSlug(projectSegment) {
+    const slug = projectSegment?.match(/^g-p-[0-9a-f]{32}-(.+)$/i)?.[1];
+    return slug ? slug.split('-').filter(Boolean)
+      .map(word => word.charAt(0).toUpperCase() + word.slice(1)).join(' ') : null;
+  }
+
+  /**
+   * Resolves the project name using project navigation, tab title, or route slug.
    *
-   * @returns {string|null} Visible project name, or null for standalone/unresolved chats.
+   * @returns {string|null} Current visible or route-derived project name.
    */
   function conversationProjectName() {
+    const namesByRoute = conversationProjectName.byRoute ??= new Map();
     const projectSegment = location.pathname.match(/^\/g\/([^/]+)(?:\/|$)/)?.[1] ?? null;
     if (!projectSegment) return null;
     const projectPath = `/g/${projectSegment}/project`;
+    const projectRoot = `/g/${projectSegment}`;
     for (const anchor of document.querySelectorAll('a[href]')) {
       try {
         const target = new URL(anchor.href, location.href);
-        if (target.origin !== location.origin || target.pathname !== projectPath) continue;
+        if (target.origin !== location.origin || ![projectPath, projectRoot].includes(target.pathname.replace(/\/$/, ''))) continue;
         const visibleName = anchor.textContent?.trim();
-        if (visibleName) return visibleName;
+        if (visibleName) {
+          namesByRoute.set(projectSegment, visibleName);
+          return visibleName;
+        }
       } catch {}
     }
 
@@ -8589,16 +8623,48 @@ globalThis.__dcCompressor = {
     const pageTitle = String(document.title ?? '')
       .replace(/\s*[-–—]\s*ChatGPT\s*$/i, '')
       .trim();
-    if (!heading || !pageTitle || pageTitle === heading) return null;
+    if (!heading || !pageTitle || pageTitle === heading) return namesByRoute.get(projectSegment) ?? null;
     for (const separator of [' - ', ' – ', ' — ']) {
       if (pageTitle.endsWith(`${separator}${heading}`)) {
-        return pageTitle.slice(0, -(`${separator}${heading}`).length).trim() || null;
+        const resolved = pageTitle.slice(0, -(`${separator}${heading}`).length).trim();
+        if (resolved) namesByRoute.set(projectSegment, resolved);
+        return resolved || namesByRoute.get(projectSegment) || null;
       }
       if (pageTitle.startsWith(`${heading}${separator}`)) {
-        return pageTitle.slice(`${heading}${separator}`.length).trim() || null;
+        const resolved = pageTitle.slice(`${heading}${separator}`.length).trim();
+        if (resolved) namesByRoute.set(projectSegment, resolved);
+        return resolved || namesByRoute.get(projectSegment) || null;
       }
     }
-    return null;
+    return namesByRoute.get(projectSegment) ?? null;
+  }
+
+  /**
+   * Returns one conversation-scoped manual filename override across reloads.
+   *
+   * @returns {string|null} Explicit basename or null for automatic naming.
+   */
+  function conversationFilenameOverride() {
+    const id = currentConversationId();
+    if (!id) return null;
+    try {
+      const value = localStorage.getItem('tm-recorder-filename-override:' + id);
+      return value ? sanitizeFileName(value) : null;
+    } catch { return null; }
+  }
+
+  /**
+   * Stores or resets an explicit filename base for the current conversation.
+   *
+   * @param {string|null} value - Manual basename or null to restore automatic naming.
+   * @returns {void} No value is returned.
+   */
+  function conversationFilenameSetOverride(value) {
+    const id = currentConversationId();
+    if (!id) throw new Error('Conversation identity is unavailable.');
+    const key = 'tm-recorder-filename-override:' + id;
+    if (value === null) localStorage.removeItem(key);
+    else localStorage.setItem(key, sanitizeFileName(value));
   }
 
   /**
@@ -8608,10 +8674,10 @@ globalThis.__dcCompressor = {
    */
   function conversationFileBaseName() {
     const conversationName = sanitizeFileName(conversationTitle());
+    const manual = conversationFilenameOverride();
+    if (manual) return manual;
     const projectName = conversationProjectName();
-    return projectName
-      ? `${sanitizeFileName(projectName)} - ${conversationName}`
-      : conversationName;
+    return `${projectName ? sanitizeFileName(projectName).replace(/\s+/g, '-') : 'Unknown'}__${conversationName}`;
   }
 
 
@@ -8651,12 +8717,11 @@ globalThis.__dcCompressor = {
       throw new Error('Filename content has no trustworthy timestamp range.');
     }
     const chatName = sanitizeFileName(chat);
-    const identity = project
-      ? `${sanitizeFileName(project)} - ${chatName}`
-      : chatName;
+    const manual = conversationFilenameOverride();
+    const identity = manual || `${project ? sanitizeFileName(project).replace(/\s+/g, '-') : 'Unknown'}__${chatName}`;
     const start = canonicalFilenameTimestamp(timestampRange.start_timestamp);
     const end = canonicalFilenameTimestamp(timestampRange.end_timestamp);
-    return `DownloadConversation_${identity}_${start}-${end}`;
+    return `${identity}_${start}-${end}`;
   }
 
   /**
@@ -9262,9 +9327,9 @@ globalThis.__dcCompressor = {
   /**
    * Filters exact JSONL record bytes by inclusive timestamp bounds.
    *
-   * Records are chronological.  Once a trustworthy record is later than the
-   * requested upper bound, no following record can be accepted and scanning
-   * stops immediately.
+   * Preserve original file order without assuming wall-clock monotonicity.
+   * Out-of-range records never terminate scanning because the clock can move
+   * backward and subsequent records can fall within the selected range.
    *
    * @param {Uint8Array} bytes - Complete JSONL bytes.
    * @param {number|null} lowerMs - Inclusive lower bound.
@@ -9294,7 +9359,7 @@ globalThis.__dcCompressor = {
         : null;
       const time = timestamp ? Date.parse(timestamp) : NaN;
       if (!Number.isFinite(time)) continue;
-      if (upperMs !== null && time > upperMs) break;
+      if (upperMs !== null && time > upperMs) continue;
       if (lowerMs !== null && time < lowerMs) continue;
       parts.push(complete);
       total += complete.byteLength;
@@ -10314,12 +10379,15 @@ globalThis.__dcCompressor = {
    * @returns {Promise<boolean>} True when the record committed to disk.
    */
   async function communicationLogRecord(type, data = {}) {
+    if (localStorage.getItem('tm-recorder-communication-capture') === 'false') return false;
     if (!communicationLogReady) {
       communicationLogDroppedBeforeReady += 1;
       return false;
     }
     const record = {
       timestamp: new Date().toISOString(),
+      capture_order: logCapturePosition(),
+      recording_group_uuid: recordingGroupTrackConversation(),
       monotonic_ms: Math.round(performance.now() * 1000) / 1000,
       time_origin: performance.timeOrigin,
       session_id: communicationLogSessionId,
@@ -16476,9 +16544,12 @@ Image elapsed: ${formatDuration(imageElapsed)} — Completed: ${imageCompleted}/
   function communicationLogPanelControls(panel = document.getElementById(PANEL_ID)) {
     const root = panel instanceof Element ? panel : null;
     return {
+      communicationLogDirectoryText: root?.querySelector('[data-role="communication-log-directory"]') ?? null,
+      changeCommunicationLogDirectoryButton: root?.querySelector('[data-role="change-communication-log-directory"]') ?? null,
       communicationLogNameViewport: root?.querySelector('[data-role="communication-log-name-viewport"]') ?? null,
       communicationLogNameText: root?.querySelector('[data-role="communication-log-name"]') ?? null,
       renameCommunicationLogButton: root?.querySelector('[data-role="rename-communication-log"]') ?? null,
+      resetCommunicationLogFilenameButton: root?.querySelector('[data-role="reset-communication-log-filename"]') ?? null,
       duplicateCommunicationLogButton: root?.querySelector('[data-role="duplicate-communication-log"]') ?? null,
       resetCommunicationLogButton: root?.querySelector('[data-role="reset-communication-log"]') ?? null
     };
@@ -16524,6 +16595,23 @@ Image elapsed: ${formatDuration(imageElapsed)} — Completed: ${imageCompleted}/
   }
 
   /**
+   * Displays the actual selected recording folder, not a hard-coded prefix.
+   * The logical filename retains its original bytes for disk operations.
+   *
+   * @param {FileSystemDirectoryHandle|null} directory - Selected storage folder.
+   * @param {string|null} filename - Current logical communication-log filename.
+   * @returns {Object} Short display location and exact folder/filename.
+   */
+  function communicationLogDisplayLocation(directory, filename) {
+    const directoryName = typeof directory?.name === 'string'
+      ? directory.name.trim() : '';
+    return {
+      directory: directoryName || 'Not configured',
+      base: filename ? filename.replace(/\.[^.]+$/, '') : 'Not configured'
+    };
+  }
+
+  /**
    * Refreshes status.
    *
    * @returns {void} No value is returned.
@@ -16532,22 +16620,39 @@ Image elapsed: ${formatDuration(imageElapsed)} — Completed: ${imageCompleted}/
     const status = document.querySelector(`#${PANEL_ID} [data-role="status"]`);
     if (!status) return;
     const {
+      communicationLogDirectoryText,
+      changeCommunicationLogDirectoryButton,
       communicationLogNameViewport,
       communicationLogNameText,
       renameCommunicationLogButton,
+      resetCommunicationLogFilenameButton,
       duplicateCommunicationLogButton,
       resetCommunicationLogButton
     } = communicationLogPanelControls();
     const communicationLogAvailable = Boolean(communicationLogReady && communicationLogFileName);
-    const communicationLogDisplayName = communicationLogAvailable ? communicationLogFileName : 'Not configured';
-    if (communicationLogNameText) communicationLogNameText.textContent = communicationLogDisplayName;
+    if (communicationLogAvailable && !conversationFilenameOverride()) {
+      const automaticName = conversationFileBaseName() + '.jsonl';
+      if (communicationLogFileName !== automaticName) communicationLogFileName = automaticName;
+    }
+    if (resetCommunicationLogFilenameButton) {
+      resetCommunicationLogFilenameButton.disabled =
+        communicationLogUiActionInProgress || !communicationLogAvailable
+          || !conversationFilenameOverride();
+    }
+    const location = communicationLogDisplayLocation(
+      communicationLogDirectoryHandle,
+      communicationLogAvailable ? communicationLogFileName : null
+    );
+    if (communicationLogDirectoryText) communicationLogDirectoryText.textContent = location.directory + '/';
+    if (changeCommunicationLogDirectoryButton) changeCommunicationLogDirectoryButton.disabled = communicationLogUiActionInProgress || communicationLogDirectoryPickerOpening;
+    if (communicationLogNameText) communicationLogNameText.textContent = location.base;
     if (communicationLogNameViewport) {
-      communicationLogNameViewport.title = communicationLogDisplayName;
+      communicationLogNameViewport.title = location.base;
       communicationLogNameViewport.setAttribute(
         'aria-label',
         communicationLogAvailable
-          ? `Current communication log filename: ${communicationLogFileName}`
-          : 'Current communication log filename: not configured'
+          ? `Current communication log filename base: ${location.base}`
+          : 'Current communication log location: not configured'
       );
       requestAnimationFrame(refreshCommunicationLogNameOverflow);
     }
@@ -16562,6 +16667,15 @@ Image elapsed: ${formatDuration(imageElapsed)} — Completed: ${imageCompleted}/
       status.textContent = progressStatus(exportKind === 'md' ? 'Extract MD' : 'Extract JSONL');
     } else {
       status.textContent = statusText;
+    }
+    status.title = status.textContent;
+    const feedback = document.querySelector(`#${PANEL_ID} [data-role="user-feedback"]`);
+    if (feedback) {
+      const message = progressState
+        ? progressStatus(exportKind === 'md' ? 'Extract MD' : 'Extract JSONL')
+        : statusText;
+      if (feedback.textContent !== message) feedback.textContent = message;
+      feedback.title = message;
     }
   }
 
@@ -20807,13 +20921,190 @@ Image elapsed: ${formatDuration(imageElapsed)} — Completed: ${imageCompleted}/
 
   document.addEventListener('click', communicationLogHandleDuplicateRangeClick, true);
 
+  /** Unique overlay identity for combined log extraction. */
+  const LOG_EXTRACTION_DIALOG_ID = 'tm-recorder-extract-logs-dialog';
+
+  /**
+   * Resolves trustworthy timestamps from the selected existing log stores.
+   *
+   * @param {boolean} includeGeneral - Whether to include retained diagnostics.
+   * @param {boolean} includeComm - Whether to include the existing communication log.
+   * @returns {Promise<Object>} Inclusive available range with selected-source availability.
+   */
+  async function logExtractionAvailableRange(includeGeneral, includeComm) {
+    const general = includeGeneral ? diagnosticLogTimestampRange() : null;
+    let comm = null;
+    if (includeComm && communicationLogReady) {
+      try {
+        comm = await communicationLogDuplicateAvailableRange();
+      } catch (error) {
+        logDiagnostic('warnings', 'log-extraction-communication-range-unavailable', {
+          message: errorMessage(error)
+        });
+      }
+    }
+    const ranges = [general, comm].filter(range =>
+      range && Number.isFinite(Date.parse(range.start_timestamp))
+        && Number.isFinite(Date.parse(range.end_timestamp))
+    );
+    if (!ranges.length) throw new Error('No trustworthy timestamps are available for extraction.');
+    const start = Math.min(...ranges.map(range => Date.parse(range.start_timestamp)));
+    const end = Math.max(...ranges.map(range => Date.parse(range.end_timestamp)));
+    return {
+      start_timestamp: new Date(start).toISOString(),
+      end_timestamp: new Date(end).toISOString(),
+      general_available: Boolean(general),
+      communication_available: Boolean(comm)
+    };
+  }
+
+  /**
+   * Opens the existing local date/time selector with per-extraction log choices.
+   *
+   * Changing these checkboxes does not change the main panel logging preferences.
+   * The result is a selection contract; issue #220 owns merging/writing events.
+   *
+   * @param {HTMLElement|null} opener - Original button for focus restoration.
+   * @returns {Promise<Object|null>} Selected date range and sources, or cancellation.
+   */
+  async function showLogExtractionDialog(opener = null) {
+    document.getElementById(LOG_EXTRACTION_DIALOG_ID)?.remove();
+    const panel = document.getElementById(PANEL_ID);
+    const selectedGen = panel?.querySelector('[data-role="record-general"]')?.checked ?? true;
+    const selectedComm = panel?.querySelector('[data-role="record-communication"]')?.checked ?? true;
+    // Availability spans existing stored history, not only active capture toggles.
+    const range = await logExtractionAvailableRange(true, true);
+    const minimum = new Date(range.start_timestamp);
+    const maximum = new Date(range.end_timestamp);
+    minimum.setMilliseconds(0);
+    maximum.setMilliseconds(0);
+    injectSingleDateTimeControlStyles();
+    const overlay = document.createElement('div');
+    overlay.id = LOG_EXTRACTION_DIALOG_ID;
+    overlay.className = 'tm-date-range-overlay';
+    overlay.innerHTML = `
+      <div class="tm-date-range-dialog" role="dialog" aria-modal="true"
+           aria-label="Extract logs">
+        <div class="tm-date-range-row">
+          <span class="tm-date-range-label">From:</span>
+          <span data-role="extract-log-start"></span>
+          <span class="tm-date-range-label">To:</span>
+          <span data-role="extract-log-end"></span>
+        </div>
+        <div class="tm-date-range-row">
+          <label><input type="checkbox" data-role="extract-log-gen"> Gen</label>
+          <label><input type="checkbox" data-role="extract-log-comm"> Comm</label>
+          <span class="tm-date-range-actions">
+            <button type="button" data-role="extract-log-save">Save</button>
+            <button type="button" data-role="extract-log-cancel">Cancel</button>
+          </span>
+        </div>
+        <div class="tm-date-range-error" data-role="extract-log-error" aria-live="polite"></div>
+      </div>`;
+    const startHost = overlay.querySelector('[data-role="extract-log-start"]');
+    const endHost = overlay.querySelector('[data-role="extract-log-end"]');
+    const gen = overlay.querySelector('[data-role="extract-log-gen"]');
+    const comm = overlay.querySelector('[data-role="extract-log-comm"]');
+    const save = overlay.querySelector('[data-role="extract-log-save"]');
+    const cancel = overlay.querySelector('[data-role="extract-log-cancel"]');
+    const errorOutput = overlay.querySelector('[data-role="extract-log-error"]');
+    if (!(startHost instanceof HTMLElement)
+        || !(endHost instanceof HTMLElement)
+        || !(gen instanceof HTMLInputElement)
+        || !(comm instanceof HTMLInputElement)
+        || !(save instanceof HTMLButtonElement)
+        || !(cancel instanceof HTMLButtonElement)) {
+      throw new Error('Log extraction dialog is incomplete.');
+    }
+    gen.checked = selectedGen && range.general_available;
+    comm.checked = selectedComm && range.communication_available;
+    let fromControl;
+    let toControl;
+    /**
+     * Validates selected sources and ordered bounds before allowing Save.
+     *
+     * @returns {boolean} Whether at least one source and a valid range are selected.
+     */
+    const validate = () => {
+      const chronological = !fromControl || !toControl
+        || fromControl.getDate().getTime() <= toControl.getDate().getTime();
+      const selected = gen.checked || comm.checked;
+      save.disabled = !chronological || !selected;
+      if (errorOutput) {
+        errorOutput.textContent = !selected
+          ? 'Select Gen and/or Comm.' : chronological
+            ? '' : 'From must not be later than To.';
+      }
+      return !save.disabled;
+    };
+    fromControl = createSingleDateTimeControl({
+      label: 'Log extraction start local date and time',
+      value: minimum, minimum, maximum, onChange: validate
+    });
+    toControl = createSingleDateTimeControl({
+      label: 'Log extraction end local date and time',
+      value: maximum, minimum, maximum, onChange: validate
+    });
+    startHost.append(fromControl.element);
+    endHost.append(toControl.element);
+    gen.addEventListener('change', validate);
+    comm.addEventListener('change', validate);
+    validate();
+    const previousFocus = opener instanceof HTMLElement
+      ? opener : document.activeElement instanceof HTMLElement
+        ? document.activeElement : null;
+    document.body.append(overlay);
+    return new Promise(resolve => {
+      let settled = false;
+      /**
+       * Closes the dialog exactly once while restoring the originating focus.
+       *
+       * @param {Object|null} selection - Accepted bounds or cancellation.
+       * @param {boolean} restore - Whether to restore focus locally.
+       * @returns {void} Nothing.
+       */
+      const finish = (selection, restore = true) => {
+        if (settled) return;
+        settled = true;
+        overlay.remove();
+        if (restore && previousFocus?.isConnected) {
+          previousFocus.focus({ preventScroll: true });
+        }
+        resolve(selection);
+      };
+      save.addEventListener('click', () => {
+        if (!validate()) return;
+        const from = fromControl.getDate();
+        const to = toControl.getDate();
+        from.setMilliseconds(0);
+        to.setMilliseconds(999);
+        finish({
+          start_timestamp: from.toISOString(),
+          end_timestamp: to.toISOString(),
+          general: gen.checked,
+          communication: comm.checked
+        });
+      });
+      cancel.addEventListener('click', () => finish(null));
+      overlay.addEventListener('click', event => {
+        if (event.target === overlay) finish(null);
+      });
+      installModalContract(overlay, {
+        defaultButton: save,
+        onClose: () => finish(null, false),
+        opener: previousFocus
+      });
+      fromControl.focus();
+    });
+  }
+
   /**
    * Returns the diagnostic archive/save icon.
    *
    * @returns {string} Inline SVG markup for the Save button.
    */
   function saveIconMarkup() {
-    return '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 3v12m0 0 4-4m-4 4-4-4M5 19h14"/></svg>';
+    return '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 3h13l3 3v15H4z"/><path d="M7 3v7h10V3M7 21v-8h10v8M10 3v5"/></svg>';
   }
 
   /**
@@ -21063,6 +21354,713 @@ Image elapsed: ${formatDuration(imageElapsed)} — Completed: ${imageCompleted}/
     }, 800);
   }
 
+  /** Per-tab document-epoch counter, incremented once per page initialization. */
+  const LOG_CAPTURE_EPOCH_KEY = 'tm-recorder-capture-epoch';
+  /** Document epoch for comparing Gen and Comm events without using clocks. */
+  const logCaptureEpoch = (() => {
+    const prior = Number(sessionStorage.getItem(LOG_CAPTURE_EPOCH_KEY));
+    const next = Number.isSafeInteger(prior) && prior >= 0 ? prior + 1 : 1;
+    sessionStorage.setItem(LOG_CAPTURE_EPOCH_KEY, String(next));
+    return next;
+  })();
+  /** Per-document capture position shared by both event sources. */
+  let logCaptureSequence = 0;
+
+  /**
+   * Assigns a relative capture order without sorting by wall-clock time.
+   *
+   * @returns {Object} Document epoch and per-document insertion sequence.
+   */
+  function logCapturePosition() {
+    return { epoch: logCaptureEpoch, ordinal: ++logCaptureSequence,
+      document: recordingGroupInstanceId };
+  }
+
+  /**
+   * Validates exact timestamp bounds and one-or-more source selection.
+   *
+   * @param {Object} selection - UI's inclusive timestamp and source selection.
+   * @returns {Object} Numeric boundaries and selected source switches.
+   */
+  function mergedLogValidateSelection(selection) {
+    if (!selection || (!selection.general && !selection.communication)) {
+      throw new Error('Select Gen or Comm before extracting logs.');
+    }
+    const lower = Date.parse(selection.start_timestamp);
+    const upper = Date.parse(selection.end_timestamp);
+    if (!Number.isFinite(lower) || !Number.isFinite(upper) || lower > upper) {
+      throw new Error('Log extraction requires an ordered, valid date/time range.');
+    }
+    return { lower, upper, general: selection.general === true,
+      communication: selection.communication === true };
+  }
+
+  /**
+   * Filters one source by time while retaining original insertion order.
+   *
+   * @param {Object[]} entries - Source events in existing source order.
+   * @param {number} lower - Inclusive start epoch milliseconds.
+   * @param {number} upper - Inclusive end epoch milliseconds.
+   * @returns {Object[]} Filtered events without any reordering.
+   */
+  function mergedLogRangeFilter(entries, lower, upper) {
+    return entries.filter(entry => {
+      const timestamp = entry?.timestamp;
+      const time = typeof timestamp === 'string' ? Date.parse(timestamp) : NaN;
+      return Number.isFinite(time) && time >= lower && time <= upper;
+    });
+  }
+
+  /**
+   * Parses retained communication JSONL in its original file order.
+   *
+   * @param {Uint8Array} bytes - Exact recorded bytes.
+   * @returns {Object[]} Complete JSONL objects without timestamp ordering.
+   */
+  function mergedLogParseJsonl(bytes) {
+    const results = [];
+    const text = new TextDecoder().decode(bytes);
+    const lines = text.split('\n');
+    for (let index = 0; index < lines.length; index += 1) {
+      const line = lines[index];
+      if (!line.trim()) continue;
+      let event;
+      try {
+        event = JSON.parse(line);
+      } catch {
+        if (index === lines.length - 1 && !text.endsWith('\n')) {
+          // An incomplete final line is not a committed JSONL record.
+          continue;
+        }
+        throw new Error('Malformed complete communication JSONL record at line '
+          + (index + 1));
+      }
+      if (!event || typeof event !== 'object' || Array.isArray(event)) {
+        throw new Error('Communication JSONL record is not an object at line '
+          + (index + 1));
+      }
+      results.push(event);
+    }
+    return results;
+  }
+
+  /**
+   * Reads earlier conversations visited by this recording tab from the
+   * existing per-conversation segment directories without changing storage.
+   *
+   * @returns {Promise<Object[][]>} Original file-order communication blocks.
+   */
+  async function mergedLogPreviousConversationBlocks() {
+    const current = communicationLogSegmentDirectoryHandle?.name ?? null;
+    const groups = [];
+    for (const directoryName of recordingGroupDirectoryNames()) {
+      if (directoryName === current) continue;
+      let directory;
+      try {
+        directory = await communicationLogDirectoryHandle.getDirectoryHandle(
+          directoryName, { create: false }
+        );
+      } catch (error) {
+        if (error?.name === 'NotFoundError') {
+          throw new Error('Recorded communication directory is missing: '
+            + directoryName);
+        }
+        throw error;
+      }
+      for await (const [name, handle] of directory.entries()) {
+        if (handle?.kind !== 'file') continue;
+        const archived = communicationLogParseSegmentArchiveName(name);
+        const isActive = COMMUNICATION_LOG_ACTIVE_FILE_NAMES.includes(name);
+        if (!archived && !isActive) continue;
+        const file = await handle.getFile();
+        const bytes = new Uint8Array(await file.arrayBuffer());
+        const plain = archived ? await extractArchive(bytes) : bytes;
+        groups.push(mergedLogParseJsonl(plain));
+      }
+    }
+    return groups;
+  }
+
+  /**
+   * Freezes and reads existing disk archives without altering their storage.
+   *
+   * @returns {Promise<Object[]>} Captured communication events in file order.
+   */
+  async function mergedLogReadCommunication() {
+    if (!communicationLogReady || !communicationLogSegmentDirectoryHandle) {
+      throw new Error('Communication recording directory is not ready.');
+    }
+    const queued = communicationLogEnqueue('merged-log-extract-snapshot',
+      async () => communicationLogCaptureSnapshotPlan());
+    const plan = await queued.operation;
+    const blocks = [];
+    for (const segment of plan.segments) {
+      const bytes = await communicationLogReadHistoricalSegment(segment);
+      blocks.push(mergedLogParseJsonl(bytes));
+    }
+    const active = await communicationLogSegmentDirectoryHandle.getFileHandle(
+      plan.active_name, { create: false }
+    );
+    const file = await active.getFile();
+    if (file.size < plan.active_eof) {
+      throw new Error('Communication active file changed below frozen EOF.');
+    }
+    const bytes = new Uint8Array(
+      await file.slice(0, plan.active_eof).arrayBuffer()
+    );
+    blocks.push(mergedLogParseJsonl(bytes));
+    const group = recordingGroupState();
+    if (group.ready && group.uuid) {
+      blocks.push(...await mergedLogPreviousConversationBlocks());
+      // A group starts at explicit enablement. Historical entries from
+      // before enablement and other tabs must never leak into the output.
+      for (let i = 0; i < blocks.length; i += 1) {
+        blocks[i] = blocks[i].filter(event =>
+          event.recording_group_uuid === group.uuid
+        );
+      }
+    }
+    // The older segment naming scheme sorts by timestamps, not source order.
+    // New records carry capture_order; sort whole archived blocks by their
+    // capture position when every block has comparable evidence.
+    const positioned = group.ready && group.uuid
+      && blocks.every(block => block.every(event =>
+      mergedLogValidPosition(event?.capture_order)));
+    if (positioned) {
+      blocks.sort((left, right) => {
+        if (!left.length || !right.length) return 0;
+        return mergedLogComparePosition(
+          left[0].capture_order, right[0].capture_order
+        );
+      });
+    }
+    const records = blocks.flat();
+    const seen = new Set();
+    return records.filter(event => {
+      if (!mergedLogValidPosition(event?.capture_order)) return true;
+      const key = String(event.recording_group_uuid) + ':'
+        + event.capture_order.epoch + ':' + event.capture_order.ordinal;
+      if (seen.has(key)) return false;
+      seen.add(key);
+      return true;
+    });
+  }
+
+  /**
+   * Checks a source's explicit capture-order evidence.
+   *
+   * @param {Object} value - Candidate order marker.
+   * @returns {boolean} Whether the marker is structurally valid.
+   */
+  function mergedLogValidPosition(value) {
+    return value && Number.isSafeInteger(value.epoch) && value.epoch > 0
+      && Number.isSafeInteger(value.ordinal) && value.ordinal > 0
+      && typeof value.document === 'string' && value.document.length > 0;
+  }
+
+  /**
+   * Compares cross-stream capture markers, never wall-clock timestamps.
+   *
+   * @param {Object} left - First capture position.
+   * @param {Object} right - Second capture position.
+   * @returns {number} Negative when first event was captured earlier.
+   */
+  function mergedLogComparePosition(left, right) {
+    return left.epoch - right.epoch || left.ordinal - right.ordinal;
+  }
+
+  /**
+   * Merges two source streams without changing either stream's event order.
+   *
+   * For legacy entries without shared order markers, sources stay in separate
+   * intact ranges and an explicit uncertainty declaration accompanies export.
+   *
+   * @param {Object[]} general - Filtered Gen events in insertion order.
+   * @param {Object[]} communication - Filtered Comm events in insertion order.
+   * @returns {Object} Combined source-tagged events plus order provenance.
+   */
+  function mergedLogInterleave(general, communication) {
+    const tagged = [];
+    const all = [...general, ...communication];
+    const isPositioned = all.every(event =>
+      mergedLogValidPosition(event?.capture_order));
+    const documents = new Set(all.map(event =>
+      event?.capture_order?.document));
+    const groupIds = new Set(all.map(event => event?.recording_group_uuid));
+    const sameGroup = groupIds.size === 1
+      && !groupIds.has(null) && !groupIds.has(undefined);
+    /**
+     * Checks whether one source remains monotonic in capture ordinals.
+     *
+     * @param {Object[]} stream - Original ordered source entries.
+     * @returns {boolean} Whether source event order agrees with capture order.
+     */
+    const ordered = stream => stream.every((event, index) =>
+      index === 0 || mergedLogComparePosition(
+        stream[index - 1].capture_order, event.capture_order
+      ) <= 0);
+    const orderConflict = isPositioned
+      && (!ordered(general) || !ordered(communication));
+    if (!isPositioned || orderConflict
+        || (documents.size > 1 && !sameGroup)) {
+      for (const event of general) tagged.push({ source: 'gen', record: event });
+      for (const event of communication) {
+        tagged.push({ source: 'comm', record: event });
+      }
+      return { entries: tagged, ordering: orderConflict
+        ? 'source-order-conflict' : 'legacy-source-ranges' };
+    }
+    let g = 0;
+    let c = 0;
+    while (g < general.length || c < communication.length) {
+      const takeGeneral = c >= communication.length || (
+        g < general.length && mergedLogComparePosition(
+          general[g].capture_order, communication[c].capture_order
+        ) <= 0
+      );
+      if (takeGeneral) tagged.push({ source: 'gen', record: general[g++] });
+      else tagged.push({ source: 'comm', record: communication[c++] });
+    }
+    return { entries: tagged, ordering: 'capture-sequence' };
+  }
+
+  /**
+   * Groups consecutive events by source and diagnostic severity.
+   *
+   * A change in stream or severity starts another group. The severity is
+   * moved out of the individual record only when originally present, so
+   * missing severity and an explicit null remain distinguishable. Original
+   * record order is never changed.
+   *
+   * @param {Object[]} entries - Already merged source-tagged records.
+   * @returns {Object[]} Consecutive source/severity blocks.
+   */
+  function mergedLogGroupEntries(entries) {
+    const groups = [];
+    for (const entry of entries) {
+      const original = entry.record;
+      const hasLevel = Object.hasOwn(original, 'level');
+      const level = hasLevel ? original.level : undefined;
+      const previous = groups[groups.length - 1];
+      if (!previous || previous.source !== entry.source
+          || Object.hasOwn(previous, 'level') !== hasLevel
+          || (hasLevel && !Object.is(previous.level, level))) {
+        const group = { source: entry.source };
+        if (hasLevel) group.level = level;
+        group.records = [];
+        groups.push(group);
+      }
+      const record = hasLevel ? { ...original } : original;
+      if (hasLevel) delete record.level;
+      groups[groups.length - 1].records.push(record);
+    }
+    return groups;
+  }
+
+  /**
+   * Renders grouped source/severity JSONL with export provenance.
+   *
+   * @param {Object} merge - Selected interleaved event stream.
+   * @param {Object} selection - Original export bounds.
+   * @returns {string} Newline-terminated grouped JSONL.
+   */
+  function mergedLogJsonl(merge, selection) {
+    const header = {
+      kind: 'downloadconversation-merged-log',
+      schema: 2,
+      ordering: merge.ordering,
+      start_timestamp: selection.start_timestamp,
+      end_timestamp: selection.end_timestamp,
+      group_uuid: recordingGroupState().uuid
+    };
+    return [JSON.stringify(header),
+      ...mergedLogGroupEntries(merge.entries).map(JSON.stringify)].join('\n')
+      + '\n';
+  }
+
+  /**
+   * Saves a combined Gen/Comm snapshot using the existing archive primitives.
+   *
+   * @param {Object} selection - User-selected inclusive bounds and source flags.
+   * @returns {Promise<string>} Verified archive filename.
+   */
+  async function saveMergedLogs(selection) {
+    const ownership = recordingGroupState();
+    if (ownership.enabled && !ownership.ready) {
+      throw new Error('Recording group ownership is not yet verified.');
+    }
+    const bounds = mergedLogValidateSelection(selection);
+    const group = recordingGroupState();
+    const general = bounds.general ? mergedLogRangeFilter(
+      group.ready && group.uuid
+        ? diagnosticLog.filter(e => e.recording_group_uuid === group.uuid)
+        : diagnosticLog, bounds.lower, bounds.upper
+    ) : [];
+    const communication = bounds.communication ? mergedLogRangeFilter(
+      await mergedLogReadCommunication(), bounds.lower, bounds.upper
+    ) : [];
+    const merge = mergedLogInterleave(general, communication);
+    if (!merge.entries.length) {
+      throw new Error('No recorded events exist within the selected range.');
+    }
+    const text = mergedLogJsonl(merge, selection);
+    const source = new TextEncoder().encode(text);
+    const archive = await createArchive(source);
+    const restored = await extractArchive(archive);
+    if (!diagnosticLogBytesEqual(source, restored)) {
+      throw new Error('Merged-log archive round-trip verification failed.');
+    }
+    const range = {
+      start_timestamp: selection.start_timestamp,
+      end_timestamp: selection.end_timestamp
+    };
+    const prefix = canonicalFilename(
+      conversationProjectName(), conversationTitle(), range
+    );
+    const suffix = '.mlog' + compressorExtension();
+    const directory = communicationLogReady
+      ? communicationLogDirectoryHandle : null;
+    let name = prefix + suffix;
+    if (directory) {
+      name = await unusedFilename(directory, prefix, suffix);
+      await diagnosticLogWriteArchive(directory, name, archive);
+    } else {
+      downloadBlob(new Blob([archive], { type: compressorMimeType() }), name);
+    }
+    setStatus('Merged logs: ' + merge.entries.length + ' records saved as '
+      + name + ' (' + merge.ordering + ').');
+    return name;
+  }
+
+  /**
+   * Opens one extraction dialog and saves exactly the selected sources/range.
+   *
+   * @param {HTMLButtonElement} button - Disk action origin.
+   * @returns {Promise<void>} Resolves after completion or cancellation.
+   */
+  async function runMergedLogExtraction(button) {
+    const selection = await showLogExtractionDialog(button);
+    if (!selection) return;
+    button.disabled = true;
+    button.setAttribute('aria-busy', 'true');
+    try {
+      await saveMergedLogs(selection);
+    } catch (error) {
+      logDiagnostic('errors', 'merged-log-save-failed', {
+        message: errorMessage(error)
+      });
+      setStatus('Merged log extraction failed: ' + errorMessage(error));
+    } finally {
+      button.disabled = false;
+      button.removeAttribute('aria-busy');
+    }
+  }
+
+  /** Session-storage key for the per-tab single recording-group preference. */
+  const RECORDING_GROUP_ENABLED_KEY = 'tm-downloadconversation-one-group-enabled';
+  /** Session-storage key for the stable per-tab recording-group UUID. */
+  const RECORDING_GROUP_UUID_KEY = 'tm-downloadconversation-one-group-uuid';
+  /** Origin-scoped cross-document channel for live recording-group ownership. */
+  const RECORDING_GROUP_CHANNEL = 'tm-downloadconversation-recording-group-ownership-v1';
+  /** Startup claim-response window, in milliseconds. */
+  const RECORDING_GROUP_CLAIM_MS = 450;
+  /** Grace period allowing a replaced page document to emit pagehide. */
+  const RECORDING_GROUP_RELEASE_GRACE_MS = 150;
+  /** Wall-clock creation time used to preserve the older live tab on collision. */
+  const recordingGroupDocumentStartedAt = performance.timeOrigin || Date.now();
+  /** Fresh identity for this document only; never persisted with the tab. */
+  const recordingGroupInstanceId = crypto.randomUUID();
+  /** Currently active recording-group UUID, or null when disabled. */
+  let recordingGroupUuid = null;
+  /** Ownership channel, retained only while one-group recording is enabled. */
+  let recordingGroupChannel = null;
+  /** Whether this document has exclusive asserted group ownership. */
+  let recordingGroupReady = false;
+  /** Epoch invalidating pending asynchronous ownership claims. */
+  let recordingGroupClaimEpoch = 0;
+  /** Competing instance identities observed during the current claim. */
+  let recordingGroupPeers = new Map();
+  /** Current claim timer, cleared when a claim is cancelled. */
+  let recordingGroupClaimTimer = null;
+  /** Low-frequency liveness repeat when an earlier tab missed one probe. */
+  const RECORDING_GROUP_HEARTBEAT_MS = 2000;
+  /** Heartbeat timer owned only by a confirmed live recording group. */
+  let recordingGroupHeartbeatTimer = null;
+
+  /**
+   * Publishes a bounded ownership message; payloads contain no log data.
+   *
+   * @param {string} kind - Protocol message type.
+   * @param {string|null} group - Recording-group UUID.
+   * @returns {void} Nothing.
+   */
+  function recordingGroupSend(kind, group = recordingGroupUuid) {
+    if (!recordingGroupChannel || !group) return;
+    recordingGroupChannel.postMessage({
+      kind, group, instance: recordingGroupInstanceId,
+      started_at: recordingGroupDocumentStartedAt,
+      ready: recordingGroupReady
+    });
+  }
+
+  /**
+   * Returns the current one-group ownership state without exposing its writer.
+   *
+   * @returns {Object} Enabled state, identifier, and claim readiness.
+   */
+  function recordingGroupState() {
+    return {
+      enabled: sessionStorage.getItem(RECORDING_GROUP_ENABLED_KEY) === 'true',
+      uuid: recordingGroupUuid,
+      ready: recordingGroupReady
+    };
+  }
+
+  /** Registry of physical segment directories already used by this tab. */
+  const RECORDING_GROUP_DIRECTORIES_PREFIX = 'tm-recorder-group-directories:';
+
+  /**
+   * Lists only physical directories where this tab actually recorded Comm.
+   *
+   * @returns {string[]} Existing segment folder names in registration order.
+   */
+  function recordingGroupDirectoryNames() {
+    const state = recordingGroupState();
+    if (!state.ready || !state.uuid) return [];
+    const stored = sessionStorage.getItem(
+      RECORDING_GROUP_DIRECTORIES_PREFIX + state.uuid
+    );
+    if (!stored) return [];
+    try {
+      const names = JSON.parse(stored);
+      return Array.isArray(names)
+        ? names.filter(name => typeof name === 'string' && name.length > 0)
+        : [];
+    } catch {
+      return [];
+    }
+  }
+
+  /** Metadata-only list of conversations recorded under a group. */
+  const RECORDING_GROUP_CHATS_PREFIX = 'tm-recorder-group-chats:';
+
+  /**
+   * Returns the already-recorded conversation IDs for this tab's group.
+   *
+   * @returns {string[]} Distinct conversation identifiers in visit order.
+   */
+  function recordingGroupConversationIds() {
+    const state = recordingGroupState();
+    if (!state.ready || !state.uuid) return [];
+    const stored = sessionStorage.getItem(RECORDING_GROUP_CHATS_PREFIX + state.uuid);
+    if (!stored) return [];
+    try {
+      const ids = JSON.parse(stored);
+      return Array.isArray(ids)
+        ? ids.filter(id => typeof id === 'string' && id.length > 0) : [];
+    } catch {
+      return [];
+    }
+  }
+
+  /**
+   * Associates the current conversation with this tab's active recording.
+   *
+   * Only the small conversation registry is persisted here; event buffering,
+   * segmented disk recording, compression and rotation remain unchanged.
+   *
+   * @returns {string|null} Current active group's UUID or null.
+   */
+  function recordingGroupTrackConversation() {
+    const state = recordingGroupState();
+    if (!state.ready || !state.uuid) return null;
+    const id = typeof currentConversationId === 'function'
+      ? currentConversationId() : null;
+    const directory = typeof communicationLogSegmentDirectoryHandle
+      !== 'undefined' ? communicationLogSegmentDirectoryHandle?.name : null;
+    if (directory) {
+      const names = recordingGroupDirectoryNames();
+      if (!names.includes(directory)) {
+        names.push(directory);
+        sessionStorage.setItem(
+          RECORDING_GROUP_DIRECTORIES_PREFIX + state.uuid,
+          JSON.stringify(names)
+        );
+      }
+    }
+    if (!id) return state.uuid;
+    const ids = recordingGroupConversationIds();
+    if (!ids.includes(id)) {
+      ids.push(id);
+      sessionStorage.setItem(
+        RECORDING_GROUP_CHATS_PREFIX + state.uuid, JSON.stringify(ids)
+      );
+    }
+    return state.uuid;
+  }
+
+  /**
+   * Clears one pending ownership claim and invalidates its callback.
+   *
+   * @returns {void} Nothing.
+   */
+  function recordingGroupCancelClaim() {
+    recordingGroupClaimEpoch += 1;
+    if (recordingGroupClaimTimer !== null) clearTimeout(recordingGroupClaimTimer);
+    recordingGroupClaimTimer = null;
+    recordingGroupReady = false;
+    if (recordingGroupHeartbeatTimer !== null) {
+      clearInterval(recordingGroupHeartbeatTimer);
+      recordingGroupHeartbeatTimer = null;
+    }
+    recordingGroupPeers.clear();
+  }
+
+  /**
+   * Commits a newly generated group identity for this tab.
+   *
+   * @returns {string} Fresh group UUID.
+   */
+  function recordingGroupNewUuid() {
+    const next = crypto.randomUUID();
+    sessionStorage.setItem(RECORDING_GROUP_UUID_KEY, next);
+    recordingGroupUuid = next;
+    return next;
+  }
+
+  /**
+   * Resolves another live claim without ever allowing shared group writers.
+   *
+   * Lower lexical instance UUID wins symmetric startup conflicts. A ready
+   * incumbent also wins against a verifying newcomer. A stale document's
+   * pagehide release is honored during the claim grace period.
+   *
+   * @param {MessageEvent} event - Ownership channel message.
+   * @returns {void} Nothing.
+   */
+  function recordingGroupOnMessage(event) {
+    const message = event?.data;
+    if (!message || !['probe', 'owner', 'release'].includes(message.kind)
+      || typeof message.group !== 'string'
+      || typeof message.instance !== 'string'
+      || message.instance === recordingGroupInstanceId
+      || message.group !== recordingGroupUuid) return;
+
+    if (message.kind === 'release') {
+      recordingGroupPeers.delete(message.instance);
+      return;
+    }
+    recordingGroupPeers.set(message.instance, {
+      ready: message.ready === true,
+      started_at: Number.isFinite(message.started_at)
+        ? message.started_at : Number.POSITIVE_INFINITY
+    });
+    if (message.kind === 'probe' && recordingGroupReady) recordingGroupSend('owner');
+    if (recordingGroupReady && message.ready === true) {
+      // Retain the older live document on collision, even when its UUID sorts later.
+      const otherIsOlder = message.started_at < recordingGroupDocumentStartedAt
+        || (message.started_at === recordingGroupDocumentStartedAt
+          && message.instance < recordingGroupInstanceId);
+      if (otherIsOlder) {
+        recordingGroupReady = false;
+        recordingGroupNewUuid();
+        void recordingGroupClaim();
+      }
+    }
+  }
+
+  /**
+   * Verifies live group ownership before allowing any group-specific writer.
+   *
+   * @returns {Promise<boolean>} True only after this instance owns a group.
+   */
+  async function recordingGroupClaim() {
+    recordingGroupCancelClaim();
+    if (sessionStorage.getItem(RECORDING_GROUP_ENABLED_KEY) !== 'true') return false;
+    if (!recordingGroupUuid) recordingGroupNewUuid();
+    if (typeof BroadcastChannel !== 'function') {
+      logConsoleDiagnostic('warnings',
+        '[DownloadConversation] One-group mode unavailable: BroadcastChannel unsupported.');
+      return false;
+    }
+    if (!recordingGroupChannel) {
+      recordingGroupChannel = new BroadcastChannel(RECORDING_GROUP_CHANNEL);
+      recordingGroupChannel.onmessage = recordingGroupOnMessage;
+    }
+    const epoch = recordingGroupClaimEpoch;
+    recordingGroupSend('probe');
+    await new Promise(resolve => {
+      recordingGroupClaimTimer = setTimeout(resolve,
+        RECORDING_GROUP_CLAIM_MS + RECORDING_GROUP_RELEASE_GRACE_MS);
+    });
+    recordingGroupClaimTimer = null;
+    if (epoch !== recordingGroupClaimEpoch) return false;
+    const competitor = [...recordingGroupPeers.entries()].some(([instance, peer]) =>
+      peer.ready && (peer.started_at < recordingGroupDocumentStartedAt
+        || (peer.started_at === recordingGroupDocumentStartedAt
+          && instance < recordingGroupInstanceId))
+    );
+    if (competitor) {
+      recordingGroupNewUuid();
+      return recordingGroupClaim();
+    }
+    recordingGroupReady = true;
+    recordingGroupSend('owner');
+    // Periodic owner evidence repairs missed startup messages and suspended
+    // tab wakeups without logging or reading the page DOM.
+    recordingGroupHeartbeatTimer = setInterval(() => {
+      if (recordingGroupReady) recordingGroupSend('owner');
+    }, RECORDING_GROUP_HEARTBEAT_MS);
+    return true;
+  }
+
+  /**
+   * Starts a new tab-scoped recording group at the user's explicit request.
+   *
+   * @returns {Promise<boolean>} Whether new-group ownership was established.
+   */
+  function recordingGroupEnable() {
+    sessionStorage.setItem(RECORDING_GROUP_ENABLED_KEY, 'true');
+    recordingGroupNewUuid();
+    return recordingGroupClaim();
+  }
+
+  /**
+   * Ends the active one-group mode without deleting any retained log data.
+   *
+   * @returns {void} Nothing.
+   */
+  function recordingGroupDisable() {
+    recordingGroupSend('release');
+    recordingGroupCancelClaim();
+    sessionStorage.removeItem(RECORDING_GROUP_ENABLED_KEY);
+    sessionStorage.removeItem(RECORDING_GROUP_UUID_KEY);
+    recordingGroupUuid = null;
+    if (recordingGroupChannel) recordingGroupChannel.close();
+    recordingGroupChannel = null;
+  }
+
+  /** Release live ownership before this document unloads or is replaced. */
+  window.addEventListener('pagehide', () => {
+    recordingGroupSend('release');
+    recordingGroupCancelClaim();
+    if (recordingGroupChannel) recordingGroupChannel.close();
+    recordingGroupChannel = null;
+  });
+
+  /** Revalidate when Chrome restores this document from the back-forward cache. */
+  window.addEventListener('pageshow', event => {
+    if (event.persisted && sessionStorage.getItem(RECORDING_GROUP_ENABLED_KEY) === 'true') {
+      void recordingGroupClaim();
+    }
+  });
+
+  // A restored tab retains its UUID, but must revalidate live ownership.
+  if (sessionStorage.getItem(RECORDING_GROUP_ENABLED_KEY) === 'true') {
+    recordingGroupUuid = sessionStorage.getItem(RECORDING_GROUP_UUID_KEY);
+    void recordingGroupClaim();
+  }
+
   /**
    * Returns the AgentPanelSpeaker config-reset icon using its exact PNG bytes.
    *
@@ -21087,6 +22085,16 @@ Image elapsed: ${formatDuration(imageElapsed)} — Completed: ${imageCompleted}/
     const output = panel.querySelector('[data-role="log-output"]');
     const toggle = panel.querySelector('[data-role="toggle-log"]');
     if (count) count.textContent = `Log: ${diagnosticLog.length} item${diagnosticLog.length === 1 ? '' : 's'}`;
+    const lastProblem = panel.querySelector('[data-role="last-log-problem"]');
+    if (lastProblem) {
+      const problem = diagnosticLog.findLast(entry =>
+        ['errors', 'warnings'].includes(entry?.level)
+      );
+      lastProblem.textContent = problem
+        ? `${problem.level}: ${problem.message}` : '';
+      lastProblem.hidden = !problem;
+      lastProblem.title = lastProblem.textContent;
+    }
     if (output && diagnosticLogExpanded) {
       output.replaceChildren(...diagnosticLog.map(entry => {
         const row = document.createElement('div');
@@ -21152,10 +22160,14 @@ Image elapsed: ${formatDuration(imageElapsed)} — Completed: ${imageCompleted}/
    */
   function logDiagnostic(level, message, data = null) {
     logConsoleDiagnostic(level, `[ChatGPT Recorder ${level}] ${message}`, data);
+    if (localStorage.getItem('tm-recorder-general-capture') === 'false') return;
     if (!diagnosticEnabled(level)) return;
     const safeData = redactDiagnosticSignedTokens(data);
     const entry = {
       timestamp: new Date().toISOString(),
+      capture_order: logCapturePosition(),
+      recording_group_uuid: recordingGroupState().ready
+        ? recordingGroupState().uuid : null,
       level,
       message,
       data: safeData
@@ -21182,20 +22194,21 @@ Image elapsed: ${formatDuration(imageElapsed)} — Completed: ${imageCompleted}/
     style.textContent = `
       #${LAUNCHER_ID}{position:fixed;right:16px;bottom:16px;z-index:2147483647;width:36px;height:32px;box-sizing:border-box;border:1px solid #777;border-radius:9px;background:#242424;color:#fff;padding:0;display:grid;place-items:center;box-shadow:0 1px 3px rgba(0,0,0,.35);cursor:pointer}
       #${LAUNCHER_ID}::before{content:'';width:16px;height:16px;border-radius:50%;background:#d0d0d0;display:block}
-      #${PANEL_ID}{position:fixed;right:16px;bottom:54px;z-index:2147483647;width:300px;box-sizing:border-box;padding:12px;border:1px solid rgba(127,127,127,.55);border-radius:12px;background:rgba(24,24,24,.97);color:#f2f2f2;box-shadow:0 6px 24px rgba(0,0,0,.35);font:13px/1.35 system-ui,sans-serif}
-      #${PANEL_ID} .tm-title{font-size:16px;margin:0 28px 8px 0}
+      #${PANEL_ID}{position:fixed;right:16px;bottom:54px;z-index:2147483647;width:min(390px,calc(100vw - 20px));max-height:calc(100dvh - 76px);overflow-y:auto;overflow-x:hidden;overscroll-behavior:contain;box-sizing:border-box;padding:10px;border:1px solid rgba(127,127,127,.55);border-radius:12px;background:#181818;color:#f2f2f2;box-shadow:0 6px 24px rgba(0,0,0,.35);font:13px/1.35 system-ui,sans-serif}
+      #${PANEL_ID} .tm-title{font-size:13px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;margin:0 32px 6px 0;font-weight:600}
       #${PANEL_ID} .tm-close{position:absolute;right:9px;top:7px;border:0;background:transparent;color:#fff;font-size:24px;cursor:pointer}
-      #${PANEL_ID} .tm-status{white-space:pre-wrap;margin:10px 0 12px;min-height:24px}
-      #${PANEL_ID} .tm-row{display:flex;gap:10px;align-items:center;flex-wrap:wrap;margin-top:10px}
+      #${PANEL_ID} .tm-status{white-space:nowrap;overflow:hidden;text-overflow:ellipsis;margin:2px 0 4px;min-height:0;max-width:100%;font-size:12px;color:#bbb}
+      #${PANEL_ID} .tm-row{display:flex;gap:6px;align-items:center;flex-wrap:wrap;margin-top:6px;min-width:0}
       #${PANEL_ID} .tm-sound-control-row{position:relative}
       #${PANEL_ID} .tm-sound-control{min-width:92px}
       #${PANEL_ID} .tm-sound-popup[hidden]{display:none}
       #${PANEL_ID} .tm-sound-popup{position:absolute;left:0;top:calc(100% + 6px);z-index:3;display:flex;flex-direction:column;align-items:center;gap:6px;padding:9px;border:1px solid rgba(127,127,127,.55);border-radius:9px;background:rgba(24,24,24,.99);box-shadow:0 4px 14px rgba(0,0,0,.4)}
       #${PANEL_ID} .tm-sound-volume-slider{writing-mode:vertical-lr;direction:rtl;width:24px;height:120px}
       #${PANEL_ID} .tm-sound-volume-value{min-width:2ch;text-align:center;font-variant-numeric:tabular-nums}
-      #${PANEL_ID} .tm-communication-log-row{flex-wrap:nowrap}
+      #${PANEL_ID} .tm-communication-log-row{flex-wrap:nowrap;min-width:0;gap:5px}
+      #${PANEL_ID} .tm-recording-location{display:flex;flex-direction:column;gap:3px;min-width:0}
       #${PANEL_ID} .tm-log-name-viewport{flex:1 1 auto;min-width:0;overflow:hidden;color:#fff;box-sizing:border-box}
-      #${PANEL_ID} .tm-log-name-text{display:block;width:max-content;min-width:100%;box-sizing:border-box;padding:7px 0;white-space:nowrap;transform:translateX(0);transition:transform var(--tm-log-name-duration,1.5s) linear .35s}
+      #${PANEL_ID} .tm-log-name-text{display:block;width:max-content;min-width:100%;box-sizing:border-box;padding:5px 0;white-space:nowrap;transform:translateX(0);transition:transform var(--tm-log-name-duration,1.5s) linear .35s}
       #${PANEL_ID} .tm-log-name-viewport:hover .tm-log-name-text{transform:translateX(calc(-1 * var(--tm-log-name-overflow,0px)))}
       #${PANEL_ID} .tm-communication-log-row button{flex:0 0 auto}
       #${PANEL_ID} select,#${PANEL_ID} button,#${TEST_MATRIX_ID} button{border:1px solid #666;background:#292929;color:#fff;font:inherit}
@@ -21216,22 +22229,77 @@ Image elapsed: ${formatDuration(imageElapsed)} — Completed: ${imageCompleted}/
       #${TEST_MATRIX_ID} .tm-test-table td:nth-child(2),#${TEST_MATRIX_ID} .tm-test-table td:nth-child(3),#${TEST_MATRIX_ID} .tm-test-table td:nth-child(4){white-space:nowrap}
       #${TEST_MATRIX_ID} button{border-radius:8px;padding:7px 10px}
       #${TEST_MATRIX_ID} .tm-test-actions{justify-content:flex-end;border-top:1px solid #555}
-      #${PANEL_ID} .tm-log-head{display:flex;align-items:center;gap:6px;margin-top:4px}
+      #${PANEL_ID} .tm-log-head{display:flex;align-items:center;gap:6px;margin-top:3px}
       #${PANEL_ID} .tm-log-head [data-role="log-count"]{margin-right:auto}
-      #${PANEL_ID} .tm-icon-button{box-sizing:border-box;width:30px;height:28px;padding:4px;display:grid;place-items:center;transition:opacity .2s ease}
+      #${PANEL_ID} .tm-icon-button{box-sizing:border-box;flex:0 0 28px;width:28px;height:27px;padding:3px;display:grid;place-items:center;transition:opacity .2s ease}
       #${PANEL_ID} .tm-icon-button svg{width:16px;height:16px;fill:none;stroke:currentColor;stroke-width:2;stroke-linecap:round;stroke-linejoin:round}
       #${PANEL_ID} .tm-icon-button img{width:16px;height:16px;display:block;object-fit:contain}
       #${PANEL_ID} .tm-copy-fade{opacity:0}
       #${PANEL_ID} .tm-log-output{margin:6px 0 10px;max-height:190px;overflow:auto;border:1px solid #555;border-radius:8px;background:#111;font:11px/1.35 ui-monospace,SFMono-Regular,Consolas,monospace;color:#ddd}
       #${PANEL_ID} .tm-log-row{padding:6px 8px;white-space:pre-wrap;overflow-wrap:anywhere}
       #${PANEL_ID} .tm-log-row:nth-child(even){background:rgba(255,255,255,.055)}
-      #${PANEL_ID} .tm-switch{margin-left:auto;width:42px;height:24px;padding:2px;border-radius:999px;position:relative}
+      #${PANEL_ID} .tm-switch{margin-left:auto;width:42px;height:24px;padding:2px;flex:0 0 42px;border-radius:999px;position:relative}
       #${PANEL_ID} .tm-switch-thumb{display:block;width:18px;height:18px;border-radius:50%;background:#aaa;transform:translateX(0);transition:transform .16s ease,background .16s ease}
       #${PANEL_ID} .tm-switch[aria-checked="true"] .tm-switch-thumb{transform:translateX(16px);background:#fff}
-      #${PANEL_ID} .tm-extract-formats{display:grid;grid-template-columns:auto auto auto auto;gap:6px 12px;align-items:center}
+      #${PANEL_ID} .tm-extract-formats{display:flex;flex-wrap:wrap;gap:6px 12px;align-items:center}
       #${PANEL_ID} .tm-export-compression{width:34px;height:28px;padding:3px 4px;display:flex;align-items:center;justify-content:center}
       #${PANEL_ID} .tm-export-compression svg{display:block;width:28px;height:20px}
       #${PANEL_ID} .tm-extract-formats label{display:flex;gap:5px;align-items:center}
+      #${PANEL_ID} .tm-last-log-problem{display:block;max-width:100%;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;font-size:12px;color:#e5b6a0;margin:2px 0}
+      #${PANEL_ID} .tm-user-feedback{min-height:16px;font-size:12px;line-height:1.4;color:#ddd;white-space:normal;overflow-wrap:anywhere;margin:3px 0 9px}
+      #${PANEL_ID} .tm-last-log-problem[hidden],#${PANEL_ID} .tm-log-output[hidden]{display:none}
+      #${PANEL_ID} .tm-recording-options{display:grid;grid-template-columns:auto minmax(0,1fr);gap:5px 8px}
+      #${PANEL_ID} .tm-recording-options select{min-width:0;width:100%;padding:6px 8px}
+      #${PANEL_ID} .tm-recording-modes{grid-column:1/-1;display:flex;flex-wrap:wrap;align-items:center;gap:4px 14px}
+      #${PANEL_ID} .tm-recording-modes label,#${PANEL_ID} .tm-md-metadata label{display:inline-flex;align-items:center;gap:4px;white-space:nowrap}
+      #${PANEL_ID} .tm-recording-modes input,#${PANEL_ID} .tm-md-metadata input{margin:0}
+      #${PANEL_ID} .tm-file-label{flex:0 0 auto}
+      #${PANEL_ID} .tm-communication-log-row .tm-icon-button{width:28px;min-width:28px}
+      #${PANEL_ID} .tm-capture-options .tm-label{flex:1 1 auto;min-width:0}
+      #${PANEL_ID} .tm-md-metadata{gap:5px 10px}
+      #${PANEL_ID} button[data-role="jump"],#${PANEL_ID} button[data-role="test"]{padding:6px 10px}
+      #${PANEL_ID} button[data-role="extract"]{padding:0;align-items:center;justify-items:center}
+      #${PANEL_ID} .tm-sound-control{padding:6px 9px}
+      @media(max-width:430px){#${PANEL_ID}{right:10px;bottom:48px;max-height:calc(100dvh - 58px);padding:8px}#${PANEL_ID} .tm-recording-modes{gap:4px 9px}#${PANEL_ID} .tm-communication-log-row{gap:3px}}
+
+      #${PANEL_ID} .tm-log-head{margin:10px 0 5px}
+      #${PANEL_ID} .tm-last-log-problem{margin:4px 0 10px;min-height:15px}
+      #${PANEL_ID} .tm-diagnostics-row{display:grid;grid-template-columns:auto minmax(0,1fr);gap:8px;margin:0 0 12px}
+      #${PANEL_ID} .tm-diagnostics-row select{width:100%;min-width:0;padding:6px 9px}
+      #${PANEL_ID} .tm-recorder-section{border-top:1px solid #494949;padding:9px 0 7px}
+      #${PANEL_ID} .tm-recorder-section .tm-row{margin-top:0}
+      #${PANEL_ID} .tm-recording-section{display:grid;gap:9px}
+      #${PANEL_ID} .tm-communication-log-row{gap:6px}
+      #${PANEL_ID} .tm-log-name-text{font-weight:600;padding:3px 0}
+      #${PANEL_ID} .tm-recording-modes{display:flex;justify-content:space-between;flex-wrap:nowrap;gap:4px}
+      #${PANEL_ID} .tm-recording-modes label{white-space:nowrap;gap:5px}
+      #${PANEL_ID} .tm-recording-actions{justify-content:center;gap:14px}
+      #${PANEL_ID} .tm-recording-actions .tm-icon-button{width:40px;height:36px;flex:0 0 40px}
+      #${PANEL_ID} .tm-recording-actions .tm-icon-button svg{width:21px;height:21px}
+      #${PANEL_ID} .tm-export-section{display:grid;gap:8px}
+      #${PANEL_ID} .tm-md-metadata{display:flex;justify-content:space-between;flex-wrap:nowrap;gap:4px;font-size:12px}
+      #${PANEL_ID} .tm-md-metadata label{gap:3px}
+      #${PANEL_ID} .tm-extract-formats{display:flex;justify-content:flex-start;gap:12px;flex-wrap:nowrap}
+      #${PANEL_ID} .tm-extract-formats label{white-space:nowrap}
+      #${PANEL_ID} .tm-export-action{display:grid;place-items:center;width:36px;height:32px;flex:0 0 36px;padding:0}
+      #${PANEL_ID} .tm-export-action svg{display:block;width:23px;height:23px;transform:translateY(-1px)}
+      #${PANEL_ID} .tm-export-compression{border-radius:8px;min-width:34px;flex:0 0 34px}
+      #${PANEL_ID} .tm-export-compression svg{width:28px}
+      #${PANEL_ID} .tm-tool-actions{border-top:1px solid #494949;padding:12px 0 3px;margin-top:4px;justify-content:space-around;gap:12px;flex-wrap:nowrap}
+      #${PANEL_ID} .tm-tool-actions .tm-tool-button{width:48px;height:40px;padding:3px;font-size:24px;line-height:1;flex:0 0 48px}
+      #${PANEL_ID} .tm-tool-actions .tm-sound-control{height:40px;min-width:96px;font-size:14px;padding:6px}
+      #${PANEL_ID} .tm-sound-popup{bottom:calc(100% + 4px);top:auto;left:0;min-width:64px;z-index:12}
+      #${PANEL_ID} .tm-sound-volume-slider{appearance:slider-vertical;accent-color:#78b8ff;min-height:145px;cursor:pointer}
+      #${PANEL_ID} .tm-sound-volume-slider::-webkit-slider-runnable-track{background:repeating-linear-gradient(to top,#8192a8 0 2px,#323b49 2px 15px);border-radius:6px;border:1px solid #a4b1c3;width:12px}
+      #${PANEL_ID} .tm-sound-volume-slider::-webkit-slider-thumb{appearance:none;background:#b2d8ff;border:2px solid #fff;box-shadow:0 0 0 2px #296ca8;width:22px;height:14px;border-radius:5px}
+      #${PANEL_ID} .tm-sound-volume-value{font-size:14px;font-weight:700;color:#fff}
+      #${PANEL_ID} .tm-sound-popup{flex-direction:row;align-items:center;flex-wrap:wrap;justify-content:center}
+      #${PANEL_ID} .tm-volume-ticks{height:145px;display:flex;flex-direction:column;justify-content:space-between;font:700 12px/1 system-ui,sans-serif;color:#fff;text-shadow:0 1px 2px #000}
+      #${PANEL_ID} .tm-sound-volume-value{flex:0 0 100%;text-align:center}
+
+      #${PANEL_ID} .tm-status{margin:0;max-height:0;overflow:hidden}
+      #${PANEL_ID} .tm-status:not(:empty){max-height:2px}
+      @media(max-width:390px){#${PANEL_ID} .tm-md-metadata{font-size:11px;gap:2px}#${PANEL_ID} .tm-recording-modes{gap:2px}#${PANEL_ID} .tm-extract-formats{gap:8px}}
     `;
     (document.head || document.documentElement).append(style);
   }
@@ -21245,7 +22313,10 @@ Image elapsed: ${formatDuration(imageElapsed)} — Completed: ${imageCompleted}/
     const panel = document.getElementById(PANEL_ID);
     if (!panel) return;
     const title = panel.querySelector('[data-role="title"]');
-    if (title) title.textContent = `ChatGPT Recorder v${VERSION}`;
+    if (title) {
+      title.textContent = `ChatGPT Recorder v${VERSION}`;
+      title.title = title.textContent;
+    }
     const extract = panel.querySelector('[data-role="extract"]');
     const jsonl = panel.querySelector('[data-role="format-jsonl"]');
     const md = panel.querySelector('[data-role="format-md"]');
@@ -21259,16 +22330,17 @@ Image elapsed: ${formatDuration(imageElapsed)} — Completed: ${imageCompleted}/
     const formatsSelected = Boolean(jsonl?.checked || md?.checked);
     if (extract) {
       extract.disabled = exportInProgress || testInProgress || jumpInProgress || !formatsSelected;
-      extract.textContent = exportInProgress ? 'Extracting…' : 'Extract';
+      extract.innerHTML = exportInProgress ? '…' : exportArrowIconMarkup();
+      extract.setAttribute('aria-label', exportInProgress ? 'Exporting conversation' : 'Export conversation');
     }
     if (jsonl) jsonl.disabled = exportInProgress || testInProgress || jumpInProgress;
     if (md) md.disabled = exportInProgress || testInProgress || jumpInProgress;
     if (exportCompression) {
       const compressed = exportCompressionEnabled;
-      const description = compressed ? 'Compress JSONL/MD files' : 'Raw JSONL/MD files';
+      const description = compressed ? 'Save compressed' : 'Save uncompressed';
       exportCompression.disabled = exportInProgress || testInProgress || jumpInProgress;
       exportCompression.setAttribute('aria-checked', String(compressed));
-      exportCompression.setAttribute('aria-label', compressed ? 'Compressed export output' : 'Raw export output');
+      exportCompression.setAttribute('aria-label', compressed ? 'Save compressed' : 'Save uncompressed');
       exportCompression.title = description;
       exportCompression.innerHTML = exportCompressionIconMarkup(compressed);
     }
@@ -21279,11 +22351,11 @@ Image elapsed: ${formatDuration(imageElapsed)} — Completed: ${imageCompleted}/
     if (debugProvenance) debugProvenance.disabled = metadataDisabled;
     if (test) {
       test.disabled = exportInProgress || testInProgress || jumpInProgress;
-      test.textContent = testInProgress ? 'Testing…' : 'Test';
+      test.textContent = testInProgress ? '…' : '🧪';
     }
     if (jump) {
       jump.disabled = exportInProgress || testInProgress || jumpInProgress;
-      jump.textContent = jumpInProgress ? 'Jumping…' : 'Jump';
+      jump.textContent = jumpInProgress ? '…' : '🪂';
     }
     const screen = panel.querySelector('[data-role="screen-on"]');
     if (screen) screen.setAttribute('aria-checked', String(screenOnWhenCapturing));
@@ -21880,15 +22952,26 @@ Image elapsed: ${formatDuration(imageElapsed)} — Completed: ${imageCompleted}/
   }
 
   /**
+   * Renders an export arrow centred inside its SVG viewport.
+   *
+   * @returns {string} Inline SVG markup for the export button.
+   */
+  function exportArrowIconMarkup() {
+    return '<svg viewBox="0 0 24 24" aria-hidden="true" focusable="false">'
+      + '<path d="M4 12h16m-6-6 6 6-6 6" fill="none" '
+      + 'stroke="currentColor" stroke-width="2" '
+      + 'stroke-linecap="round" stroke-linejoin="round"/></svg>';
+  }
+
+  /**
    * Renders the raw/compressed export icon as an arrow entering a size-coded circle.
    *
    * @param {boolean} compressed - True for the small compressed circle; false for the large raw circle.
    * @returns {string} Inline SVG markup for the export-mode toggle.
    */
   function exportCompressionIconMarkup(compressed) {
-    const radius = compressed ? 4 : 7;
-    const circleX = compressed ? 18 : 17;
-    return `<svg viewBox="0 0 28 20" aria-hidden="true" focusable="false"><circle cx="${circleX}" cy="10" r="${radius}" fill="none" stroke="currentColor" stroke-width="2"/><path d="M2 10h10M8 6l4 4-4 4" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>`;
+    const radius = compressed ? 4 : 8;
+    return `<svg viewBox="0 0 28 20" aria-hidden="true" focusable="false"><circle cx="14" cy="10" r="${radius}" fill="none" stroke="currentColor" stroke-width="2"/></svg>`;
   }
 
   /**
@@ -21906,17 +22989,26 @@ Image elapsed: ${formatDuration(imageElapsed)} — Completed: ${imageCompleted}/
     panel.innerHTML = `
       <button class="tm-close" type="button" aria-label="Close">×</button>
       <div class="tm-title" data-role="title"></div>
-      <div class="tm-log-head"><span class="tm-label" data-role="log-count">Log: 0 items</span><button class="tm-icon-button" data-role="save-log" type="button" aria-label="Save diagnostic log" title="Save log"></button><button class="tm-icon-button" data-role="copy-log" type="button" aria-label="Copy diagnostic log" title="Copy log"></button><button class="tm-icon-button" data-role="toggle-log" type="button" aria-label="Show diagnostic log" aria-expanded="false" title="Show log">+</button></div>
+      <div class="tm-log-head"><span class="tm-label" data-role="log-count">Log: 0 items</span></div>
+      <div class="tm-last-log-problem" data-role="last-log-problem" role="status" hidden></div>
+      <div class="tm-user-feedback" data-role="user-feedback" role="status" aria-live="polite"></div>
       <div class="tm-log-output" data-role="log-output" hidden></div>
-      <div class="tm-status" data-role="status"></div>
-      <div class="tm-row"><span class="tm-label">Diagnostics</span><select data-role="diagnostics"><option value="errors">Errors</option><option value="warnings">Warnings</option><option value="debug">Debug</option><option value="verbose">Verbose</option></select><label><input data-role="console-diagnostics" type="checkbox"> console</label><button data-role="test" type="button">Test</button></div>
-      <div class="tm-row"><span class="tm-label">Communication log</span></div>
-      <div class="tm-row tm-communication-log-row"><div class="tm-log-name-viewport" data-role="communication-log-name-viewport" role="textbox" aria-readonly="true" aria-label="Current communication log filename" title="Current communication log filename"><span class="tm-log-name-text" data-role="communication-log-name"></span></div><button class="tm-icon-button" data-role="rename-communication-log" type="button" aria-label="Rename communication log" title="Rename communication log"></button><button class="tm-icon-button" data-role="duplicate-communication-log" type="button" aria-label="Duplicate communication log" title="Duplicate communication log"></button><button class="tm-icon-button" data-role="reset-communication-log" type="button" aria-label="Reset communication log" title="Reset communication log"></button></div>
-      <div class="tm-row"><span class="tm-label">Screen on when extracting</span><button class="tm-switch" data-role="screen-on" type="button" role="switch" aria-checked="false" aria-label="Keep screen on while extracting"><span class="tm-switch-thumb"></span></button></div>
-      <div class="tm-row tm-sound-control-row"><button class="tm-sound-control" data-role="agent-sound-control" type="button" aria-haspopup="dialog" aria-expanded="false">Sound <span data-role="agent-sound-control-value"></span></button><div class="tm-sound-popup" data-role="agent-sound-popup" hidden role="dialog" aria-label="Agent sound volume"><input class="tm-sound-volume-slider" data-role="agent-sound-volume" type="range" min="0" max="10" step="1" aria-label="Agent sound volume"><output class="tm-sound-volume-value" data-role="agent-sound-volume-value"></output></div></div>
-      <div class="tm-row"><button data-role="jump" type="button">Jump</button></div>
-      <div class="tm-row tm-extract-formats"><button data-role="extract" type="button">Extract</button><label><input data-role="format-jsonl" type="checkbox"> JSONL</label><label><input data-role="format-md" type="checkbox" checked> MD</label><button class="tm-export-compression" data-role="export-compression" type="button" role="switch" aria-checked="false" aria-label="Raw export output" title="Raw JSONL/MD files"></button></div>
-      <div class="tm-row tm-md-metadata"><span class="tm-label">MD headings</span><label><input data-role="show-timestamps" type="checkbox"> Timestamp</label><label><input data-role="show-record-numbers" type="checkbox"> Record #</label><label><input data-role="show-turn-ids" type="checkbox"> Turn ID</label><label><input data-role="show-debug-provenance" type="checkbox"> provenance</label></div>
+      <div class="tm-row tm-diagnostics-row"><label for="tm-recorder-diagnostics">Diagnostics:</label><select id="tm-recorder-diagnostics" data-role="diagnostics"><option value="errors">Errors</option><option value="warnings">Warnings</option><option value="debug">Debug</option><option value="verbose">Verbose</option></select></div>
+      <div class="tm-recorder-section tm-recording-section">
+        <div class="tm-recording-location"><div class="tm-row tm-communication-log-row"><div class="tm-log-name-viewport" data-role="communication-log-directory" aria-label="Destination directory"></div><button class="tm-icon-button" data-role="change-communication-log-directory" type="button" aria-label="Change destination directory" title="Change destination directory"></button></div><div class="tm-row tm-communication-log-row"><div class="tm-log-name-viewport" data-role="communication-log-name-viewport" role="textbox" aria-readonly="true" aria-label="Current communication log filename base" title="Current communication log filename base"><span class="tm-log-name-text" data-role="communication-log-name"></span></div><button class="tm-icon-button" data-role="rename-communication-log" type="button" aria-label="Rename communication log" title="Rename communication log"></button><button class="tm-icon-button" data-role="reset-communication-log-filename" type="button" aria-label="Reset filename to project and conversation" title="Reset filename to project and conversation"></button></div></div>
+        <div class="tm-row tm-recording-modes"><label><input data-role="record-general" type="checkbox" checked> Gen</label><label><input data-role="record-communication" type="checkbox" checked> Comm</label><label><input data-role="console-diagnostics" type="checkbox"> Con</label><label><input data-role="record-one-group" type="checkbox"> 1</label></div>
+        <div class="tm-row tm-recording-actions"><button class="tm-icon-button" data-role="save-log" type="button" aria-label="Save merged log" title="Save merged log"></button><button class="tm-icon-button" data-role="reset-communication-log" type="button" aria-label="Reset communication log" title="Reset communication log"></button></div>
+      </div>
+      <div class="tm-recorder-section tm-export-section">
+        <div class="tm-row tm-md-metadata"><label><input data-role="show-timestamps" type="checkbox"> Timestamp</label><label><input data-role="show-record-numbers" type="checkbox"> Record #</label><label><input data-role="show-turn-ids" type="checkbox"> Turn ID</label><label><input data-role="show-debug-provenance" type="checkbox"> Provenance</label></div>
+        <div class="tm-row tm-extract-formats"><label><input data-role="format-jsonl" type="checkbox"> JSONL</label><label><input data-role="format-md" type="checkbox" checked> MD</label><button class="tm-icon-button tm-export-action" data-role="extract" type="button" aria-label="Export conversation" title="Export conversation"></button><button class="tm-export-compression" data-role="export-compression" type="button" role="switch" aria-checked="false" aria-label="Save uncompressed" title="Save uncompressed"></button></div>
+      </div>
+      <div class="tm-row tm-tool-actions">
+        <div class="tm-sound-control-row"><button class="tm-sound-control" data-role="agent-sound-control" type="button" aria-haspopup="dialog" aria-expanded="false" aria-label="Sound volume">🔊 <span data-role="agent-sound-control-value"></span></button><div class="tm-sound-popup" data-role="agent-sound-popup" hidden role="dialog" aria-label="Agent sound volume"><span class="tm-volume-ticks" aria-hidden="true"><span>10</span><span>5</span><span>0</span></span><input class="tm-sound-volume-slider" data-role="agent-sound-volume" type="range" min="0" max="10" step="1" aria-label="Agent sound volume"><output class="tm-sound-volume-value" data-role="agent-sound-volume-value"></output></div></div>
+        <button class="tm-tool-button" data-role="jump" type="button" aria-label="Jump to entry" title="Jump to entry">🪂</button>
+        <button class="tm-tool-button" data-role="test" type="button" aria-label="Run tests" title="Run tests">🧪</button>
+      </div>
+      <div class="tm-status" data-role="status" role="status"></div>
     `;
     panel.querySelector('.tm-close').addEventListener('click', () => {
       panel.style.display = 'none';
@@ -21938,52 +23030,137 @@ Image elapsed: ${formatDuration(imageElapsed)} — Completed: ${imageCompleted}/
       localStorage.setItem(CONSOLE_DIAGNOSTICS_STORAGE_KEY, String(consoleDiagnostics));
       logDiagnostic('debug', 'console-diagnostics-changed', { enabled: consoleDiagnostics });
     });
-    const saveLogButton = panel.querySelector('[data-role="save-log"]');
-    if (saveLogButton) saveLogButton.innerHTML = saveIconMarkup();
-    const copyLogButton = panel.querySelector('[data-role="copy-log"]');
-    if (copyLogButton) copyLogButton.innerHTML = copyIconMarkup();
-    panel.querySelector('[data-role="save-log"]').addEventListener('click', () => {
-      void saveDiagnosticLog().catch(error => {
-        logDiagnostic('errors', 'diagnostic-log-save-failure', {
+    const oneGroup = panel.querySelector('[data-role="record-one-group"]');
+    oneGroup.checked = recordingGroupState().enabled;
+    oneGroup.addEventListener('change', () => {
+      if (!oneGroup.checked) {
+        recordingGroupDisable();
+        setStatus('Single-tab recording group ended.');
+        return;
+      }
+      oneGroup.disabled = true;
+      void recordingGroupEnable().then(ready => {
+        if (!ready) {
+          oneGroup.checked = false;
+          recordingGroupDisable();
+          setStatus('Single-tab recording group could not acquire ownership.');
+        } else {
+          setStatus('Single-tab recording group started.');
+        }
+      }).catch(error => {
+        oneGroup.checked = false;
+        recordingGroupDisable();
+        logDiagnostic('errors', 'recording-group-enable-failed', {
           message: errorMessage(error)
         });
-        setStatus(`Diagnostic log save failed: ${errorMessage(error)}`);
+        setStatus('Single-tab recording group could not start.');
+      }).finally(() => {
+        oneGroup.disabled = false;
       });
     });
-    panel.querySelector('[data-role="toggle-log"]').addEventListener('click', () => {
-      diagnosticLogExpanded = !diagnosticLogExpanded;
-      refreshDiagnosticLog();
+    const generalCapture = panel.querySelector('[data-role="record-general"]');
+    const communicationCapture = panel.querySelector('[data-role="record-communication"]');
+    generalCapture.checked = localStorage.getItem('tm-recorder-general-capture') !== 'false';
+    communicationCapture.checked = localStorage.getItem('tm-recorder-communication-capture') !== 'false';
+    generalCapture.addEventListener('change', () => {
+      localStorage.setItem('tm-recorder-general-capture', String(generalCapture.checked));
     });
-    panel.querySelector('[data-role="copy-log"]').addEventListener('click', () => {
-      void copyDiagnosticLog().catch(error => {
-        logDiagnostic('errors', 'diagnostic-log-copy-failure', {
+    communicationCapture.addEventListener('change', () => {
+      localStorage.setItem('tm-recorder-communication-capture', String(communicationCapture.checked));
+    });
+    const saveLogButton = panel.querySelector('[data-role="save-log"]');
+    if (saveLogButton) saveLogButton.innerHTML = saveIconMarkup();
+    panel.querySelector('[data-role="save-log"]').addEventListener('click', event => {
+      void runMergedLogExtraction(event.currentTarget).catch(error => {
+        logDiagnostic('errors', 'merged-log-dialog-failure', {
           message: errorMessage(error)
         });
+        setStatus('Log extraction dialog failed: ' + errorMessage(error));
       });
     });
     panel.querySelector('[data-role="test"]').addEventListener('click', event => openTestMatrix(event.currentTarget));
     panel.querySelector('[data-role="jump"]').addEventListener('click', () => void runJump());
     const {
       communicationLogNameViewport,
+      changeCommunicationLogDirectoryButton,
       renameCommunicationLogButton,
+      resetCommunicationLogFilenameButton,
       duplicateCommunicationLogButton,
       resetCommunicationLogButton
     } = communicationLogPanelControls(panel);
+    if (changeCommunicationLogDirectoryButton) changeCommunicationLogDirectoryButton.innerHTML = renameIconMarkup();
     if (renameCommunicationLogButton) renameCommunicationLogButton.innerHTML = renameIconMarkup();
+    if (resetCommunicationLogFilenameButton) resetCommunicationLogFilenameButton.innerHTML =
+      '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M3 12a9 9 0 1 1 3 6.7"/><path d="M3 4v8h8"/></svg>';
     if (duplicateCommunicationLogButton) duplicateCommunicationLogButton.innerHTML = duplicateIconMarkup();
-    if (resetCommunicationLogButton) resetCommunicationLogButton.innerHTML = resetIconMarkup();
+    if (resetCommunicationLogButton) resetCommunicationLogButton.innerHTML =
+      '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 6v5h5"/><path d="M5.5 11a8 8 0 1 1 .8 5"/></svg>';
     communicationLogNameViewport?.addEventListener('pointerenter', refreshCommunicationLogNameOverflow);
+    changeCommunicationLogDirectoryButton?.addEventListener('click', () => {
+      if (communicationLogUiActionInProgress || communicationLogDirectoryPickerOpening) return;
+      const pickerWindow = typeof unsafeWindow !== 'undefined' ? unsafeWindow : window;
+      if (typeof pickerWindow.showDirectoryPicker !== 'function') {
+        setStatus('Directory chooser is unavailable in this browser.');
+        return;
+      }
+      communicationLogDirectoryPickerOpening = true;
+      let picker;
+      try {
+        picker = pickerWindow.showDirectoryPicker({ mode: 'readwrite' });
+      } catch (error) {
+        communicationLogDirectoryPickerOpening = false;
+        setStatus('Directory selection failed: ' + errorMessage(error));
+        return;
+      }
+      void Promise.resolve(picker).then(async handle => {
+        if (await communicationLogPermissionState(handle) !== 'granted') {
+          throw new Error('Read/write permission was not granted.');
+        }
+        await communicationLogWriteChain;
+        await communicationLogStoreDirectoryHandle(handle);
+        await communicationLogActivateDirectory(handle);
+        setStatus('Communication log destination changed to ' + handle.name + '.');
+      }).catch(error => {
+        if (error?.name !== 'AbortError') setStatus('Directory selection failed: ' + errorMessage(error));
+      }).finally(() => {
+        communicationLogDirectoryPickerOpening = false;
+        refreshStatus();
+      });
+    });
     renameCommunicationLogButton?.addEventListener('click', () => {
       if (renameCommunicationLogButton.disabled || communicationLogUiActionInProgress || !communicationLogFileName) return;
-      const requestedName = window.prompt('Rename communication log', communicationLogFileName);
-      if (requestedName === null || requestedName === communicationLogFileName) return;
+      const currentBase = communicationLogDisplayLocation(communicationLogDirectoryHandle, communicationLogFileName).base;
+      const requestedBase = window.prompt('Rename communication log filename base', currentBase);
+      if (requestedBase === null || requestedBase === currentBase) return;
+      const requestedName = requestedBase + '.jsonl';
       void runCommunicationLogPanelAction(renameCommunicationLogButton, {
         idleLabel: 'Rename communication log',
         busyLabel: 'Renaming communication log',
         busyTitle: 'Renaming…',
         operation: () => communicationLogRename(requestedName),
-        onSuccess: newFileName => setStatus(`Communication log renamed to ${newFileName}.`),
+        onSuccess: newFileName => {
+          conversationFilenameSetOverride(newFileName.replace(/\.jsonl$/, ''));
+          setStatus(`Communication log renamed to ${newFileName}.`);
+        },
         failurePrefix: 'Communication log rename failed'
+      });
+    });
+    resetCommunicationLogFilenameButton?.addEventListener('click', () => {
+      if (communicationLogUiActionInProgress || !conversationFilenameOverride()) return;
+      const automaticBase = `${conversationProjectName()
+        ? sanitizeFileName(conversationProjectName()).replace(/\s+/g, '-') : 'Unknown'}__${sanitizeFileName(conversationTitle())}`;
+      void runCommunicationLogPanelAction(resetCommunicationLogFilenameButton, {
+        idleLabel: 'Reset filename',
+        busyLabel: 'Resetting filename',
+        busyTitle: 'Resetting filename…',
+        operation: async () => {
+          // Reset the explicit override only once the logical rename succeeds.
+          const name = await communicationLogRename(automaticBase + '.jsonl');
+          conversationFilenameSetOverride(null);
+          return name;
+        },
+        onSuccess: name => setStatus(`Filename reset to ${name}.`),
+        failurePrefix: 'Filename reset failed'
       });
     });
     duplicateCommunicationLogButton?.addEventListener('click', () => {
@@ -22013,13 +23190,6 @@ Image elapsed: ${formatDuration(imageElapsed)} — Completed: ${imageCompleted}/
         failurePrefix: 'Communication log reset failed'
       });
     });
-    panel.querySelector('[data-role="screen-on"]').addEventListener('click', () => {
-      screenOnWhenCapturing = !screenOnWhenCapturing;
-      localStorage.setItem(SCREEN_ON_STORAGE_KEY, String(screenOnWhenCapturing));
-      if (screenOnWhenCapturing) void acquireWakeLock();
-      else void releaseWakeLock();
-      updateUi();
-    });
     bindStoredCheckbox(panel, 'show-timestamps', SHOW_TIMESTAMPS_STORAGE_KEY, showTimestamps, value => {
       showTimestamps = value;
     });
@@ -22037,6 +23207,7 @@ Image elapsed: ${formatDuration(imageElapsed)} — Completed: ${imageCompleted}/
       exportCompression.innerHTML = exportCompressionIconMarkup(exportCompressionEnabled);
       exportCompression.addEventListener('click', () => {
         exportCompressionEnabled = !exportCompressionEnabled;
+        localStorage.setItem(EXPORT_COMPRESSION_STORAGE_KEY, String(exportCompressionEnabled));
         updateUi();
       });
     }
@@ -22107,8 +23278,19 @@ Image elapsed: ${formatDuration(imageElapsed)} — Completed: ${imageCompleted}/
       if (kinds.length) await runExport(kinds, { compressed: exportCompressionEnabled });
     };
     panel.querySelector('[data-role="extract"]').addEventListener('click', () => void runSelectedExports());
-    panel.querySelector('[data-role="format-jsonl"]').addEventListener('change', updateUi);
-    panel.querySelector('[data-role="format-md"]').addEventListener('change', updateUi);
+    for (const [role, key, fallback] of [
+      ['format-jsonl', EXPORT_JSONL_STORAGE_KEY, false],
+      ['format-md', EXPORT_MD_STORAGE_KEY, true]
+    ]) {
+      const input = panel.querySelector(`[data-role="${role}"]`);
+      if (!(input instanceof HTMLInputElement)) continue;
+      const stored = localStorage.getItem(key);
+      input.checked = stored === null ? fallback : stored === 'true';
+      input.addEventListener('change', () => {
+        localStorage.setItem(key, String(input.checked));
+        updateUi();
+      });
+    }
     panel.addEventListener('mouseleave', () => {
       if (!panel.matches(':focus-within') && !exportInProgress && !testInProgress) {
         panel.style.display = 'none';

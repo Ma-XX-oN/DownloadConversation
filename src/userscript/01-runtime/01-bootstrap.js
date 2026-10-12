@@ -22,8 +22,14 @@
   const MAX_PAGES = 10000;
   /** Local-storage key for the keep-screen-on capture preference. */
   const SCREEN_ON_STORAGE_KEY = 'tm-conversation-recorder-screen-on-when-capturing';
+  /** Persistent checkbox choice for JSONL conversation export. */
+  const EXPORT_JSONL_STORAGE_KEY = 'tm-conversation-recorder-export-jsonl';
+  /** Persistent checkbox choice for Markdown conversation export. */
+  const EXPORT_MD_STORAGE_KEY = 'tm-conversation-recorder-export-md';
+  /** Persistent compressed-versus-raw conversation export preference. */
+  const EXPORT_COMPRESSION_STORAGE_KEY = 'tm-conversation-recorder-export-compressed';
   /** Whether selected JSONL/Markdown exports are compressed as archives. */
-  let exportCompressionEnabled = false;
+  let exportCompressionEnabled = localStorage.getItem(EXPORT_COMPRESSION_STORAGE_KEY) === 'true';
   /** Local-storage key for Markdown heading timestamp visibility. */
   const SHOW_TIMESTAMPS_STORAGE_KEY = 'tm-conversation-recorder-show-timestamps';
   /** Local-storage key for Markdown JSONL record-number visibility. */

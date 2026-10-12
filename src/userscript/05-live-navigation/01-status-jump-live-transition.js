@@ -12,6 +12,15 @@
     } else {
       status.textContent = statusText;
     }
+    status.title = status.textContent;
+    const feedback = document.querySelector(`#${PANEL_ID} [data-role="user-feedback"]`);
+    if (feedback) {
+      const message = progressState
+        ? progressStatus(exportKind === 'md' ? 'Extract MD' : 'Extract JSONL')
+        : statusText;
+      if (feedback.textContent !== message) feedback.textContent = message;
+      feedback.title = message;
+    }
   }
 
   /**
