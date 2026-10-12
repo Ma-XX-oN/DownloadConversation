@@ -20,3 +20,26 @@ Browser measurement attempt: headless local Chromium and Playwright are present,
 Reproduction test source: `tests/gen-persistence-performance.bench.mjs` on PR #259. Its JS syntax was validated; the independent V8 measurement above exercised extracted source blocks but does not certify this Node benchmark script's execution. Normal canonical repository CI succeeded for revision `91935254721b5ea73865c29a49bc8955aaf5ff0e` (run 38294411915). No production source was changed. No merge.
 
 Outstanding: run the committed Node benchmark script on its exact candidate and baseline; measure real Chromium/Chrome `sessionStorage` on an accessible origin, under actual persisted-volume and startup conditions; record distributions, main-thread pauses and an acceptance verdict. Do not mark #251 DONE until these pass.
+
+## 2026-10-12 independent recovery verification
+
+Ownership: operator explicitly reassigned unfinished #251 after prior worker checkpoint; auditable transfer comment 6131117806. Original claim 6130595096 and PR #259 are preserved.
+
+An isolated local fixture was built using the **verbatim extracted function bodies** (bootstrap restore, diagnostics append, persistence writer and enable predicate) fetched through GitHub from #237 commit `8be04b6200449de12ae78e9405e697d9093701bb`. The baseline fixture uses corresponding fetched `main` append and persistence bodies, omitting restore (absent from the baseline). These fixtures are *not* complete repository checkouts; the benchmark script was copied verbatim from the PR's GitHub source and executed against the isolated fixture source tree with Node.js v22.16.0.
+
+Commands: `node --check tests/gen-persistence-performance.bench.mjs`; `node tests/gen-persistence-performance.bench.mjs`. Both completed with exit status 0 for the candidate fixture; baseline benchmark completed with exit status 0. 12 trials for each implementation; `performance.now()` timings in Node VM, not native browser storage I/O.
+
+| Operation (median of 12) | Baseline fixture | Candidate fixture |
+|---|---:|---:|
+| 11,000 append operations | 17.789 ms | 22.596 ms |
+| 80 persistence serialisations and stub writes | 114.736 ms | 154.875 ms |
+| 80 restores | N/A (baseline lacks restore) | 336.778 ms |
+| Serialized snapshot bytes | 556,001 | 556,045 |
+| Retained records | 10,000 | 10,000 |
+| Persisted records | 5,000 | 5,000 |
+
+These readings are environment-specific and do not establish a browser-performance PASS or regression threshold. This run's candidate persistence serialisation median was 40.140 ms per 80-write batch slower than the isolated baseline (about 0.502 ms/write); repeated benchmarking is required before interpreting the difference as a stable change. Tests use synchronous **in-memory** storage, not actual Chrome sessionStorage.
+
+Additional browser probe in this run: Debian Chromium 144 invoked headlessly on minimal `file:` and `data:` documents returned no DOM output within timeout. A second launch with `--single-process --no-zygote` also timed out after 8 seconds, reporting DBus connection errors. Previous worker observed `ERR_BLOCKED_BY_ADMINISTRATOR` for test origins. There is still **no actual browser-origin sessionStorage or end-to-end startup timing**. Do not mark those acceptance gates passed.
+
+Remaining exact requirements: (1) execute the script on the actual checkout at candidate/base refs, rather than reconstructed fixtures; (2) capture Chromium/Chrome origin-backed storage-read/write timing, event-loop blocking, 5,000-record restore/startup distributions, and compare to baseline; (3) post an acceptance verdict tied to exact candidate and browser environment. The prior canonical CI run validated policy only, not the benchmark. Issue remains OPEN; no merge.
