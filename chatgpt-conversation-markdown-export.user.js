@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         ChatGPT Conversation Markdown Recorder
 // @namespace    https://chatgpt.com/
-// @version      1.11.4-issue.220.25
+// @version      1.11.4-issue.220.26
 // @description  Exports the current ChatGPT conversation directly from the Conversation API as Markdown or JSONL.
 // @match        https://chatgpt.com/*
 // @match        https://chat.openai.com/*
@@ -6845,8 +6845,11 @@ globalThis.__dcCompressor = {
   const MAX_PAGES = 10000;
   /** Local-storage key for the keep-screen-on capture preference. */
   const SCREEN_ON_STORAGE_KEY = 'tm-conversation-recorder-screen-on-when-capturing';
+  const EXPORT_JSONL_STORAGE_KEY = 'tm-conversation-recorder-export-jsonl';
+  const EXPORT_MD_STORAGE_KEY = 'tm-conversation-recorder-export-md';
+  const EXPORT_COMPRESSION_STORAGE_KEY = 'tm-conversation-recorder-export-compressed';
   /** Whether selected JSONL/Markdown exports are compressed as archives. */
-  let exportCompressionEnabled = false;
+  let exportCompressionEnabled = localStorage.getItem(EXPORT_COMPRESSION_STORAGE_KEY) === 'true';
   /** Local-storage key for Markdown heading timestamp visibility. */
   const SHOW_TIMESTAMPS_STORAGE_KEY = 'tm-conversation-recorder-show-timestamps';
   /** Local-storage key for Markdown JSONL record-number visibility. */
@@ -22168,7 +22171,8 @@ Image elapsed: ${formatDuration(imageElapsed)} — Completed: ${imageCompleted}/
       #${PANEL_ID} .tm-md-metadata label{gap:3px}
       #${PANEL_ID} .tm-extract-formats{display:flex;justify-content:flex-start;gap:12px;flex-wrap:nowrap}
       #${PANEL_ID} .tm-extract-formats label{white-space:nowrap}
-      #${PANEL_ID} .tm-export-action{font-size:22px;line-height:1;font-weight:700;width:36px;height:32px;flex:0 0 36px;padding:0}
+      #${PANEL_ID} .tm-export-action{display:grid;place-items:center;width:36px;height:32px;flex:0 0 36px;padding:0}
+      #${PANEL_ID} .tm-export-action svg{display:block;width:23px;height:23px}
       #${PANEL_ID} .tm-export-compression{border-radius:8px;min-width:34px;flex:0 0 34px}
       #${PANEL_ID} .tm-export-compression svg{width:28px}
       #${PANEL_ID} .tm-tool-actions{border-top:1px solid #494949;padding:12px 0 3px;margin-top:4px;justify-content:space-around;gap:12px;flex-wrap:nowrap}
@@ -22216,7 +22220,7 @@ Image elapsed: ${formatDuration(imageElapsed)} — Completed: ${imageCompleted}/
     const formatsSelected = Boolean(jsonl?.checked || md?.checked);
     if (extract) {
       extract.disabled = exportInProgress || testInProgress || jumpInProgress || !formatsSelected;
-      extract.textContent = exportInProgress ? '…' : '→';
+      extract.innerHTML = exportInProgress ? '…' : exportArrowIconMarkup();
       extract.setAttribute('aria-label', exportInProgress ? 'Exporting conversation' : 'Export conversation');
     }
     if (jsonl) jsonl.disabled = exportInProgress || testInProgress || jumpInProgress;
@@ -22837,6 +22841,14 @@ Image elapsed: ${formatDuration(imageElapsed)} — Completed: ${imageCompleted}/
     });
   }
 
+  /** Renders the export arrow in a centred SVG coordinate system. */
+  function exportArrowIconMarkup() {
+    return '<svg viewBox="0 0 24 24" aria-hidden="true" focusable="false">'
+      + '<path d="M4 12h16m-6-6 6 6-6 6" fill="none" '
+      + 'stroke="currentColor" stroke-width="2" '
+      + 'stroke-linecap="round" stroke-linejoin="round"/></svg>';
+  }
+
   /**
    * Renders the raw/compressed export icon as an arrow entering a size-coded circle.
    *
@@ -22874,7 +22886,7 @@ Image elapsed: ${formatDuration(imageElapsed)} — Completed: ${imageCompleted}/
       </div>
       <div class="tm-recorder-section tm-export-section">
         <div class="tm-row tm-md-metadata"><label><input data-role="show-timestamps" type="checkbox"> Timestamp</label><label><input data-role="show-record-numbers" type="checkbox"> Record #</label><label><input data-role="show-turn-ids" type="checkbox"> Turn ID</label><label><input data-role="show-debug-provenance" type="checkbox"> Provenance</label></div>
-        <div class="tm-row tm-extract-formats"><label><input data-role="format-jsonl" type="checkbox"> JSONL</label><label><input data-role="format-md" type="checkbox" checked> MD</label><button class="tm-icon-button tm-export-action" data-role="extract" type="button" aria-label="Export conversation" title="Export conversation">→</button><button class="tm-export-compression" data-role="export-compression" type="button" role="switch" aria-checked="false" aria-label="Save uncompressed" title="Save uncompressed"></button></div>
+        <div class="tm-row tm-extract-formats"><label><input data-role="format-jsonl" type="checkbox"> JSONL</label><label><input data-role="format-md" type="checkbox" checked> MD</label><button class="tm-icon-button tm-export-action" data-role="extract" type="button" aria-label="Export conversation" title="Export conversation"></button><button class="tm-export-compression" data-role="export-compression" type="button" role="switch" aria-checked="false" aria-label="Save uncompressed" title="Save uncompressed"></button></div>
       </div>
       <div class="tm-row tm-tool-actions">
         <div class="tm-sound-control-row"><button class="tm-sound-control" data-role="agent-sound-control" type="button" aria-haspopup="dialog" aria-expanded="false" aria-label="Sound volume">🔊 <span data-role="agent-sound-control-value"></span></button><div class="tm-sound-popup" data-role="agent-sound-popup" hidden role="dialog" aria-label="Agent sound volume"><span class="tm-volume-ticks" aria-hidden="true"><span>10</span><span>5</span><span>0</span></span><input class="tm-sound-volume-slider" data-role="agent-sound-volume" type="range" min="0" max="10" step="1" aria-label="Agent sound volume"><output class="tm-sound-volume-value" data-role="agent-sound-volume-value"></output></div></div>
@@ -23021,6 +23033,7 @@ Image elapsed: ${formatDuration(imageElapsed)} — Completed: ${imageCompleted}/
       exportCompression.innerHTML = exportCompressionIconMarkup(exportCompressionEnabled);
       exportCompression.addEventListener('click', () => {
         exportCompressionEnabled = !exportCompressionEnabled;
+        localStorage.setItem(EXPORT_COMPRESSION_STORAGE_KEY, String(exportCompressionEnabled));
         updateUi();
       });
     }
@@ -23091,8 +23104,19 @@ Image elapsed: ${formatDuration(imageElapsed)} — Completed: ${imageCompleted}/
       if (kinds.length) await runExport(kinds, { compressed: exportCompressionEnabled });
     };
     panel.querySelector('[data-role="extract"]').addEventListener('click', () => void runSelectedExports());
-    panel.querySelector('[data-role="format-jsonl"]').addEventListener('change', updateUi);
-    panel.querySelector('[data-role="format-md"]').addEventListener('change', updateUi);
+    for (const [role, key, fallback] of [
+      ['format-jsonl', EXPORT_JSONL_STORAGE_KEY, false],
+      ['format-md', EXPORT_MD_STORAGE_KEY, true]
+    ]) {
+      const input = panel.querySelector(`[data-role="${role}"]`);
+      if (!(input instanceof HTMLInputElement)) continue;
+      const stored = localStorage.getItem(key);
+      input.checked = stored === null ? fallback : stored === 'true';
+      input.addEventListener('change', () => {
+        localStorage.setItem(key, String(input.checked));
+        updateUi();
+      });
+    }
     panel.addEventListener('mouseleave', () => {
       if (!panel.matches(':focus-within') && !exportInProgress && !testInProgress) {
         panel.style.display = 'none';
