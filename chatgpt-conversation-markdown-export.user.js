@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         ChatGPT Conversation Markdown Recorder
 // @namespace    https://chatgpt.com/
-// @version      1.11.4-issue.238.1
+// @version      1.11.4-issue.247.1
 // @description  Exports the current ChatGPT conversation directly from the Conversation API as Markdown or JSONL.
 // @match        https://chatgpt.com/*
 // @match        https://chat.openai.com/*
@@ -8431,8 +8431,9 @@ globalThis.__dcCompressor = {
       end_timestamp: range.end_timestamp
     };
     await communicationLogSwitchActiveFile(alternate);
-    await communicationLogOpenWriter();
-    await communicationLogEnsureFragmentHeader();
+    // Leave the new physical fragment empty until its first content append.
+    // Append creates its immutable header; sealing must not make a header-only
+    // fragment that recovery could confuse with an active recording.
     void communicationLogQueueSegmentCompression(segment).catch(() => {});
     return segment;
   }
