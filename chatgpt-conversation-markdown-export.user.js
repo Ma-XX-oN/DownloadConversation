@@ -16712,9 +16712,12 @@ Image elapsed: ${formatDuration(imageElapsed)} — Completed: ${imageCompleted}/
   function communicationLogPanelControls(panel = document.getElementById(PANEL_ID)) {
     const root = panel instanceof Element ? panel : null;
     return {
+      communicationLogDirectoryText: root?.querySelector('[data-role="communication-log-directory"]') ?? null,
+      changeCommunicationLogDirectoryButton: root?.querySelector('[data-role="change-communication-log-directory"]') ?? null,
       communicationLogNameViewport: root?.querySelector('[data-role="communication-log-name-viewport"]') ?? null,
       communicationLogNameText: root?.querySelector('[data-role="communication-log-name"]') ?? null,
       renameCommunicationLogButton: root?.querySelector('[data-role="rename-communication-log"]') ?? null,
+      resetCommunicationLogFilenameButton: root?.querySelector('[data-role="reset-communication-log-filename"]') ?? null,
       duplicateCommunicationLogButton: root?.querySelector('[data-role="duplicate-communication-log"]') ?? null,
       resetCommunicationLogButton: root?.querySelector('[data-role="reset-communication-log"]') ?? null
     };
@@ -16760,6 +16763,23 @@ Image elapsed: ${formatDuration(imageElapsed)} — Completed: ${imageCompleted}/
   }
 
   /**
+   * Displays the actual selected recording folder, not a hard-coded prefix.
+   * The logical filename retains its original bytes for disk operations.
+   *
+   * @param {FileSystemDirectoryHandle|null} directory - Selected storage folder.
+   * @param {string|null} filename - Current logical communication-log filename.
+   * @returns {Object} Short display location and exact folder/filename.
+   */
+  function communicationLogDisplayLocation(directory, filename) {
+    const directoryName = typeof directory?.name === 'string'
+      ? directory.name.trim() : '';
+    return {
+      directory: directoryName || 'Not configured',
+      base: filename ? filename.replace(/\.[^.]+$/, '') : 'Not configured'
+    };
+  }
+
+  /**
    * Refreshes status.
    *
    * @returns {void} No value is returned.
@@ -16768,22 +16788,39 @@ Image elapsed: ${formatDuration(imageElapsed)} — Completed: ${imageCompleted}/
     const status = document.querySelector(`#${PANEL_ID} [data-role="status"]`);
     if (!status) return;
     const {
+      communicationLogDirectoryText,
+      changeCommunicationLogDirectoryButton,
       communicationLogNameViewport,
       communicationLogNameText,
       renameCommunicationLogButton,
+      resetCommunicationLogFilenameButton,
       duplicateCommunicationLogButton,
       resetCommunicationLogButton
     } = communicationLogPanelControls();
     const communicationLogAvailable = Boolean(communicationLogReady && communicationLogFileName);
-    const communicationLogDisplayName = communicationLogAvailable ? communicationLogFileName : 'Not configured';
-    if (communicationLogNameText) communicationLogNameText.textContent = communicationLogDisplayName;
+    if (communicationLogAvailable && !conversationFilenameOverride()) {
+      const automaticName = conversationFileBaseName() + '.jsonl';
+      if (communicationLogFileName !== automaticName) communicationLogFileName = automaticName;
+    }
+    if (resetCommunicationLogFilenameButton) {
+      resetCommunicationLogFilenameButton.disabled =
+        communicationLogUiActionInProgress || !communicationLogAvailable
+          || !conversationFilenameOverride();
+    }
+    const location = communicationLogDisplayLocation(
+      communicationLogDirectoryHandle,
+      communicationLogAvailable ? communicationLogFileName : null
+    );
+    if (communicationLogDirectoryText) communicationLogDirectoryText.textContent = location.directory + '/';
+    if (changeCommunicationLogDirectoryButton) changeCommunicationLogDirectoryButton.disabled = communicationLogUiActionInProgress || communicationLogDirectoryPickerOpening;
+    if (communicationLogNameText) communicationLogNameText.textContent = location.base;
     if (communicationLogNameViewport) {
-      communicationLogNameViewport.title = communicationLogDisplayName;
+      communicationLogNameViewport.title = location.base;
       communicationLogNameViewport.setAttribute(
         'aria-label',
         communicationLogAvailable
-          ? `Current communication log filename: ${communicationLogFileName}`
-          : 'Current communication log filename: not configured'
+          ? `Current communication log filename base: ${location.base}`
+          : 'Current communication log location: not configured'
       );
       requestAnimationFrame(refreshCommunicationLogNameOverflow);
     }
@@ -16794,6 +16831,10 @@ Image elapsed: ${formatDuration(imageElapsed)} — Completed: ${imageCompleted}/
       duplicateCommunicationLogButton.disabled = !communicationLogAvailable || communicationLogUiActionInProgress;
     }
     if (resetCommunicationLogButton) resetCommunicationLogButton.disabled = communicationLogUiActionInProgress;
+    const feedback = document.querySelector(`#${PANEL_ID} [data-role="user-feedback"]`);
+    if (feedback) feedback.textContent = progressState
+      ? progressStatus(exportKind === 'md' ? 'Extract MD' : 'Extract JSONL')
+      : statusText;
     if (progressState) {
       status.textContent = progressStatus(exportKind === 'md' ? 'Extract MD' : 'Extract JSONL');
     } else {
