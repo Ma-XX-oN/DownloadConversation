@@ -12,9 +12,14 @@ const hash = crypto.createHash('sha1').update(
 ).digest('hex');
 assert.equal(hash, 'd9fd8293d2d9595f03712ce870eb351c143c119b',
   'must consume the verified #220 merge source');
+const genSource = file('src/userscript/06-image-export-tests/05-modal-contract.js');
+const genStart = genSource.indexOf('  function resolveGenVersionAtBoundary(');
+assert.ok(genStart >= 0, 'GEN resolver must exist');
+const genEnd = genSource.indexOf('\n  }', genStart);
+assert.ok(genEnd > genStart, 'GEN resolver boundary must exist');
 const source = [
   file('src/userscript/02-network-communication/06-comm-version-boundary.js'),
-  file('src/userscript/06-image-export-tests/05-modal-contract.js'),
+  genSource.slice(genStart, genEnd + 4),
   fixture,
   file('src/userscript/07-panel-launcher/01-merged-version-adapter.js')
 ].join('\n');
