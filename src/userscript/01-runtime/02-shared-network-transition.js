@@ -1,3 +1,6 @@
+  /**
+   * Normalizes one thrown value to readable diagnostic text.
+   *
    * @param {unknown} error - Thrown value to describe.
    * @returns {string} Readable error text.
    */
