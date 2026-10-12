@@ -175,6 +175,7 @@ Image elapsed: ${formatDuration(imageElapsed)} — Completed: ${imageCompleted}/
       communicationLogNameViewport: root?.querySelector('[data-role="communication-log-name-viewport"]') ?? null,
       communicationLogNameText: root?.querySelector('[data-role="communication-log-name"]') ?? null,
       renameCommunicationLogButton: root?.querySelector('[data-role="rename-communication-log"]') ?? null,
+      resetCommunicationLogFilenameButton: root?.querySelector('[data-role="reset-communication-log-filename"]') ?? null,
       duplicateCommunicationLogButton: root?.querySelector('[data-role="duplicate-communication-log"]') ?? null,
       resetCommunicationLogButton: root?.querySelector('[data-role="reset-communication-log"]') ?? null
     };
@@ -250,10 +251,20 @@ Image elapsed: ${formatDuration(imageElapsed)} — Completed: ${imageCompleted}/
       communicationLogNameViewport,
       communicationLogNameText,
       renameCommunicationLogButton,
+      resetCommunicationLogFilenameButton,
       duplicateCommunicationLogButton,
       resetCommunicationLogButton
     } = communicationLogPanelControls();
     const communicationLogAvailable = Boolean(communicationLogReady && communicationLogFileName);
+    if (communicationLogAvailable && !conversationFilenameOverride()) {
+      const automaticName = conversationFileBaseName() + '.jsonl';
+      if (communicationLogFileName !== automaticName) communicationLogFileName = automaticName;
+    }
+    if (resetCommunicationLogFilenameButton) {
+      resetCommunicationLogFilenameButton.disabled =
+        communicationLogUiActionInProgress || !communicationLogAvailable
+          || !conversationFilenameOverride();
+    }
     const location = communicationLogDisplayLocation(
       communicationLogDirectoryHandle,
       communicationLogAvailable ? communicationLogFileName : null
