@@ -136,3 +136,42 @@ test('changed sealed source refuses archive creation and preserves raw', async (
   assert.deepEqual(h.removed, []);
   assert.equal(h.written.size, 0);
 });
+
+test('occupied alternate leaves original active fragment and bytes untouched', async () => {
+  const { result, run } = sealHarness();
+  const waiting = bind(seal, 'communicationLogSealActiveSegment', {
+    communicationLogAvailableAlternateActiveFile: async () => null
+  });
+  assert.equal(await waiting(), null);
+  assert.deepEqual(result.switches, []);
+  assert.deepEqual(result.compression, []);
+});
+
+test('archive writer failure retains the sealed source', async () => {
+  const h = compressionHarness(bytes => bytes.slice(1));
+  const original = h.run;
+  const rejected = bind(compress, 'communicationLogCompressSealedSegment', {
+    communicationLogSegmentDirectoryHandle: {
+      getFileHandle: async () => ({
+        getFile: async () => ({ arrayBuffer: async () => raw })
+      }),
+      removeEntry: async name => { h.removed.push(name); }
+    },
+    communicationLogSha256: h.hash,
+    communicationLogBytesEqual: async (a, b) =>
+      a.length === b.length && a.every((byte, i) => byte === b[i]),
+    setStatus: () => {},
+    createArchive: async bytes => bytes,
+    communicationLogWriteExactFile: async () => { throw new Error('disk unavailable'); },
+    logDiagnostic: () => {},
+    errorMessage: error => String(error),
+    boundedDiagnosticText: value => value
+  });
+  await assert.rejects(rejected({
+    raw_name: 'active-a.jsonl',
+    raw_bytes: raw.length,
+    source_sha256: await h.hash(raw),
+    archive_name: 'archive.seg.zst'
+  }), /disk unavailable/);
+  assert.deepEqual(h.removed, []);
+});
