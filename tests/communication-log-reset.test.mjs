@@ -22,7 +22,12 @@ function resetHarness() {
 
   vm.runInNewContext(
     `${diskHarnessSource()}
-communicationLogResetSegmentHistory = async () => {};
+// Establish fixture state after the production lexical declarations execute.
+communicationLogDirectoryHandle = this.communicationLogDirectoryHandle;
+communicationLogFileName = this.communicationLogFileName;
+communicationLogReady = this.communicationLogReady;
+communicationLogWriteChain = this.communicationLogWriteChain;
+communicationLogResetSegmentHistory = async () => {};`
 communicationLogReportFailure = (stage, error) => {
   this.__issue133Events.push(\`failure:\${stage}:\${error?.message ?? error}\`);
 };
