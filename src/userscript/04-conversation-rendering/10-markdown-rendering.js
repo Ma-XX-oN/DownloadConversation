@@ -170,6 +170,8 @@ Image elapsed: ${formatDuration(imageElapsed)} — Completed: ${imageCompleted}/
   function communicationLogPanelControls(panel = document.getElementById(PANEL_ID)) {
     const root = panel instanceof Element ? panel : null;
     return {
+      communicationLogDirectoryText: root?.querySelector('[data-role="communication-log-directory"]') ?? null,
+      changeCommunicationLogDirectoryButton: root?.querySelector('[data-role="change-communication-log-directory"]') ?? null,
       communicationLogNameViewport: root?.querySelector('[data-role="communication-log-name-viewport"]') ?? null,
       communicationLogNameText: root?.querySelector('[data-role="communication-log-name"]') ?? null,
       renameCommunicationLogButton: root?.querySelector('[data-role="rename-communication-log"]') ?? null,
@@ -226,13 +228,11 @@ Image elapsed: ${formatDuration(imageElapsed)} — Completed: ${imageCompleted}/
    * @returns {Object} Short display location and exact folder/filename.
    */
   function communicationLogDisplayLocation(directory, filename) {
-    if (!filename) return { display: 'Not configured', exact: 'Not configured' };
-    const folderName = typeof directory?.name === 'string'
+    const directoryName = typeof directory?.name === 'string'
       ? directory.name.trim() : '';
-    const shortName = filename.replace(/^DownloadConversation_/, '');
     return {
-      display: folderName ? `${folderName} / ${shortName}` : filename,
-      exact: folderName ? `${folderName} / ${filename}` : filename
+      directory: directoryName || 'Not configured',
+      base: filename ? filename.replace(/\.[^.]+$/, '') : 'Not configured'
     };
   }
 
@@ -245,6 +245,8 @@ Image elapsed: ${formatDuration(imageElapsed)} — Completed: ${imageCompleted}/
     const status = document.querySelector(`#${PANEL_ID} [data-role="status"]`);
     if (!status) return;
     const {
+      communicationLogDirectoryText,
+      changeCommunicationLogDirectoryButton,
       communicationLogNameViewport,
       communicationLogNameText,
       renameCommunicationLogButton,
@@ -256,12 +258,14 @@ Image elapsed: ${formatDuration(imageElapsed)} — Completed: ${imageCompleted}/
       communicationLogDirectoryHandle,
       communicationLogAvailable ? communicationLogFileName : null
     );
-    if (communicationLogNameText) communicationLogNameText.textContent = location.display;
+    if (communicationLogDirectoryText) communicationLogDirectoryText.textContent = location.directory + '/';
+    if (changeCommunicationLogDirectoryButton) changeCommunicationLogDirectoryButton.disabled = communicationLogUiActionInProgress || communicationLogDirectoryPickerOpening;
+    if (communicationLogNameText) communicationLogNameText.textContent = location.base;
     if (communicationLogNameViewport) {
-      communicationLogNameViewport.title = location.exact;
+      communicationLogNameViewport.title = location.base;
       communicationLogNameViewport.setAttribute(
         'aria-label',
         communicationLogAvailable
-          ? `Current communication log location: ${location.exact}`
+          ? `Current communication log filename base: ${location.base}`
           : 'Current communication log location: not configured'
       );
