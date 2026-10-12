@@ -90,7 +90,7 @@ test('all direct recorder console calls use the shared lifecycle gate', () => {
 });
 
 test('provenance is only a label change; Core preference and diagnostic Debug remain independent', () => {
-  assert.match(downloadConversationSource, /data-role="show-debug-provenance" type="checkbox"> provenance/);
+  assert.match(downloadConversationSource, /data-role="show-debug-provenance" type="checkbox"> Provenance/);
   assert.match(downloadConversationSource, /showDebugProvenance = localStorage\.getItem\(SHOW_DEBUG_PROVENANCE_STORAGE_KEY\) === 'true'/);
   assert.match(downloadConversationSource, /debugProvenance: showDebugProvenance/);
   assert.match(downloadConversationSource, /<option value="debug">Debug<\/option>/);
