@@ -20838,13 +20838,15 @@ Image elapsed: ${formatDuration(imageElapsed)} — Completed: ${imageCompleted}/
     }
     let gen = null;
     if (selection.general === true) {
-      const first = general.findIndex(entry => {
+      const preceding = general.filter(entry => {
         const ms = typeof entry?.timestamp === 'string'
           ? Date.parse(entry.timestamp) : NaN;
-        return Number.isFinite(ms) && ms >= lower && ms <= upper;
+        return Number.isFinite(ms) && ms <= lower;
       });
-      gen = first < 0 ? genBaseline
-        : resolveGenVersionAtBoundary(general, first, genBaseline);
+      gen = preceding.length
+        ? resolveGenVersionAtBoundary(
+          preceding, preceding.length - 1, genBaseline
+        ) : genBaseline;
     }
     const comm = selection.communication === true
       ? communicationLogResolveCommVersionAtBoundary(fragments, lower)
