@@ -23,7 +23,8 @@ test('startup transition runs after capture-order declarations', () => {
 test('capture position can execute before lifecycle version event without TDZ', () => {
   const capture = fs.readFileSync(
     'src/userscript/07-panel-launcher/01-merged-log-extraction.js', 'utf8');
-  const positionEnd = capture.indexOf('  function mergedLogValidateSelection(');
+  const positionEnd = capture.indexOf('  /**\n   * Validates exact timestamp');
+  assert.ok(positionEnd > 0);
   const positionSource = capture.slice(0, positionEnd);
   const context = {
     sessionStorage: {
