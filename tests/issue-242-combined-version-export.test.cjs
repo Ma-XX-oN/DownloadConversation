@@ -102,3 +102,16 @@ test('invalid range and invalid provenance fail without rewriting events', () =>
     {version:{gen:undefined,comm:null}}), /Invalid combined/);
   assert.equal(JSON.stringify(general), snapshot);
 });
+
+test('GEN provenance is evaluated at range start, not the first later selected event', () => {
+  const prior = [
+    { timestamp: stamp(1), level: 'lifecycle',
+      message: 'dc-version-transition', data: { version: 'gen-v1' } },
+    { timestamp: stamp(3), level: 'lifecycle',
+      message: 'dc-version-transition', data: { version: 'gen-v2' } }
+  ];
+  const chosen = { ...selection, start_timestamp: stamp(2),
+    end_timestamp: stamp(4), communication: false };
+  const actual = ctx.boundary(prior, null, [], chosen);
+  assert.equal(actual.version.gen, 'gen-v1');
+});
