@@ -64,8 +64,6 @@
   /**
    * Writes recorder diagnostics to DevTools during startup or when continued console output is enabled.
    *
-   * This gate is independent of the panel's severity filter and covers direct lifecycle messages too.
-   *
    * @param {'errors'|'warnings'|'debug'|'verbose'} level - Severity selecting the DevTools console method.
    * @param {string} message - Console message, including its recorder prefix.
    * @param {Object|null} data - Diagnostic payload redacted before console output.
