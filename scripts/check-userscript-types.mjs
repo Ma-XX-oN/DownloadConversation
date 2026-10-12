@@ -5,7 +5,6 @@ import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import {
-  buildAgentPluginPrelude,
   injectUserscriptPrelude,
   orderedSourcePaths,
   readDownloadConversationSource,
@@ -16,7 +15,6 @@ const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const TYPESCRIPT_VERSION = '7.0.2';
 const BROKEN_COMMIT = 'c16c2beb71e210ceb3110b69b61a92de6483deb3';
 const BROKEN_PLUGIN_REF = 'v1.9.0-issue.156.8';
-const BROKER_PATH = 'src/userscript/01-runtime/02-github-agent-plugin-broker.js';
 const BRIDGE_PATH = 'src/userscript/04-conversation-rendering/08-agent-plugin-bridge.js';
 
 function gitShow(commit, relativePath) {
@@ -47,10 +45,10 @@ function historicalPluginAssembledSource(ref) {
   const source = orderedSourcePaths(manifest)
     .map(relativePath => gitShow(ref, relativePath))
     .join('');
-  const prelude = buildAgentPluginPrelude(
-    gitShow(ref, BROKER_PATH),
-    gitShow(ref, BRIDGE_PATH)
-  );
+  // Historical negative control retains its legacy broker separately.
+  const prelude = gitShow(ref,
+    'src/userscript/01-runtime/02-github-agent-plugin-broker.js')
+    + gitShow(ref, BRIDGE_PATH);
   return injectUserscriptPrelude(source, prelude);
 }
 
@@ -122,10 +120,7 @@ function unresolvedDiagnostics(result) {
 
 const manifest = await readUserscriptManifest(root);
 const source = await readDownloadConversationSource(root, manifest);
-const currentPrelude = buildAgentPluginPrelude(
-  readFileSync(path.join(root, BROKER_PATH), 'utf8'),
-  readFileSync(path.join(root, BRIDGE_PATH), 'utf8')
-);
+const currentPrelude = readFileSync(path.join(root, BRIDGE_PATH), 'utf8');
 const currentSource = injectUserscriptPrelude(source, currentPrelude);
 const current = runTsc(currentSource, 'current');
 if (current.error) {
