@@ -270,22 +270,56 @@
   }
 
   /**
-   * Renders a source-marked merged JSONL stream and a provenance header.
+   * Groups consecutive events by source and diagnostic severity.
+   *
+   * A change in stream or severity starts another group. The severity is
+   * moved out of the individual record only when originally present, so
+   * missing severity and an explicit null remain distinguishable. Original
+   * record order is never changed.
+   *
+   * @param {Object[]} entries - Already merged source-tagged records.
+   * @returns {Object[]} Consecutive source/severity blocks.
+   */
+  function mergedLogGroupEntries(entries) {
+    const groups = [];
+    for (const entry of entries) {
+      const original = entry.record;
+      const hasLevel = Object.hasOwn(original, 'level');
+      const level = hasLevel ? original.level : undefined;
+      const previous = groups[groups.length - 1];
+      if (!previous || previous.source !== entry.source
+          || Object.hasOwn(previous, 'level') !== hasLevel
+          || (hasLevel && !Object.is(previous.level, level))) {
+        const group = { source: entry.source };
+        if (hasLevel) group.level = level;
+        group.records = [];
+        groups.push(group);
+      }
+      const record = hasLevel ? { ...original } : original;
+      if (hasLevel) delete record.level;
+      groups[groups.length - 1].records.push(record);
+    }
+    return groups;
+  }
+
+  /**
+   * Renders grouped source/severity JSONL with export provenance.
    *
    * @param {Object} merge - Selected interleaved event stream.
    * @param {Object} selection - Original export bounds.
-   * @returns {string} Newline-terminated canonical JSONL.
+   * @returns {string} Newline-terminated grouped JSONL.
    */
   function mergedLogJsonl(merge, selection) {
     const header = {
       kind: 'downloadconversation-merged-log',
-      schema: 1,
+      schema: 2,
       ordering: merge.ordering,
       start_timestamp: selection.start_timestamp,
       end_timestamp: selection.end_timestamp,
       group_uuid: recordingGroupState().uuid
     };
-    return [JSON.stringify(header), ...merge.entries.map(JSON.stringify)].join('\n')
+    return [JSON.stringify(header),
+      ...mergedLogGroupEntries(merge.entries).map(JSON.stringify)].join('\n')
       + '\n';
   }
 
