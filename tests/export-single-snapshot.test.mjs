@@ -61,6 +61,7 @@ function functionSource(source, name) {
 function identityHarness({ pathname, heading, title, links }) {
   const conversationTitle = functionSource(identitySource, 'conversationTitle');
   const sanitizeFileName = functionSource(identitySource, 'sanitizeFileName');
+  const currentConversationId = functionSource(identitySource, 'currentConversationId');
   const projectSlug = functionSource(identitySource, 'projectNameFromRouteSlug');
   const projectName = functionSource(identitySource, 'conversationProjectName');
   const fileBase = functionSource(identitySource, 'conversationFileBaseName');
@@ -77,6 +78,7 @@ function identityHarness({ pathname, heading, title, links }) {
   return new Function('document', 'location', 'URL', `
     ${conversationTitle}
     ${sanitizeFileName}
+    ${currentConversationId}
     ${projectSlug}
     ${projectName}
     ${fileBase}
