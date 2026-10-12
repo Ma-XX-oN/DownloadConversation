@@ -168,6 +168,8 @@
   let activeClickDiagnostic = null;
   /** In-memory diagnostic history mirrored to session storage for the panel. */
   let diagnosticLog = [];
+  /** Effective DC version immediately before the first retained GEN record. */
+  let diagnosticLogBaselineVersion = null;
   /** Pending debounced diagnostic-log persistence timer, or null when no write is scheduled. */
   let diagnosticPersistTimer = null;
   /** Whether the recorder panel currently shows the expanded diagnostic history. */
@@ -228,13 +230,6 @@
   let communicationLogUiActionInProgress = false;
   /** Unique identity correlating all communication records produced by this page lifetime. */
   const communicationLogSessionId = crypto.randomUUID();
-  try {
-    const storedDiagnosticLog = JSON.parse(sessionStorage.getItem(DIAGNOSTIC_LOG_STORAGE_KEY) || '[]');
-    if (Array.isArray(storedDiagnosticLog)) diagnosticLog = storedDiagnosticLog.slice(-MAX_DIAGNOSTIC_LOG_ITEMS);
-  } catch {}
-
-  logConsoleDiagnostic('debug', `[DownloadConversation v${VERSION} | AIConversationCore v${CORE_VERSION}] version identity`);
-
   /**
    * Handles assert.
    *
