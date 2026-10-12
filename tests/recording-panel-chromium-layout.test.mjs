@@ -4,6 +4,7 @@ import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
+import { productionFunctionSource } from './helpers/userscript-source.mjs';
 
 const cssModule = readFileSync(new URL(
   '../src/userscript/07-panel-launcher/01-panel-diagnostics-part2.js',
@@ -21,6 +22,14 @@ const mark = markupModule.indexOf('panel.innerHTML = `');
 const markEnd = markupModule.indexOf('`;', mark);
 assert.ok(mark >= 0 && markEnd > mark);
 const html = markupModule.slice(mark + 'panel.innerHTML = `'.length, markEnd);
+const arrowMarkup = new Function(
+  productionFunctionSource('exportArrowIconMarkup') +
+  '\nreturn exportArrowIconMarkup();'
+)();
+const circleMarkup = new Function(
+  productionFunctionSource('exportCompressionIconMarkup') +
+  '\nreturn exportCompressionIconMarkup(false);'
+)();
 
 function run(width, height) {
   const doc = `<!doctype html><meta charset="utf-8">
@@ -36,6 +45,10 @@ panel.querySelector('[data-role="log-count"]').textContent = 'Log: 5199 items';
 panel.querySelector('[data-role="last-log-problem"]').hidden = false;
 panel.querySelector('[data-role="last-log-problem"]').textContent =
   'warnings: communication-log-response-body-incomplete after repeated requests and retries';
+panel.querySelector('[data-role="user-feedback"]').textContent =
+  'Merged logs: 989 records saved';
+panel.querySelector('[data-role="extract"]').innerHTML = `${arrowMarkup}`;
+panel.querySelector('[data-role="export-compression"]').innerHTML = `${circleMarkup}`;
 panel.querySelector('[data-role="status"]').textContent =
   'segment_2026,10,11;22,31,25-2026,10,11;22,31,26.seg.zst verified; recording continues';
 panel.querySelector('[data-role="communication-log-name"]').textContent =
@@ -62,7 +75,7 @@ for (const role of ['last-log-problem', 'status']) {
   if (box(el).height > 24) result.issues.push(role + ' uses multiple rows');
 }
 for (const role of ['record-general','record-communication','console-diagnostics',
-  'record-one-group','diagnostics','rename-communication-log',
+  'record-one-group','diagnostics','change-communication-log-directory','rename-communication-log',
   'reset-communication-log',
   'jump','test','extract']) {
   if (!panel.querySelector('[data-role="' + role + '"]')) {
@@ -70,11 +83,25 @@ for (const role of ['record-general','record-communication','console-diagnostics
   }
 }
 const filename = box(panel.querySelector('[data-role="communication-log-name-viewport"]'));
+const destination = box(panel.querySelector('[data-role="communication-log-directory"]'));
+if (destination.bottom > filename.top + 1) {
+  result.issues.push('destination directory and filename rows overlap');
+}
+const arrowSvg = panel.querySelector('[data-role="extract"] svg');
+const circleSvg = panel.querySelector('[data-role="export-compression"] svg');
+if (!arrowSvg || !circleSvg) result.issues.push('export symbols missing');
+else {
+  const midY = element => (box(element).top + box(element).bottom) / 2;
+  if (Math.abs(midY(arrowSvg) - midY(circleSvg)) > 1.25) {
+    result.issues.push('export arrow and compression circle vertical centres differ');
+  }
+}
 const rename = box(panel.querySelector('[data-role="rename-communication-log"]'));
 if (filename.right > rename.left + 1 || filename.width < 24) {
   result.issues.push('filename overlaps action buttons');
 }
-const orderedRoles = ['title','log-count','last-log-problem','diagnostics',
+const orderedRoles = ['title','log-count','last-log-problem','user-feedback',
+  'diagnostics','communication-log-directory','change-communication-log-directory',
   'communication-log-name-viewport','rename-communication-log',
   'record-general','record-communication','console-diagnostics','record-one-group',
   'save-log','reset-communication-log','show-timestamps','show-record-numbers',
@@ -102,6 +129,10 @@ if (Math.max(...bottom.map(b => b.top)) - Math.min(...bottom.map(b => b.top)) > 
 const rows = [...panel.querySelectorAll('.tm-row')];
 const warning = box(panel.querySelector('[data-role="last-log-problem"]'));
 const status = box(panel.querySelector('[data-role="status"]'));
+const feedback = box(panel.querySelector('[data-role="user-feedback"]'));
+if (feedback.top < warning.bottom - 1 || feedback.height < 10) {
+  result.issues.push('feedback missing or overlaps warning');
+}
 if (status.top < warning.bottom - 1) result.issues.push('warning/status overlap');
 for (let i = 1; i < rows.length; i++) {
   if (box(rows[i]).top < box(rows[i - 1]).bottom - 1) {
