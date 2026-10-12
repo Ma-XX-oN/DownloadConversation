@@ -61,5 +61,46 @@ test('every directly bound panel control exists in the actual panel markup', () 
     assert.match(panelHtml, new RegExp('data-role="' + role + '"'),
       'Missing required panel event target: ' + role);
   }
-  assert.match(panelHtml, /<button data-role="test" type="button">Test<\/button>/);
+  assert.match(panelHtml, /data-role="test" type="button" aria-label="Run tests"/);
+});
+
+test('recorder panel follows the exact requested control order', () => {
+  const start = panel.indexOf('panel.innerHTML = \`', panel.indexOf('  function makePanel() {'));
+  const end = panel.indexOf('\`;', start);
+  const html = panel.slice(start, end);
+  assert.ok(end > start);
+  const roles = [
+    'title', 'log-count', 'last-log-problem', 'diagnostics',
+    'communication-log-name', 'rename-communication-log',
+    'record-general', 'record-communication', 'console-diagnostics',
+    'record-one-group', 'save-log', 'reset-communication-log',
+    'show-timestamps', 'show-record-numbers', 'show-turn-ids',
+    'show-debug-provenance', 'format-jsonl', 'format-md',
+    'extract', 'export-compression', 'agent-sound-control', 'jump', 'test'
+  ];
+  let previous = -1;
+  for (const role of roles) {
+    const index = html.indexOf('data-role="' + role + '"');
+    assert.ok(index > previous, role + ' must appear in requested order');
+    previous = index;
+  }
+  for (const obsolete of ['copy-log', 'toggle-log', 'screen-on',
+    'duplicate-communication-log']) {
+    assert.doesNotMatch(html, new RegExp('data-role="' + obsolete + '"'));
+  }
+  assert.match(html, /tm-recording-section/);
+  assert.match(html, /tm-export-section/);
+  assert.match(html, /tm-tool-actions/);
+  assert.match(html, /aria-label="Jump to entry"/);
+  assert.match(html, /aria-label="Run tests"/);
+});
+
+test('the volume markers and user-specified icons are explicitly styled', () => {
+  assert.match(panel, /tm-sound-volume-slider::-webkit-slider-runnable-track/);
+  assert.match(panel, /tm-sound-volume-slider::-webkit-slider-thumb/);
+  assert.match(panel, /background:#b2d8ff/);
+  assert.match(panel, /const radius = compressed \? 4 : 8/);
+  assert.match(panel, /extract.textContent = exportInProgress \? '…' : '→'/);
+  assert.match(panel, /test.textContent = testInProgress \? '…' : '🧪'/);
+  assert.match(panel, /jump.textContent = jumpInProgress \? '…' : '🪂'/);
 });
