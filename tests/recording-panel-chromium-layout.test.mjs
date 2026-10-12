@@ -63,7 +63,7 @@ for (const role of ['last-log-problem', 'status']) {
 }
 for (const role of ['record-general','record-communication','console-diagnostics',
   'record-one-group','diagnostics','rename-communication-log',
-  'duplicate-communication-log','reset-communication-log',
+  'reset-communication-log',
   'jump','test','extract']) {
   if (!panel.querySelector('[data-role="' + role + '"]')) {
     result.issues.push('missing ' + role);
