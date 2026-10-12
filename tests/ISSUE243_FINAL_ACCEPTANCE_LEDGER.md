@@ -36,7 +36,7 @@ No main merge, production release or stable tag authorized or performed.
 | JSDoc and source-size invariants | `node scripts/check-jsdoc.mjs`; all manifest source segments <16 KiB | PASS |
 | Per-leaf performance and browser storage | Existing #251 independent hosted evidence, run 38300819106; no newly invented latency SLA | PASS (leaf handoff) |
 | Live personal Tampermonkey use and user-visible export review | User has not yet tested this exact #243 artifact in the ChatGPT browser UI | PENDING USER TEST |
-| Canonical repository CI at exact final handoff | Remove temporary issue workflow, then re-run canonical policy CI. Evidence to be appended to #243 after host completion | INCOMPLETE until cleanup |
+| Canonical repository policy CI at final code/artifact handoff | Temporary workflow removed; hosted canonical run https://github.com/Ma-XX-oN/DownloadConversation/actions/runs/38305915837 on `f19d7847f5bd460010a9f619a708dc7242b9ac32`, policy SUCCESS; authoritative full acceptance remains hosted run 38305704291 | PASS (policy; full tests separately PASS) |
 | Production deployment / protected-main merge | Explicitly not authorized | DEFERRED |
 
 ## Integration boundaries and unresolved matters
