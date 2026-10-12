@@ -31,6 +31,10 @@ const bytes = text => new TextEncoder().encode(text);
     assert.equal(await invoke('communicationLogLastTimestampFromJsonlFile', file(text)),
       '2026-10-12T13:00:00.000Z');
   }
+  assert.equal(invoke('communicationLogTimestampRangeFromJsonl',
+    bytes(header + a + b.slice(0, -1))).end_timestamp,
+    '2026-10-12T12:00:00.000Z');
+  assert.equal(invoke('communicationLogTimestampRangeFromJsonl', bytes(a.slice(0, -1))), null);
   const incomplete = file(header + a + b.slice(0, -1));
   assert.equal(await invoke('communicationLogLastTimestampFromJsonlFile', incomplete),
     '2026-10-12T12:00:00.000Z');
