@@ -1,0 +1,33 @@
+name: Issue 242 Combined Version Verification
+on:
+  push:
+    branches: [issue-242-combined-version-export-v3]
+permissions:
+  contents: write
+jobs:
+  join:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: true
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - name: Independent leaf and join test gates
+        run: |
+          node --test tests/gen-boundary-version.test.mjs tests/issue-241-comm-boundary.test.cjs tests/issue-242-combined-version-export.test.cjs tests/issue-239-comm-integration.test.cjs
+      - name: Rebuild and validate exact userscript
+        run: |
+          node scripts/build-userscript.mjs
+          node --check chatgpt-conversation-markdown-export.user.js
+          node scripts/build-userscript.mjs --check
+      - name: Commit verified generated artifact
+        run: |
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git config user.name "github-actions[bot]"
+          git add chatgpt-conversation-markdown-export.user.js
+          if ! git diff --cached --quiet; then
+            git commit -m "build(#242): verified combined-boundary candidate artifact"
+            git push origin HEAD:issue-242-combined-version-export-v3
+          fi
