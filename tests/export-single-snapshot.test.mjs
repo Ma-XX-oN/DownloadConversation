@@ -61,6 +61,7 @@ function functionSource(source, name) {
 function identityHarness({ pathname, heading, title, links }) {
   const conversationTitle = functionSource(identitySource, 'conversationTitle');
   const sanitizeFileName = functionSource(identitySource, 'sanitizeFileName');
+  const projectSlug = functionSource(identitySource, 'projectNameFromRouteSlug');
   const projectName = functionSource(identitySource, 'conversationProjectName');
   const fileBase = functionSource(identitySource, 'conversationFileBaseName');
   const location = {
@@ -76,6 +77,7 @@ function identityHarness({ pathname, heading, title, links }) {
   return new Function('document', 'location', 'URL', `
     ${conversationTitle}
     ${sanitizeFileName}
+    ${projectSlug}
     ${projectName}
     ${fileBase}
     return {
@@ -316,4 +318,18 @@ test('Issue 172 all user-facing archive/export paths use canonical naming', () =
   assert.match(diagnosticSource, /canonicalFilename\(/);
   assert.doesNotMatch(imageRecoverySource,
     /sanitizeFileName\(conversationTitle\(\)\)\.(?:jsonl|md)/);
+});
+
+test('filename uses conversation identity and not unrelated numeric page heading', () => {
+  const projectSegment = 'g-p-6a74170dd7ac8191b0f5bc2147af1f33-download-conversation';
+  const result = identityHarness({
+    pathname: `/g/${projectSegment}/c/6acc61bf-7524-83ea-8120-0b0dccab3e24`,
+    heading: '58',
+    title: 'Filename Layout Revision - ChatGPT',
+    links: []
+  });
+  assert.deepEqual(result, {
+    projectName: 'Download Conversation',
+    fileBase: 'Download-Conversation__Filename Layout Revision'
+  });
 });
