@@ -46,6 +46,10 @@ const result = { width: innerWidth, height: innerHeight,
     bottom:box(panel).bottom,height:box(panel).height},
   overflow: panel.scrollHeight > panel.clientHeight,
   issues: [] };
+const background = getComputedStyle(panel).backgroundColor;
+if (background !== 'rgb(24, 24, 24)') {
+  result.issues.push('popup background is translucent: ' + background);
+}
 const bounds = box(panel);
 if (bounds.left < -1 || bounds.right > innerWidth + 1 ||
     bounds.top < -1 || bounds.bottom > innerHeight + 1) {
@@ -71,9 +75,12 @@ if (filename.right > rename.left + 1 || filename.width < 24) {
   result.issues.push('filename overlaps action buttons');
 }
 const rows = [...panel.querySelectorAll('.tm-row')];
+const warning = box(panel.querySelector('[data-role="last-log-problem"]'));
+const status = box(panel.querySelector('[data-role="status"]'));
+if (status.top < warning.bottom - 1) result.issues.push('warning/status overlap');
 for (let i = 1; i < rows.length; i++) {
-  if (box(rows[i]).top < box(rows[i - 1]).top - 1) {
-    result.issues.push('unordered rows ' + i);
+  if (box(rows[i]).top < box(rows[i - 1]).bottom - 1) {
+    result.issues.push('vertically overlapping rows ' + i);
   }
 }
 const output = document.getElementById('layout-result');
