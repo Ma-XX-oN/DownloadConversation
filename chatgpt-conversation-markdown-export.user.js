@@ -8789,7 +8789,7 @@ globalThis.__dcCompressor = {
             { create: false }
           );
           const content = await (await handle.getFile()).text();
-          const lines = content.trimEnd().split('\\n');
+          const lines = content.trimEnd().split(/\r?\n/);
           if (lines.length !== 1) continue;
           let record;
           try { record = JSON.parse(lines[0]); } catch { continue; }
