@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         ChatGPT Conversation Markdown Recorder
 // @namespace    https://chatgpt.com/
-// @version      1.11.4-issue.243.1
+// @version      1.11.4-issue.243.2
 // @description  Exports the current ChatGPT conversation directly from the Conversation API as Markdown or JSONL.
 // @match        https://chatgpt.com/*
 // @match        https://chat.openai.com/*
@@ -7111,9 +7111,7 @@ globalThis.__dcCompressor = {
 
   restoreDiagnosticLog();
 
-  // #234 provenance: one ordinary timestamped lifecycle event per startup.
-  // #236 guarantees this specific lifecycle event bypasses severity filtering.
-  logDiagnostic('lifecycle', 'dc-version-transition', { version: VERSION });
+  // Version transition is recorded after capture-order state initializes.
   logConsoleDiagnostic('debug', `[DownloadConversation v${VERSION} | AIConversationCore v${CORE_VERSION}] version identity`);
 
   /**
@@ -23725,6 +23723,9 @@ Image elapsed: ${formatDuration(imageElapsed)} — Completed: ${imageCompleted}/
     installLauncherRemovalDiagnostics();
     installLauncherTopologyDiagnostics();
   }
+  // Capture sequencing and recording-group state are now initialized.
+  // Record the current version once per page initialization, unfiltered.
+  logDiagnostic('lifecycle', 'dc-version-transition', { version: VERSION });
   communicationLogInitializationPromise = initializeCommunicationDiskRecorder();
   installLiveTailTracking();
   /** Persisted scalar volume present when the userscript was initialized. */
