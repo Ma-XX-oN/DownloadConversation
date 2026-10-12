@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         ChatGPT Conversation Markdown Recorder
 // @namespace    https://chatgpt.com/
-// @version      1.11.4-issue.220.31
+// @version      1.11.4-issue.220.32
 // @description  Exports the current ChatGPT conversation directly from the Conversation API as Markdown or JSONL.
 // @match        https://chatgpt.com/*
 // @match        https://chat.openai.com/*
@@ -7856,13 +7856,13 @@ globalThis.__dcCompressor = {
       return false;
     }
     communicationLogDirectoryHandle = handle;
-    communicationLogFileName = `DownloadConversation_${conversationFileBaseName()}.jsonl`;
-    if (/^DownloadConversation_(?:ChatGPT|ChatGPT conversation)\.jsonl$/i.test(communicationLogFileName)) {
+    communicationLogFileName = `${conversationFileBaseName()}.jsonl`;
+    if (/^(?:ChatGPT|ChatGPT conversation)\.jsonl$/i.test(communicationLogFileName)) {
       const projectName = conversationProjectName();
       const fallbackBase = projectName
-        ? `${sanitizeFileName(projectName)} - ${conversationName}`
+        ? `${sanitizeFileName(projectName).replace(/\s+/g, '-')}__${conversationName}`
         : conversationName;
-      communicationLogFileName = `DownloadConversation_${fallbackBase}.jsonl`;
+      communicationLogFileName = `${fallbackBase}.jsonl`;
     }
     logDiagnostic('debug', 'communication-log-segment-initialize-call-started', {
       initializer_type: typeof communicationLogInitializeSegmentStorage
@@ -8578,6 +8578,7 @@ globalThis.__dcCompressor = {
    *
    * @returns {string|null} Visible project name, or null for standalone/unresolved chats.
    */
+  const conversationProjectNamesByRoute = new Map();
   function conversationProjectName() {
     const projectSegment = location.pathname.match(/^\/g\/([^/]+)(?:\/|$)/)?.[1] ?? null;
     if (!projectSegment) return null;
@@ -8586,9 +8587,12 @@ globalThis.__dcCompressor = {
     for (const anchor of document.querySelectorAll('a[href]')) {
       try {
         const target = new URL(anchor.href, location.href);
-        if (target.origin !== location.origin || ![projectRoot, projectPath].includes(target.pathname.replace(/\/$/, ''))) continue;
+        if (target.origin !== location.origin || ![projectPath, projectRoot].includes(target.pathname.replace(/\/$/, ''))) continue;
         const visibleName = anchor.textContent?.trim();
-        if (visibleName) return visibleName;
+        if (visibleName) {
+          conversationProjectNamesByRoute.set(projectSegment, visibleName);
+          return visibleName;
+        }
       } catch {}
     }
 
@@ -8596,16 +8600,20 @@ globalThis.__dcCompressor = {
     const pageTitle = String(document.title ?? '')
       .replace(/\s*[-–—]\s*ChatGPT\s*$/i, '')
       .trim();
-    if (!heading || !pageTitle || pageTitle === heading) return null;
+    if (!heading || !pageTitle || pageTitle === heading) return conversationProjectNamesByRoute.get(projectSegment) ?? null;
     for (const separator of [' - ', ' – ', ' — ']) {
       if (pageTitle.endsWith(`${separator}${heading}`)) {
-        return pageTitle.slice(0, -(`${separator}${heading}`).length).trim() || null;
+        const resolved = pageTitle.slice(0, -(`${separator}${heading}`).length).trim();
+        if (resolved) conversationProjectNamesByRoute.set(projectSegment, resolved);
+        return resolved || conversationProjectNamesByRoute.get(projectSegment) || null;
       }
       if (pageTitle.startsWith(`${heading}${separator}`)) {
-        return pageTitle.slice(`${heading}${separator}`.length).trim() || null;
+        const resolved = pageTitle.slice(`${heading}${separator}`.length).trim();
+        if (resolved) conversationProjectNamesByRoute.set(projectSegment, resolved);
+        return resolved || conversationProjectNamesByRoute.get(projectSegment) || null;
       }
     }
-    return null;
+    return conversationProjectNamesByRoute.get(projectSegment) ?? null;
   }
 
   /**
@@ -8663,7 +8671,7 @@ globalThis.__dcCompressor = {
       : chatName;
     const start = canonicalFilenameTimestamp(timestampRange.start_timestamp);
     const end = canonicalFilenameTimestamp(timestampRange.end_timestamp);
-    return `DownloadConversation_${identity}_${start}-${end}`;
+    return `${identity}_${start}-${end}`;
   }
 
   /**
@@ -16546,19 +16554,10 @@ Image elapsed: ${formatDuration(imageElapsed)} — Completed: ${imageCompleted}/
   function communicationLogDisplayLocation(directory, filename) {
     const directoryName = typeof directory?.name === 'string'
       ? directory.name.trim() : '';
-    if (!filename) return { directory: directoryName || 'Not configured', base: 'Not configured' };
-    const logicalBase = filename.replace(/\.[^.]+$/, '').replace(/^DownloadConversation_/, '');
-    const projectName = conversationProjectName();
-    if (!projectName) return { directory: directoryName || 'Not configured', base: logicalBase };
-    const sanitizedProject = sanitizeFileName(projectName);
-    const projectPrefix = sanitizedProject.replace(/\s+/g, '-') + '__';
-    const legacyPrefix = sanitizedProject + ' - ';
-    const strippedBase = logicalBase.startsWith(legacyPrefix)
-      ? logicalBase.slice(legacyPrefix.length)
-      : logicalBase.startsWith(projectPrefix)
-        ? logicalBase.slice(projectPrefix.length)
-        : logicalBase;
-    return { directory: directoryName || 'Not configured', base: projectPrefix + strippedBase };
+    return {
+      directory: directoryName || 'Not configured',
+      base: filename ? filename.replace(/\.[^.]+$/, '') : 'Not configured'
+    };
   }
 
   /**
