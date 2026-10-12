@@ -7,7 +7,8 @@ const read = path => readFileSync(
 );
 const bootstrap = read('01-runtime/01-bootstrap.js');
 const restoration = read('01-runtime/01-bootstrap-restore.js');
-const diagnostics = read('07-panel-launcher/01-panel-diagnostics.js');
+const diagnostics = read('07-panel-launcher/01-panel-diagnostics.js')
+  + '  /**\n   * Handles inject styles.';
 const serializer = read('06-image-export-tests/05-modal-contract.js');
 const pick = (source, begin, end) => {
   const i = source.indexOf(begin);
