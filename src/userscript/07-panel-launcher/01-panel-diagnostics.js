@@ -31,6 +31,7 @@
       lastProblem.textContent = problem
         ? `${problem.level}: ${problem.message}` : '';
       lastProblem.hidden = !problem;
+      lastProblem.title = lastProblem.textContent;
     }
     if (output && diagnosticLogExpanded) {
       output.replaceChildren(...diagnosticLog.map(entry => {
