@@ -67,6 +67,7 @@ function runTsc(source, label) {
       [
         'declare const GM_info: any;',
         'declare const unsafeWindow: any;',
+        'declare function GM_xmlhttpRequest(details: any): any;',
         'declare function GM_getValue(name: string, defaultValue?: any): any;',
         'declare function GM_setValue(name: string, value: any): void;',
         'declare function GM_addValueChangeListener(name: string, callback: (...args: any[]) => void): number;',
