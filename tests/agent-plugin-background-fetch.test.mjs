@@ -64,7 +64,8 @@ test('verified GM cache survives a simulated page reload without another downloa
   const sourceText = 'export const plugin = 1;\n';
   const bytes = Buffer.from(sourceText, 'utf8');
   const gitBlobSha1 = createHash('sha1')
-    .update('blob ' + bytes.length + '\\0').update(bytes).digest('hex');
+    .update('blob ' + bytes.length).update(Buffer.from([0]))
+    .update(bytes).digest('hex');
   const descriptor = {
     id: 'chatgpt-web',
     repository: 'Example/Private-Plugin',
