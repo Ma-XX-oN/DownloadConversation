@@ -202,6 +202,8 @@
   let streamTailCapture = null;
   /** Monotonic sequence assigned to stock page fetch/XHR diagnostics in this page lifetime. */
   let stockNetworkSequence = 0;
+  /** Unique identity correlating all communication records produced by this page lifetime. */
+  const communicationLogSessionId = crypto.randomUUID();
   /**
    * Restores the GEN diagnostic tail and its historical version baseline.
    * Older plain-array snapshots have no trustworthy prior version.
