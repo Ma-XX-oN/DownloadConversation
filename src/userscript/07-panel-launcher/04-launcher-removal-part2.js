@@ -137,6 +137,7 @@
       exportCompression.innerHTML = exportCompressionIconMarkup(exportCompressionEnabled);
       exportCompression.addEventListener('click', () => {
         exportCompressionEnabled = !exportCompressionEnabled;
+        localStorage.setItem(EXPORT_COMPRESSION_STORAGE_KEY, String(exportCompressionEnabled));
         updateUi();
       });
     }
