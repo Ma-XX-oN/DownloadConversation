@@ -57,6 +57,8 @@ function harness() {
       },
       setTimeout,
       clearTimeout,
+      setInterval,
+      clearInterval,
       logConsoleDiagnostic: (...args) => diagnostics.push(args)
     };
     vm.runInNewContext(source + `
