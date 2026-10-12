@@ -8,8 +8,8 @@
    *
    * @returns {string|null} Visible project name, or null for standalone/unresolved chats.
    */
-  const conversationProjectNamesByRoute = new Map();
   function conversationProjectName() {
+    const namesByRoute = conversationProjectName.byRoute ??= new Map();
     const projectSegment = location.pathname.match(/^\/g\/([^/]+)(?:\/|$)/)?.[1] ?? null;
     if (!projectSegment) return null;
     const projectPath = `/g/${projectSegment}/project`;
@@ -20,7 +20,7 @@
         if (target.origin !== location.origin || ![projectPath, projectRoot].includes(target.pathname.replace(/\/$/, ''))) continue;
         const visibleName = anchor.textContent?.trim();
         if (visibleName) {
-          conversationProjectNamesByRoute.set(projectSegment, visibleName);
+          namesByRoute.set(projectSegment, visibleName);
           return visibleName;
         }
       } catch {}
@@ -30,20 +30,20 @@
     const pageTitle = String(document.title ?? '')
       .replace(/\s*[-–—]\s*ChatGPT\s*$/i, '')
       .trim();
-    if (!heading || !pageTitle || pageTitle === heading) return conversationProjectNamesByRoute.get(projectSegment) ?? null;
+    if (!heading || !pageTitle || pageTitle === heading) return namesByRoute.get(projectSegment) ?? null;
     for (const separator of [' - ', ' – ', ' — ']) {
       if (pageTitle.endsWith(`${separator}${heading}`)) {
         const resolved = pageTitle.slice(0, -(`${separator}${heading}`).length).trim();
-        if (resolved) conversationProjectNamesByRoute.set(projectSegment, resolved);
-        return resolved || conversationProjectNamesByRoute.get(projectSegment) || null;
+        if (resolved) namesByRoute.set(projectSegment, resolved);
+        return resolved || namesByRoute.get(projectSegment) || null;
       }
       if (pageTitle.startsWith(`${heading}${separator}`)) {
         const resolved = pageTitle.slice(`${heading}${separator}`.length).trim();
-        if (resolved) conversationProjectNamesByRoute.set(projectSegment, resolved);
-        return resolved || conversationProjectNamesByRoute.get(projectSegment) || null;
+        if (resolved) namesByRoute.set(projectSegment, resolved);
+        return resolved || namesByRoute.get(projectSegment) || null;
       }
     }
-    return conversationProjectNamesByRoute.get(projectSegment) ?? null;
+    return namesByRoute.get(projectSegment) ?? null;
   }
 
   /**
