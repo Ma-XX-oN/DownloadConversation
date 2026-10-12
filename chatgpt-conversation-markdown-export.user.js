@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         ChatGPT Conversation Markdown Recorder
 // @namespace    https://chatgpt.com/
-// @version      1.11.4-issue.226.3
+// @version      1.11.4-issue.248.1
 // @description  Exports the current ChatGPT conversation directly from the Conversation API as Markdown or JSONL.
 // @match        https://chatgpt.com/*
 // @match        https://chat.openai.com/*
@@ -8199,6 +8199,29 @@ globalThis.__dcCompressor = {
   }
 
   /**
+   * Prefixes one new physical fragment with immutable, timestamp-free version
+   * provenance. Existing nonempty fragments are never rewritten on upgrade.
+   *
+   * @returns {Promise<void>} Resolves after the unique header is accepted.
+   */
+  async function communicationLogEnsureFragmentHeader() {
+    if (communicationLogActiveSegmentBytes !== 0) return;
+    const snapshot = await communicationLogActiveFileSnapshot();
+    if (snapshot.file.size !== 0) {
+      communicationLogActiveSegmentBytes = snapshot.file.size;
+      return;
+    }
+    await communicationLogOpenWriter();
+    const currentVersion = VERSION === 'unknown' ? null : VERSION;
+    const line = `${JSON.stringify({
+      version: { gen: currentVersion, comm: currentVersion }
+    })}\n`;
+    await communicationLogWritable.write(line);
+    communicationLogWriterDirty = true;
+    communicationLogActiveSegmentBytes += new TextEncoder().encode(line).byteLength;
+  }
+
+  /**
    * Returns the stable internal segment-directory name for this logical log.
    *
    * @returns {string} Stable internal directory name.
@@ -8409,6 +8432,7 @@ globalThis.__dcCompressor = {
     };
     await communicationLogSwitchActiveFile(alternate);
     await communicationLogOpenWriter();
+    await communicationLogEnsureFragmentHeader();
     void communicationLogQueueSegmentCompression(segment).catch(() => {});
     return segment;
   }
@@ -8440,6 +8464,7 @@ globalThis.__dcCompressor = {
     const lineBytes = new TextEncoder().encode(line).byteLength;
     const queued = communicationLogEnqueue('storage-append', async () => {
       await communicationLogOpenWriter();
+      await communicationLogEnsureFragmentHeader();
       await communicationLogWritable.write(line);
       communicationLogWriterDirty = true;
       communicationLogActiveSegmentBytes += lineBytes;
@@ -8753,9 +8778,33 @@ globalThis.__dcCompressor = {
       if (empty.length === 1) {
         active = empty[0];
       } else {
-        active = [...existing].sort((left, right) =>
-          right.modified - left.modified || left.name.localeCompare(right.name)
-        )[0];
+        // A crash can leave a header-only new active fragment beside the
+        // previous sealed source. Resume that exact header rather than
+        // treating it as a closed segment without any content timestamps.
+        const headerOnly = [];
+        for (const state of existing) {
+          if (state.size > 512) continue;
+          const handle = await communicationLogSegmentDirectoryHandle.getFileHandle(
+            state.name,
+            { create: false }
+          );
+          const content = await (await handle.getFile()).text();
+          const lines = content.trimEnd().split(/\r?\n/);
+          if (lines.length !== 1) continue;
+          let record;
+          try { record = JSON.parse(lines[0]); } catch { continue; }
+          if (record && Object.keys(record).length === 1
+              && record.version && typeof record.version === 'object'
+              && !Array.isArray(record.version)
+              && Object.hasOwn(record.version, 'gen')
+              && Object.hasOwn(record.version, 'comm')) {
+            headerOnly.push(state);
+          }
+        }
+        active = headerOnly.length === 1 ? headerOnly[0]
+          : [...existing].sort((left, right) =>
+            right.modified - left.modified || left.name.localeCompare(right.name)
+          )[0];
       }
     }
     communicationLogActiveFileName = active.name;
