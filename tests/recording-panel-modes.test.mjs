@@ -1,11 +1,11 @@
 import assert from 'node:assert/strict';
-import { readFileSync } from 'node:fs';
 import test from 'node:test';
+import { downloadConversationSource } from './helpers/userscript-source.mjs';
 
-const root = new URL('../src/userscript/', import.meta.url);
-const panel = readFileSync(new URL('07-panel-launcher/04-launcher-removal.js', root), 'utf8');
-const diagnostics = readFileSync(new URL('07-panel-launcher/01-panel-diagnostics.js', root), 'utf8');
-const communication = readFileSync(new URL('02-network-communication/06-communication-files.js', root), 'utf8');
+// Test the production concatenation, not incidental source-file boundaries.
+const panel = downloadConversationSource;
+const diagnostics = downloadConversationSource;
+const communication = downloadConversationSource;
 
 test('panel places Gen, Comm, Con and 1 together with the established console switch', () => {
   assert.match(panel, /tm-recording-modes/);
