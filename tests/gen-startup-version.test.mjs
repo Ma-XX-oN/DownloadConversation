@@ -8,7 +8,7 @@ const source = readFileSync(
   'utf8'
 );
 const declaration = 'let diagnosticLogBaselineVersion = null;';
-const start = source.indexOf('  try {\n    const storedDiagnosticLog =');
+const start = source.indexOf('  function restoreDiagnosticLog() {');
 const end = source.indexOf('\n  /**\n   * Handles assert.', start);
 assert.ok(start !== -1 && end > start);
 const startup = source.slice(start, end);
@@ -20,6 +20,8 @@ function boot(version, persisted = null, level = 'errors') {
     CORE_VERSION: 'core',
     DIAGNOSTIC_LOG_STORAGE_KEY: 'test-log',
     MAX_DIAGNOSTIC_LOG_ITEMS: 10000,
+    MAX_PERSISTED_DIAGNOSTIC_LOG_ITEMS: 5000,
+    diagnosticLogBaselineVersion: null,
     diagnosticLog: [],
     sessionStorage: {
       getItem: () => persisted === null ? null : JSON.stringify(persisted)
@@ -77,7 +79,7 @@ test('errors-only does not suppress lifecycle in the isolated append contract', 
 test('startup uses shared API, not a direct array append', () => {
   assert.match(startup, /logDiagnostic\('lifecycle', 'dc-version-transition', \{ version: VERSION \}\)/);
   assert.doesNotMatch(startup, /diagnosticLog\.(?:push|unshift|splice)\(/);
-  assert.equal(startup.match(/dc-version-transition/g)?.length, 1);
+  assert.equal(startup.match(/logDiagnostic\('lifecycle', 'dc-version-transition'/g)?.length, 1);
 });
 
 test('legacy corrupt storage still emits version transition', () => {
