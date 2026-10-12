@@ -38,8 +38,6 @@
 
   restoreDiagnosticLog();
 
-  // #234 provenance: one ordinary timestamped lifecycle event per startup.
-  // #236 guarantees this specific lifecycle event bypasses severity filtering.
-  logDiagnostic('lifecycle', 'dc-version-transition', { version: VERSION });
+  // Version transition is recorded after capture-order state initializes.
   logConsoleDiagnostic('debug', `[DownloadConversation v${VERSION} | AIConversationCore v${CORE_VERSION}] version identity`);
 
