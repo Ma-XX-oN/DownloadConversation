@@ -19,7 +19,7 @@
    * @returns {string|null} Current project name or null outside a project.
    */
   function conversationProjectName() {
-    const route = location.pathname.match(/^\\/g\\/(g-p-[0-9a-f]{32})(?:-[^/]+)?(?:\\/|$)/i);
+    const route = location.pathname.match(/^\/g\/(g-p-[0-9a-f]{32})(?:-[^/]+)?(?:\/|$)/i);
     if (!route) return null;
     const projectId = route[1].toLowerCase();
     const namesByRoute = conversationProjectName.byRoute ??= new Map();
@@ -29,7 +29,7 @@
       try {
         const url = new URL(anchor.href, location.href);
         const match = url.pathname.match(
-          /^\\/g\\/(g-p-[0-9a-f]{32})(?:-[^/]+)?\\/project\\/?$/i
+          /^\/g\/(g-p-[0-9a-f]{32})(?:-[^/]+)?\/project\/?$/i
         );
         if (url.origin !== location.origin || !match
             || match[1].toLowerCase() !== projectId) continue;
