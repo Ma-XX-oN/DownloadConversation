@@ -118,7 +118,7 @@
    */
   function usableConversationTitle(value) {
     const text = String(value ?? '').trim();
-    return Boolean(text) && !/^(?:skip to content|chatgpt|chatgpt conversation|unknown(?:__\\d+)?)$/i.test(text);
+    return Boolean(text) && !/^(?:skip to content|chatgpt|chatgpt conversation|unknown(?:__\d+)?)$/i.test(text);
   }
 
   /**
@@ -137,7 +137,7 @@
         try {
           const url = new URL(anchor.href, location.href);
           if (url.origin !== location.origin
-              || url.pathname.match(/\\/c\\/([^/]+)$/)?.[1] !== conversationId) continue;
+              || url.pathname.match(/\/c\/([^/]+)$/)?.[1] !== conversationId) continue;
           const text = anchor.querySelector('[data-thread-title]')?.textContent?.trim()
             || anchor.getAttribute('aria-label')?.trim();
           if (usableConversationTitle(text)) return text;
@@ -145,7 +145,7 @@
       }
     }
     const pageTitle = String(document.title ?? '')
-      .replace(/\\s*[-–—]\\s*ChatGPT\\s*$/i, '').trim();
+      .replace(/\s*[-–—]\s*ChatGPT\s*$/i, '').trim();
     return usableConversationTitle(pageTitle) ? pageTitle : 'ChatGPT conversation';
   }
 
