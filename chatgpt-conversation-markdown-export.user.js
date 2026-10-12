@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         ChatGPT Conversation Markdown Recorder
 // @namespace    https://chatgpt.com/
-// @version      1.11.4-issue.226.3
+// @version      1.11.4-issue.245.1
 // @description  Exports the current ChatGPT conversation directly from the Conversation API as Markdown or JSONL.
 // @match        https://chatgpt.com/*
 // @match        https://chat.openai.com/*
@@ -18962,10 +18962,25 @@ Image elapsed: ${formatDuration(imageElapsed)} — Completed: ${imageCompleted}/
    */
   function persistDiagnosticLog() {
     try {
-      sessionStorage.setItem(
-        DIAGNOSTIC_LOG_STORAGE_KEY,
-        JSON.stringify(diagnosticLog.slice(-MAX_PERSISTED_DIAGNOSTIC_LOG_ITEMS))
+      const tailStart = Math.max(
+        0, diagnosticLog.length - MAX_PERSISTED_DIAGNOSTIC_LOG_ITEMS
       );
+      let versionBeforeTail = diagnosticLogBaselineVersion;
+      // Resolve only at the debounced persistence boundary, never per append.
+      for (let index = 0; index < tailStart; index += 1) {
+        const entry = diagnosticLog[index];
+        if (entry?.level === 'lifecycle' &&
+            entry.message === 'dc-version-transition' &&
+            entry.data && Object.hasOwn(entry.data, 'version') &&
+            (typeof entry.data.version === 'string' || entry.data.version === null)) {
+          versionBeforeTail = entry.data.version;
+        }
+      }
+      const snapshot = {
+        version_before_persisted: versionBeforeTail,
+        records: diagnosticLog.slice(tailStart)
+      };
+      sessionStorage.setItem(DIAGNOSTIC_LOG_STORAGE_KEY, JSON.stringify(snapshot));
     } catch {}
   }
 
