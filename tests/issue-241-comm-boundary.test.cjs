@@ -52,3 +52,11 @@ test('session-start script versions override immutable fragment headers after up
     script_version:'unknown'}));
   assert.equal(resolve([legacy], stamp(2)), null);
 });
+
+test('clock rollback does not discard later source-order version events', () => {
+  const reversed = encode(line({version:{comm:'v1'}})
+    + line({timestamp:stamp(1),type:'communication_session_start',script_version:'v1'})
+    + line({timestamp:stamp(4),message:'future clock'})
+    + line({timestamp:stamp(2),type:'communication_session_start',script_version:'v2'}));
+  assert.equal(resolve([reversed], stamp(3)), 'v2');
+});
