@@ -134,7 +134,8 @@
   /**
    * Freezes and reads existing disk archives without altering their storage.
    *
-   * @returns {Promise<Object[]>} Captured communication events in file order.
+   * @param {boolean} includeVersions - Include scoped provenance fragments.
+   * @returns {Promise<Object[]|Object>} Events, or events and fragment provenance.
    */
   async function mergedLogReadCommunication(includeVersions = false) {
     if (!communicationLogReady || !communicationLogSegmentDirectoryHandle) {
