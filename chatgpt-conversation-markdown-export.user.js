@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         ChatGPT Conversation Markdown Recorder
 // @namespace    https://chatgpt.com/
-// @version      1.11.4-issue.220.9
+// @version      1.11.4-issue.220.10
 // @description  Exports the current ChatGPT conversation directly from the Conversation API as Markdown or JSONL.
 // @match        https://chatgpt.com/*
 // @match        https://chat.openai.com/*
@@ -21824,7 +21824,7 @@ Image elapsed: ${formatDuration(imageElapsed)} — Completed: ${imageCompleted}/
     const prefix = canonicalFilename(
       conversationProjectName(), conversationTitle(), range
     );
-    const suffix = '.merged.log' + compressorExtension();
+    const suffix = '.mlog' + compressorExtension();
     const directory = communicationLogReady
       ? communicationLogDirectoryHandle : null;
     let name = prefix + suffix;
