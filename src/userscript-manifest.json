@@ -120,6 +120,7 @@
         "src/userscript/07-panel-launcher/02-launcher-lifecycle.js",
         "src/userscript/07-panel-launcher/03-launcher-topology.js",
         "src/userscript/07-panel-launcher/04-launcher-removal.js",
+        "src/userscript/07-panel-launcher/04-launcher-removal-part2.js",
         "src/userscript/07-panel-launcher/05-bootstrap.js"
       ]
     }
