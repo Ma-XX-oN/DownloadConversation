@@ -244,3 +244,31 @@
   function duplicateIconMarkup() {
     return '<svg viewBox="0 0 24 24" aria-hidden="true"><rect x="1.5" y="8" width="6" height="8" rx="1.5"></rect><rect x="16.5" y="2" width="6" height="7" rx="1.5"></rect><rect x="16.5" y="15" width="6" height="7" rx="1.5"></rect><path d="M7.5 12h3c2.8 0 2.8-6.5 6-6.5"></path><path d="M7.5 12h3c2.8 0 2.8 6.5 6 6.5"></path><path d="m14.5 4 2 1.5-2 1.5"></path><path d="m14.5 17 2 1.5-2 1.5"></path></svg>';
   }
+  /**
+   * Resolves the GEN version at the inclusive first selected event.
+   * The retained baseline is the version before the first retained event.
+   * This function reads but never changes the input log or version entries.
+   *
+   * @param {Array<Object>} records - Chronologically ordered GEN diagnostics.
+   * @param {number} startIndex - Inclusive first selected record index.
+   * @param {string|null} baselineVersion - Pre-window effective version.
+   * @returns {string|null} Effective DC version or unknown provenance.
+   */
+  function resolveGenVersionAtBoundary(records, startIndex, baselineVersion) {
+    if (!Array.isArray(records) || !Number.isInteger(startIndex) ||
+        startIndex < 0 || startIndex >= records.length ||
+        !(baselineVersion === null || typeof baselineVersion === 'string')) {
+      throw new TypeError('Invalid GEN version boundary');
+    }
+    let version = baselineVersion;
+    for (let i = 0; i <= startIndex; i++) {
+      const item = records[i];
+      if (item?.level === 'lifecycle' && item.message === 'dc-version-transition' &&
+          item.data && typeof item.data === 'object' &&
+          Object.prototype.hasOwnProperty.call(item.data, 'version') &&
+          (item.data.version === null || typeof item.data.version === 'string')) {
+        version = item.data.version;
+      }
+    }
+    return version;
+  }
