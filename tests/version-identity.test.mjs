@@ -22,7 +22,7 @@ test('DownloadConversation keeps one caller-version authority in userscript meta
   assert.doesNotMatch(downloadConversationSource, /const VERSION = ['"]\d/);
   assert.match(
     downloadConversationSource,
-    /if \(title\) title\.textContent = `ChatGPT Recorder v\$\{VERSION\}`;/,
+    /if \(title\) \{\s*title\.textContent = `ChatGPT Recorder v\$\{VERSION\}`;\s*title\.title = title\.textContent;/,
     'General status title must show the authoritative caller version at the top.'
   );
 });
