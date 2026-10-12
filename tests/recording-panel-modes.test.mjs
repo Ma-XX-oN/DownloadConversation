@@ -44,3 +44,22 @@ test('most recent retained diagnostic warning or error is visible separately', (
   assert.match(diagnostics, /diagnosticLog\.findLast\(entry/);
   assert.match(diagnostics, /problem\.level/);
 });
+
+
+test('every directly bound panel control exists in the actual panel markup', () => {
+  const start = panel.indexOf('  function makePanel() {');
+  const markupStart = panel.indexOf('panel.innerHTML = `', start);
+  const markupEnd = panel.indexOf('`;', markupStart);
+  const panelHtml = panel.slice(markupStart, markupEnd);
+  assert.ok(start >= 0 && markupStart > start && markupEnd > markupStart);
+  const bindingSource = panel.slice(markupEnd, panel.indexOf('\n  function ', markupEnd));
+  const selectors = [...bindingSource.matchAll(
+    /panel\.querySelector\('\[data-role="([^"]+)"\]'\)\.addEventListener\(/g
+  )].map(match => match[1]);
+  assert.ok(selectors.includes('test'), 'Test handler must be covered');
+  for (const role of selectors) {
+    assert.match(panelHtml, new RegExp('data-role="' + role + '"'),
+      'Missing required panel event target: ' + role);
+  }
+  assert.match(panelHtml, /<button data-role="test" type="button">Test<\/button>/);
+});
