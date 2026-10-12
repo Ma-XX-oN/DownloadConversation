@@ -94,15 +94,26 @@
   }
 
   /**
+   * Renders an export arrow centred inside its SVG viewport.
+   *
+   * @returns {string} Inline SVG markup for the export button.
+   */
+  function exportArrowIconMarkup() {
+    return '<svg viewBox="0 0 24 24" aria-hidden="true" focusable="false">'
+      + '<path d="M4 12h16m-6-6 6 6-6 6" fill="none" '
+      + 'stroke="currentColor" stroke-width="2" '
+      + 'stroke-linecap="round" stroke-linejoin="round"/></svg>';
+  }
+
+  /**
    * Renders the raw/compressed export icon as an arrow entering a size-coded circle.
    *
    * @param {boolean} compressed - True for the small compressed circle; false for the large raw circle.
    * @returns {string} Inline SVG markup for the export-mode toggle.
    */
   function exportCompressionIconMarkup(compressed) {
-    const radius = compressed ? 4 : 7;
-    const circleX = compressed ? 18 : 17;
-    return `<svg viewBox="0 0 28 20" aria-hidden="true" focusable="false"><circle cx="${circleX}" cy="10" r="${radius}" fill="none" stroke="currentColor" stroke-width="2"/><path d="M2 10h10M8 6l4 4-4 4" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>`;
+    const radius = compressed ? 4 : 8;
+    return `<svg viewBox="0 0 28 20" aria-hidden="true" focusable="false"><circle cx="14" cy="10" r="${radius}" fill="none" stroke="currentColor" stroke-width="2"/></svg>`;
   }
 
   /**
@@ -120,156 +131,24 @@
     panel.innerHTML = `
       <button class="tm-close" type="button" aria-label="Close">×</button>
       <div class="tm-title" data-role="title"></div>
-      <div class="tm-log-head"><span class="tm-label" data-role="log-count">Log: 0 items</span><button class="tm-icon-button" data-role="save-log" type="button" aria-label="Save diagnostic log" title="Save log"></button><button class="tm-icon-button" data-role="copy-log" type="button" aria-label="Copy diagnostic log" title="Copy log"></button><button class="tm-icon-button" data-role="toggle-log" type="button" aria-label="Show diagnostic log" aria-expanded="false" title="Show log">+</button></div>
+      <div class="tm-log-head"><span class="tm-label" data-role="log-count">Log: 0 items</span></div>
+      <div class="tm-last-log-problem" data-role="last-log-problem" role="status" hidden></div>
+      <div class="tm-user-feedback" data-role="user-feedback" role="status" aria-live="polite"></div>
       <div class="tm-log-output" data-role="log-output" hidden></div>
-      <div class="tm-status" data-role="status"></div>
-      <div class="tm-row"><span class="tm-label">Diagnostics</span><select data-role="diagnostics"><option value="errors">Errors</option><option value="warnings">Warnings</option><option value="debug">Debug</option><option value="verbose">Verbose</option></select><label><input data-role="console-diagnostics" type="checkbox"> console</label><button data-role="test" type="button">Test</button></div>
-      <div class="tm-row"><span class="tm-label">Communication log</span></div>
-      <div class="tm-row tm-communication-log-row"><div class="tm-log-name-viewport" data-role="communication-log-name-viewport" role="textbox" aria-readonly="true" aria-label="Current communication log filename" title="Current communication log filename"><span class="tm-log-name-text" data-role="communication-log-name"></span></div><button class="tm-icon-button" data-role="rename-communication-log" type="button" aria-label="Rename communication log" title="Rename communication log"></button><button class="tm-icon-button" data-role="duplicate-communication-log" type="button" aria-label="Duplicate communication log" title="Duplicate communication log"></button><button class="tm-icon-button" data-role="reset-communication-log" type="button" aria-label="Reset communication log" title="Reset communication log"></button></div>
-      <div class="tm-row"><span class="tm-label">Screen on when extracting</span><button class="tm-switch" data-role="screen-on" type="button" role="switch" aria-checked="false" aria-label="Keep screen on while extracting"><span class="tm-switch-thumb"></span></button></div>
-      <div class="tm-row tm-sound-control-row"><button class="tm-sound-control" data-role="agent-sound-control" type="button" aria-haspopup="dialog" aria-expanded="false">Sound <span data-role="agent-sound-control-value"></span></button><div class="tm-sound-popup" data-role="agent-sound-popup" hidden role="dialog" aria-label="Agent sound volume"><input class="tm-sound-volume-slider" data-role="agent-sound-volume" type="range" min="0" max="10" step="1" aria-label="Agent sound volume"><output class="tm-sound-volume-value" data-role="agent-sound-volume-value"></output></div></div>
-      <div class="tm-row"><button data-role="jump" type="button">Jump</button></div>
-      <div class="tm-row tm-extract-formats"><button data-role="extract" type="button">Extract</button><label><input data-role="format-jsonl" type="checkbox"> JSONL</label><label><input data-role="format-md" type="checkbox" checked> MD</label><button class="tm-export-compression" data-role="export-compression" type="button" role="switch" aria-checked="false" aria-label="Raw export output" title="Raw JSONL/MD files"></button></div>
-      <div class="tm-row tm-md-metadata"><span class="tm-label">MD headings</span><label><input data-role="show-timestamps" type="checkbox"> Timestamp</label><label><input data-role="show-record-numbers" type="checkbox"> Record #</label><label><input data-role="show-turn-ids" type="checkbox"> Turn ID</label><label><input data-role="show-debug-provenance" type="checkbox"> provenance</label></div>
+      <div class="tm-row tm-diagnostics-row"><label for="tm-recorder-diagnostics">Diagnostics:</label><select id="tm-recorder-diagnostics" data-role="diagnostics"><option value="errors">Errors</option><option value="warnings">Warnings</option><option value="debug">Debug</option><option value="verbose">Verbose</option></select></div>
+      <div class="tm-recorder-section tm-recording-section">
+        <div class="tm-recording-location"><div class="tm-row tm-communication-log-row"><div class="tm-log-name-viewport" data-role="communication-log-directory" aria-label="Destination directory"></div><button class="tm-icon-button" data-role="change-communication-log-directory" type="button" aria-label="Change destination directory" title="Change destination directory"></button></div><div class="tm-row tm-communication-log-row"><div class="tm-log-name-viewport" data-role="communication-log-name-viewport" role="textbox" aria-readonly="true" aria-label="Current communication log filename base" title="Current communication log filename base"><span class="tm-log-name-text" data-role="communication-log-name"></span></div><button class="tm-icon-button" data-role="rename-communication-log" type="button" aria-label="Rename communication log" title="Rename communication log"></button><button class="tm-icon-button" data-role="reset-communication-log-filename" type="button" aria-label="Reset filename to project and conversation" title="Reset filename to project and conversation"></button></div></div>
+        <div class="tm-row tm-recording-modes"><label><input data-role="record-general" type="checkbox" checked> Gen</label><label><input data-role="record-communication" type="checkbox" checked> Comm</label><label><input data-role="console-diagnostics" type="checkbox"> Con</label><label><input data-role="record-one-group" type="checkbox"> 1</label></div>
+        <div class="tm-row tm-recording-actions"><button class="tm-icon-button" data-role="save-log" type="button" aria-label="Save merged log" title="Save merged log"></button><button class="tm-icon-button" data-role="reset-communication-log" type="button" aria-label="Reset communication log" title="Reset communication log"></button></div>
+      </div>
+      <div class="tm-recorder-section tm-export-section">
+        <div class="tm-row tm-md-metadata"><label><input data-role="show-timestamps" type="checkbox"> Timestamp</label><label><input data-role="show-record-numbers" type="checkbox"> Record #</label><label><input data-role="show-turn-ids" type="checkbox"> Turn ID</label><label><input data-role="show-debug-provenance" type="checkbox"> Provenance</label></div>
+        <div class="tm-row tm-extract-formats"><label><input data-role="format-jsonl" type="checkbox"> JSONL</label><label><input data-role="format-md" type="checkbox" checked> MD</label><button class="tm-icon-button tm-export-action" data-role="extract" type="button" aria-label="Export conversation" title="Export conversation"></button><button class="tm-export-compression" data-role="export-compression" type="button" role="switch" aria-checked="false" aria-label="Save uncompressed" title="Save uncompressed"></button></div>
+      </div>
+      <div class="tm-row tm-tool-actions">
+        <div class="tm-sound-control-row"><button class="tm-sound-control" data-role="agent-sound-control" type="button" aria-haspopup="dialog" aria-expanded="false" aria-label="Sound volume">🔊 <span data-role="agent-sound-control-value"></span></button><div class="tm-sound-popup" data-role="agent-sound-popup" hidden role="dialog" aria-label="Agent sound volume"><span class="tm-volume-ticks" aria-hidden="true"><span>10</span><span>5</span><span>0</span></span><input class="tm-sound-volume-slider" data-role="agent-sound-volume" type="range" min="0" max="10" step="1" aria-label="Agent sound volume"><output class="tm-sound-volume-value" data-role="agent-sound-volume-value"></output></div></div>
+        <button class="tm-tool-button" data-role="jump" type="button" aria-label="Jump to entry" title="Jump to entry">🪂</button>
+        <button class="tm-tool-button" data-role="test" type="button" aria-label="Run tests" title="Run tests">🧪</button>
+      </div>
+      <div class="tm-status" data-role="status" role="status"></div>
     `;
-    panel.querySelector('.tm-close').addEventListener('click', () => {
-      panel.style.display = 'none';
-      const launcher = document.getElementById(LAUNCHER_ID);
-      if (launcher) launcher.style.display = '';
-    });
-    const diagnostics = panel.querySelector('[data-role="diagnostics"]');
-    diagnostics.value = diagnosticsLevel;
-    diagnostics.addEventListener('change', () => {
-      diagnosticsLevel = diagnostics.value;
-      localStorage.setItem('tm-conversation-recorder-diagnostics', diagnosticsLevel);
-      logDiagnostic('debug', 'diagnostics-level-changed', { diagnostics_level: diagnosticsLevel });
-      refreshDiagnosticLog();
-    });
-    const consoleOutput = panel.querySelector('[data-role="console-diagnostics"]');
-    consoleOutput.checked = consoleDiagnostics;
-    consoleOutput.addEventListener('change', () => {
-      consoleDiagnostics = consoleOutput.checked;
-      localStorage.setItem(CONSOLE_DIAGNOSTICS_STORAGE_KEY, String(consoleDiagnostics));
-      logDiagnostic('debug', 'console-diagnostics-changed', { enabled: consoleDiagnostics });
-    });
-    const saveLogButton = panel.querySelector('[data-role="save-log"]');
-    if (saveLogButton) saveLogButton.innerHTML = saveIconMarkup();
-    const copyLogButton = panel.querySelector('[data-role="copy-log"]');
-    if (copyLogButton) copyLogButton.innerHTML = copyIconMarkup();
-    panel.querySelector('[data-role="save-log"]').addEventListener('click', () => {
-      void saveDiagnosticLog().catch(error => {
-        logDiagnostic('errors', 'diagnostic-log-save-failure', {
-          message: errorMessage(error)
-        });
-        setStatus(`Diagnostic log save failed: ${errorMessage(error)}`);
-      });
-    });
-    panel.querySelector('[data-role="toggle-log"]').addEventListener('click', () => {
-      diagnosticLogExpanded = !diagnosticLogExpanded;
-      refreshDiagnosticLog();
-    });
-    panel.querySelector('[data-role="copy-log"]').addEventListener('click', () => {
-      void copyDiagnosticLog().catch(error => {
-        logDiagnostic('errors', 'diagnostic-log-copy-failure', {
-          message: errorMessage(error)
-        });
-      });
-    });
-    panel.querySelector('[data-role="test"]').addEventListener('click', event => openTestMatrix(event.currentTarget));
-    panel.querySelector('[data-role="jump"]').addEventListener('click', () => void runJump());
-    const {
-      communicationLogNameViewport,
-      renameCommunicationLogButton,
-      duplicateCommunicationLogButton,
-      resetCommunicationLogButton
-    } = communicationLogPanelControls(panel);
-    if (renameCommunicationLogButton) renameCommunicationLogButton.innerHTML = renameIconMarkup();
-    if (duplicateCommunicationLogButton) duplicateCommunicationLogButton.innerHTML = duplicateIconMarkup();
-    if (resetCommunicationLogButton) resetCommunicationLogButton.innerHTML = resetIconMarkup();
-    communicationLogNameViewport?.addEventListener('pointerenter', refreshCommunicationLogNameOverflow);
-    renameCommunicationLogButton?.addEventListener('click', () => {
-      if (renameCommunicationLogButton.disabled || communicationLogUiActionInProgress || !communicationLogFileName) return;
-      const requestedName = window.prompt('Rename communication log', communicationLogFileName);
-      if (requestedName === null || requestedName === communicationLogFileName) return;
-      void runCommunicationLogPanelAction(renameCommunicationLogButton, {
-        idleLabel: 'Rename communication log',
-        busyLabel: 'Renaming communication log',
-        busyTitle: 'Renaming…',
-        operation: () => communicationLogRename(requestedName),
-        onSuccess: newFileName => setStatus(`Communication log renamed to ${newFileName}.`),
-        failurePrefix: 'Communication log rename failed'
-      });
-    });
-    duplicateCommunicationLogButton?.addEventListener('click', () => {
-      if (duplicateCommunicationLogButton.disabled || communicationLogUiActionInProgress || !communicationLogFileName) return;
-      void runCommunicationLogPanelAction(duplicateCommunicationLogButton, {
-        idleLabel: 'Duplicate communication log',
-        busyLabel: 'Duplicating communication log',
-        busyTitle: 'Duplicating…',
-        operation: communicationLogArchiveDuplicate,
-        onSuccess: duplicateName => setStatus(`Communication log duplicated as ${duplicateName}.`),
-        failurePrefix: 'Communication log duplicate failed'
-      });
-    });
-    resetCommunicationLogButton?.addEventListener('click', () => {
-      if (resetCommunicationLogButton.disabled || communicationLogUiActionInProgress) return;
-      void runCommunicationLogPanelAction(resetCommunicationLogButton, {
-        idleLabel: 'Reset communication log',
-        busyLabel: 'Resetting communication log',
-        busyTitle: 'Resetting…',
-        operation: communicationLogReset,
-        onSuccess: () => {
-          logDiagnostic('debug', 'communication-log-reset-complete', {
-            file_name: communicationLogFileName
-          });
-          setStatus('Communication log reset to empty.');
-        },
-        failurePrefix: 'Communication log reset failed'
-      });
-    });
-    panel.querySelector('[data-role="screen-on"]').addEventListener('click', () => {
-      screenOnWhenCapturing = !screenOnWhenCapturing;
-      localStorage.setItem(SCREEN_ON_STORAGE_KEY, String(screenOnWhenCapturing));
-      if (screenOnWhenCapturing) void acquireWakeLock();
-      else void releaseWakeLock();
-      updateUi();
-    });
-    bindStoredCheckbox(panel, 'show-timestamps', SHOW_TIMESTAMPS_STORAGE_KEY, showTimestamps, value => {
-      showTimestamps = value;
-    });
-    bindStoredCheckbox(panel, 'show-record-numbers', SHOW_RECORD_NUMBERS_STORAGE_KEY, showRecordNumbers, value => {
-      showRecordNumbers = value;
-    });
-    bindStoredCheckbox(panel, 'show-turn-ids', SHOW_TURN_IDS_STORAGE_KEY, showTurnIds, value => {
-      showTurnIds = value;
-    });
-    bindStoredCheckbox(panel, 'show-debug-provenance', SHOW_DEBUG_PROVENANCE_STORAGE_KEY, showDebugProvenance, value => {
-      showDebugProvenance = value;
-    });
-    const exportCompression = panel.querySelector('[data-role="export-compression"]');
-    if (exportCompression) {
-      exportCompression.innerHTML = exportCompressionIconMarkup(exportCompressionEnabled);
-      exportCompression.addEventListener('click', () => {
-        exportCompressionEnabled = !exportCompressionEnabled;
-        updateUi();
-      });
-    }
-    const soundControl = panel.querySelector('[data-role="agent-sound-control"]');
-    const soundPopup = panel.querySelector('[data-role="agent-sound-popup"]');
-    const soundVolumeInput = panel.querySelector('[data-role="agent-sound-volume"]');
-    const soundVolumeValue = panel.querySelector('[data-role="agent-sound-volume-value"]');
-    const soundControlValue = panel.querySelector('[data-role="agent-sound-control-value"]');
-    /**
-     * Renders the current integer sound volume into the popup and control label.
-     *
-     * @returns {void} No value is returned.
-     */
-    const renderSoundVolume = () => {
-      const value = String(agentSoundVolume);
-      if (soundVolumeInput instanceof HTMLInputElement) soundVolumeInput.value = value;
-      if (soundVolumeValue) soundVolumeValue.textContent = value;
-      if (soundControlValue) soundControlValue.textContent = value;
-    };
-    /**
-     * Opens or closes the sound-volume popup and mirrors the expanded state for accessibility.
-     *
