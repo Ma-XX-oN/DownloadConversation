@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         ChatGPT Conversation Markdown Recorder
 // @namespace    https://chatgpt.com/
-// @version      1.11.4-issue.220.30
+// @version      1.11.4-issue.220.31
 // @description  Exports the current ChatGPT conversation directly from the Conversation API as Markdown or JSONL.
 // @match        https://chatgpt.com/*
 // @match        https://chat.openai.com/*
@@ -8582,10 +8582,11 @@ globalThis.__dcCompressor = {
     const projectSegment = location.pathname.match(/^\/g\/([^/]+)(?:\/|$)/)?.[1] ?? null;
     if (!projectSegment) return null;
     const projectPath = `/g/${projectSegment}/project`;
+    const projectRoot = `/g/${projectSegment}`;
     for (const anchor of document.querySelectorAll('a[href]')) {
       try {
         const target = new URL(anchor.href, location.href);
-        if (target.origin !== location.origin || target.pathname !== projectPath) continue;
+        if (target.origin !== location.origin || ![projectRoot, projectPath].includes(target.pathname.replace(/\/$/, ''))) continue;
         const visibleName = anchor.textContent?.trim();
         if (visibleName) return visibleName;
       } catch {}
@@ -8616,7 +8617,7 @@ globalThis.__dcCompressor = {
     const conversationName = sanitizeFileName(conversationTitle());
     const projectName = conversationProjectName();
     return projectName
-      ? `${sanitizeFileName(projectName)} - ${conversationName}`
+      ? `${sanitizeFileName(projectName).replace(/\s+/g, '-')}__${conversationName}`
       : conversationName;
   }
 
@@ -8658,7 +8659,7 @@ globalThis.__dcCompressor = {
     }
     const chatName = sanitizeFileName(chat);
     const identity = project
-      ? `${sanitizeFileName(project)} - ${chatName}`
+      ? `${sanitizeFileName(project).replace(/\s+/g, '-')}__${chatName}`
       : chatName;
     const start = canonicalFilenameTimestamp(timestampRange.start_timestamp);
     const end = canonicalFilenameTimestamp(timestampRange.end_timestamp);
@@ -16546,15 +16547,18 @@ Image elapsed: ${formatDuration(imageElapsed)} — Completed: ${imageCompleted}/
     const directoryName = typeof directory?.name === 'string'
       ? directory.name.trim() : '';
     if (!filename) return { directory: directoryName || 'Not configured', base: 'Not configured' };
-    const logicalBase = filename.replace(/\\.[^.]+$/, '').replace(/^DownloadConversation_/, '');
+    const logicalBase = filename.replace(/\.[^.]+$/, '').replace(/^DownloadConversation_/, '');
     const projectName = conversationProjectName();
-    const title = sanitizeFileName(conversationTitle());
-    const normalizedProject = projectName ? sanitizeFileName(projectName).replace(/\\s+/g, '-') : '';
-    const legacyPrefix = projectName ? sanitizeFileName(projectName) + ' - ' : '';
-    const base = normalizedProject && logicalBase.startsWith(legacyPrefix)
-      ? normalizedProject + '__' + logicalBase.slice(legacyPrefix.length)
-      : logicalBase;
-    return { directory: directoryName || 'Not configured', base };
+    if (!projectName) return { directory: directoryName || 'Not configured', base: logicalBase };
+    const sanitizedProject = sanitizeFileName(projectName);
+    const projectPrefix = sanitizedProject.replace(/\s+/g, '-') + '__';
+    const legacyPrefix = sanitizedProject + ' - ';
+    const strippedBase = logicalBase.startsWith(legacyPrefix)
+      ? logicalBase.slice(legacyPrefix.length)
+      : logicalBase.startsWith(projectPrefix)
+        ? logicalBase.slice(projectPrefix.length)
+        : logicalBase;
+    return { directory: directoryName || 'Not configured', base: projectPrefix + strippedBase };
   }
 
   /**
@@ -16605,6 +16609,14 @@ Image elapsed: ${formatDuration(imageElapsed)} — Completed: ${imageCompleted}/
       status.textContent = statusText;
     }
     status.title = status.textContent;
+    const feedback = document.querySelector(`#${PANEL_ID} [data-role="user-feedback"]`);
+    if (feedback) {
+      const message = progressState
+        ? progressStatus(exportKind === 'md' ? 'Extract MD' : 'Extract JSONL')
+        : statusText;
+      if (feedback.textContent !== message) feedback.textContent = message;
+      feedback.title = message;
+    }
   }
 
   /**
@@ -22174,6 +22186,7 @@ Image elapsed: ${formatDuration(imageElapsed)} — Completed: ${imageCompleted}/
       #${PANEL_ID} .tm-export-compression svg{display:block;width:28px;height:20px}
       #${PANEL_ID} .tm-extract-formats label{display:flex;gap:5px;align-items:center}
       #${PANEL_ID} .tm-last-log-problem{display:block;max-width:100%;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;font-size:12px;color:#e5b6a0;margin:2px 0}
+      #${PANEL_ID} .tm-user-feedback{min-height:16px;font-size:12px;line-height:1.4;color:#ddd;white-space:normal;overflow-wrap:anywhere;margin:3px 0 9px}
       #${PANEL_ID} .tm-last-log-problem[hidden],#${PANEL_ID} .tm-log-output[hidden]{display:none}
       #${PANEL_ID} .tm-recording-options{display:grid;grid-template-columns:auto minmax(0,1fr);gap:5px 8px}
       #${PANEL_ID} .tm-recording-options select{min-width:0;width:100%;padding:6px 8px}
@@ -22184,7 +22197,8 @@ Image elapsed: ${formatDuration(imageElapsed)} — Completed: ${imageCompleted}/
       #${PANEL_ID} .tm-communication-log-row .tm-icon-button{width:28px;min-width:28px}
       #${PANEL_ID} .tm-capture-options .tm-label{flex:1 1 auto;min-width:0}
       #${PANEL_ID} .tm-md-metadata{gap:5px 10px}
-      #${PANEL_ID} button[data-role="jump"],#${PANEL_ID} button[data-role="test"],#${PANEL_ID} button[data-role="extract"]{padding:6px 10px}
+      #${PANEL_ID} button[data-role="jump"],#${PANEL_ID} button[data-role="test"]{padding:6px 10px}
+      #${PANEL_ID} button[data-role="extract"]{padding:0;align-items:center;justify-items:center}
       #${PANEL_ID} .tm-sound-control{padding:6px 9px}
       @media(max-width:430px){#${PANEL_ID}{right:10px;bottom:48px;max-height:calc(100dvh - 58px);padding:8px}#${PANEL_ID} .tm-recording-modes{gap:4px 9px}#${PANEL_ID} .tm-communication-log-row{gap:3px}}
 
@@ -22208,7 +22222,7 @@ Image elapsed: ${formatDuration(imageElapsed)} — Completed: ${imageCompleted}/
       #${PANEL_ID} .tm-extract-formats{display:flex;justify-content:flex-start;gap:12px;flex-wrap:nowrap}
       #${PANEL_ID} .tm-extract-formats label{white-space:nowrap}
       #${PANEL_ID} .tm-export-action{display:grid;place-items:center;width:36px;height:32px;flex:0 0 36px;padding:0}
-      #${PANEL_ID} .tm-export-action svg{display:block;width:23px;height:23px}
+      #${PANEL_ID} .tm-export-action svg{display:block;width:23px;height:23px;transform:translateY(-1px)}
       #${PANEL_ID} .tm-export-compression{border-radius:8px;min-width:34px;flex:0 0 34px}
       #${PANEL_ID} .tm-export-compression svg{width:28px}
       #${PANEL_ID} .tm-tool-actions{border-top:1px solid #494949;padding:12px 0 3px;margin-top:4px;justify-content:space-around;gap:12px;flex-wrap:nowrap}
@@ -22917,6 +22931,7 @@ Image elapsed: ${formatDuration(imageElapsed)} — Completed: ${imageCompleted}/
       <div class="tm-title" data-role="title"></div>
       <div class="tm-log-head"><span class="tm-label" data-role="log-count">Log: 0 items</span></div>
       <div class="tm-last-log-problem" data-role="last-log-problem" role="status" hidden></div>
+      <div class="tm-user-feedback" data-role="user-feedback" role="status" aria-live="polite"></div>
       <div class="tm-log-output" data-role="log-output" hidden></div>
       <div class="tm-row tm-diagnostics-row"><label for="tm-recorder-diagnostics">Diagnostics:</label><select id="tm-recorder-diagnostics" data-role="diagnostics"><option value="errors">Errors</option><option value="warnings">Warnings</option><option value="debug">Debug</option><option value="verbose">Verbose</option></select></div>
       <div class="tm-recorder-section tm-recording-section">
