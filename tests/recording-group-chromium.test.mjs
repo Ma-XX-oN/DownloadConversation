@@ -58,8 +58,12 @@ test('Chromium retains an owner across reload and rekeys a cloned session tab',
         document.getElementById('result').textContent =
           JSON.stringify({ error: String(error) });
       });
-      <\/script>`;
+      <\/script><img src="/hold" hidden>`;
     const server = createServer((request, response) => {
+      if (request.url === '/hold') {
+        setTimeout(() => { response.writeHead(204); response.end(); }, 8500);
+        return;
+      }
       response.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8' });
       response.end(fixture);
     });
@@ -86,7 +90,7 @@ test('Chromium retains an owner across reload and rekeys a cloned session tab',
         '--disable-renderer-backgrounding',
         '--disable-backgrounding-occluded-windows',
         '--no-first-run', '--no-default-browser-check',
-        '--virtual-time-budget=20000', '--dump-dom',
+        '--dump-dom',
         '--user-data-dir=' + userData,
         'http://127.0.0.1:' + port + '/'
       ];
