@@ -88,6 +88,29 @@
   }
 
   /**
+   * Prefixes one new physical fragment with immutable, timestamp-free version
+   * provenance. Existing nonempty fragments are never rewritten on upgrade.
+   *
+   * @returns {Promise<void>} Resolves after the unique header is accepted.
+   */
+  async function communicationLogEnsureFragmentHeader() {
+    if (communicationLogActiveSegmentBytes !== 0) return;
+    const snapshot = await communicationLogActiveFileSnapshot();
+    if (snapshot.file.size !== 0) {
+      communicationLogActiveSegmentBytes = snapshot.file.size;
+      return;
+    }
+    await communicationLogOpenWriter();
+    const currentVersion = VERSION === 'unknown' ? null : VERSION;
+    const line = `${JSON.stringify({
+      version: { gen: currentVersion, comm: currentVersion }
+    })}\n`;
+    await communicationLogWritable.write(line);
+    communicationLogWriterDirty = true;
+    communicationLogActiveSegmentBytes += new TextEncoder().encode(line).byteLength;
+  }
+
+  /**
    * Returns the stable internal segment-directory name for this logical log.
    *
    * @returns {string} Stable internal directory name.
@@ -297,7 +320,9 @@
       end_timestamp: range.end_timestamp
     };
     await communicationLogSwitchActiveFile(alternate);
-    await communicationLogOpenWriter();
+    // Leave the new physical fragment empty until its first content append.
+    // Append creates its immutable header; sealing must not make a header-only
+    // fragment that recovery could confuse with an active recording.
     void communicationLogQueueSegmentCompression(segment).catch(() => {});
     return segment;
   }
@@ -329,6 +354,7 @@
     const lineBytes = new TextEncoder().encode(line).byteLength;
     const queued = communicationLogEnqueue('storage-append', async () => {
       await communicationLogOpenWriter();
+      await communicationLogEnsureFragmentHeader();
       await communicationLogWritable.write(line);
       communicationLogWriterDirty = true;
       communicationLogActiveSegmentBytes += lineBytes;

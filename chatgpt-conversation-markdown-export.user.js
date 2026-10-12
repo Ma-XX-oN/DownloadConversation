@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         ChatGPT Conversation Markdown Recorder
 // @namespace    https://chatgpt.com/
-// @version      1.11.4-issue.226.3
+// @version      1.11.4-issue.241.2
 // @description  Exports the current ChatGPT conversation directly from the Conversation API as Markdown or JSONL.
 // @match        https://chatgpt.com/*
 // @match        https://chat.openai.com/*
@@ -8199,6 +8199,29 @@ globalThis.__dcCompressor = {
   }
 
   /**
+   * Prefixes one new physical fragment with immutable, timestamp-free version
+   * provenance. Existing nonempty fragments are never rewritten on upgrade.
+   *
+   * @returns {Promise<void>} Resolves after the unique header is accepted.
+   */
+  async function communicationLogEnsureFragmentHeader() {
+    if (communicationLogActiveSegmentBytes !== 0) return;
+    const snapshot = await communicationLogActiveFileSnapshot();
+    if (snapshot.file.size !== 0) {
+      communicationLogActiveSegmentBytes = snapshot.file.size;
+      return;
+    }
+    await communicationLogOpenWriter();
+    const currentVersion = VERSION === 'unknown' ? null : VERSION;
+    const line = `${JSON.stringify({
+      version: { gen: currentVersion, comm: currentVersion }
+    })}\n`;
+    await communicationLogWritable.write(line);
+    communicationLogWriterDirty = true;
+    communicationLogActiveSegmentBytes += new TextEncoder().encode(line).byteLength;
+  }
+
+  /**
    * Returns the stable internal segment-directory name for this logical log.
    *
    * @returns {string} Stable internal directory name.
@@ -8408,7 +8431,9 @@ globalThis.__dcCompressor = {
       end_timestamp: range.end_timestamp
     };
     await communicationLogSwitchActiveFile(alternate);
-    await communicationLogOpenWriter();
+    // Leave the new physical fragment empty until its first content append.
+    // Append creates its immutable header; sealing must not make a header-only
+    // fragment that recovery could confuse with an active recording.
     void communicationLogQueueSegmentCompression(segment).catch(() => {});
     return segment;
   }
@@ -8440,6 +8465,7 @@ globalThis.__dcCompressor = {
     const lineBytes = new TextEncoder().encode(line).byteLength;
     const queued = communicationLogEnqueue('storage-append', async () => {
       await communicationLogOpenWriter();
+      await communicationLogEnsureFragmentHeader();
       await communicationLogWritable.write(line);
       communicationLogWriterDirty = true;
       communicationLogActiveSegmentBytes += lineBytes;
@@ -8753,9 +8779,33 @@ globalThis.__dcCompressor = {
       if (empty.length === 1) {
         active = empty[0];
       } else {
-        active = [...existing].sort((left, right) =>
-          right.modified - left.modified || left.name.localeCompare(right.name)
-        )[0];
+        // A crash can leave a header-only new active fragment beside the
+        // previous sealed source. Resume that exact header rather than
+        // treating it as a closed segment without any content timestamps.
+        const headerOnly = [];
+        for (const state of existing) {
+          if (state.size > 512) continue;
+          const handle = await communicationLogSegmentDirectoryHandle.getFileHandle(
+            state.name,
+            { create: false }
+          );
+          const content = await (await handle.getFile()).text();
+          const lines = content.trimEnd().split(/\r?\n/);
+          if (lines.length !== 1) continue;
+          let record;
+          try { record = JSON.parse(lines[0]); } catch { continue; }
+          if (record && Object.keys(record).length === 1
+              && record.version && typeof record.version === 'object'
+              && !Array.isArray(record.version)
+              && Object.hasOwn(record.version, 'gen')
+              && Object.hasOwn(record.version, 'comm')) {
+            headerOnly.push(state);
+          }
+        }
+        active = headerOnly.length === 1 ? headerOnly[0]
+          : [...existing].sort((left, right) =>
+            right.modified - left.modified || left.name.localeCompare(right.name)
+          )[0];
       }
     }
     communicationLogActiveFileName = active.name;
@@ -8957,7 +9007,10 @@ globalThis.__dcCompressor = {
     const text = new TextDecoder().decode(bytes);
     let start = null;
     let end = null;
-    for (const line of text.split('\n')) {
+    // Only newline-terminated JSONL records belong to a committed snapshot.
+    const complete = text.lastIndexOf('\n');
+    if (complete < 0) return null;
+    for (const line of text.slice(0, complete).split('\n')) {
       if (!line) continue;
       let record;
       try { record = JSON.parse(line); } catch { continue; }
@@ -9026,13 +9079,20 @@ globalThis.__dcCompressor = {
   async function communicationLogLastTimestampFromJsonlFile(file, end = file.size) {
     const limit = Math.min(file.size, Math.max(0, end));
     let lineEnd = limit;
+    // A frozen EOF inside an unfinished JSONL line must not count as an event.
+    const tail = limit > 0
+      ? new Uint8Array(await file.slice(limit - 1, limit).arrayBuffer())[0]
+      : 10;
+    let skipTrailingLine = tail !== 10;
     for (let cursor = limit; cursor > 0;) {
       const start = Math.max(0, cursor - COMMUNICATION_LOG_COMPARE_CHUNK_BYTES);
       const bytes = new Uint8Array(await file.slice(start, cursor).arrayBuffer());
       for (let index = bytes.byteLength - 1; index >= 0; index -= 1) {
         if (bytes[index] !== 10) continue;
         const lineStart = start + index + 1;
-        if (lineStart < lineEnd) {
+        if (skipTrailingLine) {
+          skipTrailingLine = false;
+        } else if (lineStart < lineEnd) {
           const timestamp = await communicationLogTimestampFromJsonlLine(
             file.slice(lineStart, lineEnd)
           );
@@ -9042,7 +9102,7 @@ globalThis.__dcCompressor = {
       }
       cursor = start;
     }
-    return lineEnd > 0
+    return !skipTrailingLine && lineEnd > 0
       ? communicationLogTimestampFromJsonlLine(file.slice(0, lineEnd))
       : null;
   }
@@ -9260,6 +9320,70 @@ globalThis.__dcCompressor = {
     communicationLogActiveSegmentBytes = 0;
   }
   /**
+   * Resolve the last known COMM version at or before an inclusive export start.
+   * Fragments are committed newline-delimited JSONL bytes in recording order.
+   * An immutable fragment header takes effect at its first timestamped event,
+   * not earlier; legacy fragments without headers inherit prior knowledge.
+   *
+   * @param {Uint8Array[]} fragments - Physical fragments in recording order.
+   * @param {string|number} boundary - Selected export start time.
+   * @returns {string|null} Effective version or null if unknown.
+   */
+  function communicationLogResolveCommVersionAtBoundary(fragments, boundary) {
+    const bound = typeof boundary === 'number' ? boundary : Date.parse(boundary);
+    if (!Number.isFinite(bound)) throw new Error('Invalid COMM export start boundary.');
+    let version = null;
+    const decoder = new TextDecoder();
+    for (const bytes of fragments) {
+      let firstLine = true;
+      let lineStart = 0;
+      let pendingHeader;
+      let headerSeen = false;
+      let fragmentBegan = false;
+      for (let index = 0; index < bytes.length; index += 1) {
+        if (bytes[index] !== 10) continue;
+        const line = decoder.decode(bytes.subarray(lineStart, index));
+        lineStart = index + 1;
+        if (!line) { firstLine = false; continue; }
+        let record;
+        try { record = JSON.parse(line); }
+        catch { firstLine = false; continue; }
+        const header = firstLine && record && typeof record === 'object'
+          && !Array.isArray(record) && Object.keys(record).length === 1
+          && Object.hasOwn(record, 'version');
+        firstLine = false;
+        if (header) {
+          pendingHeader = record.version?.comm;
+          headerSeen = true;
+          continue;
+        }
+        const time = typeof record?.timestamp === 'string'
+          ? Date.parse(record.timestamp) : NaN;
+        if (!Number.isFinite(time)) continue;
+        if (time > bound) return version;
+        if (!fragmentBegan) {
+          fragmentBegan = true;
+          if (headerSeen) {
+            version = typeof pendingHeader === 'string' && pendingHeader
+              ? pendingHeader : null;
+          }
+        }
+        if (record.type === 'communication_session_start'
+            && Object.hasOwn(record, 'script_version')) {
+          const next = record.script_version;
+          if (next === null || next === 'unknown') version = null;
+          else if (typeof next === 'string' && next) version = next;
+        }
+        if (record.version && Object.hasOwn(record.version, 'comm')) {
+          const next = record.version.comm;
+          if (next === null) version = null;
+          else if (typeof next === 'string' && next) version = next;
+        }
+      }
+    }
+    return version;
+  }
+  /**
    * Filters exact JSONL record bytes by inclusive timestamp bounds.
    *
    * Records are chronological.  Once a trustworthy record is later than the
@@ -9277,18 +9401,32 @@ globalThis.__dcCompressor = {
     let startTimestamp = null;
     let endTimestamp = null;
     let lineStart = 0;
+    let fragmentHeader = null;
+    let firstLine = true;
     for (let index = 0; index < bytes.byteLength; index += 1) {
       if (bytes[index] !== 10) continue;
       const line = bytes.subarray(lineStart, index);
       const complete = bytes.subarray(lineStart, index + 1);
       lineStart = index + 1;
-      if (!line.byteLength) continue;
+      if (!line.byteLength) {
+        firstLine = false;
+        continue;
+      }
       let record;
       try {
         record = JSON.parse(new TextDecoder().decode(line));
       } catch {
+        firstLine = false;
         continue;
       }
+      if (firstLine && record && typeof record === 'object'
+          && !Array.isArray(record) && Object.keys(record).length === 1
+          && Object.hasOwn(record, 'version')) {
+        fragmentHeader = complete;
+        firstLine = false;
+        continue;
+      }
+      firstLine = false;
       const timestamp = typeof record?.timestamp === 'string'
         ? record.timestamp
         : null;
@@ -9300,6 +9438,11 @@ globalThis.__dcCompressor = {
       total += complete.byteLength;
       startTimestamp ??= timestamp;
       endTimestamp = timestamp;
+    }
+    // No selected records means no output, including no orphan header.
+    if (total > 0 && fragmentHeader) {
+      parts.unshift(fragmentHeader);
+      total += fragmentHeader.byteLength;
     }
     const accepted = new Uint8Array(total);
     let offset = 0;
