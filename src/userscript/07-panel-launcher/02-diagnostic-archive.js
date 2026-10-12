@@ -5,7 +5,7 @@
    * @returns {string} Inline SVG markup for the Save button.
    */
   function saveIconMarkup() {
-    return '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 3v12m0 0 4-4m-4 4-4-4M5 19h14"/></svg>';
+    return '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 3h13l3 3v15H4z"/><path d="M7 3v7h10V3M7 21v-8h10v8M10 3v5"/></svg>';
   }
 
   /**
