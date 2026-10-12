@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         ChatGPT Conversation Markdown Recorder
 // @namespace    https://chatgpt.com/
-// @version      1.11.4-issue.226.3
+// @version      1.11.4-issue.250.1
 // @description  Exports the current ChatGPT conversation directly from the Conversation API as Markdown or JSONL.
 // @match        https://chatgpt.com/*
 // @match        https://chat.openai.com/*
@@ -8957,6 +8957,207 @@ globalThis.__dcCompressor = {
     const text = new TextDecoder().decode(bytes);
     let start = null;
     let end = null;
+    // Only newline-terminated JSONL records belong to a committed snapshot.
+    const complete = text.lastIndexOf('\n');
+    if (complete < 0) return null;
+    for (const line of text.slice(0, complete).split('\n')) {
+      if (!line) continue;
+      let record;
+      try { record = JSON.parse(line); } catch { continue; }
+      const timestamp = typeof record?.timestamp === 'string' ? record.timestamp : null;
+      if (!timestamp || !Number.isFinite(Date.parse(timestamp))) continue;
+      if (start === null || timestamp < start) start = timestamp;
+      if (end === null || timestamp > end) end = timestamp;
+    }
+    return start === null ? null : { start_timestamp: start, end_timestamp: end };
+  }
+
+  /**
+   * Returns a trustworthy timestamp from one exact JSONL line blob.
+   *
+   * @param {Blob} line - Exact JSONL line bytes without the newline delimiter.
+   * @returns {Promise<string|null>} Trustworthy timestamp, or null.
+   */
+  async function communicationLogTimestampFromJsonlLine(line) {
+    if (!line || line.size === 0) return null;
+    try {
+      const record = JSON.parse(await line.text());
+      const timestamp = typeof record?.timestamp === 'string' ? record.timestamp : null;
+      return timestamp && Number.isFinite(Date.parse(timestamp)) ? timestamp : null;
+    } catch {
+      return null;
+    }
+  }
+
+  /**
+   * Finds the first trustworthy complete JSONL record timestamp by scanning only
+   * as far forward from the file start as necessary.
+   *
+   * @param {File} file - JSONL file snapshot.
+   * @param {number} [end] - Exclusive frozen EOF.
+   * @returns {Promise<string|null>} First trustworthy timestamp, or null.
+   */
+  async function communicationLogFirstTimestampFromJsonlFile(file, end = file.size) {
+    const limit = Math.min(file.size, Math.max(0, end));
+    let lineStart = 0;
+    for (let cursor = 0; cursor < limit;) {
+      const next = Math.min(limit, cursor + COMMUNICATION_LOG_COMPARE_CHUNK_BYTES);
+      const bytes = new Uint8Array(await file.slice(cursor, next).arrayBuffer());
+      for (let index = 0; index < bytes.byteLength; index += 1) {
+        if (bytes[index] !== 10) continue;
+        const lineEnd = cursor + index;
+        const timestamp = await communicationLogTimestampFromJsonlLine(
+          file.slice(lineStart, lineEnd)
+        );
+        if (timestamp) return timestamp;
+        lineStart = lineEnd + 1;
+      }
+      cursor = next;
+    }
+    return null;
+  }
+
+  /**
+   * Finds the last trustworthy complete JSONL record timestamp by scanning
+   * backward from the frozen EOF in bounded chunks and stopping at the first
+   * timestamped line encountered.
+   *
+   * @param {File} file - JSONL file snapshot.
+   * @param {number} [end] - Exclusive frozen EOF.
+   * @returns {Promise<string|null>} Last trustworthy timestamp, or null.
+   */
+  async function communicationLogLastTimestampFromJsonlFile(file, end = file.size) {
+    const limit = Math.min(file.size, Math.max(0, end));
+    let lineEnd = limit;
+    // A frozen EOF inside an unfinished JSONL line must not count as an event.
+    const tail = limit > 0
+      ? new Uint8Array(await file.slice(limit - 1, limit).arrayBuffer())[0]
+      : 10;
+    let skipTrailingLine = tail !== 10;
+    for (let cursor = limit; cursor > 0;) {
+      const start = Math.max(0, cursor - COMMUNICATION_LOG_COMPARE_CHUNK_BYTES);
+      const bytes = new Uint8Array(await file.slice(start, cursor).arrayBuffer());
+      for (let index = bytes.byteLength - 1; index >= 0; index -= 1) {
+        if (bytes[index] !== 10) continue;
+        const lineStart = start + index + 1;
+        if (skipTrailingLine) {
+          skipTrailingLine = false;
+        } else if (lineStart < lineEnd) {
+          const timestamp = await communicationLogTimestampFromJsonlLine(
+            file.slice(lineStart, lineEnd)
+          );
+          if (timestamp) return timestamp;
+        }
+        lineEnd = start + index;
+      }
+      cursor = start;
+    }
+    return !skipTrailingLine && lineEnd > 0
+      ? communicationLogTimestampFromJsonlLine(file.slice(0, lineEnd))
+      : null;
+  }
+
+  /**
+   * Formats one ISO timestamp deterministically for cross-platform filenames.
+   *
+   * @param {string} timestamp - Trustworthy ISO timestamp.
+   * @returns {string} Filesystem-safe UTC timestamp.
+   */
+  function communicationLogArchiveTimestamp(timestamp) {
+    const date = new Date(timestamp);
+    if (!Number.isFinite(date.getTime())) throw new Error('Archive timestamp is not trustworthy.');
+    /**
+     * Pads one local date/time field to two digits.
+     *
+     * @param {number} value - Local calendar/time field.
+     * @returns {string} Two-digit field.
+     */
+    const pad = value => String(value).padStart(2, '0');
+    return `${date.getFullYear()},${pad(date.getMonth() + 1)},${pad(date.getDate())};`
+      + `${pad(date.getHours())},${pad(date.getMinutes())},${pad(date.getSeconds())}`;
+  }
+
+  /**
+   * Returns the final communication content time at whole-second precision.
+   *
+   * @param {Object} range - Trustworthy communication timestamp range.
+   * @returns {number} Unix modification time in milliseconds.
+   */
+  function communicationLogArchiveMTime(range) {
+    const endMs = Date.parse(range?.end_timestamp);
+    if (!Number.isFinite(endMs)) {
+      throw new Error('Communication archive end timestamp is not trustworthy.');
+    }
+    return Math.floor(endMs / 1000) * 1000;
+  }
+
+  /**
+   * Builds a role-explicit archive filename; collision suffix is inserted before the role.
+   *
+   * @param {string} base - Logical archive base name.
+   * @param {Object} range - Trustworthy start/end timestamps.
+   * @param {'seg'|'comm'|'log'} role - Archive role.
+   * @param {number} collision - Zero for normal name, positive for actual collision.
+   * @returns {string} Timestamped role-explicit archive filename.
+   */
+  function communicationLogRoleArchiveName(base, range, role, collision = 0) {
+    if (!range?.start_timestamp || !range?.end_timestamp) {
+      throw new Error('Archive content has no trustworthy timestamp range.');
+    }
+    const start = communicationLogArchiveTimestamp(range.start_timestamp);
+    const end = communicationLogArchiveTimestamp(range.end_timestamp);
+    const suffix = collision > 0 ? `(${collision})` : '';
+    return `${base}_${start}-${end}${suffix}.${role}${compressorExtension()}`;
+  }
+
+  /**
+   * Converts a user-facing archive-derived member name to the compressor's ASCII contract.
+   *
+   * @param {string} name - Desired member name.
+   * @returns {string} Deterministic printable-ASCII member name.
+   */
+  function communicationLogAsciiArchiveMemberName(name) {
+    return String(name).replace(/[^\x20-\x7e]/g, '_');
+  }
+
+  /**
+   * Returns the first unused role archive name without adding (N) unnecessarily.
+   *
+   * @param {Object} directory - Directory where the archive will be written.
+   * @param {string} base - Logical archive base.
+   * @param {Object} range - Trustworthy timestamp range.
+   * @param {'seg'|'comm'|'log'} role - Archive role.
+   * @returns {Promise<string>} Lowest-collision archive name.
+   */
+  async function communicationLogUnusedRoleArchiveName(directory, base, range, role) {
+    for (let collision = 0; ; collision += 1) {
+      const name = communicationLogRoleArchiveName(base, range, role, collision);
+      try {
+        await directory.getFileHandle(name, { create: false });
+      } catch (error) {
+        if (error?.name === 'NotFoundError') return name;
+        throw error;
+      }
+    }
+  }
+
+  /**
+   * Escapes one literal string for safe use inside a regular expression.
+   *
+   * @param {string} value - Literal text.
+   * @returns {string} Regular-expression-safe literal text.
+   */
+  function communicationLogEscapeRegex(value) {
+    return String(value).replace(/[.*+?^${}()|[\]\\]/g, '\\  /**
+   * Extracts the trustworthy earliest/latest record timestamps from exact JSONL bytes.
+   *
+   * @param {Uint8Array} bytes - Exact JSONL bytes.
+   * @returns {Object|null} ISO start/end timestamps, or null when none are trustworthy.
+   */
+  function communicationLogTimestampRangeFromJsonl(bytes) {
+    const text = new TextDecoder().decode(bytes);
+    let start = null;
+    let end = null;
     for (const line of text.split('\n')) {
       if (!line) continue;
       let record;
@@ -9152,6 +9353,9076 @@ globalThis.__dcCompressor = {
     const pattern = new RegExp(
       `^segment_(\\d{4},\\d{2},\\d{2};\\d{2},\\d{2},\\d{2})-`
       + `(\\d{4},\\d{2},\\d{2};\\d{2},\\d{2},\\d{2})\\.seg${extension}$`
+    );
+    const match = pattern.exec(name);
+    if (!match) return null;
+    /**
+     * Parses one local archive timestamp field.
+     *
+     * @param {string} value - Local filename timestamp.
+     * @returns {number} Epoch milliseconds at the start of that second.
+     */
+    const parseLocal = value => {
+      const fields = value.match(/\d+/g).map(Number);
+      return new Date(
+        fields[0], fields[1] - 1, fields[2],
+        fields[3], fields[4], fields[5], 0
+      ).getTime();
+    };
+    const startMs = parseLocal(match[1]);
+    const endMs = parseLocal(match[2]) + 999;
+    if (!Number.isFinite(startMs) || !Number.isFinite(endMs)) {
+      throw new Error(`Invalid communication segment timestamp filename: ${name}`);
+    }
+    return {
+      archive_name: name,
+      start_timestamp: new Date(startMs).toISOString(),
+      end_timestamp: new Date(endMs).toISOString(),
+      filename_start: match[1],
+      filename_end: match[2]
+    };
+  }
+
+  /**
+   * Enumerates compressed historical segments from the private directory.
+   *
+   * @returns {Promise<Object[]>} Chronologically ordered archive metadata.
+   */
+  async function communicationLogHistoricalSegmentsFromDirectory() {
+    const segments = [];
+    for await (const [name, entry] of communicationLogSegmentDirectoryHandle.entries()) {
+      if (entry?.kind !== 'file') continue;
+      const parsed = communicationLogParseSegmentArchiveName(name);
+      if (parsed) segments.push(parsed);
+    }
+    segments.sort((left, right) => left.archive_name.localeCompare(right.archive_name));
+    return segments;
+  }
+
+  /**
+   * Returns exact extracted bytes for one filesystem-authoritative historical segment.
+   *
+   * @param {Object} segment - Historical archive metadata.
+   * @returns {Promise<Uint8Array>} Exact raw JSONL segment bytes.
+   */
+  async function communicationLogReadHistoricalSegment(segment) {
+    const handle = await communicationLogSegmentDirectoryHandle.getFileHandle(
+      segment.archive_name,
+      { create: false }
+    );
+    const archive = new Uint8Array(await (await handle.getFile()).arrayBuffer());
+    const bytes = await extractArchive(archive);
+    const range = communicationLogTimestampRangeFromJsonl(bytes);
+    if (!range
+        || communicationLogArchiveTimestamp(range.start_timestamp) !== segment.filename_start
+        || communicationLogArchiveTimestamp(range.end_timestamp) !== segment.filename_end) {
+      throw new Error(`Historical segment range verification failed: ${segment.archive_name}`);
+    }
+    return bytes;
+  }
+
+  /**
+   * Freezes filesystem-derived history plus the exact active committed EOF.
+   *
+   * @returns {Promise<Object>} Frozen logical-log snapshot plan.
+   */
+  async function communicationLogCaptureSnapshotPlan() {
+    await communicationLogCloseActiveWriter();
+    const active = await communicationLogActiveFileSnapshot();
+    const activeEof = active.file.size;
+    communicationLogActiveLastTimestamp = activeEof > 0
+      ? await communicationLogLastTimestampFromJsonlFile(active.file, activeEof)
+      : null;
+    communicationLogSegmentManifest.active_committed_eof = activeEof;
+    await communicationLogSyncManifestConversationName();
+    await communicationLogWriteSegmentManifest();
+    return {
+      segments: await communicationLogHistoricalSegmentsFromDirectory(),
+      active_name: communicationLogActiveFileName,
+      active_eof: activeEof,
+      active_last_timestamp: communicationLogActiveLastTimestamp
+    };
+  }
+
+  /**
+   * Clears historical segment membership for an explicit log reset.
+   *
+   * @returns {Promise<void>} Resolves after historical segment state is reset.
+   */
+  async function communicationLogResetSegmentHistory() {
+    if (!communicationLogSegmentDirectoryHandle) return;
+    await communicationLogCompressionChain;
+    const name = communicationLogSegmentDirectoryName();
+    await communicationLogDirectoryHandle.removeEntry(name, { recursive: true });
+    communicationLogSegmentDirectoryHandle =
+      await communicationLogDirectoryHandle.getDirectoryHandle(name, { create: true });
+    communicationLogSegmentManifest = communicationLogCreateSegmentManifest();
+    await communicationLogWriteSegmentManifest();
+    communicationLogActiveSegmentBytes = 0;
+  }
+');
+  }
+
+  /**
+   * Parses one filesystem-authoritative historical segment archive name.
+   *
+   * @param {string} name - Candidate private segment filename.
+   * @returns {Object|null} Parsed range metadata, or null for another file role.
+   */
+  function communicationLogParseSegmentArchiveName(name) {
+    const extension = communicationLogEscapeRegex(compressorExtension());
+    const pattern = new RegExp(
+      `^segment_(\\d{4},\\d{2},\\d{2};\\d{2},\\d{2},\\d{2})-`
+      + `(\\d{4},\\d{2},\\d{2};\\d{2},\\d{2},\\d{2})\\.seg${extension}// ==UserScript==
+// @name         ChatGPT Conversation Markdown Recorder
+// @namespace    https://chatgpt.com/
+// @version      1.11.4-issue.226.3
+// @description  Exports the current ChatGPT conversation directly from the Conversation API as Markdown or JSONL.
+// @match        https://chatgpt.com/*
+// @match        https://chat.openai.com/*
+// @connect      github.com
+// @connect      raw.githubusercontent.com
+// @grant        GM_xmlhttpRequest
+// @grant        GM_getValue
+// @grant        GM_setValue
+// @grant        GM_addValueChangeListener
+// @grant        GM_removeValueChangeListener
+// @run-at       document-start
+// ==/UserScript==
+// source https://raw.githubusercontent.com/Ma-XX-oN/AIConversationCore/9e18441a1f68a1cac5ebb6e20dead945dd36d7dd/dist/aiconversationcore.chatgpt.browser.js
+// BEGIN bundled AIConversationCore commit=9e18441a1f68a1cac5ebb6e20dead945dd36d7dd blob=47efb4f379f5bb27ae710a53d1cb84388aeeb1a2
+// Generated by scripts/build-browser-bundle.mjs. Do not edit directly.
+// Includes marked 18.0.11 (MIT) for Core-owned Markdown-to-HTML rendering.
+/**
+ * marked v18.0.11 - a markdown parser
+ * Copyright (c) 2018-2026, MarkedJS. (MIT License)
+ * Copyright (c) 2011-2018, Christopher Jeffrey. (MIT License)
+ * https://github.com/markedjs/marked
+ */
+
+/**
+ * DO NOT EDIT THIS FILE
+ * The code in this file is generated from files in ./src/
+ */
+(function(g,f){if(typeof exports=="object"&&typeof module<"u"){module.exports=f()}else if("function"==typeof define && define.amd){define("marked",f)}else {g["marked"]=f()}}(typeof globalThis < "u" ? globalThis : typeof self < "u" ? self : this,function(){var exports={};var __exports=exports;var module={exports};
+"use strict";var j=Object.defineProperty;var we=Object.getOwnPropertyDescriptor;var ye=Object.getOwnPropertyNames;var Pe=Object.prototype.hasOwnProperty;var Se=(l,e)=>{for(var t in e)j(l,t,{get:e[t],enumerable:!0})},_e=(l,e,t,n)=>{if(e&&typeof e=="object"||typeof e=="function")for(let s of ye(e))!Pe.call(l,s)&&s!==t&&j(l,s,{get:()=>e[s],enumerable:!(n=we(e,s))||n.enumerable});return l};var $e=l=>_e(j({},"__esModule",{value:!0}),l);var Lt={};Se(Lt,{Hooks:()=>P,Lexer:()=>x,Marked:()=>D,Parser:()=>b,Renderer:()=>y,TextRenderer:()=>_,Tokenizer:()=>w,defaults:()=>R,getDefaults:()=>z,lexer:()=>$t,marked:()=>g,options:()=>Tt,parse:()=>St,parseInline:()=>Pt,parser:()=>_t,setOptions:()=>wt,use:()=>Re,walkTokens:()=>yt});module.exports=$e(Lt);function z(){return{async:!1,breaks:!1,extensions:null,gfm:!0,hooks:null,pedantic:!1,renderer:null,silent:!1,tokenizer:null,walkTokens:null}}var R=z();function F(l){R=l}var M={exec:()=>null};function I(l){let e=[];return t=>{let n=Math.max(0,Math.min(3,t-1)),s=e[n];return s||(s=l(n),e[n]=s),s}}function k(l,e=""){let t=typeof l=="string"?l:l.source,n={replace:(s,r)=>{let i=typeof r=="string"?r:r.source;return i=i.replace(m.caret,"$1"),t=t.replace(s,i),n},getRegex:()=>new RegExp(t,e)};return n}var Le=((l="")=>{try{return!!new RegExp("(?<=1)(?<!1)"+l)}catch{return!1}})(),m={codeRemoveIndent:/^(?: {1,4}| {0,3}\t)/gm,outputLinkReplace:/\\([\[\]])/g,indentCodeCompensation:/^(\s+)(?:```)/,beginningSpace:/^\s+/,endingHash:/#$/,startingSpaceChar:/^ /,endingSpaceChar:/ $/,nonSpaceChar:/[^ ]/,newLineCharGlobal:/\n/g,tabCharGlobal:/\t/g,multipleSpaceGlobal:/\s+/g,blankLine:/^[ \t]*$/,doubleBlankLine:/\n[ \t]*\n[ \t]*$/,blockquoteStart:/^ {0,3}>/,blockquoteSetextReplace:/\n {0,3}((?:=+|-+) *)(?=\n|$)/g,blockquoteSetextReplace2:/^ {0,3}>[ \t]?/gm,listReplaceNesting:/^ {1,4}(?=( {4})*[^ ])/g,listIsTask:/^\[[ xX]\] +\S/,listReplaceTask:/^\[[ xX]\] +/,listTaskCheckbox:/\[[ xX]\]/,anyLine:/\n.*\n/,hrefBrackets:/^<(.*)>$/,tableDelimiter:/[:|]/,tableAlignChars:/^\||\| *$/g,tableRowBlankLine:/\n[ \t]*$/,tableAlignRight:/^ *-+: *$/,tableAlignCenter:/^ *:-+: *$/,tableAlignLeft:/^ *:-+ *$/,startATag:/^<a /i,endATag:/^<\/a>/i,startPreScriptTag:/^<(pre|code|kbd|script)(\s|>)/i,endPreScriptTag:/^<\/(pre|code|kbd|script)(\s|>)/i,startAngleBracket:/^</,endAngleBracket:/>$/,pedanticHrefTitle:/^([^'"]*[^\s])\s+(['"])(.*)\2/,unicodeAlphaNumeric:/[\p{L}\p{N}]/u,escapeTest:/[&<>"']/,escapeReplace:/[&<>"']/g,escapeTestNoEncode:/[<>"']|&(?!(#\d{1,7}|#[Xx][a-fA-F0-9]{1,6}|\w+);)/,escapeReplaceNoEncode:/[<>"']|&(?!(#\d{1,7}|#[Xx][a-fA-F0-9]{1,6}|\w+);)/g,caret:/(^|[^\[])\^/g,percentDecode:/%25/g,findPipe:/\|/g,splitPipe:/ \|/,slashPipe:/\\\|/g,carriageReturn:/\r\n|\r/g,spaceLine:/^ +$/gm,notSpaceStart:/^\S*/,endingNewline:/\n$/,listItemRegex:l=>new RegExp(`^( {0,3}${l})((?:[	 ][^\\n]*)?(?:\\n|$))`),nextBulletRegex:I(l=>new RegExp(`^ {0,${l}}(?:[*+-]|\\d{1,9}[.)])((?:[ 	][^\\n]*)?(?:\\n|$))`)),hrRegex:I(l=>new RegExp(`^ {0,${l}}((?:- *){3,}|(?:_ *){3,}|(?:\\* *){3,})(?:\\n+|$)`)),fencesBeginRegex:I(l=>new RegExp(`^ {0,${l}}(?:\`\`\`|~~~)`)),headingBeginRegex:I(l=>new RegExp(`^ {0,${l}}#`)),htmlBeginRegex:I(l=>new RegExp(`^ {0,${l}}<(?:[a-z].*>|!--)`,"i")),blockquoteBeginRegex:I(l=>new RegExp(`^ {0,${l}}>`))},Ee=/^(?:[ \t]*(?:\n|$))+/,ze=/^((?: {4}| {0,3}\t)[^\n]+(?:\n(?:[ \t]*(?:\n|$))*)?)+/,Me=/^ {0,3}(`{3,}(?=[^`\n]*(?:\n|$))|~{3,})([^\n]*)(?:\n|$)(?:|([\s\S]*?)(?:\n|$))(?: {0,3}\1[~`]* *(?=\n|$)|$)/,v=/^ {0,3}((?:-[\t ]*){3,}|(?:_[ \t]*){3,}|(?:\*[ \t]*){3,})(?:\n+|$)/,Ae=/^ {0,3}(#{1,6})(?=\s|$)(.*)(?:\n+|$)/,K=/ {0,3}(?:[*+-]|\d{1,9}[.)])/,ae=/^(?!bull |blockCode|fences|blockquote|heading|html|table)((?:.|\n(?!\s*?\n|bull |blockCode|fences|blockquote|heading|html|table))+?)\n {0,3}(=+|-+) *(?:\n+|$)/,le=k(ae).replace(/bull/g,K).replace(/blockCode/g,/(?: {4}| {0,3}\t)/).replace(/fences/g,/ {0,3}(?:`{3,}|~{3,})/).replace(/blockquote/g,/ {0,3}>/).replace(/heading/g,/ {0,3}#{1,6}(?:\s|$)/).replace(/html/g,/ {0,3}<[^\n>]+>\n/).replace(/\|table/g,"").getRegex(),Ie=k(ae).replace(/bull/g,K).replace(/blockCode/g,/(?: {4}| {0,3}\t)/).replace(/fences/g,/ {0,3}(?:`{3,}|~{3,})/).replace(/blockquote/g,/ {0,3}>/).replace(/heading/g,/ {0,3}#{1,6}(?:\s|$)/).replace(/html/g,/ {0,3}<[^\n>]+>\n/).replace(/table/g,/ {0,3}\|?(?:[:\- ]*\|)+[\:\- ]*\n/).getRegex(),W=/^([^\n]+(?:\n(?!hr|heading|lheading|blockquote|fences|list|html|table|[ \t]+\n)[^\n]+)*)/,Ce=/^[^\n]+/,X=/(?!\s*\])(?:\\[\s\S]|[^\[\]\\])+/,Be=k(/^ {0,3}\[(label)\]: *(?:\n[ \t]*)?([^<\s][^\s]*|<.*?>)(?:(?: +(?:\n[ \t]*)?| *\n[ \t]*)(title))? *(?:\n+|$)/).replace("label",X).replace("title",/(?:"(?:\\"?|[^"\\])*"|'[^'\n]*(?:\n[^'\n]+)*\n?'|\([^()]*\))/).getRegex(),De=k(/^(bull)([ \t][^\n]*?)?(?:\n|$)/).replace(/bull/g,K).getRegex(),Q="address|article|aside|base|basefont|blockquote|body|caption|center|col|colgroup|dd|details|dialog|dir|div|dl|dt|fieldset|figcaption|figure|footer|form|frame|frameset|h[1-6]|head|header|hr|html|iframe|legend|li|link|main|menu|menuitem|meta|nav|noframes|ol|optgroup|option|p|param|search|section|summary|table|tbody|td|tfoot|th|thead|title|tr|track|ul",J=/<!--(?:-?>|[\s\S]*?(?:-->|$))/,qe=k("^ {0,3}(?:<(script|pre|style|textarea)[\\s>][\\s\\S]*?(?:</\\1>[^\\n]*\\n*|$)|comment[^\\n]*(\\n+|$)|<\\?[\\s\\S]*?(?:\\?>[^\\n]*\\n*|$)|<![A-Z][\\s\\S]*?(?:>[^\\n]*\\n*|$)|<!\\[CDATA\\[[\\s\\S]*?(?:\\]\\]>[^\\n]*\\n*|$)|</?(tag)(?: +|\\n|/?>)[\\s\\S]*?(?:(?:\\n[ 	]*)+\\n|$)|<(?!script|pre|style|textarea)([a-z][\\w-]*)(?:attribute)*? */?>(?=[ \\t]*(?:\\n|$))[\\s\\S]*?(?:(?:\\n[ 	]*)+\\n|$)|</(?!script|pre|style|textarea)[a-z][\\w-]*\\s*>(?=[ \\t]*(?:\\n|$))[\\s\\S]*?(?:(?:\\n[ 	]*)+\\n|$))","i").replace("comment",J).replace("tag",Q).replace("attribute",/ +[a-zA-Z:_][\w.:-]*(?: *= *"[^"\n]*"| *= *'[^'\n]*'| *= *[^\s"'=<>`]+)?/).getRegex(),ue=l=>k(W).replace("hr",v).replace("heading"," {0,3}#{1,6}(?:\\s|$)").replace("|lheading","").replace("|table","").replace("blockquote"," {0,3}>").replace("fences"," {0,3}(?:`{3,}(?=[^`\\n]*(?:\\n|$))|~~~)[^\\n]*(?:\\n|$)").replace("list",l).replace("html","</?(?:tag)(?: +|\\n|/?>)|<(?:script|pre|style|textarea|!--)").replace("tag",Q).getRegex(),ve=ue(/ {0,3}(?:[*+-]|1[.)])[ \t]+[^ \t\n]/),He=ue(/ {0,3}(?:[*+-]|\d{1,9}[.)])(?:[ \t]|\n|$)/),Ze=k(/^( {0,3}> ?(paragraph|[^\n]*)(?:\n|$))+/).replace("paragraph",He).getRegex(),V={blockquote:Ze,code:ze,def:Be,fences:Me,heading:Ae,hr:v,html:qe,lheading:le,list:De,newline:Ee,paragraph:ve,table:M,text:Ce},ie=k("^ *([^\\n ].*)\\n {0,3}((?:\\| *)?:?-+:? *(?:\\| *:?-+:? *)*(?:\\| *)?)(?:\\n((?:(?! *\\n|hr|heading|blockquote|code|fences|list|html).*(?:\\n|$))*)\\n*|$)").replace("hr",v).replace("heading"," {0,3}#{1,6}(?:\\s|$)").replace("blockquote"," {0,3}>").replace("code","(?: {4}| {0,3}	)[^\\n]").replace("fences"," {0,3}(?:`{3,}(?=[^`\\n]*(?:\\n|$))|~~~)[^\\n]*(?:\\n|$)").replace("list"," {0,3}(?:[*+-]|1[.)])[ \\t]").replace("html","</?(?:tag)(?: +|\\n|/?>)|<(?:script|pre|style|textarea|!--)").replace("tag",Q).getRegex(),Ge={...V,lheading:Ie,table:ie,paragraph:k(W).replace("hr",v).replace("heading"," {0,3}#{1,6}(?:\\s|$)").replace("|lheading","").replace("table",ie).replace("blockquote"," {0,3}>").replace("fences"," {0,3}(?:`{3,}(?=[^`\\n]*(?:\\n|$))|~~~)[^\\n]*(?:\\n|$)").replace("list"," {0,3}(?:[*+-]|1[.)])[ \\t]+[^ \\t\\n]").replace("html","</?(?:tag)(?: +|\\n|/?>)|<(?:script|pre|style|textarea|!--)").replace("tag",Q).getRegex()},Qe={...V,html:k(`^ *(?:comment *(?:\\n|\\s*$)|<(tag)[\\s\\S]+?</\\1> *(?:\\n{2,}|\\s*$)|<tag(?:"[^"]*"|'[^']*'|\\s[^'"/>\\s]*)*?/?> *(?:\\n{2,}|\\s*$))`).replace("comment",J).replace(/tag/g,"(?!(?:a|em|strong|small|s|cite|q|dfn|abbr|data|time|code|var|samp|kbd|sub|sup|i|b|u|mark|ruby|rt|rp|bdi|bdo|span|br|wbr|ins|del|img)\\b)\\w+(?!:|[^\\w\\s@]*@)\\b").getRegex(),def:/^ *\[([^\]]+)\]: *<?([^\s>]+)>?(?: +(["(][^\n]+[")]))? *(?:\n+|$)/,heading:/^(#{1,6})(.*)(?:\n+|$)/,fences:M,lheading:/^(.+?)\n {0,3}(=+|-+) *(?:\n+|$)/,paragraph:k(W).replace("hr",v).replace("heading",` *#{1,6} *[^
+]`).replace("lheading",le).replace("|table","").replace("blockquote"," {0,3}>").replace("|fences","").replace("|list","").replace("|html","").replace("|tag","").getRegex()},Ne=/^\\([!"#$%&'()*+,\-./:;<=>?@\[\]\\^_`{|}~])/,je=/^(`+)([^`]|[^`][\s\S]*?[^`])\1(?!`)/,pe=/^( {2,}|\\)\n(?!\s*$)/,Fe=/^(`+|[^`])(?:(?= {2,}\n)|[\s\S]*?(?:(?=[\\<!\[`*_]|\b_|$)|[^ ](?= {2,}\n)))/,$=/[\p{P}\p{S}]/u,C=/[\s\p{P}\p{S}]/u,H=/[^\s\p{P}\p{S}]/u,Ue=k(/^((?![*_])punctSpace)/,"u").replace(/punctSpace/g,C).getRegex(),Ke=/[\p{Pi}\p{Ps}"']/u,ce=/(?!~)[\p{P}\p{S}]/u,We=/(?!~)[\s\p{P}\p{S}]/u,Xe=/(?:[^\s\p{P}\p{S}]|~)/u,Je=k(/link|precode-code|html/,"g").replace("link",/\[(?:[^\[\]`]|(?<a>`+)[^`]+\k<a>(?!`))*?\]\((?:\\[\s\S]|[^\\\(\)]|\((?:\\[\s\S]|[^\\\(\)])*\))*\)/).replace("precode-",Le?"(?<!`)()":"(^^|[^`])").replace("code",/(?<b>`+)[^`]+\k<b>(?!`)/).replace("html",/<(?! )[^<>]*?>/).getRegex(),he=/^(?:\*+(?:((?!\*)punct)|([^\s*]))?)|^_+(?:((?!_)punct)|([^\s_]))?/,Ve=k(he,"u").replace(/punct/g,$).getRegex(),Ye=k(he,"u").replace(/punct/g,ce).getRegex(),et=/^(?:\*+(?:((?!\*)(?!openQuote)punct)|([^\s*]))?)|^_+(?:((?!_)(?!openQuote)punct)|([^\s_]))?/,tt=k(et,"u").replace(/openQuote/g,Ke).replace(/punct/g,$).getRegex(),ke="^[^_*]*?__[^_*]*?\\*[^_*]*?(?=__)|[^*]+(?=[^*])|(?!\\*)punct(\\*+)(?=[\\s]|$)|notPunctSpace(\\*+)(?!\\*)(?=punctSpace|$)|(?!\\*)punctSpace(\\*+)(?=notPunctSpace)|[\\s](\\*+)(?!\\*)(?=punct)|(?!\\*)punct(\\*+)(?!\\*)(?=punct)|notPunctSpace(\\*+)(?=notPunctSpace)",nt=k(ke,"gu").replace(/notPunctSpace/g,H).replace(/punctSpace/g,C).replace(/punct/g,$).getRegex(),rt=k(ke,"gu").replace(/notPunctSpace/g,Xe).replace(/punctSpace/g,We).replace(/punct/g,ce).getRegex(),st="^[^_*]*?__[^_*]*?\\*[^_*]*?(?=__)|[^*]+(?=[^*])|(?!\\*)punct(\\*+)(?=[\\s]|$)|notPunctSpace(\\*+)(?!\\*)(?=punctSpace|$)|(?!\\*)[\\s](\\*+)(?=notPunctSpace)|[\\s](\\*+)(?!\\*)(?=punct)|(?!\\*)punct(\\*+)(?!\\*)(?=punct)|(?:(?!\\*)punct|notPunctSpace)(\\*+)(?!\\*)(?=notPunctSpace)",it=k(st,"gu").replace(/notPunctSpace/g,H).replace(/punctSpace/g,C).replace(/punct/g,$).getRegex(),ot=k("^[^_*]*?\\*\\*[^_*]*?_[^_*]*?(?=\\*\\*)|[^_]+(?=[^_])|(?!_)punct(_+)(?=[\\s]|$)|notPunctSpace(_+)(?!_)(?=punctSpace|$)|(?!_)punctSpace(_+)(?=notPunctSpace)|[\\s](_+)(?!_)(?=punct)|(?!_)punct(_+)(?!_)(?=punct)","gu").replace(/notPunctSpace/g,H).replace(/punctSpace/g,C).replace(/punct/g,$).getRegex(),at="^[^_*]*?\\*\\*[^_*]*?_[^_*]*?(?=\\*\\*)|[^_]+(?=[^_])|(?!_)punct(_+)(?=[\\s]|$)|notPunctSpace(_+)(?!_)(?=punctSpace|$)|(?!_)[\\s](_+)(?=notPunctSpace)|[\\s](_+)(?!_)(?=punct)|(?!_)punct(_+)(?!_)(?=punct)|(?:(?!_)punct|notPunctSpace)(_+)(?!_)(?=notPunctSpace)",lt=k(at,"gu").replace(/notPunctSpace/g,H).replace(/punctSpace/g,C).replace(/punct/g,$).getRegex(),ut=k(/^~~?(?:((?!~)punct)|[^\s~])/,"u").replace(/punct/g,$).getRegex(),pt="^[^~]+(?=[^~])|(?!~)punct(~~?)(?=[\\s]|$)|notPunctSpace(~~?)(?!~)(?=punctSpace|$)|(?!~)punctSpace(~~?)(?=notPunctSpace)|[\\s](~~?)(?!~)(?=punct)|(?!~)punct(~~?)(?!~)(?=punct)|notPunctSpace(~~?)(?=notPunctSpace)",ct=k(pt,"gu").replace(/notPunctSpace/g,H).replace(/punctSpace/g,C).replace(/punct/g,$).getRegex(),ht=k(/\\(punct)/,"gu").replace(/punct/g,$).getRegex(),kt=k(/^<(scheme:[^\s\x00-\x1f<>]*|email)>/).replace("scheme",/[a-zA-Z][a-zA-Z0-9+.-]{1,31}/).replace("email",/[a-zA-Z0-9.!#$%&'*+/=?^_`{|}~-]+(@)[a-zA-Z0-9](?:[a-zA-Z0-9-]{0,61}[a-zA-Z0-9])?(?:\.[a-zA-Z0-9](?:[a-zA-Z0-9-]{0,61}[a-zA-Z0-9])?)+(?![-_])/).getRegex(),dt=k(J).replace("(?:-->|$)","-->").getRegex(),gt=k("^comment|^</[a-zA-Z][\\w:-]*\\s*>|^<[a-zA-Z][\\w-]*(?:attribute)*?\\s*/?>|^<\\?[\\s\\S]*?\\?>|^<![a-zA-Z]+\\s[\\s\\S]*?>|^<!\\[CDATA\\[[\\s\\S]*?\\]\\]>").replace("comment",dt).replace("attribute",/\s+[a-zA-Z:_][\w.:-]*(?:\s*=\s*"[^"]*"|\s*=\s*'[^']*'|\s*=\s*[^\s"'=<>`]+)?/).getRegex(),G=/(?:\[(?:\\[\s\S]|[^\[\]\\])*\]|\\[\s\S]|`+(?!`)[^`]*?`+(?!`)|``+(?=\])|[^\[\]\\`])*?/,ft=k(/^!?\[(label)\]\(\s*(href)(?:(?:[ \t]+(?:\n[ \t]*)?|\n[ \t]*)(title))?\s*\)/).replace("label",G).replace("href",/<(?:\\.|[^\n<>\\])+>|[^ \t\n\x00-\x1f]+|(?=\))/).replace("title",/"(?:\\"?|[^"\\])*"|'(?:\\'?|[^'\\])*'|\((?:\\\)?|[^)\\])*\)/).getRegex(),de=k(/^!?\[(label)\]\[(ref)\]/).replace("label",G).replace("ref",X).getRegex(),ge=k(/^!?\[(ref)\](?:\[\])?/).replace("ref",X).getRegex(),mt=k("reflink|nolink(?!\\()","g").replace("reflink",de).replace("nolink",ge).getRegex(),oe=/[hH][tT][tT][pP][sS]?|[fF][tT][pP]/,Y={_backpedal:M,anyPunctuation:ht,autolink:kt,blockSkip:Je,br:pe,code:je,del:M,delLDelim:M,delRDelim:M,emStrongLDelim:Ve,emStrongRDelimAst:nt,emStrongRDelimUnd:ot,escape:Ne,link:ft,nolink:ge,punctuation:Ue,reflink:de,reflinkSearch:mt,tag:gt,text:Fe,url:M},xt={...Y,emStrongLDelim:tt,emStrongRDelimAst:it,emStrongRDelimUnd:lt,link:k(/^!?\[(label)\]\((.*?)\)/).replace("label",G).getRegex(),reflink:k(/^!?\[(label)\]\s*\[([^\]]*)\]/).replace("label",G).getRegex()},U={...Y,emStrongRDelimAst:rt,emStrongLDelim:Ye,delLDelim:ut,delRDelim:ct,url:k(/^((?:protocol):\/\/|www\.)(?:[a-zA-Z0-9\-]+\.?)+[^\s<]*|^email/).replace("protocol",oe).replace("email",/[A-Za-z0-9._+-]+(@)[a-zA-Z0-9-_]+(?:\.[a-zA-Z0-9-_]*[a-zA-Z0-9])+(?![-_])/).getRegex(),_backpedal:/(?:[^?!.,:;*_'"~()&]+|\([^)]*\)|&(?![a-zA-Z0-9]+;$)|[?!.,:;*_'"~)]+(?!$))+/,del:/^(~~?)(?=[^\s~])((?:\\[\s\S]|[^\\])*?(?:\\[\s\S]|[^\s~\\]))\1(?=[^~]|$)/,text:k(/^(`+|~+|[^`~])(?:(?=[`~])|(?= {2,}\n)|(?=[a-zA-Z0-9.!#$%&'*+\/=?_`{\|}~-]+@)|[\s\S]*?(?:(?=[\\<!\[`*~_]|\b_|protocol:\/\/|www\.|$)|[^ ](?= {2,}\n)|[^a-zA-Z0-9.!#$%&'*+\/=?_`{\|}~-](?=[a-zA-Z0-9.!#$%&'*+\/=?_`{\|}~-]+@)))/).replace("protocol",oe).getRegex()},bt={...U,br:k(pe).replace("{2,}","*").getRegex(),text:k(U.text).replace("\\b_","\\b_| {2,}\\n").replace(/\{2,\}/g,"*").getRegex()},Z={normal:V,gfm:Ge,pedantic:Qe},B={normal:Y,gfm:U,breaks:bt,pedantic:xt};var Rt={"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"},fe=l=>Rt[l];function T(l,e){if(e){if(m.escapeTest.test(l))return l.replace(m.escapeReplace,fe)}else if(m.escapeTestNoEncode.test(l))return l.replace(m.escapeReplaceNoEncode,fe);return l}function ee(l){try{l=encodeURI(l).replace(m.percentDecode,"%")}catch{return null}return l}function te(l,e){let t=l.replace(m.findPipe,(r,i,o)=>{let u=!1,a=i;for(;--a>=0&&o[a]==="\\";)u=!u;return u?"|":" |"}),n=t.split(m.splitPipe),s=0;if(n[0].trim()||n.shift(),n.length>0&&!n.at(-1)?.trim()&&n.pop(),e)if(n.length>e)n.splice(e);else for(;n.length<e;)n.push("");for(;s<n.length;s++)n[s]=n[s].trim().replace(m.slashPipe,"|");return n}function L(l,e,t){let n=l.length;if(n===0)return"";let s=0;for(;s<n;){let r=l.charAt(n-s-1);if(r===e&&!t)s++;else if(r!==e&&t)s++;else break}return l.slice(0,n-s)}function ne(l){let e=l.split(`
+`),t=e.length-1;for(;t>=0&&m.blankLine.test(e[t]);)t--;return e.length-t<=2?l:e.slice(0,t+1).join(`
+`)}function me(l,e){if(l.indexOf(e[1])===-1)return-1;let t=0;for(let n=0;n<l.length;n++)if(l[n]==="\\")n++;else if(l[n]===e[0])t++;else if(l[n]===e[1]&&(t--,t<0))return n;return t>0?-2:-1}function xe(l,e=0){let t=e,n="";for(let s of l)if(s==="	"){let r=4-t%4;n+=" ".repeat(r),t+=r}else n+=s,t++;return n}function be(l,e,t,n,s){let r=e.href,i=e.title||null,o=l[1].replace(s.other.outputLinkReplace,"$1"),u=l[0].charAt(0)==="!";n.state.inLink=!0;let a=n.state.linkEmitted,p=n.state.inRawBlock;n.state.linkEmitted=!1;let c=n.inlineTokens(o),h=n.state.linkEmitted;if(n.state.linkEmitted=a,n.state.inLink=!1,!u){if(h){n.state.inRawBlock=p;return}n.state.linkEmitted=!0}return{type:u?"image":"link",raw:t,href:r,title:i,text:o,tokens:c}}function Ot(l,e,t){let n=l.match(t.other.indentCodeCompensation);if(n===null)return e;let s=n[1];return e.split(`
+`).map(r=>{let i=r.match(t.other.beginningSpace);if(i===null)return r;let[o]=i;return o.length>=s.length?r.slice(s.length):r}).join(`
+`)}var w=class{options;rules;lexer;constructor(e){this.options=e||R}space(e){let t=this.rules.block.newline.exec(e);if(t&&t[0].length>0)return{type:"space",raw:t[0]}}code(e){let t=this.rules.block.code.exec(e);if(t){let n=this.options.pedantic?t[0]:ne(t[0]),s=n.replace(this.rules.other.codeRemoveIndent,"");return{type:"code",raw:n,codeBlockStyle:"indented",text:s}}}fences(e){let t=this.rules.block.fences.exec(e);if(t){let n=t[0],s=Ot(n,t[3]||"",this.rules);return{type:"code",raw:n,lang:t[2]?t[2].trim().replace(this.rules.inline.anyPunctuation,"$1"):t[2],text:s}}}heading(e){let t=this.rules.block.heading.exec(e);if(t){let n=t[2].trim();if(this.rules.other.endingHash.test(n)){let s=L(n,"#");(this.options.pedantic||!s||this.rules.other.endingSpaceChar.test(s))&&(n=s.trim())}return{type:"heading",raw:L(t[0],`
+`),depth:t[1].length,text:n,tokens:this.lexer.inline(n)}}}hr(e){let t=this.rules.block.hr.exec(e);if(t)return{type:"hr",raw:L(t[0],`
+`)}}blockquote(e){let t=this.rules.block.blockquote.exec(e);if(t){let n=L(t[0],`
+`).split(`
+`),s="",r="",i=[];for(;n.length>0;){let o=!1,u=[],a;for(a=0;a<n.length;a++)if(this.rules.other.blockquoteStart.test(n[a]))u.push(n[a]),o=!0;else if(!o)u.push(n[a]);else break;n=n.slice(a);let p=u.join(`
+`),c=p.replace(this.rules.other.blockquoteSetextReplace,`
+    $1`).replace(this.rules.other.blockquoteSetextReplace2,"");s=s?`${s}
+${p}`:p,r=r?`${r}
+${c}`:c;let h=this.lexer.state.top;if(this.lexer.state.top=!0,this.lexer.blockTokens(c,i,!0),this.lexer.state.top=h,n.length===0)break;let d=i.at(-1);if(d?.type==="code")break;if(d?.type==="blockquote"){let O=d,f=n.join(`
+`),S=O.raw+`
+`+f.replace(this.rules.other.blockquoteSetextReplace2,""),E=this.blockquote(S);i[i.length-1]=E,s=`${s}
+${f}`,r=r.substring(0,r.length-O.text.length)+E.text;break}else if(d?.type==="list"){let O=d,f=O.raw+`
+`+n.join(`
+`),S=this.list(f);i[i.length-1]=S,s=s.substring(0,s.length-d.raw.length)+S.raw,r=r.substring(0,r.length-O.raw.length)+S.raw,n=f.substring(i.at(-1).raw.length).split(`
+`);continue}}return{type:"blockquote",raw:s,tokens:i,text:r}}}list(e){let t=this.rules.block.list.exec(e);if(t){let n=t[1].trim(),s=n.length>1,r={type:"list",raw:"",ordered:s,start:s?+n.slice(0,-1):"",loose:!1,items:[]};n=s?`\\d{1,9}\\${n.slice(-1)}`:`\\${n}`,this.options.pedantic&&(n=s?n:"[*+-]");let i=this.rules.other.listItemRegex(n),o=!1;for(;e;){let a=!1,p="",c="";if(!(t=i.exec(e))||this.rules.block.hr.test(e))break;p=t[0],e=e.substring(p.length);let h=xe(t[2].split(`
+`,1)[0],t[1].length),d=e.split(`
+`,1)[0],O=!h.trim(),f=0;if(this.options.pedantic?(f=2,c=h.trimStart()):O?f=t[1].length+1:(f=h.search(this.rules.other.nonSpaceChar),f=f>4?1:f,c=h.slice(f),f+=t[1].length),O&&this.rules.other.blankLine.test(d)&&(p+=d+`
+`,e=e.substring(d.length+1),a=!0),!a){let S=this.rules.other.nextBulletRegex(f),E=this.rules.other.hrRegex(f),re=this.rules.other.fencesBeginRegex(f),se=this.rules.other.headingBeginRegex(f),Oe=this.rules.other.htmlBeginRegex(f),Te=this.rules.other.blockquoteBeginRegex(f);for(;e;){let N=e.split(`
+`,1)[0],q;if(d=N,this.options.pedantic?(d=d.replace(this.rules.other.listReplaceNesting,"  "),q=d):q=d.replace(this.rules.other.tabCharGlobal,"    "),re.test(d)||se.test(d)||Oe.test(d)||Te.test(d)||S.test(d)||E.test(d))break;if(q.search(this.rules.other.nonSpaceChar)>=f||!d.trim())c+=`
+`+q.slice(f);else{if(O||h.replace(this.rules.other.tabCharGlobal,"    ").search(this.rules.other.nonSpaceChar)>=4||re.test(h)||se.test(h)||E.test(h))break;c+=`
+`+d}O=!d.trim(),p+=N+`
+`,e=e.substring(N.length+1),h=q.slice(f)}}r.loose||(o?r.loose=!0:this.rules.other.doubleBlankLine.test(p)&&(o=!0)),r.items.push({type:"list_item",raw:p,task:!!this.options.gfm&&this.rules.other.listIsTask.test(c),loose:!1,text:c,tokens:[]}),r.raw+=p}let u=r.items.at(-1);if(u)u.raw=u.raw.trimEnd(),u.text=u.text.trimEnd();else return;r.raw=r.raw.trimEnd();for(let a of r.items)if(this.lexer.state.top=!1,a.tokens=this.lexer.blockTokens(a.text,[]),!r.loose){let p=a.tokens.filter(h=>h.type==="space"),c=p.length>0&&p.some(h=>this.rules.other.anyLine.test(h.raw));r.loose=c}for(let a of r.items){let p=a.tokens[0];if(a.task&&(p?.type==="text"||p?.type==="paragraph")){a.text=a.text.replace(this.rules.other.listReplaceTask,""),p.raw=p.raw.replace(this.rules.other.listReplaceTask,""),p.text=p.text.replace(this.rules.other.listReplaceTask,"");for(let h=this.lexer.inlineQueue.length-1;h>=0;h--)if(this.rules.other.listIsTask.test(this.lexer.inlineQueue[h].src)){this.lexer.inlineQueue[h].src=this.lexer.inlineQueue[h].src.replace(this.rules.other.listReplaceTask,"");break}let c=this.rules.other.listTaskCheckbox.exec(a.raw);if(c){let h={type:"checkbox",raw:c[0]+" ",checked:c[0]!=="[ ]"};a.checked=h.checked,r.loose?a.tokens[0]&&["paragraph","text"].includes(a.tokens[0].type)&&"tokens"in a.tokens[0]&&a.tokens[0].tokens?(a.tokens[0].raw=h.raw+a.tokens[0].raw,a.tokens[0].text=h.raw+a.tokens[0].text,a.tokens[0].tokens.unshift(h)):a.tokens.unshift({type:"paragraph",raw:h.raw,text:h.raw,tokens:[h]}):a.tokens.unshift(h)}}else a.task&&(a.task=!1)}if(r.loose)for(let a of r.items){a.loose=!0;for(let p of a.tokens)p.type==="text"&&(p.type="paragraph")}return r}}html(e){let t=this.rules.block.html.exec(e);if(t){let n=ne(t[0]);return{type:"html",block:!0,raw:n,pre:t[1]==="pre"||t[1]==="script"||t[1]==="style",text:n}}}def(e){let t=this.rules.block.def.exec(e);if(t){let n=t[1].toLowerCase().replace(this.rules.other.multipleSpaceGlobal," "),s=t[2]?t[2].replace(this.rules.other.hrefBrackets,"$1").replace(this.rules.inline.anyPunctuation,"$1"):"",r=t[3]?t[3].substring(1,t[3].length-1).replace(this.rules.inline.anyPunctuation,"$1"):t[3];return{type:"def",tag:n,raw:L(t[0],`
+`),href:s,title:r}}}table(e){let t=this.rules.block.table.exec(e);if(!t||!this.rules.other.tableDelimiter.test(t[2]))return;let n=te(t[1]),s=t[2].replace(this.rules.other.tableAlignChars,"").split("|"),r=t[3]?.trim()?t[3].replace(this.rules.other.tableRowBlankLine,"").split(`
+`):[],i={type:"table",raw:L(t[0],`
+`),header:[],align:[],rows:[]};if(n.length===s.length){for(let o of s)this.rules.other.tableAlignRight.test(o)?i.align.push("right"):this.rules.other.tableAlignCenter.test(o)?i.align.push("center"):this.rules.other.tableAlignLeft.test(o)?i.align.push("left"):i.align.push(null);for(let o=0;o<n.length;o++)i.header.push({text:n[o],tokens:this.lexer.inline(n[o]),header:!0,align:i.align[o]});for(let o of r)i.rows.push(te(o,i.header.length).map((u,a)=>({text:u,tokens:this.lexer.inline(u),header:!1,align:i.align[a]})));return i}}lheading(e){let t=this.rules.block.lheading.exec(e);if(t){let n=t[1].trim();return{type:"heading",raw:L(t[0],`
+`),depth:t[2].charAt(0)==="="?1:2,text:n,tokens:this.lexer.inline(n)}}}paragraph(e){let t=this.rules.block.paragraph.exec(e);if(t){let n=t[1].charAt(t[1].length-1)===`
+`?t[1].slice(0,-1):t[1];return{type:"paragraph",raw:t[0],text:n,tokens:this.lexer.inline(n)}}}text(e){let t=this.rules.block.text.exec(e);if(t)return{type:"text",raw:t[0],text:t[0],tokens:this.lexer.inline(t[0])}}escape(e){let t=this.rules.inline.escape.exec(e);if(t)return{type:"escape",raw:t[0],text:t[1]}}tag(e){let t=this.rules.inline.tag.exec(e);if(t)return!this.lexer.state.inLink&&this.rules.other.startATag.test(t[0])?this.lexer.state.inLink=!0:this.lexer.state.inLink&&this.rules.other.endATag.test(t[0])&&(this.lexer.state.inLink=!1),!this.lexer.state.inRawBlock&&this.rules.other.startPreScriptTag.test(t[0])?this.lexer.state.inRawBlock=!0:this.lexer.state.inRawBlock&&this.rules.other.endPreScriptTag.test(t[0])&&(this.lexer.state.inRawBlock=!1),{type:"html",raw:t[0],inLink:this.lexer.state.inLink,inRawBlock:this.lexer.state.inRawBlock,block:!1,text:t[0]}}link(e){let t=this.rules.inline.link.exec(e);if(t){let n=t[2].trim();if(!this.options.pedantic&&this.rules.other.startAngleBracket.test(n)){if(!this.rules.other.endAngleBracket.test(n))return;let i=L(n.slice(0,-1),"\\");if((n.length-i.length)%2===0)return}else{let i=me(t[2],"()");if(i===-2)return;if(i>-1){let u=(t[0].indexOf("!")===0?5:4)+t[1].length+i;t[2]=t[2].substring(0,i),t[0]=t[0].substring(0,u).trim(),t[3]=""}}let s=t[2],r="";if(this.options.pedantic){let i=this.rules.other.pedanticHrefTitle.exec(s);i&&(s=i[1],r=i[3])}else r=t[3]?t[3].slice(1,-1):"";return s=s.trim(),this.rules.other.startAngleBracket.test(s)&&(this.options.pedantic&&!this.rules.other.endAngleBracket.test(n)?s=s.slice(1):s=s.slice(1,-1)),be(t,{href:s&&s.replace(this.rules.inline.anyPunctuation,"$1"),title:r&&r.replace(this.rules.inline.anyPunctuation,"$1")},t[0],this.lexer,this.rules)}}reflink(e,t){let n;if((n=this.rules.inline.reflink.exec(e))||(n=this.rules.inline.nolink.exec(e))){let s=(n[2]||n[1]).replace(this.rules.other.multipleSpaceGlobal," "),r=t[s.toLowerCase()];if(!r){let i=n[0].charAt(0);return{type:"text",raw:i,text:i}}return be(n,r,n[0],this.lexer,this.rules)}}emStrong(e,t,n=""){let s=this.rules.inline.emStrongLDelim.exec(e);if(!s||!s[1]&&!s[2]&&!s[3]&&!s[4]||s[4]&&n.match(this.rules.other.unicodeAlphaNumeric))return;if(!(s[1]||s[3]||"")||!n||this.rules.inline.punctuation.exec(n)){let i=[...s[0]].length-1,o,u,a=i,p=0,c=s[0][0],h=n===c,d=c==="*"?this.rules.inline.emStrongRDelimAst:this.rules.inline.emStrongRDelimUnd;for(d.lastIndex=0,t=t.slice(-1*e.length+i);(s=d.exec(t))!==null;){if(o=s[1]||s[2]||s[3]||s[4]||s[5]||s[6],!o)continue;if(u=[...o].length,s[3]||s[4]){a+=u;continue}else if(s[5]||s[6]){if(i%3&&!((i+u)%3)){p+=u;continue}if(h)break}if(a-=u,a>0)continue;u=Math.min(u,u+a+p);let O=[...s[0]][0].length,f=e.slice(0,i+s.index+O+u);if(Math.min(i,u)%2){let E=f.slice(1,-1);return{type:"em",raw:f,text:E,tokens:this.lexer.inlineTokens(E)}}let S=f.slice(2,-2);return{type:"strong",raw:f,text:S,tokens:this.lexer.inlineTokens(S)}}}}codespan(e){let t=this.rules.inline.code.exec(e);if(t){let n=t[2].replace(this.rules.other.newLineCharGlobal," "),s=this.rules.other.nonSpaceChar.test(n),r=this.rules.other.startingSpaceChar.test(n)&&this.rules.other.endingSpaceChar.test(n);return s&&r&&(n=n.substring(1,n.length-1)),{type:"codespan",raw:t[0],text:n}}}br(e){let t=this.rules.inline.br.exec(e);if(t)return{type:"br",raw:t[0]}}del(e,t,n=""){let s=this.rules.inline.delLDelim.exec(e);if(!s)return;if(!(s[1]||"")||!n||this.rules.inline.punctuation.exec(n)){let i=[...s[0]].length-1,o,u,a=i,p=this.rules.inline.delRDelim;for(p.lastIndex=0,t=t.slice(-1*e.length+i);(s=p.exec(t))!==null;){if(o=s[1]||s[2]||s[3]||s[4]||s[5]||s[6],!o||(u=[...o].length,u!==i))continue;if(s[3]||s[4]){a+=u;continue}if(a-=u,a>0)continue;u=Math.min(u,u+a);let c=[...s[0]][0].length,h=e.slice(0,i+s.index+c+u),d=h.slice(i,-i);return{type:"del",raw:h,text:d,tokens:this.lexer.inlineTokens(d)}}}}autolink(e){let t=this.rules.inline.autolink.exec(e);if(t){let n,s;return t[2]==="@"?(n=t[1],s="mailto:"+n):(n=t[1],s=n),{type:"link",raw:t[0],text:n,href:s,tokens:[{type:"text",raw:n,text:n}]}}}url(e){let t;if(t=this.rules.inline.url.exec(e)){let n,s;if(t[2]==="@")n=t[0],s="mailto:"+n;else{let r;do r=t[0],t[0]=this.rules.inline._backpedal.exec(t[0])?.[0]??"";while(r!==t[0]);n=t[0],t[1]==="www."?s="http://"+t[0]:s=t[0]}return{type:"link",raw:t[0],text:n,href:s,tokens:[{type:"text",raw:n,text:n}]}}}inlineText(e){let t=this.rules.inline.text.exec(e);if(t){let n=this.lexer.state.inRawBlock;return{type:"text",raw:t[0],text:t[0],escaped:n}}}};var x=class l{tokens;options;state;inlineQueue;tokenizer;constructor(e){this.tokens=[],this.tokens.links=Object.create(null),this.options=e||R,this.options.tokenizer=this.options.tokenizer||new w,this.tokenizer=this.options.tokenizer,this.tokenizer.options=this.options,this.tokenizer.lexer=this,this.inlineQueue=[],this.state={inLink:!1,inRawBlock:!1,linkEmitted:!1,top:!0};let t={other:m,block:Z.normal,inline:B.normal};this.options.pedantic?(t.block=Z.pedantic,t.inline=B.pedantic):this.options.gfm&&(t.block=Z.gfm,this.options.breaks?t.inline=B.breaks:t.inline=B.gfm),this.tokenizer.rules=t}static get rules(){return{block:Z,inline:B}}static lex(e,t){return new l(t).lex(e)}static lexInline(e,t){return new l(t).inlineTokens(e)}lex(e){e=e.replace(m.carriageReturn,`
+`),this.blockTokens(e,this.tokens);for(let t=0;t<this.inlineQueue.length;t++){let n=this.inlineQueue[t];this.inlineTokens(n.src,n.tokens)}return this.inlineQueue=[],this.tokens}blockTokens(e,t=[],n=!1){this.tokenizer.lexer=this,this.options.pedantic&&(e=e.replace(m.tabCharGlobal,"    ").replace(m.spaceLine,""));let s=1/0;for(;e;){if(e.length<s)s=e.length;else{this.infiniteLoopError(e.charCodeAt(0));break}let r;if(this.options.extensions?.block?.some(o=>(r=o.call({lexer:this},e,t))?(e=e.substring(r.raw.length),t.push(r),!0):!1))continue;if(r=this.tokenizer.space(e)){e=e.substring(r.raw.length);let o=t.at(-1);r.raw.length===1&&o!==void 0?o.raw+=`
+`:t.push(r);continue}if(r=this.tokenizer.code(e)){e=e.substring(r.raw.length);let o=t.at(-1);o?.type==="paragraph"||o?.type==="text"?(o.raw+=(o.raw.endsWith(`
+`)?"":`
+`)+r.raw,o.text+=`
+`+r.text,this.inlineQueue.at(-1).src=o.text):t.push(r);continue}if(r=this.tokenizer.fences(e)){e=e.substring(r.raw.length),t.push(r);continue}if(r=this.tokenizer.heading(e)){e=e.substring(r.raw.length),t.push(r);continue}if(r=this.tokenizer.hr(e)){e=e.substring(r.raw.length),t.push(r);continue}if(r=this.tokenizer.blockquote(e)){e=e.substring(r.raw.length),t.push(r);continue}if(r=this.tokenizer.list(e)){e=e.substring(r.raw.length),t.push(r);continue}if(r=this.tokenizer.html(e)){e=e.substring(r.raw.length),t.push(r);continue}if(r=this.tokenizer.def(e)){e=e.substring(r.raw.length);let o=t.at(-1);o?.type==="paragraph"||o?.type==="text"?(o.raw+=(o.raw.endsWith(`
+`)?"":`
+`)+r.raw,o.text+=`
+`+r.raw,this.inlineQueue.at(-1).src=o.text):this.tokens.links[r.tag]||(this.tokens.links[r.tag]={href:r.href,title:r.title},t.push(r));continue}if(r=this.tokenizer.table(e)){e=e.substring(r.raw.length),t.push(r);continue}if(r=this.tokenizer.lheading(e)){e=e.substring(r.raw.length),t.push(r);continue}let i=e;if(this.options.extensions?.startBlock){let o=1/0,u=e.slice(1),a;this.options.extensions.startBlock.forEach(p=>{a=p.call({lexer:this},u),typeof a=="number"&&a>=0&&(o=Math.min(o,a))}),o<1/0&&o>=0&&(i=e.substring(0,o+1))}if(this.state.top&&(r=this.tokenizer.paragraph(i))){let o=t.at(-1);n&&o?.type==="paragraph"?(o.raw+=(o.raw.endsWith(`
+`)?"":`
+`)+r.raw,o.text+=`
+`+r.text,this.inlineQueue.pop(),this.inlineQueue.at(-1).src=o.text):t.push(r),n=i.length!==e.length,e=e.substring(r.raw.length);continue}if(r=this.tokenizer.text(e)){e=e.substring(r.raw.length);let o=t.at(-1);o?.type==="text"?(o.raw+=(o.raw.endsWith(`
+`)?"":`
+`)+r.raw,o.text+=`
+`+r.text,this.inlineQueue.pop(),this.inlineQueue.at(-1).src=o.text):t.push(r);continue}if(e){this.infiniteLoopError(e.charCodeAt(0));break}}return this.state.top=!0,t}inline(e,t=[]){return this.inlineQueue.push({src:e,tokens:t}),t}linkInText(e){if(!e.includes("["))return!1;let t=this.tokenizer.rules.inline.link;for(let n of e.matchAll(this.tokenizer.rules.inline.blockSkip))if(t.test(n[0])&&e.charAt(n.index-1)!=="!")return!0;for(let n of e.matchAll(this.tokenizer.rules.inline.reflinkSearch)){let s=n[0],r=s.lastIndexOf("[");if(!(s.charAt(0)==="!"||!Object.hasOwn(this.tokens.links,s.slice(r+1,-1)))&&!(r>1&&this.linkInText(s.slice(1,r-1))))return!0}return!1}inlineTokens(e,t=[]){this.tokenizer.lexer=this;let n=e;if(this.tokens.links&&e.includes("[")){let o=this.tokenizer.rules.inline.reflinkSearch,u=a=>{let p=a.lastIndexOf("[");if(!Object.hasOwn(this.tokens.links,a.slice(p+1,-1)))return a;if(p>1&&a.charAt(0)!=="!"){let c=a.slice(1,p-1);if(this.linkInText(c))return"["+c.replace(o,u)+"]["+"a".repeat(a.length-p-2)+"]"}return"["+"a".repeat(a.length-2)+"]"};n=n.replace(o,u)}n=n.replace(this.tokenizer.rules.inline.anyPunctuation,o=>"+".repeat(o.length)),n=n.replace(this.tokenizer.rules.inline.blockSkip,(o,u,a)=>{let p=a?a.length:0;return o.slice(0,p)+"["+"a".repeat(o.length-p-2)+"]"}),n=this.options.hooks?.emStrongMask?.call({lexer:this},n)??n;let s=!1,r="",i=1/0;for(;e;){if(e.length<i)i=e.length;else{this.infiniteLoopError(e.charCodeAt(0));break}s||(r=""),s=!1;let o;if(this.options.extensions?.inline?.some(a=>(o=a.call({lexer:this},e,t))?(e=e.substring(o.raw.length),t.push(o),!0):!1))continue;if(o=this.tokenizer.escape(e)){e=e.substring(o.raw.length),t.push(o);continue}if(o=this.tokenizer.tag(e)){e=e.substring(o.raw.length),t.push(o);continue}if(o=this.tokenizer.link(e)){e=e.substring(o.raw.length),t.push(o);continue}if(o=this.tokenizer.reflink(e,this.tokens.links)){e=e.substring(o.raw.length);let a=t.at(-1);o.type==="text"&&a?.type==="text"?(a.raw+=o.raw,a.text+=o.text):t.push(o);continue}if(o=this.tokenizer.emStrong(e,n,r)){e=e.substring(o.raw.length),t.push(o);continue}if(o=this.tokenizer.codespan(e)){e=e.substring(o.raw.length),t.push(o);continue}if(o=this.tokenizer.br(e)){e=e.substring(o.raw.length),t.push(o);continue}if(o=this.tokenizer.del(e,n,r)){e=e.substring(o.raw.length),t.push(o);continue}if(o=this.tokenizer.autolink(e)){e=e.substring(o.raw.length),t.push(o);continue}if(!this.state.inLink&&(o=this.tokenizer.url(e))){e=e.substring(o.raw.length),t.push(o);continue}let u=e;if(this.options.extensions?.startInline){let a=1/0,p=e.slice(1),c;this.options.extensions.startInline.forEach(h=>{c=h.call({lexer:this},p),typeof c=="number"&&c>=0&&(a=Math.min(a,c))}),a<1/0&&a>=0&&(u=e.substring(0,a+1))}if(o=this.tokenizer.inlineText(u)){e=e.substring(o.raw.length),o.raw.slice(-1)!=="_"&&(r=o.raw.slice(-1)),s=!0;let a=t.at(-1);a?.type==="text"?(a.raw+=o.raw,a.text+=o.text):t.push(o);continue}if(e){this.infiniteLoopError(e.charCodeAt(0));break}}return t}infiniteLoopError(e){let t="Infinite loop on byte: "+e;if(this.options.silent)console.error(t);else throw new Error(t)}};var y=class{options;parser;constructor(e){this.options=e||R}space(e){return""}code({text:e,lang:t,escaped:n}){let s=(t||"").match(m.notSpaceStart)?.[0],r=e.replace(m.endingNewline,"")+`
+`;return s?'<pre><code class="language-'+T(s)+'">'+(n?r:T(r,!0))+`</code></pre>
+`:"<pre><code>"+(n?r:T(r,!0))+`</code></pre>
+`}blockquote({tokens:e}){return`<blockquote>
+${this.parser.parse(e)}</blockquote>
+`}html({text:e}){return e}def(e){return""}heading({tokens:e,depth:t}){return`<h${t}>${this.parser.parseInline(e)}</h${t}>
+`}hr(e){return`<hr>
+`}list(e){let t=e.ordered,n=e.start,s="";for(let o=0;o<e.items.length;o++){let u=e.items[o];s+=this.listitem(u)}let r=t?"ol":"ul",i=t&&n!==1?' start="'+n+'"':"";return"<"+r+i+`>
+`+s+"</"+r+`>
+`}listitem(e){return`<li>${this.parser.parse(e.tokens)}</li>
+`}checkbox({checked:e}){return"<input "+(e?'checked="" ':"")+'disabled="" type="checkbox"> '}paragraph({tokens:e}){return`<p>${this.parser.parseInline(e)}</p>
+`}table(e){let t="",n="";for(let r=0;r<e.header.length;r++)n+=this.tablecell(e.header[r]);t+=this.tablerow({text:n});let s="";for(let r=0;r<e.rows.length;r++){let i=e.rows[r];n="";for(let o=0;o<i.length;o++)n+=this.tablecell(i[o]);s+=this.tablerow({text:n})}return s&&(s=`<tbody>${s}</tbody>`),`<table>
+<thead>
+`+t+`</thead>
+`+s+`</table>
+`}tablerow({text:e}){return`<tr>
+${e}</tr>
+`}tablecell(e){let t=this.parser.parseInline(e.tokens),n=e.header?"th":"td";return(e.align?`<${n} align="${e.align}">`:`<${n}>`)+t+`</${n}>
+`}strong({tokens:e}){return`<strong>${this.parser.parseInline(e)}</strong>`}em({tokens:e}){return`<em>${this.parser.parseInline(e)}</em>`}codespan({text:e}){return`<code>${T(e,!0)}</code>`}br(e){return"<br>"}del({tokens:e}){return`<del>${this.parser.parseInline(e)}</del>`}link({href:e,title:t,tokens:n}){let s=this.parser.parseInline(n),r=ee(e);if(r===null)return s;e=r;let i='<a href="'+e+'"';return t&&(i+=' title="'+T(t)+'"'),i+=">"+s+"</a>",i}image({href:e,title:t,text:n,tokens:s}){s&&(n=this.parser.parseInline(s,this.parser.textRenderer));let r=ee(e);if(r===null)return T(n);e=r;let i=`<img src="${e}" alt="${T(n)}"`;return t&&(i+=` title="${T(t)}"`),i+=">",i}text(e){return"tokens"in e&&e.tokens?this.parser.parseInline(e.tokens):"escaped"in e&&e.escaped?e.text:T(e.text)}};var _=class{strong({text:e}){return e}em({text:e}){return e}codespan({text:e}){return e}del({text:e}){return e}html({text:e}){return e}text({text:e}){return e}link({text:e}){return""+e}image({text:e}){return""+e}br(){return""}checkbox({raw:e}){return e}};var b=class l{options;renderer;textRenderer;constructor(e){this.options=e||R,this.options.renderer=this.options.renderer||new y,this.renderer=this.options.renderer,this.renderer.options=this.options,this.renderer.parser=this,this.textRenderer=new _}static parse(e,t){return new l(t).parse(e)}static parseInline(e,t){return new l(t).parseInline(e)}parse(e){this.renderer.parser=this;let t="";for(let n=0;n<e.length;n++){let s=e[n];if(this.options.extensions?.renderers?.[s.type]){let i=s,o=this.options.extensions.renderers[i.type].call({parser:this},i);if(o!==!1||!["space","hr","heading","code","table","blockquote","list","checkbox","html","def","paragraph","text"].includes(i.type)){t+=o||"";continue}}let r=s;switch(r.type){case"space":{t+=this.renderer.space(r);break}case"hr":{t+=this.renderer.hr(r);break}case"heading":{t+=this.renderer.heading(r);break}case"code":{t+=this.renderer.code(r);break}case"table":{t+=this.renderer.table(r);break}case"blockquote":{t+=this.renderer.blockquote(r);break}case"list":{t+=this.renderer.list(r);break}case"checkbox":{t+=this.renderer.checkbox(r);break}case"html":{t+=this.renderer.html(r);break}case"def":{t+=this.renderer.def(r);break}case"paragraph":{t+=this.renderer.paragraph(r);break}case"text":{t+=this.renderer.text(r);break}default:{let i='Token with "'+r.type+'" type was not found.';if(this.options.silent)return console.error(i),"";throw new Error(i)}}}return t}parseInline(e,t=this.renderer){this.renderer.parser=this;let n="";for(let s=0;s<e.length;s++){let r=e[s];if(this.options.extensions?.renderers?.[r.type]){let o=this.options.extensions.renderers[r.type].call({parser:this},r);if(o!==!1||!["escape","html","link","image","checkbox","strong","em","codespan","br","del","text"].includes(r.type)){n+=o||"";continue}}let i=r;switch(i.type){case"escape":{n+=t.text(i);break}case"html":{n+=t.html(i);break}case"link":{n+=t.link(i);break}case"image":{n+=t.image(i);break}case"checkbox":{n+=t.checkbox(i);break}case"strong":{n+=t.strong(i);break}case"em":{n+=t.em(i);break}case"codespan":{n+=t.codespan(i);break}case"br":{n+=t.br(i);break}case"del":{n+=t.del(i);break}case"text":{n+=t.text(i);break}default:{let o='Token with "'+i.type+'" type was not found.';if(this.options.silent)return console.error(o),"";throw new Error(o)}}}return n}};var P=class{options;block;constructor(e){this.options=e||R}static passThroughHooks=new Set(["preprocess","postprocess","processAllTokens","emStrongMask"]);static passThroughHooksRespectAsync=new Set(["preprocess","postprocess","processAllTokens"]);preprocess(e){return e}postprocess(e){return e}processAllTokens(e){return e}emStrongMask(e){return e}provideLexer(e=this.block){return e?x.lex:x.lexInline}provideParser(e=this.block){return e?b.parse:b.parseInline}};var D=class{defaults=z();options=this.setOptions;parse=this.parseMarkdown(!0);parseInline=this.parseMarkdown(!1);Parser=b;Renderer=y;TextRenderer=_;Lexer=x;Tokenizer=w;Hooks=P;constructor(...e){this.use(...e)}walkTokens(e,t){let n=[];for(let s of e)switch(n=n.concat(t.call(this,s)),s.type){case"table":{let r=s;for(let i of r.header)n=n.concat(this.walkTokens(i.tokens,t));for(let i of r.rows)for(let o of i)n=n.concat(this.walkTokens(o.tokens,t));break}case"list":{let r=s;n=n.concat(this.walkTokens(r.items,t));break}default:{let r=s;this.defaults.extensions?.childTokens?.[r.type]?this.defaults.extensions.childTokens[r.type].forEach(i=>{let o=r[i].flat(1/0);n=n.concat(this.walkTokens(o,t))}):r.tokens&&(n=n.concat(this.walkTokens(r.tokens,t)))}}return n}use(...e){let t=this.defaults.extensions||{renderers:{},childTokens:{}};return e.forEach(n=>{let s={...n};if(s.async=this.defaults.async||s.async||!1,n.extensions&&(n.extensions.forEach(r=>{if(!r.name)throw new Error("extension name required");if("renderer"in r){let i=t.renderers[r.name];i?t.renderers[r.name]=function(...o){let u=r.renderer.apply(this,o);return u===!1&&(u=i.apply(this,o)),u}:t.renderers[r.name]=r.renderer}if("tokenizer"in r){if(!r.level||r.level!=="block"&&r.level!=="inline")throw new Error("extension level must be 'block' or 'inline'");let i=t[r.level];i?i.unshift(r.tokenizer):t[r.level]=[r.tokenizer],r.start&&(r.level==="block"?t.startBlock?t.startBlock.push(r.start):t.startBlock=[r.start]:r.level==="inline"&&(t.startInline?t.startInline.push(r.start):t.startInline=[r.start]))}"childTokens"in r&&r.childTokens&&(t.childTokens[r.name]=r.childTokens)}),s.extensions=t),n.renderer){let r=this.defaults.renderer||new y(this.defaults);for(let i in n.renderer){if(!(i in r))throw new Error(`renderer '${i}' does not exist`);if(["options","parser"].includes(i))continue;let o=i,u=n.renderer[o],a=r[o];r[o]=(...p)=>{let c=u.apply(r,p);return c===!1&&(c=a.apply(r,p)),c||""}}s.renderer=r}if(n.tokenizer){let r=this.defaults.tokenizer||new w(this.defaults);for(let i in n.tokenizer){if(!(i in r))throw new Error(`tokenizer '${i}' does not exist`);if(["options","rules","lexer"].includes(i))continue;let o=i,u=n.tokenizer[o],a=r[o];r[o]=(...p)=>{let c=u.apply(r,p);return c===!1&&(c=a.apply(r,p)),c}}s.tokenizer=r}if(n.hooks){let r=this.defaults.hooks||new P;for(let i in n.hooks){if(!(i in r))throw new Error(`hook '${i}' does not exist`);if(["options","block"].includes(i))continue;let o=i,u=n.hooks[o],a=r[o];P.passThroughHooks.has(i)?r[o]=p=>{if(this.defaults.async&&P.passThroughHooksRespectAsync.has(i))return(async()=>{let h=await u.call(r,p);return a.call(r,h)})();let c=u.call(r,p);return a.call(r,c)}:r[o]=(...p)=>{if(this.defaults.async)return(async()=>{let h=await u.apply(r,p);return h===!1&&(h=await a.apply(r,p)),h})();let c=u.apply(r,p);return c===!1&&(c=a.apply(r,p)),c}}s.hooks=r}if(n.walkTokens){let r=this.defaults.walkTokens,i=n.walkTokens;s.walkTokens=function(o){let u=[];return u.push(i.call(this,o)),r&&(u=u.concat(r.call(this,o))),u}}this.defaults={...this.defaults,...s}}),this}setOptions(e){return this.defaults={...this.defaults,...e},this}lexer(e,t){return x.lex(e,t??this.defaults)}parser(e,t){return b.parse(e,t??this.defaults)}parseMarkdown(e){return(n,s)=>{let r={...s},i={...this.defaults,...r},o=this.onError(!!i.silent,!!i.async);if(this.defaults.async===!0&&r.async===!1)return o(new Error("marked(): The async option was set to true by an extension. Remove async: false from the parse options object to return a Promise."));if(typeof n>"u"||n===null)return o(new Error("marked(): input parameter is undefined or null"));if(typeof n!="string")return o(new Error("marked(): input parameter is of type "+Object.prototype.toString.call(n)+", string expected"));if(i.hooks&&(i.hooks.options=i,i.hooks.block=e),i.async)return(async()=>{let u=i.hooks?await i.hooks.preprocess(n):n,p=await(i.hooks?await i.hooks.provideLexer(e):e?x.lex:x.lexInline)(u,i),c=i.hooks?await i.hooks.processAllTokens(p):p;i.walkTokens&&await Promise.all(this.walkTokens(c,i.walkTokens));let d=await(i.hooks?await i.hooks.provideParser(e):e?b.parse:b.parseInline)(c,i);return i.hooks?await i.hooks.postprocess(d):d})().catch(o);try{i.hooks&&(n=i.hooks.preprocess(n));let a=(i.hooks?i.hooks.provideLexer(e):e?x.lex:x.lexInline)(n,i);i.hooks&&(a=i.hooks.processAllTokens(a)),i.walkTokens&&this.walkTokens(a,i.walkTokens);let c=(i.hooks?i.hooks.provideParser(e):e?b.parse:b.parseInline)(a,i);return i.hooks&&(c=i.hooks.postprocess(c)),c}catch(u){return o(u)}}}onError(e,t){return n=>{if(n.message+=`
+Please report this to https://github.com/markedjs/marked.`,e){let s="<p>An error occurred:</p><pre>"+T(n.message+"",!0)+"</pre>";return t?Promise.resolve(s):s}if(t)return Promise.reject(n);throw n}}};var A=new D;function g(l,e){return A.parse(l,e)}g.options=g.setOptions=function(l){return A.setOptions(l),g.defaults=A.defaults,F(g.defaults),g};g.getDefaults=z;g.defaults=R;function Re(...l){return A.use(...l),g.defaults=A.defaults,F(g.defaults),g}g.use=Re;g.walkTokens=function(l,e){return A.walkTokens(l,e)};g.parseInline=A.parseInline;g.Parser=b;g.parser=b.parse;g.Renderer=y;g.TextRenderer=_;g.Lexer=x;g.lexer=x.lex;g.Tokenizer=w;g.Hooks=P;g.parse=g;var Tt=g.options,wt=g.setOptions,yt=g.walkTokens,Pt=g.parseInline,St=g,_t=b.parse,$t=x.lex;
+
+if(__exports != exports)module.exports = exports;return module.exports}));
+//# sourceMappingURL=marked.umd.js.map
+// AIConversationCore source modules:
+// - src/adapters/chatgpt-base.js
+// - src/adapters/chatgpt.js
+// - src/derive/turns.js
+// - src/projections/style.js
+// - src/projections/heading-metadata.js
+// - src/projections/markdown.js
+// - src/projections/markdown-revisions.js
+// - src/projections/markdown-visibility.js
+// - src/projections/presentation.js
+// - src/projections/revision-visibility.js
+// - src/projections/presentation-revisions.js
+// - src/projections/html.js
+// - src/projections/word-identity.js
+// - src/projections/word-element.js
+// - src/projections/html-visibility.js
+// - src/projections/structured.js
+// Version source: package.json
+(function bootstrapAIConversationCore(global) {
+  'use strict';
+
+const VERSION = "1.1.0-issue.104.11";
+
+/**
+ * Returns the authoritative AIConversationCore version.
+ *
+ * @returns {string} The authoritative AIConversationCore version.
+ */
+function getVersion() {
+  return VERSION;
+}
+
+/**
+ * Returns the string-valued text parts from a ChatGPT source record in source order.
+ *
+ * @param {Object<string, *>} record - The provider/source record to process.
+ * @returns {Array<string>} String-valued ChatGPT content parts in their source order.
+ */
+function textParts(record) {
+  const parts = record?.content?.parts;
+  if (!Array.isArray(parts)) return [];
+  return parts.filter(part => typeof part === 'string');
+}
+
+/**
+ * Builds canonical reasoning-summary blocks from a ChatGPT `thoughts` record.
+ *
+ * @param {Object<string, *>} record - The provider/source record to process.
+ * @param {string} sourceRecordId - The stable provider/source record identifier.
+ * @param {number} sourceIndex - The zero-based index of the source record.
+ * @returns {Array<Object<string, *>>} Canonical reasoning-summary blocks derived from the ChatGPT thoughts record.
+ */
+function reasoningBlocks(record, sourceRecordId, sourceIndex) {
+  const thoughts = record?.content?.thoughts;
+  if (!Array.isArray(thoughts)) return [];
+
+  return thoughts.map((thought, thoughtIndex) => ({
+    id: `${sourceRecordId}:thought:${thoughtIndex}`,
+    type: 'reasoning_summary',
+    summary: thought?.summary ?? null,
+    content: thought?.content ?? null,
+    chunks: Array.isArray(thought?.chunks) ? [...thought.chunks] : null,
+    finished: thought?.finished ?? null,
+    source: {
+      provider: 'chatgpt',
+      record_id: sourceRecordId,
+      record_index: sourceIndex,
+      thought_index: thoughtIndex
+    }
+  }));
+}
+
+/**
+ * Parses a JSON string when valid, otherwise returns no parsed value.
+ *
+ * @param {string} value - The input value to process.
+ * @returns {Object|Array<unknown>|string|number|boolean|null} The parsed JSON value, or `null` when the input is empty or invalid JSON.
+ */
+function parsedJson(value) {
+  if (typeof value !== 'string' || !value.trim()) return null;
+  try {
+    return JSON.parse(value);
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Extracts the normalized executable/launcher token from the start of a persisted command string.
+ *
+ * @param {string} value - The input value to process.
+ * @returns {string|null} The normalized launcher executable name, or `null` when no launcher token can be extracted.
+ */
+function launcherToken(value) {
+  if (typeof value !== 'string') return null;
+  const match = value.trimStart().match(/^([A-Za-z0-9_./+-]+)/);
+  return match?.[1]?.split('/').at(-1)?.toLowerCase() ?? null;
+}
+
+/**
+ * Normalizes ChatGPT tool-call presentation without discarding the persisted source form.
+ *
+ * Source -> canonical transformations:
+ * - `api_tool.*` + provider `language: python3` + JSON object text -> unchanged JSON input, `input_format: json`, `language: json`.
+ * - `container.exec` + provider `language: unknown` + `bash`/`sh` launcher -> original command text with `bash`/`sh` language.
+ * - `container.exec` + provider `language: unknown` + flattened Python `-c` command -> preserve the full persisted command in `source_input`, render only the Python program in `input`, and set `language: python`.
+ * The source language is always retained separately as `source_language`.
+ *
+ * @param {Object<string, *>} record - The provider/source record to process.
+ * @returns {Object<string, *>} Normalized output-facing tool-call input/format/language together with the exact persisted source input and source language.
+ */
+function normalizedToolCallPresentation(record) {
+  const name = record?.recipient ?? null;
+  const sourceInput = record?.content?.text ?? null;
+  const sourceLanguage = record?.content?.language ?? null;
+  // Canonical tool input starts as the exact provider payload and is replaced only by an evidenced normalization.
+  let input = sourceInput;
+  // Canonical input format remains unspecified unless the provider payload can be classified safely.
+  let inputFormat = 'code';
+  // Canonical display language starts from provider metadata and may be corrected from stronger tool semantics.
+  let language = sourceLanguage;
+
+  // ChatGPT currently labels api_tool call arguments as python3 even when the
+  // payload is a serialized JSON object.  The recipient plus successful JSON
+  // parse is stronger semantic evidence than that provider presentation label.
+  if (typeof name === 'string' && name.startsWith('api_tool.') && parsedJson(sourceInput) !== null) {
+    inputFormat = 'json';
+    language = 'json';
+  } else if (name === 'container.exec' && typeof sourceInput === 'string') {
+    const launcher = launcherToken(sourceInput);
+    if (launcher === 'bash') language = 'bash';
+    else if (launcher === 'sh') language = 'sh';
+    else if (['python', 'python3', 'py'].includes(launcher)) {
+      const command = sourceInput.trimStart();
+      const pythonCommand = command.match(/^[A-Za-z0-9_./+-]+\s+-c(?:\s+|$)/);
+      if (pythonCommand) {
+        // The persisted ChatGPT record has already flattened the argv boundary
+        // around Python's -c program.  Do not invent shell quoting.  Preserve
+        // the source string separately and render the program itself as Python.
+        input = command.slice(pythonCommand[0].length);
+        language = 'python';
+      }
+    }
+  }
+
+  return { input, inputFormat, language, sourceInput, sourceLanguage };
+}
+
+/**
+ * Projects a persisted ChatGPT assistant tool-call record into one canonical `tool_call` block.
+ *
+ * The block carries both the normalized input/language used for output and the original persisted input/language for provenance.
+ *
+ * @param {Object<string, *>} record - The provider/source record to process.
+ * @param {string} sourceRecordId - The stable provider/source record identifier.
+ * @param {number} sourceIndex - The zero-based index of the source record.
+ * @returns {Array<Object<string, *>>} The single canonical tool-call block array for the source record.
+ */
+function toolCallBlocks(record, sourceRecordId, sourceIndex) {
+  const presentation = normalizedToolCallPresentation(record);
+  return [{
+    id: `${sourceRecordId}:tool_call:0`,
+    type: 'tool_call',
+    call_id: null,
+    name: record?.recipient ?? null,
+    input: presentation.input,
+    input_format: presentation.inputFormat,
+    language: presentation.language,
+    source_input: presentation.sourceInput,
+    source_language: presentation.sourceLanguage,
+    source: {
+      provider: 'chatgpt',
+      record_id: sourceRecordId,
+      record_index: sourceIndex
+    }
+  }];
+}
+
+/**
+ * Projects a persisted ChatGPT tool-role record into one canonical `tool_result` block.
+ *
+ * Source -> canonical transformations:
+ * - `execution_output`/`code` -> text output from the source text/content field.
+ * - `text` -> string parts joined in source order with blank lines.
+ * - `multimodal_text` -> source parts preserved as an ordered array.
+ * The original ChatGPT content type is retained as `output_format`.
+ *
+ * @param {Object<string, *>} record - The provider/source record to process.
+ * @param {string} sourceRecordId - The stable provider/source record identifier.
+ * @param {number} sourceIndex - The zero-based index of the source record.
+ * @returns {Array<Object<string, *>>} The single canonical tool-result block array for the source record.
+ */
+function toolResultBlocks(record, sourceRecordId, sourceIndex) {
+  const contentType = record?.content?.content_type ?? null;
+  let output = null;
+  if (contentType === 'execution_output' || contentType === 'code') {
+    output = record?.content?.text ?? record?.content?.content ?? null;
+  }
+  if (contentType === 'text') {
+    output = Array.isArray(record?.content?.parts)
+      ? record.content.parts.filter(part => typeof part === 'string').join('\n\n')
+      : record?.content?.text ?? null;
+  }
+  if (contentType === 'multimodal_text') output = Array.isArray(record?.content?.parts)
+    ? [...record.content.parts]
+    : null;
+
+  return [{
+    id: `${sourceRecordId}:tool_result:0`,
+    type: 'tool_result',
+    call_id: null,
+    name: record?.author?.name ?? null,
+    output,
+    output_format: contentType,
+    source: {
+      provider: 'chatgpt',
+      record_id: sourceRecordId,
+      record_index: sourceIndex
+    }
+  }];
+}
+
+/**
+ * Returns whether a ChatGPT source record is canonically visible or hidden.
+ *
+ * @param {Object<string, *>} record - The provider/source record to process.
+ * @returns {string} The canonical visibility value, `visible` or `hidden`.
+ */
+function eventVisibility(record) {
+  return record?.metadata?.is_visually_hidden_from_conversation ? 'hidden' : 'visible';
+}
+
+/**
+ * Checks whether tool call.
+ *
+ * @param {Object<string, *>} record - The provider/source record to process.
+ * @returns {boolean} Whether the source record represents a supported ChatGPT tool call.
+ */
+function isToolCall(record) {
+  return record?.author?.role === 'assistant' &&
+    record?.content?.content_type === 'code' &&
+    typeof record?.recipient === 'string' &&
+    record.recipient !== 'all';
+}
+
+/**
+ * Checks whether tool result.
+ *
+ * @param {Object<string, *>} record - The provider/source record to process.
+ * @returns {boolean} Whether the source record represents a supported ChatGPT tool result.
+ */
+function isToolResult(record) {
+  if (record?.author?.role !== 'tool') return false;
+  return ['execution_output', 'multimodal_text', 'text', 'code']
+    .includes(record?.content?.content_type);
+}
+
+/**
+ * Classifies a ChatGPT source record into its canonical event kind.
+ *
+ * @param {Object<string, *>} record - The provider/source record to process.
+ * @returns {string} The canonical event-kind classification for the source record.
+ */
+function eventKind(record) {
+  if (isToolCall(record)) return 'tool_call';
+  if (isToolResult(record)) return 'tool_result';
+  if (record?.author?.role === 'assistant' && record?.content?.content_type === 'thoughts') {
+    return 'reasoning_summary';
+  }
+  if (record?.author?.role === 'assistant' && record?.channel === 'commentary') return 'commentary';
+  return 'message';
+}
+
+/**
+ * Builds the canonical content blocks for one classified ChatGPT source record.
+ *
+ * @param {Object<string, *>} record - The provider/source record to process.
+ * @param {string} sourceRecordId - The stable provider/source record identifier.
+ * @param {number} sourceIndex - The zero-based index of the source record.
+ * @param {string} kind - The canonical kind/category being processed.
+ * @returns {Array<Object<string, *>>} Canonical content blocks for the classified ChatGPT source record.
+ */
+function eventBlocks(record, sourceRecordId, sourceIndex, kind) {
+  if (kind === 'reasoning_summary') return reasoningBlocks(record, sourceRecordId, sourceIndex);
+  if (kind === 'tool_call') return toolCallBlocks(record, sourceRecordId, sourceIndex);
+  if (kind === 'tool_result') return toolResultBlocks(record, sourceRecordId, sourceIndex);
+
+  return textParts(record).map((text, partIndex) => ({
+    id: `${sourceRecordId}:part:${partIndex}`,
+    type: 'text',
+    text,
+    source: {
+      provider: 'chatgpt',
+      record_id: sourceRecordId,
+      record_index: sourceIndex,
+      part_index: partIndex
+    }
+  }));
+}
+
+/**
+ * Normalizes a URL for stable citation/search-result lookup.
+ *
+ * @param {string} value - The input value to process.
+ * @returns {string|null} The normalized URL string, or `null` when the input is not a string.
+ */
+function normalizedUrl(value) {
+  if (typeof value !== 'string') return null;
+  try {
+    const url = new URL(value);
+    url.searchParams.delete('utm_source');
+    url.hash = '';
+    return url.toString();
+  } catch {
+    return value;
+  }
+}
+
+/**
+ * Handles search result lookup.
+ *
+ * @param {Object<string, *>} record - The provider/source record to process.
+ * @returns {Map<string, Object<string, *>>} Search-result entries indexed by normalized URL.
+ */
+function searchResultLookup(record) {
+  // Lookup maps preserve source reference identity while citations/resources are normalized.
+  const lookup = new Map();
+  const groups = record?.metadata?.search_result_groups;
+  if (!Array.isArray(groups)) return lookup;
+
+  for (const group of groups) {
+    if (!Array.isArray(group?.entries)) continue;
+    for (const entry of group.entries) {
+      const key = normalizedUrl(entry?.url);
+      if (key) lookup.set(key, entry);
+    }
+  }
+  return lookup;
+}
+
+/**
+ * Handles retrieved file lookup.
+ *
+ * @param {Array<Object<string, *>>} records - The ordered provider/source records to process.
+ * @returns {Map<string, Object<string, *>>} Retrieved-file citation metadata indexed by ChatGPT retrieval marker.
+ */
+function retrievedFileLookup(records) {
+  // Lookup maps preserve source reference identity while citations/resources are normalized.
+  const lookup = new Map();
+  records.forEach((record, recordIndex) => {
+    const turn = record?.metadata?.retrieval_turn_number;
+    const file = record?.metadata?.retrieval_file_index;
+    const citation = record?.metadata?.citation_metadata;
+    if (!Number.isInteger(turn) || !Number.isInteger(file) || !citation) return;
+    lookup.set(`turn${turn}file${file}`, {
+      title: citation?.title ?? null,
+      url: citation?.url ?? null,
+      source_record_id: record?.id ?? null,
+      source_index: recordIndex
+    });
+  });
+  return lookup;
+}
+
+/**
+ * Handles file marker key.
+ *
+ * @param {string} matchedText - The literal source text associated with the reference.
+ * @returns {string|null} The normalized ChatGPT retrieved-file marker key, or `null` when no marker is present.
+ */
+function fileMarkerKey(matchedText) {
+  if (typeof matchedText !== 'string') return null;
+  const match = matchedText.match(/turn(\d+)file(\d+)/);
+  return match ? `turn${match[1]}file${match[2]}` : null;
+}
+
+/**
+ * Locates reference.
+ *
+ * @param {Array<Object<string, *>>} blocks - The ordered canonical content blocks to process.
+ * @param {string} matchedText - The literal source text associated with the reference.
+ * @param {number} startPartIndex - The content-part index at which searching begins.
+ * @param {number} startOffset - The character offset at which searching begins.
+ * @returns {Object<string, number>|null} The matching canonical text range, or null when the literal reference text is absent.
+ */
+function locateReference(blocks, matchedText, startPartIndex = 0, startOffset = 0) {
+  if (typeof matchedText !== 'string' || !matchedText) return null;
+  for (let partIndex = startPartIndex; partIndex < blocks.length; partIndex += 1) {
+    const block = blocks[partIndex];
+    if (block?.type !== 'text' || typeof block.text !== 'string') continue;
+    const from = partIndex === startPartIndex ? startOffset : 0;
+    const index = block.text.indexOf(matchedText, from);
+    if (index >= 0) {
+      return {
+        part_index: partIndex,
+        start: index,
+        end: index + matchedText.length
+      };
+    }
+  }
+  return null;
+}
+
+/**
+ * Handles citation base.
+ *
+ * @param {string} sourceRecordId - The stable provider/source record identifier.
+ * @param {number} sourceIndex - The zero-based index of the source record.
+ * @param {number} referenceIndex - The zero-based index of the content reference.
+ * @param {Object<string, *>} reference - The provider reference object to process.
+ * @param {Object<string, number>|null} range - The located text range, or `null` when the reference text was not found.
+ * @param {string} kind - The canonical kind/category being processed.
+ * @returns {Object<string, *>} Common canonical citation fields and source provenance.
+ */
+function citationBase(sourceRecordId, sourceIndex, referenceIndex, reference, range, kind) {
+  return {
+    id: `${sourceRecordId}:citation:${referenceIndex}`,
+    type: 'citation',
+    citation_kind: kind,
+    matched_text: reference?.matched_text ?? null,
+    text_range: range,
+    source: {
+      provider: 'chatgpt',
+      record_id: sourceRecordId,
+      record_index: sourceIndex,
+      reference_index: referenceIndex
+    }
+  };
+}
+
+/**
+ * Handles web source.
+ *
+ * @param {Object<string, *>} item - The provider/search-result item being converted to a canonical source descriptor.
+ * @param {Map<string, Object<string, *>>} lookup - The lookup table used to resolve related source data.
+ * @returns {Object<string, *>} A canonical web-source descriptor with any normalized supporting-source evidence.
+ */
+function webSource(item, lookup) {
+  const source = {
+    url: item?.url ?? null,
+    title: item?.title ?? null,
+    attribution: item?.attribution ?? null,
+    snippet: item?.snippet ?? null,
+    supporting_sources: []
+  };
+
+  if (Array.isArray(item?.supporting_websites)) {
+    source.supporting_sources = item.supporting_websites.map(site => {
+      const evidence = lookup.get(normalizedUrl(site?.url));
+      return {
+        url: site?.url ?? null,
+        title: evidence?.title ?? null,
+        attribution: evidence?.attribution ?? null,
+        snippet: evidence?.snippet ?? null
+      };
+    });
+  }
+
+  return source;
+}
+
+/**
+ * Normalizes citation.
+ *
+ * @param {Object<string, *>} reference - The provider reference object to process.
+ * @param {Object<string, *>} context - The contextual source/provenance values required by the operation.
+ * @returns {Object<string, *>|null} The canonical citation for a supported provider reference, or null for an unsupported reference shape.
+ */
+function normalizeCitation(reference, context) {
+  const {
+    sourceRecordId,
+    sourceIndex,
+    referenceIndex,
+    range,
+    record,
+    retrievedFiles
+  } = context;
+
+  if (reference?.type === 'file') {
+    return {
+      ...citationBase(sourceRecordId, sourceIndex, referenceIndex, reference, range, 'file'),
+      file: {
+        id: reference?.id ?? null,
+        name: reference?.name ?? null,
+        source: reference?.source ?? null,
+        snippet: reference?.snippet ?? null
+      }
+    };
+  }
+
+  if (reference?.type === 'grouped_webpages') {
+    const lookup = searchResultLookup(record);
+    return {
+      ...citationBase(sourceRecordId, sourceIndex, referenceIndex, reference, range, 'web'),
+      web: {
+        sources: Array.isArray(reference?.items)
+          ? reference.items.map(item => webSource(item, lookup))
+          : [],
+        safe_urls: Array.isArray(reference?.safe_urls) ? [...reference.safe_urls] : []
+      }
+    };
+  }
+
+  if (reference?.type === 'hidden' && reference?.invalid === false &&
+      reference?.matched_text === 'memcite') {
+    const metadata = record?.metadata?.conversation_context_citation_metadata;
+    return {
+      ...citationBase(sourceRecordId, sourceIndex, referenceIndex, reference, range, 'memory'),
+      memory: {
+        sources: Array.isArray(metadata) ? metadata.map(entry => ({
+          citation_uuid: entry?.citation_uuid ?? null,
+          deleted: entry?.deleted ?? null,
+          retrieval_origin: entry?.retrieval_origin ?? null,
+          title: entry?.citation?.title ?? null,
+          url: entry?.citation?.url ?? null,
+          snippet: entry?.citation?.snippet ?? null,
+          attribution: entry?.citation?.attribution ?? null,
+          category: entry?.citation?.category ?? null
+        })) : []
+      }
+    };
+  }
+
+  if (reference?.type === 'hidden' && reference?.invalid === true) {
+    const key = fileMarkerKey(reference?.matched_text);
+    const resolved = key ? retrievedFiles.get(key) : null;
+    return {
+      ...citationBase(sourceRecordId, sourceIndex, referenceIndex, reference, range, 'retrieved_file'),
+      retrieved_file: {
+        resolved: Boolean(resolved),
+        title: resolved?.title ?? null,
+        url: resolved?.url ?? null,
+        source_record_id: resolved?.source_record_id ?? null,
+        source_index: resolved?.source_index ?? null
+      }
+    };
+  }
+
+  return null;
+}
+
+/**
+ * Handles event citations.
+ *
+ * @param {Object<string, *>} record - The provider/source record to process.
+ * @param {string} sourceRecordId - The stable provider/source record identifier.
+ * @param {number} sourceIndex - The zero-based index of the source record.
+ * @param {Array<Object<string, *>>} blocks - The ordered canonical content blocks to process.
+ * @param {Map<string, Object<string, *>>} retrievedFiles - The retrieved-file lookup keyed by ChatGPT file marker.
+ * @returns {Array<Object<string, *>>} Canonical citations associated with the source record in source-reference order.
+ */
+function eventCitations(record, sourceRecordId, sourceIndex, blocks, retrievedFiles) {
+  const references = record?.metadata?.content_references;
+  if (!Array.isArray(references)) return [];
+
+  // Canonical citations are accumulated in source-reference order.
+  const citations = [];
+  // Source text-part cursor used to continue citation matching after the previous reference.
+  let partIndex = 0;
+  // Character offset within the current source text part for the next citation search.
+  let offset = 0;
+
+  references.forEach((reference, referenceIndex) => {
+    const range = locateReference(blocks, reference?.matched_text, partIndex, offset);
+    if (range) {
+      partIndex = range.part_index;
+      offset = range.end;
+    }
+
+    const citation = normalizeCitation(reference, {
+      sourceRecordId,
+      sourceIndex,
+      referenceIndex,
+      range,
+      record,
+      retrievedFiles
+    });
+    if (citation) citations.push(citation);
+  });
+
+  return citations;
+}
+
+/**
+ * Handles conversation ID.
+ *
+ * @param {Array<Object<string, *>>} records - The ordered provider/source records to process.
+ * @returns {string|null} The ChatGPT conversation identifier from the metadata record, or null when metadata is absent.
+ */
+function conversationId(records) {
+  const metadata = records.find(record =>
+    record?.record_type === 'chatgpt_conversation_metadata' &&
+    typeof record?.conversation_id === 'string'
+  );
+  return metadata?.conversation_id ?? null;
+}
+
+/**
+ * Checks whether conversation metadata.
+ *
+ * @param {Object<string, *>} record - The provider/source record to process.
+ * @returns {boolean} Whether the isConversationMetadata condition is satisfied.
+ */
+function isConversationMetadata(record) {
+  return record?.record_type === 'chatgpt_conversation_metadata';
+}
+
+/**
+ * Handles basename.
+ *
+ * @param {string} path - The provider/sandbox path being reduced to its final path component.
+ * @returns {string|null} The last non-empty path component, or null when the path has no component.
+ */
+function basename(path) {
+  if (typeof path !== 'string') return null;
+  const pieces = path.split('/').filter(Boolean);
+  return pieces.length ? pieces[pieces.length - 1] : null;
+}
+
+/**
+ * Handles sandbox path.
+ *
+ * @param {string} pointer - The provider sandbox pointer being converted to a /mnt/data-style path.
+ * @returns {string|null} The /mnt/data-style path represented by a supported sandbox pointer, or null for unsupported pointer forms.
+ */
+function sandboxPath(pointer) {
+  if (typeof pointer !== 'string') return null;
+  const value = pointer.trim();
+  if (!value.startsWith('sandbox:/') || value.startsWith('sandbox://')) return null;
+  return value.slice('sandbox:'.length);
+}
+
+/**
+ * Handles sandbox download URL.
+ *
+ * @param {string} path - The provider/sandbox path being reduced to its final path component.
+ * @param {string} sourceRecordId - The stable provider/source record identifier.
+ * @param {string} chatgptConversationId - The chatgpt conversation id.
+ * @returns {string|null} The authenticated ChatGPT generated-file download URL, or null when required identity is unavailable.
+ */
+function sandboxDownloadUrl(path, sourceRecordId, chatgptConversationId) {
+  if (!path || !sourceRecordId || !chatgptConversationId) return null;
+  const conversation = encodeURIComponent(chatgptConversationId);
+  const message = encodeURIComponent(sourceRecordId);
+  const sandbox = encodeURIComponent(path);
+  return (
+    `https://chatgpt.com/backend-api/conversation/${conversation}/` +
+    `interpreter/download?message_id=${message}&sandbox_path=${sandbox}` +
+    '&download_intent=true'
+  );
+}
+
+/**
+ * Handles sandbox links.
+ *
+ * @param {string} text - The text value to process.
+ * @returns {Array<Object<string, *>>} Generated sandbox-link descriptors in source-text order, including label, pointer, and character range.
+ */
+function sandboxLinks(text) {
+  if (typeof text !== 'string' || !text) return [];
+  const links = [];
+  // Offset of the next source character not yet copied while rewriting generated sandbox links.
+  let cursor = 0;
+
+  while (cursor < text.length) {
+    const destinationMarker = text.indexOf('](', cursor);
+    if (destinationMarker < 0) break;
+
+    const labelStart = text.lastIndexOf('[', destinationMarker);
+    if (labelStart < 0) {
+      cursor = destinationMarker + 2;
+      continue;
+    }
+
+    const destinationStart = destinationMarker + 2;
+    if (!text.startsWith('sandbox:/', destinationStart) ||
+        text.startsWith('sandbox://', destinationStart)) {
+      cursor = destinationStart;
+      continue;
+    }
+
+    let depth = 0;
+    let destinationEnd = -1;
+    for (let index = destinationStart; index < text.length; index += 1) {
+      const char = text[index];
+      if (char === '(') {
+        depth += 1;
+      } else if (char === ')') {
+        if (depth === 0) {
+          destinationEnd = index;
+          break;
+        }
+        depth -= 1;
+      }
+    }
+
+    if (destinationEnd < 0) break;
+
+    links.push({
+      label: text.slice(labelStart + 1, destinationMarker),
+      source_pointer: text.slice(destinationStart, destinationEnd),
+      start: labelStart,
+      end: destinationEnd + 1
+    });
+    cursor = destinationEnd + 1;
+  }
+
+  return links;
+}
+
+/**
+ * Handles citation resources.
+ *
+ * @param {Array<Object<string, *>>} citations - The canonical citations associated with the event, in source order.
+ * @param {string} sourceRecordId - The stable provider/source record identifier.
+ * @param {number} sourceIndex - The zero-based index of the source record.
+ * @returns {Array<Object<string, *>>} Canonical file resources derived from supported citation objects in citation order.
+ */
+function citationResources(citations, sourceRecordId, sourceIndex) {
+  // Canonical resources are accumulated without changing source encounter order.
+  const resources = [];
+
+  for (const citation of citations) {
+    if (citation?.citation_kind === 'file') {
+      const resourceId = `${sourceRecordId}:resource:citation:${citation.source.reference_index}`;
+      citation.resource_id = resourceId;
+      resources.push({
+        id: resourceId,
+        type: 'file',
+        resource_kind: 'attachment',
+        name: citation.file?.name ?? null,
+        provider_file_id: citation.file?.id ?? null,
+        provider_source: citation.file?.source ?? null,
+        snippet: citation.file?.snippet ?? null,
+        source: {
+          provider: 'chatgpt',
+          record_id: sourceRecordId,
+          record_index: sourceIndex,
+          reference_index: citation.source.reference_index
+        }
+      });
+    }
+
+    if (citation?.citation_kind === 'retrieved_file' && citation.retrieved_file?.resolved) {
+      const resourceId = `${sourceRecordId}:resource:citation:${citation.source.reference_index}`;
+      citation.resource_id = resourceId;
+      resources.push({
+        id: resourceId,
+        type: 'file',
+        resource_kind: 'retrieved_file',
+        name: citation.retrieved_file?.title ?? null,
+        source_url: citation.retrieved_file?.url ?? null,
+        source_record_id: citation.retrieved_file?.source_record_id ?? null,
+        source: {
+          provider: 'chatgpt',
+          record_id: sourceRecordId,
+          record_index: sourceIndex,
+          reference_index: citation.source.reference_index
+        }
+      });
+    }
+  }
+
+  return resources;
+}
+
+/**
+ * Handles sandbox resources.
+ *
+ * @param {Array<Object<string, *>>} blocks - The ordered canonical content blocks to process.
+ * @param {string} sourceRecordId - The stable provider/source record identifier.
+ * @param {number} sourceIndex - The zero-based index of the source record.
+ * @param {string} chatgptConversationId - The chatgpt conversation id.
+ * @returns {Array<Object<string, *>>} Canonical generated-file resources derived from sandbox links in block/source order.
+ */
+function sandboxResources(blocks, sourceRecordId, sourceIndex, chatgptConversationId) {
+  // Canonical resources are accumulated without changing source encounter order.
+  const resources = [];
+  // Stable per-event resource ordinal used to construct canonical resource identifiers.
+  let resourceIndex = 0;
+
+  blocks.forEach((block, partIndex) => {
+    if (block?.type !== 'text') return;
+    for (const link of sandboxLinks(block.text)) {
+      const path = sandboxPath(link.source_pointer);
+      if (!path) continue;
+      resources.push({
+        id: `${sourceRecordId}:resource:sandbox:${resourceIndex}`,
+        type: 'artifact',
+        resource_kind: 'generated_file',
+        name: basename(path),
+        label: link.label,
+        source_pointer: link.source_pointer,
+        path,
+        download_url: sandboxDownloadUrl(path, sourceRecordId, chatgptConversationId),
+        text_range: {
+          part_index: partIndex,
+          start: link.start,
+          end: link.end
+        },
+        resolution_context: {
+          provider: 'chatgpt',
+          conversation_id: chatgptConversationId,
+          message_id: sourceRecordId
+        },
+        source: {
+          provider: 'chatgpt',
+          record_id: sourceRecordId,
+          record_index: sourceIndex,
+          part_index: partIndex
+        }
+      });
+      resourceIndex += 1;
+    }
+  });
+
+  return resources;
+}
+
+/**
+ * Handles event resources.
+ *
+ * @param {Object<string, *>} record - The provider/source record to process.
+ * @param {string} sourceRecordId - The stable provider/source record identifier.
+ * @param {number} sourceIndex - The zero-based index of the source record.
+ * @param {Array<Object<string, *>>} blocks - The ordered canonical content blocks to process.
+ * @param {Array<Object<string, *>>} citations - The canonical citations associated with the event, in source order.
+ * @param {string} chatgptConversationId - The chatgpt conversation id.
+ * @returns {Array<Object<string, *>>} Canonical citation and generated-file resources for the source event.
+ */
+function eventResources(record, sourceRecordId, sourceIndex, blocks, citations,
+                        chatgptConversationId) {
+  return [
+    ...citationResources(citations, sourceRecordId, sourceIndex),
+    ...sandboxResources(blocks, sourceRecordId, sourceIndex, chatgptConversationId)
+  ];
+}
+
+/**
+ * Adapts ordered ChatGPT provider records into ordered canonical events while preserving source identity and provenance.
+ *
+ * @param {Array<Object<string, *>>} records - The ordered provider/source records to process.
+ * @returns {Array<Object<string, *>>} Canonical events derived from ChatGPT source records while preserving source order and provenance.
+ */
+function adaptBaseChatGPTRecords(records) {
+  if (!Array.isArray(records)) throw new TypeError('ChatGPT records must be an array.');
+
+  const chatgptConversationId = conversationId(records);
+  const retrievedFiles = retrievedFileLookup(records);
+  // Metadata records are excluded here so source_index continues to refer only to provider conversation records.
+  const sourceRecords = records
+    .map((record, sourceIndex) => ({ record, sourceIndex }))
+    .filter(({ record }) => !isConversationMetadata(record));
+
+  return sourceRecords.map(({ record, sourceIndex }) => {
+    const sourceRecordId = typeof record?.id === 'string' ? record.id : null;
+    if (!sourceRecordId) throw new Error(`ChatGPT source record at index ${sourceIndex} is missing id.`);
+
+    const role = record?.author?.role ?? null;
+    const channel = record?.channel ?? null;
+    const contentType = record?.content?.content_type ?? null;
+    const kind = eventKind(record);
+    const blocks = eventBlocks(record, sourceRecordId, sourceIndex, kind);
+    const citations = eventCitations(record, sourceRecordId, sourceIndex, blocks, retrievedFiles);
+    const resources = eventResources(
+      record,
+      sourceRecordId,
+      sourceIndex,
+      blocks,
+      citations,
+      chatgptConversationId
+    );
+
+    return {
+      id: `chatgpt:${sourceRecordId}`,
+      provider: 'chatgpt',
+      source_record_id: sourceRecordId,
+      source_index: sourceIndex,
+      kind,
+      role,
+      channel,
+      visibility: eventVisibility(record),
+      content_type: contentType,
+      blocks,
+      citations,
+      resources,
+      relationships: {
+        turn_exchange_id: record?.metadata?.turn_exchange_id ?? null,
+        working_turn_id: record?.metadata?.working_turn_id ?? null,
+        tool_call_id: null
+      },
+      source: {
+        provider: 'chatgpt',
+        record_id: sourceRecordId,
+        record_index: sourceIndex
+      }
+    };
+  });
+}
+
+/**
+ * Returns the first usable image asset pointer exposed by a ChatGPT multimodal part.
+ *
+ * @param {Object<string, *>} part - The ChatGPT multimodal source part being normalized.
+ * @returns {string|null} The first usable image asset pointer exposed by the multimodal part, or null when none is present.
+ */
+function imagePointerSource(part) {
+  if (!part || typeof part !== 'object') return null;
+  const metadata = part?.metadata && typeof part.metadata === 'object' ? part.metadata : {};
+  for (const value of [metadata.asset_pointer_link, part.asset_pointer_link, part.asset_pointer]) {
+    if (typeof value === 'string' && value.trim()) return value.trim();
+  }
+  return null;
+}
+
+/**
+ * Converts a ChatGPT `sediment://file_*` pointer into its authenticated download URL.
+ *
+ * @param {string} source - The source descriptor or provider pointer being normalized or rendered.
+ * @returns {string|null} The authenticated ChatGPT file-download URL for a sediment file pointer, or null for another pointer form.
+ */
+function sedimentDownloadUrl(source) {
+  if (typeof source !== 'string' || !source.startsWith('sediment://')) return null;
+  const assetId = source.slice('sediment://'.length).split(/[?#]/, 1)[0];
+  if (!assetId.startsWith('file_')) return null;
+  return `https://chatgpt.com/backend-api/files/download/${encodeURIComponent(assetId)}`;
+}
+
+/**
+ * Builds the canonical conversation-image resource for one ChatGPT image-pointer part.
+ *
+ * @param {Object<string, *>} part - The ChatGPT multimodal source part being normalized.
+ * @param {string} sourceRecordId - The stable provider/source record identifier.
+ * @param {number} sourceIndex - The zero-based index of the source record.
+ * @param {number} partIndex - The zero-based content-part index.
+ * @returns {Object<string, *>} The canonical conversation-image resource corresponding to the source image-pointer part.
+ */
+function imageResource(part, sourceRecordId, sourceIndex, partIndex) {
+  const sourcePointer = imagePointerSource(part);
+  const resource = {
+    id: `${sourceRecordId}:resource:image:${partIndex}`,
+    type: 'image',
+    resource_kind: 'conversation_image',
+    source: {
+      provider: 'chatgpt',
+      record_id: sourceRecordId,
+      record_index: sourceIndex,
+      part_index: partIndex
+    }
+  };
+
+  if (sourcePointer) resource.source_pointer = sourcePointer;
+  if (Number.isFinite(part?.size_bytes)) resource.size_bytes = part.size_bytes;
+  if (Number.isFinite(part?.width)) resource.width = part.width;
+  if (Number.isFinite(part?.height)) resource.height = part.height;
+
+  if (!sourcePointer) {
+    resource.status = 'missing';
+    return resource;
+  }
+
+  if (sourcePointer.startsWith('data:image/')) {
+    resource.status = 'available';
+    resource.data_url = sourcePointer;
+    return resource;
+  }
+
+  const downloadUrl = sedimentDownloadUrl(sourcePointer);
+  if (downloadUrl) resource.download_url = downloadUrl;
+  return resource;
+}
+
+/**
+ * Remaps text range.
+ *
+ * @param {Object<string, *>|null} range - The located text range, or `null` when the reference text was not found.
+ * @param {Map<number, number>} textOrdinalToPartIndex - The zero-based text ordinal to part index.
+ * @returns {Object<string, *>|null} The supplied text range with its text-only ordinal remapped to the original multimodal part index, or the original null/range when no remap applies.
+ */
+function remapTextRange(range, textOrdinalToPartIndex) {
+  if (!range || !Number.isInteger(range.part_index)) return range;
+  const partIndex = textOrdinalToPartIndex.get(range.part_index);
+  if (!Number.isInteger(partIndex)) return range;
+  return { ...range, part_index: partIndex };
+}
+
+/**
+ * Remaps citation.
+ *
+ * @param {Object<string, *>} citation - The canonical citation being rendered or remapped.
+ * @param {Map<number, number>} textOrdinalToPartIndex - The zero-based text ordinal to part index.
+ * @returns {Object<string, *>} A copy of the canonical citation whose text range uses the original multimodal part index.
+ */
+function remapCitation(citation, textOrdinalToPartIndex) {
+  if (!citation || typeof citation !== 'object') return citation;
+  return {
+    ...citation,
+    text_range: remapTextRange(citation.text_range, textOrdinalToPartIndex)
+  };
+}
+
+/**
+ * Remaps display replacement.
+ *
+ * @param {Object<string, *>} replacement - The canonical display-replacement object whose part indexes are being remapped.
+ * @param {Map<number, number>} textOrdinalToPartIndex - The zero-based text ordinal to part index.
+ * @returns {Object<string, *>} A copy of the display replacement whose text range uses the original multimodal part index.
+ */
+function remapDisplayReplacement(replacement, textOrdinalToPartIndex) {
+  if (!replacement || typeof replacement !== 'object') return replacement;
+  return {
+    ...replacement,
+    text_range: remapTextRange(replacement.text_range, textOrdinalToPartIndex)
+  };
+}
+
+/**
+ * Remaps existing resource.
+ *
+ * @param {Object<string, *>} resource - The canonical resource whose source/text part indexes are being remapped.
+ * @param {Map<number, number>} textOrdinalToPartIndex - The zero-based text ordinal to part index.
+ * @returns {Object<string, *>} A copy of the canonical resource with text/source part indexes remapped to original multimodal indexes when applicable.
+ */
+function remapExistingResource(resource, textOrdinalToPartIndex) {
+  if (!resource || typeof resource !== 'object') return resource;
+  const remapped = { ...resource };
+  if (resource.text_range) {
+    remapped.text_range = remapTextRange(resource.text_range, textOrdinalToPartIndex);
+  }
+  if (resource.source && Number.isInteger(resource.source.part_index)) {
+    const partIndex = textOrdinalToPartIndex.get(resource.source.part_index);
+    if (Number.isInteger(partIndex)) {
+      remapped.source = { ...resource.source, part_index: partIndex };
+    }
+  }
+  return remapped;
+}
+
+/**
+ * Normalizes multimodal images.
+ *
+ * @param {Object<string, *>} event - The canonical event being inspected, normalized, or rendered.
+ * @param {Object<string, *>} record - The provider/source record to process.
+ * @returns {Object<string, *>} The canonical event with source-order image blocks/resources inserted, or the original event when no image pointers are present.
+ */
+function normalizeMultimodalImages(event, record) {
+  const parts = record?.content?.parts;
+  if (!Array.isArray(parts)) return event;
+  if (!parts.some(part => part?.content_type === 'image_asset_pointer')) return event;
+
+  const blocks = [];
+  const images = [];
+  // Maps text-only ordinals used by ChatGPT references back to original multimodal part indexes.
+  const textOrdinalToPartIndex = new Map();
+  // Counts only textual parts while walking multimodal source content.
+  let textOrdinal = 0;
+
+  parts.forEach((part, partIndex) => {
+    if (typeof part === 'string') {
+      textOrdinalToPartIndex.set(textOrdinal, partIndex);
+      textOrdinal += 1;
+      blocks.push({
+        id: `${event.source_record_id}:part:${partIndex}`,
+        type: 'text',
+        text: part,
+        source: {
+          provider: 'chatgpt',
+          record_id: event.source_record_id,
+          record_index: event.source_index,
+          part_index: partIndex
+        }
+      });
+      return;
+    }
+
+    if (part?.content_type !== 'image_asset_pointer') return;
+    const resource = imageResource(part, event.source_record_id, event.source_index, partIndex);
+    images.push(resource);
+    blocks.push({
+      id: `${event.source_record_id}:part:${partIndex}`,
+      type: 'image',
+      resource_id: resource.id,
+      source: {
+        provider: 'chatgpt',
+        record_id: event.source_record_id,
+        record_index: event.source_index,
+        part_index: partIndex
+      }
+    });
+  });
+
+  return {
+    ...event,
+    blocks,
+    citations: event.citations.map(citation => remapCitation(citation, textOrdinalToPartIndex)),
+    display_replacements: (event.display_replacements ?? [])
+      .map(replacement => remapDisplayReplacement(replacement, textOrdinalToPartIndex)),
+    resources: [
+      ...event.resources.map(resource => remapExistingResource(resource, textOrdinalToPartIndex)),
+      ...images
+    ]
+  };
+}
+
+/**
+ * Builds canonical ChatGPT source provenance for a derived event/block object.
+ *
+ * @param {Object<string, *>} event - The canonical event being inspected, normalized, or rendered.
+ * @param {Object<string, *>} extra - Additional source-provenance fields to merge with the event source object.
+ * @returns {Object<string, *>} Canonical ChatGPT source provenance extended with any supplied block/reference fields.
+ */
+function sourceFor(event, extra = {}) {
+  return {
+    provider: 'chatgpt',
+    record_id: event.source_record_id,
+    record_index: event.source_index,
+    ...extra
+  };
+}
+
+/**
+ * Locates text range.
+ *
+ * @param {Array<Object<string, *>>} blocks - The ordered canonical content blocks to process.
+ * @param {string} matchedText - The literal source text associated with the reference.
+ * @param {number} startPartIndex - The content-part index at which searching begins.
+ * @param {number} startOffset - The character offset at which searching begins.
+ * @returns {Object<string, number>|null} The located text range within canonical blocks, or null when the literal text is absent.
+ */
+function locateTextRange(blocks, matchedText, startPartIndex = 0, startOffset = 0) {
+  if (typeof matchedText !== 'string' || !matchedText) return null;
+  for (let partIndex = startPartIndex; partIndex < blocks.length; partIndex += 1) {
+    const block = blocks[partIndex];
+    if (block?.type !== 'text' || typeof block.text !== 'string') continue;
+    const from = partIndex === startPartIndex ? startOffset : 0;
+    const index = block.text.indexOf(matchedText, from);
+    if (index >= 0) {
+      return {
+        part_index: partIndex,
+        start: index,
+        end: index + matchedText.length
+      };
+    }
+  }
+  return null;
+}
+
+/**
+ * Normalizes display replacements.
+ *
+ * @param {Object<string, *>} event - The canonical event being inspected, normalized, or rendered.
+ * @param {Object<string, *>} record - The provider/source record to process.
+ * @returns {Object<string, *>} The canonical event with normalized alt-text display replacements appended, or the original event when none apply.
+ */
+function normalizeDisplayReplacements(event, record) {
+  const references = record?.metadata?.content_references;
+  if (!Array.isArray(references)) return event;
+
+  const replacements = [];
+  // Canonical text-block cursor used to place display replacements in source order.
+  let partIndex = 0;
+  // Character offset within the current canonical text block for the next reference match.
+  let offset = 0;
+
+  references.forEach((reference, referenceIndex) => {
+    if (reference?.type !== 'alt_text') return;
+    const matchedText = typeof reference?.matched_text === 'string'
+      ? reference.matched_text
+      : null;
+    const displayText = typeof reference?.alt === 'string'
+      ? reference.alt
+      : null;
+    if (!matchedText || displayText == null) return;
+
+    const range = locateTextRange(event.blocks, matchedText, partIndex, offset);
+    if (range) {
+      partIndex = range.part_index;
+      offset = range.end;
+    }
+
+    replacements.push({
+      id: `${event.source_record_id}:display_replacement:${referenceIndex}`,
+      type: 'display_replacement',
+      replacement_kind: 'alt_text',
+      matched_text: matchedText,
+      display_text: displayText,
+      prompt_text: typeof reference?.prompt_text === 'string' ? reference.prompt_text : null,
+      text_range: range,
+      source: sourceFor(event, { reference_index: referenceIndex })
+    });
+  });
+
+  if (!replacements.length) return event;
+  return {
+    ...event,
+    display_replacements: [
+      ...(Array.isArray(event.display_replacements) ? event.display_replacements : []),
+      ...replacements
+    ]
+  };
+}
+
+/**
+ * Normalizes tether assets.
+ *
+ * @param {Object<string, *>|Array<Object<string, *>>|null} assets - The provider tether-browsing asset object/array, or null when absent.
+ * @returns {Array<Object<string, *>>|null} Normalized tether asset descriptors in source order, or null when the source assets field is absent.
+ */
+function normalizedTetherAssets(assets) {
+  if (assets == null) return null;
+  const values = Array.isArray(assets) ? assets : [assets];
+  return values.filter(asset => asset && typeof asset === 'object').map((asset, assetIndex) => {
+    const normalized = { asset_index: assetIndex };
+    for (const key of ['title', 'text', 'alt', 'caption', 'url']) {
+      if (typeof asset[key] === 'string') normalized[key] = asset[key];
+    }
+    return normalized;
+  });
+}
+
+/**
+ * Normalizes tether browsing display.
+ *
+ * @param {Object<string, *>} event - The canonical event being inspected, normalized, or rendered.
+ * @param {Object<string, *>} record - The provider/source record to process.
+ * @returns {Object<string, *>} A canonical tool-result event for tether browsing display content, or the original event when the source shape does not match.
+ */
+function normalizeTetherBrowsingDisplay(event, record) {
+  if (record?.author?.role !== 'tool' ||
+      record?.content?.content_type !== 'tether_browsing_display') return event;
+
+  const output = {
+    summary: typeof record.content.summary === 'string' ? record.content.summary : null,
+    result: typeof record.content.result === 'string' ? record.content.result : null,
+    assets: normalizedTetherAssets(record.content.assets),
+    tether_id: typeof record.content.tether_id === 'string' ? record.content.tether_id : null
+  };
+
+  return {
+    ...event,
+    kind: 'tool_result',
+    blocks: [{
+      id: `${event.source_record_id}:tool_result:0`,
+      type: 'tool_result',
+      call_id: null,
+      name: record?.author?.name ?? null,
+      output,
+      output_format: 'tether_browsing_display',
+      source: sourceFor(event)
+    }]
+  };
+}
+
+/**
+ * Normalizes reasoning recap.
+ *
+ * @param {Object<string, *>} event - The canonical event being inspected, normalized, or rendered.
+ * @param {Object<string, *>} record - The provider/source record to process.
+ * @returns {Object<string, *>} A canonical reasoning-summary event for reasoning recap content, or the original event when the source shape does not match.
+ */
+function normalizeReasoningRecap(event, record) {
+  if (record?.author?.role !== 'assistant' ||
+      record?.content?.content_type !== 'reasoning_recap') return event;
+
+  const content = typeof record.content.content === 'string' ? record.content.content : null;
+  return {
+    ...event,
+    kind: 'reasoning_summary',
+    blocks: [{
+      id: `${event.source_record_id}:reasoning_recap:0`,
+      type: 'reasoning_summary',
+      summary: null,
+      content,
+      chunks: null,
+      finished: null,
+      source: sourceFor(event)
+    }]
+  };
+}
+
+/**
+ * Normalizes model editable context.
+ *
+ * @param {Object<string, *>} event - The canonical event being inspected, normalized, or rendered.
+ * @param {Object<string, *>} record - The provider/source record to process.
+ * @returns {Object<string, *>} A canonical system-context event for model editable context content, or the original event when the source shape does not match.
+ */
+function normalizeModelEditableContext(event, record) {
+  if (record?.author?.role !== 'assistant' ||
+      record?.content?.content_type !== 'model_editable_context') return event;
+
+  const blocks = [];
+  for (const key of ['model_set_context', 'repo_summary']) {
+    const value = record.content[key];
+    if (typeof value !== 'string' || !value.trim()) continue;
+    blocks.push({
+      id: `${event.source_record_id}:context:${key}`,
+      type: 'text',
+      text: value,
+      context_kind: key,
+      source: sourceFor(event, { context_key: key })
+    });
+  }
+
+  return {
+    ...event,
+    kind: 'system_context',
+    blocks
+  };
+}
+
+/**
+ * Normalizes non parts content.
+ *
+ * @param {Object<string, *>} event - The canonical event being inspected, normalized, or rendered.
+ * @param {Object<string, *>} record - The provider/source record to process.
+ * @returns {Object<string, *>} The canonical event after applying supported non-parts ChatGPT content normalizers.
+ */
+function normalizeNonPartsContent(event, record) {
+  let normalized = normalizeTetherBrowsingDisplay(event, record);
+  normalized = normalizeReasoningRecap(normalized, record);
+  return normalizeModelEditableContext(normalized, record);
+}
+
+/**
+ * Normalizes source footnotes.
+ *
+ * @param {Object<string, *>} event - The canonical event being inspected, normalized, or rendered.
+ * @param {Object<string, *>} record - The provider/source record to process.
+ * @returns {Object<string, *>} The canonical event with sources-footnote citations appended, or the original event when none are present.
+ */
+function normalizeSourceFootnotes(event, record) {
+  const references = record?.metadata?.content_references;
+  if (!Array.isArray(references)) return event;
+
+  const footnotes = [];
+  references.forEach((reference, referenceIndex) => {
+    if (reference?.type !== 'sources_footnote') return;
+
+    footnotes.push({
+      id: `${event.source_record_id}:citation:${referenceIndex}`,
+      type: 'citation',
+      citation_kind: 'sources_footnote',
+      matched_text: typeof reference?.matched_text === 'string' ? reference.matched_text : null,
+      text_range: null,
+      sources_footnote: {
+        sources: Array.isArray(reference?.sources)
+          ? reference.sources.map(source => ({
+              title: typeof source?.title === 'string' ? source.title : null,
+              url: typeof source?.url === 'string' ? source.url : null,
+              attribution: typeof source?.attribution === 'string' ? source.attribution : null
+            }))
+          : []
+      },
+      source: sourceFor(event, { reference_index: referenceIndex })
+    });
+  });
+
+  if (!footnotes.length) return event;
+  return {
+    ...event,
+    citations: [...event.citations, ...footnotes]
+  };
+}
+
+/**
+ * Normalizes parent relationship.
+ *
+ * @param {Object<string, *>} event - The canonical event being inspected, normalized, or rendered.
+ * @param {Object<string, *>} record - The provider/source record to process.
+ * @param {Set<string>} knownRecordIds - Set of stable source record IDs used to validate parent-event linkage.
+ * @returns {Object<string, *>} The canonical event with parent source/event relationship fields derived from provider metadata.
+ */
+function normalizeParentRelationship(event, record, knownRecordIds) {
+  const parentRecordId = typeof record?.metadata?.parent_id === 'string' &&
+      record.metadata.parent_id.trim()
+    ? record.metadata.parent_id.trim()
+    : null;
+
+  return {
+    ...event,
+    relationships: {
+      ...event.relationships,
+      parent_record_id: parentRecordId,
+      parent_event_id: parentRecordId && knownRecordIds.has(parentRecordId)
+        ? `chatgpt:${parentRecordId}`
+        : null
+    }
+  };
+}
+
+/**
+ * Normalizes source provenance.
+ *
+ * @param {Object<string, *>} event - The canonical event being inspected, normalized, or rendered.
+ * @param {Object<string, *>} record - The provider/source record to process.
+ * @returns {Object<string, *>} The canonical event with stable ChatGPT record identity, indexes, timestamps, and turn-linkage provenance.
+ */
+function normalizeSourceProvenance(event, record) {
+  const sourceIndex = Number.isInteger(event.source_index) ? event.source_index : null;
+  const recordId = typeof record?.id === 'string' ? record.id : event.source_record_id;
+  const metadata = record?.metadata && typeof record.metadata === 'object' ? record.metadata : {};
+
+  return {
+    ...event,
+    source: {
+      ...event.source,
+      record_id: recordId,
+      record_index: sourceIndex,
+      turn_id: recordId,
+      create_time: record?.create_time ?? null,
+      update_time: record?.update_time ?? null,
+      turn_exchange_id: typeof metadata.turn_exchange_id === 'string'
+        ? metadata.turn_exchange_id
+        : null,
+      working_turn_id: typeof metadata.working_turn_id === 'string'
+        ? metadata.working_turn_id
+        : null
+    }
+  };
+}
+
+/**
+ * Adapts ordered ChatGPT provider records into ordered canonical events while preserving source identity and provenance.
+ *
+ * @param {Array<Object>} records - The ordered provider/source records to process.
+ * @returns {Array<Object>} The ordered canonical events derived from the ordered ChatGPT source records.
+ */
+function adaptChatGPTRecords(records) {
+  const events = adaptBaseChatGPTRecords(records);
+  // Set of stable provider record IDs used to validate parent relationships without inventing links.
+  const knownRecordIds = new Set(records
+    .map(record => record?.id)
+    .filter(id => typeof id === 'string' && id));
+
+  return events.map(event => {
+    const record = records[event.source_index];
+    const withReplacements = normalizeDisplayReplacements(event, record);
+    const withImages = normalizeMultimodalImages(withReplacements, record);
+    const withNonParts = normalizeNonPartsContent(withImages, record);
+    const withFootnotes = normalizeSourceFootnotes(withNonParts, record);
+    const withParent = normalizeParentRelationship(withFootnotes, record, knownRecordIds);
+    return normalizeSourceProvenance(withParent, record);
+  });
+}
+
+/**
+ * Checks whether visible turn event.
+ *
+ * @param {Object<string, *>|null} event - The canonical event being inspected, normalized, or rendered.
+ * @returns {boolean} Whether the canonical event is a visible User/Assistant turn event.
+ */
+function isVisibleTurnEvent(event) {
+  return event?.visibility === 'visible' &&
+    (event?.role === 'user' || event?.role === 'assistant') &&
+    (event?.kind === 'message' || event?.kind === 'commentary' || event?.kind === 'reasoning_summary');
+}
+
+/**
+ * Handles source record.
+ *
+ * @param {Object<string, *>} event - The canonical event being inspected, normalized, or rendered.
+ * @returns {Object<string, *>} The normalized source-provenance record carried by a derived turn.
+ */
+function sourceRecord(event) {
+  const source = event?.source && typeof event.source === 'object' ? event.source : {};
+  const sourceIndex = Number.isInteger(event?.source_index)
+    ? event.source_index
+    : Number.isInteger(source.record_index) ? source.record_index : null;
+  const recordId = event?.source_record_id ?? source.record_id ?? null;
+
+  return {
+    record_id: recordId,
+    record_index: sourceIndex,
+    turn_id: source.turn_id ?? recordId,
+    create_time: source.create_time ?? null,
+    update_time: source.update_time ?? null,
+    turn_exchange_id: source.turn_exchange_id ?? event?.relationships?.turn_exchange_id ?? null,
+    working_turn_id: source.working_turn_id ?? event?.relationships?.working_turn_id ?? null
+  };
+}
+
+/**
+ * Handles append event.
+ *
+ * @param {Object<string, *>} turn - The derived canonical turn whose identity or header is being projected.
+ * @param {Object<string, *>} event - The canonical event being inspected, normalized, or rendered.
+ * @returns {void} No value is returned; the supplied turn is updated in place.
+ */
+function appendEvent(turn, event) {
+  turn.event_ids.push(event.id);
+  turn.source.record_ids.push(event.source_record_id);
+  turn.source.records.push(sourceRecord(event));
+}
+
+/**
+ * Handles new turn.
+ *
+ * @param {Object<string, *>} event - The canonical event being inspected, normalized, or rendered.
+ * @param {number} turnIndex - The zero-based turn index.
+ * @returns {Object<string, *>} A new derived turn initialized from the supplied canonical event.
+ */
+function newTurn(event, turnIndex) {
+  return {
+    id: `turn:${event.id}`,
+    index: turnIndex,
+    role: event.role,
+    event_ids: [event.id],
+    source: {
+      provider: event.source?.provider ?? event.provider ?? null,
+      record_ids: [event.source_record_id],
+      records: [sourceRecord(event)]
+    }
+  };
+}
+
+/**
+ * Derives turns.
+ *
+ * @param {Array<Object<string, *>>} events - The ordered canonical events to process.
+ * @returns {Array<Object<string, *>>} Derived turns in the same canonical event order, with contiguous Assistant activity grouped into its turn.
+ */
+function deriveTurns(events) {
+  if (!Array.isArray(events)) throw new TypeError('Canonical events must be an array.');
+
+  // Derived turns are accumulated in canonical event order; no provider event reordering occurs here.
+  const turns = [];
+  // Tracks turn indexes that already contain a visible message so later assistant activity is attached correctly.
+  const turnsWithMessage = new Set();
+  for (const event of events) {
+    if (!isVisibleTurnEvent(event)) continue;
+
+    const current = turns.at(-1);
+    if (event.kind === 'reasoning_summary' && event.role === 'assistant' &&
+        current?.role === 'assistant' && !turnsWithMessage.has(current.id)) {
+      appendEvent(current, event);
+      continue;
+    }
+
+    if (event.kind === 'commentary' && current?.role === 'assistant') {
+      appendEvent(current, event);
+      continue;
+    }
+
+    if (event.kind === 'message' && event.role === 'assistant' &&
+        current?.role === 'assistant' && !turnsWithMessage.has(current.id)) {
+      appendEvent(current, event);
+      turnsWithMessage.add(current.id);
+      continue;
+    }
+
+    const turn = newTurn(event, turns.length);
+    turns.push(turn);
+    if (event.kind === 'message') turnsWithMessage.add(turn.id);
+  }
+  return turns;
+}
+
+/** Stable semantic style-role names exposed to projection consumers. */
+const STYLE_ROLES = Object.freeze({
+  USER_HEADING: 'user-heading',
+  ASSISTANT_HEADING: 'assistant-heading',
+  TIMESTAMP: 'timestamp',
+  RECORD_NUMBER: 'record-number',
+  TURN_ID: 'turn-id'
+});
+
+/** Immutable default projection theme used as the reset and merge baseline. */
+const DEFAULT_THEME = Object.freeze({
+  ansi: Object.freeze({
+    [STYLE_ROLES.USER_HEADING]: '\u001b[33m',
+    [STYLE_ROLES.ASSISTANT_HEADING]: '\u001b[32m',
+    [STYLE_ROLES.TIMESTAMP]: '\u001b[36m',
+    [STYLE_ROLES.RECORD_NUMBER]: '\u001b[2m',
+    [STYLE_ROLES.TURN_ID]: '\u001b[35m',
+    reset: '\u001b[0m'
+  }),
+  html: Object.freeze({
+    [STYLE_ROLES.USER_HEADING]: 'transcript-user-heading',
+    [STYLE_ROLES.ASSISTANT_HEADING]: 'transcript-assistant-heading',
+    [STYLE_ROLES.TIMESTAMP]: 'transcript-timestamp',
+    [STYLE_ROLES.RECORD_NUMBER]: 'transcript-record-number',
+    [STYLE_ROLES.TURN_ID]: 'transcript-turn-id'
+  })
+});
+
+/** Mutable process-wide projection theme produced by applying consumer overrides to the default. */
+let configuredTheme = cloneTheme(DEFAULT_THEME);
+
+/**
+ * Handles clone theme.
+ *
+ * @param {Object<string, *>} theme - The projection theme containing ANSI and HTML style-role mappings.
+ * @returns {Object<string, *>} A detached projection-theme object containing copied ANSI and HTML role maps.
+ */
+function cloneTheme(theme) {
+  return {
+    ansi: { ...(theme?.ansi ?? {}) },
+    html: { ...(theme?.html ?? {}) }
+  };
+}
+
+/**
+ * Handles merge theme.
+ *
+ * @param {Object<string, *>} base - The base projection theme on which overrides are applied.
+ * @param {Object<string, *>|null} overrides - Optional projection-theme role overrides to merge with the current/base theme.
+ * @returns {Object<string, *>} A new projection theme formed by overlaying the supplied role maps on the base theme.
+ */
+function mergeTheme(base, overrides) {
+  return {
+    ansi: { ...base.ansi, ...(overrides?.ansi ?? {}) },
+    html: { ...base.html, ...(overrides?.html ?? {}) }
+  };
+}
+
+/**
+ * Gets default projection theme.
+ *
+ * @returns {Object<string, *>} A detached copy of the currently configured projection theme.
+ */
+function getDefaultProjectionTheme() {
+  return cloneTheme(configuredTheme);
+}
+
+/**
+ * Configures projection theme.
+ *
+ * @param {Object<string, *>} overrides - Optional projection-theme role overrides to merge with the current/base theme.
+ * @returns {Object<string, *>} A detached copy of the newly configured projection theme.
+ */
+function configureProjectionTheme(overrides = {}) {
+  configuredTheme = mergeTheme(configuredTheme, overrides);
+  return getDefaultProjectionTheme();
+}
+
+/**
+ * Resets projection theme.
+ *
+ * @returns {Object<string, *>} A detached copy of the restored built-in projection theme.
+ */
+function resetProjectionTheme() {
+  configuredTheme = cloneTheme(DEFAULT_THEME);
+  return getDefaultProjectionTheme();
+}
+
+/**
+ * Handles resolve projection theme.
+ *
+ * @param {Object<string, *>|null} overrides - Optional projection-theme role overrides to merge with the current/base theme.
+ * @returns {Object<string, *>} A new effective projection theme combining the configured theme with optional per-call overrides.
+ */
+function resolveProjectionTheme(overrides = null) {
+  return mergeTheme(configuredTheme, overrides);
+}
+
+/** Default heading-presentation policy when a caller supplies no preference. */
+const DEFAULT_HEADING_POLICY = Object.freeze({
+  timestamp: false,
+  recordNumber: false,
+  recordNumberWidth: null,
+  turnId: false,
+  debugProvenance: false,
+  timeZone: null
+});
+
+/**
+ * Resolves the Core heading-presentation policy from public projection options.
+ *
+ * Callers select visibility/presentation preferences only. Semantic values such
+ * as timestamps, record numbers, source turn IDs, and debug identities are
+ * always derived by Core from canonical source provenance.
+ *
+ * @param {Object<string, *>} options - Public Core projection options.
+ * @returns {Object<string, *>} Normalized heading-presentation policy.
+ */
+function resolveHeadingPolicy(options = {}) {
+  const heading = options?.heading && typeof options.heading === 'object'
+    ? options.heading
+    : {};
+  return {
+    timestamp: heading.timestamp === true,
+    recordNumber: heading.recordNumber === true,
+    recordNumberWidth: Number.isInteger(heading.recordNumberWidth) &&
+        heading.recordNumberWidth > 0
+      ? heading.recordNumberWidth
+      : DEFAULT_HEADING_POLICY.recordNumberWidth,
+    turnId: heading.turnId === true,
+    debugProvenance: heading.debugProvenance === true,
+    timeZone: typeof heading.timeZone === 'string' && heading.timeZone.trim()
+      ? heading.timeZone.trim()
+      : DEFAULT_HEADING_POLICY.timeZone
+  };
+}
+
+/**
+ * Converts one provider timestamp retained in canonical source provenance to a Date.
+ *
+ * Numeric provider timestamps are interpreted as Unix seconds unless their
+ * magnitude already indicates milliseconds. ISO/date strings are parsed using
+ * the platform Date implementation. Invalid or absent values yield null.
+ *
+ * @param {*} raw - Canonical source timestamp value.
+ * @returns {Date|null} Parsed source timestamp or null.
+ */
+function sourceDate(raw) {
+  if (raw == null || raw === '') return null;
+  let value = raw;
+  if (typeof raw === 'string' && /^-?\d+(?:\.\d+)?$/.test(raw.trim())) {
+    value = Number(raw);
+  }
+  if (typeof value === 'number' && Number.isFinite(value)) {
+    const milliseconds = Math.abs(value) < 1e12 ? value * 1000 : value;
+    const date = new Date(milliseconds);
+    return Number.isFinite(date.getTime()) ? date : null;
+  }
+  if (typeof value !== 'string') return null;
+  const date = new Date(value);
+  return Number.isFinite(date.getTime()) ? date : null;
+}
+
+/**
+ * Formats one source timestamp using Core's canonical transcript date grammar.
+ *
+ * The grammar is `YYYY-MM-DD HH:MM:SS`. A caller may select an IANA timezone as
+ * presentation policy, but never supplies the formatted timestamp itself.
+ *
+ * @param {*} raw - Canonical source timestamp value.
+ * @param {string|null} timeZone - Optional IANA timezone name.
+ * @returns {string|null} Canonical formatted timestamp or null.
+ */
+function formatHeadingTimestamp(raw, timeZone = null) {
+  const date = sourceDate(raw);
+  if (!date) return null;
+  const offsetMatch = typeof timeZone === 'string'
+    ? timeZone.match(/^([+-])(\d{2}):(\d{2})$/)
+    : null;
+  if (offsetMatch) {
+    const hours = Number(offsetMatch[2]);
+    const minutes = Number(offsetMatch[3]);
+    if (hours > 23 || minutes > 59) {
+      throw new RangeError(`Invalid fixed-offset timezone: ${timeZone}`);
+    }
+    const sign = offsetMatch[1] === '-' ? -1 : 1;
+    const offsetMinutes = sign * ((hours * 60) + minutes);
+    const shifted = new Date(date.getTime() + (offsetMinutes * 60_000));
+    return shifted.toISOString().slice(0, 19).replace('T', ' ');
+  }
+  const formatter = new Intl.DateTimeFormat('en-CA', {
+    year: 'numeric',
+    month: '2-digit',
+    day: '2-digit',
+    hour: '2-digit',
+    minute: '2-digit',
+    second: '2-digit',
+    hourCycle: 'h23',
+    ...(timeZone ? { timeZone } : {})
+  });
+  const parts = Object.fromEntries(
+    formatter.formatToParts(date)
+      .filter(part => part.type !== 'literal')
+      .map(part => [part.type, part.value])
+  );
+  if (!parts.year || !parts.month || !parts.day ||
+      !parts.hour || !parts.minute || !parts.second) return null;
+  return `${parts.year}-${parts.month}-${parts.day} ` +
+    `${parts.hour}:${parts.minute}:${parts.second}`;
+}
+
+/**
+ * Returns canonical source provenance for heading projection from one event.
+ *
+ * @param {Object<string, *>} event - Canonical event.
+ * @returns {Object<string, *>} Canonical source provenance view.
+ */
+function headingSource(event) {
+  const source = event?.source && typeof event.source === 'object'
+    ? event.source
+    : {};
+  return {
+    provider: event?.provider ?? source.provider ?? null,
+    record_id: source.record_id ?? event?.source_record_id ?? null,
+    record_index: Number.isInteger(source.record_index)
+      ? source.record_index
+      : Number.isInteger(event?.source_index) ? event.source_index : null,
+    turn_id: source.turn_id ?? null,
+    timestamp: source.timestamp ?? source.create_time ?? source.update_time ?? null
+  };
+}
+
+/**
+ * Derives Core-owned semantic heading metadata for one canonical event.
+ *
+ * @param {Object<string, *>} event - Canonical event supplying source provenance.
+ * @param {Object<string, *>} options - Public Core projection options.
+ * @returns {Object<string, *>} Core-owned semantic heading metadata.
+ */
+function deriveHeadingMetadata(event, options = {}) {
+  const policy = resolveHeadingPolicy(options);
+  const source = headingSource(event);
+  const metadata = {};
+
+  if (policy.timestamp) {
+    const timestamp = formatHeadingTimestamp(source.timestamp, policy.timeZone);
+    if (timestamp) metadata.timestamp = timestamp;
+  }
+  if (policy.recordNumber && Number.isInteger(source.record_index)) {
+    metadata.record_number = source.record_index + 1;
+    if (policy.recordNumberWidth != null) {
+      metadata.record_number_width = policy.recordNumberWidth;
+    }
+  }
+  if (policy.turnId && typeof source.turn_id === 'string' && source.turn_id) {
+    metadata.turn_id = source.turn_id;
+  }
+  if (policy.debugProvenance) {
+    const debug = {};
+    if (source.record_id != null) debug.record_id = source.record_id;
+    if (Number.isInteger(source.record_index)) debug.record_index = source.record_index;
+    if (Object.keys(debug).length) metadata.debug = debug;
+  }
+  return metadata;
+}
+
+/**
+ * Formats the Core-derived record number using optional presentation width.
+ *
+ * The numeric record number remains authoritative in `record_number`. Width is
+ * presentation policy only and pads with leading spaces without truncating a
+ * value that is already wider than the requested field.
+ *
+ * @param {Object<string, *>} metadata - Core-owned heading metadata.
+ * @returns {string|null} Display record number, or null when absent.
+ */
+function formatHeadingRecordNumber(metadata = {}) {
+  if (metadata.record_number == null) return null;
+  const text = String(metadata.record_number);
+  const width = Number.isInteger(metadata.record_number_width) &&
+      metadata.record_number_width > 0
+    ? metadata.record_number_width
+    : 0;
+  return width ? text.padStart(width, ' ') : text;
+}
+
+/**
+ * Replaces caller semantic heading projection with Core-derived metadata.
+ *
+ * Generic projection fields remain intact, but callers cannot override semantic
+ * heading values or debug provenance by placing them in `projection`.
+ *
+ * @param {Object<string, *>} event - Canonical event to project.
+ * @param {Object<string, *>} options - Public Core projection options.
+ * @returns {Object<string, *>} Event clone carrying Core-owned heading metadata.
+ */
+function withCoreHeadingMetadata(event, options = {}) {
+  const projection = { ...(event?.projection ?? {}) };
+  delete projection.heading_metadata;
+  delete projection.debug_provenance;
+  projection.heading_metadata = deriveHeadingMetadata(event, options);
+
+  const related = projection.related_sources &&
+      typeof projection.related_sources === 'object'
+    ? { ...projection.related_sources }
+    : {};
+  for (const [name, source] of Object.entries(event?.relationships ?? {})) {
+    if (!source || typeof source !== 'object' || Array.isArray(source)) continue;
+    const relatedProjection = {
+      ...(related[name] && typeof related[name] === 'object' ? related[name] : {})
+    };
+    delete relatedProjection.heading_metadata;
+    delete relatedProjection.debug_provenance;
+    relatedProjection.heading_metadata = deriveHeadingMetadata({
+      provider: source.provider ?? event?.provider ?? null,
+      source_record_id: source.record_id ?? null,
+      source_index: Number.isInteger(source.record_index) ? source.record_index : null,
+      source
+    }, options);
+    related[name] = relatedProjection;
+  }
+  if (Object.keys(related).length) projection.related_sources = related;
+  return { ...event, projection };
+}
+
+/**
+ * Builds ordered semantic heading components from Core-owned metadata.
+ *
+ * @param {Object<string, *>} metadata - Core-owned heading metadata.
+ * @returns {Array<Object<string, string>>} Ordered visible metadata components.
+ */
+function headingMetadataComponents(metadata = {}) {
+  const components = [];
+  if (metadata.timestamp != null) {
+    components.push({
+      type: 'timestamp',
+      styleRole: STYLE_ROLES.TIMESTAMP,
+      text: `[${metadata.timestamp}]:`
+    });
+  }
+  const recordNumber = formatHeadingRecordNumber(metadata);
+  if (recordNumber != null) {
+    components.push({
+      type: 'record-number',
+      styleRole: STYLE_ROLES.RECORD_NUMBER,
+      text: `${recordNumber}:`
+    });
+  }
+  if (metadata.turn_id != null) {
+    components.push({
+      type: 'turn-id',
+      styleRole: STYLE_ROLES.TURN_ID,
+      text: String(metadata.turn_id)
+    });
+  }
+  return components;
+}
+
+/**
+ * Renders Core-owned debug provenance as the canonical Markdown/HTML comment.
+ *
+ * @param {Object<string, *>} metadata - Core-owned heading metadata.
+ * @returns {string} Debug provenance comment or an empty string.
+ */
+function renderHeadingDebugComment(metadata = {}) {
+  const debug = metadata?.debug ?? {};
+  const fields = [];
+  if (debug.record_id != null) fields.push(`record_id=${debug.record_id}`);
+  if (Number.isInteger(debug.record_index)) fields.push(`record_index=${debug.record_index}`);
+  return fields.length ? `<!-- ${fields.join(' ')} -->` : '';
+}
+
+/**
+ * Escapes text for safe insertion into generated HTML fragments.
+ *
+ * @param {string} value - The input value to process.
+ * @returns {string} The HTML-escaped form of the supplied text.
+ */
+function htmlEscape(value) {
+  return String(value ?? '')
+    .replaceAll('&', '&amp;')
+    .replaceAll('<', '&lt;')
+    .replaceAll('>', '&gt;')
+    .replaceAll('"', '&quot;')
+    .replaceAll("'", '&#39;');
+}
+
+/**
+ * Quotes Markdown.
+ *
+ * @param {string} text - The text value to process.
+ * @returns {string} The supplied text rendered as Markdown blockquote lines.
+ */
+function quoteMarkdown(text) {
+  return String(text).split('\n').map(line => line ? `> ${line}` : '>').join('\n');
+}
+
+/**
+ * Returns the human-readable transcript speaker label for a canonical provider.
+ *
+ * @param {string} provider - The canonical provider identifier whose display label is requested.
+ * @returns {string} The human-readable provider name used in transcript headings.
+ */
+function providerLabel(provider) {
+  if (provider === 'claude') return 'Claude';
+  if (provider === 'codex') return 'Codex';
+  return 'ChatGPT';
+}
+
+
+/**
+ * Renders the optional metadata suffix for a transcript heading.
+ *
+ * @param {Object<string, *>} event - The canonical event whose source projection metadata is being used.
+ * @returns {string} The consumer-specific heading metadata suffix.
+ */
+function projectedHeadingMetadataSuffix(event) {
+  const projection = event?.projection ?? {};
+  const metadata = projection.heading_metadata ?? {};
+  const colors = projection.colors ?? {};
+  const reset = colors.reset ?? '';
+  /**
+   * Applies one configured ANSI colour to heading metadata.
+   *
+   * @param {string} text - Metadata text to style.
+   * @param {string} colorName - Projection colour field name.
+   * @returns {string} Styled text, or the original text when no colour is configured.
+   */
+  const styled = (text, colorName) => {
+    const color = colors[colorName] ?? '';
+    return color ? `${color}${text}${reset}` : text;
+  };
+  const fields = [];
+  if (metadata.timestamp != null) {
+    fields.push(styled(`[${metadata.timestamp}]:`, 'timestamp'));
+  }
+  if (metadata.record_number != null) {
+    fields.push(styled(`${formatHeadingRecordNumber(metadata)}:`, 'record_number'));
+  }
+  if (metadata.turn_id != null) {
+    fields.push(String(metadata.turn_id));
+  }
+  const metadataSuffix = fields.length ? ` ${fields.join(' ')}` : '';
+  return `${metadataSuffix}${projection.heading_suffix ?? ''}`;
+}
+
+/**
+ * Renders a transcript heading with optional consumer projection styling.
+ *
+ * @param {Object<string, *>} event - The canonical event being headed.
+ * @param {string} label - Canonical Markdown heading label.
+ * @returns {string} The consumer-decorated transcript heading.
+ */
+function projectedHeading(event, label) {
+  const projection = event?.projection ?? {};
+  const colors = projection.colors ?? {};
+  const color = label === '## User' ? colors.user : (label.includes(' Sub-agent ') ? '' : colors.ai);
+  const reset = colors.reset ?? '';
+  const heading = color ? `${color}${label}${reset}` : label;
+  return `${heading}${projectedHeadingMetadataSuffix(event)}`;
+}
+
+/**
+ * Renders a numbered thought heading with optional consumer projection metadata.
+ *
+ * @param {Object<string, *>} event - The canonical reasoning/tool event being headed.
+ * @param {number} number - The one-based thought number within the current Assistant section.
+ * @returns {string} The consumer-decorated thought heading.
+ */
+function projectedThoughtHeading(event, number) {
+  const projection = event?.projection ?? {};
+  const colors = projection.colors ?? {};
+  const label = `### Thought ${number}`;
+  const heading = colors.thought ? `${colors.thought}${label}${colors.reset ?? ''}` : label;
+  return `${heading}${projectedHeadingMetadataSuffix(event)}`;
+}
+
+/**
+ * Returns the optional source-record debug provenance comment for an event.
+ *
+ * Debug provenance is formatted centrally so every renderer uses the same
+ * `record_id` and `record_index` field names. `record_id` is the native
+ * provider/source record identity retained as `source_record_id`; it is
+ * deliberately distinct from first-class turn identity.
+ *
+ * @param {Object<string, *>} event - The canonical event whose source provenance is being rendered.
+ * @param {boolean} quoted - Whether the comment must remain inside an existing Markdown blockquote.
+ * @returns {string} The provenance comment in plain or blockquoted form, or an empty string when debugging is disabled.
+ */
+function projectedComment(event, quoted = false) {
+  const projection = event?.projection ?? {};
+  const coreComment = renderHeadingDebugComment(projection.heading_metadata ?? {});
+  if (coreComment) return quoted ? quoteMarkdown(coreComment) : coreComment;
+
+  // Internal compatibility for old direct-renderer tests. Public Core renderers
+  // strip this caller field and derive debug provenance from canonical source.
+  if (!projection.debug_provenance) return '';
+  const fields = [];
+  if (event?.source_record_id != null) fields.push(`record_id=${event.source_record_id}`);
+  if (Number.isInteger(event?.source_index)) fields.push(`record_index=${event.source_index}`);
+  if (!fields.length) return '';
+  const comment = `<!-- ${fields.join(' ')} -->`;
+  return quoted ? quoteMarkdown(comment) : comment;
+}
+
+/**
+ * Appends source debug provenance to the first renderer-generated structural line.
+ *
+ * @param {Object<string, *>} event - The canonical event whose provenance identifies the generated structure.
+ * @param {string} section - The already-rendered Markdown section whose first line is renderer-generated structure.
+ * @returns {string} The section with optional provenance appended to its first structural line.
+ */
+function projectedSection(event, section) {
+  const comment = projectedComment(event);
+  if (!comment) return section;
+  const newline = section.indexOf('\n');
+  if (newline < 0) return `${section} ${comment}`;
+  return `${section.slice(0, newline)} ${comment}${section.slice(newline)}`;
+}
+
+
+/**
+ * Returns an event-shaped projection view for a related source record.
+ *
+ * Primary canonical event provenance is preserved unchanged. This view is used
+ * only when a renderer-generated structure has separately evidenced provenance.
+ *
+ * @param {Object<string, *>} event - The canonical event whose related source is being projected.
+ * @param {string} relationshipName - The relationship/source role to project.
+ * @returns {Object<string, *>} An event-shaped view using the related source and projection, or the original event when unavailable.
+ */
+function relatedProjectionEvent(event, relationshipName) {
+  const source = event?.relationships?.[relationshipName];
+  if (!source || typeof source !== 'object') return event;
+  const relatedProjection = event?.projection?.related_sources?.[relationshipName];
+  return {
+    ...event,
+    source_record_id: source.record_id ?? null,
+    source_index: Number.isInteger(source.record_index) ? source.record_index : null,
+    projection: relatedProjection ?? event?.projection ?? {}
+  };
+}
+
+/**
+ * Finds one canonical event resource by resource ID.
+ *
+ * @param {Object<string, *>} event - The canonical event being inspected, normalized, or rendered.
+ * @param {string} resourceId - The resource id.
+ * @returns {Object<string, *>|null} The canonical resource with the requested ID, or null when the event has no matching resource.
+ */
+function resourceById(event, resourceId) {
+  return event.resources?.find(resource => resource.id === resourceId) ?? null;
+}
+
+/**
+ * Renders image block.
+ *
+ * @param {Object<string, *>} event - The canonical event being inspected, normalized, or rendered.
+ * @param {Object<string, *>} block - The canonical/provider content block being inspected or rendered.
+ * @returns {string} Markdown for the canonical image resource, including available/missing/unavailable state.
+ */
+function renderImageBlock(event, block) {
+  const resource = resourceById(event, block.resource_id);
+  if (!resource || resource.status === 'missing') return '[image missing]';
+  if (resource.status === 'available') {
+    const source = resource.data_url ?? resource.download_url ?? resource.source_pointer;
+    return source ? `![image](${source})` : '[image available]';
+  }
+  if (resource.source_pointer) return `[image not available](${resource.source_pointer})`;
+  return '[image not available]';
+}
+
+/**
+ * Returns the origin used for a citation-source favicon lookup.
+ *
+ * @param {string} url - The URL value to process.
+ * @returns {string} The hostname used for favicon lookup, or an empty string when the URL cannot be parsed.
+ */
+function faviconDomain(url) {
+  if (typeof url !== 'string' || !url) return '';
+  try {
+    const parsed = new URL(url);
+    return `${parsed.protocol}//${parsed.host}`;
+  } catch {
+    return url;
+  }
+}
+
+/**
+ * Builds citation-source tooltip text from the source title and snippet.
+ *
+ * @param {Object<string, *>} source - The source descriptor or provider pointer being normalized or rendered.
+ * @returns {string} Tooltip text assembled from the source title/snippet metadata.
+ */
+function sourceTooltip(source) {
+  const title = source?.title ?? '';
+  const snippet = source?.snippet ?? '';
+  if (title && snippet) return `${title}\n\n${snippet}`;
+  return title || snippet;
+}
+
+/**
+ * Returns the preferred visible label for a citation source.
+ *
+ * @param {Object<string, *>} source - The source descriptor or provider pointer being normalized or rendered.
+ * @param {string} fallback - Fallback display label used when the source supplies no suitable label.
+ * @returns {string} The preferred visible source label, falling back to the supplied label/hostname.
+ */
+function sourceLabel(source, fallback = '') {
+  return source?.attribution || source?.title || fallback;
+}
+
+/**
+ * Renders source anchor.
+ *
+ * @param {Object<string, *>} source - The source descriptor or provider pointer being normalized or rendered.
+ * @param {string} fallbackLabel - Fallback link label used when the source supplies no suitable title/attribution.
+ * @param {boolean} preferTitle - Whether an available source title should be preferred over attribution/hostname.
+ * @returns {string} The HTML anchor (with optional favicon/tooltip) for the canonical web source.
+ */
+function renderSourceAnchor(source, fallbackLabel = '', preferTitle = false) {
+  const url = source?.url ?? '';
+  const tooltip = sourceTooltip(source);
+  const label = preferTitle ? (source?.title || source?.attribution || fallbackLabel)
+    : sourceLabel(source, fallbackLabel);
+  const favicon = `https://www.google.com/s2/favicons?domain=${faviconDomain(url)}&sz=32`;
+  const escapedTooltip = htmlEscape(tooltip).replaceAll('\n', '&#10;');
+  return `<a href="${htmlEscape(url)}" title="${escapedTooltip}" style="display:inline-block;white-space:nowrap;"><img alt="" src="${htmlEscape(favicon)}" width="15" height="15" title="${escapedTooltip}" style="width:0.97em;height:0.97em;vertical-align:-0.13em;margin-right:0.22em;border-radius:2px;">${htmlEscape(label)}</a>`;
+}
+
+/**
+ * Renders web citation.
+ *
+ * @param {Object<string, *>} citation - The canonical citation being rendered or remapped.
+ * @returns {string} Markdown/HTML rendering of the canonical web citation and its supporting sources.
+ */
+function renderWebCitation(citation) {
+  const rendered = [];
+  for (const source of citation.web?.sources ?? []) {
+    rendered.push(renderSourceAnchor(source));
+    for (const supporting of source.supporting_sources ?? []) rendered.push(renderSourceAnchor(supporting));
+  }
+  return `**(cite: ${rendered.join(', ')})**`;
+}
+
+/**
+ * Renders memory citation.
+ *
+ * @param {Object<string, *>} citation - The canonical citation being rendered or remapped.
+ * @returns {string} Markdown/HTML rendering of the canonical memory citation sources.
+ */
+function renderMemoryCitation(citation) {
+  const rendered = (citation.memory?.sources ?? [])
+    .map(source => renderSourceAnchor(source, source?.title ?? 'memory', true));
+  return `**(memory: ${rendered.join(', ')})**`;
+}
+
+/**
+ * Extracts and normalizes a retrieved-file line-range label from citation marker text.
+ *
+ * @param {Object<string, *>} citation - The canonical citation being rendered or remapped.
+ * @returns {string} Human-readable line/range label for a retrieved-file citation, or an empty string when no line metadata exists.
+ */
+function retrievedLineLabel(citation) {
+  const matched = citation?.matched_text;
+  if (typeof matched !== 'string') return '';
+  const match = matched.match(/(L\d+(?:-L?\d+)?)$/);
+  return match ? ` ${match[1].replace(/-(?=\d)/, '-L')}` : '';
+}
+
+/**
+ * Renders citation.
+ *
+ * @param {Object<string, *>} citation - The canonical citation being rendered or remapped.
+ * @returns {string} Rendered Markdown for the supported canonical citation kind.
+ */
+function renderCitation(citation) {
+  if (citation.citation_kind === 'file') return `\`${citation.file?.name ?? 'file'}\``;
+  if (citation.citation_kind === 'retrieved_file') {
+    const file = citation.retrieved_file ?? {};
+    if (!file.resolved || !file.url) return file.title ?? citation.matched_text ?? '';
+    return `<a href="${htmlEscape(file.url)}">${htmlEscape(file.title ?? 'file')}${retrievedLineLabel(citation)}</a>`;
+  }
+  if (citation.citation_kind === 'web') return renderWebCitation(citation);
+  if (citation.citation_kind === 'memory') return renderMemoryCitation(citation);
+  return citation.matched_text ?? '';
+}
+
+/**
+ * Collects display replacements, citations, and generated-file links that apply to one text part.
+ *
+ * @param {Object<string, *>} event - The canonical event being inspected, normalized, or rendered.
+ * @param {number} partIndex - The zero-based content-part index.
+ * @returns {Array<Object<string, *>>} Text replacements for the requested part, sorted from highest to lowest character offset for safe in-place rewriting.
+ */
+function textReplacements(event, partIndex) {
+  const replacements = [];
+  for (const replacement of event.display_replacements ?? []) {
+    if (replacement?.text_range?.part_index !== partIndex) continue;
+    replacements.push({ start: replacement.text_range.start, end: replacement.text_range.end, text: replacement.display_text ?? '' });
+  }
+  for (const citation of event.citations ?? []) {
+    if (citation?.text_range?.part_index !== partIndex) continue;
+    replacements.push({ start: citation.text_range.start, end: citation.text_range.end, text: renderCitation(citation) });
+  }
+  for (const resource of event.resources ?? []) {
+  if (resource?.type !== 'artifact' || resource?.resource_kind !== 'generated_file') continue;
+  if (resource?.text_range?.part_index !== partIndex) continue;
+  const destination = resource.download_url ?? resource.source_pointer;
+  if (!destination) continue;
+  const label = resource.label ?? resource.name ?? 'Download';
+  replacements.push({
+    start: resource.text_range.start,
+    end: resource.text_range.end,
+    text: `[${label}](${destination})`
+  });
+}
+  return replacements.sort((a, b) => b.start - a.start || b.end - a.end);
+}
+
+/**
+ * Renders text block.
+ *
+ * @param {Object<string, *>} event - The canonical event being inspected, normalized, or rendered.
+ * @param {Object<string, *>} block - The canonical/provider content block being inspected or rendered.
+ * @param {number} partIndex - The zero-based content-part index.
+ * @returns {string} Canonical text block after applying ordered display/citation replacements.
+ */
+function renderTextBlock(event, block, partIndex) {
+  let text = block.text ?? '';
+  for (const replacement of textReplacements(event, partIndex)) {
+    text = text.slice(0, replacement.start) + replacement.text + text.slice(replacement.end);
+  }
+  return text;
+}
+
+/**
+ * Renders message blocks.
+ *
+ * @param {Object<string, *>} event - The canonical event being inspected, normalized, or rendered.
+ * @returns {string} Visible canonical message/image blocks rendered as Markdown text in block order.
+ */
+function renderMessageBlocks(event) {
+  return (event.blocks ?? []).map((block, blockIndex) => {
+    if (block.type === 'text') {
+      const partIndex = Number.isInteger(block?.source?.part_index) ? block.source.part_index : blockIndex;
+      return renderTextBlock(event, block, partIndex);
+    }
+    if (block.type === 'image') return renderImageBlock(event, block);
+    return '';
+  }).filter(text => text !== '').join('\n\n');
+}
+
+/**
+ * Escapes bare HTML starts on Claude blockquoted thinking lines outside code fences.
+ *
+ * Claude thinking may itself contain Markdown blockquote lines. After the
+ * renderer adds its outer blockquote, an unescaped `<tag>` on one of those
+ * source lines can be interpreted as HTML rather than literal reasoning text.
+ * Fenced code is left unchanged because the fence already protects its body.
+ *
+ * @param {string} text - Raw Claude thinking content.
+ * @returns {string} Thinking content with `<` escaped only on source blockquote lines outside matching backtick fences.
+ */
+function escapeClaudeThinking(text) {
+  const lines = String(text ?? '').split('\n');
+  let fence = null;
+  return lines.map(line => {
+    const marker = line.match(/^((?:> )*)(`{3,})(?!`)/);
+    if (marker) {
+      const key = `${marker[1]}${marker[2]}`;
+      if (fence === null) fence = key;
+      else if (key === fence) fence = null;
+      return line;
+    }
+    if (fence === null && line.startsWith('>')) return line.replaceAll('<', '&lt;');
+    return line;
+  }).join('\n');
+}
+
+/**
+ * Builds the Markdown body for canonical reasoning-summary blocks in one event.
+ *
+ * @param {Object<string, *>} event - The canonical event being inspected, normalized, or rendered.
+ * @returns {string} Visible reasoning-summary text joined from the event reasoning blocks.
+ */
+function reasoningBody(event) {
+  return (event.blocks ?? []).map(block => {
+    if (block.type !== 'reasoning_summary') return '';
+    const parts = [];
+    if (block.summary) parts.push(`**${block.summary}**`);
+    if (block.content) parts.push(event.provider === 'claude' ? escapeClaudeThinking(block.content) : block.content);
+    return parts.join('\n\n');
+  }).filter(Boolean).join('\n\n');
+}
+
+/**
+ * Wraps a summary and body in the HTML `details` structure used by Markdown output.
+ *
+ * @param {string} summary - The summary label shown for the collapsible details block.
+ * @param {string} body - The body text placed inside the generated details block.
+ * @returns {string} The HTML details/summary Markdown fragment containing the supplied body.
+ */
+function details(summary, body) {
+  return `<details>\n<summary>${summary}</summary>\n\n${body}\n\n</details>`;
+}
+
+/**
+ * Renders a details group with source debug provenance for every grouped event.
+ *
+ * @param {string} summary - The visible summary label for the details group.
+ * @param {string} body - The Markdown body inside the details group.
+ * @param {Array<Object<string, *>>} sourceEvents - Ordered canonical events represented by the generated group.
+ * @param {boolean} quoted - Whether provenance lines must be Markdown-blockquoted.
+ * @param {boolean} inlineOpening - Whether `<details>` and `<summary>` share the opening line.
+ * @returns {string} The details group with optional per-source provenance on the summary and following lines.
+ */
+function projectedDetails(summary, body, sourceEvents, quoted = false, inlineOpening = false) {
+  const events = Array.isArray(sourceEvents) ? sourceEvents : [];
+  const comments = events.map(event => projectedComment(event, quoted)).filter(Boolean);
+  const first = comments.shift() ?? '';
+  const summaryLine = `<summary>${summary}</summary>${first ? ` ${first.replace(/^> /, '')}` : ''}`;
+  const opening = inlineOpening ? `<details>${summaryLine}` : `<details>\n${summaryLine}`;
+  const extra = comments.length ? `\n${comments.join('\n')}` : '';
+  return `${opening}${extra}\n\n${body}\n\n</details>`;
+}
+
+/**
+ * Returns the singular/plural human-readable summary for a count of thoughts.
+ *
+ * @param {number} count - The number of reasoning/thought items represented by the summary label.
+ * @returns {string} The singular/plural summary label for the requested number of thought items.
+ */
+function thoughtSummary(count) {
+  return count === 1 ? 'Having a thought' : `Having ${count} thoughts`;
+}
+
+/**
+ * Wraps literal content in an adaptive Markdown code fence that cannot collide with backtick runs in the payload.
+ *
+ * @param {string} content - The provider/canonical content being converted to display text.
+ * @param {string} language - The source or canonical language identifier.
+ * @returns {string} The Markdown code-fence representation of the literal payload.
+ */
+function fencedCode(content, language = '') {
+  const text = String(content ?? '');
+  const runs = text.match(/`+/g) ?? [];
+  const longest = runs.reduce((max, run) => Math.max(max, run.length), 0);
+  const fence = '`'.repeat(Math.max(3, longest + 1));
+  return `${fence}${language}\n${text}\n${fence}`;
+}
+
+/**
+ * Selects the Markdown fence language from canonical tool-call semantics.
+ *
+ * A normalized non-`unknown` canonical language is emitted unchanged; the historical `container.exec` fallback emits `bash` only when no stronger normalized language is present.
+ *
+ * @param {Object<string, *>} block - The canonical/provider content block being inspected or rendered.
+ * @returns {string} The Markdown fence language selected from canonical tool semantics, or an empty string when no language is justified.
+ */
+function inferredToolLanguage(block) {
+  const language = typeof block.language === 'string' ? block.language.trim() : '';
+  if (language && language !== 'unknown') return language;
+  if (block.name === 'container.exec') return 'bash';
+  return '';
+}
+
+/**
+ * Handles related retrieved file.
+ *
+ * @param {Array<Object<string, *>>} events - The ordered canonical events to process.
+ * @param {string} sourceRecordId - The stable provider/source record identifier.
+ * @returns {Object<string, *>|null} Resolved retrieved-file citation metadata associated with the source record, or null when none is related.
+ */
+function relatedRetrievedFile(events, sourceRecordId) {
+  for (const event of events) {
+    for (const citation of event.citations ?? []) {
+      if (citation.citation_kind === 'retrieved_file' && citation.retrieved_file?.source_record_id === sourceRecordId && citation.retrieved_file?.resolved) return citation.retrieved_file;
+    }
+  }
+  return null;
+}
+
+/**
+ * Renders multimodal tool output.
+ *
+ * @param {Object<string, *>} event - The canonical event being inspected, normalized, or rendered.
+ * @param {Object<string, *>} block - The canonical/provider content block being inspected or rendered.
+ * @param {Array<Object<string, *>>} events - The ordered canonical events to process.
+ * @returns {string} Rendered Markdown for a multimodal tool-result block and any related retrieved file.
+ */
+function renderMultimodalToolOutput(event, block, events) {
+  const values = Array.isArray(block.output) ? block.output : [];
+  const visible = values.filter(value => typeof value === 'string' && !value.startsWith('Make sure to include ')).map(value => value.trim());
+  const retrieved = relatedRetrievedFile(events, event.source_record_id);
+  if (retrieved?.url) {
+    for (let index = 0; index < visible.length; index += 1) {
+      if (visible[index].startsWith('Citation Marker:')) visible[index] = `Citation Marker: <a href="${htmlEscape(retrieved.url)}">${htmlEscape(retrieved.title ?? 'file')}</a>`;
+    }
+  }
+  return visible.join('\n\n');
+}
+
+/**
+ * Renders a canonical ChatGPT tool block into the Markdown details/fence representation.
+ *
+ * The renderer consumes canonical `input`, `language`, `output`, and
+ * `output_format`; provider-native presentation is not reinterpreted here.
+ *
+ * @param {Object<string, *>} event - The canonical event represented by the tool structure.
+ * @param {Object<string, *>} block - The canonical tool call/result block being rendered.
+ * @param {Array<Object<string, *>>} events - The ordered canonical events used for related-resource resolution.
+ * @returns {string} Rendered Markdown details block for one ChatGPT tool call or result block.
+ */
+function renderChatGPTToolBlock(event, block, events) {
+  if (block.type === 'tool_call') {
+    const language = inferredToolLanguage(block);
+    return projectedDetails(`${block.name ?? 'tool'} code`, fencedCode(block.input ?? '', language), [event]);
+  }
+  if (block.type === 'tool_result') {
+    let output = block.output ?? '';
+    if (block.output_format === 'multimodal_text') output = renderMultimodalToolOutput(event, block, events);
+    else if (block.output_format === 'tether_browsing_display') output = [block.output?.summary, block.output?.result].filter(Boolean).join('\n\n');
+    return projectedDetails(`${block.name ?? 'tool'} output`, fencedCode(output), [event]);
+  }
+  return '';
+}
+
+/**
+ * Renders all canonical tool blocks belonging to one ChatGPT tool event.
+ *
+ * @param {Object<string, *>} event - The canonical event being inspected, normalized, or rendered.
+ * @param {Array<Object<string, *>>} events - The ordered canonical events to process.
+ * @returns {string} Rendered Markdown for all tool blocks in the canonical ChatGPT tool event.
+ */
+function renderChatGPTToolEvent(event, events) {
+  return (event.blocks ?? []).map(block => renderChatGPTToolBlock(event, block, events)).filter(Boolean).join('\n\n');
+}
+
+/**
+ * Renders one semantic User-context block as a blockquoted details disclosure.
+ *
+ * @param {Object<string, *>} block - Canonical User-context block.
+ * @returns {string} Blockquoted Markdown/HTML details fragment.
+ */
+function renderUserContextBlock(block) {
+  const summary = htmlEscape(block?.summary ?? '# Context from my IDE setup:');
+  const body = String(block?.text ?? '');
+  return quoteMarkdown(`<details><summary>${summary}</summary>\n\n${body}\n\n</details>`);
+}
+
+/**
+ * Renders user.
+ *
+ * Semantic User context is presented before the actual prompt in a blockquoted
+ * details disclosure. The prompt remains outside that blockquote so consumers
+ * can assign context and prompt distinct User speech voices without reparsing
+ * provider-native text. User events without semantic context retain the existing
+ * fully-blockquoted rendering contract.
+ *
+ * @param {Object<string, *>} event - The canonical event being inspected, normalized, or rendered.
+ * @returns {string} The complete User transcript section for the canonical event.
+ */
+function renderUser(event) {
+  const blocks = Array.isArray(event?.blocks) ? event.blocks : [];
+  const contexts = blocks.filter(block => block?.type === 'user_context');
+  if (!contexts.length) {
+    return projectedSection(event, `${projectedHeading(event, '## User')}\n\n${quoteMarkdown(renderMessageBlocks(event))}`);
+  }
+
+  const promptEvent = {
+    ...event,
+    blocks: blocks.filter(block => block?.type !== 'user_context')
+  };
+  const parts = contexts.map(renderUserContextBlock);
+  const prompt = renderMessageBlocks(promptEvent);
+  if (prompt) parts.push(prompt);
+  return projectedSection(event, `${projectedHeading(event, '## User')}\n\n${parts.join('\n\n')}`);
+}
+
+/**
+ * Renders the ChatGPT activity inside one response while preserving source order.
+ *
+ * Consecutive reasoning records define the thought count. Tool call/result
+ * structures may occur within the same thought run but do not increment `N`.
+ * Commentary flushes the current run, receives its own
+ * `### ChatGPT Commentary` heading, and breaks thought consecutiveness.
+ *
+ * @param {Array<Object<string, *>>} segment - Ordered canonical events in one ChatGPT response.
+ * @param {Array<Object<string, *>>} events - Full ordered canonical event sequence for resource resolution.
+ * @returns {Array<string>} Ordered thought/tool/commentary structures rendered inside the enclosing ChatGPT response.
+ */
+function renderChatGPTCommentarySegment(segment, events) {
+  const body = [];
+  let run = [];
+  let thoughtEvents = [];
+
+  /**
+   * Flushes the current ChatGPT reasoning/tool run without counting tools as thoughts.
+   *
+   * @returns {void} No value is returned.
+   */
+  const flushRun = () => {
+    if (!run.length) return;
+    if (thoughtEvents.length) {
+      const rendered = run.map(item => item.text).join('\n\n');
+      body.push(projectedDetails(
+        thoughtSummary(thoughtEvents.length),
+        rendered,
+        thoughtEvents,
+        false,
+        true
+      ));
+    } else {
+      body.push(...run.map(item => item.text));
+    }
+    run = [];
+    thoughtEvents = [];
+  };
+
+  for (const event of segment) {
+    if (event.kind === 'reasoning_summary') {
+      const text = reasoningBody(event);
+      if (text) {
+        run.push({ event, text });
+        thoughtEvents.push(event);
+      }
+      continue;
+    }
+    if (event.kind === 'tool_call' || event.kind === 'tool_result') {
+      const text = renderChatGPTToolEvent(event, events);
+      if (text) run.push({ event, text });
+      continue;
+    }
+    if (event.kind === 'commentary') {
+      flushRun();
+      const text = renderMessageBlocks(event);
+      if (text) body.push(projectedSection(event, `${projectedHeading(event, '### ChatGPT Commentary')}\n\n${quoteMarkdown(text)}`));
+    }
+  }
+  flushRun();
+  return body;
+}
+
+/**
+ * Renders one canonical ChatGPT response with exactly one leading `## ChatGPT` heading.
+ *
+ * Reasoning/tool activity is grouped into consecutive thought groups; commentary
+ * is rendered at level three and breaks thought-group consecutiveness. Final
+ * Assistant messages remain inside the same response section.
+ *
+ * @param {Array<Object<string, *>>} segment - Ordered canonical events forming one ChatGPT response.
+ * @param {Array<Object<string, *>>} events - Full ordered canonical event sequence for resource resolution.
+ * @returns {Array<string>} Zero or one complete ChatGPT Markdown response sections.
+ */
+function renderChatGPTAssistantSegment(segment, events) {
+  const body = renderChatGPTCommentarySegment(segment, events);
+  const messages = segment.filter(event => event.kind === 'message' && event.role === 'assistant');
+  for (const event of messages) {
+    const text = renderMessageBlocks(event);
+    if (text) body.push(quoteMarkdown(text));
+  }
+  if (!body.length) return [];
+  const headingEvent = segment[0];
+  const finalMessageEvent = [...messages].reverse()[0] ?? null;
+  const semanticHeadingEvent = finalMessageEvent ?? headingEvent;
+  // Generic caller decoration remains compatible, but semantic metadata comes
+  // from the Core-selected final response event rather than an opaque suffix.
+  const responseHeadingSuffix = headingEvent?.projection?.response_heading_suffix;
+  const responseHeadingEvent = responseHeadingSuffix != null
+    ? {
+        ...semanticHeadingEvent,
+        projection: {
+          ...(semanticHeadingEvent?.projection ?? {}),
+          heading_suffix: responseHeadingSuffix
+        }
+      }
+    : semanticHeadingEvent;
+  return [projectedSection(responseHeadingEvent, `${projectedHeading(responseHeadingEvent, '## ChatGPT')}\n\n${body.join('\n\n')}`)];
+}
+
+/**
+ * Handles tool call ID.
+ *
+ * @param {Object<string, *>} event - The canonical event being inspected, normalized, or rendered.
+ * @returns {string|null} The canonical tool-call correlation ID, or null when the event carries no call ID.
+ */
+function toolCallId(event) {
+  return event?.relationships?.tool_call_id ?? event?.blocks?.[0]?.call_id ?? null;
+}
+
+/**
+ * Handles tool result by call ID.
+ *
+ * @param {Array<Object<string, *>>} segment - The ordered canonical events that form one Assistant activity segment.
+ * @returns {Map<string, Object<string, *>>} Tool-result events indexed by their non-null call IDs.
+ */
+function toolResultByCallId(segment) {
+  // Maps tool-call IDs to their canonical result events for paired rendering.
+  const results = new Map();
+  for (const event of segment) if (event.kind === 'tool_result' && toolCallId(event)) results.set(toolCallId(event), event);
+  return results;
+}
+
+/**
+ * Handles tool output.
+ *
+ * @param {Object<string, *>} event - The canonical event being inspected, normalized, or rendered.
+ * @returns {string} Tool-result output flattened to displayable text.
+ */
+function toolOutput(event) {
+  const block = event?.blocks?.find(item => item.type === 'tool_result');
+  if (!block) return '';
+  if (typeof block.output === 'string') return block.output;
+  if (Array.isArray(block.output)) return block.output.filter(item => item?.type === 'text' && typeof item.text === 'string').map(item => item.text).join('\n');
+  return String(block.output ?? '');
+}
+
+/**
+ * Renders Claude tool thought.
+ *
+ * @param {Object<string, *>} callEvent - The canonical tool-call event being paired/rendered.
+ * @param {Object<string, *>|null} resultEvent - The matching canonical tool-result event, or null when no result is available.
+ * @returns {string} Collapsed Markdown representation of a Claude tool call and its optional result.
+ */
+function renderClaudeToolThought(callEvent, resultEvent) {
+  const block = callEvent?.blocks?.find(item => item.type === 'tool_call');
+  if (!block || block.name !== 'Bash') return '';
+  const command = typeof block.input?.command === 'string' ? block.input.command : '';
+  const summary = typeof block.input?.description === 'string' && block.input.description ? block.input.description : 'Bash';
+  const output = resultEvent ? toolOutput(resultEvent) : '';
+  const sources = resultEvent ? [callEvent, resultEvent] : [callEvent];
+  return projectedDetails(summary, [fencedCode(command, 'bash'), `**OUT**\n\n${fencedCode(output)}`].join('\n\n'), sources);
+}
+
+/**
+ * Renders a Claude subagent section with invocation and completion provenance.
+ *
+ * The heading represents the originating Agent invocation when that related
+ * source is available. The completion remains the primary event source and is
+ * emitted as a second debug provenance line so neither source is lost.
+ *
+ * @param {Object<string, *>} event - The canonical subagent completion event being rendered.
+ * @returns {string} Markdown representation of the Claude subagent completion event.
+ */
+function renderSubagentEvent(event) {
+  const block = event?.blocks?.find(item => item.type === 'subagent');
+  if (!block?.agent_id) return '';
+  const headingEvent = relatedProjectionEvent(event, 'invocation_source');
+  const body = [];
+  const completionComment = headingEvent === event ? '' : projectedComment(event);
+  if (block.description) body.push(quoteMarkdown(`**${block.description}**`));
+  if (block.output) body.push(quoteMarkdown(block.output));
+  const label = `## ${providerLabel(event.provider)} Sub-agent ${block.agent_id}`;
+  const secondaryProvenance = completionComment ? `\n${completionComment}` : '';
+  const renderedBody = body.length ? `\n\n${body.join('\n\n')}` : '';
+  return projectedSection(
+    headingEvent,
+    `${projectedHeading(headingEvent, label)}${secondaryProvenance}${renderedBody}`
+  );
+}
+/**
+ * Renders Claude AskUserQuestion headings/options with source debug provenance.
+ *
+ * @param {Object<string, *>} event - The canonical tool-call event represented by the generated question headings.
+ * @param {Object<string, *>} block - The normalized Claude AskUserQuestion block.
+ * @returns {string} Markdown question/options blocks in provider order.
+ */
+function renderClaudeQuestionBlock(event, block) {
+  const questions = block?.ask_user_question?.questions ?? [];
+  const chunks = [];
+  questions.forEach((question, index) => {
+    const lines = [];
+    if (question.question) lines.push(`**${question.question}**`);
+    for (const option of question.options ?? []) {
+      if (!option?.label) continue;
+      lines.push(`- ${option.label}${option.description ? ` - ${option.description}` : ''}`);
+    }
+    chunks.push(projectedSection(event, `### Question ${index + 1}\n\n${quoteMarkdown(lines.join('\n'))}`));
+  });
+  return chunks.join('\n\n');
+}
+
+/**
+ * Renders a Claude ExitPlanMode plan heading with source debug provenance.
+ *
+ * @param {Object<string, *>} event - The canonical tool-call event represented by the generated plan heading.
+ * @param {Object<string, *>} block - The normalized Claude ExitPlanMode block.
+ * @returns {string} Blockquoted Markdown plan section, or an empty string when no plan is present.
+ */
+function renderClaudePlanBlock(event, block) {
+  const plan = block?.exit_plan?.plan;
+  if (typeof plan !== 'string' || !plan.trim()) return '';
+  const comment = projectedComment(event);
+  const heading = `### Plan${comment ? ` ${comment}` : ''}`;
+  return quoteMarkdown(`${heading}\n\n${quoteMarkdown(plan.trim())}`);
+}
+
+/**
+ * Renders Claude plan approval.
+ *
+ * @param {Object<string, *>} event - The canonical tool-result event supplying source projection metadata.
+ * @param {Object<string, *>} block - The canonical/provider content block being inspected or rendered.
+ * @returns {string} Markdown User response section for a Claude exit-plan approval result.
+ */
+function renderClaudePlanApproval(event, block) {
+  const response = block?.exit_plan_response;
+  if (!response) return '';
+  const parts = [];
+  if (response.intro) parts.push(quoteMarkdown(response.intro));
+  if (response.approved_plan) parts.push(quoteMarkdown(projectedDetails('Approved Plan', response.approved_plan, [event])));
+  return projectedSection(event, `${projectedHeading(event, '## User')}\n\n${parts.join('\n\n')}`);
+}
+
+/**
+ * Renders Claude assistant segment.
+ *
+ * @param {Array<Object<string, *>>} segment - The ordered canonical events that form one Assistant activity segment.
+ * @returns {Array<string>} Claude/User/subagent Markdown sections produced from the Assistant segment.
+ */
+function renderClaudeAssistantSegment(segment) {
+  const sections = [];
+  const subagents = segment.filter(event => event.kind === 'subagent');
+  const results = toolResultByCallId(segment);
+  // Tracks tool-result event IDs already rendered with a call so they are not emitted twice.
+  const consumedResults = new Set();
+  let body = [];
+  let thoughts = [];
+  const headingEvent = segment[0];
+
+  /**
+   * Implements `flushThoughts`.
+   *
+   * @returns {void} No value is returned.
+   */
+  const flushThoughts = () => {
+    if (!thoughts.length) return;
+    const separate = Boolean(headingEvent?.projection?.separate_thoughts);
+    const renderedThoughts = separate
+      ? thoughts.map((item, index) => `${projectedThoughtHeading(item.event, index + 1)}\n\n${item.text}`).join('\n\n***\n\n')
+      : thoughts.map(item => item.text).join('\n\n***\n\n');
+    body.push(quoteMarkdown(projectedDetails(thoughtSummary(thoughts.length), renderedThoughts, thoughts.map(item => item.event))));
+    thoughts = [];
+  };
+  /**
+   * Implements `flushClaude`.
+   *
+   * @returns {void} No value is returned.
+   */
+  const flushClaude = () => {
+    flushThoughts();
+    if (!body.length) return;
+    sections.push(projectedSection(headingEvent, `${projectedHeading(headingEvent, '## Claude')}\n\n${body.join('\n\n')}`));
+    body = [];
+  };
+
+  for (const event of segment) {
+    if (event.kind === 'subagent') continue;
+    if (event.kind === 'reasoning_summary') {
+      const text = reasoningBody(event);
+      if (text) thoughts.push({ event, text });
+      continue;
+    }
+    if (event.kind === 'tool_call') {
+      const block = event.blocks?.find(item => item.type === 'tool_call');
+      const result = toolCallId(event) ? results.get(toolCallId(event)) : null;
+      if (block?.name === 'Bash') {
+        const rendered = renderClaudeToolThought(event, result);
+        if (rendered) thoughts.push({ event, text: rendered });
+        if (result) consumedResults.add(result.id);
+      } else if (block?.name === 'AskUserQuestion') {
+        flushThoughts();
+        const rendered = renderClaudeQuestionBlock(event, block);
+        if (rendered) body.push(rendered);
+      } else if (block?.name === 'ExitPlanMode') {
+        flushThoughts();
+        const rendered = renderClaudePlanBlock(event, block);
+        if (rendered) body.push(rendered);
+      }
+      continue;
+    }
+    if (event.kind === 'tool_result') {
+      if (consumedResults.has(event.id)) continue;
+      const block = event.blocks?.find(item => item.type === 'tool_result');
+      if (block?.name === 'AskUserQuestion') {
+        flushClaude();
+        const text = block.ask_user_question_response?.text ?? toolOutput(event);
+        if (text) sections.push(projectedSection(event, `${projectedHeading(event, '## User')}\n\n${quoteMarkdown(text)}`));
+      } else if (block?.name === 'ExitPlanMode') {
+        flushClaude();
+        const rendered = renderClaudePlanApproval(event, block);
+        if (rendered) sections.push(rendered);
+      }
+      continue;
+    }
+    if (event.kind === 'message' && event.role === 'assistant') {
+      flushThoughts();
+      const text = renderMessageBlocks(event);
+      if (text) {
+        if (event?.projection?.separate_thoughts) {
+          const inner = `${quoteMarkdown(projectedHeading(event, '## Claude'))}\n>\n${quoteMarkdown(text)}`;
+          const comment = projectedComment(event);
+          body.push(comment ? `${comment}\n\n${inner}` : inner);
+        } else {
+          body.push(quoteMarkdown(text));
+        }
+      }
+    }
+  }
+  flushClaude();
+  for (const event of subagents) {
+    const rendered = renderSubagentEvent(event);
+    if (rendered) sections.push(rendered);
+  }
+  return sections;
+}
+
+/**
+ * Handles codex request block.
+ *
+ * @param {Object<string, *>} event - The canonical event being inspected, normalized, or rendered.
+ * @returns {Object<string, *>|undefined} The request_user_input tool-call block, or undefined when the event has no such block.
+ */
+function codexRequestBlock(event) {
+  return event?.blocks?.find(block => block.type === 'tool_call' && block.name === 'request_user_input');
+}
+
+/**
+ * Handles codex response block.
+ *
+ * @param {Object<string, *>} event - The canonical event being inspected, normalized, or rendered.
+ * @returns {Object<string, *>|undefined} The request_user_input tool-result block, or undefined when the event has no such block.
+ */
+function codexResponseBlock(event) {
+  return event?.blocks?.find(block => block.type === 'tool_result' && block.request_user_input_response);
+}
+
+/**
+ * Renders Codex request sections.
+ *
+ * @param {Object<string, *>} callEvent - The canonical tool-call event being paired/rendered.
+ * @param {Object<string, *>|null} resultEvent - The matching canonical tool-result event, or null when no result is available.
+ * @param {Object<string, number>} state - Per-render mutable state used for numbering and other projection-local counters.
+ * @returns {Array<string>} Codex question Markdown and, when answers exist, the corresponding User answer section.
+ */
+function renderCodexRequestSections(callEvent, resultEvent, state) {
+  const call = codexRequestBlock(callEvent);
+  if (!call) return [];
+  const response = codexResponseBlock(resultEvent);
+  const questions = call.request_user_input?.questions ?? [];
+  if (!questions.length) return [];
+  const questionParts = [];
+  const answerLines = [];
+  for (const question of questions) {
+    state.codexQuestionNumber += 1;
+    const lines = [];
+    if (question.question) lines.push(`**${question.question}**`);
+    for (const option of question.options ?? []) if (option?.label) lines.push(`- ${option.label}${option.description ? ` - ${option.description}` : ''}`);
+    questionParts.push(projectedSection(callEvent, `### Question ${state.codexQuestionNumber}\n\n${quoteMarkdown(lines.join('\n'))}`));
+    const selected = response?.request_user_input_response?.answers?.[question.id] ?? [];
+    if (question.question && selected.length) answerLines.push(`**${question.question}** → ${selected.map(value => `"${value}"`).join(', ')}`);
+  }
+  const sections = [projectedSection(callEvent, `${projectedHeading(callEvent, '## Codex')}\n\n${questionParts.join('\n\n')}`)];
+  if (answerLines.length) sections.push(projectedSection(resultEvent, `${projectedHeading(resultEvent, '## User')}\n\n${quoteMarkdown(answerLines.join('\n'))}`));
+  return sections;
+}
+
+/**
+ * Renders Codex apply_patch changes as one provenance-traceable details group.
+ *
+ * @param {Array<Object<string, *>>} segment - Ordered canonical events forming the Codex response.
+ * @returns {string|null} Collapsed Codex file-change details section, or null when no apply_patch changes exist.
+ */
+function renderCodexFileChanges(segment) {
+  const patches = [];
+  for (const event of segment) {
+    if (event.kind !== 'tool_call') continue;
+    const block = event.blocks?.find(item => item.type === 'tool_call' && item.name === 'apply_patch' && item.file_change?.patch);
+    if (block) patches.push({ event, patch: block.file_change.patch });
+  }
+  if (!patches.length) return null;
+  const fileCount = patches.reduce((count, item) => count + (item.patch.match(/^\*\*\* (?:Update|Add|Delete) File:/gm)?.length ?? 0), 0);
+  const n = fileCount || patches.length;
+  const body = patches.map(item => quoteMarkdown(`\`\`\`diff\n${item.patch}\n\`\`\``)).join('\n\n');
+  return projectedDetails(`${n} file change${n === 1 ? '' : 's'}`, body, patches.map(item => item.event));
+}
+
+/**
+ * Renders the main Codex response with provenance on generated response/thought structures.
+ *
+ * @param {Array<Object<string, *>>} segment - Ordered canonical events forming the Codex response.
+ * @returns {string|null} The main Codex transcript section, or null when no visible response exists.
+ */
+function renderCodexMainResponse(segment) {
+  const thoughts = [];
+  const finals = [];
+  for (const event of segment) {
+    if (event.kind === 'reasoning_summary') {
+      const text = reasoningBody(event);
+      if (text) thoughts.push({ event, text });
+    } else if (event.kind === 'commentary') {
+      const text = renderMessageBlocks(event);
+      if (text) thoughts.push({ event, text });
+    } else if (event.kind === 'message' && event.role === 'assistant') {
+      const text = renderMessageBlocks(event);
+      if (text) finals.push({ event, text });
+    }
+  }
+  if (!thoughts.length && !finals.length) return null;
+  const body = [];
+  if (thoughts.length) {
+    const thoughtBody = thoughts.map(item => item.text).join('\n\n***\n\n');
+    body.push(quoteMarkdown(projectedDetails(thoughtSummary(thoughts.length), thoughtBody, thoughts.map(item => item.event))));
+  }
+  for (const item of finals) body.push(quoteMarkdown(item.text));
+  const headingEvent = segment[0];
+  return projectedSection(headingEvent, `${projectedHeading(headingEvent, '## Codex')}\n\n${body.join('\n\n')}`);
+}
+
+/**
+ * Renders Codex assistant segment.
+ *
+ * @param {Array<Object<string, *>>} segment - The ordered canonical events that form one Assistant activity segment.
+ * @param {Object<string, number>} state - Per-render mutable state used for numbering and other projection-local counters.
+ * @returns {Array<string>} Ordered Markdown sections for Codex request/answer, main response, and file-change content.
+ */
+function renderCodexAssistantSegment(segment, state) {
+  const sections = [];
+  const results = toolResultByCallId(segment);
+  // Tracks Codex request/result event IDs rendered in request sections and excluded from the main response.
+  const requestIds = new Set();
+  for (const event of segment) {
+    if (!codexRequestBlock(event)) continue;
+    const result = toolCallId(event) ? results.get(toolCallId(event)) : null;
+    sections.push(...renderCodexRequestSections(event, result, state));
+    requestIds.add(event.id);
+    if (result) requestIds.add(result.id);
+  }
+  const mainSegment = segment.filter(event => !requestIds.has(event.id));
+  const main = renderCodexMainResponse(mainSegment);
+  if (main) sections.push(main);
+  const changes = renderCodexFileChanges(mainSegment);
+  if (changes) sections.push(changes);
+  return sections;
+}
+
+/**
+ * Renders assistant segment.
+ *
+ * @param {Array<Object<string, *>>} segment - The ordered canonical events that form one Assistant activity segment.
+ * @param {Array<Object<string, *>>} events - The ordered canonical events to process.
+ * @param {Object<string, number>} state - Per-render mutable state used for numbering and other projection-local counters.
+ * @returns {Array<string>} Provider-specific Markdown sections produced from one ordered Assistant activity segment.
+ */
+function renderAssistantSegment(segment, events, state) {
+  const provider = segment.find(event => event?.provider)?.provider ?? 'chatgpt';
+  if (provider === 'claude') return renderClaudeAssistantSegment(segment);
+  if (provider === 'codex') return renderCodexAssistantSegment(segment, state);
+  return renderChatGPTAssistantSegment(segment, events);
+}
+
+/**
+ * Renders notice.
+ *
+ * @param {Object<string, *>} event - The canonical event being inspected, normalized, or rendered.
+ * @returns {string} Blockquoted system-notice Markdown, or an empty string when the notice has no visible text.
+ */
+function renderNotice(event) {
+  const text = renderMessageBlocks(event);
+  if (!text) return '';
+  const rendered = `> *(system: ${text})*`;
+  return projectedSection(event, rendered);
+}
+
+/**
+ * Renders canonical Markdown.
+ *
+ * @param {Array<Object>} events - The ordered canonical events to process.
+ * @returns {string} The complete canonical Markdown transcript projection.
+ */
+function renderBaseMarkdown(events) {
+  if (!Array.isArray(events)) throw new TypeError('Canonical events must be an array.');
+  const sections = [];
+  // Per-render mutable numbering state for Codex question sections; it is not shared across render calls.
+  const state = { codexQuestionNumber: 0 };
+  let assistantSegment = [];
+  /**
+   * Implements `flushAssistant`.
+   *
+   * @returns {void} No value is returned.
+   */
+  const flushAssistant = () => {
+    if (!assistantSegment.length) return;
+    sections.push(...renderAssistantSegment(assistantSegment, events, state));
+    assistantSegment = [];
+  };
+
+  for (const event of events) {
+    if (event?.visibility === 'hidden' || event?.kind === 'system_context') continue;
+    if (event?.kind === 'notice') {
+      flushAssistant();
+      const rendered = renderNotice(event);
+      if (rendered) sections.push(rendered);
+      continue;
+    }
+    if (event?.role === 'user' && event?.kind === 'message') {
+      flushAssistant();
+      sections.push(renderUser(event));
+      continue;
+    }
+    const isAssistantActivity = event?.role === 'assistant' || event?.kind === 'tool_call' || event?.kind === 'tool_result' || event?.kind === 'subagent';
+    if (!isAssistantActivity) continue;
+    assistantSegment.push(event);
+    if (event?.role === 'assistant' && event?.kind === 'message' && event?.provider !== 'claude') flushAssistant();
+  }
+  flushAssistant();
+  return sections.join('\n\n') + '\n\n';
+}
+
+/**
+ * Returns the human-readable Assistant label for one canonical provider.
+ *
+ * @param {string} provider - Canonical provider identifier.
+ * @returns {string} Canonical transcript actor label.
+ */
+function providerLabel(provider) {
+  if (provider === 'claude') return 'Claude';
+  if (provider === 'codex') return 'Codex';
+  return 'ChatGPT';
+}
+
+/**
+ * Returns the visible revision/execution suffix for one canonical turn event.
+ *
+ * @param {Object<string, *>} event - Canonical User/Assistant event.
+ * @returns {string} Parenthesized status suffix or an empty string.
+ */
+function turnStatusSuffix(event) {
+  const statuses = [];
+  if (event?.revision_status && event.revision_status !== 'normal') {
+    statuses.push(Number.isInteger(event.revision_depth)
+      ? `${event.revision_status} ${event.revision_depth}`
+      : event.revision_status);
+  }
+  if (event?.execution_status === 'aborted') statuses.push('aborted');
+  return statuses.length ? ` (${statuses.join(', ')})` : '';
+}
+
+/**
+ * Returns the canonical Markdown heading label for one revision-bearing message.
+ *
+ * @param {Object<string, *>} event - Canonical User/Assistant message event.
+ * @returns {string} Heading label without status or metadata.
+ */
+function headingLabel(event) {
+  return event?.role === 'user'
+    ? '## User'
+    : `## ${providerLabel(event?.provider)}`;
+}
+
+/**
+ * Removes one already-rendered copy of a status suffix from immediately after
+ * the actor label.
+ *
+ * Base Markdown can already contain `projection.heading_suffix` before consumer
+ * metadata such as `<!-- record_index=... -->`.  Removing only a trailing suffix
+ * therefore misses that case and duplicates the status when this canonical
+ * post-pass positions it next to the actor label.
+ *
+ * @param {string} line - One rendered Markdown heading line.
+ * @param {number} insertionIndex - Index immediately after label/ANSI reset.
+ * @param {string} suffix - Canonical revision/execution suffix.
+ * @returns {string} Heading with the pre-existing adjacent suffix removed.
+ */
+function removeAdjacentSuffix(line, insertionIndex, suffix) {
+  const before = line.slice(0, insertionIndex);
+  let after = line.slice(insertionIndex);
+  if (after.startsWith(suffix)) {
+    after = after.slice(suffix.length);
+  }
+  return before + after;
+}
+
+/**
+ * Positions revision status immediately after User/Assistant labels.
+ *
+ * Base rendering may append `projection.heading_suffix` before consumer heading
+ * metadata, and an Assistant section may be headed by reasoning/commentary that
+ * precedes its final message. This canonical post-pass therefore pairs visible
+ * message generations with their rendered actor headings and places the status
+ * next to the actor label without depending on which event opened the section.
+ *
+ * @param {string} markdown - Base canonical Markdown.
+ * @param {Array<Object<string, *>>} events - Ordered canonical events.
+ * @returns {string} Revision-aware Markdown.
+ */
+function positionTurnStatuses(markdown, events) {
+  const statuses = events
+    .filter(event => event?.visibility !== 'hidden' && event?.kind === 'message' &&
+      (event?.role === 'user' || event?.role === 'assistant'))
+    .map(event => ({
+      label: headingLabel(event),
+      suffix: turnStatusSuffix(event)
+    }))
+    .filter(item => item.suffix);
+  if (!statuses.length) return markdown;
+
+  let statusIndex = 0;
+  return markdown.split('\n').map(line => {
+    if (statusIndex >= statuses.length) return line;
+    const item = statuses[statusIndex];
+    const labelIndex = line.indexOf(item.label);
+    if (labelIndex < 0) return line;
+
+    const afterLabel = labelIndex + item.label.length;
+    let insertionIndex = afterLabel;
+    const resetMatch = line.slice(afterLabel).match(/^(\x1b\[[0-9;]*m)/);
+    if (resetMatch) insertionIndex += resetMatch[1].length;
+
+    const withoutExistingSuffix = removeAdjacentSuffix(
+      line,
+      insertionIndex,
+      item.suffix);
+    statusIndex += 1;
+    return `${withoutExistingSuffix.slice(0, insertionIndex)}${item.suffix}` +
+      `${withoutExistingSuffix.slice(insertionIndex)}`;
+  }).join('\n');
+}
+
+/**
+ * Renders canonical Markdown with revision/execution status positioned as part
+ * of both User and Assistant heading labels before consumer metadata.
+ *
+ * @param {Array<Object<string, *>>} events - Ordered canonical event stream.
+ * @returns {string} Canonical transcript Markdown.
+ */
+function renderRevisionMarkdown(events) {
+  return positionTurnStatuses(renderBaseMarkdown(events), events);
+}
+
+// Version of the provider-independent canonical presentation-tree contract.
+const PRESENTATION_SCHEMA_VERSION = 2;
+
+/**
+ * Returns the human-readable actor label for a canonical provider.
+ *
+ * @param {string|null} provider - Canonical provider identifier.
+ * @returns {string} Human-readable actor label.
+ */
+function providerLabel(provider) {
+  if (provider === 'claude') return 'Claude';
+  if (provider === 'codex') return 'Codex';
+  return 'ChatGPT';
+}
+
+/**
+ * Returns stable source provenance for one canonical event.
+ *
+ * @param {Object<string, *>} event - Canonical event.
+ * @returns {Object<string, *>} Stable source identity for presentation mapping.
+ */
+function sourceRef(event) {
+  const source = event?.source && typeof event.source === 'object'
+    ? event.source
+    : {};
+  return {
+    event_id: event?.id ?? null,
+    provider: event?.provider ?? source.provider ?? null,
+    record_id: event?.source_record_id ?? source.record_id ?? null,
+    record_index: Number.isInteger(event?.source_index)
+      ? event.source_index
+      : Number.isInteger(source.record_index) ? source.record_index : null,
+    block_indexes: (event?.blocks ?? [])
+      .map(block => block?.source?.block_index)
+      .filter(Number.isInteger)
+  };
+}
+
+/**
+ * Returns the canonical tool correlation identifier for an event.
+ *
+ * @param {Object<string, *>} event - Canonical tool event.
+ * @returns {string|null} Tool-call correlation identifier or null.
+ */
+function toolCallId(event) {
+  return event?.relationships?.tool_call_id ??
+    event?.blocks?.find(block =>
+      block?.type === 'tool_call' || block?.type === 'tool_result')?.call_id ??
+    null;
+}
+
+/**
+ * Returns the canonical tool block carried by an event.
+ *
+ * @param {Object<string, *>} event - Canonical tool event.
+ * @returns {Object<string, *>|null} Canonical tool block or null.
+ */
+function toolBlock(event) {
+  return event?.blocks?.find(block =>
+    block?.type === 'tool_call' || block?.type === 'tool_result') ?? null;
+}
+
+/**
+ * Returns whether a tool carries an explicit interactive transcript semantic.
+ *
+ * Interactive tools are not ordinary hidden reasoning activity. They are kept
+ * explicit in the tree so serializers can present their User/Agent interaction
+ * without treating the provider name itself as a rendering rule.
+ *
+ * @param {Object<string, *>} block - Canonical tool block.
+ * @returns {boolean} Whether the tool has an explicit interactive semantic.
+ */
+function isInteractiveTool(block) {
+  return Boolean(
+    block?.ask_user_question ||
+    block?.ask_user_question_response ||
+    block?.exit_plan ||
+    block?.exit_plan_response ||
+    block?.request_user_input ||
+    block?.request_user_input_response
+  );
+}
+
+/**
+ * Builds a Markdown-content presentation node from one canonical event.
+ *
+ * The original canonical blocks remain attached so format serializers can apply
+ * citations, resources, and Markdown conversion without reparsing a rendered
+ * transcript.
+ *
+ * @param {Object<string, *>} event - Canonical visible content event.
+ * @param {string} kind - Presentation node kind.
+ * @param {Array<Object<string, *>>|null} blocksOverride - Optional block subset.
+ * @returns {Object<string, *>} Presentation content node.
+ */
+function contentNode(event, kind = 'markdown', blocksOverride = null) {
+  return {
+    id: `presentation:${event.id}:${kind}`,
+    kind,
+    atomic: false,
+    event_id: event.id,
+    source: [sourceRef(event)],
+    role: event.role ?? null,
+    channel: event.channel ?? null,
+    content_type: event.content_type ?? null,
+    blocks: blocksOverride ?? event.blocks ?? [],
+    citations: event.citations ?? [],
+    resources: event.resources ?? []
+  };
+}
+
+/**
+ * Builds ordered User-turn children with attachments before Markdown body text.
+ *
+ * Existing verified transcript presentation places uploaded images/attachments
+ * before the User body. Canonical source block order remains retained on the
+ * event, but presentation does not invent arbitrary inline attachment semantics.
+ *
+ * @param {Object<string, *>} event - Canonical User message event.
+ * @returns {Array<Object<string, *>>} Ordered User presentation children.
+ */
+function userChildren(event) {
+  const blocks = Array.isArray(event?.blocks) ? event.blocks : [];
+  const attachments = blocks.filter(block =>
+    block?.type === 'image' ||
+    block?.type === 'attachment' ||
+    block?.type === 'file'
+  );
+  const contexts = blocks.filter(block => block?.type === 'user_context');
+  const body = blocks.filter(block =>
+    !attachments.includes(block) && !contexts.includes(block));
+  const children = [];
+  if (attachments.length) {
+    children.push(contentNode(event, 'attachments', attachments));
+  }
+  if (contexts.length) {
+    children.push({
+      ...contentNode(event, 'user_context', contexts),
+      atomic: true
+    });
+  }
+  if (body.length || (!attachments.length && !contexts.length)) {
+    children.push(contentNode(event, 'markdown', body));
+  }
+  return children;
+}
+
+/**
+ * Builds one reasoning presentation item.
+ *
+ * @param {Object<string, *>} event - Canonical reasoning event.
+ * @returns {Object<string, *>} Reasoning presentation item.
+ */
+function reasoningNode(event) {
+  return {
+    ...contentNode(event, 'reasoning'),
+    atomic: true
+  };
+}
+
+/**
+ * Builds one tool presentation node.
+ *
+ * @param {Object<string, *>} event - Canonical tool event.
+ * @returns {Object<string, *>} Tool presentation node.
+ */
+function toolNode(event) {
+  const block = toolBlock(event);
+  return {
+    id: `presentation:tool:${event.id}`,
+    kind: 'tool',
+    atomic: true,
+    call_id: toolCallId(event),
+    name: block?.name ?? null,
+    interactive: isInteractiveTool(block),
+    call: event.kind === 'tool_call' ? block : null,
+    result: event.kind === 'tool_result' ? block : null,
+    event_ids: [event.id],
+    source: [sourceRef(event)]
+  };
+}
+
+/**
+ * Attaches a tool-result event to a prior tool-call presentation node.
+ *
+ * @param {Object<string, *>} node - Existing tool node.
+ * @param {Object<string, *>} event - Canonical tool-result event.
+ * @returns {void} The supplied tool node is updated in place.
+ */
+function attachToolResult(node, event) {
+  const block = toolBlock(event);
+  node.result = block;
+  node.interactive = node.interactive || isInteractiveTool(block);
+  node.event_ids.push(event.id);
+  node.source.push(sourceRef(event));
+}
+
+/**
+ * Creates a new presentation turn.
+ *
+ * @param {Object<string, *>} event - First event assigned to the turn.
+ * @param {number} turnIndex - Zero-based presentation turn index.
+ * @param {string} role - Presentation actor role.
+ * @param {Object<string, *>} [actorOverride] - Optional explicit actor metadata.
+ * @returns {Object<string, *>} New presentation turn.
+ */
+function createTurn(event, turnIndex, role, actorOverride = {}) {
+  const provider = event?.provider ?? event?.source?.provider ?? null;
+  const actor = {
+    role,
+    provider,
+    label: role === 'user' ? 'User' : providerLabel(provider),
+    ...actorOverride
+  };
+  return {
+    id: `presentation:turn:${turnIndex}:${event.id}`,
+    kind: 'turn',
+    atomic: false,
+    actor,
+    source: [],
+    children: []
+  };
+}
+
+/**
+ * Adds one event source to a turn without duplicating the same event identity.
+ *
+ * @param {Object<string, *>} turn - Presentation turn.
+ * @param {Object<string, *>} event - Canonical event.
+ * @returns {void} The supplied turn is updated in place.
+ */
+function addTurnSource(turn, event) {
+  if (turn.source.some(source => source.event_id === event.id)) return;
+  turn.source.push(sourceRef(event));
+}
+
+/**
+ * Creates a reasoning group at the current turn position.
+ *
+ * @param {Object<string, *>} turn - Agent presentation turn.
+ * @param {Object<string, *>} event - First event in the reasoning group.
+ * @param {number} groupIndex - Zero-based reasoning-group index in the turn.
+ * @returns {Object<string, *>} New reasoning group.
+ */
+function createReasoningGroup(turn, event, groupIndex) {
+  const group = {
+    id: `${turn.id}:reasoning:${groupIndex}:${event.id}`,
+    kind: 'reasoning_group',
+    atomic: true,
+    source: [],
+    thought_count: 0,
+    children: []
+  };
+  turn.children.push(group);
+  return group;
+}
+
+/**
+ * Creates a separately-addressable subagent turn.
+ *
+ * @param {Object<string, *>} event - Canonical subagent event.
+ * @param {number} turnIndex - Zero-based presentation turn index.
+ * @returns {Object<string, *>} Subagent presentation turn.
+ */
+function createSubagentTurn(event, turnIndex) {
+  const block = event?.blocks?.find(item => item?.type === 'subagent');
+  const provider = event?.provider ?? event?.source?.provider ?? null;
+  const agentId = block?.agent_id ?? null;
+  const label = `${providerLabel(provider)} Sub-agent${agentId ? ` ${agentId}` : ''}`;
+  const turn = createTurn(event, turnIndex, 'assistant', {
+    kind: 'subagent',
+    label,
+    agent_id: agentId
+  });
+  addTurnSource(turn, event);
+  turn.children.push({
+    id: `presentation:subagent:${event.id}`,
+    kind: 'subagent_content',
+    atomic: false,
+    event_id: event.id,
+    source: [sourceRef(event)],
+    block: block ?? null
+  });
+  return turn;
+}
+
+/**
+ * Builds the provider-independent canonical presentation tree.
+ *
+ * User/Agent turns preserve canonical event order. Consecutive reasoning and
+ * ordinary tool activity form one reasoning group. Assistant commentary emitted
+ * while that reasoning group is active is part of the thought/tool activity and
+ * remains inside the group. A visible Assistant response closes the group but
+ * remains inside the same Agent turn. Later reasoning starts a new group.
+ *
+ * @param {Array<Object<string, *>>} events - Ordered canonical event stream.
+ * @returns {Object<string, *>} Canonical presentation tree.
+ */
+function buildBasePresentation(events) {
+  if (!Array.isArray(events)) {
+    throw new TypeError('buildCanonicalPresentation expects an event array');
+  }
+
+  const turns = [];
+  let currentTurn = null;
+  let reasoningGroup = null;
+  let reasoningGroupIndex = 0;
+  const toolsByCallId = new Map();
+
+  /**
+   * Ensures that an Agent turn exists for the supplied event.
+   *
+   * @param {Object<string, *>} event - Canonical event assigned to the Agent turn.
+   * @returns {Object<string, *>} Existing or newly created Agent presentation turn.
+   */
+  const ensureAgentTurn = event => {
+    if (!currentTurn || currentTurn.actor.role !== 'assistant' ||
+        currentTurn.actor.kind === 'subagent') {
+      currentTurn = createTurn(event, turns.length, 'assistant');
+      turns.push(currentTurn);
+      reasoningGroupIndex = 0;
+      toolsByCallId.clear();
+    }
+    addTurnSource(currentTurn, event);
+    return currentTurn;
+  };
+
+  /**
+   * Closes the current reasoning run without ending the surrounding turn.
+   *
+   * @returns {void} The active reasoning-group reference is cleared.
+   */
+  const closeReasoning = () => {
+    reasoningGroup = null;
+  };
+
+  /**
+   * Ensures that a reasoning group exists at the current Agent position.
+   *
+   * @param {Object<string, *>} event - Canonical reasoning/tool event assigned to the group.
+   * @returns {Object<string, *>} Existing or newly created reasoning group.
+   */
+  const ensureReasoningGroup = event => {
+    const turn = ensureAgentTurn(event);
+    if (!reasoningGroup) {
+      reasoningGroup = createReasoningGroup(
+        turn,
+        event,
+        reasoningGroupIndex++
+      );
+    }
+    return reasoningGroup;
+  };
+
+  for (const event of events) {
+    if (!event || event.visibility === 'hidden') continue;
+
+    if (event.kind === 'subagent') {
+      closeReasoning();
+      currentTurn = createSubagentTurn(event, turns.length);
+      turns.push(currentTurn);
+      reasoningGroupIndex = 0;
+      toolsByCallId.clear();
+      currentTurn = null;
+      continue;
+    }
+
+    if (event.kind === 'message' && event.role === 'user') {
+      closeReasoning();
+      currentTurn = createTurn(event, turns.length, 'user');
+      addTurnSource(currentTurn, event);
+      currentTurn.children.push(...userChildren(event));
+      turns.push(currentTurn);
+      currentTurn = null;
+      reasoningGroupIndex = 0;
+      toolsByCallId.clear();
+      continue;
+    }
+
+    if (event.kind === 'reasoning_summary') {
+      const group = ensureReasoningGroup(event);
+      group.children.push(reasoningNode(event));
+      group.source.push(sourceRef(event));
+      group.thought_count += 1;
+      continue;
+    }
+
+    if (event.kind === 'tool_call') {
+      const node = toolNode(event);
+      if (node.interactive) {
+        closeReasoning();
+        const turn = ensureAgentTurn(event);
+        turn.children.push({ ...node, kind: 'interaction' });
+      } else {
+        const group = ensureReasoningGroup(event);
+        group.children.push(node);
+        group.source.push(sourceRef(event));
+      }
+      if (node.call_id) toolsByCallId.set(node.call_id, node);
+      continue;
+    }
+
+    if (event.kind === 'tool_result') {
+      const callId = toolCallId(event);
+      const existing = callId ? toolsByCallId.get(callId) : null;
+      if (existing) {
+        if (existing.interactive) {
+          closeReasoning();
+        }
+        attachToolResult(existing, event);
+        addTurnSource(ensureAgentTurn(event), event);
+        const group = currentTurn?.children?.find(child =>
+          child.kind === 'reasoning_group' &&
+          child.children.includes(existing));
+        if (group) group.source.push(sourceRef(event));
+        continue;
+      }
+
+      const node = toolNode(event);
+      if (node.interactive) {
+        closeReasoning();
+        const turn = ensureAgentTurn(event);
+        turn.children.push({ ...node, kind: 'interaction' });
+      } else {
+        const group = ensureReasoningGroup(event);
+        group.children.push(node);
+        group.source.push(sourceRef(event));
+      }
+      continue;
+    }
+
+    if (event.kind === 'commentary' && event.role === 'assistant') {
+      if (reasoningGroup) {
+        ensureAgentTurn(event);
+        reasoningGroup.children.push(contentNode(event, 'commentary'));
+        reasoningGroup.source.push(sourceRef(event));
+      } else {
+        const turn = ensureAgentTurn(event);
+        turn.children.push(contentNode(event, 'commentary'));
+      }
+      continue;
+    }
+
+    if (event.kind === 'message' && event.role === 'assistant') {
+      closeReasoning();
+      const turn = ensureAgentTurn(event);
+      turn.children.push(contentNode(event, 'markdown'));
+      continue;
+    }
+
+    if (event.kind === 'notice') {
+      closeReasoning();
+      const turn = ensureAgentTurn(event);
+      turn.children.push(contentNode(event, 'notice'));
+    }
+  }
+
+  closeReasoning();
+
+  return {
+    schema_version: PRESENTATION_SCHEMA_VERSION,
+    kind: 'conversation',
+    turns
+  };
+}
+
+/**
+ * Returns whether one canonical event belongs to historical Codex revision
+ * history rather than the active revision.
+ *
+ * Revision status is canonical data.  Consumers must not inspect provider-native
+ * rollback markers to answer this question.
+ *
+ * @param {Object<string, *>} event - Canonical event.
+ * @returns {boolean} Whether the event belongs to rolled-back revision history.
+ */
+function isHistoricalRevision(event) {
+  return event?.rolled_back === true ||
+    event?.revision_status === 'original' ||
+    event?.revision_status === 'superseded';
+}
+
+/**
+ * Returns whether one canonical event participates in a revision lineage whose
+ * historical visibility may be toggled at projection time.
+ *
+ * The active edited generation is controlled by the same history policy as its
+ * historical predecessors even though the active generation itself remains
+ * visible when history is hidden.  Exposing this distinction lets downstream
+ * consumers change eligibility without interpreting revision-status strings.
+ *
+ * @param {Object<string, *>} event - Canonical event.
+ * @returns {boolean} Whether revision-history visibility controls this event.
+ */
+function isRevisionHistoryControlled(event) {
+  return typeof event?.revision_status === 'string' &&
+    event.revision_status !== 'normal';
+}
+
+/**
+ * Resolves effective projection visibility for one canonical event.
+ *
+ * Intrinsically hidden canonical events remain hidden.  Historical revision
+ * events are additionally controlled by the projection option without changing
+ * their canonical identity or removing them from the projected inventory.
+ *
+ * @param {Object<string, *>} event - Canonical event.
+ * @param {Object<string, *>} options - Projection options.
+ * @returns {boolean} Whether the event is eligible for the visible projection.
+ */
+function isEventProjectionVisible(event, options = {}) {
+  if (event?.visibility === 'hidden') return false;
+  if (!isHistoricalRevision(event)) return true;
+  return options?.includeRolledBackTurns === true;
+}
+
+/**
+ * Adds effective revision visibility metadata without mutating canonical events.
+ *
+ * Non-revision conversations preserve the exact caller event-array reference so
+ * existing structured consumers do not pay an allocation/identity cost for a
+ * Codex-only projection concern.  Once a historical revision exists, every event
+ * in that canonical inventory receives explicit effective visibility metadata so
+ * consumers can share one eligibility policy without renumbering/removing events.
+ *
+ * @param {Array<Object<string, *>>} events - Ordered canonical events.
+ * @param {Object<string, *>} options - Projection options.
+ * @returns {Array<Object<string, *>>} Stable event inventory with projection metadata.
+ */
+function projectRevisionVisibility(events, options = {}) {
+  if (!Array.isArray(events)) {
+    throw new TypeError('projectRevisionVisibility expects an event array');
+  }
+  if (!events.some(isHistoricalRevision)) return events;
+
+  return events.map(event => {
+    const visible = isEventProjectionVisible(event, options);
+    const historicalRevision = isHistoricalRevision(event);
+    return {
+      ...event,
+      projection: {
+        ...(event?.projection ?? {}),
+        visible,
+        revision_history_controlled: isRevisionHistoryControlled(event),
+        historical_revision: historicalRevision,
+        ...(visible
+          ? {}
+          : {
+              hidden_reason: historicalRevision
+                ? 'rolled-back-revision'
+                : 'canonical-hidden'
+            })
+      }
+    };
+  });
+}
+
+/**
+ * Renders canonical Markdown after applying projection-time revision visibility.
+ *
+ * Markdown is a serialization rather than an interactive retained DOM, so events
+ * that are not effectively visible are omitted from this output. Canonical
+ * normalization itself still retains them. Heading presentation values are
+ * derived by Core from canonical source provenance; callers provide visibility
+ * policy only and cannot inject semantic heading values.
+ *
+ * @param {Array<Object<string, *>>} events - Complete canonical event inventory.
+ * @param {Object<string, *>} options - Projection options.
+ * @returns {string} Canonical Markdown for the selected visibility projection.
+ */
+function renderCanonicalMarkdown(events, options = {}) {
+  const projected = projectRevisionVisibility(events, options)
+    .map(event => withCoreHeadingMetadata(event, options));
+  const visible = projected.filter(event => event?.projection?.visible !== false);
+  return renderRevisionMarkdown(visible);
+}
+
+/**
+ * Returns the visible revision/execution suffix for one canonical turn event.
+ *
+ * @param {Object<string, *>} event - Canonical User/Assistant event.
+ * @returns {string} Parenthesized status suffix or an empty string.
+ */
+function turnStatusSuffix(event) {
+  const statuses = [];
+  if (event?.revision_status && event.revision_status !== 'normal') {
+    statuses.push(Number.isInteger(event.revision_depth)
+      ? `${event.revision_status} ${event.revision_depth}`
+      : event.revision_status);
+  }
+  if (event?.execution_status === 'aborted') statuses.push('aborted');
+  return statuses.length ? ` (${statuses.join(', ')})` : '';
+}
+
+/**
+ * Returns all canonical events referenced by one presentation turn.
+ *
+ * @param {Object<string, *>} turn - Canonical presentation turn.
+ * @param {Map<string, Object<string, *>>} eventsById - Canonical events by ID.
+ * @returns {Array<Object<string, *>>} Resolved source events in turn order.
+ */
+function sourceEventsForTurn(turn, eventsById) {
+  return (turn?.source ?? [])
+    .map(source => eventsById.get(source?.event_id))
+    .filter(Boolean);
+}
+
+/**
+ * Finds the canonical message that supplies revision metadata for one
+ * presentation turn.
+ *
+ * Assistant turns may begin with reasoning/commentary before their final
+ * message, so the matching message is located from the turn's complete source
+ * list rather than assumed to be its first event.
+ *
+ * @param {Object<string, *>} turn - Canonical presentation turn.
+ * @param {Array<Object<string, *>>} sourceEvents - Resolved turn source events.
+ * @returns {Object<string, *>|null} Matching message event or null.
+ */
+function revisionMessageForTurn(turn, sourceEvents) {
+  const role = turn?.actor?.role;
+  if (role !== 'user' && role !== 'assistant') return null;
+  return sourceEvents.find(event =>
+    event?.role === role && event?.kind === 'message') ?? null;
+}
+
+/**
+ * Finds the canonical source event that owns one rendered turn heading.
+ *
+ * Assistant activity may start with reasoning or Commentary before a final
+ * response message. The enclosing Assistant heading therefore belongs to the
+ * last final Assistant message when present, while a User heading belongs to its
+ * User message. If a turn has no ordinary message, the first same-role source
+ * event supplies the heading provenance.
+ *
+ * @param {Object<string, *>} turn - Canonical presentation turn.
+ * @param {Array<Object<string, *>>} sourceEvents - Resolved turn source events.
+ * @returns {Object<string, *>|null} Heading-owning canonical event or null.
+ */
+function headingEventForTurn(turn, sourceEvents) {
+  const role = turn?.actor?.role;
+  if (role === 'assistant') {
+    return [...sourceEvents].reverse().find(event =>
+      event?.role === 'assistant' && event?.kind === 'message') ??
+      sourceEvents.find(event => event?.role === 'assistant') ?? null;
+  }
+  if (role === 'user') {
+    return sourceEvents.find(event =>
+      event?.role === 'user' && event?.kind === 'message') ??
+      sourceEvents.find(event => event?.role === 'user') ?? null;
+  }
+  return sourceEvents[0] ?? null;
+}
+
+/**
+ * Adds Core-owned heading metadata to presentation descendants that map to one
+ * canonical source event.
+ *
+ * @param {Object<string, *>} node - Canonical presentation node.
+ * @param {Map<string, Object<string, *>>} eventsById - Canonical events by ID.
+ * @param {Object<string, *>} options - Public Core projection options.
+ * @returns {void} The presentation node is annotated in place.
+ */
+function annotateNodeHeadingMetadata(node, eventsById, options) {
+  const event = eventsById.get(node?.event_id);
+  if (event) {
+    const metadata = deriveHeadingMetadata(event, options);
+    if (Object.keys(metadata).length) node.heading_metadata = metadata;
+  }
+  for (const child of node?.children ?? []) {
+    annotateNodeHeadingMetadata(child, eventsById, options);
+  }
+}
+
+/**
+ * Returns Core-owned effective visibility metadata for one revision-bearing
+ * presentation turn.
+ *
+ * A revision lineage remains one stable presentation inventory. Projection
+ * visibility may change without changing IDs, status, or depth, so downstream
+ * interactive consumers receive both the current effective visibility and the
+ * stable fact that a turn belongs to revision history. Consumers therefore do
+ * not need to interpret status strings or provider-native rollback markers.
+ *
+ * @param {Object<string, *>} revisionEvent - Revision-bearing message event.
+ * @param {Array<Object<string, *>>} sourceEvents - Resolved turn source events.
+ * @returns {Object<string, boolean>} Effective and stable revision visibility facts.
+ */
+function revisionTurnProjection(revisionEvent, sourceEvents) {
+  const visible = sourceEvents.length === 0 ||
+    sourceEvents.some(event => event?.projection?.visible !== false);
+  return {
+    visible,
+    revision_history_controlled:
+      typeof revisionEvent?.revision_status === 'string' &&
+      revisionEvent.revision_status !== 'normal',
+    historical_revision: isHistoricalRevision(revisionEvent)
+  };
+}
+
+/**
+ * Builds the canonical presentation tree and carries canonical revision status,
+ * heading metadata, depth, and effective visibility into presentation nodes.
+ *
+ * @param {Array<Object<string, *>>} events - Ordered canonical event stream.
+ * @param {Object<string, *>} options - Public Core projection options.
+ * @returns {Object<string, *>} Canonical presentation tree.
+ */
+function buildCanonicalPresentation(events, options = {}) {
+  const presentation = buildBasePresentation(events);
+  const eventsById = new Map(events.map(event => [event?.id, event]));
+
+  for (const turn of presentation.turns ?? []) {
+    const sourceEvents = sourceEventsForTurn(turn, eventsById);
+    const headingEvent = headingEventForTurn(turn, sourceEvents);
+    if (headingEvent) {
+      const metadata = deriveHeadingMetadata(headingEvent, options);
+      if (Object.keys(metadata).length) turn.heading_metadata = metadata;
+    }
+    for (const child of turn.children ?? []) {
+      annotateNodeHeadingMetadata(child, eventsById, options);
+    }
+
+    const sourceEvent = revisionMessageForTurn(turn, sourceEvents);
+    const suffix = turnStatusSuffix(sourceEvent);
+    if (!suffix) continue;
+    turn.actor = {
+      ...turn.actor,
+      label: `${turn.actor.label}${suffix}`,
+      revision_status: sourceEvent.revision_status,
+      revision_depth: sourceEvent.revision_depth,
+      execution_status: sourceEvent.execution_status
+    };
+    turn.projection = {
+      ...(turn.projection ?? {}),
+      ...revisionTurnProjection(sourceEvent, sourceEvents)
+    };
+  }
+
+  return presentation;
+}
+
+/**
+ * Escapes text for safe insertion into generated structural HTML.
+ *
+ * @param {*} value - Value to escape.
+ * @returns {string} HTML-escaped text.
+ */
+function htmlEscape(value) {
+  return String(value ?? '')
+    .replaceAll('&', '&amp;')
+    .replaceAll('<', '&lt;')
+    .replaceAll('>', '&gt;')
+    .replaceAll('"', '&quot;')
+    .replaceAll("'", '&#39;');
+}
+
+/**
+ * Adds an explicit resolved ordinal to every ordered-list item in a generated
+ * Markdown HTML fragment.
+ *
+ * HTML list markers are visual presentation and are not part of an item's text.
+ * Exposing the resolved ordinal as stable semantic metadata lets speech and
+ * accessibility integrations consume Core output without reparsing Markdown or
+ * recreating ordered-list numbering. Nested lists maintain independent ordinal
+ * counters and unordered lists remain unchanged.
+ *
+ * @param {string} html - Marked-generated HTML fragment.
+ * @returns {string} HTML with `data-list-ordinal` on ordered-list items.
+ */
+function annotateOrderedListOrdinals(html) {
+  const lists = [];
+  return String(html).replace(
+    /<(\/?)(ol|ul|li)\b([^>]*)>/gi,
+    (match, closing, rawTag, rawAttributes) => {
+      const tag = rawTag.toLowerCase();
+      const attributes = rawAttributes ?? '';
+
+      if (closing) {
+        if (tag === 'ol' || tag === 'ul') lists.pop();
+        return match;
+      }
+
+      if (tag === 'ol') {
+        const startMatch = attributes.match(
+          /\bstart\s*=\s*(?:"(-?\d+)"|'(-?\d+)'|(-?\d+))/i
+        );
+        const start = Number.parseInt(
+          startMatch?.[1] ?? startMatch?.[2] ?? startMatch?.[3] ?? '1',
+          10
+        );
+        lists.push({ ordered: true, next: Number.isFinite(start) ? start : 1 });
+        return match;
+      }
+
+      if (tag === 'ul') {
+        lists.push({ ordered: false, next: null });
+        return match;
+      }
+
+      const list = lists.at(-1);
+      if (!list?.ordered) return match;
+      const ordinal = list.next;
+      list.next += 1;
+      if (/\bdata-list-ordinal\s*=/i.test(attributes)) return match;
+      return `<li${attributes} data-list-ordinal="${ordinal}">`;
+    }
+  );
+}
+
+/**
+ * Renders one canonical Markdown leaf to HTML inside Core.
+ *
+ * @param {string} markdown - Canonical Markdown leaf content.
+ * @returns {string} HTML generated from the canonical Markdown content.
+ */
+function renderMarkdown(markdown) {
+  const renderer = new marked.Renderer();
+  renderer.html = ({ text }) => htmlEscape(text);
+  const html = String(marked.parse(String(markdown ?? ''), {
+    async: false,
+    breaks: false,
+    gfm: true,
+    renderer
+  }));
+  return annotateOrderedListOrdinals(html);
+}
+
+/**
+ * Converts one canonical block to Markdown leaf text without interpreting
+ * provider-native syntax.
+ *
+ * @param {Object<string, *>} block - Canonical content block.
+ * @returns {string} Markdown leaf text represented by the block.
+ */
+function blockMarkdown(block) {
+  if (!block || typeof block !== 'object') return '';
+  if (block.type === 'text') return block.text ?? '';
+  if (block.type === 'reasoning_summary') {
+    const content = block.content ?? '';
+    if (content) return content;
+    return block.summary ?? '';
+  }
+  if (block.type === 'code') {
+    const language = block.language ?? '';
+    const code = block.code ?? block.text ?? '';
+    return `\`\`\`${language}\n${code}\n\`\`\``;
+  }
+  if (block.type === 'subagent') {
+    return block.output ?? block.text ?? block.description ?? '';
+  }
+  return block.text ?? '';
+}
+
+/**
+ * Renders one canonical content block as its isolated HTML leaf.
+ *
+ * This helper shares the exact block-to-Markdown and Markdown-to-HTML
+ * implementation used by the complete renderer.  Interactive word
+ * provenance uses it only to verify block ownership inside Core.
+ *
+ * @param {Object<string, *>} block - Canonical content block.
+ * @returns {string} Canonical HTML represented by the block.
+ */
+function renderCanonicalBlockHtml(block) {
+  const markdown = blockMarkdown(block);
+  return markdown ? renderMarkdown(markdown) : '';
+}
+
+/**
+ * Converts the Markdown-bearing blocks on one presentation node to one leaf
+ * string in canonical block order.
+ *
+ * @param {Object<string, *>} node - Canonical presentation node.
+ * @returns {string} Markdown leaf content.
+ */
+function nodeMarkdown(node) {
+  return (node?.blocks ?? [])
+    .map(blockMarkdown)
+    .filter(text => text !== '')
+    .join('\n\n');
+}
+
+/**
+ * Renders source anchors retained by the canonical presentation tree.
+ *
+ * @param {Object<string, *>} node - Canonical presentation node.
+ * @param {Set<number>} emittedSourceIndexes - Source indexes already emitted.
+ * @returns {string} Stable source-anchor HTML.
+ */
+function renderSourceAnchors(node, emittedSourceIndexes) {
+  const output = [];
+  for (const source of node?.source ?? []) {
+    const index = source?.record_index;
+    if (!Number.isInteger(index) || emittedSourceIndexes.has(index)) continue;
+    emittedSourceIndexes.add(index);
+    const id = source?.record_id ?? String(index + 1);
+    output.push(
+      `<span class="record-anchor" data-jsonl-record="${index + 1}" ` +
+      `data-source-id="${htmlEscape(id)}"></span>`
+    );
+  }
+  return output.join('');
+}
+
+/**
+ * Renders a Markdown-bearing canonical presentation node.
+ *
+ * @param {Object<string, *>} node - Canonical presentation node.
+ * @param {Set<number>} emittedSourceIndexes - Source indexes already emitted.
+ * @param {string} className - Semantic CSS class for the content wrapper.
+ * @returns {string} Canonical HTML for the node.
+ */
+function renderMarkdownNode(node, emittedSourceIndexes, className = 'presentation-content') {
+  const anchors = renderSourceAnchors(node, emittedSourceIndexes);
+  const debug = renderHeadingDebugComment(node?.heading_metadata ?? {});
+  const markdown = nodeMarkdown(node);
+  const body = markdown ? renderMarkdown(markdown) : '';
+  return `<div class="${className}" data-presentation-id="${htmlEscape(node?.id ?? '')}">` +
+    `${debug}${anchors}${body}</div>`;
+}
+
+/**
+ * Returns the stable reasoning-group summary label.
+ *
+ * @param {number} count - Canonical thought count.
+ * @returns {string} Human-readable reasoning summary.
+ */
+function thoughtSummary(count) {
+  if (count === 1) return 'Having a thought';
+  if (count > 1) return `Having ${count} thoughts`;
+  return 'Thought and tool activity';
+}
+
+/**
+ * Returns a stable summary for one canonical tool presentation node.
+ *
+ * @param {Object<string, *>} node - Canonical tool or interaction node.
+ * @returns {string} Human-readable tool summary.
+ */
+function toolSummary(node) {
+  const description = node?.call?.input?.description;
+  if (typeof description === 'string' && description.trim()) return description;
+  return node?.name || 'Tool';
+}
+
+/**
+ * Renders one canonical tool or interaction node.
+ *
+ * @param {Object<string, *>} node - Canonical tool presentation node.
+ * @param {Set<number>} emittedSourceIndexes - Source indexes already emitted.
+ * @returns {string} Canonical structural HTML for the tool.
+ */
+function renderTool(node, emittedSourceIndexes) {
+  const anchors = renderSourceAnchors(node, emittedSourceIndexes);
+  const payload = [node?.call, node?.result]
+    .filter(value => value != null)
+    .map(value => JSON.stringify(value))
+    .join('\n');
+  return `<details class="tool" data-presentation-id="${htmlEscape(node?.id ?? '')}">` +
+    `<summary>${htmlEscape(toolSummary(node))}</summary>${anchors}` +
+    `<pre><code>${htmlEscape(payload)}</code></pre></details>`;
+}
+
+/**
+ * Resolves a canonical attachment/image source from node resources.
+ *
+ * @param {Object<string, *>} node - Canonical attachment node.
+ * @param {Object<string, *>} block - Canonical attachment/image block.
+ * @returns {string} Renderable resource source or an empty string.
+ */
+function attachmentSource(node, block) {
+  if (block?.url) return block.url;
+  if (block?.source_pointer) return block.source_pointer;
+  const resource = (node?.resources ?? []).find(item => item?.id === block?.resource_id);
+  return resource?.data_url ?? resource?.download_url ?? resource?.source_pointer ?? '';
+}
+
+/**
+ * Renders canonical User attachments.
+ *
+ * @param {Object<string, *>} node - Canonical attachments node.
+ * @param {Set<number>} emittedSourceIndexes - Source indexes already emitted.
+ * @returns {string} Canonical attachment-area HTML.
+ */
+function renderAttachments(node, emittedSourceIndexes) {
+  const anchors = renderSourceAnchors(node, emittedSourceIndexes);
+  const images = (node?.blocks ?? []).map(block => {
+    const source = attachmentSource(node, block);
+    if (!source) return '';
+    return `<img src="${htmlEscape(source)}" alt="">`;
+  }).join('');
+  return `<div class="attachments" data-presentation-id="${htmlEscape(node?.id ?? '')}">${anchors}${images}</div>`;
+}
+
+/**
+ * Renders semantic User context as a nested blockquote/details disclosure.
+ *
+ * @param {Object<string, *>} node - Canonical User-context presentation node.
+ * @param {Set<number>} emittedSourceIndexes - Source indexes already emitted.
+ * @returns {string} Canonical User-context HTML.
+ */
+function renderUserContext(node, emittedSourceIndexes) {
+  const block = (node?.blocks ?? []).find(item => item?.type === 'user_context') ?? {};
+  const summary = block.summary ?? '# Context from my IDE setup:';
+  const anchors = renderSourceAnchors(node, emittedSourceIndexes);
+  const body = block.text ? renderMarkdown(String(block.text)) : '';
+  return `<blockquote class="user-context"><details class="user-context-details" ` +
+    `data-presentation-id="${htmlEscape(node?.id ?? '')}">` +
+    `<summary>${htmlEscape(summary)}</summary>${anchors}${body}</details></blockquote>`;
+}
+
+/**
+ * Renders one canonical subagent content node.
+ *
+ * @param {Object<string, *>} node - Canonical subagent content node.
+ * @param {Set<number>} emittedSourceIndexes - Source indexes already emitted.
+ * @returns {string} Canonical subagent HTML.
+ */
+function renderSubagentContent(node, emittedSourceIndexes) {
+  const anchors = renderSourceAnchors(node, emittedSourceIndexes);
+  const block = node?.block ?? {};
+  const markdown = block.output ?? block.text ?? block.description ?? '';
+  const body = markdown ? renderMarkdown(String(markdown)) : '';
+  return `<div class="subagent-content" data-presentation-id="${htmlEscape(node?.id ?? '')}">${anchors}${body}</div>`;
+}
+
+/**
+ * Renders one reasoning group and its ordered canonical children.
+ *
+ * @param {Object<string, *>} node - Canonical reasoning-group node.
+ * @param {Set<number>} emittedSourceIndexes - Source indexes already emitted.
+ * @returns {string} Canonical reasoning-group HTML.
+ */
+function renderReasoningGroup(node, emittedSourceIndexes) {
+  const children = (node?.children ?? []).map(child => {
+    if (child?.kind === 'reasoning') {
+      return renderMarkdownNode(child, emittedSourceIndexes, 'thought');
+    }
+    return renderNode(child, emittedSourceIndexes);
+  }).join('');
+  return `<details class="reasoning" data-presentation-id="${htmlEscape(node?.id ?? '')}">` +
+    `<summary>${htmlEscape(thoughtSummary(node?.thought_count ?? 0))}</summary>` +
+    `<div class="reasoning-body">${children}</div></details>`;
+}
+
+/**
+ * Renders one canonical presentation node according to its normalized kind.
+ *
+ * @param {Object<string, *>} node - Canonical presentation node.
+ * @param {Set<number>} emittedSourceIndexes - Source indexes already emitted.
+ * @returns {string} Canonical structural HTML for the node.
+ */
+function renderNode(node, emittedSourceIndexes) {
+  switch (node?.kind) {
+    case 'reasoning_group':
+      return renderReasoningGroup(node, emittedSourceIndexes);
+    case 'tool':
+    case 'interaction':
+      return renderTool(node, emittedSourceIndexes);
+    case 'attachments':
+      return renderAttachments(node, emittedSourceIndexes);
+    case 'user_context':
+      return renderUserContext(node, emittedSourceIndexes);
+    case 'reasoning':
+      return renderMarkdownNode(node, emittedSourceIndexes, 'thought');
+    case 'markdown':
+      return renderMarkdownNode(node, emittedSourceIndexes, 'presentation-content');
+    case 'commentary':
+      return renderMarkdownNode(node, emittedSourceIndexes, 'presentation-content commentary');
+    case 'notice':
+      return renderMarkdownNode(node, emittedSourceIndexes, 'presentation-content notice');
+    case 'subagent_content':
+      return renderSubagentContent(node, emittedSourceIndexes);
+    default:
+      throw new TypeError(`Unsupported canonical presentation node kind: ${node?.kind ?? '<missing>'}`);
+  }
+}
+
+/**
+ * Renders one canonical turn from the provider-independent presentation tree.
+ *
+ * @param {Object<string, *>} turn - Canonical presentation turn.
+ * @param {Set<number>} emittedSourceIndexes - Source indexes already emitted.
+ * @returns {string} Canonical turn HTML.
+ */
+function renderTurnHeading(turn, options = {}) {
+  const label = turn?.actor?.label || (turn?.actor?.role === 'user' ? 'User' : 'Agent');
+  const metadata = turn?.heading_metadata ?? {};
+  const components = headingMetadataComponents(metadata);
+  const debug = renderHeadingDebugComment(metadata);
+  if (!components.length && !debug) return `<h2>${htmlEscape(label)}</h2>`;
+
+  const theme = resolveProjectionTheme(options?.theme ?? null);
+  const speakerRole = turn?.actor?.role === 'user'
+    ? STYLE_ROLES.USER_HEADING
+    : STYLE_ROLES.ASSISTANT_HEADING;
+  const speakerClass = theme.html[speakerRole] ?? '';
+  const speaker = speakerClass
+    ? `<span class="${htmlEscape(speakerClass)}">${htmlEscape(label)}</span>`
+    : `<span>${htmlEscape(label)}</span>`;
+  const fields = components.map(component => {
+    const className = theme.html[component.styleRole] ?? '';
+    const value = htmlEscape(component.text);
+    return className
+      ? `<span class="${htmlEscape(className)}">${value}</span>`
+      : `<span>${value}</span>`;
+  });
+  if (debug) fields.push(debug);
+  return `<h2>${[speaker, ...fields].join(' ')}</h2>`;
+}
+
+/**
+ * Renders one canonical turn from the provider-independent presentation tree.
+ *
+ * @param {Object<string, *>} turn - Canonical presentation turn.
+ * @param {Set<number>} emittedSourceIndexes - Source indexes already emitted.
+ * @param {Object<string, *>} options - Projection options.
+ * @returns {string} Canonical turn HTML.
+ */
+function renderTurn(turn, emittedSourceIndexes, options = {}) {
+  const children = (turn?.children ?? [])
+    .map(node => renderNode(node, emittedSourceIndexes))
+    .join('');
+  return `<section class="transcript-turn" data-presentation-id="${htmlEscape(turn?.id ?? '')}">` +
+    `${renderTurnHeading(turn, options)}` +
+    `<blockquote class="transcript-turn-body">${children}</blockquote></section>`;
+}
+
+/**
+ * Renders ordered complete-turn HTML units from normalized canonical events.
+ *
+ * Each returned unit is a legal virtualization boundary owned by Core.  Its
+ * HTML is already fully rendered canonical output, so downstream consumers may
+ * materialize or concatenate whole units without rediscovering presentation
+ * semantics from tags, classes, or source-anchor counts.
+ *
+ * @param {Array<Object<string, *>>} events - Ordered normalized canonical events.
+ * @param {Object<string, *>} options - Projection options.
+ * @returns {Array<Object<string, *>>} Ordered indivisible canonical HTML units.
+ */
+function renderBaseHtmlUnits(events, options = {}) {
+  if (!Array.isArray(events)) throw new TypeError('Canonical events must be an array.');
+  const presentation = buildCanonicalPresentation(events, options);
+  const emittedSourceIndexes = new Set();
+  return (presentation.turns ?? []).map(turn => ({
+    id: turn?.id ?? '',
+    kind: 'turn',
+    atomic: true,
+    source: (turn?.source ?? []).map(source => ({ ...source })),
+    html: renderTurn(turn, emittedSourceIndexes, options)
+  }));
+}
+
+/**
+ * Renders complete canonical HTML directly from normalized canonical events.
+ *
+ * All semantic structure and Markdown-to-HTML conversion are owned by
+ * AIConversationCore. The complete output is exactly the concatenation of the
+ * same Core-owned complete-turn units exposed to interactive consumers.
+ *
+ * @param {Array<Object<string, *>>} events - Ordered normalized canonical events.
+ * @param {Object<string, *>} options - Projection options.
+ * @returns {string} Complete canonical HTML transcript.
+ */
+function renderBaseHtml(events, options = {}) {
+  return renderBaseHtmlUnits(events, options)
+    .map(unit => unit.html)
+    .join('');
+}
+
+/**
+ * Canonical speech/display token grammar shared by interactive Core projections.
+ *
+ * Decimal/fractional values are one unit, runs of periods remain one unit,
+ * ordinary Unicode words retain apostrophes/hyphens, and every remaining
+ * non-whitespace symbol is an individual unit.  This is intentionally the same
+ * semantic grammar used by AgentPanelSpeaker's existing speech boundary model;
+ * the consumer-side copy is migration debt tracked separately.
+ */
+const CANONICAL_WORD_PATTERN =
+  /(?<![\p{L}\p{M}\p{N}_.])\d*\.\d+(?!\.\d)(?=[fFlL]|\b)|\.+|[\p{L}\p{M}\p{N}_]+(?:['’\-][\p{L}\p{M}\p{N}_]+)*|[^\s]/gu;
+
+/** HTML tags whose boundaries separate visible speech-token runs. */
+const BLOCK_TAGS = new Set([
+  'address', 'article', 'aside', 'blockquote', 'br', 'dd', 'div', 'dl', 'dt',
+  'fieldset', 'figcaption', 'figure', 'footer', 'form', 'h1', 'h2', 'h3', 'h4',
+  'h5', 'h6', 'header', 'hr', 'li', 'main', 'nav', 'ol', 'p', 'pre', 'section',
+  'table', 'tbody', 'td', 'tfoot', 'th', 'thead', 'tr', 'ul'
+]);
+
+/** HTML elements whose opening begins one canonical speech-navigation unit. */
+const NAVIGATION_TAGS = new Set([
+  'blockquote', 'h1', 'h2', 'h3', 'h4', 'h5', 'h6', 'li', 'p', 'pre', 'tr'
+]);
+
+/** HTML elements that never contain a matching closing tag. */
+const VOID_TAGS = new Set([
+  'area', 'base', 'br', 'col', 'embed', 'hr', 'img', 'input', 'link', 'meta',
+  'param', 'source', 'track', 'wbr'
+]);
+
+/** Core content containers whose descendants participate in word identity. */
+const WORD_CONTENT_CLASSES = new Set([
+  'presentation-content',
+  'thought',
+  'user-context-details',
+  'subagent-content'
+]);
+
+/** Named entities emitted by Core/Marked escaping that affect visible tokens. */
+const BASIC_HTML_ENTITIES = Object.freeze({
+  amp: '&',
+  apos: "'",
+  gt: '>',
+  lt: '<',
+  nbsp: '\u00a0',
+  quot: '"'
+});
+
+/**
+ * Creates one global word-enumeration state for a complete transcript render.
+ *
+ * @returns {Object<string, number>} Mutable render-local enumeration state.
+ */
+function createCanonicalWordState() {
+  return { nextWordId: 1 };
+}
+
+/**
+ * Finds the end of one HTML tag while respecting quoted attribute values.
+ *
+ * Core applies this only to HTML produced by its own canonical renderer.  A
+ * malformed unterminated tag is an invariant violation rather than a reason to
+ * guess where visible text resumes.
+ *
+ * @param {string} html - Complete HTML fragment.
+ * @param {number} start - Index of the opening `<`.
+ * @returns {number} Exclusive end offset of the complete tag/comment.
+ */
+function htmlTagEnd(html, start) {
+  if (html.startsWith('<!--', start)) {
+    const commentEnd = html.indexOf('-->', start + 4);
+    if (commentEnd < 0) {
+      throw new TypeError('Canonical HTML contains an unterminated comment.');
+    }
+    return commentEnd + 3;
+  }
+
+  let quote = '';
+  for (let index = start + 1; index < html.length; ++index) {
+    const character = html[index];
+    if (quote) {
+      if (character === quote) quote = '';
+      continue;
+    }
+    if (character === '"' || character === "'") {
+      quote = character;
+      continue;
+    }
+    if (character === '>') return index + 1;
+  }
+  throw new TypeError('Canonical HTML contains an unterminated tag.');
+}
+
+/**
+ * Parses structural information needed from one canonical HTML tag.
+ *
+ * @param {string} raw - Complete raw HTML tag.
+ * @returns {Object<string, *>} Parsed tag metadata.
+ */
+function parseHtmlTag(raw) {
+  if (raw.startsWith('<!--') || raw.startsWith('<!') || raw.startsWith('<?')) {
+    return {
+      name: '',
+      closing: false,
+      selfClosing: true,
+      classes: [],
+      listOrdinal: null
+    };
+  }
+
+  const match = raw.match(/^<\s*(\/?)\s*([A-Za-z][\w:-]*)\b([\s\S]*?)>$/);
+  if (!match) {
+    throw new TypeError(`Unsupported canonical HTML tag: ${raw.slice(0, 80)}`);
+  }
+  const name = match[2].toLowerCase();
+  const attributes = match[3] ?? '';
+  const classMatch = attributes.match(
+    /\bclass\s*=\s*(?:"([^"]*)"|'([^']*)'|([^\s"'=<>`]+))/i
+  );
+  const classes = (classMatch?.[1] ?? classMatch?.[2] ?? classMatch?.[3] ?? '')
+    .split(/\s+/u)
+    .filter(Boolean);
+  const ordinalMatch = attributes.match(
+    /\bdata-list-ordinal\s*=\s*(?:"(-?\d+)"|'(-?\d+)'|(-?\d+))/i
+  );
+  const listOrdinal = ordinalMatch
+    ? (ordinalMatch[1] ?? ordinalMatch[2] ?? ordinalMatch[3])
+    : null;
+  return {
+    name,
+    closing: match[1] === '/',
+    selfClosing: VOID_TAGS.has(name) || /\/\s*$/.test(attributes),
+    classes,
+    listOrdinal
+  };
+}
+
+/**
+ * Decodes one HTML entity to the single visible character/string it represents.
+ *
+ * Numeric entities and the entities Core/Marked itself emits are authoritative.
+ * Other named entities are preserved as their literal entity spelling in the
+ * word text rather than guessed as a different character.
+ *
+ * @param {string} entity - Raw entity spelling including `&` and `;`.
+ * @returns {string} Visible token text used by the word projection.
+ */
+function decodeHtmlEntity(entity) {
+  const body = entity.slice(1, -1);
+  if (/^#\d+$/u.test(body)) {
+    return String.fromCodePoint(Number.parseInt(body.slice(1), 10));
+  }
+  if (/^#x[\dA-Fa-f]+$/u.test(body)) {
+    return String.fromCodePoint(Number.parseInt(body.slice(2), 16));
+  }
+  return BASIC_HTML_ENTITIES[body] ?? entity;
+}
+
+/**
+ * Converts one raw HTML text segment to visible text plus exact raw offsets.
+ *
+ * Each visible UTF-16 code unit carries the raw source interval that produced it
+ * so a canonical token can later be wrapped without searching for its text.
+ *
+ * @param {string} raw - Raw HTML text-node serialization.
+ * @param {number} absoluteStart - Raw offset of the segment in the HTML fragment.
+ * @param {Array<string>} groups - Semantic ancestor groups for the text segment.
+ * @returns {Object<string, *>} Visible text and exact raw-offset map.
+ */
+function decodeTextSegment(raw, absoluteStart, groups) {
+  let text = '';
+  const map = [];
+  for (let index = 0; index < raw.length;) {
+    if (raw[index] === '&') {
+      const match = raw.slice(index).match(/^&(?:#\d+|#x[\dA-Fa-f]+|[A-Za-z][A-Za-z0-9]+);/u);
+      if (match) {
+        const decoded = decodeHtmlEntity(match[0]);
+        text += decoded;
+        for (let offset = 0; offset < decoded.length; ++offset) {
+          map.push({
+            rawStart: absoluteStart + index,
+            rawEnd: absoluteStart + index + match[0].length,
+            groups
+          });
+        }
+        index += match[0].length;
+        continue;
+      }
+    }
+
+    const codePoint = raw.codePointAt(index);
+    const visible = String.fromCodePoint(codePoint);
+    text += visible;
+    for (let offset = 0; offset < visible.length; ++offset) {
+      map.push({
+        rawStart: absoluteStart + index,
+        rawEnd: absoluteStart + index + visible.length,
+        groups
+      });
+    }
+    index += visible.length;
+  }
+  return { text, map };
+}
+
+/**
+ * Returns normalized semantic group names represented by the current ancestors.
+ *
+ * Core HTML classes remain the structural authority.  The word projection
+ * normalizes hyphens to underscores only for transport-friendly group keys; it
+ * does not add per-word CSS classes to the HTML.
+ *
+ * @param {Array<Object<string, *>>} stack - Open canonical HTML elements.
+ * @returns {Array<string>} Stable semantic group keys in ancestor order.
+ */
+function semanticGroups(stack) {
+  const groups = [];
+  const seen = new Set();
+  for (const element of stack) {
+    for (const className of element.classes ?? []) {
+      const group = className.replaceAll('-', '_');
+      if (!seen.has(group)) {
+        seen.add(group);
+        groups.push(group);
+      }
+      if (className.startsWith('language-')) {
+        const language = className.slice('language-'.length);
+        const fenceGroup = `fence:${language}`;
+        if (!seen.has('fenced_code')) {
+          seen.add('fenced_code');
+          groups.push('fenced_code');
+        }
+        if (language && !seen.has(fenceGroup)) {
+          seen.add(fenceGroup);
+          groups.push(fenceGroup);
+        }
+      }
+    }
+  }
+  return groups;
+}
+
+/**
+ * Returns whether the current element ancestry is canonical interactive content.
+ *
+ * Turn headings and generated disclosure summaries stay display structure rather
+ * than becoming speech/interaction words.  Markdown headings inside a canonical
+ * content container remain included because their content ancestor stays active.
+ *
+ * @param {Array<Object<string, *>>} stack - Open canonical HTML elements.
+ * @returns {boolean} Whether descendant text participates in word identity.
+ */
+function isWordContent(stack) {
+  if (stack.some(element => element.name === 'summary')) return false;
+  return stack.some(element =>
+    (element.classes ?? []).some(className => WORD_CONTENT_CLASSES.has(className))
+  );
+}
+
+/**
+ * Splits one canonical HTML fragment into tags and text with semantic ancestry.
+ *
+ * @param {string} html - Core-rendered HTML for one canonical unit.
+ * @returns {Array<Object<string, *>>} Ordered serialization segments.
+ */
+function htmlSegments(html) {
+  const segments = [];
+  const stack = [];
+  let cursor = 0;
+  let nextListItemId = 1;
+
+  while (cursor < html.length) {
+    if (html[cursor] !== '<') {
+      const end = html.indexOf('<', cursor);
+      const rawEnd = end < 0 ? html.length : end;
+      let listItem = null;
+      for (let index = stack.length - 1; index >= 0; --index) {
+        if (stack[index].name === 'li') {
+          listItem = stack[index];
+          break;
+        }
+      }
+      segments.push({
+        kind: 'text',
+        rawStart: cursor,
+        rawEnd,
+        groups: semanticGroups(stack),
+        wordContent: isWordContent(stack),
+        listItemId: listItem?.listItemId ?? null
+      });
+      cursor = rawEnd;
+      continue;
+    }
+
+    const end = htmlTagEnd(html, cursor);
+    const raw = html.slice(cursor, end);
+    const tag = parseHtmlTag(raw);
+    const boundary = Boolean(tag.name && BLOCK_TAGS.has(tag.name));
+    const listItemId = !tag.closing && !tag.selfClosing && tag.name === 'li'
+      ? nextListItemId++
+      : null;
+    const structuralStack = listItemId == null
+      ? stack
+      : [...stack, { ...tag, listItemId }];
+    segments.push({
+      kind: 'tag',
+      rawStart: cursor,
+      rawEnd: end,
+      boundary,
+      name: tag.name,
+      closing: tag.closing,
+      selfClosing: tag.selfClosing,
+      listItemId,
+      listOrdinal: tag.listOrdinal,
+      groups: semanticGroups(structuralStack),
+      wordContent: isWordContent(structuralStack)
+    });
+
+    if (tag.name) {
+      if (tag.closing) {
+        let matched = false;
+        for (let index = stack.length - 1; index >= 0; --index) {
+          if (stack[index].name === tag.name) {
+            stack.splice(index);
+            matched = true;
+            break;
+          }
+        }
+        if (!matched) {
+          throw new TypeError(`Canonical HTML closes unopened <${tag.name}>.`);
+        }
+      } else if (!tag.selfClosing) {
+        stack.push({
+          ...tag,
+          listItemId
+        });
+      }
+    }
+    cursor = end;
+  }
+
+  if (stack.length) {
+    throw new TypeError(
+      `Canonical HTML leaves <${stack.at(-1).name}> unclosed.`
+    );
+  }
+  return segments;
+}
+
+/**
+ * Adds one insertion at a raw HTML offset.
+ *
+ * @param {Map<number, Array<string>>} insertions - Pending output insertions.
+ * @param {number} offset - Raw HTML offset.
+ * @param {string} value - Markup to insert at that offset.
+ * @returns {void} The insertion is appended at the supplied offset.
+ */
+function addInsertion(insertions, offset, value) {
+  const values = insertions.get(offset) ?? [];
+  values.push(value);
+  insertions.set(offset, values);
+}
+
+/**
+ * Builds a tokenizable visible stream and exact raw-offset map from HTML segments.
+ *
+ * Block boundaries become unmapped whitespace sentinels, preventing one word
+ * from joining across separate canonical block-level structures. Inline markup
+ * contributes no boundary and therefore cannot split `turn_id` + `s` identity.
+ *
+ * @param {string} html - Complete canonical unit HTML.
+ * @param {Array<Object<string, *>>} segments - Parsed HTML segments.
+ * @returns {Object<string, *>} Visible stream and exact raw-offset map.
+ */
+function visibleWordStream(html, segments) {
+  let text = '';
+  const map = [];
+  const structuralWords = [];
+  const navigationStarts = new Set();
+  for (const segment of segments) {
+    if (segment.kind === 'tag') {
+      if (segment.boundary && text && !/\s$/u.test(text)) {
+        text += '\n';
+        map.push(null);
+      }
+      if (!segment.closing && NAVIGATION_TAGS.has(segment.name)) {
+        navigationStarts.add(text.length);
+      }
+      if (segment.name === 'li' &&
+          !segment.closing &&
+          segment.wordContent &&
+          segment.listOrdinal != null) {
+        structuralWords.push({
+          kind: 'list_ordinal',
+          text: `${segment.listOrdinal}.`,
+          start: text.length,
+          end: text.length,
+          groups: segment.groups,
+          listItemId: segment.listItemId,
+          rawStart: segment.rawStart,
+          rawEnd: segment.rawEnd
+        });
+      }
+      continue;
+    }
+    if (!segment.wordContent) continue;
+    const decoded = decodeTextSegment(
+      html.slice(segment.rawStart, segment.rawEnd),
+      segment.rawStart,
+      segment.groups
+    );
+    text += decoded.text;
+    map.push(...decoded.map.map(entry => ({
+      ...entry,
+      listItemId: segment.listItemId
+    })));
+  }
+  return { text, map, structuralWords, navigationStarts };
+}
+
+/**
+ * Returns the complete canonical interactive-word occurrences in HTML order.
+ *
+ * Ordered-list ordinals are canonical spoken words even though the browser
+ * renders their marker structurally rather than as a text node.  They therefore
+ * enter the same global word stream here, before the item's textual body.  The
+ * ordinal's DOM identity is carried by its <li>; ordinary words retain exact raw
+ * text pieces for span annotation.
+ *
+ * @param {string} html - Core-rendered canonical content HTML.
+ * @returns {Object<string, *>} Visible stream plus ordered word occurrences.
+ */
+function canonicalWordOccurrences(html) {
+  const value = String(html ?? '');
+  const segments = htmlSegments(value);
+  const visible = visibleWordStream(value, segments);
+  const occurrences = [...visible.structuralWords];
+
+  CANONICAL_WORD_PATTERN.lastIndex = 0;
+  for (const match of visible.text.matchAll(CANONICAL_WORD_PATTERN)) {
+    const start = match.index;
+    const end = start + match[0].length;
+    const groups = [];
+    const seenGroups = new Set();
+    for (let index = start; index < end; ++index) {
+      for (const group of visible.map[index]?.groups ?? []) {
+        if (!seenGroups.has(group)) {
+          seenGroups.add(group);
+          groups.push(group);
+        }
+      }
+    }
+    const firstMapped = visible.map.slice(start, end).find(Boolean);
+    occurrences.push({
+      kind: 'text',
+      text: match[0],
+      start,
+      end,
+      groups,
+      listItemId: firstMapped?.listItemId ?? null,
+      pieces: rawTokenPieces(visible.map, start, end)
+    });
+  }
+
+  occurrences.sort((left, right) => {
+    if (left.start !== right.start) return left.start - right.start;
+    if (left.kind === right.kind) return 0;
+    return left.kind === 'list_ordinal' ? -1 : 1;
+  });
+
+  const awaitingBody = new Set();
+  const navigationStarts = [...visible.navigationStarts].sort((left, right) =>
+    left - right);
+  let navigationStartIndex = 0;
+  let previousEnd = 0;
+  for (const occurrence of occurrences) {
+    let navigationBoundaryBefore = false;
+    while (navigationStartIndex < navigationStarts.length &&
+           navigationStarts[navigationStartIndex] <= occurrence.start) {
+      if (navigationStarts[navigationStartIndex] >= previousEnd) {
+        navigationBoundaryBefore = true;
+      }
+      ++navigationStartIndex;
+    }
+    let separator = visible.text.slice(previousEnd, occurrence.start);
+    if (occurrence.kind === 'list_ordinal') {
+      awaitingBody.add(occurrence.listItemId);
+      previousEnd = occurrence.start;
+    } else {
+      if (occurrence.listItemId != null && awaitingBody.has(occurrence.listItemId)) {
+        awaitingBody.delete(occurrence.listItemId);
+        if (separator === '') separator = ' ';
+      }
+      previousEnd = occurrence.end;
+    }
+    occurrence.separator_before = separator;
+    occurrence.navigation_boundary_before = navigationBoundaryBefore;
+  }
+
+  return { value, occurrences };
+}
+
+/**
+ * Returns canonical visible words plus their exact preceding separators.
+ *
+ * The same sequence contains both text-node words and Core-owned structural words
+ * such as ordered-list ordinals.  Consumers therefore receive one lossless spoken
+ * word stream without parsing Markdown or inventing a second identity space.
+ *
+ * @param {string} html - Core-rendered canonical content HTML.
+ * @returns {Array<Object<string, string>>} Ordered words and separators.
+ */
+function canonicalWordDescriptorsFromHtml(html) {
+  return canonicalWordOccurrences(html).occurrences.map(occurrence => ({
+    text: occurrence.text,
+    separator_before: occurrence.separator_before
+  }));
+}
+
+/**
+ * Returns the canonical visible word texts in one Core HTML fragment.
+ *
+ * @param {string} html - Core-rendered canonical content HTML.
+ * @returns {Array<string>} Canonical visible word texts in render order.
+ */
+function canonicalWordTextsFromHtml(html) {
+  return canonicalWordDescriptorsFromHtml(html).map(word => word.text);
+}
+
+/**
+ * Returns exact raw HTML pieces covered by one canonical visible token.
+ *
+ * @param {Array<Object<string, *>|null>} map - Visible-to-raw offset map.
+ * @param {number} start - Inclusive visible start offset.
+ * @param {number} end - Exclusive visible end offset.
+ * @returns {Array<Object<string, number>>} Contiguous raw text pieces.
+ */
+function rawTokenPieces(map, start, end) {
+  const pieces = [];
+  let current = null;
+  for (let index = start; index < end; ++index) {
+    const entry = map[index];
+    if (!entry) {
+      throw new TypeError('Canonical word unexpectedly crosses a block boundary.');
+    }
+    if (current && entry.rawStart <= current.rawEnd) {
+      current.rawEnd = Math.max(current.rawEnd, entry.rawEnd);
+      continue;
+    }
+    current = {
+      rawStart: entry.rawStart,
+      rawEnd: entry.rawEnd
+    };
+    pieces.push(current);
+  }
+  return pieces;
+}
+
+/**
+ * Renders raw HTML with all deterministic word-span insertions applied.
+ *
+ * @param {string} html - Original canonical unit HTML.
+ * @param {Map<number, Array<string>>} insertions - Markup indexed by raw offset.
+ * @returns {string} HTML containing stable `word-N` identities.
+ */
+function applyInsertions(html, insertions) {
+  let output = '';
+  for (let index = 0; index <= html.length; ++index) {
+    const values = insertions.get(index);
+    if (values) output += values.join('');
+    if (index < html.length) output += html[index];
+  }
+  return output;
+}
+
+/**
+ * Adds canonical global word identities to one Core-rendered HTML unit.
+ *
+ * Identity is allocated exactly once from the supplied transcript-wide state.
+ * A word spanning inline markup uses one unique DOM `id` on its first text piece
+ * and `data-word-id` on subsequent pieces, preserving one canonical handle
+ * without emitting duplicate HTML IDs.
+ *
+ * @param {string} html - Core-rendered HTML for one complete canonical unit.
+ * @param {Object<string, number>} state - Transcript-wide word enumeration state.
+ * @returns {Object<string, *>} Annotated HTML and canonical word records.
+ */
+function annotateCanonicalHtmlWords(html, state) {
+  if (!state || !Number.isSafeInteger(state.nextWordId) || state.nextWordId < 1) {
+    throw new TypeError('Canonical word state requires a positive safe nextWordId.');
+  }
+
+  const canonical = canonicalWordOccurrences(String(html ?? ''));
+  const insertions = new Map();
+  const words = [];
+  for (const occurrence of canonical.occurrences) {
+    const id = state.nextWordId++;
+    if (!Number.isSafeInteger(id)) {
+      throw new RangeError('Canonical word ID exceeded JavaScript safe integer range.');
+    }
+
+    words.push({
+      id,
+      text: occurrence.text,
+      groups: occurrence.groups,
+      navigation_boundary_before:
+        occurrence.navigation_boundary_before === true
+    });
+
+    if (occurrence.kind === 'list_ordinal') {
+      const rawTag = canonical.value.slice(occurrence.rawStart, occurrence.rawEnd);
+      if (/\bid\s*=/iu.test(rawTag)) {
+        throw new TypeError(
+          `Canonical ordered-list item already has an id before word ${id}.`);
+      }
+      addInsertion(
+        insertions,
+        occurrence.rawEnd - 1,
+        ` id="word-${id}"`
+      );
+      continue;
+    }
+
+    if (!occurrence.pieces.length) {
+      throw new TypeError(`Canonical word ${id} has no rendered text piece.`);
+    }
+    occurrence.pieces.forEach((piece, pieceIndex) => {
+      const attribute = pieceIndex === 0
+        ? `id="word-${id}"`
+        : `data-word-id="${id}"`;
+      addInsertion(insertions, piece.rawStart, `<span ${attribute}>`);
+      addInsertion(insertions, piece.rawEnd, '</span>');
+    });
+  }
+
+  return {
+    html: applyInsertions(canonical.value, insertions),
+    words
+  };
+}
+
+/** HTML elements that never contain a matching closing tag. */
+const WORD_ELEMENT_VOID_TAGS = new Set([
+  'area', 'base', 'br', 'col', 'embed', 'hr', 'img', 'input', 'link', 'meta',
+  'param', 'source', 'track', 'wbr'
+]);
+
+/**
+ * Finds the exclusive end of one Core-generated HTML tag or comment.
+ *
+ * @param {string} html - Complete canonical HTML fragment.
+ * @param {number} start - Offset of the opening `<`.
+ * @returns {number} Exclusive end offset of the tag or comment.
+ */
+function tagEnd(html, start) {
+  if (html.startsWith('<!--', start)) {
+    const end = html.indexOf('-->', start + 4);
+    if (end < 0) throw new TypeError('Canonical HTML contains an unterminated comment.');
+    return end + 3;
+  }
+
+  let quote = '';
+  for (let index = start + 1; index < html.length; ++index) {
+    const character = html[index];
+    if (quote) {
+      if (character === quote) quote = '';
+      continue;
+    }
+    if (character === '"' || character === "'") {
+      quote = character;
+      continue;
+    }
+    if (character === '>') return index + 1;
+  }
+  throw new TypeError('Canonical HTML contains an unterminated tag.');
+}
+
+/**
+ * Parses the structural fields needed from one Core-generated HTML tag.
+ *
+ * @param {string} raw - Complete raw HTML tag.
+ * @returns {Object<string, *>} Parsed tag metadata.
+ */
+function parseTag(raw) {
+  if (raw.startsWith('<!--') || raw.startsWith('<!') || raw.startsWith('<?')) {
+    return { name: '', closing: false, selfClosing: true };
+  }
+  const match = raw.match(/^<\s*(\/?)\s*([A-Za-z][\w:-]*)\b([\s\S]*?)>$/);
+  if (!match) throw new TypeError(`Unsupported canonical HTML tag: ${raw.slice(0, 80)}`);
+  const name = match[2].toLowerCase();
+  const attributes = match[3] ?? '';
+  return {
+    name,
+    closing: match[1] === '/',
+    selfClosing: WORD_ELEMENT_VOID_TAGS.has(name) || /\/\s*$/.test(attributes)
+  };
+}
+
+/**
+ * Returns a canonical word-fragment ID carried by one opening span tag.
+ *
+ * @param {string} raw - Raw opening tag.
+ * @returns {number|null} Numeric word ID, or null when the span is not a fragment.
+ */
+function fragmentWordId(raw) {
+  if (!/^<\s*span\b/i.test(raw)) return null;
+  const match = raw.match(/\b(?:id="word-|data-word-id=")([0-9]+)"/i);
+  if (!match) return null;
+  const id = Number.parseInt(match[1], 10);
+  return Number.isSafeInteger(id) && id > 0 ? id : null;
+}
+
+/**
+ * Parses Core-generated HTML into the minimal tree needed for word restructuring.
+ *
+ * @param {string} html - Annotated canonical HTML.
+ * @returns {Object<string, *>} Root tree node preserving original tag spellings.
+ */
+function parseHtml(html) {
+  const root = { type: 'root', children: [] };
+  const stack = [root];
+  let cursor = 0;
+
+  while (cursor < html.length) {
+    if (html[cursor] !== '<') {
+      const next = html.indexOf('<', cursor);
+      const end = next < 0 ? html.length : next;
+      stack.at(-1).children.push({ type: 'text', raw: html.slice(cursor, end) });
+      cursor = end;
+      continue;
+    }
+
+    const end = tagEnd(html, cursor);
+    const raw = html.slice(cursor, end);
+    const tag = parseTag(raw);
+    if (!tag.name) {
+      stack.at(-1).children.push({ type: 'raw', raw });
+      cursor = end;
+      continue;
+    }
+
+    if (tag.closing) {
+      const current = stack.at(-1);
+      if (current?.type !== 'element' || current.name !== tag.name) {
+        throw new TypeError(`Canonical HTML closes unexpected <${tag.name}>.`);
+      }
+      current.closeRaw = raw;
+      stack.pop();
+      cursor = end;
+      continue;
+    }
+
+    if (tag.selfClosing) {
+      stack.at(-1).children.push({ type: 'raw', raw });
+      cursor = end;
+      continue;
+    }
+
+    const element = {
+      type: 'element',
+      name: tag.name,
+      openRaw: raw,
+      closeRaw: '',
+      wordFragmentId: fragmentWordId(raw),
+      children: []
+    };
+    stack.at(-1).children.push(element);
+    stack.push(element);
+    cursor = end;
+  }
+
+  if (stack.length !== 1) {
+    throw new TypeError(`Canonical HTML leaves <${stack.at(-1).name}> unclosed.`);
+  }
+  return root;
+}
+
+/**
+ * Serializes a parsed canonical HTML node without changing untouched markup.
+ *
+ * @param {Object<string, *>} node - Parsed HTML node.
+ * @returns {string} Serialized HTML.
+ */
+function serialize(node) {
+  if (node.type === 'text' || node.type === 'raw') return node.raw;
+  if (node.type === 'root') return node.children.map(serialize).join('');
+  return node.openRaw + node.children.map(serialize).join('') + node.closeRaw;
+}
+
+/**
+ * Counts the current fragment wrappers for each canonical word ID.
+ *
+ * @param {Object<string, *>} node - Parsed HTML subtree.
+ * @param {Map<number, number>} counts - Mutable fragment counts by word ID.
+ * @returns {void} Counts are accumulated into `counts`.
+ */
+function countFragments(node, counts) {
+  if (node.type === 'element' && node.wordFragmentId != null) {
+    counts.set(node.wordFragmentId, (counts.get(node.wordFragmentId) ?? 0) + 1);
+  }
+  for (const child of node.children ?? []) countFragments(child, counts);
+}
+
+/**
+ * Finds root-to-fragment paths for one canonical word ID.
+ *
+ * @param {Object<string, *>} node - Current parsed HTML node.
+ * @param {number} wordId - Canonical word ID to locate.
+ * @param {Array<Object<string, *>>} path - Current root-to-node path.
+ * @param {Array<Array<Object<string, *>>>} matches - Mutable matching paths.
+ * @returns {void} Matching paths are appended to `matches`.
+ */
+function findFragmentPaths(node, wordId, path, matches) {
+  const nextPath = [...path, node];
+  if (node.type === 'element' && node.wordFragmentId === wordId) {
+    matches.push(nextPath);
+  }
+  for (const child of node.children ?? []) {
+    findFragmentPaths(child, wordId, nextPath, matches);
+  }
+}
+
+/**
+ * Returns the lowest common ancestor shared by all supplied node paths.
+ *
+ * @param {Array<Array<Object<string, *>>>} paths - Root-to-node paths.
+ * @returns {Object<string, *>} Lowest common ancestor node.
+ */
+function commonAncestor(paths) {
+  if (!paths.length) throw new TypeError('Canonical word has no HTML fragments.');
+  let ancestor = paths[0][0];
+  const limit = Math.min(...paths.map(path => path.length));
+  for (let index = 0; index < limit; ++index) {
+    const candidate = paths[0][index];
+    if (!paths.every(path => path[index] === candidate)) break;
+    ancestor = candidate;
+  }
+  return ancestor;
+}
+
+/**
+ * Returns whether a subtree contains a fragment for one canonical word ID.
+ *
+ * @param {Object<string, *>} node - Parsed HTML subtree.
+ * @param {number} wordId - Canonical word ID to locate.
+ * @returns {boolean} Whether the subtree contains the requested fragment.
+ */
+function containsFragment(node, wordId) {
+  if (node.type === 'element' && node.wordFragmentId === wordId) return true;
+  return (node.children ?? []).some(child => containsFragment(child, wordId));
+}
+
+/**
+ * Clones one formatting/container element around a selected child slice.
+ *
+ * Fragment spans for the target word are stripped before this function is used;
+ * other elements preserve their exact original opening and closing tags.
+ *
+ * @param {Object<string, *>} node - Original element node.
+ * @param {Array<Object<string, *>>} children - Child slice to wrap.
+ * @returns {Object<string, *>} Cloned element containing `children`.
+ */
+function cloneElement(node, children) {
+  return {
+    ...node,
+    children
+  };
+}
+
+/**
+ * Splits one element around the contiguous fragments of a canonical word.
+ *
+ * Formatting ancestors are cloned only where the selected word cuts through
+ * them. This lets Core move one word span outside its inline formatting while
+ * preserving formatting on neighbouring text.
+ *
+ * @param {Object<string, *>} node - Element containing a target fragment.
+ * @param {number} wordId - Canonical word ID being restructured.
+ * @returns {Object<string, Array<Object<string, *>>>} Before/selected/after slices.
+ */
+function splitElement(node, wordId) {
+  if (node.wordFragmentId === wordId) {
+    return { before: [], selected: node.children, after: [] };
+  }
+
+  const children = node.children ?? [];
+  const targetIndexes = [];
+  for (let index = 0; index < children.length; ++index) {
+    if (containsFragment(children[index], wordId)) targetIndexes.push(index);
+  }
+  if (!targetIndexes.length) {
+    throw new TypeError(`Canonical word ${wordId} is absent from requested subtree.`);
+  }
+
+  const first = targetIndexes[0];
+  const last = targetIndexes.at(-1);
+  const beforeChildren = [...children.slice(0, first)];
+  const selectedChildren = [];
+  const afterChildren = [...children.slice(last + 1)];
+
+  for (let index = first; index <= last; ++index) {
+    const child = children[index];
+    if (!containsFragment(child, wordId)) {
+      selectedChildren.push(child);
+      continue;
+    }
+    if (child.type !== 'element') {
+      throw new TypeError(`Canonical word ${wordId} fragment is not an element.`);
+    }
+    const split = splitElement(child, wordId);
+    if (index === first) beforeChildren.push(...split.before);
+    else if (split.before.length) {
+      throw new TypeError(`Canonical word ${wordId} has noncontiguous rendered content.`);
+    }
+    selectedChildren.push(...split.selected);
+    if (index === last) afterChildren.unshift(...split.after);
+    else if (split.after.length) {
+      throw new TypeError(`Canonical word ${wordId} has noncontiguous rendered content.`);
+    }
+  }
+
+  const before = beforeChildren.length ? [cloneElement(node, beforeChildren)] : [];
+  const selected = selectedChildren.length ? [cloneElement(node, selectedChildren)] : [];
+  const after = afterChildren.length ? [cloneElement(node, afterChildren)] : [];
+  return { before, selected, after };
+}
+
+/**
+ * Replaces fragmented wrappers for one word with one enclosing canonical span.
+ *
+ * @param {Object<string, *>} root - Parsed canonical HTML root.
+ * @param {number} wordId - Canonical word ID to collapse.
+ * @returns {void} The parsed tree is restructured in place.
+ */
+function collapseWord(root, wordId) {
+  const paths = [];
+  findFragmentPaths(root, wordId, [], paths);
+  if (paths.length < 2) return;
+  const ancestor = commonAncestor(paths);
+  if (!Array.isArray(ancestor.children)) {
+    throw new TypeError(`Canonical word ${wordId} has no common container.`);
+  }
+
+  const targetIndexes = [];
+  for (let index = 0; index < ancestor.children.length; ++index) {
+    if (containsFragment(ancestor.children[index], wordId)) targetIndexes.push(index);
+  }
+  const first = targetIndexes[0];
+  const last = targetIndexes.at(-1);
+  const before = [...ancestor.children.slice(0, first)];
+  const selected = [];
+  const after = [...ancestor.children.slice(last + 1)];
+
+  for (let index = first; index <= last; ++index) {
+    const child = ancestor.children[index];
+    if (!containsFragment(child, wordId)) {
+      selected.push(child);
+      continue;
+    }
+    if (child.type !== 'element') {
+      throw new TypeError(`Canonical word ${wordId} fragment is not an element.`);
+    }
+    const split = splitElement(child, wordId);
+    if (index === first) before.push(...split.before);
+    else if (split.before.length) {
+      throw new TypeError(`Canonical word ${wordId} has noncontiguous rendered content.`);
+    }
+    selected.push(...split.selected);
+    if (index === last) after.unshift(...split.after);
+    else if (split.after.length) {
+      throw new TypeError(`Canonical word ${wordId} has noncontiguous rendered content.`);
+    }
+  }
+
+  const wordSpan = {
+    type: 'element',
+    name: 'span',
+    openRaw: `<span id="word-${wordId}">`,
+    closeRaw: '</span>',
+    wordFragmentId: wordId,
+    children: selected
+  };
+  ancestor.children = [...before, wordSpan, ...after];
+}
+
+/**
+ * Converts internal per-text-piece word markers into one DOM element per word.
+ *
+ * `annotateCanonicalHtmlWords()` identifies canonical token text exactly once and
+ * may temporarily mark multiple raw text pieces when inline Markdown separates
+ * them. This Core-owned restructuring step removes that serialization detail from
+ * the public HTML contract: every canonical word leaves Core as exactly one DOM
+ * word element. Ordinary textual words use `<span id="word-N">...</span>`; an
+ * ordered-list ordinal uses its canonical `<li id="word-N">` because that
+ * structural element is the visible/highlightable word object. Applicable inline
+ * formatting remains nested inside ordinary word spans. Consumers never repair or
+ * reconstruct word identity.
+ *
+ * @param {string} html - Core-annotated canonical HTML.
+ * @returns {string} Canonical HTML with one DOM element per canonical word.
+ */
+function collapseCanonicalWordFragments(html) {
+  const root = parseHtml(String(html ?? ''));
+  const counts = new Map();
+  countFragments(root, counts);
+  const fragmentedIds = [...counts.entries()]
+    .filter(([, count]) => count > 1)
+    .map(([wordId]) => wordId)
+    .sort((left, right) => left - right);
+  for (const wordId of fragmentedIds) collapseWord(root, wordId);
+  return serialize(root);
+}
+
+/**
+ * Resolves canonical revision metadata for one presentation turn.
+ *
+ * @param {Object<string, *>} turn - Canonical presentation turn.
+ * @param {Map<string, Object<string, *>>} eventsById - Projected events by ID.
+ * @returns {Object<string, *>} Revision and effective-visibility metadata.
+ */
+function turnRevisionProjection(turn, eventsById) {
+  const sourceEvents = (turn?.source ?? [])
+    .map(source => eventsById.get(source?.event_id))
+    .filter(Boolean);
+  const revisionEvent = sourceEvents.find(event =>
+    typeof event?.revision_status === 'string' && event.revision_status.length);
+  const visible = sourceEvents.length === 0 ||
+    sourceEvents.some(event => event?.projection?.visible !== false);
+  return {
+    visible,
+    revision_status: revisionEvent?.revision_status ?? null,
+    revision_depth: Number.isInteger(revisionEvent?.revision_depth)
+      ? revisionEvent.revision_depth
+      : null,
+    historical: revisionEvent ? isHistoricalRevision(revisionEvent) : false
+  };
+}
+
+/**
+ * Applies canonical revision/visibility attributes to one already-rendered turn.
+ *
+ * This remains a Core serializer operation. Interactive consumers receive the
+ * completed unit and never need to interpret revision status or rewrite HTML.
+ *
+ * @param {string} html - Base canonical HTML for one complete turn.
+ * @param {Map<string, Object<string, *>>} turnsById - Turn projection metadata.
+ * @returns {string} Canonical turn HTML with revision visibility attributes.
+ */
+function applyTurnRevisionAttributes(html, turnsById) {
+  return html.replace(
+    /<section class="transcript-turn" data-presentation-id="([^"]*)">/,
+    (match, id) => {
+      const projection = turnsById.get(id);
+      if (!projection) return match;
+      const status = projection.revision_status;
+      const className = status
+        ? `transcript-turn revision-${status}`
+        : 'transcript-turn';
+      const statusAttribute = status
+        ? ` data-revision-status="${status}"`
+        : '';
+      const depthAttribute = Number.isInteger(projection.revision_depth)
+        ? ` data-revision-depth="${projection.revision_depth}"`
+        : '';
+      const hiddenAttribute = projection.historical && !projection.visible
+        ? ' hidden'
+        : '';
+      const historicalAttribute = projection.historical
+        ? ' data-revision-historical="true"'
+        : '';
+      return `<section class="${className}" data-presentation-id="${id}"` +
+        `${statusAttribute}${depthAttribute}${hiddenAttribute}${historicalAttribute}>`;
+    }
+  );
+}
+
+/**
+ * Returns the canonical blocks that contribute interactive words for one
+ * presentation leaf.
+ *
+ * @param {Object<string, *>} node - Canonical presentation node.
+ * @returns {Array<Object<string, *>>} Ordered word-bearing blocks.
+ */
+function wordBlocksForPresentationNode(node) {
+  if (node?.kind === 'subagent_content') {
+    return node?.block ? [node.block] : [];
+  }
+  if ([
+    'user_context',
+    'reasoning',
+    'markdown',
+    'commentary',
+    'notice'
+  ].includes(node?.kind)) {
+    return Array.isArray(node?.blocks) ? node.blocks : [];
+  }
+  return [];
+}
+
+/**
+ * Appends authoritative word provenance for one presentation subtree.
+ *
+ * Block word texts are rendered and tokenized by the same Core helpers as
+ * the complete projection. The complete-unit render later verifies this
+ * sequence exactly before provenance is attached, so this path can never
+ * silently align by text or ordinal when the renderings disagree.
+ *
+ * @param {Object<string, *>} node - Canonical presentation subtree.
+ * @param {Array<Object<string, *>>} output - Ordered provenance descriptors.
+ * @returns {void} Descriptors are appended in canonical render order.
+ */
+function appendWordProvenance(node, output) {
+  if (node?.kind === 'reasoning_group') {
+    for (const child of node?.children ?? []) {
+      appendWordProvenance(child, output);
+    }
+    return;
+  }
+  if (node?.kind === 'tool' || node?.kind === 'interaction' ||
+      node?.kind === 'attachments') return;
+
+  for (const block of wordBlocksForPresentationNode(node)) {
+    const html = '<div class="presentation-content">' +
+      renderCanonicalBlockHtml(block) + '</div>';
+    const descriptors = canonicalWordDescriptorsFromHtml(html);
+    descriptors.forEach((descriptor, blockWordIndex) => {
+      output.push({
+        text: descriptor.text,
+        separator_before: descriptor.separator_before,
+        provenance: {
+          presentation_id: node?.id ?? null,
+          event_id: node?.event_id ?? null,
+          block_id: block?.id ?? null,
+          block_word_index: blockWordIndex,
+          source: block?.source && typeof block.source === 'object'
+            ? { ...block.source }
+            : null
+        }
+      });
+    });
+  }
+}
+
+/**
+ * Builds the authoritative ordered word provenance sequence for one turn.
+ *
+ * @param {Object<string, *>} turn - Canonical presentation turn.
+ * @returns {Array<Object<string, *>>} Ordered provenance descriptors.
+ */
+function turnWordProvenance(turn) {
+  const output = [];
+  for (const child of turn?.children ?? []) {
+    appendWordProvenance(child, output);
+  }
+  return output;
+}
+
+/**
+ * Attaches verified canonical provenance to annotated word records.
+ *
+ * @param {Array<Object<string, *>>} words - Annotated unit word records.
+ * @param {Array<Object<string, *>>} expected - Core provenance descriptors.
+ * @param {string} unitId - Canonical unit identity for invariant errors.
+ * @returns {Array<Object<string, *>>} Word records carrying provenance.
+ */
+function wordsWithVerifiedProvenance(words, expected, unitId) {
+  if (words.length !== expected.length) {
+    throw new TypeError(
+      `Canonical word provenance count mismatch in unit ${unitId}: ` +
+      `${words.length} rendered words versus ${expected.length} block words.`
+    );
+  }
+  return words.map((word, index) => {
+    const descriptor = expected[index];
+    if (word?.text !== descriptor?.text) {
+      throw new TypeError(
+        `Canonical word provenance mismatch in unit ${unitId} at word ` +
+        `${index}: rendered ${JSON.stringify(word?.text)} versus block ` +
+        `${JSON.stringify(descriptor?.text)}.`
+      );
+    }
+    return {
+      ...word,
+      separator_before: descriptor.separator_before,
+      provenance: descriptor.provenance
+    };
+  });
+}
+
+/**
+ * Renders canonical HTML as ordered complete-turn units while retaining
+ * historical revision turns and assigning one transcript-global word identity.
+ *
+ * Word IDs are allocated once across the complete ordered unit sequence. The
+ * returned `speech_words` are the same identities embedded in each unit's HTML;
+ * consumers never have to retokenize or align rendered text independently.
+ * Each canonical word leaves Core as one DOM element, with inline Markdown
+ * formatting restructured inside that element when necessary.
+ *
+ * @param {Array<Object<string, *>>} events - Complete canonical event inventory.
+ * @param {Object<string, *>} options - Projection options.
+ * @returns {Array<Object<string, *>>} Ordered canonical HTML units.
+ */
+function renderCanonicalHtmlUnits(events, options = {}) {
+  if (!Array.isArray(events)) {
+    throw new TypeError('Canonical events must be an array.');
+  }
+  const projectedEvents = projectRevisionVisibility(events, options);
+  const presentation = buildCanonicalPresentation(projectedEvents, options);
+  const eventsById = new Map(projectedEvents.map(event => [event?.id, event]));
+  const turnsById = new Map((presentation.turns ?? []).map(turn => [
+    String(turn?.id ?? ''),
+    turnRevisionProjection(turn, eventsById)
+  ]));
+  const wordState = createCanonicalWordState();
+  const provenanceByTurnId = new Map((presentation.turns ?? []).map(turn => [
+    String(turn?.id ?? ''),
+    turnWordProvenance(turn)
+  ]));
+
+  return renderBaseHtmlUnits(projectedEvents, options).map(unit => {
+    const revisionHtml = applyTurnRevisionAttributes(unit.html, turnsById);
+    const annotated = annotateCanonicalHtmlWords(revisionHtml, wordState);
+    const provenance = provenanceByTurnId.get(String(unit?.id ?? '')) ?? [];
+    const words = wordsWithVerifiedProvenance(
+      annotated.words,
+      provenance,
+      String(unit?.id ?? '')
+    );
+    return {
+      ...unit,
+      html: collapseCanonicalWordFragments(annotated.html),
+      speech_words: words
+    };
+  });
+}
+
+/**
+ * Locates one authoritative canonical word and its containing rendered unit.
+ *
+ * The numeric word ID is the only lookup key. Core renders the same canonical
+ * unit/word projection used by HTML and speech, then resolves the exact identity
+ * from that projection. Visible text is never searched or used as a fallback, so
+ * duplicate text in another unit cannot impersonate the requested handle.
+ *
+ * @param {Array<Object<string, *>>} events - Complete canonical event inventory.
+ * @param {number} wordId - Positive safe canonical global word ID.
+ * @param {Object<string, *>} options - Projection options.
+ * @returns {Object<string, *>|null} Canonical word plus containing rendered unit, or null when the ID is absent.
+ */
+function locateCanonicalWord(events, wordId, options = {}) {
+  if (!Number.isSafeInteger(wordId) || wordId < 1) {
+    throw new TypeError('Canonical word ID must be a positive safe integer.');
+  }
+
+  const units = renderCanonicalHtmlUnits(events, options);
+  for (const unit of units) {
+    const word = (unit.speech_words ?? []).find(item => item?.id === wordId);
+    if (word) return { word, unit };
+  }
+  return null;
+}
+
+/**
+ * Projects the authoritative global word handles used by HTML and speech/UI.
+ *
+ * This projection is derived from the same annotated unit render returned by
+ * `renderCanonicalHtmlUnits`, so there is no second tokenization/alignment path.
+ * Internal word-to-turn/unit lookup remains Core-owned and is exposed through a
+ * separate high-level lookup API rather than copied into each word record.
+ *
+ * @param {Array<Object<string, *>>} events - Complete canonical event inventory.
+ * @param {Object<string, *>} options - Projection options.
+ * @returns {Object<string, Array<Object<string, *>>>} Ordered canonical words.
+ */
+function projectCanonicalWords(events, options = {}) {
+  const units = renderCanonicalHtmlUnits(events, options);
+  return {
+    words: units.flatMap(unit => unit.speech_words)
+  };
+}
+
+/**
+ * Renders canonical HTML while retaining historical revision turns in the DOM.
+ *
+ * Historical turns always remain serialized with stable presentation IDs and
+ * semantic revision attributes. The selected projection controls only their
+ * `hidden` state, allowing an interactive consumer to show/hide the already
+ * materialized DOM without reparsing provider records or changing identities.
+ *
+ * @param {Array<Object<string, *>>} events - Complete canonical event inventory.
+ * @param {Object<string, *>} options - Projection options.
+ * @returns {string} Canonical structural HTML containing all revision turns.
+ */
+function renderCanonicalHtml(events, options = {}) {
+  return renderCanonicalHtmlUnits(events, options)
+    .map(unit => unit.html)
+    .join('');
+}
+
+/** Version of the structured interactive projection. */
+const STRUCTURED_SCHEMA_VERSION = 2;
+/** Policy declaring that consumers split only at presentation-tree boundaries. */
+const PRESENTATION_SPLIT_POLICY = 'presentation-tree';
+
+/**
+ * Returns the canonical source block index when one exists.
+ *
+ * @param {Object<string, *>} block - Canonical block.
+ * @returns {number|null} Source block index or null.
+ */
+function sourceBlockIndex(block) {
+  const value = block?.source?.block_index;
+  return Number.isInteger(value) ? value : null;
+}
+
+/**
+ * Projects one canonical block into the flattened interactive-consumer shape.
+ *
+ * @param {Object<string, *>} event - Canonical owner event.
+ * @param {Object<string, *>} block - Canonical block.
+ * @param {number} blockIndex - Canonical block ordinal within the event.
+ * @returns {Object<string, *>} Flattened canonical unit.
+ */
+function projectBlock(event, block, blockIndex) {
+  return {
+    id: block?.id ?? `${event.id}:block:${blockIndex}`,
+    event_id: event.id,
+    provider: event.provider ?? null,
+    source_record_id: event.source_record_id ?? event?.source?.record_id ?? null,
+    source_index: Number.isInteger(event.source_index)
+      ? event.source_index
+      : Number.isInteger(event?.source?.record_index)
+        ? event.source.record_index
+        : null,
+    source_block_index: sourceBlockIndex(block),
+    event_kind: event.kind ?? null,
+    role: event.role ?? null,
+    channel: event.channel ?? null,
+    visibility: event.visibility ?? null,
+    content_type: event.content_type ?? null,
+    block_type: block?.type ?? null,
+    block
+  };
+}
+
+/**
+ * Converts presentation source aliases to the compatibility structural-unit shape.
+ *
+ * @param {Object<string, *>} node - Atomic presentation node.
+ * @returns {Object<string, *>} Structural-unit descriptor.
+ */
+function structuralUnit(node) {
+  const sources = Array.isArray(node?.source) ? node.source : [];
+  return {
+    id: node.id,
+    kind: node.kind,
+    atomic: Boolean(node.atomic),
+    source_indexes: sources
+      .map(source => source?.record_index)
+      .filter(Number.isInteger),
+    source_record_ids: sources
+      .map(source => source?.record_id)
+      .filter(value => value != null)
+      .map(String)
+  };
+}
+
+/**
+ * Collects atomic presentation nodes recursively in display order.
+ *
+ * @param {Object<string, *>} presentation - Canonical presentation tree.
+ * @returns {Array<Object<string, *>>} Atomic structural-unit descriptors.
+ */
+function collectStructuralUnits(presentation) {
+  const units = [];
+
+  /**
+   * Visits one presentation node recursively.
+   *
+   * @param {Object<string, *>} node - Presentation node.
+   * @returns {void} No value is returned.
+   */
+  const visit = node => {
+    if (!node || typeof node !== 'object') return;
+    if (node.atomic) units.push(structuralUnit(node));
+    for (const child of node.children ?? []) visit(child);
+  };
+
+  for (const turn of presentation.turns ?? []) visit(turn);
+  return units;
+}
+
+/**
+ * Enables renderer provenance without mutating caller canonical events.
+ *
+ * This compatibility Markdown remains available while consumers migrate to the
+ * presentation tree. It is not used to discover structural boundaries.
+ *
+ * @param {Object<string, *>} event - Canonical event.
+ * @returns {Object<string, *>} Event copy with debug provenance enabled.
+ */
+function withRenderProvenance(event) {
+  return {
+    ...event,
+    projection: {
+      ...(event?.projection ?? {}),
+      debug_provenance: true
+    }
+  };
+}
+
+/**
+ * Projects canonical events for interactive consumers.
+ *
+ * The presentation tree is authoritative for structural grouping, atomicity,
+ * source aliases, and display order. Markdown remains a compatibility/output
+ * serialization only and is never reparsed to infer those semantics.
+ *
+ * @param {Array<Object<string, *>>} events - Ordered canonical events.
+ * @returns {Object<string, *>} Structured projection.
+ */
+function projectBaseConversationBrowser(events) {
+  if (!Array.isArray(events)) {
+    throw new TypeError('projectCanonicalConversation expects an event array');
+  }
+
+  const units = [];
+  for (const event of events) {
+    const blocks = Array.isArray(event?.blocks) ? event.blocks : [];
+    for (let blockIndex = 0; blockIndex < blocks.length; ++blockIndex) {
+      units.push(projectBlock(event, blocks[blockIndex], blockIndex));
+    }
+  }
+
+  const presentation = buildCanonicalPresentation(events);
+  return {
+    schema_version: STRUCTURED_SCHEMA_VERSION,
+    events,
+    turns: deriveTurns(events),
+    units,
+    presentation: {
+      schema_version: presentation.schema_version,
+      split_policy: PRESENTATION_SPLIT_POLICY,
+      structural_units: collectStructuralUnits(presentation),
+      tree: presentation
+    },
+    markdown: renderRevisionMarkdown(events.map(withRenderProvenance))
+  };
+}
+
+/**
+ * Resolves the effective visibility and revision metadata for one presentation
+ * node.
+ *
+ * @param {Object<string, *>} node - Canonical presentation node or turn.
+ * @param {Map<string, Object<string, *>>} eventsById - Projected events by canonical ID.
+ * @returns {Object<string, *>} Projection metadata for the presentation node.
+ */
+function nodeProjection(node, eventsById) {
+  const sourceEvents = (node?.source ?? [])
+    .map(source => eventsById.get(source?.event_id))
+    .filter(Boolean);
+  const visible = sourceEvents.length === 0 ||
+    sourceEvents.some(event => event?.projection?.visible !== false);
+  const revisionEvent = sourceEvents.find(event =>
+    typeof event?.revision_status === 'string' && event.revision_status.length);
+  return {
+    visible,
+    ...(revisionEvent?.revision_status
+      ? { revision_status: revisionEvent.revision_status }
+      : {}),
+    ...(Number.isInteger(revisionEvent?.revision_depth)
+      ? { revision_depth: revisionEvent.revision_depth }
+      : {})
+  };
+}
+
+/**
+ * Adds visibility metadata to the canonical presentation tree without removing
+ * nodes or changing their IDs/order.
+ *
+ * @param {Object<string, *>} presentation - Structured presentation wrapper.
+ * @param {Array<Object<string, *>>} events - Projected canonical events.
+ * @returns {Object<string, *>} Presentation wrapper with visibility metadata.
+ */
+function annotatePresentation(presentation, events) {
+  if (!events.some(event => event?.projection?.visible === false)) {
+    return presentation;
+  }
+  const eventsById = new Map(events.map(event => [event?.id, event]));
+
+  /**
+   * Clones one presentation node recursively with projection metadata.
+   *
+   * @param {Object<string, *>} node - Presentation node.
+   * @returns {Object<string, *>} Annotated node clone.
+   */
+  const annotateNode = node => ({
+    ...node,
+    projection: {
+      ...(node?.projection ?? {}),
+      ...nodeProjection(node, eventsById)
+    },
+    ...(Array.isArray(node?.children)
+      ? { children: node.children.map(annotateNode) }
+      : {})
+  });
+
+  const tree = presentation?.tree ?? {};
+  return {
+    ...presentation,
+    tree: {
+      ...tree,
+      turns: (tree.turns ?? []).map(annotateNode)
+    }
+  };
+}
+
+/**
+ * Returns the canonical Markdown projection for the current effective
+ * visibility while preserving the base structured renderer's provenance/header
+ * enrichment.
+ *
+ * @param {Array<Object<string, *>>} projectedEvents - Full projected inventory.
+ * @param {Object<string, *>} fullResult - Base projection of the full inventory.
+ * @returns {string} Markdown for effectively visible events.
+ */
+function visibleMarkdown(projectedEvents, fullResult) {
+  const visibleEvents = projectedEvents.filter(event =>
+    event?.projection?.visible !== false);
+  if (visibleEvents.length === projectedEvents.length) return fullResult.markdown;
+  return projectBaseConversationBrowser(visibleEvents).markdown;
+}
+
+/**
+ * Projects a complete canonical event inventory for interactive consumers.
+ *
+ * Visibility changes annotate the same canonical events and presentation nodes;
+ * they never remove or renumber them.  This preserves stable speech, search,
+ * highlighting, and virtualization identities while allowing downstream UI to
+ * hide/show historical revisions cheaply. Markdown remains a serialization of
+ * the effectively visible projection and therefore omits hidden revisions.
+ *
+ * @param {Array<Object<string, *>>} events - Complete canonical event inventory.
+ * @param {Object<string, *>} options - Projection options.
+ * @returns {Object<string, *>} Structured canonical projection.
+ */
+function projectVisibleConversation(events, options = {}) {
+  const projectedEvents = projectRevisionVisibility(events, options);
+  const result = projectBaseConversationBrowser(projectedEvents);
+  const hasRevisionProjection = projectedEvents !== events;
+  if (!hasRevisionProjection) return result;
+
+  return {
+    ...result,
+    events: projectedEvents,
+    presentation: annotatePresentation(result.presentation, projectedEvents),
+    projection_options: {
+      include_rolled_back_turns: options?.includeRolledBackTurns === true
+    },
+    markdown: visibleMarkdown(projectedEvents, result)
+  };
+}
+
+/**
+ * Retains canonical events published by one registered provider agent.
+ *
+ * Provider plugins normalize provider-native observations.  Core owns this
+ * retained canonical inventory and all projection/rendering operations over it.
+ */
+class PluginCanonicalSession {
+  #events = [];
+
+  /**
+   * Replaces the retained canonical event inventory.
+   *
+   * @param {Array<Object<string, *>>} events - Complete canonical event inventory.
+   * @returns {void}
+   */
+  replace(events) {
+    if (!Array.isArray(events)) {
+      throw new TypeError('published canonical events must be an array');
+    }
+    this.#events = [...events];
+  }
+
+  /** @returns {Array<Object<string, *>>} Current complete canonical event inventory. */
+  get events() {
+    return this.#events;
+  }
+
+  /**
+   * Projects the retained canonical inventory through Core's shared projection.
+   *
+   * @param {Object<string, *>} [options={}] - Projection options.
+   * @returns {Object<string, *>} Structured canonical projection.
+   */
+  project(options = {}) {
+    return projectVisibleConversation(this.#events, options);
+  }
+
+  /**
+   * Renders the retained canonical inventory through Core's Markdown renderer.
+   *
+   * @param {Object<string, *>} [options={}] - Rendering options.
+   * @returns {string} Canonical Markdown.
+   */
+  renderMarkdown(options = {}) {
+    return renderCanonicalMarkdown(this.#events, options);
+  }
+
+  /**
+   * Renders the retained canonical inventory through Core's HTML renderer.
+   *
+   * @param {Object<string, *>} [options={}] - Rendering options.
+   * @returns {string} Canonical HTML.
+   */
+  renderHtml(options = {}) {
+    return renderCanonicalHtml(this.#events, options);
+  }
+}
+
+/** Public provider-neutral methods every registered agent instance must expose. */
+const PUBLIC_PI = Object.freeze([
+  'sendMessage',
+  'getResponse',
+  'getTurns',
+  'currentState',
+  'observeState',
+  'commTraffic',
+  'version'
+]);
+
+/**
+ * Requires a plugin contract member to be callable.
+ *
+ * @param {*} value - Candidate function value.
+ * @param {string} name - Contract member name used in diagnostics.
+ * @returns {void}
+ */
+function requireFunction(value, name) {
+  if (typeof value !== 'function') {
+    throw new TypeError(`agent plugin ${name} must be a function`);
+  }
+}
+
+/**
+ * Validates one provider plugin descriptor against the Core plugin ABI.
+ *
+ * @param {Object<string, *>} descriptor - Provider plugin descriptor.
+ * @param {number} [apiVersion=1] - Core plugin API version to require.
+ * @returns {Object<string, *>} The validated descriptor.
+ */
+function validateAgentPluginDescriptor(descriptor, apiVersion = 1) {
+  if (!descriptor || typeof descriptor !== 'object') {
+    throw new TypeError('agent plugin descriptor must be an object');
+  }
+  if (typeof descriptor.id !== 'string' || !descriptor.id.trim()) {
+    throw new TypeError('agent plugin descriptor id must be a non-empty string');
+  }
+  if (!Number.isInteger(descriptor.apiVersion)) {
+    throw new TypeError('agent plugin descriptor apiVersion must be an integer');
+  }
+  if (descriptor.apiVersion !== apiVersion) {
+    throw new Error(
+      `agent plugin ${descriptor.id} API version ${descriptor.apiVersion} requires ${apiVersion}`
+    );
+  }
+  requireFunction(descriptor.create, 'create');
+  if (descriptor.recognize != null) requireFunction(descriptor.recognize, 'recognize');
+  return descriptor;
+}
+
+/**
+ * Verifies that one created provider agent satisfies the public Core PI.
+ *
+ * @param {Object<string, *>} instance - Created provider agent instance.
+ * @param {Object<string, *>} descriptor - Descriptor that created the instance.
+ * @param {number} apiVersion - Core plugin API version required by the registry.
+ * @returns {Object<string, *>} The validated agent instance.
+ */
+function validateAgentInstance(instance, descriptor, apiVersion) {
+  if (!instance || typeof instance !== 'object') {
+    throw new TypeError(`agent plugin ${descriptor.id} create() must return an object`);
+  }
+  const missing = PUBLIC_PI.filter(name => typeof instance[name] !== 'function');
+  if (missing.length) {
+    throw new TypeError(
+      `agent plugin ${descriptor.id} is missing public PI: ${missing.join(', ')}`
+    );
+  }
+  const identity = instance.version();
+  if (!identity || typeof identity !== 'object') {
+    throw new TypeError(`agent plugin ${descriptor.id} version() must return an object`);
+  }
+  if (identity.plugin !== descriptor.id || identity.apiVersion !== apiVersion) {
+    throw new Error(`agent plugin ${descriptor.id} identity mismatch`);
+  }
+  return instance;
+}
+
+/**
+ * Builds the provider creation context with Core-owned canonical services.
+ *
+ * Caller-supplied `core` members may add services, but cannot replace Core's
+ * canonical turn derivation or canonical-event publication services.
+ *
+ * @param {Object<string, *>} context - Caller/provider creation context.
+ * @param {PluginCanonicalSession} session - Core-owned canonical session.
+ * @returns {Object<string, *>} Creation context passed to the provider factory.
+ */
+function creationContext(context, session) {
+  if (!context || typeof context !== 'object') {
+    throw new TypeError('agent plugin creation context must be an object');
+  }
+  return {
+    ...context,
+    core: Object.freeze({
+      ...(context.core ?? {}),
+      deriveTurns,
+      publishEvents: events => session.replace(events)
+    })
+  };
+}
+
+/** Registry for provider-neutral agent plugin descriptors and instances. */
+class AgentPluginRegistry {
+  #apiVersion;
+  #descriptors = new Map();
+  #sessions = new WeakMap();
+
+  /**
+   * Creates a registry for one Core plugin API version.
+   *
+   * @param {Object<string, *>} [options={}] - Registry configuration.
+   * @param {number} [options.apiVersion=1] - Supported plugin API version.
+   */
+  constructor({ apiVersion = 1 } = {}) {
+    if (!Number.isInteger(apiVersion) || apiVersion < 1) {
+      throw new TypeError('apiVersion must be a positive integer');
+    }
+    this.#apiVersion = apiVersion;
+  }
+
+  /** @returns {number} Core plugin API version accepted by this registry. */
+  get apiVersion() {
+    return this.#apiVersion;
+  }
+
+  /**
+   * Registers one validated provider descriptor.
+   *
+   * @param {Object<string, *>} descriptor - Provider descriptor to register.
+   * @returns {Object<string, *>} The registered descriptor.
+   */
+  register(descriptor) {
+    const validated = validateAgentPluginDescriptor(descriptor, this.#apiVersion);
+    if (this.#descriptors.has(validated.id)) {
+      throw new Error(`agent plugin ${validated.id} is already registered`);
+    }
+    this.#descriptors.set(validated.id, validated);
+    return validated;
+  }
+
+  /**
+   * Registers the default descriptor exported by an imported plugin module.
+   *
+   * @param {Object<string, *>} module - Imported ESM module namespace.
+   * @returns {Object<string, *>} The registered descriptor.
+   */
+  registerModule(module) {
+    if (!module || typeof module !== 'object' || !module.default) {
+      throw new TypeError('agent plugin module must expose a default descriptor');
+    }
+    return this.register(module.default);
+  }
+
+  /**
+   * Looks up a registered provider descriptor by ID.
+   *
+   * @param {string} id - Provider plugin ID.
+   * @returns {Object<string, *>|null} Registered descriptor or null.
+   */
+  get(id) {
+    return this.#descriptors.get(id) ?? null;
+  }
+
+  /**
+   * Creates and validates one provider agent instance.
+   *
+   * @param {string} id - Registered provider plugin ID.
+   * @param {Object<string, *>} [context={}] - Provider creation context.
+   * @returns {Object<string, *>} Validated provider agent instance.
+   */
+  create(id, context = {}) {
+    const descriptor = this.#descriptors.get(id);
+    if (!descriptor) throw new Error(`agent plugin ${id} is not registered`);
+    const session = new PluginCanonicalSession();
+    const instance = validateAgentInstance(
+      descriptor.create(creationContext(context, session)),
+      descriptor,
+      this.#apiVersion
+    );
+    this.#sessions.set(instance, session);
+    return instance;
+  }
+
+  /**
+   * Returns the Core-owned canonical session associated with a created agent.
+   *
+   * @param {Object<string, *>} instance - Agent instance returned by `create()`.
+   * @returns {PluginCanonicalSession|null} Associated canonical session or null.
+   */
+  session(instance) {
+    return this.#sessions.get(instance) ?? null;
+  }
+
+  /**
+   * Identifies the first registered provider that recognizes unknown input.
+   *
+   * @param {*} input - Unknown provider/source descriptor.
+   * @returns {Object<string, *>|null} Recognizing descriptor or null.
+   */
+  recognize(input) {
+    for (const descriptor of this.#descriptors.values()) {
+      if (typeof descriptor.recognize !== 'function') continue;
+      if (descriptor.recognize(input) === true) return descriptor;
+    }
+    return null;
+  }
+
+  /** @returns {Array<Object<string, *>>} Registered descriptors in insertion order. */
+  list() {
+    return [...this.#descriptors.values()];
+  }
+}
+
+/** Core-owned catalogue of configured agent-plugin artifact identities. */
+const AGENT_PLUGIN_CATALOG = Object.freeze({
+  'chatgpt-web': Object.freeze({
+    id: 'chatgpt-web',
+    repository: 'Ma-XX-oN/Chat-Gpt-Plugin-2',
+    ref: 'main',
+    commit: '6805ea7240c38160386a591cf3a72439226ab675',
+    version: '0.1.0-issue.1.9',
+    apiVersion: 1,
+    path: 'dist/chatgpt-plugin.mjs',
+    url: 'https://raw.githubusercontent.com/Ma-XX-oN/Chat-Gpt-Plugin-2/6805ea7240c38160386a591cf3a72439226ab675/dist/chatgpt-plugin.mjs',
+    gitBlobSha1: 'f29805c7f8d0393f588aacf22661f667b11f8cfa',
+    byteLength: 50204
+  })
+});
+
+/**
+ * Returns the Core-owned artifact descriptor for one configured agent plugin.
+ *
+ * Downstream consumers use this only through generic host transport callbacks;
+ * provider repository/ref/version/integrity identity remains owned by Core.
+ *
+ * @param {string} id - Agent plugin ID.
+ * @returns {Object<string, *>} Frozen artifact descriptor.
+ */
+function getAgentPluginArtifact(id) {
+  const artifact = AGENT_PLUGIN_CATALOG[id];
+  if (!artifact) throw new Error(`agent plugin ${id} is not configured`);
+  return artifact;
+}
+
+/**
+ * Loads, registers and creates one configured agent through Core.
+ *
+ * The host owns only artifact transport. It receives the Core-owned descriptor
+ * and returns an imported module namespace; Core owns selection, registration,
+ * API validation, agent construction, canonical session ownership and identity
+ * verification.
+ *
+ * @param {string} id - Configured agent plugin ID.
+ * @param {Object<string, *>} [options={}] - Loading options.
+ * @param {function(Object<string, *>): Promise<Object<string, *>>} options.loadModule
+ *   Generic host callback that transports/imports the selected artifact.
+ * @param {Object<string, *>} [options.context={}] - Provider creation context.
+ * @returns {Promise<Object<string, *>>} Agent, Core session, registry and artifact.
+ */
+async function loadAgent(id, { loadModule, context = {} } = {}) {
+  if (typeof loadModule !== 'function') {
+    throw new TypeError('loadAgent requires a loadModule artifact transport function');
+  }
+  const artifact = getAgentPluginArtifact(id);
+  const module = await loadModule(artifact);
+  const registry = new AgentPluginRegistry({ apiVersion: artifact.apiVersion });
+  registry.registerModule(module);
+  const agent = registry.create(id, { ...context, ref: artifact.ref });
+  const session = registry.session(agent);
+  if (!session) throw new Error(`agent plugin ${id} did not receive a Core session`);
+
+  const identity = agent.version();
+  if (identity?.plugin !== artifact.id
+      || identity?.version !== artifact.version
+      || identity?.ref !== artifact.ref
+      || identity?.apiVersion !== artifact.apiVersion) {
+    throw new Error(`agent plugin ${id} artifact identity mismatch`);
+  }
+
+  return Object.freeze({ agent, session, registry, artifact });
+}
+
+  global.AIConversationCore = Object.freeze({
+    getVersion,
+    AgentPluginRegistry,
+    PUBLIC_PI,
+    validateAgentPluginDescriptor,
+    getAgentPluginArtifact,
+    loadAgent,
+    adaptChatGPTRecords,
+    renderCanonicalMarkdown,
+    renderCanonicalHtml,
+    renderCanonicalHtmlUnits,
+    locateCanonicalWord,
+    projectCanonicalWords,
+    buildCanonicalPresentation,
+    projectCanonicalConversation: projectVisibleConversation
+  });
+})(globalThis);
+// END bundled AIConversationCore
+
+(() => {
+  /** Shared cache prefix for verified direct-download artifacts. */
+  const AGENT_PLUGIN_CACHE_PREFIX = 'downloadconversation:agent-plugin-cache:';
+  /** Direct GitHub-origin retrieval timeout in milliseconds. */
+  const AGENT_PLUGIN_DOWNLOAD_TIMEOUT_MS = 2 * 60 * 1000;
+
+  /** Promise for the one AICC-selected ChatGPT plugin module import in this page realm. */
+  let chatGPTPluginModulePromise = null;
+  /** Provider-owned ChatGPT agent instance created through AICC. */
+  let chatGPTAgent = null;
+  /** Core-owned canonical session associated with `chatGPTAgent`. */
+  let chatGPTCanonicalSession = null;
+
+  /**
+   * Converts bytes to lowercase hexadecimal text.
+   *
+   * @param {Uint8Array} bytes - Bytes to format.
+   * @returns {string} Lowercase hexadecimal text.
+   */
+  function agentPluginHex(bytes) {
+    return Array.from(bytes, byte => byte.toString(16).padStart(2, '0')).join('');
+  }
+
+  /**
+   * Verifies artifact source against AICC-owned Git object identity.
+   *
+   * @param {Object} descriptor - Core-owned artifact selector and integrity metadata.
+   * @param {string} source - Retrieved self-contained ESM source.
+   * @returns {Promise<Uint8Array>} Exact verified UTF-8 source bytes.
+   */
+  async function verifyAgentPluginSource(descriptor, source) {
+    const bytes = new TextEncoder().encode(source);
+    assert(bytes.byteLength === descriptor.byteLength,
+      `Plugin byte length ${bytes.byteLength} differs from configured ${descriptor.byteLength}.`);
+    const header = new TextEncoder().encode(`blob ${bytes.byteLength}\0`);
+    const gitObject = new Uint8Array(header.byteLength + bytes.byteLength);
+    gitObject.set(header, 0);
+    gitObject.set(bytes, header.byteLength);
+    const digest = new Uint8Array(await crypto.subtle.digest('SHA-1', gitObject));
+    assert(agentPluginHex(digest) === descriptor.gitBlobSha1,
+      'Plugin Git blob integrity check failed.');
+    return bytes;
+  }
+
+  /**
+   * Returns the shared cache key for one exact AICC-selected artifact.
+   *
+   * @param {Object} descriptor - Core-owned artifact descriptor.
+   * @returns {string} Shared userscript-storage key.
+   */
+  function agentPluginCacheKey(descriptor) {
+    return `${AGENT_PLUGIN_CACHE_PREFIX}${descriptor.id}:${descriptor.gitBlobSha1}`;
+  }
+
+  /**
+   * Reads a previously verified artifact candidate from shared userscript storage.
+   * Integrity is rechecked asynchronously before execution.
+   *
+   * @param {Object} descriptor - Core-owned artifact descriptor.
+   * @returns {string|null} Cached ESM source candidate, or null when unavailable.
+   */
+  function cachedAgentPluginSource(descriptor) {
+    const cached = GM_getValue(agentPluginCacheKey(descriptor), null);
+    if (!cached || cached.ref !== descriptor.ref || cached.version !== descriptor.version
+        || typeof cached.source !== 'string') return null;
+    return cached.source;
+  }
+
+  /**
+   * Fetches the Core-selected private artifact through authenticated GitHub raw.
+   * The GitHub-origin request uses the user's browser session; GitHub may redirect
+   * to the raw CDN after checking access. The caller verifies exact Git identity.
+   *
+   * @param {Object} descriptor - Core-owned artifact descriptor.
+   * @returns {Promise<string>} Unmodified UTF-8 source for integrity validation.
+   */
+  function requestAgentPluginFromGitHub(descriptor) {
+    const [owner, repository] = String(descriptor.repository).split('/');
+    assert(owner && repository, 'Invalid plugin repository.');
+    const encodePath = value => String(value).split('/').map(encodeURIComponent).join('/');
+    const url = `https://github.com/${encodeURIComponent(owner)}/${encodeURIComponent(repository)}`
+      + `/raw/${encodeURIComponent(descriptor.ref)}/${encodePath(descriptor.path)}`;
+    return new Promise((resolve, reject) => {
+      GM_xmlhttpRequest({
+        method: 'GET',
+        url,
+        timeout: AGENT_PLUGIN_DOWNLOAD_TIMEOUT_MS,
+        onload(response) {
+          if (response.status !== 200) {
+            reject(new Error(`Private plugin download returned HTTP ${response.status}.`));
+            return;
+          }
+          const source = response.responseText;
+          if (typeof source !== 'string') {
+            reject(new Error('Private plugin download returned no UTF-8 source.'));
+            return;
+          }
+          resolve(source);
+        },
+        onerror() {
+          reject(new Error('Private plugin download failed.'));
+        },
+        ontimeout() {
+          reject(new Error('Private plugin download timed out.'));
+        }
+      });
+    });
+  }
+
+  /**
+   * Retrieves, verifies and caches one AICC-selected plugin artifact.
+   *
+   * @param {Object} descriptor - Core-owned artifact descriptor.
+   * @returns {Promise<Uint8Array>} Verified module bytes.
+   */
+  async function loadAgentPlugin(descriptor) {
+    const cachedSource = cachedAgentPluginSource(descriptor);
+    if (cachedSource) {
+      try {
+        const bytes = await verifyAgentPluginSource(descriptor, cachedSource);
+        logDiagnostic('debug', 'agent-plugin-cache-hit', {
+          plugin_id: descriptor.id,
+          ref: descriptor.ref,
+          version: descriptor.version
+        });
+        return bytes;
+      } catch (error) {
+        GM_setValue(agentPluginCacheKey(descriptor), null);
+        throw new Error(
+          `Cached agent plugin failed integrity verification; retry Extract to reacquire it. ${errorMessage(error)}`
+        );
+      }
+    }
+
+    const source = await requestAgentPluginFromGitHub(descriptor);
+    const bytes = await verifyAgentPluginSource(descriptor, source);
+    GM_setValue(agentPluginCacheKey(descriptor), {
+      ref: descriptor.ref,
+      version: descriptor.version,
+      source,
+      verified_at: Date.now()
+    });
+    logDiagnostic('debug', 'agent-plugin-cache-stored', {
+      plugin_id: descriptor.id,
+      ref: descriptor.ref,
+      version: descriptor.version
+    });
+    return bytes;
+  }
+
+  /**
+   * Imports one AICC-selected ESM artifact through DownloadConversation's generic
+   * authenticated browser transport.
+   *
+   * @param {Object} descriptor - Core-owned artifact descriptor.
+   * @returns {Promise<Object>} Imported module namespace.
+   */
+  async function importAgentPluginModule(descriptor) {
+    if (!chatGPTPluginModulePromise) {
+      chatGPTPluginModulePromise = (async () => {
+        const bytes = await loadAgentPlugin(descriptor);
+        const blobUrl = URL.createObjectURL(new Blob([bytes], { type: 'text/javascript' }));
+        try {
+          return await import(blobUrl);
+        } finally {
+          URL.revokeObjectURL(blobUrl);
+        }
+      })();
+    }
+    try {
+      return await chatGPTPluginModulePromise;
+    } catch (error) {
+      chatGPTPluginModulePromise = null;
+      throw error;
+    }
+  }
+
+  /**
+   * Asks AICC to select, load, register and create the ChatGPT agent. DC supplies
+   * only the generic browser artifact-transport callback.
+   *
+   * @returns {Promise<Object>} The validated ChatGPT agent instance.
+   */
+  async function ensureChatGPTCanonicalAgent() {
+    if (chatGPTAgent) return chatGPTAgent;
+    const core = canonicalCore();
+    assert(typeof core.loadAgent === 'function',
+      'AIConversationCore agent loader is unavailable.');
+    const loaded = await core.loadAgent('chatgpt-web', {
+      loadModule: importAgentPluginModule,
+      context: {
+        conversationId: typeof currentConversationId === 'function'
+          ? currentConversationId()
+          : null
+      }
+    });
+    chatGPTAgent = loaded?.agent ?? null;
+    chatGPTCanonicalSession = loaded?.session ?? null;
+    assert(chatGPTAgent && chatGPTCanonicalSession,
+      'AIConversationCore did not create the ChatGPT agent and canonical session.');
+    const identity = chatGPTAgent.version();
+    logDiagnostic('debug', 'agent-plugin-ready', {
+      plugin_id: identity?.plugin ?? 'unknown',
+      ref: identity?.ref ?? 'unknown',
+      version: identity?.version ?? 'unknown',
+      api_version: identity?.apiVersion ?? null
+    });
+    return chatGPTAgent;
+  }
+
+  /**
+   * Publishes one complete persisted ChatGPT record inventory through the registered
+   * provider agent and returns Core-owned canonical events.
+   *
+   * @param {Array<Object>} records - Complete provider/source record inventory.
+   * @returns {Array<Object>} Core-owned canonical events.
+   */
+  function canonicalEventsFromChatGPTAgent(records) {
+    assert(chatGPTAgent && chatGPTCanonicalSession,
+      'ChatGPT agent plugin must be ready before canonical record projection.');
+    chatGPTAgent.commTraffic({ type: 'persisted_records', records });
+    const events = chatGPTCanonicalSession.events;
+    assert(Array.isArray(events), 'AIConversationCore canonical session did not expose canonical events.');
+    return events;
+  }
+
+  /**
+   * Production canonicalization strategy for DownloadConversation ChatGPT records.
+   *
+   * @param {Array<Object>} records - Ordered provider/source records.
+   * @param {Map<unknown, unknown>} recoveredImageMap - Recovered images keyed by source record id.
+   * @returns {Map<unknown, unknown>} Canonical events keyed by source record id.
+   */
+  canonicalEventsBySourceRecord = function canonicalEventsBySourceRecordViaAgent(
+    records, recoveredImageMap = new Map()
+  ) {
+    const conversationId = typeof currentConversationId === 'function' ? currentConversationId() : null;
+    const hasMetadata = records.some(record => record?.record_type === 'chatgpt_conversation_metadata');
+    const providerRecords = conversationId && !hasMetadata
+      ? [{
+          record_type: 'chatgpt_conversation_metadata',
+          schema_version: 1,
+          conversation_id: conversationId
+        }, ...records]
+      : records;
+    const events = canonicalEventsFromChatGPTAgent(providerRecords);
+    const bySourceRecord = new Map();
+    for (const event of events) {
+      const sourceIndex = event?.source_index;
+      const sourceRecordId = event?.source_record_id;
+      if (!Number.isInteger(sourceIndex) || typeof sourceRecordId !== 'string' || !sourceRecordId) continue;
+      const original = providerRecords[sourceIndex];
+      if (!original) continue;
+      assert(original?.id === sourceRecordId,
+        `ChatGPT plugin source record mismatch at JSONL index ${sourceIndex}.`);
+      assert(event?.source?.record_id === sourceRecordId,
+        `AIConversationCore did not preserve source record ID ${sourceRecordId}.`);
+      assert(event?.source?.record_index === sourceIndex,
+        `AIConversationCore did not preserve source record index ${sourceIndex}.`);
+      assert(event?.source?.turn_id === sourceRecordId,
+        `AIConversationCore source turn identity differs from record ${sourceRecordId}.`);
+      assert(event?.source?.create_time === (original?.create_time ?? null),
+        `AIConversationCore did not preserve create_time for ${sourceRecordId}.`);
+      assert(event?.source?.update_time === (original?.update_time ?? null),
+        `AIConversationCore did not preserve update_time for ${sourceRecordId}.`);
+      bySourceRecord.set(sourceRecordId, canonicalEnrichRecoveredImages(
+        event, recoveredImageMap.get(sourceRecordId) ?? []));
+    }
+    return bySourceRecord;
+  };
+
+  /**
+   * Production canonical image-resource lookup through the same registered agent/session.
+   *
+   * @param {Array<Object>} records - Exact ordered provider/source record set.
+   * @returns {Map<string, Map<number, Object>>} Canonical image resources by record and part index.
+   */
+  canonicalImageResourcesByRecordAndPart = function canonicalImageResourcesViaAgent(records) {
+    assert(Array.isArray(records), 'Canonical image-resource lookup requires the ordered source record set.');
+    const events = canonicalEventsFromChatGPTAgent(records);
+    const byRecord = new Map();
+    for (const event of events) {
+      const recordId = event?.source_record_id;
+      if (typeof recordId !== 'string' || !recordId) continue;
+      const resources = Array.isArray(event?.resources) ? event.resources : [];
+      let byPart = byRecord.get(recordId);
+      for (const resource of resources) {
+        if (resource?.type !== 'image' || resource?.resource_kind !== 'conversation_image') continue;
+        const partIndex = resource?.source?.part_index;
+        if (!Number.isInteger(partIndex)) continue;
+        if (!byPart) {
+          byPart = new Map();
+          byRecord.set(recordId, byPart);
+        }
+        assert(!byPart.has(partIndex), `Duplicate canonical image resource for ${recordId}:${partIndex}.`);
+        byPart.set(partIndex, resource);
+      }
+    }
+    return byRecord;
+  };
+// BEGIN bundled compressor name=zstd source=01b7154f1172432f8abe9b3bb9909e14a1176b7d
+let __dcCompressorModule = null;
+
+async function __dcCompressorInit(wasmBytes) {
+  const instantiated = await WebAssembly.instantiate(wasmBytes, {
+    env: { emscripten_notify_memory_growth() {} }
+  });
+  __dcCompressorModule = instantiated.instance.exports;
+}
+
+function __dcCompressorViews(module) {
+  return {
+    bytes: new Uint8Array(module.memory.buffer),
+    words: new Uint32Array(module.memory.buffer)
+  };
+}
+
+class CompressorEncoder {
+  constructor(level) {
+    const module = __dcCompressorModule;
+    if (!module) throw new Error('Compressor is not initialized.');
+    this.module = module;
+    this.handle = module.compressor_encoder_new(level);
+    this.finished = false;
+    if (!this.handle) throw new Error('Compressor encoder initialization failed.');
+  }
+
+  write(bytes) {
+    if (this.finished) throw new Error('Compressor encoder is already finished.');
+    if (!(bytes instanceof Uint8Array)) throw new TypeError('Archive input must be Uint8Array.');
+    if (!bytes.byteLength) return new Uint8Array();
+    const module = this.module;
+    const input = module.compressor_malloc(bytes.byteLength);
+    const outputPointer = module.compressor_malloc(4);
+    const outputLength = module.compressor_malloc(4);
+    let compressedPointer = 0;
+    try {
+      let views = __dcCompressorViews(module);
+      views.bytes.set(bytes, input);
+      if (module.compressor_encoder_write(
+        this.handle,
+        input,
+        bytes.byteLength,
+        outputPointer,
+        outputLength
+      ) !== 1) throw new Error('Compressor encoder write failed.');
+      views = __dcCompressorViews(module);
+      compressedPointer = views.words[outputPointer >>> 2] >>> 0;
+      const length = views.words[outputLength >>> 2] >>> 0;
+      return views.bytes.slice(compressedPointer, compressedPointer + length);
+    } finally {
+      if (compressedPointer) module.compressor_buffer_free(compressedPointer);
+      module.compressor_free(input);
+      module.compressor_free(outputPointer);
+      module.compressor_free(outputLength);
+    }
+  }
+
+  finish() {
+    if (this.finished) throw new Error('Compressor encoder is already finished.');
+    this.finished = true;
+    const module = this.module;
+    const outputPointer = module.compressor_malloc(4);
+    const outputLength = module.compressor_malloc(4);
+    let compressedPointer = 0;
+    try {
+      if (module.compressor_encoder_finish(
+        this.handle,
+        outputPointer,
+        outputLength
+      ) !== 1) throw new Error('Compressor encoder finish failed.');
+      const views = __dcCompressorViews(module);
+      compressedPointer = views.words[outputPointer >>> 2] >>> 0;
+      const length = views.words[outputLength >>> 2] >>> 0;
+      return views.bytes.slice(compressedPointer, compressedPointer + length);
+    } finally {
+      if (compressedPointer) module.compressor_buffer_free(compressedPointer);
+      module.compressor_free(outputPointer);
+      module.compressor_free(outputLength);
+    }
+  }
+
+  free() {
+    if (!this.handle) return;
+    this.module.compressor_encoder_free(this.handle);
+    this.handle = 0;
+  }
+}
+
+function __dcCompressorDecompress(bytes) {
+  if (!(bytes instanceof Uint8Array)) throw new TypeError('Archive input must be Uint8Array.');
+  const module = __dcCompressorModule;
+  if (!module) throw new Error('Compressor is not initialized.');
+  const input = module.compressor_malloc(Math.max(bytes.byteLength, 1));
+  const outputPointer = module.compressor_malloc(4);
+  const outputLength = module.compressor_malloc(4);
+  let decodedPointer = 0;
+  try {
+    let views = __dcCompressorViews(module);
+    if (bytes.byteLength) views.bytes.set(bytes, input);
+    if (module.compressor_decompress(
+      input,
+      bytes.byteLength,
+      outputPointer,
+      outputLength
+    ) !== 1) throw new Error('Archive decompression failed.');
+    views = __dcCompressorViews(module);
+    decodedPointer = views.words[outputPointer >>> 2] >>> 0;
+    const length = views.words[outputLength >>> 2] >>> 0;
+    return views.bytes.slice(decodedPointer, decodedPointer + length);
+  } finally {
+    if (decodedPointer) module.compressor_buffer_free(decodedPointer);
+    module.compressor_free(input);
+    module.compressor_free(outputPointer);
+    module.compressor_free(outputLength);
+  }
+}
+
+globalThis.__dcCompressor = {
+  init: __dcCompressorInit,
+  Encoder: CompressorEncoder,
+  decompress: __dcCompressorDecompress,
+  wasmGzipBase64: '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TiCi4yfmt5KIKkR03MQcj52Y4zFEdDQRHTUxzyOJ6O1E9NaJub5lYq5vJqI3EdGhRHQIER1MRAdNzPnAiTkfQEQDE/NeMjHvfiJ6/cTc97U8ZG8i2mti/ntOzH934nA+6puAwa4TMHg1Ee0yAYediGhHInoVEW1HhJzSrPrPt+aAwJoI5lizwUwrd09PyPQdVs6J9u8Wu6/4luYtice8VvPSh2t3mErnvHjHKXXOG3f0b1L/WcvOv6z4h2M7TzXjK3f293/FTBThxbtMCb/Vu/hb2v73jA9tux52CtHbTj75Ha/6y81/arvztOo27/jYOffkT7z7y9cvuemJry1vXXrru1evvWKPC8846PBdveovK6c/+cmD3C9+6rbXP+Tssdy9M5jn3nvfZ+fPO/eukSdG7n7m+rf+uffcyxaclP1larfDzvvQwyd9/h1L9IKnN35h909u940bdn/67IWPdmx732efDrrOumG27r3JnHf0+x36092r3t7/4U+7i878+NOtDx127py3HfXC8Ff/4po9vnPcrvkrzvps1/wfnPujLct7btjrfPeJE8/5+uLDVger6A3vuOenX297+0Pvue2NH+mcfsDlFzqLvvOVzaV7vv+RE7+9aebj7127485jv/vN0/vfvuS16+/b5bEzdy397KpHT//z96+75xOjF846+Sfv/sXcN3snD379otsvuXe/wsc/9MPtv0a7Pf7M8o+d9cfv/K71HfsfedrIMVsWb7fj7NP/vuPDg3e/Z8GOt9x65Mc2LL58+7Oe9s646bD1VzqXn/imfR66xDniMzd9p3TCvZvP+sxDL/ztyP533jHwwQO+edl583927jv/fvVPF9664dZL3jftpBv/+Jbs0P6v7bj6lm2qt4wt+d1pbXPX777fNvetzTx4ylHD7+075/au3w297pP3XaP813/6c3O/X/792A1Pdf330Z96618uvGzWhvxXblv26Z8+fVHLoUNv3+dP+Qv/vGPqTdcsmnbcHmtWZHe57IqDjh+4suMz3xxyDz/l5HMX7vm9eQu3PfSbb3tgj49+99jzbvnovCNmfHXJWz4RfPYw96nXvs//4OLtut+9pO2S7Ib5N92y8o7g3Lfs+OnrfvHcvGOPPT4zNLjbKXsefLdz8LrsXoed8tgda1Zd3vvCde/ufvDwP8475AdfHRzpemjFhvBzD5/6j09f/cjd6sknt692Lzh+p+PmH3vw8WtO6z/047sP37rH924cf7vzxLVvnPOWr1++b7b0Aeca3XvX8/P9OQu3/Ullz7OW//4N84/c/JfvjX38kc+1XPDkkzfedtkbfrdnTt2611mHbC6u+Nley9/5u30vf/9dbz56TfvH3rpvx5EX0M0dVy3d647Wmbv8847j3nTg5/ce+e2xb3/26O/9cbtLL/jWP0669u8jq36/3a1DP1179dHnf/LT+33r85fsdcfpztvvuPyWW9/7x/UfnTWndN4PP/OtK9NfPvO8h779lR8fveCGGX9+5LSf/PyFaVteVV529H4r3nrheQ/9YviyDx389Px3DX//S5u3c2+5e+8jFu/+ha8ddPeD3p7PPpa9/ZahN27fd8RBJ9979k8XtAVXLVn3uT9ddFV+6cHfPr7/l99Z9491uy5+6vadtr938fcvvfzMf/71q8+98/K3PDByyOhrnzr0zlMX7v+Fed++8aMfWbXNWGbTY2d1rfjEo73Xfvqiwxed/vxB37jitjekvr3bqv/+9bM/D/9yzB23nLD0hNwR7bc9ut3Rfznu4ctSX1nz7fUfumW32/58yGtfrQ64Y8mtl/7+uqWn0vIH33Pauz7wRHrwyPnP3bTnqTesuvSbn/pgdfEPnn/LnqPXTvvBqu9t+fwL+97/rrvPXLric333HfHwqt98aO6pP696hR1+fvlBK3d/26+/uObpwf6D/3H7Pb/9yJGtr/7KJ3668L+e6P7J+d9NbbNCrfr1o8f+o2vuB7uO2vPsY3p//NPnpp1+82XHXvDr4crIY7d3dfzg3Cve/aH8M61HnXv9oz/66hn/vOnd37x6pO3EuX8+d+17rl654fNnH9b37LU3/2XeOe8bvnXZHdf9avMRJy1Mnbff09/5U/qUvXYfufWt//Xe27sef+3j+937rJNdOf2PW54ZumnFH8868HcfGx/54uV7eXe5pVmH6I/ec9naT9+y2xv+cd1pC5b9+pz+XTsqJy/1cxft6v9y8AGTeXzxXje/buFw98wn/3DVD3//u09eu+/jPf6vd/7Gq9efcN+bpj8y68HdF/zXzfd2fOHn3y48ss/cj2z7mdOKdx2YW/H+L6z7gbfdB9ac/Pcvrl187AUnPzWw4ptLHr3osm/0/uGx6/d/YO+PbfY/8JU/V865YeD4YzdmnjuipXLvrq/9S3Dskce/9Q/73v3VDyz44u5v+vnzX93hvC/Pvui/BoIPPj304Jq9sofOvPRP/zjvu99dnf175xXlY9+54Ws7n/2PO79z7AO/OWHDNc+99vgTjz3iD7fc8a2fveWxez/xoff+bMnPfvjfn+954kfP7H7QM8/d8PkrvnbBZYc+nHnwHQe2/C177mtu+Mdhbzno8yc9v/eszot22vGOr+5z84aP9HWd+i713cM+fMTNT52/aEXbwrPOfm92zXd6Li5++92bbnvNgp9XTv/4g+e/aqcjbx3pfe/mlTPOLe4+9Oj3rlqWevr7Hzr07zNL+e3u2vmuf3z+nBsueuiMT13Q+8tvn7nbnd5e1zzx5++d+NCRbz2w76LAbd396sK6vU+7/LAVx8179J+PX3TVN778rS+tGDly1qmvv+qKhcsPfPzeL+2l77hg9T1fW/DrPW6/8bS/Lf/NY69+50En9a/b/Zp93/iuwScOuX2fY772vp1OPvO0+/fNzf7EM8999uGz337j85/Z+/gD7v/VXr//zcdf/ao37n/cvTsde8qBxz5536/uPO7AJRe8ccmn/At+94WTd3to/gvf6vvvr3X+mB792epHTrrle+Wrjjn/qPvfXn1H/s1/e8f81zz/+O8fuK973kf3fNcB33BXr/9F3x1H7LT07avPvufwn+170ed+Me/GIy+9d/dP9i1Zd3TXfb86d96N62/8zU+v+dsdzz457bsth6VXfOT7F33j8nue2+H4W46etsfDJ49v/ttP7rxt+w+sfeiRUzaHr1r/5IFv+sOyv91zRtuZJ33YO/91P+l7zTe//JHlb9vsv+rOhe9atf/mez+WOea4Lxz55tt23TS26NqLbvzTvOd3Hz1k/KI5v3tkQ8fn7rrQe2HeR8OT/3ngarrllhsOub/YdsWnd247+uh3b3r+8C/sdPujp12waem+r7n6q19sn390eOmXDnz1g5/78M1X975p3p4nfvBn3//qce894z37fbr31oGdbv9Y6f3Xn7/Xju/adOvBZ5/1zJNz04+sfH771bsMf/b9H1pywvmv+cmWz5YPS53+uWdbnT1/84nH1nzku12Pff0L5x5U3fLAhZcv+uJSb3D13x9Z9+U5Z//zvxfNPvUD12/88GtvOHzvI784v+XDG8fOXd+x7uc/uXX7r9x7xnNv+Et+88Pt2yy/atn2NaHv/46/VMN4dBPDg/M/NuZwzZ00lRz45J3k7/PvHrWFa+6iKQXAJ+8i/zL1Hz6Ngyay0Gole0w6/gxX/ZB8zwLr0h+S/2sVQe8TRPQwEX1AiWp1LRHdi5XSolp9zaqAPVrUrEgVPEcTVSfUql9YtXCd/Y5OvzOhdg46oo6tUES3TWgV/+USvZeIFmtRH4OUqG+r7ffVKaLTMAGH6BaokmlRBdc6omoempGxXubK/WkZUTnf6cn976dEXT3Hfr+Cv4eX/Jj8P0SqMetL0KNmWT3uAyT68hbozQ7RljTRliLRljlEW/Yh2jI68TeOP0Vbxh3aMp6mLeNF2jI+h7aM70Nbxkcn/sbxp7aMjztbxsfTW8bHi1vGx+dsGR/fZwv0nxfBjBc7vN7awfWLHVjXTqplzlMdU8+3Oip01e2tDvsaq+e+3urJ75og4bNBxorI0USOS+RkiJwSIR8QOYsmSHwMZK4oXH3P1PTywD3kX6Be6tn9VNNvs9OeZqc7006r15rtouPTmB1FdsdSw/kqhvvsvYQEak0YSDO3g0ZLbLP7/1dMa+39U7LFZ+8n/zxXkVL2PIQnVLJXIyYl/PMce7Uz9mx7z54ne9bu6OXsVVxFKNUi8PBK9tphr9MEbt5Mvjqekdd7O/N7U94i/p72xsSYmeKZUi4lI8unMEhTWwA3Gqe2447Gac9Z43Fm7PdonL4dZ4F/r42zzX6PxtnN36NxOshUh8fcRQwvuZp4vNkUrwocfjK8YjFclX1/NE5rs47HmbLXaJxZe/XtNYJr0Y4vGmcHX6NxClyNHaexcCUqpQRliinBjpYUYwoV4JgUnvMA+Z93/m/mksBUe2piLyl3L4G4t4VRoOhhHESdHt6LlZKGafcDfM17GDNRm4cxEnV5GBcWYJZgmruFry0e5kTU4WEOwADFKxj143tbGKVaPcyXaJqHOQKDC9wu6qfgAT5E7R7gAcxSFmNk3DlvC5NWydvCHiwzPcCEqAfXNNEMXB2i6bgqom5cKVz9EPk/V//f3DQemXrTWPtIA79KWb7kugk6SvKnTAN/StI7riV7bbfXafY63V5n2uscew2EP6Tm2+sC4Q+pnYQvpPaU4aQOFaxLnW35AaZdsuNkNEnQe8RHzWQ+mkrSO65t9tppr9322mOvs+21bMc31163tePc3o7zNXacr7fgepfls1giY8e5s72WEuNNN/CnXII/1fg9pVrttcNeu+x1hr3Osldj+ZJj+ZJj+ZJj+ZJjhN87JeGnTkb2Acel8Fe/oP+0w+TmJ8jfXSVUmka/kUzibzJ5IjuU76zeRf0frUYsaOBNBQA=',
+  _extension: '.zst',
+  _mime_type: 'application/zstd',
+  _compression_level: 6
+};
+// END bundled compressor
+
+  'use strict';
+
+  /** Installed userscript version reported in diagnostics and runtime metadata. */
+  const VERSION = (typeof GM_info !== 'undefined' && GM_info?.script?.version) || 'unknown';
+  /** Loaded AIConversationCore semantic version derived from the pinned dependency. */
+  const CORE_VERSION = canonicalCore().getVersion();
+  /** DOM id of the recorder panel so UI lookups share one stable selector. */
+  const PANEL_ID = 'tm-conversation-recorder';
+  /** DOM id of the floating launcher button that opens the recorder panel. */
+  const LAUNCHER_ID = 'tm-conversation-recorder-launcher';
+  /** Enables invasive launcher topology/call-stack diagnostics when manually set true. */
+  const DEEP_LAUNCHER_DIAGNOSTICS = false;
+  /** Numeric severity ordering used to decide which diagnostic entries are emitted. */
+  const DIAGNOSTIC_LEVELS = Object.freeze({ errors: 0, warnings: 1, debug: 2, verbose: 3 });
+  /** Default diagnostic threshold when the user has not stored a preference. */
+  const DEFAULT_DIAGNOSTICS = 'warnings';
+  /** Conversation API page size requested while walking backward through history. */
+  const PAGE_TURNS = 100;
+  /** Safety cap that prevents malformed pagination from running without bound. */
+  const MAX_PAGES = 10000;
+  /** Local-storage key for the keep-screen-on capture preference. */
+  const SCREEN_ON_STORAGE_KEY = 'tm-conversation-recorder-screen-on-when-capturing';
+  /** Whether selected JSONL/Markdown exports are compressed as archives. */
+  let exportCompressionEnabled = false;
+  /** Local-storage key for Markdown heading timestamp visibility. */
+  const SHOW_TIMESTAMPS_STORAGE_KEY = 'tm-conversation-recorder-show-timestamps';
+  /** Local-storage key for Markdown JSONL record-number visibility. */
+  const SHOW_RECORD_NUMBERS_STORAGE_KEY = 'tm-conversation-recorder-show-record-numbers';
+  /** Local-storage key for Markdown source/provider turn-ID visibility. */
+  const SHOW_TURN_IDS_STORAGE_KEY = 'tm-conversation-recorder-show-turn-ids';
+  /** Local-storage key for Markdown Core debug-provenance visibility. */
+  const SHOW_DEBUG_PROVENANCE_STORAGE_KEY = 'tm-conversation-recorder-show-debug-provenance';
+  /** Local-storage key for the current integer agent terminal-sound volume. */
+  const AGENT_SOUND_VOLUME_STORAGE_KEY = 'tm-conversation-recorder-agent-sound-volume';
+  /** Legacy boolean sound preference retained only for deterministic migration. */
+  const LEGACY_AGENT_SOUNDS_STORAGE_KEY = 'tm-conversation-recorder-agent-sounds';
+  /** Yellow RGB used while Agent processing is observed. */
+  const AGENT_FAVICON_PROCESSING_RGB = Object.freeze([255, 255, 0]);
+  /** Light-green RGB used after a current-page successful completion. */
+  const AGENT_FAVICON_COMPLETED_RGB = Object.freeze([144, 238, 144]);
+  /** Red RGB used after a normalized Agent terminal error. */
+  const AGENT_FAVICON_ERROR_RGB = Object.freeze([255, 0, 0]);
+  /** DOM id of the fixed agent-turn stopwatch display. */
+  const AGENT_STOPWATCH_ID = 'tm-agent-turn-stopwatch';
+  /** Refresh cadence for the live agent-turn stopwatch display. */
+  const AGENT_STOPWATCH_REFRESH_MS = 250;
+  /** Local-storage key for continued console mirroring after the status panel first appears. */
+  const CONSOLE_DIAGNOSTICS_STORAGE_KEY = 'tm-conversation-recorder-console-diagnostics';
+  /** Session-storage key for the retained recorder diagnostic log. */
+  const DIAGNOSTIC_LOG_STORAGE_KEY = 'tm-conversation-recorder-diagnostic-log';
+  /** Maximum number of diagnostic entries retained in memory and session storage. */
+  const MAX_DIAGNOSTIC_LOG_ITEMS = 10000;
+  /** Maximum retained diagnostic entries persisted across a page reload. */
+  const MAX_PERSISTED_DIAGNOSTIC_LOG_ITEMS = 5000;
+  /** Debounce used to keep high-volume debug diagnostics from serializing the full log on every event. */
+  const DIAGNOSTIC_PERSIST_DELAY_MS = 1000;
+  /** Maximum number of legitimate forward tail markers retained for export consistency checks. */
+  const LIVE_TAIL_MARKER_LIMIT = 10;
+  /** Maximum normalized visible characters retained per live tail marker for bounded comparison. */
+  const LIVE_TAIL_TEXT_LIMIT = 8192;
+  /** Session-storage key for the newest exact streamed conversation-turn capture. */
+  const STREAM_TAIL_STORAGE_KEY = 'tm-conversation-recorder-stream-tail';
+  /** Maximum source records retained from one live streamed conversation turn. */
+  const STREAM_TAIL_RECORD_LIMIT = 512;
+  /** Maximum message identities retained in one stock-network body summary. */
+  const STOCK_NETWORK_ID_LIMIT = 64;
+  /** Maximum response-body bytes inspected for stock-network identity diagnostics. */
+  const STOCK_NETWORK_JSON_BYTE_LIMIT = 1024 * 1024;
+  /** IndexedDB database retaining the user-authorized communication-log directory handle. */
+  const COMMUNICATION_LOG_DB_NAME = 'downloadconversation-communication-log';
+  /** IndexedDB object store containing File System Access handles. */
+  const COMMUNICATION_LOG_DB_STORE = 'handles';
+  /** Stable IndexedDB key for the communication-log directory handle. */
+  const COMMUNICATION_LOG_HANDLE_KEY = 'communication-directory';
+  /** Prefix used to retain the last known conversation title for immediate reload logging. */
+  const COMMUNICATION_LOG_TITLE_STORAGE_PREFIX = 'tm-downloadconversation-communication-title:';
+  /** Initial sealed communication-segment target; tune this one symbol after browser benchmarks. */
+  const COMMUNICATION_LOG_SEGMENT_TARGET_BYTES = 10 * 1024 * 1024;
+  /** All-in-memory duplicate guard: 128 MiB bounds source+archive+verification copies while the direct Wasm bridge is synchronous. */
+  const COMMUNICATION_LOG_DUPLICATE_MAX_BYTES = 128 * 1024 * 1024;
+  /** Maximum decoded text retained before one communication body chunk is flushed to disk. */
+  const COMMUNICATION_LOG_BODY_CHUNK_CHARS = 256 * 1024;
+  /** Maximum wait for startup directory restoration before a cloned network body is abandoned. */
+  const COMMUNICATION_LOG_READY_WAIT_MS = 2000;
+  /** Bounded retry count for Chromium stale File System Access interface state. */
+  const COMMUNICATION_LOG_WRITE_RETRY_LIMIT = 3;
+  /** Byte comparison chunk size used to verify ambiguous append outcomes. */
+  const COMMUNICATION_LOG_COMPARE_CHUNK_BYTES = 256 * 1024;
+
+  /** Unwrapped page-realm fetch implementation captured before installing interception. */
+  let originalPageFetch = null;
+  /** Latest captured Conversation API authorization/header context for direct requests. */
+  let apiRequestContext = null;
+  /** Guards network interception so page hooks are installed only once. */
+  let captureInstalled = false;
+  /** Currently selected diagnostic threshold, restored from local storage at startup. */
+  let diagnosticsLevel = localStorage.getItem('tm-conversation-recorder-diagnostics') || DEFAULT_DIAGNOSTICS;
+  /** Saved opt-in for console output after startup; independent of panel diagnostic verbosity. */
+  let consoleDiagnostics = localStorage.getItem(CONSOLE_DIAGNOSTICS_STORAGE_KEY) === 'true';
+  /** One-way startup boundary: hiding or reopening the panel does not restore automatic console output. */
+  let generalStatusShown = false;
+  /** Whether active exports should request a screen wake lock. */
+  let screenOnWhenCapturing = localStorage.getItem(SCREEN_ON_STORAGE_KEY) !== 'false';
+  /** Whether Markdown headings should include local-time source timestamps. */
+  let showTimestamps = localStorage.getItem(SHOW_TIMESTAMPS_STORAGE_KEY) === 'true';
+  /** Whether Markdown headings should include one-based JSONL record numbers. */
+  let showRecordNumbers = localStorage.getItem(SHOW_RECORD_NUMBERS_STORAGE_KEY) === 'true';
+  /** Whether Markdown headings should include source/provider turn IDs. */
+  let showTurnIds = localStorage.getItem(SHOW_TURN_IDS_STORAGE_KEY) === 'true';
+  /** Whether Markdown headings should include Core-derived source debug provenance. */
+  let showDebugProvenance = localStorage.getItem(SHOW_DEBUG_PROVENANCE_STORAGE_KEY) === 'true';
+  /**
+   * Loads the persisted 0-10 terminal-sound volume, including the legacy checkbox migration.
+   *
+   * @returns {number} Integer terminal-sound volume from 0 through 10.
+   */
+  function loadAgentSoundVolume() {
+    const stored = localStorage.getItem(AGENT_SOUND_VOLUME_STORAGE_KEY);
+    if (stored !== null) {
+      const parsed = Number.parseInt(stored, 10);
+      return /^(?:10|[0-9])$/.test(stored) && Number.isFinite(parsed) && parsed >= 0 && parsed <= 10 ? parsed : 10;
+    }
+    const legacy = localStorage.getItem(LEGACY_AGENT_SOUNDS_STORAGE_KEY);
+    if (legacy === 'true') return 10;
+    if (legacy === 'false') return 0;
+    return 10;
+  }
+
+  /** Persisted integer terminal-sound volume; zero is the only disabled state. */
+  let agentSoundVolume = loadAgentSoundVolume();
+  /** AudioContext unlocked by a user gesture when terminal sounds are enabled. */
+  let agentSoundAudioContext = null;
+  /** Bounded stable turn identities that have already emitted a terminal sound. */
+  const agentSoundTerminalKeys = new Set();
+  /** Maximum number of emitted terminal turn identities retained for de-duplication. */
+  const AGENT_SOUND_TERMINAL_KEY_LIMIT = 128;
+  /** Original source href retained per stock favicon link before DownloadConversation recolors it. */
+  const agentFaviconOriginalSources = new Map();
+  /** Monotonic render generation preventing stale asynchronous favicon writes. */
+  let agentFaviconRenderGeneration = 0;
+  /** Whether processing has been observed in this loaded page and may transition to green. */
+  let agentFaviconProcessingObserved = false;
+  /** Current agent-turn stopwatch session, including completed lap durations. */
+  let agentStopwatchState = null;
+  /** Interval handle refreshing the live agent-turn stopwatch, or null while stopped. */
+  let agentStopwatchTimer = null;
+  /** Active screen wake-lock handle, or null when no lock is held. */
+  let wakeLockSentinel = null;
+  /** Serializes export work so overlapping extraction runs cannot start. */
+  let exportInProgress = false;
+  /** Format of the active export, used by shared status/progress rendering. */
+  let exportKind = null;
+  /** Persistent status message shown when no structured progress state is active. */
+  let statusText = 'Ready.';
+  /** Interval handle used to refresh elapsed time and ETA while work is active. */
+  let statusTimer = null;
+  /** Structured state for the active fetch/render progress display. */
+  let progressState = null;
+  /** Guards the built-in test runner against overlapping operations. */
+  let testInProgress = false;
+  /** Guards turn-jump navigation against overlapping operations. */
+  let jumpInProgress = false;
+  /** Monotonic identifier assigned to click-correlation diagnostic observations. */
+  let clickDiagnosticSequence = 0;
+  /** Click observation currently collecting correlated network/resource evidence. */
+  let activeClickDiagnostic = null;
+  /** In-memory diagnostic history mirrored to session storage for the panel. */
+  let diagnosticLog = [];
+  /** Pending debounced diagnostic-log persistence timer, or null when no write is scheduled. */
+  let diagnosticPersistTimer = null;
+  /** Whether the recorder panel currently shows the expanded diagnostic history. */
+  let diagnosticLogExpanded = false;
+  /** Element to refocus after the active recorder modal closes. */
+  let lastModalOpener = null;
+  /** Conversation id whose live high-water tail is currently retained. */
+  let liveTailConversationId = null;
+  /** Newest legitimate forward-progression markers retained as a bounded high-water history. */
+  let liveTailMarkers = [];
+  /** Whether current materialization is historical navigation and therefore cannot advance the high-water tail. */
+  let liveTailHistoricalNavigation = false;
+  /** Whether an explicit prompt submission currently authorizes User then Assistant tail advancement. */
+  let liveTailPromptAdvancePending = false;
+  /** Guards live-tail DOM/event tracking so observers are installed only once. */
+  let liveTailTrackingInstalled = false;
+  /** Coalesces high-volume DOM mutations into one live-tail scan per task. */
+  let liveTailScanScheduled = false;
+  /** Last observed conversation-scroll position used only to detect upward historical navigation. */
+  let liveTailLastScrollTop = null;
+  /** Thread element currently carrying mounted virtual-window conversation turns. */
+  let liveTailObservedThread = null;
+  /** Mutation observer scoped to the current conversation thread. */
+  let liveTailThreadObserver = null;
+  /** Lightweight root observer used only to detect host replacement of the conversation thread. */
+  let liveTailRootObserver = null;
+  /** Scroll root currently supplying direction evidence for live-tail tracking. */
+  let liveTailObservedScrollRoot = null;
+  /** Newest passive /f/conversation streamed-turn capture observed in this page lifetime. */
+  let streamTailCapture = null;
+  /** Monotonic sequence assigned to stock page fetch/XHR diagnostics in this page lifetime. */
+  let stockNetworkSequence = 0;
+  /** Persisted user-authorized directory used for the disk communication recorder. */
+  let communicationLogDirectoryHandle = null;
+  /** Whether the next trusted page gesture is reserved for native directory chooser launch. */
+  let communicationLogDirectoryGestureArmed = false;
+  /** Whether a native directory chooser promise is currently outstanding. */
+  let communicationLogDirectoryPickerOpening = false;
+  /** Active `DownloadConversation_<conversation>.jsonl` file name. */
+  let communicationLogFileName = null;
+  /** Serializes append operations so independent network observers cannot overlap file writes. */
+  let communicationLogWriteChain = Promise.resolve();
+  /** Whether the disk recorder has a writable directory and resolved conversation file name. */
+  let communicationLogReady = false;
+  /** Guards the required-directory prompt against duplicate page UI. */
+  let communicationLogPromptShown = false;
+  /** Monotonic sequence assigned to JSONL communication records within this page session. */
+  let communicationLogSequence = 0;
+  /** Startup restoration promise shared by early intercepted network clones. */
+  let communicationLogInitializationPromise = null;
+  /** Count of communication records intentionally skipped before disk logging became available. */
+  let communicationLogDroppedBeforeReady = 0;
+  /** Last newest-Assistant lifecycle signature written to disk, preventing mutation-scan duplicates. */
+  let communicationLogLastAssistantLifecycleKey = null;
+  /** Guards page/session lifecycle listeners against duplicate installation after reauthorization. */
+  let communicationLogLifecycleInstalled = false;
+  /** Whether one communication-log file-management action is currently updating panel state. */
+  let communicationLogUiActionInProgress = false;
+  /** Unique identity correlating all communication records produced by this page lifetime. */
+  const communicationLogSessionId = crypto.randomUUID();
+  try {
+    const storedDiagnosticLog = JSON.parse(sessionStorage.getItem(DIAGNOSTIC_LOG_STORAGE_KEY) || '[]');
+    if (Array.isArray(storedDiagnosticLog)) diagnosticLog = storedDiagnosticLog.slice(-MAX_DIAGNOSTIC_LOG_ITEMS);
+  } catch {}
+
+  logConsoleDiagnostic('debug', `[DownloadConversation v${VERSION} | AIConversationCore v${CORE_VERSION}] version identity`);
+
+  /**
+   * Handles assert.
+   *
+   * @param {Object} condition - The condition that must be true.
+   * @param {string} message - The assertion failure message.
+   * @returns {void} No value is returned.
+   */
+  function assert(condition, message) {
+    if (!condition) throw new Error(message);
+  }
+
+  /**
+   * Normalizes one thrown value to readable diagnostic text.
+   *
+   * @param {unknown} error - Thrown value to describe.
+   * @returns {string} Readable error text.
+   */
+  function errorMessage(error) {
+    if (error instanceof Error) return error.message;
+    if (error && typeof error === 'object' && typeof error.message === 'string') return error.message;
+    return String(error);
+  }
+
+  /**
+   * Clones one Request/Response-like object without allowing a clone failure to escape.
+   *
+   * @param {Object|null} value - Cloneable object, when available.
+   * @returns {Object|null} Independent clone, or null when cloning is unavailable or fails.
+   */
+  function cloneSafely(value) {
+    try {
+      return typeof value?.clone === 'function' ? value.clone() : null;
+    } catch {
+      return null;
+    }
+  }
+
+  /**
+   * Releases one stream-reader lock without allowing cleanup failure to replace the primary outcome.
+   *
+   * @param {Object|null} reader - Reader whose lock should be released.
+   * @returns {void} No value is returned.
+   */
+  function releaseReaderLockQuietly(reader) {
+    try { reader?.releaseLock?.(); } catch {}
+  }
+
+  /**
+   * Aborts one writable stream without allowing cleanup failure to replace the primary outcome.
+   *
+   * @param {Object|null} writable - Writable stream to abort when present.
+   * @returns {Promise<void>} Resolves after best-effort abort cleanup.
+   */
+  async function abortWritableQuietly(writable) {
+    try { await writable?.abort?.(); } catch {}
+  }
+
+  /**
+   * Cancels one readable body without allowing cleanup failure to replace the primary outcome.
+   *
+   * @param {Object|null} body - Readable stream body to cancel when present.
+   * @returns {Promise<void>} Resolves after best-effort cancellation.
+   */
+  async function cancelReadableBodyQuietly(body) {
+    try { await body?.cancel?.(); } catch {}
+  }
+
+  /**
+   * Formats duration.
+   *
+   * @param {Object} milliseconds - The duration in milliseconds.
+   * @returns {string} The string produced by `formatDuration`.
+   */
+  function formatDuration(milliseconds) {
+    const totalSeconds = Math.max(0, Math.round(milliseconds / 1000));
+    if (totalSeconds < 60) return `${totalSeconds}s`;
+    const totalMinutes = Math.floor(totalSeconds / 60);
+    const seconds = totalSeconds % 60;
+    if (totalMinutes < 60) return seconds ? `${totalMinutes}m ${seconds}s` : `${totalMinutes}m`;
+    const hours = Math.floor(totalMinutes / 60);
+    const minutes = totalMinutes % 60;
+    return minutes ? `${hours}h ${minutes}m` : `${hours}h`;
+  }
+
+  /**
+   * Handles escape HTML text.
+   *
+   * @param {string} text - The text to process.
+   * @returns {string} The string produced by `escapeHtmlText`.
+   */
+  function escapeHtmlText(text) {
+    return String(text ?? '')
+      .replace(/&/g, '&amp;')
+      .replace(/</g, '&lt;')
+      .replace(/>/g, '&gt;');
+  }
+
+  /**
+   * Handles escape HTML attribute.
+   *
+   * @param {string} text - The text to process.
+   * @returns {string} The string produced by `escapeHtmlAttribute`.
+   */
+  function escapeHtmlAttribute(text) {
+    return String(text ?? '')
+      .replace(/&/g, '&amp;')
+      .replace(/"/g, '&quot;')
+      .replace(/</g, '&lt;')
+      .replace(/>/g, '&gt;');
+  }
+
+  /**
+   * Quotes literal message text as the transcript blockquote representation while preserving line order.
+   *
+   * @param {string} markdown - The Markdown text to process.
+   * @returns {string} The string produced by `quoteMarkdown`.
+   */
+  function quoteMarkdown(markdown) {
+    const text = String(markdown ?? '').replace(/\s+$/, '');
+    if (!text) return '>';
+    return text.split('\n').map(line => line.length ? `> ${line}` : '>').join('\n');
+  }
+
+  /**
+   * Handles conversation title.
+   *
+   * @returns {string} The string produced by `conversationTitle`.
+   */
+  function conversationTitle() {
+    const heading = document.querySelector('h1')?.textContent?.trim();
+    const title = heading || document.title || 'ChatGPT conversation';
+    return title.replace(/\s*[-–—]\s*ChatGPT\s*$/i, '').trim() || 'ChatGPT conversation';
+  }
+
+  /**
+   * Sanitizes file name.
+   *
+   * @param {string} name - The name to process.
+   * @returns {string} The string produced by `sanitizeFileName`.
+   */
+  function sanitizeFileName(name) {
+    return String(name || 'ChatGPT conversation')
+      .replace(/[<>:"/\\|?*\x00-\x1f]/g, '_')
+      .replace(/[. ]+$/g, '')
+      .trim() || 'ChatGPT conversation';
+  }
+
+  /**
+   * Handles current conversation ID.
+   *
+   * @returns {null} The value produced by `currentConversationId`, or `null` when unavailable.
+   */
+  function currentConversationId() {
+    return location.pathname.match(/\/c\/([^/?#]+)/)?.[1] ?? null;
+  }
+
+  /**
+   * Checks whether conversation API URL.
+   *
+   * @param {string} url - The URL to process.
+   * @returns {boolean} `true` when `isConversationApiUrl` succeeds or its predicate is satisfied; otherwise `false`.
+   */
+  function isConversationApiUrl(url) {
+    try {
+      const parsed = new URL(url, location.href);
+      if (parsed.origin !== location.origin) return false;
+      return /^\/backend-api\/conversations\/[^/]+(?:\/messages)?$/.test(parsed.pathname);
+    } catch {
+      return false;
+    }
+  }
+
+  /**
+   * Handles raw headers to object.
+   *
+   * @param {Object} headers - The HTTP header values to inspect.
+   * @returns {Object} The Object value produced by `rawHeadersToObject`.
+   */
+  function rawHeadersToObject(headers) {
+    const result = {};
+    /**
+     * Handles put.
+     *
+     * @param {string} name - The name to process.
+     * @param {string} value - The value to process.
+     * @returns {void} No value is returned.
+     */
+    const put = (name, value) => {
+      if (name == null || value == null) return;
+      const key = String(name).toLowerCase();
+      result[key] = result[key] ? `${result[key]}, ${value}` : String(value);
+    };
+    try {
+      if (typeof headers?.forEach === 'function') {
+        headers.forEach((value, key) => put(key, value));
+      } else if (Array.isArray(headers)) {
+        for (const entry of headers) {
+          if (Array.isArray(entry) && entry.length >= 2) put(entry[0], entry[1]);
+        }
+      } else if (headers && typeof headers === 'object') {
+        for (const [key, value] of Object.entries(headers)) put(key, value);
+      }
+    } catch {}
+    return result;
+  }
+
+  // BEGIN Issue #123 stock network diagnostics
+  /**
+   * Produces a bounded URL safe for stock-network diagnostics.
+   *
+   * Same-origin ChatGPT URLs retain routing query parameters while known secret
+   * values are redacted. Cross-origin URLs retain only origin and path.
+   *
+   * @param {string} value - Request or response URL to sanitize.
+   * @returns {string} Sanitized diagnostic URL.
+   */
+  function stockNetworkSafeUrl(value) {
+    try {
+      const parsed = new URL(String(value ?? ''), location.href);
+      if (parsed.origin !== location.origin) return `${parsed.origin}${parsed.pathname}`;
+      const relative = `${parsed.pathname}${parsed.search}`;
+      return boundedDiagnosticText(
+        redactDiagnosticSignedTokens(relative)
+          .replace(/([?&](?:access_token|token|key|secret|auth|session|jwt)=)[^&#\s]*/gi, '$1[redacted]'),
+        4000
+      );
+    } catch {
+      return boundedDiagnosticText(String(value ?? ''), 4000);
+    }
+  }
+
+  /**
+   * Extracts only explicitly safe cache/correlation response headers.
+   *
+   * @param {Object} headers - Headers-like object exposing get(name).
+   * @returns {Object} Safe response-header diagnostic projection.
+   */
+  function stockNetworkSafeResponseHeaders(headers) {
+    const result = {};
+    const allowed = [
+      ['date', 'date'],
+      ['age', 'age'],
+      ['cache-control', 'cache_control'],
+      ['etag', 'etag'],
+      ['last-modified', 'last_modified'],
+      ['expires', 'expires'],
+      ['pragma', 'pragma'],
+      ['vary', 'vary'],
+      ['cf-cache-status', 'cf_cache_status'],
+      ['x-cache', 'x_cache'],
+      ['x-cache-hits', 'x_cache_hits'],
+      ['x-served-by', 'x_served_by'],
+      ['x-timer', 'x_timer'],
+      ['server-timing', 'server_timing'],
+      ['x-request-id', 'x_request_id'],
+      ['x-openai-request-id', 'x_openai_request_id'],
+      ['cf-ray', 'cf_ray']
+    ];
+    for (const [headerName, outputName] of allowed) {
+      let value = null;
+      try { value = headers?.get?.(headerName) ?? null; } catch {}
+      if (value) result[outputName] = boundedDiagnosticText(value, 1000);
+    }
+    return result;
+  }
+
+  /**
+   * Extracts bounded message identity/status metadata from arbitrary JSON data.
+   *
+   * The traversal intentionally records no message content.
+   *
+   * @param {Object} payload - Parsed stock response JSON.
+   * @returns {Object} Bounded identity-only summary.
+   */
+  function stockNetworkJsonIdentitySummary(payload) {
+    const messageIds = [];
+    const tailMessages = [];
+    const seenMessageIds = new Set();
+    const visited = new WeakSet();
+    let visitedNodes = 0;
+
+    /**
+     * Retains one message-like object without retaining its content.
+     *
+     * @param {Object} candidate - Potential provider message object.
+     * @returns {void} No value is returned.
+     */
+    function retainMessage(candidate) {
+      if (!candidate || typeof candidate !== 'object') return;
+      const id = typeof candidate.id === 'string' ? candidate.id : null;
+      const role = typeof candidate?.author?.role === 'string'
+        ? candidate.author.role
+        : (typeof candidate.role === 'string' ? candidate.role : null);
+      if (!id || !role || seenMessageIds.has(id)) return;
+      seenMessageIds.add(id);
+      messageIds.push(id);
+      tailMessages.push({
+        id,
+        role,
+        status: typeof candidate.status === 'string' ? candidate.status : null,
+        end_turn: typeof candidate.end_turn === 'boolean' ? candidate.end_turn : null,
+        channel: typeof candidate.channel === 'string' ? candidate.channel : null
+      });
+      if (messageIds.length > STOCK_NETWORK_ID_LIMIT) messageIds.shift();
+      if (tailMessages.length > STOCK_NETWORK_ID_LIMIT) tailMessages.shift();
+    }
+
+    /**
+     * Walks bounded JSON structure looking only for message-like identity objects.
+     *
+     * @param {Object} value - Current JSON value.
+     * @param {number} depth - Current traversal depth.
+     * @returns {void} No value is returned.
+     */
+    function visit(value, depth) {
+      if (!value || typeof value !== 'object' || depth > 16 || visitedNodes >= 20000) return;
+      if (visited.has(value)) return;
+      visited.add(value);
+      visitedNodes += 1;
+      if (Array.isArray(value)) {
+        for (const item of value) visit(item, depth + 1);
+        return;
+      }
+      retainMessage(value);
+      if (value.message && typeof value.message === 'object') retainMessage(value.message);
+      for (const nested of Object.values(value)) visit(nested, depth + 1);
+    }
+
+    visit(payload, 0);
+    const currentNode = typeof payload?.current_node === 'string'
+      ? payload.current_node
+      : (typeof payload?.conversation?.current_node === 'string' ? payload.conversation.current_node : null);
+    const conversationId = typeof payload?.conversation_id === 'string'
+      ? payload.conversation_id
+      : (typeof payload?.id === 'string' && !seenMessageIds.has(payload.id) ? payload.id : null);
+    return {
+      current_node: currentNode,
+      conversation_id: conversationId,
+      message_ids: messageIds,
+      tail_messages: tailMessages,
+      visited_nodes: visitedNodes
+    };
+  }
+
+  /**
+   * Extracts bounded candidate UUID identities from non-JSON text responses.
+   *
+   * @param {string} text - Bounded response text.
+   * @returns {Object} Identity-only text summary.
+   */
+  function stockNetworkTextIdentitySummary(text) {
+    const candidateIds = [];
+    const seen = new Set();
+    const uuidPattern = /\b[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}\b/gi;
+    for (const match of String(text ?? '').matchAll(uuidPattern)) {
+      const id = match[0].toLowerCase();
+      if (seen.has(id)) continue;
+      seen.add(id);
+      candidateIds.push(id);
+      if (candidateIds.length > STOCK_NETWORK_ID_LIMIT) candidateIds.shift();
+    }
+    return {
+      candidate_uuid_ids: candidateIds,
+      message_terms_present: /(?:current_node|message_id|\"message\"|\"author\"|\"role\")/i.test(String(text ?? ''))
+    };
+  }
+
+  /**
+   * Classifies one bounded stock-network text body into JSON identity or text identity evidence.
+   *
+   * @param {string} text - Bounded response text.
+   * @param {string} contentType - Response content type used as JSON evidence.
+   * @returns {Object} Exactly one JSON-identity or text-identity projection.
+   */
+  function stockNetworkBodyIdentity(text, contentType) {
+    const value = String(text ?? '');
+    if (/json/i.test(contentType) || /^[\s\r\n]*[\[{]/.test(value)) {
+      try {
+        return { json_identity: stockNetworkJsonIdentitySummary(JSON.parse(value)) };
+      } catch {}
+    }
+    return { text_identity: stockNetworkTextIdentitySummary(value) };
+  }
+
+  /**
+   * Projects request headers without retaining authentication or other secret values.
+   *
+   * @param {Object} headers - Headers-like request headers.
+   * @returns {Object} Safe request-header metadata.
+   */
+  function stockNetworkRequestHeaderSummary(headers) {
+    const raw = rawHeadersToObject(headers);
+    const headerNames = Object.keys(raw).slice(0, 100);
+    const selected = {};
+    for (const name of ['cache-control', 'pragma', 'if-none-match', 'if-modified-since', 'x-openai-target-path']) {
+      if (!raw[name]) continue;
+      selected[name.replace(/-/g, '_')] = boundedDiagnosticText(redactDiagnosticSignedTokens(raw[name]), 1000);
+    }
+    return { header_names: headerNames, selected };
+  }
+
+  /**
+   * Starts one stock page fetch diagnostic observation.
+   *
+   * @param {Request|null} request - Page Request when construction succeeded.
+   * @param {string} requestUrl - Effective request URL.
+   * @returns {Object} Correlation state for the response.
+   */
+  function stockNetworkTraceFetchStart(request, requestUrl) {
+    const sequence = ++stockNetworkSequence;
+    const startedAt = performance.now();
+    let sameOrigin = false;
+    try { sameOrigin = new URL(requestUrl, location.href).origin === location.origin; } catch {}
+    const trace = {
+      sequence,
+      started_at: startedAt,
+      method: String(request?.method ?? 'GET').toUpperCase(),
+      url: stockNetworkSafeUrl(requestUrl),
+      same_origin: sameOrigin
+    };
+    logDiagnostic('debug', 'stock-network-fetch-start', {
+      network_sequence: sequence,
+      method: trace.method,
+      url: trace.url,
+      cache_mode: request?.cache ?? null,
+      request_mode: request?.mode ?? null,
+      credentials: request?.credentials ?? null,
+      destination: request?.destination ?? null,
+      redirect: request?.redirect ?? null,
+      headers: stockNetworkRequestHeaderSummary(request?.headers)
+    });
+    return trace;
+  }
+
+  /**
+   * Reads at most the configured diagnostic byte limit from a cloned response.
+   *
+   * @param {Response} response - Cloned page response.
+   * @returns {Promise<Object>} Bounded text plus byte/truncation metadata.
+   */
+  async function stockNetworkReadBoundedText(response) {
+    if (!response?.body) return { text: '', byte_count: 0, truncated: false };
+    const reader = response.body.getReader();
+    const decoder = new TextDecoder();
+    let text = '';
+    let byteCount = 0;
+    let truncated = false;
+    try {
+      for (;;) {
+        const { done, value } = await reader.read();
+        if (done) break;
+        if (!value?.byteLength) continue;
+        const remaining = STOCK_NETWORK_JSON_BYTE_LIMIT - byteCount;
+        if (remaining <= 0) {
+          truncated = true;
+          try { await reader.cancel(); } catch {}
+          break;
+        }
+        const accepted = value.byteLength <= remaining ? value : value.slice(0, remaining);
+        text += decoder.decode(accepted, { stream: true });
+        byteCount += accepted.byteLength;
+        if (accepted.byteLength < value.byteLength) {
+          truncated = true;
+          try { await reader.cancel(); } catch {}
+          break;
+        }
+      }
+      text += decoder.decode();
+    } finally {
+      releaseReaderLockQuietly(reader);
+    }
+    return { text, byte_count: byteCount, truncated };
+  }
+
+  /**
+   * Inspects one cloned stock fetch body without retaining its raw content.
+   *
+   * @param {Response} response - Cloned page response.
+   * @param {Object} trace - Request/response correlation state.
+   * @returns {Promise<void>} Resolves after bounded body inspection.
+   */
+  async function stockNetworkInspectFetchBody(response, trace) {
+    try {
+      const bounded = await stockNetworkReadBoundedText(response);
+      const contentType = response.headers?.get?.('content-type') ?? '';
+      const identity = stockNetworkBodyIdentity(bounded.text, contentType);
+      logDiagnostic('debug', 'stock-network-fetch-body-summary', {
+        network_sequence: trace.sequence,
+        url: trace.url,
+        content_type: boundedDiagnosticText(contentType, 500),
+        byte_count: bounded.byte_count,
+        truncated: bounded.truncated,
+        json_identity: identity.json_identity ?? null,
+        text_identity: identity.text_identity ?? null
+      });
+    } catch (error) {
+      logDiagnostic('debug', 'stock-network-fetch-body-summary-failed', {
+        network_sequence: trace.sequence,
+        url: trace.url,
+        error: boundedDiagnosticText(errorMessage(error), 1000)
+      });
+    }
+  }
+
+  /**
+   * Records stock fetch response metadata and starts bounded identity inspection.
+   *
+   * @param {Response} response - Original page response, left untouched for ChatGPT.
+   * @param {Object} trace - Request/response correlation state.
+   * @returns {void} No value is returned.
+   */
+  function stockNetworkTraceFetchResponse(response, trace) {
+    const contentType = response?.headers?.get?.('content-type') ?? '';
+    logDiagnostic('debug', 'stock-network-fetch-response', {
+      network_sequence: trace.sequence,
+      method: trace.method,
+      url: trace.url,
+      response_url: stockNetworkSafeUrl(response?.url ?? ''),
+      status: response?.status ?? null,
+      ok: response?.ok === true,
+      type: response?.type ?? null,
+      redirected: response?.redirected === true,
+      duration_ms: Math.round(performance.now() - trace.started_at),
+      content_type: boundedDiagnosticText(contentType, 500),
+      response_headers: stockNetworkSafeResponseHeaders(response?.headers)
+    });
+    const inspectable = trace.same_origin && (
+      /(?:json|text|event-stream|x-component|javascript)/i.test(contentType) ||
+      /\/backend-api\/(?:conversation|conversations|f\/conversation)(?:\/|\?|$)/.test(trace.url)
+    );
+    if (!inspectable) return;
+    const cloned = cloneSafely(response);
+    if (cloned) void stockNetworkInspectFetchBody(cloned, trace);
+  }
+
+  /**
+   * Starts one stock page XHR diagnostic observation.
+   *
+   * @param {XMLHttpRequest} xhr - Page XHR instance.
+   * @param {Object} info - Captured XHR method/URL/header metadata.
+   * @returns {Object} Correlation state for loadend.
+   */
+  function stockNetworkTraceXhrStart(xhr, info) {
+    const sequence = ++stockNetworkSequence;
+    const trace = {
+      sequence,
+      started_at: performance.now(),
+      method: String(info?.method ?? 'GET').toUpperCase(),
+      url: stockNetworkSafeUrl(info?.url ?? '')
+    };
+    logDiagnostic('debug', 'stock-network-xhr-start', {
+      network_sequence: sequence,
+      method: trace.method,
+      url: trace.url,
+      response_type: xhr?.responseType || null,
+      headers: stockNetworkRequestHeaderSummary(info?.headers)
+    });
+    return trace;
+  }
+
+  /**
+   * Parses XHR raw response headers into a Headers-like safe lookup object.
+   *
+   * @param {XMLHttpRequest} xhr - Completed page XHR instance.
+   * @returns {Object} Headers-like object with get(name).
+   */
+  function stockNetworkXhrHeaderLookup(xhr) {
+    const values = {};
+    try {
+      for (const line of String(xhr?.getAllResponseHeaders?.() ?? '').split(/\r?\n/)) {
+        const split = line.indexOf(':');
+        if (split <= 0) continue;
+        values[line.slice(0, split).trim().toLowerCase()] = line.slice(split + 1).trim();
+      }
+    } catch {}
+    return { get: name => values[String(name).toLowerCase()] ?? null };
+  }
+
+  /**
+   * Records completed stock XHR response metadata and bounded identity information.
+   *
+   * @param {XMLHttpRequest} xhr - Completed page XHR instance.
+   * @param {Object} trace - Request/response correlation state.
+   * @returns {void} No value is returned.
+   */
+  function stockNetworkTraceXhrResponse(xhr, trace) {
+    const headerLookup = stockNetworkXhrHeaderLookup(xhr);
+    const contentType = headerLookup.get('content-type') ?? '';
+    let bodyIdentity = null;
+    try {
+      if (xhr.responseType === 'json' && xhr.response && typeof xhr.response === 'object') {
+        bodyIdentity = { json_identity: stockNetworkJsonIdentitySummary(xhr.response) };
+      } else if (!xhr.responseType || xhr.responseType === 'text') {
+        const rawText = String(xhr.responseText ?? '');
+        const boundedText = rawText.slice(0, STOCK_NETWORK_JSON_BYTE_LIMIT);
+        bodyIdentity = {
+          ...stockNetworkBodyIdentity(boundedText, contentType),
+          truncated: rawText.length > boundedText.length
+        };
+      }
+    } catch {}
+    logDiagnostic('debug', 'stock-network-xhr-response', {
+      network_sequence: trace.sequence,
+      method: trace.method,
+      url: trace.url,
+      response_url: stockNetworkSafeUrl(xhr?.responseURL ?? ''),
+      status: Number.isFinite(xhr?.status) ? xhr.status : null,
+      duration_ms: Math.round(performance.now() - trace.started_at),
+      content_type: boundedDiagnosticText(contentType, 500),
+      response_headers: stockNetworkSafeResponseHeaders(headerLookup),
+      body_identity: bodyIdentity
+    });
+  }
+  // END Issue #123 stock network diagnostics
+
+
+  // BEGIN Issue #123 disk communication recorder
+  /** Interval between dirty communication-log checkpoints. */
+  /** Long-lived writable stream used by normal communication-log appends. */
+  let communicationLogWritable = null;
+  /** Whether the current long-lived writable contains bytes not yet checkpointed. */
+  let communicationLogWriterDirty = false;
+  /** Exact accepted byte count in the current active raw segment. */
+  let communicationLogActiveBytes = null;
+  /** Periodic checkpoint timer installed once communication logging becomes active. */
+  /**
+   * Opens the IndexedDB database that retains the authorized directory handle.
+   *
+   * @returns {Promise<IDBDatabase>} Open handle database.
+   */
+  function communicationLogOpenDb() {
+    return new Promise((resolve, reject) => {
+      const request = indexedDB.open(COMMUNICATION_LOG_DB_NAME, 1);
+      request.onupgradeneeded = () => {
+        const db = request.result;
+        if (!db.objectStoreNames.contains(COMMUNICATION_LOG_DB_STORE)) {
+          db.createObjectStore(COMMUNICATION_LOG_DB_STORE);
+        }
+      };
+      request.onsuccess = () => resolve(request.result);
+      request.onerror = () => reject(request.error ?? new Error('Could not open communication-log handle database.'));
+    });
+  }
+
+  /**
+   * Loads the previously selected communication-log directory handle.
+   *
+   * @returns {Promise<Object|null>} Persisted directory handle, or null when none exists.
+   */
+  async function communicationLogLoadDirectoryHandle() {
+    const db = await communicationLogOpenDb();
+    try {
+      return await new Promise((resolve, reject) => {
+        const request = db.transaction(COMMUNICATION_LOG_DB_STORE, 'readonly')
+          .objectStore(COMMUNICATION_LOG_DB_STORE)
+          .get(COMMUNICATION_LOG_HANDLE_KEY);
+        request.onsuccess = () => resolve(request.result ?? null);
+        request.onerror = () => reject(request.error ?? new Error('Could not load communication-log directory handle.'));
+      });
+    } finally {
+      db.close();
+    }
+  }
+
+  /**
+   * Persists one authorized communication-log directory handle for later reloads.
+   *
+   * @param {Object} handle - FileSystemDirectoryHandle selected by the user.
+   * @returns {Promise<void>} Resolves after IndexedDB stores the handle.
+   */
+  async function communicationLogStoreDirectoryHandle(handle) {
+    const db = await communicationLogOpenDb();
+    try {
+      await new Promise((resolve, reject) => {
+        const request = db.transaction(COMMUNICATION_LOG_DB_STORE, 'readwrite')
+          .objectStore(COMMUNICATION_LOG_DB_STORE)
+          .put(handle, 'communication-directory');
+        request.onsuccess = () => resolve();
+        request.onerror = () => reject(request.error ?? new Error('Could not store communication-log directory handle.'));
+      });
+    } finally {
+      db.close();
+    }
+  }
+
+  /**
+   * Reads current read/write permission for one File System Access directory handle.
+   *
+   * @param {Object|null} handle - Candidate FileSystemDirectoryHandle.
+   * @returns {Promise<string>} Browser permission state.
+   */
+  async function communicationLogPermissionState(handle) {
+    if (!handle || typeof handle.queryPermission !== 'function') return 'denied';
+    return handle.queryPermission({ mode: 'readwrite' });
+  }
+
+  /**
+   * Returns the current conversation title, preferring a previously retained title during early reload startup.
+   *
+   * @returns {string|null} Sanitized conversation name, or null before a usable title is known.
+   */
+  function communicationLogConversationName() {
+    const conversationId = currentConversationId();
+    const storageKey = `${COMMUNICATION_LOG_TITLE_STORAGE_PREFIX}${conversationId ?? 'unknown'}`;
+    const current = sanitizeFileName(conversationTitle());
+    const currentUsable = !/^(?:ChatGPT|ChatGPT conversation)$/i.test(current);
+    if (currentUsable) {
+      try { localStorage.setItem(storageKey, current); } catch {}
+      return current;
+    }
+    try {
+      const stored = localStorage.getItem(storageKey);
+      return stored ? sanitizeFileName(stored) : null;
+    } catch {
+      return null;
+    }
+  }
+
+  /**
+   * Waits briefly for the conversation title needed by the required disk-log filename.
+   *
+   * @returns {Promise<string|null>} Sanitized title when available, otherwise null.
+   */
+  async function communicationLogWaitForConversationName() {
+    for (let attempt = 0; attempt < 50; attempt += 1) {
+      const name = communicationLogConversationName();
+      if (name) return name;
+      await new Promise(resolve => setTimeout(resolve, 100));
+    }
+    return null;
+  }
+
+  /**
+   * Commits queued communication-log state at a hard document-departure boundary.
+   *
+   * Browser lifecycle events start this operation on a best-effort basis because
+   * the browser does not promise to await arbitrary asynchronous unload work.
+   * DownloadConversation-initiated full-document navigation must await this same
+   * function before changing location.
+   *
+   * @param {string} reason - Lifecycle boundary identifying why the document is departing.
+   * @returns {Promise<boolean>} True when dirty writer bytes were checkpointed.
+   */
+  function communicationLogCheckpointForDocumentDeparture(reason) {
+    return communicationLogCheckpoint(reason);
+  }
+
+  /**
+   * Installs page/session lifecycle records after the disk recorder becomes writable.
+   *
+   * @returns {void} No value is returned.
+   */
+  function communicationLogInstallLifecycleObservers() {
+    if (communicationLogLifecycleInstalled) return;
+    communicationLogLifecycleInstalled = true;
+    window.addEventListener('beforeunload', () => {
+      void communicationLogCheckpointForDocumentDeparture('beforeunload');
+    });
+    window.addEventListener('pagehide', event => {
+      void communicationLogRecord('communication_pagehide', {
+        persisted: event.persisted === true,
+        visibility_state: document.visibilityState
+      });
+      void communicationLogCheckpointForDocumentDeparture('pagehide');
+    });
+    document.addEventListener('visibilitychange', () => {
+      void communicationLogRecord('communication_visibility_change', {
+        visibility_state: document.visibilityState
+      });
+    });
+  }
+
+  /**
+   * Activates disk logging for one granted directory and the current conversation.
+   *
+   * @param {Object} handle - Granted FileSystemDirectoryHandle.
+   * @returns {Promise<boolean>} True when logging becomes ready.
+   */
+  async function communicationLogActivateDirectory(handle) {
+    logDiagnostic('debug', 'communication-log-activation-entered', {
+      directory_handle_present: Boolean(handle)
+    });
+    const conversationName = await communicationLogWaitForConversationName();
+    logDiagnostic('debug', 'communication-log-conversation-name-resolved', {
+      available: Boolean(conversationName),
+      conversation_id: currentConversationId()
+    });
+    if (!conversationName) {
+      communicationLogShowDirectoryPrompt('Conversation title is not available yet.');
+      return false;
+    }
+    communicationLogDirectoryHandle = handle;
+    communicationLogFileName = `DownloadConversation_${conversationFileBaseName()}.jsonl`;
+    if (/^DownloadConversation_(?:ChatGPT|ChatGPT conversation)\.jsonl$/i.test(communicationLogFileName)) {
+      const projectName = conversationProjectName();
+      const fallbackBase = projectName
+        ? `${sanitizeFileName(projectName)} - ${conversationName}`
+        : conversationName;
+      communicationLogFileName = `DownloadConversation_${fallbackBase}.jsonl`;
+    }
+    logDiagnostic('debug', 'communication-log-segment-initialize-call-started', {
+      initializer_type: typeof communicationLogInitializeSegmentStorage
+    });
+    await communicationLogInitializeSegmentStorage();
+    logDiagnostic('debug', 'communication-log-swap-recovery-started', {
+      file_name: communicationLogActiveFileName
+    });
+    await communicationLogRecoverSwapFiles();
+    logDiagnostic('debug', 'communication-log-swap-recovery-completed', {
+      file_name: communicationLogActiveFileName
+    });
+    communicationLogReady = true;
+    const recoveredDuplicateRequest =
+      communicationLogSegmentManifest?.duplicate_request
+        ? { ...communicationLogSegmentManifest.duplicate_request }
+        : null;
+    logDiagnostic('debug', 'communication-log-recorder-ready', {
+      file_name: communicationLogFileName,
+      segment_directory: communicationLogSegmentDirectoryName(),
+      active_segment_bytes: communicationLogActiveSegmentBytes,
+      historical_segments: (await communicationLogHistoricalSegmentsFromDirectory()).length
+    });
+    communicationLogDisarmDirectoryGesture();
+    document.getElementById('tm-communication-directory-required')?.remove();
+    communicationLogPromptShown = false;
+    communicationLogInstallLifecycleObservers();
+    const navigation = performance.getEntriesByType?.('navigation')?.[0] ?? null;
+    await communicationLogRecord('communication_session_start', {
+      script_version: VERSION,
+      core_version: CORE_VERSION,
+      conversation_id: currentConversationId(),
+      conversation_name: conversationName,
+      project_name: conversationProjectName(),
+      file_name: communicationLogFileName,
+      page_url: stockNetworkSafeUrl(location.href),
+      navigation_type: navigation?.type ?? null,
+      time_origin: performance.timeOrigin,
+      dropped_before_ready: communicationLogDroppedBeforeReady
+    });
+    communicationLogDroppedBeforeReady = 0;
+    if (recoveredDuplicateRequest) {
+      queueMicrotask(() => {
+        void communicationLogArchiveDuplicate(recoveredDuplicateRequest)
+          .catch(error => communicationLogReportFailure('duplicate-restart', error));
+      });
+    }
+    return true;
+  }
+
+  /**
+   * Displays a user-gesture directory authorization prompt required by File System Access.
+   *
+   * @param {string} reason - Why directory authorization is required.
+   * @returns {void} No value is returned.
+   */
+  /**
+   * Removes the trusted-gesture listeners once directory authorization succeeds.
+   *
+   * @returns {void} No value is returned.
+   */
+  function communicationLogDisarmDirectoryGesture() {
+    if (!communicationLogDirectoryGestureArmed) return;
+    communicationLogDirectoryGestureArmed = false;
+    window.removeEventListener('click', communicationLogHandleDirectoryGesture, true);
+    window.removeEventListener('keydown', communicationLogHandleDirectoryGesture, true);
+  }
+
+  /**
+   * Uses the first trusted page interaction to launch the native directory chooser directly.
+   *
+   * The File System Access picker call must remain synchronous with this trusted event; no
+   * awaited work may occur before `showDirectoryPicker()` or Chromium will discard transient
+   * user activation.
+   *
+   * @param {Event} event - Trusted click or keydown reserved for directory authorization.
+   * @returns {void} No value is returned.
+   */
+  function communicationLogHandleDirectoryGesture(event) {
+    if (!communicationLogDirectoryGestureArmed || communicationLogDirectoryPickerOpening) return;
+    if (event.isTrusted !== true) return;
+
+    event.preventDefault();
+    event.stopImmediatePropagation();
+
+    const pickerWindow = typeof unsafeWindow !== 'undefined' ? unsafeWindow : window;
+    if (typeof pickerWindow.showDirectoryPicker !== 'function') {
+      communicationLogReportFailure(
+        'directory-authorization',
+        new Error('This browser does not expose showDirectoryPicker().')
+      );
+      return;
+    }
+
+    let pickerPromise;
+    try {
+      communicationLogDirectoryPickerOpening = true;
+      pickerPromise = pickerWindow.showDirectoryPicker({ mode: 'readwrite' });
+    } catch (error) {
+      communicationLogDirectoryPickerOpening = false;
+      communicationLogReportFailure('directory-authorization', error);
+      return;
+    }
+
+    Promise.resolve(pickerPromise)
+      .then(async handle => {
+        const permission = await communicationLogPermissionState(handle);
+        if (permission !== 'granted') {
+          throw new Error('The selected folder did not grant read/write permission.');
+        }
+        await communicationLogStoreDirectoryHandle(handle);
+        await communicationLogActivateDirectory(handle);
+      })
+      .catch(error => {
+        if (error?.name === 'AbortError') {
+          logDiagnostic('debug', 'communication-directory-picker-cancelled', {});
+        } else {
+          communicationLogReportFailure('directory-authorization', error);
+        }
+      })
+      .finally(() => {
+        communicationLogDirectoryPickerOpening = false;
+      });
+  }
+
+  /**
+   * Blocks page interaction until the next trusted click or key press can open the native chooser.
+   *
+   * @param {string} reason - Why directory authorization is required.
+   * @returns {void} No value is returned.
+   */
+  function communicationLogShowDirectoryPrompt(reason) {
+    logDiagnostic('warnings', 'communication-directory-required', { reason });
+    if (!communicationLogDirectoryGestureArmed) {
+      communicationLogDirectoryGestureArmed = true;
+      window.addEventListener('click', communicationLogHandleDirectoryGesture, { capture: true });
+      window.addEventListener('keydown', communicationLogHandleDirectoryGesture, { capture: true });
+    }
+    if (communicationLogPromptShown) return;
+    communicationLogPromptShown = true;
+
+    /**
+     * Mounts the blocking explanation after the document body exists.
+     *
+     * @returns {void} No value is returned.
+     */
+    const mount = () => {
+      if (!document.body) {
+        requestAnimationFrame(mount);
+        return;
+      }
+      if (document.getElementById('tm-communication-directory-required')) return;
+      const prompt = document.createElement('div');
+      prompt.id = 'tm-communication-directory-required';
+      prompt.tabIndex = -1;
+      prompt.style.cssText = 'position:fixed;inset:0;z-index:2147483647;display:grid;place-items:center;background:#000a;color:#fff;font:14px/1.5 system-ui,sans-serif;cursor:pointer';
+      const card = document.createElement('div');
+      card.style.cssText = 'max-width:520px;padding:18px;border:1px solid #888;border-radius:10px;background:#202123;box-shadow:0 6px 24px #000a';
+      card.textContent = `DownloadConversation needs a writable folder for the communication log. Click or press any key to open the native folder chooser. ${reason}`;
+      prompt.append(card);
+      document.body.append(prompt);
+      try { prompt.focus({ preventScroll: true }); } catch {}
+    };
+    mount();
+  }
+
+  /**
+   * Restores the persisted communication-log directory and starts disk logging when permission permits.
+   *
+   * @returns {Promise<boolean>} True when a saved writable directory was activated.
+   */
+  async function initializeCommunicationDiskRecorder() {
+    logDiagnostic('debug', 'communication-log-startup-entered', {});
+    try {
+      const handle = await communicationLogLoadDirectoryHandle();
+      logDiagnostic('debug', 'communication-log-directory-restore-completed', {
+        handle_present: Boolean(handle)
+      });
+      if (!handle) {
+        communicationLogShowDirectoryPrompt('No log folder has been authorized for this browser profile.');
+        return false;
+      }
+      const permission = await communicationLogPermissionState(handle);
+      logDiagnostic('debug', 'communication-log-directory-permission-checked', {
+        permission
+      });
+      if (permission !== 'granted') {
+        communicationLogShowDirectoryPrompt('The saved log folder is no longer authorized; choose it again.');
+        return false;
+      }
+      return await communicationLogActivateDirectory(handle);
+    } catch (error) {
+      try {
+        logDiagnostic('warnings', 'communication-log-startup-caught', {
+          name: String(error?.name ?? ''),
+          message: String(error?.message ?? error),
+          stack: boundedDiagnosticText(String(error?.stack ?? ''), 6000)
+        });
+      } catch (diagnosticError) {
+        logConsoleDiagnostic(
+          'warnings',
+          '[DownloadConversation] communication recorder startup diagnostic failed',
+          {
+            startup_error: String(error?.message ?? error),
+            diagnostic_error: String(diagnosticError?.message ?? diagnosticError)
+          }
+        );
+      }
+      communicationLogReportFailure('startup', error);
+      communicationLogShowDirectoryPrompt('The saved log folder could not be restored.');
+      return false;
+    }
+  }
+
+  /**
+   * Redacts credential-bearing headers while retaining ordinary protocol/cache/routing metadata.
+   *
+   * @param {Object} headers - Headers-like or plain header collection.
+   * @returns {Object} Header map safe to persist to the communication log.
+   */
+  function communicationLogSafeHeaders(headers) {
+    const raw = rawHeadersToObject(headers);
+    const safe = {};
+    for (const [name, value] of Object.entries(raw).slice(0, 200)) {
+      if (/(?:^|[-_])(?:authorization|cookie|set-cookie|proxy-authorization|access-token|refresh-token|api-key|csrf|xsrf|session|jwt|secret)(?:$|[-_])/i.test(name)) {
+        safe[name] = '[redacted]';
+      } else {
+        safe[name] = boundedDiagnosticText(communicationLogRedactText(value), 4000);
+      }
+    }
+    return safe;
+  }
+
+  /**
+   * Finds the earliest sensitive-value prefix in uncommitted communication text.
+   *
+   * @param {string} text - Uncommitted text held by the streaming redactor.
+   * @returns {Object|null} Trigger descriptor, or null when no complete prefix is present.
+   */
+  function communicationLogFindSecretTrigger(text) {
+    const candidates = [];
+    const query = /[?&](?:sig|signature|access_token|refresh_token|token|key|secret|auth|authorization|session|jwt|api_key)=/i.exec(text);
+    if (query) candidates.push({ index: query.index, prefix: query[0], kind: 'query', terminator: null });
+    const bearer = /\bBearer\s+/i.exec(text);
+    if (bearer) candidates.push({ index: bearer.index, prefix: bearer[0], kind: 'bearer', terminator: null });
+    const quoted = /(?:\"|')?(?:access_token|refresh_token|authorization|cookie|session|jwt|api[_-]?key|secret)(?:\"|')?\s*:\s*(\"|')/i.exec(text);
+    if (quoted) candidates.push({ index: quoted.index, prefix: quoted[0], kind: 'quoted', terminator: quoted[1] });
+    if (!candidates.length) return null;
+    candidates.sort((left, right) => left.index - right.index || right.prefix.length - left.prefix.length);
+    return candidates[0];
+  }
+
+  /** Internal directory containing sealed/compressed segments for the logical log. */
+  let communicationLogSegmentDirectoryHandle = null;
+  /** Small durable active-boundary and interrupted-Duplicate control record. */
+  let communicationLogSegmentManifest = null;
+  /** Background compression chain; active recorder writes do not await it. */
+  let communicationLogCompressionChain = Promise.resolve();
+  /** Exact bytes accepted into the current active raw segment. */
+  let communicationLogActiveSegmentBytes = 0;
+  /** Alternating private active files; a closed source is never copied/truncated. */
+  const COMMUNICATION_LOG_ACTIVE_FILE_NAMES = Object.freeze([
+    'active-a.jsonl',
+    'active-b.jsonl'
+  ]);
+  /** Current append target inside the private segment directory. */
+  let communicationLogActiveFileName = null;
+  /** Timestamp of the last complete record accepted into the active file. */
+  let communicationLogActiveLastTimestamp = null;
+  /** Threshold rotation deferred while held or while the alternate is occupied. */
+  let communicationLogRotationPending = false;
+  /** Duplicate snapshot hold preventing active-file rotation. */
+  let communicationLogRotationHold = 0;
+  /** One Duplicate operation may run per logical conversation. */
+  let communicationLogDuplicateInProgress = false;
+
+  /**
+   * Reads the current active file from the private segment directory.
+   *
+   * @returns {Promise<Object>} Fresh handle and file snapshot.
+   */
+  async function communicationLogActiveFileSnapshot() {
+    if (!communicationLogSegmentDirectoryHandle || !communicationLogActiveFileName) {
+      throw new Error('Communication active segment is not ready.');
+    }
+    const handle = await communicationLogSegmentDirectoryHandle.getFileHandle(
+      communicationLogActiveFileName,
+      { create: true }
+    );
+    return { handle, file: await handle.getFile() };
+  }
+
+  /**
+   * Switches the append target to the other alternating file without copying bytes.
+   *
+   * @returns {Promise<string>} New active filename.
+   */
+  async function communicationLogAvailableAlternateActiveFile() {
+    const current = communicationLogActiveFileName;
+    const next = COMMUNICATION_LOG_ACTIVE_FILE_NAMES.find(name => name !== current);
+    if (!next) throw new Error('Communication active-file alternation is invalid.');
+    try {
+      const occupied = await communicationLogSegmentDirectoryHandle.getFileHandle(
+        next,
+        { create: false }
+      );
+      if ((await occupied.getFile()).size > 0) {
+        communicationLogRotationPending = true;
+        return null;
+      }
+      await communicationLogSegmentDirectoryHandle.removeEntry(next);
+    } catch (error) {
+      if (error?.name !== 'NotFoundError') throw error;
+    }
+    return next;
+  }
+
+  /**
+   * Switches to one preflighted alternating active filename.
+   *
+   * @param {string|null} next - Available alternate filename.
+   * @returns {Promise<string|null>} New active filename, or null when unavailable.
+   */
+  async function communicationLogSwitchActiveFile(next = null) {
+    const selected = next ?? await communicationLogAvailableAlternateActiveFile();
+    if (!selected) return null;
+    communicationLogActiveFileName = selected;
+    const handle = await communicationLogSegmentDirectoryHandle.getFileHandle(
+      communicationLogActiveFileName,
+      { create: true }
+    );
+    const file = await handle.getFile();
+    if (file.size !== 0) {
+      throw new Error(`New communication active file is not empty: ${selected}`);
+    }
+    communicationLogActiveSegmentBytes = 0;
+    communicationLogActiveLastTimestamp = null;
+    communicationLogRotationPending = false;
+    return selected;
+  }
+
+  /**
+   * Returns the stable internal segment-directory name for this logical log.
+   *
+   * @returns {string} Stable internal directory name.
+   */
+  function communicationLogSegmentDirectoryName() {
+    const identity = sanitizeFileName(
+      currentConversationId() || communicationLogConversationName() || 'conversation'
+    );
+    return `.DownloadConversation-${identity}-segments`;
+  }
+
+  /**
+   * Hashes exact bytes for segment/archive verification.
+   *
+   * @param {Uint8Array} bytes - Exact bytes to hash.
+   * @returns {Promise<string>} Lowercase hexadecimal SHA-256 digest.
+   */
+  async function communicationLogSha256(bytes) {
+    const digest = await crypto.subtle.digest('SHA-256', bytes);
+    return Array.from(
+      new Uint8Array(digest),
+      byte => byte.toString(16).padStart(2, '0')
+    ).join('');
+  }
+
+  /**
+   * Writes and byte-verifies one internal segment file.
+   *
+   * @param {Object} directory - Target File System Access directory handle.
+   * @param {string} name - Exact target filename.
+   * @param {Uint8Array} bytes - Exact bytes to commit.
+   * @returns {Promise<Object>} Verified file handle.
+   */
+  async function communicationLogWriteExactFile(directory, name, bytes) {
+    const handle = await directory.getFileHandle(name, { create: true });
+    let writable = null;
+    try {
+      writable = await handle.createWritable();
+      await writable.write(bytes);
+      await writable.close();
+      writable = null;
+      const file = await handle.getFile();
+      const committed = new Uint8Array(await file.arrayBuffer());
+      if (committed.byteLength !== bytes.byteLength
+          || !(await communicationLogBytesEqual(committed, bytes))) {
+        throw new Error(`Exact file verification failed: ${name}`);
+      }
+      return handle;
+    } catch (error) {
+      await abortWritableQuietly(writable);
+      throw error;
+    }
+  }
+
+  /**
+   * Compares two byte arrays exactly.
+   *
+   * @param {Uint8Array} left - First byte array.
+   * @param {Uint8Array} right - Second byte array.
+   * @returns {Promise<boolean>} True when every byte is identical.
+   */
+  async function communicationLogBytesEqual(left, right) {
+    if (left.byteLength !== right.byteLength) return false;
+    for (let index = 0; index < left.byteLength; index += 1) {
+      if (left[index] !== right[index]) return false;
+    }
+    return true;
+  }
+
+  /**
+   * Compresses, round-trip verifies, then retires one closed raw active file.
+   *
+   * @param {Object} segment - Immutable closed-source metadata.
+   * @returns {Promise<void>} Resolves after verified compression or rejects while retaining raw bytes.
+   */
+  async function communicationLogCompressSealedSegment(segment) {
+    const directory = communicationLogSegmentDirectoryHandle;
+    if (!directory) throw new Error('Communication segment directory is not ready.');
+    const rawHandle = await directory.getFileHandle(segment.raw_name, { create: false });
+    const rawFile = await rawHandle.getFile();
+    const rawBytes = new Uint8Array(await rawFile.arrayBuffer());
+    const sourceHash = await communicationLogSha256(rawBytes);
+    if (rawBytes.byteLength !== segment.raw_bytes
+        || sourceHash !== segment.source_sha256) {
+      throw new Error(
+        `Closed communication source changed before compression: ${segment.raw_name}`
+      );
+    }
+
+    try {
+      setStatus(`Communication log: compressing ${segment.raw_name}; recording continues.`);
+      const archiveBytes = await createArchive(rawBytes);
+      const archiveHandle = await communicationLogWriteExactFile(
+        directory,
+        segment.archive_name,
+        archiveBytes
+      );
+      const committedArchive = new Uint8Array(
+        await (await archiveHandle.getFile()).arrayBuffer()
+      );
+      const extracted = await extractArchive(committedArchive);
+      if (!(await communicationLogBytesEqual(extracted, rawBytes))
+          || await communicationLogSha256(extracted) !== segment.source_sha256) {
+        throw new Error(`Archive round-trip verification failed: ${segment.archive_name}`);
+      }
+      await directory.removeEntry(segment.raw_name);
+      if (communicationLogRotationPending) {
+        const pending = communicationLogEnqueue('pending-rotation', async () => {
+          if (communicationLogRotationHold === 0
+              && communicationLogActiveSegmentBytes
+                >= COMMUNICATION_LOG_SEGMENT_TARGET_BYTES) {
+            await communicationLogSealActiveSegment();
+          }
+        });
+        void pending.operation.catch(() => {});
+      }
+      setStatus(`Communication log: ${segment.archive_name} verified; recording continues.`);
+      logDiagnostic('debug', 'communication-log-segment-compressed', {
+        raw_name: segment.raw_name,
+        archive_name: segment.archive_name,
+        raw_bytes: segment.raw_bytes,
+        archive_bytes: committedArchive.byteLength
+      });
+    } catch (error) {
+      setStatus(
+        `Communication log: compression failed for ${segment.raw_name}; `
+        + 'closed raw source retained and recording continues.'
+      );
+      logDiagnostic('warnings', 'communication-log-segment-compression-failed', {
+        raw_name: segment.raw_name,
+        archive_name: segment.archive_name,
+        message: boundedDiagnosticText(errorMessage(error), 2000)
+      });
+      throw error;
+    }
+  }
+
+  /**
+   * Serializes background compression without blocking active appends.
+   *
+   * @param {Object} segment - Durable sealed-segment metadata.
+   * @returns {Promise<void>} Compression operation promise.
+   */
+  function communicationLogQueueSegmentCompression(segment) {
+    const operation = communicationLogCompressionChain.then(
+      () => communicationLogCompressSealedSegment(segment)
+    );
+    communicationLogCompressionChain = operation.catch(() => undefined);
+    return operation;
+  }
+
+  /**
+   * Checks whether one exact file exists in a specific directory.
+   *
+   * @param {Object} directory - File System Access directory handle.
+   * @param {string} name - Exact filename.
+   * @returns {Promise<boolean>} True when the file exists.
+   */
+  async function communicationLogFileExistsInDirectory(directory, name) {
+    try {
+      await directory.getFileHandle(name, { create: false });
+      return true;
+    } catch (error) {
+      if (error?.name === 'NotFoundError') return false;
+      throw error;
+    }
+  }
+
+  /**
+   * Closes the current active file, switches append ownership, then compresses
+   * the closed immutable source directly. No raw copy or truncation occurs.
+   *
+   * @returns {Promise<Object|null>} Sealed segment metadata, or null when empty.
+   */
+  async function communicationLogSealActiveSegment() {
+    const alternate = await communicationLogAvailableAlternateActiveFile();
+    if (!alternate) return null;
+
+    await communicationLogCloseActiveWriter();
+    const snapshot = await communicationLogActiveFileSnapshot();
+    if (snapshot.file.size === 0) return null;
+
+    const rawName = communicationLogActiveFileName;
+    const rawBytes = new Uint8Array(await snapshot.file.arrayBuffer());
+    const range = communicationLogTimestampRangeFromJsonl(rawBytes);
+    if (!range) {
+      throw new Error(
+        'Sealed communication segment has no trustworthy content timestamp range.'
+      );
+    }
+
+    const archiveName = communicationLogRoleArchiveName('segment', range, 'seg');
+    if (await communicationLogFileExistsInDirectory(
+      communicationLogSegmentDirectoryHandle,
+      archiveName
+    )) {
+      throw new Error(`Communication segment filename collision: ${archiveName}`);
+    }
+    const sourceHash = await communicationLogSha256(rawBytes);
+
+    const segment = {
+      raw_name: rawName,
+      archive_name: archiveName,
+      raw_bytes: rawBytes.byteLength,
+      source_sha256: sourceHash,
+      start_timestamp: range.start_timestamp,
+      end_timestamp: range.end_timestamp
+    };
+    await communicationLogSwitchActiveFile(alternate);
+    await communicationLogOpenWriter();
+    void communicationLogQueueSegmentCompression(segment).catch(() => {});
+    return segment;
+  }
+
+  /**
+   * Releases one Duplicate rotation hold and immediately services pending
+   * threshold rotation when possible.
+   *
+   * @returns {Promise<void>} Resolves after pending rotation is handled.
+   */
+  async function communicationLogReleaseRotationHold() {
+    communicationLogRotationHold = Math.max(0, communicationLogRotationHold - 1);
+    if (communicationLogRotationHold !== 0 || !communicationLogRotationPending) return;
+    if (communicationLogActiveSegmentBytes < COMMUNICATION_LOG_SEGMENT_TARGET_BYTES) {
+      communicationLogRotationPending = false;
+      return;
+    }
+    await communicationLogSealActiveSegment();
+  }
+
+  /**
+   * Appends one complete JSONL record and rotates only after its record boundary.
+   *
+   * @param {Object} record - Complete structured communication record.
+   * @returns {Promise<void>} Resolves after the record is accepted by active storage.
+   */
+  async function communicationLogStorageAppendRecord(record) {
+    const line = `${JSON.stringify(record)}\n`;
+    const lineBytes = new TextEncoder().encode(line).byteLength;
+    const queued = communicationLogEnqueue('storage-append', async () => {
+      await communicationLogOpenWriter();
+      await communicationLogWritable.write(line);
+      communicationLogWriterDirty = true;
+      communicationLogActiveSegmentBytes += lineBytes;
+      communicationLogActiveLastTimestamp =
+        typeof record?.timestamp === 'string' ? record.timestamp : null;
+      if (communicationLogActiveSegmentBytes >= COMMUNICATION_LOG_SEGMENT_TARGET_BYTES) {
+        if (communicationLogRotationHold > 0) {
+          communicationLogRotationPending = true;
+        } else {
+          await communicationLogSealActiveSegment();
+        }
+      }
+    });
+    return queued.operation;
+  }
+
+  /** Segmented communication storage facade. */
+  const communicationLogStorage = Object.freeze({
+    appendRecord: communicationLogStorageAppendRecord
+  });
+
+  /** Current private communication-segment storage schema. */
+  const COMMUNICATION_LOG_SEGMENT_SCHEMA = 3;
+
+  /**
+   * Creates a fresh small control/recovery manifest for the current schema.
+   *
+   * @returns {Object} New current-schema manifest.
+   */
+  function communicationLogCreateSegmentManifest() {
+    return {
+      schema: COMMUNICATION_LOG_SEGMENT_SCHEMA,
+      logical_log_id: currentConversationId() || crypto.randomUUID(),
+      conversation_name: communicationLogConversationName() ?? null,
+      project_name: conversationProjectName() ?? null,
+      active_committed_eof: 0
+    };
+  }
+
+  /**
+   * Loads the small control/recovery manifest.
+   *
+   * Historical segment membership is filesystem-derived and is never catalogued
+   * here. A missing or different schema returns null so startup can wipe and
+   * recreate the private segment directory as one format-consistent unit.
+   *
+   * @returns {Promise<Object|null>} Current control/recovery manifest, or null when reset is required.
+   */
+  async function communicationLogReadSegmentManifest() {
+    const directory = communicationLogSegmentDirectoryHandle;
+    if (!directory) throw new Error('Communication segment directory is not ready.');
+    try {
+      const handle = await directory.getFileHandle('manifest.json', { create: false });
+      const parsed = JSON.parse(await (await handle.getFile()).text());
+      if (parsed?.schema !== COMMUNICATION_LOG_SEGMENT_SCHEMA) return null;
+      if (typeof parsed.logical_log_id !== 'string') {
+        throw new Error('Invalid communication segment manifest.');
+      }
+      delete parsed.active_last_timestamp;
+      const conversationName = communicationLogConversationName();
+      const projectName = conversationProjectName();
+      const inProject = /^\/g\/[^/]+(?:\/|$)/.test(location.pathname);
+      parsed.conversation_name = conversationName
+        ?? (typeof parsed.conversation_name === 'string' ? parsed.conversation_name : null);
+      parsed.project_name = projectName
+        ?? (inProject && typeof parsed.project_name === 'string' ? parsed.project_name : null);
+      return parsed;
+    } catch (error) {
+      if (error?.name === 'NotFoundError') return null;
+      throw error;
+    }
+  }
+
+  /**
+   * Commits the current small control/recovery manifest.
+   *
+   * @returns {Promise<void>} Resolves after manifest commit.
+   */
+  async function communicationLogWriteSegmentManifest() {
+    const directory = communicationLogSegmentDirectoryHandle;
+    if (!directory || !communicationLogSegmentManifest) {
+      throw new Error('Communication segment manifest is not ready.');
+    }
+    const handle = await directory.getFileHandle('manifest.json', { create: true });
+    const writable = await handle.createWritable();
+    try {
+      await writable.write(JSON.stringify(communicationLogSegmentManifest, null, 2) + '\n');
+      await writable.close();
+    } catch (error) {
+      await abortWritableQuietly(writable);
+      throw error;
+    }
+  }
+
+  /**
+   * Refreshes human-readable project/conversation identity in the durable manifest.
+   *
+   * @returns {Promise<boolean>} True when changed identity was committed.
+   */
+  async function communicationLogSyncManifestConversationName() {
+    if (!communicationLogSegmentManifest) return false;
+    const conversationName = communicationLogConversationName();
+    const projectName = conversationProjectName();
+    const inProject = /^\/g\/[^/]+(?:\/|$)/.test(location.pathname);
+    let changed = false;
+    if (conversationName
+        && communicationLogSegmentManifest.conversation_name !== conversationName) {
+      communicationLogSegmentManifest.conversation_name = conversationName;
+      changed = true;
+    }
+    if (projectName
+        && communicationLogSegmentManifest.project_name !== projectName) {
+      communicationLogSegmentManifest.project_name = projectName;
+      changed = true;
+    } else if (!inProject && communicationLogSegmentManifest.project_name !== null) {
+      communicationLogSegmentManifest.project_name = null;
+      changed = true;
+    }
+    if (!changed) return false;
+    await communicationLogWriteSegmentManifest();
+    return true;
+  }
+
+  /**
+   * Resolves the containing ChatGPT project name for a project conversation.
+   *
+   * The project route segment supplies stable identity while the matching project
+   * navigation link supplies the user-visible name. A document-title split is a
+   * secondary source when ChatGPT has not mounted that navigation link yet.
+   *
+   * @returns {string|null} Visible project name, or null for standalone/unresolved chats.
+   */
+  function conversationProjectName() {
+    const projectSegment = location.pathname.match(/^\/g\/([^/]+)(?:\/|$)/)?.[1] ?? null;
+    if (!projectSegment) return null;
+    const projectPath = `/g/${projectSegment}/project`;
+    for (const anchor of document.querySelectorAll('a[href]')) {
+      try {
+        const target = new URL(anchor.href, location.href);
+        if (target.origin !== location.origin || target.pathname !== projectPath) continue;
+        const visibleName = anchor.textContent?.trim();
+        if (visibleName) return visibleName;
+      } catch {}
+    }
+
+    const heading = document.querySelector('h1')?.textContent?.trim();
+    const pageTitle = String(document.title ?? '')
+      .replace(/\s*[-–—]\s*ChatGPT\s*$/i, '')
+      .trim();
+    if (!heading || !pageTitle || pageTitle === heading) return null;
+    for (const separator of [' - ', ' – ', ' — ']) {
+      if (pageTitle.endsWith(`${separator}${heading}`)) {
+        return pageTitle.slice(0, -(`${separator}${heading}`).length).trim() || null;
+      }
+      if (pageTitle.startsWith(`${heading}${separator}`)) {
+        return pageTitle.slice(`${heading}${separator}`.length).trim() || null;
+      }
+    }
+    return null;
+  }
+
+  /**
+   * Builds the canonical user-facing filename base for the current conversation.
+   *
+   * @returns {string} Sanitized `project - conversation` or conversation-only base.
+   */
+  function conversationFileBaseName() {
+    const conversationName = sanitizeFileName(conversationTitle());
+    const projectName = conversationProjectName();
+    return projectName
+      ? `${sanitizeFileName(projectName)} - ${conversationName}`
+      : conversationName;
+  }
+
+
+  /**
+   * Formats one trustworthy timestamp for a user-facing filename.
+   *
+   * @param {string|number} timestamp - ISO timestamp or epoch seconds.
+   * @returns {string} Filesystem-safe local calendar/time value.
+   */
+  function canonicalFilenameTimestamp(timestamp) {
+    const numeric = typeof timestamp === 'number' ? timestamp * 1000 : timestamp;
+    const date = new Date(numeric);
+    if (!Number.isFinite(date.getTime())) {
+      throw new Error('Filename timestamp is not trustworthy.');
+    }
+    /**
+     * Pads one local date/time field to two digits.
+     *
+     * @param {number} value - Local calendar/time field.
+     * @returns {string} Two-digit field.
+     */
+    const pad = value => String(value).padStart(2, '0');
+    return `${date.getFullYear()},${pad(date.getMonth() + 1)},${pad(date.getDate())};`
+      + `${pad(date.getHours())},${pad(date.getMinutes())},${pad(date.getSeconds())}`;
+  }
+
+  /**
+   * Builds the deterministic user-facing filename prefix.
+   *
+   * @param {string|null} project - Visible project name, or null.
+   * @param {string} chat - Visible conversation name.
+   * @param {Object} timestampRange - Trustworthy start/end timestamps.
+   * @returns {string} Project/chat/timestamp filename prefix without extension.
+   */
+  function canonicalFilename(project, chat, timestampRange) {
+    if (!timestampRange?.start_timestamp || !timestampRange?.end_timestamp) {
+      throw new Error('Filename content has no trustworthy timestamp range.');
+    }
+    const chatName = sanitizeFileName(chat);
+    const identity = project
+      ? `${sanitizeFileName(project)} - ${chatName}`
+      : chatName;
+    const start = canonicalFilenameTimestamp(timestampRange.start_timestamp);
+    const end = canonicalFilenameTimestamp(timestampRange.end_timestamp);
+    return `DownloadConversation_${identity}_${start}-${end}`;
+  }
+
+  /**
+   * Returns the exact content time range represented by exported JSONL records.
+   *
+   * Metadata and absent/null/zero record times are not content timestamps.
+   *
+   * @param {string} jsonl - Exact JSONL database text being exported.
+   * @returns {Object|null} ISO start/end timestamps, or null when unavailable.
+   */
+  function conversationJsonlTimestampRange(jsonl) {
+    let startMs = null;
+    let endMs = null;
+    for (const line of String(jsonl).split('\n')) {
+      if (!line) continue;
+      let record;
+      try {
+        record = JSON.parse(line);
+      } catch {
+        continue;
+      }
+      for (const field of ['create_time', 'update_time']) {
+        const value = record?.[field];
+        if (typeof value !== 'number' || !Number.isFinite(value) || value <= 0) continue;
+        const timestampMs = value * 1000;
+        startMs = startMs === null ? timestampMs : Math.min(startMs, timestampMs);
+        endMs = endMs === null ? timestampMs : Math.max(endMs, timestampMs);
+      }
+    }
+    return startMs === null || endMs === null
+      ? null
+      : {
+          start_timestamp: new Date(startMs).toISOString(),
+          end_timestamp: new Date(endMs).toISOString()
+        };
+  }
+
+  /**
+   * Finds the lowest unused filename for one destination/prefix/extension.
+   *
+   * @param {Object} destination - File System Access directory handle.
+   * @param {string} filenamePrefix - Complete filename prefix without extension.
+   * @param {string} ext - Caller-owned complete extension, including leading dot.
+   * @returns {Promise<string>} Lowest unused filename.
+   */
+  async function unusedFilename(destination, filenamePrefix, ext) {
+    if (!destination || typeof destination.getFileHandle !== 'function') {
+      throw new TypeError('Filename destination must support getFileHandle().');
+    }
+    if (typeof ext !== 'string' || !ext.startsWith('.')) {
+      throw new TypeError('Filename extension must start with a dot.');
+    }
+    for (let collision = 0; ; collision += 1) {
+      const suffix = collision > 0 ? `(${collision})` : '';
+      const candidate = `${filenamePrefix}${suffix}${ext}`;
+      try {
+        await destination.getFileHandle(candidate, { create: false });
+      } catch (error) {
+        if (error?.name === 'NotFoundError') return candidate;
+        throw error;
+      }
+    }
+  }
+
+  /**
+   * Derives the append target from the two alternating physical files.
+   *
+   * @returns {Promise<void>} Resolves after an active file is selected/created.
+   */
+  async function communicationLogRecoverAlternatingActiveFiles() {
+    const states = [];
+    for (const name of COMMUNICATION_LOG_ACTIVE_FILE_NAMES) {
+      try {
+        const handle = await communicationLogSegmentDirectoryHandle.getFileHandle(
+          name,
+          { create: false }
+        );
+        const file = await handle.getFile();
+        states.push({ name, exists: true, size: file.size, modified: file.lastModified });
+      } catch (error) {
+        if (error?.name !== 'NotFoundError') throw error;
+        states.push({ name, exists: false, size: 0, modified: 0 });
+      }
+    }
+
+    const existing = states.filter(state => state.exists);
+    let active;
+    if (existing.length === 0) {
+      active = states[0];
+    } else if (existing.length === 1) {
+      active = existing[0];
+    } else {
+      const empty = existing.filter(state => state.size === 0);
+      if (empty.length === 1) {
+        active = empty[0];
+      } else {
+        active = [...existing].sort((left, right) =>
+          right.modified - left.modified || left.name.localeCompare(right.name)
+        )[0];
+      }
+    }
+    communicationLogActiveFileName = active.name;
+    await communicationLogSegmentDirectoryHandle.getFileHandle(
+      communicationLogActiveFileName,
+      { create: true }
+    );
+  }
+
+  /**
+   * Recovers the non-active alternating file as an interrupted sealed source.
+   *
+   * @returns {Promise<void>} Resolves after recovery compression is scheduled.
+   */
+  async function communicationLogRecoverSegmentState() {
+    const closedName = COMMUNICATION_LOG_ACTIVE_FILE_NAMES.find(
+      name => name !== communicationLogActiveFileName
+    );
+    if (!closedName) return;
+    let rawHandle;
+    try {
+      rawHandle = await communicationLogSegmentDirectoryHandle.getFileHandle(
+        closedName,
+        { create: false }
+      );
+    } catch (error) {
+      if (error?.name === 'NotFoundError') return;
+      throw error;
+    }
+    const rawFile = await rawHandle.getFile();
+    if (rawFile.size === 0) {
+      await communicationLogSegmentDirectoryHandle.removeEntry(closedName);
+      return;
+    }
+    const rawBytes = new Uint8Array(await rawFile.arrayBuffer());
+    const range = communicationLogTimestampRangeFromJsonl(rawBytes);
+    if (!range) {
+      throw new Error(`Closed communication source has no timestamp range: ${closedName}`);
+    }
+    const start = communicationLogArchiveTimestamp(range.start_timestamp);
+    const end = communicationLogArchiveTimestamp(range.end_timestamp);
+    const segment = {
+      raw_name: closedName,
+      archive_name: communicationLogRoleArchiveName('segment', range, 'seg'),
+      member_name: `segment_${start}-${end}.jsonl`,
+      raw_bytes: rawBytes.byteLength,
+      source_sha256: await communicationLogSha256(rawBytes),
+      start_timestamp: range.start_timestamp,
+      end_timestamp: range.end_timestamp
+    };
+
+    try {
+      const archiveHandle = await communicationLogSegmentDirectoryHandle.getFileHandle(
+        segment.archive_name,
+        { create: false }
+      );
+      const archive = new Uint8Array(await (await archiveHandle.getFile()).arrayBuffer());
+      const extracted = await extractArchive(archive);
+      if (await communicationLogBytesEqual(extracted, rawBytes)) {
+        await communicationLogSegmentDirectoryHandle.removeEntry(closedName);
+        return;
+      }
+      await communicationLogSegmentDirectoryHandle.removeEntry(segment.archive_name);
+    } catch (error) {
+      if (error?.name !== 'NotFoundError') {
+        try {
+          await communicationLogSegmentDirectoryHandle.removeEntry(segment.archive_name);
+        } catch (removeError) {
+          if (removeError?.name !== 'NotFoundError') throw removeError;
+        }
+      }
+    }
+    void communicationLogQueueSegmentCompression(segment).catch(() => {});
+  }
+
+  /**
+   * Removes an interrupted Duplicate output while retaining its request for a
+   * fresh post-startup snapshot boundary.
+   *
+   * @returns {Promise<void>} Resolves after transient Duplicate output is cleared.
+   */
+  async function communicationLogRecoverDuplicateRequest() {
+    const request = communicationLogSegmentManifest?.duplicate_request;
+    if (!request) return;
+    const output = communicationLogSegmentManifest.duplicate_output;
+    if (typeof output === 'string' && output) {
+      try {
+        await communicationLogDirectoryHandle.removeEntry(output);
+      } catch (error) {
+        if (error?.name !== 'NotFoundError') throw error;
+      }
+    }
+    delete communicationLogSegmentManifest.duplicate_output;
+    communicationLogRotationHold = 0;
+    communicationLogRotationPending = false;
+    await communicationLogWriteSegmentManifest();
+  }
+
+  /**
+   * Initializes durable segmented storage before recorder readiness.
+   *
+   * @returns {Promise<void>} Resolves when active and historical state is ready.
+   */
+  async function communicationLogInitializeSegmentStorage() {
+    logDiagnostic('debug', 'communication-log-segment-initialize-entered', {});
+    let phase = 'directory-name';
+    let directoryName = null;
+    try {
+      directoryName = communicationLogSegmentDirectoryName();
+      logDiagnostic('debug', 'communication-log-segment-directory-name-resolved', {
+        segment_directory: directoryName
+      });
+      phase = 'directory-create-open';
+      logDiagnostic('debug', 'communication-log-segment-initialize-started', {
+        segment_directory: directoryName
+      });
+      communicationLogSegmentDirectoryHandle =
+        await communicationLogDirectoryHandle.getDirectoryHandle(
+          directoryName,
+          { create: true }
+        );
+      logDiagnostic('debug', 'communication-log-segment-directory-ready', {
+        segment_directory: directoryName
+      });
+
+      phase = 'manifest-read';
+      communicationLogSegmentManifest = await communicationLogReadSegmentManifest();
+      if (!communicationLogSegmentManifest) {
+        phase = 'schema-reset';
+        await communicationLogDirectoryHandle.removeEntry(directoryName, { recursive: true });
+        communicationLogSegmentDirectoryHandle =
+          await communicationLogDirectoryHandle.getDirectoryHandle(
+            directoryName,
+            { create: true }
+          );
+        communicationLogSegmentManifest = communicationLogCreateSegmentManifest();
+        await communicationLogWriteSegmentManifest();
+        logDiagnostic('debug', 'communication-log-segment-schema-reset', {
+          segment_directory: directoryName,
+          schema: COMMUNICATION_LOG_SEGMENT_SCHEMA
+        });
+      }
+      logDiagnostic('debug', 'communication-log-segment-manifest-ready', {
+        segment_directory: directoryName,
+        schema: COMMUNICATION_LOG_SEGMENT_SCHEMA
+      });
+
+      phase = 'duplicate-recovery';
+      await communicationLogRecoverDuplicateRequest();
+
+      phase = 'active-file-recovery';
+      await communicationLogRecoverAlternatingActiveFiles();
+
+      phase = 'recovery';
+      logDiagnostic('debug', 'communication-log-segment-recovery-started', {
+        segment_directory: directoryName
+      });
+      await communicationLogRecoverSegmentState();
+      logDiagnostic('debug', 'communication-log-segment-recovery-completed', {
+        segment_directory: directoryName
+      });
+
+      phase = 'active-snapshot';
+      const activeSnapshot = await communicationLogRefreshedFileSnapshot();
+      communicationLogActiveSegmentBytes = activeSnapshot.file.size;
+      communicationLogActiveLastTimestamp = communicationLogActiveSegmentBytes > 0
+        ? await communicationLogLastTimestampFromJsonlFile(
+          activeSnapshot.file,
+          communicationLogActiveSegmentBytes
+        )
+        : null;
+      communicationLogSegmentManifest.active_committed_eof =
+        communicationLogActiveSegmentBytes;
+      await communicationLogWriteSegmentManifest();
+      if (communicationLogActiveSegmentBytes >= COMMUNICATION_LOG_SEGMENT_TARGET_BYTES) {
+        communicationLogRotationPending = true;
+        await communicationLogSealActiveSegment();
+      }
+      logDiagnostic('debug', 'communication-log-segment-initialize-completed', {
+        segment_directory: directoryName,
+        active_segment_bytes: communicationLogActiveSegmentBytes
+      });
+    } catch (error) {
+      logDiagnostic('warnings', 'communication-log-segment-initialize-failed', {
+        phase,
+        segment_directory: directoryName,
+        message: boundedDiagnosticText(errorMessage(error), 2000)
+      });
+      throw error;
+    }
+  }
+
     );
     const match = pattern.exec(name);
     if (!match) return null;
