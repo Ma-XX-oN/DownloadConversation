@@ -39,7 +39,7 @@
         const time = typeof record?.timestamp === 'string'
           ? Date.parse(record.timestamp) : NaN;
         if (!Number.isFinite(time)) continue;
-        if (time > bound) return version;
+        if (time > bound) continue;
         if (!fragmentBegan) {
           fragmentBegan = true;
           if (headerSeen) {
