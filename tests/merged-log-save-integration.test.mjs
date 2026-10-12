@@ -8,7 +8,7 @@ const definitions = [
   'mergedLogValidPosition', 'mergedLogComparePosition',
   'mergedLogInterleave', 'mergedLogGroupEntries',
   'mergedLogJsonl', 'mergedLogJsonlWithVersions',
-  'mergedLogBoundaryVersionRecord', 'resolveGenVersionAtBoundary', 'saveMergedLogs'
+  'mergedLogBoundaryVersionRecord', 'saveMergedLogs'
 ].map(productionFunctionSource).join('\n\n');
 
 function fixture(entries, { directory = true } = {}) {
@@ -19,6 +19,7 @@ function fixture(entries, { directory = true } = {}) {
     TextEncoder, TextDecoder, Uint8Array, Blob, Date, JSON, Number, Set,
     diagnosticLog: entries,
     diagnosticLogBaselineVersion: null,
+    resolveGenVersionAtBoundary: () => null,
     recordingGroupState: () => ({ enabled: false, ready: false, uuid: null }),
     mergedLogReadCommunication: async () => {
       commReads += 1;
