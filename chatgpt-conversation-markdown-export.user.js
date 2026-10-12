@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         ChatGPT Conversation Markdown Recorder
 // @namespace    https://chatgpt.com/
-// @version      1.11.4-issue.220.18
+// @version      1.11.4-issue.220.20
 // @description  Exports the current ChatGPT conversation directly from the Conversation API as Markdown or JSONL.
 // @match        https://chatgpt.com/*
 // @match        https://chat.openai.com/*
@@ -22084,7 +22084,7 @@ Image elapsed: ${formatDuration(imageElapsed)} — Completed: ${imageCompleted}/
     style.textContent = `
       #${LAUNCHER_ID}{position:fixed;right:16px;bottom:16px;z-index:2147483647;width:36px;height:32px;box-sizing:border-box;border:1px solid #777;border-radius:9px;background:#242424;color:#fff;padding:0;display:grid;place-items:center;box-shadow:0 1px 3px rgba(0,0,0,.35);cursor:pointer}
       #${LAUNCHER_ID}::before{content:'';width:16px;height:16px;border-radius:50%;background:#d0d0d0;display:block}
-      #${PANEL_ID}{position:fixed;right:16px;bottom:54px;z-index:2147483647;width:min(390px,calc(100vw - 20px));max-height:calc(100dvh - 76px);overflow-y:auto;overflow-x:hidden;overscroll-behavior:contain;box-sizing:border-box;padding:10px;border:1px solid rgba(127,127,127,.55);border-radius:12px;background:rgba(24,24,24,.97);color:#f2f2f2;box-shadow:0 6px 24px rgba(0,0,0,.35);font:13px/1.35 system-ui,sans-serif}
+      #${PANEL_ID}{position:fixed;right:16px;bottom:54px;z-index:2147483647;width:min(390px,calc(100vw - 20px));max-height:calc(100dvh - 76px);overflow-y:auto;overflow-x:hidden;overscroll-behavior:contain;box-sizing:border-box;padding:10px;border:1px solid rgba(127,127,127,.55);border-radius:12px;background:#181818;color:#f2f2f2;box-shadow:0 6px 24px rgba(0,0,0,.35);font:13px/1.35 system-ui,sans-serif}
       #${PANEL_ID} .tm-title{font-size:13px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;margin:0 32px 6px 0;font-weight:600}
       #${PANEL_ID} .tm-close{position:absolute;right:9px;top:7px;border:0;background:transparent;color:#fff;font-size:24px;cursor:pointer}
       #${PANEL_ID} .tm-status{white-space:nowrap;overflow:hidden;text-overflow:ellipsis;margin:2px 0 4px;min-height:0;max-width:100%;font-size:12px;color:#bbb}
