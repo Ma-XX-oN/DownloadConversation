@@ -7,7 +7,8 @@ const definitions = [
   'mergedLogValidateSelection', 'mergedLogRangeFilter',
   'mergedLogValidPosition', 'mergedLogComparePosition',
   'mergedLogInterleave', 'mergedLogGroupEntries',
-  'mergedLogJsonl', 'saveMergedLogs'
+  'mergedLogJsonl', 'mergedLogJsonlWithVersions',
+  'mergedLogBoundaryVersionRecord', 'resolveGenVersionAtBoundary', 'saveMergedLogs'
 ].map(productionFunctionSource).join('\n\n');
 
 function fixture(entries, { directory = true } = {}) {
@@ -17,6 +18,7 @@ function fixture(entries, { directory = true } = {}) {
   const state = {
     TextEncoder, TextDecoder, Uint8Array, Blob, Date, JSON, Number, Set,
     diagnosticLog: entries,
+    diagnosticLogBaselineVersion: null,
     recordingGroupState: () => ({ enabled: false, ready: false, uuid: null }),
     mergedLogReadCommunication: async () => {
       commReads += 1;
@@ -73,10 +75,11 @@ test('disk save uses mlog zstd extension and groups selected levels once', async
   assert.equal(harness.communicationReads(), 0);
   const rows = new TextDecoder().decode(harness.writes[0].blob)
     .trimEnd().split('\n').map(JSON.parse);
-  assert.equal(rows[0].schema, 2);
-  assert.deepEqual(rows.slice(1).map(group => group.level),
+  assert.deepEqual(rows[0], { version: { gen: null, comm: null } });
+  assert.equal(rows[1].schema, 2);
+  assert.deepEqual(rows.slice(2).map(group => group.level),
     ['debug', 'warnings']);
-  assert.deepEqual(rows.slice(1).map(group =>
+  assert.deepEqual(rows.slice(2).map(group =>
     group.records.map(record => record.message)),
     [['event-1', 'event-2'], ['event-3']]);
   assert.equal(JSON.stringify(original), before,
