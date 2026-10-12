@@ -76,6 +76,40 @@
       #${PANEL_ID} button[data-role="jump"],#${PANEL_ID} button[data-role="test"],#${PANEL_ID} button[data-role="extract"]{padding:6px 10px}
       #${PANEL_ID} .tm-sound-control{padding:6px 9px}
       @media(max-width:430px){#${PANEL_ID}{right:10px;bottom:48px;max-height:calc(100dvh - 58px);padding:8px}#${PANEL_ID} .tm-recording-modes{gap:4px 9px}#${PANEL_ID} .tm-communication-log-row{gap:3px}}
+
+      #${PANEL_ID} .tm-log-head{margin:10px 0 5px}
+      #${PANEL_ID} .tm-last-log-problem{margin:4px 0 10px;min-height:15px}
+      #${PANEL_ID} .tm-diagnostics-row{display:grid;grid-template-columns:auto minmax(0,1fr);gap:8px;margin:0 0 12px}
+      #${PANEL_ID} .tm-diagnostics-row select{width:100%;min-width:0;padding:6px 9px}
+      #${PANEL_ID} .tm-recorder-section{border-top:1px solid #494949;padding:9px 0 7px}
+      #${PANEL_ID} .tm-recorder-section .tm-row{margin-top:0}
+      #${PANEL_ID} .tm-recording-section{display:grid;gap:9px}
+      #${PANEL_ID} .tm-communication-log-row{gap:6px}
+      #${PANEL_ID} .tm-log-name-text{font-weight:600;padding:3px 0}
+      #${PANEL_ID} .tm-recording-modes{display:flex;justify-content:space-between;flex-wrap:nowrap;gap:4px}
+      #${PANEL_ID} .tm-recording-modes label{white-space:nowrap;gap:5px}
+      #${PANEL_ID} .tm-recording-actions{justify-content:center;gap:14px}
+      #${PANEL_ID} .tm-recording-actions .tm-icon-button{width:40px;height:36px;flex:0 0 40px}
+      #${PANEL_ID} .tm-recording-actions .tm-icon-button svg{width:21px;height:21px}
+      #${PANEL_ID} .tm-export-section{display:grid;gap:8px}
+      #${PANEL_ID} .tm-md-metadata{display:flex;justify-content:space-between;flex-wrap:nowrap;gap:4px;font-size:12px}
+      #${PANEL_ID} .tm-md-metadata label{gap:3px}
+      #${PANEL_ID} .tm-extract-formats{display:flex;justify-content:flex-start;gap:12px;flex-wrap:nowrap}
+      #${PANEL_ID} .tm-extract-formats label{white-space:nowrap}
+      #${PANEL_ID} .tm-export-action{font-size:22px;line-height:1;font-weight:700;width:36px;height:32px;flex:0 0 36px;padding:0}
+      #${PANEL_ID} .tm-export-compression{border-radius:8px;min-width:34px;flex:0 0 34px}
+      #${PANEL_ID} .tm-export-compression svg{width:28px}
+      #${PANEL_ID} .tm-tool-actions{border-top:1px solid #494949;padding:12px 0 3px;margin-top:4px;justify-content:space-around;gap:12px;flex-wrap:nowrap}
+      #${PANEL_ID} .tm-tool-actions .tm-tool-button{width:48px;height:40px;padding:3px;font-size:24px;line-height:1;flex:0 0 48px}
+      #${PANEL_ID} .tm-tool-actions .tm-sound-control{height:40px;min-width:96px;font-size:14px;padding:6px}
+      #${PANEL_ID} .tm-sound-popup{bottom:calc(100% + 4px);top:auto;left:0;min-width:64px;z-index:12}
+      #${PANEL_ID} .tm-sound-volume-slider{appearance:slider-vertical;accent-color:#78b8ff;min-height:145px;cursor:pointer}
+      #${PANEL_ID} .tm-sound-volume-slider::-webkit-slider-runnable-track{background:repeating-linear-gradient(to top,#8192a8 0 2px,#323b49 2px 15px);border-radius:6px;border:1px solid #a4b1c3;width:12px}
+      #${PANEL_ID} .tm-sound-volume-slider::-webkit-slider-thumb{appearance:none;background:#b2d8ff;border:2px solid #fff;box-shadow:0 0 0 2px #296ca8;width:22px;height:14px;border-radius:5px}
+      #${PANEL_ID} .tm-sound-volume-value{font-size:14px;font-weight:700;color:#fff}
+      #${PANEL_ID} .tm-status{margin:0;max-height:0;overflow:hidden}
+      #${PANEL_ID} .tm-status:not(:empty){max-height:2px}
+      @media(max-width:390px){#${PANEL_ID} .tm-md-metadata{font-size:11px;gap:2px}#${PANEL_ID} .tm-recording-modes{gap:2px}#${PANEL_ID} .tm-extract-formats{gap:8px}}
     `;
     (document.head || document.documentElement).append(style);
   }
@@ -106,13 +140,14 @@
     const formatsSelected = Boolean(jsonl?.checked || md?.checked);
     if (extract) {
       extract.disabled = exportInProgress || testInProgress || jumpInProgress || !formatsSelected;
-      extract.textContent = exportInProgress ? 'Extracting…' : 'Extract';
+      extract.textContent = exportInProgress ? '…' : '→';
+      extract.setAttribute('aria-label', exportInProgress ? 'Exporting conversation' : 'Export conversation');
     }
     if (jsonl) jsonl.disabled = exportInProgress || testInProgress || jumpInProgress;
     if (md) md.disabled = exportInProgress || testInProgress || jumpInProgress;
     if (exportCompression) {
       const compressed = exportCompressionEnabled;
-      const description = compressed ? 'Compress JSONL/MD files' : 'Raw JSONL/MD files';
+      const description = compressed ? 'Save compressed' : 'Save uncompressed';
       exportCompression.disabled = exportInProgress || testInProgress || jumpInProgress;
       exportCompression.setAttribute('aria-checked', String(compressed));
       exportCompression.setAttribute('aria-label', compressed ? 'Compressed export output' : 'Raw export output');
@@ -126,11 +161,11 @@
     if (debugProvenance) debugProvenance.disabled = metadataDisabled;
     if (test) {
       test.disabled = exportInProgress || testInProgress || jumpInProgress;
-      test.textContent = testInProgress ? 'Testing…' : 'Test';
+      test.textContent = testInProgress ? '…' : '🧪';
     }
     if (jump) {
       jump.disabled = exportInProgress || testInProgress || jumpInProgress;
-      jump.textContent = jumpInProgress ? 'Jumping…' : 'Jump';
+      jump.textContent = jumpInProgress ? '…' : '🪂';
     }
     const screen = panel.querySelector('[data-role="screen-on"]');
     if (screen) screen.setAttribute('aria-checked', String(screenOnWhenCapturing));
