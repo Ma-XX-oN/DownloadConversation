@@ -29,6 +29,7 @@ def main() -> int:
     run(["node", "tests/gen-persistence-performance.bench.mjs", "HEAD"]),
     run(["node", "tests/gen-persistence-performance.bench.mjs", "origin/main"]),
     run(["node", "tests/gen-browser-storage-ci.mjs"]),
+    run(["node", "tests/gen-browser-gen-startup-ci.mjs"]),
     run(["node", "scripts/ci-environment.mjs"]),
     run([sys.executable, "-m", "unittest", "tests/test_repoworkflow_validation.py"]),
   ]
