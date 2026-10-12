@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict';
-import { spawnSync } from 'node:child_process';
+import { spawn, spawnSync } from 'node:child_process';
 import { mkdtempSync, readFileSync, rmSync } from 'node:fs';
 import { createServer } from 'node:http';
 import os from 'node:os';
@@ -78,15 +78,35 @@ test('Chromium retains an owner across reload and rekeys a cloned session tab',
           }
         }
       }
-      const run = spawnSync(executable, [
+      const args = [
         '--headless=new', '--no-sandbox', '--disable-gpu',
         '--disable-dev-shm-usage', '--disable-popup-blocking',
         '--no-first-run', '--no-default-browser-check',
         '--virtual-time-budget=12000', '--dump-dom',
         '--user-data-dir=' + userData,
         'http://127.0.0.1:' + port + '/'
-      ], { encoding: 'utf8', timeout: 35000, maxBuffer: 4 * 1024 * 1024 });
-      if (run.error) throw run.error;
+      ];
+      const run = await new Promise((resolve, reject) => {
+        const child = spawn(executable, args);
+        let stdout = '';
+        let stderr = '';
+        const watchdog = setTimeout(() => {
+          child.kill('SIGKILL');
+          reject(new Error('Chromium scenario timed out.'));
+        }, 35000);
+        child.stdout.setEncoding('utf8');
+        child.stderr.setEncoding('utf8');
+        child.stdout.on('data', chunk => { stdout += chunk; });
+        child.stderr.on('data', chunk => { stderr += chunk; });
+        child.on('error', error => {
+          clearTimeout(watchdog);
+          reject(error);
+        });
+        child.on('close', status => {
+          clearTimeout(watchdog);
+          resolve({ status, stdout, stderr });
+        });
+      });
       assert.equal(run.status, 0, run.stderr.slice(-3000));
       const match = run.stdout.match(/<pre id="result">([^<]+)<\/pre>/);
       assert.ok(match, 'Chromium must render result pre');
