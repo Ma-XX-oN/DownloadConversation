@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         ChatGPT Conversation Markdown Recorder
 // @namespace    https://chatgpt.com/
-// @version      1.11.4-issue.220.20
+// @version      1.11.4-issue.220.21
 // @description  Exports the current ChatGPT conversation directly from the Conversation API as Markdown or JSONL.
 // @match        https://chatgpt.com/*
 // @match        https://chat.openai.com/*
@@ -20994,7 +20994,7 @@ Image elapsed: ${formatDuration(imageElapsed)} — Completed: ${imageCompleted}/
    * @returns {string} Inline SVG markup for the Save button.
    */
   function saveIconMarkup() {
-    return '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 3v12m0 0 4-4m-4 4-4-4M5 19h14"/></svg>';
+    return '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 3h13l3 3v15H4z"/><path d="M7 3v7h10V3M7 21v-8h10v8M10 3v5"/></svg>';
   }
 
   /**
@@ -22148,6 +22148,40 @@ Image elapsed: ${formatDuration(imageElapsed)} — Completed: ${imageCompleted}/
       #${PANEL_ID} button[data-role="jump"],#${PANEL_ID} button[data-role="test"],#${PANEL_ID} button[data-role="extract"]{padding:6px 10px}
       #${PANEL_ID} .tm-sound-control{padding:6px 9px}
       @media(max-width:430px){#${PANEL_ID}{right:10px;bottom:48px;max-height:calc(100dvh - 58px);padding:8px}#${PANEL_ID} .tm-recording-modes{gap:4px 9px}#${PANEL_ID} .tm-communication-log-row{gap:3px}}
+
+      #${PANEL_ID} .tm-log-head{margin:10px 0 5px}
+      #${PANEL_ID} .tm-last-log-problem{margin:4px 0 10px;min-height:15px}
+      #${PANEL_ID} .tm-diagnostics-row{display:grid;grid-template-columns:auto minmax(0,1fr);gap:8px;margin:0 0 12px}
+      #${PANEL_ID} .tm-diagnostics-row select{width:100%;min-width:0;padding:6px 9px}
+      #${PANEL_ID} .tm-recorder-section{border-top:1px solid #494949;padding:9px 0 7px}
+      #${PANEL_ID} .tm-recorder-section .tm-row{margin-top:0}
+      #${PANEL_ID} .tm-recording-section{display:grid;gap:9px}
+      #${PANEL_ID} .tm-communication-log-row{gap:6px}
+      #${PANEL_ID} .tm-log-name-text{font-weight:600;padding:3px 0}
+      #${PANEL_ID} .tm-recording-modes{display:flex;justify-content:space-between;flex-wrap:nowrap;gap:4px}
+      #${PANEL_ID} .tm-recording-modes label{white-space:nowrap;gap:5px}
+      #${PANEL_ID} .tm-recording-actions{justify-content:center;gap:14px}
+      #${PANEL_ID} .tm-recording-actions .tm-icon-button{width:40px;height:36px;flex:0 0 40px}
+      #${PANEL_ID} .tm-recording-actions .tm-icon-button svg{width:21px;height:21px}
+      #${PANEL_ID} .tm-export-section{display:grid;gap:8px}
+      #${PANEL_ID} .tm-md-metadata{display:flex;justify-content:space-between;flex-wrap:nowrap;gap:4px;font-size:12px}
+      #${PANEL_ID} .tm-md-metadata label{gap:3px}
+      #${PANEL_ID} .tm-extract-formats{display:flex;justify-content:flex-start;gap:12px;flex-wrap:nowrap}
+      #${PANEL_ID} .tm-extract-formats label{white-space:nowrap}
+      #${PANEL_ID} .tm-export-action{font-size:22px;line-height:1;font-weight:700;width:36px;height:32px;flex:0 0 36px;padding:0}
+      #${PANEL_ID} .tm-export-compression{border-radius:8px;min-width:34px;flex:0 0 34px}
+      #${PANEL_ID} .tm-export-compression svg{width:28px}
+      #${PANEL_ID} .tm-tool-actions{border-top:1px solid #494949;padding:12px 0 3px;margin-top:4px;justify-content:space-around;gap:12px;flex-wrap:nowrap}
+      #${PANEL_ID} .tm-tool-actions .tm-tool-button{width:48px;height:40px;padding:3px;font-size:24px;line-height:1;flex:0 0 48px}
+      #${PANEL_ID} .tm-tool-actions .tm-sound-control{height:40px;min-width:96px;font-size:14px;padding:6px}
+      #${PANEL_ID} .tm-sound-popup{bottom:calc(100% + 4px);top:auto;left:0;min-width:64px;z-index:12}
+      #${PANEL_ID} .tm-sound-volume-slider{appearance:slider-vertical;accent-color:#78b8ff;min-height:145px;cursor:pointer}
+      #${PANEL_ID} .tm-sound-volume-slider::-webkit-slider-runnable-track{background:repeating-linear-gradient(to top,#8192a8 0 2px,#323b49 2px 15px);border-radius:6px;border:1px solid #a4b1c3;width:12px}
+      #${PANEL_ID} .tm-sound-volume-slider::-webkit-slider-thumb{appearance:none;background:#b2d8ff;border:2px solid #fff;box-shadow:0 0 0 2px #296ca8;width:22px;height:14px;border-radius:5px}
+      #${PANEL_ID} .tm-sound-volume-value{font-size:14px;font-weight:700;color:#fff}
+      #${PANEL_ID} .tm-status{margin:0;max-height:0;overflow:hidden}
+      #${PANEL_ID} .tm-status:not(:empty){max-height:2px}
+      @media(max-width:390px){#${PANEL_ID} .tm-md-metadata{font-size:11px;gap:2px}#${PANEL_ID} .tm-recording-modes{gap:2px}#${PANEL_ID} .tm-extract-formats{gap:8px}}
     `;
     (document.head || document.documentElement).append(style);
   }
@@ -22178,13 +22212,14 @@ Image elapsed: ${formatDuration(imageElapsed)} — Completed: ${imageCompleted}/
     const formatsSelected = Boolean(jsonl?.checked || md?.checked);
     if (extract) {
       extract.disabled = exportInProgress || testInProgress || jumpInProgress || !formatsSelected;
-      extract.textContent = exportInProgress ? 'Extracting…' : 'Extract';
+      extract.textContent = exportInProgress ? '…' : '→';
+      extract.setAttribute('aria-label', exportInProgress ? 'Exporting conversation' : 'Export conversation');
     }
     if (jsonl) jsonl.disabled = exportInProgress || testInProgress || jumpInProgress;
     if (md) md.disabled = exportInProgress || testInProgress || jumpInProgress;
     if (exportCompression) {
       const compressed = exportCompressionEnabled;
-      const description = compressed ? 'Compress JSONL/MD files' : 'Raw JSONL/MD files';
+      const description = compressed ? 'Save compressed' : 'Save uncompressed';
       exportCompression.disabled = exportInProgress || testInProgress || jumpInProgress;
       exportCompression.setAttribute('aria-checked', String(compressed));
       exportCompression.setAttribute('aria-label', compressed ? 'Compressed export output' : 'Raw export output');
@@ -22198,11 +22233,11 @@ Image elapsed: ${formatDuration(imageElapsed)} — Completed: ${imageCompleted}/
     if (debugProvenance) debugProvenance.disabled = metadataDisabled;
     if (test) {
       test.disabled = exportInProgress || testInProgress || jumpInProgress;
-      test.textContent = testInProgress ? 'Testing…' : 'Test';
+      test.textContent = testInProgress ? '…' : '🧪';
     }
     if (jump) {
       jump.disabled = exportInProgress || testInProgress || jumpInProgress;
-      jump.textContent = jumpInProgress ? 'Jumping…' : 'Jump';
+      jump.textContent = jumpInProgress ? '…' : '🪂';
     }
     const screen = panel.querySelector('[data-role="screen-on"]');
     if (screen) screen.setAttribute('aria-checked', String(screenOnWhenCapturing));
@@ -22805,9 +22840,8 @@ Image elapsed: ${formatDuration(imageElapsed)} — Completed: ${imageCompleted}/
    * @returns {string} Inline SVG markup for the export-mode toggle.
    */
   function exportCompressionIconMarkup(compressed) {
-    const radius = compressed ? 4 : 7;
-    const circleX = compressed ? 18 : 17;
-    return `<svg viewBox="0 0 28 20" aria-hidden="true" focusable="false"><circle cx="${circleX}" cy="10" r="${radius}" fill="none" stroke="currentColor" stroke-width="2"/><path d="M2 10h10M8 6l4 4-4 4" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>`;
+    const radius = compressed ? 4 : 8;
+    return `<svg viewBox="0 0 28 20" aria-hidden="true" focusable="false"><circle cx="14" cy="10" r="${radius}" fill="none" stroke="currentColor" stroke-width="2"/></svg>`;
   }
 
   /**
@@ -22825,17 +22859,25 @@ Image elapsed: ${formatDuration(imageElapsed)} — Completed: ${imageCompleted}/
     panel.innerHTML = `
       <button class="tm-close" type="button" aria-label="Close">×</button>
       <div class="tm-title" data-role="title"></div>
-      <div class="tm-log-head"><span class="tm-label" data-role="log-count">Log: 0 items</span><button class="tm-icon-button" data-role="save-log" type="button" aria-label="Extract merged logs" title="Extract logs"></button><button class="tm-icon-button" data-role="copy-log" type="button" aria-label="Copy diagnostic log" title="Copy log"></button><button class="tm-icon-button" data-role="toggle-log" type="button" aria-label="Show diagnostic log" aria-expanded="false" title="Show log">+</button></div>
+      <div class="tm-log-head"><span class="tm-label" data-role="log-count">Log: 0 items</span></div>
       <div class="tm-last-log-problem" data-role="last-log-problem" role="status" hidden></div>
       <div class="tm-log-output" data-role="log-output" hidden></div>
-      <div class="tm-status" data-role="status"></div>
-      <div class="tm-row tm-recording-options"><label for="tm-recorder-diagnostics">Diagnostics</label><select id="tm-recorder-diagnostics" data-role="diagnostics"><option value="errors">Errors</option><option value="warnings">Warnings</option><option value="debug">Debug</option><option value="verbose">Verbose</option></select><span class="tm-recording-modes"><label><input data-role="record-general" type="checkbox" checked> Gen</label><label><input data-role="record-communication" type="checkbox" checked> Comm</label><label><input data-role="console-diagnostics" type="checkbox"> Con</label><label><input data-role="record-one-group" type="checkbox"> 1</label></span></div>
-      <div class="tm-row tm-communication-log-row"><span class="tm-label tm-file-label">File</span><div class="tm-log-name-viewport" data-role="communication-log-name-viewport" role="textbox" aria-readonly="true" aria-label="Current communication log filename" title="Current communication log filename"><span class="tm-log-name-text" data-role="communication-log-name"></span></div><button class="tm-icon-button" data-role="rename-communication-log" type="button" aria-label="Rename communication log" title="Rename communication log"></button><button class="tm-icon-button" data-role="duplicate-communication-log" type="button" aria-label="Duplicate communication log" title="Duplicate communication log"></button><button class="tm-icon-button" data-role="reset-communication-log" type="button" aria-label="Reset communication log" title="Reset communication log"></button></div>
-      <div class="tm-row tm-capture-options"><span class="tm-label">Screen on when extracting</span><button class="tm-switch" data-role="screen-on" type="button" role="switch" aria-checked="false" aria-label="Keep screen on while extracting"><span class="tm-switch-thumb"></span></button></div>
-      <div class="tm-row tm-sound-control-row"><button class="tm-sound-control" data-role="agent-sound-control" type="button" aria-haspopup="dialog" aria-expanded="false">Sound <span data-role="agent-sound-control-value"></span></button><div class="tm-sound-popup" data-role="agent-sound-popup" hidden role="dialog" aria-label="Agent sound volume"><input class="tm-sound-volume-slider" data-role="agent-sound-volume" type="range" min="0" max="10" step="1" aria-label="Agent sound volume"><output class="tm-sound-volume-value" data-role="agent-sound-volume-value"></output></div></div>
-      <div class="tm-row"><button data-role="jump" type="button">Jump</button><button data-role="test" type="button">Test</button></div>
-      <div class="tm-row tm-extract-formats"><button data-role="extract" type="button">Extract</button><label><input data-role="format-jsonl" type="checkbox"> JSONL</label><label><input data-role="format-md" type="checkbox" checked> MD</label><button class="tm-export-compression" data-role="export-compression" type="button" role="switch" aria-checked="false" aria-label="Raw export output" title="Raw JSONL/MD files"></button></div>
-      <div class="tm-row tm-md-metadata"><span class="tm-label">MD headings</span><label><input data-role="show-timestamps" type="checkbox"> Timestamp</label><label><input data-role="show-record-numbers" type="checkbox"> Record #</label><label><input data-role="show-turn-ids" type="checkbox"> Turn ID</label><label><input data-role="show-debug-provenance" type="checkbox"> provenance</label></div>
+      <div class="tm-row tm-diagnostics-row"><label for="tm-recorder-diagnostics">Diagnostics:</label><select id="tm-recorder-diagnostics" data-role="diagnostics"><option value="errors">Errors</option><option value="warnings">Warnings</option><option value="debug">Debug</option><option value="verbose">Verbose</option></select></div>
+      <div class="tm-recorder-section tm-recording-section">
+        <div class="tm-row tm-communication-log-row"><div class="tm-log-name-viewport" data-role="communication-log-name-viewport" role="textbox" aria-readonly="true" aria-label="Current communication log filename" title="Current communication log filename"><span class="tm-log-name-text" data-role="communication-log-name"></span></div><button class="tm-icon-button" data-role="rename-communication-log" type="button" aria-label="Rename communication log" title="Rename communication log"></button></div>
+        <div class="tm-row tm-recording-modes"><label><input data-role="record-general" type="checkbox" checked> Gen</label><label><input data-role="record-communication" type="checkbox" checked> Comm</label><label><input data-role="console-diagnostics" type="checkbox"> Con</label><label><input data-role="record-one-group" type="checkbox"> 1</label></div>
+        <div class="tm-row tm-recording-actions"><button class="tm-icon-button" data-role="save-log" type="button" aria-label="Save merged log" title="Save merged log"></button><button class="tm-icon-button" data-role="reset-communication-log" type="button" aria-label="Reset communication log" title="Reset communication log"></button></div>
+      </div>
+      <div class="tm-recorder-section tm-export-section">
+        <div class="tm-row tm-md-metadata"><label><input data-role="show-timestamps" type="checkbox"> Timestamp</label><label><input data-role="show-record-numbers" type="checkbox"> Record #</label><label><input data-role="show-turn-ids" type="checkbox"> Turn ID</label><label><input data-role="show-debug-provenance" type="checkbox"> Provenance</label></div>
+        <div class="tm-row tm-extract-formats"><label><input data-role="format-jsonl" type="checkbox"> JSONL</label><label><input data-role="format-md" type="checkbox" checked> MD</label><button class="tm-icon-button tm-export-action" data-role="extract" type="button" aria-label="Export conversation" title="Export conversation">→</button><button class="tm-export-compression" data-role="export-compression" type="button" role="switch" aria-checked="false" aria-label="Save uncompressed" title="Save uncompressed"></button></div>
+      </div>
+      <div class="tm-row tm-tool-actions">
+        <div class="tm-sound-control-row"><button class="tm-sound-control" data-role="agent-sound-control" type="button" aria-haspopup="dialog" aria-expanded="false" aria-label="Sound volume">🔊 <span data-role="agent-sound-control-value"></span></button><div class="tm-sound-popup" data-role="agent-sound-popup" hidden role="dialog" aria-label="Agent sound volume"><input class="tm-sound-volume-slider" data-role="agent-sound-volume" type="range" min="0" max="10" step="1" aria-label="Agent sound volume"><output class="tm-sound-volume-value" data-role="agent-sound-volume-value"></output></div></div>
+        <button class="tm-tool-button" data-role="jump" type="button" aria-label="Jump to entry" title="Jump to entry">🪂</button>
+        <button class="tm-tool-button" data-role="test" type="button" aria-label="Run tests" title="Run tests">🧪</button>
+      </div>
+      <div class="tm-status" data-role="status" role="status"></div>
     `;
     panel.querySelector('.tm-close').addEventListener('click', () => {
       panel.style.display = 'none';
@@ -22897,25 +22939,12 @@ Image elapsed: ${formatDuration(imageElapsed)} — Completed: ${imageCompleted}/
     });
     const saveLogButton = panel.querySelector('[data-role="save-log"]');
     if (saveLogButton) saveLogButton.innerHTML = saveIconMarkup();
-    const copyLogButton = panel.querySelector('[data-role="copy-log"]');
-    if (copyLogButton) copyLogButton.innerHTML = copyIconMarkup();
     panel.querySelector('[data-role="save-log"]').addEventListener('click', event => {
       void runMergedLogExtraction(event.currentTarget).catch(error => {
         logDiagnostic('errors', 'merged-log-dialog-failure', {
           message: errorMessage(error)
         });
         setStatus('Log extraction dialog failed: ' + errorMessage(error));
-      });
-    });
-    panel.querySelector('[data-role="toggle-log"]').addEventListener('click', () => {
-      diagnosticLogExpanded = !diagnosticLogExpanded;
-      refreshDiagnosticLog();
-    });
-    panel.querySelector('[data-role="copy-log"]').addEventListener('click', () => {
-      void copyDiagnosticLog().catch(error => {
-        logDiagnostic('errors', 'diagnostic-log-copy-failure', {
-          message: errorMessage(error)
-        });
       });
     });
     panel.querySelector('[data-role="test"]').addEventListener('click', event => openTestMatrix(event.currentTarget));
@@ -22928,7 +22957,8 @@ Image elapsed: ${formatDuration(imageElapsed)} — Completed: ${imageCompleted}/
     } = communicationLogPanelControls(panel);
     if (renameCommunicationLogButton) renameCommunicationLogButton.innerHTML = renameIconMarkup();
     if (duplicateCommunicationLogButton) duplicateCommunicationLogButton.innerHTML = duplicateIconMarkup();
-    if (resetCommunicationLogButton) resetCommunicationLogButton.innerHTML = resetIconMarkup();
+    if (resetCommunicationLogButton) resetCommunicationLogButton.innerHTML =
+      '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 6v5h5"/><path d="M5.5 11a8 8 0 1 1 .8 5"/></svg>';
     communicationLogNameViewport?.addEventListener('pointerenter', refreshCommunicationLogNameOverflow);
     renameCommunicationLogButton?.addEventListener('click', () => {
       if (renameCommunicationLogButton.disabled || communicationLogUiActionInProgress || !communicationLogFileName) return;
@@ -22969,13 +22999,6 @@ Image elapsed: ${formatDuration(imageElapsed)} — Completed: ${imageCompleted}/
         },
         failurePrefix: 'Communication log reset failed'
       });
-    });
-    panel.querySelector('[data-role="screen-on"]').addEventListener('click', () => {
-      screenOnWhenCapturing = !screenOnWhenCapturing;
-      localStorage.setItem(SCREEN_ON_STORAGE_KEY, String(screenOnWhenCapturing));
-      if (screenOnWhenCapturing) void acquireWakeLock();
-      else void releaseWakeLock();
-      updateUi();
     });
     bindStoredCheckbox(panel, 'show-timestamps', SHOW_TIMESTAMPS_STORAGE_KEY, showTimestamps, value => {
       showTimestamps = value;
