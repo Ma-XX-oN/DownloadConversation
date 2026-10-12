@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         ChatGPT Conversation Markdown Recorder
 // @namespace    https://chatgpt.com/
-// @version      1.11.4-issue.220.38
+// @version      1.11.4-issue.220.39
 // @description  Exports the current ChatGPT conversation directly from the Conversation API as Markdown or JSONL.
 // @match        https://chatgpt.com/*
 // @match        https://chat.openai.com/*
@@ -8589,13 +8589,6 @@ globalThis.__dcCompressor = {
    *
    * @param {string|null} projectSegment - Full project route identifier.
    * @returns {string|null} Capitalized slug, or null if the route has no slug.
-   */
-   *
-   * The project route segment supplies stable identity while the matching project
-   * navigation link supplies the user-visible name. A document-title split is a
-   * secondary source when ChatGPT has not mounted that navigation link yet.
-   *
-   * @returns {string|null} Visible project name, or null for standalone/unresolved chats.
    */
   function projectNameFromRouteSlug(projectSegment) {
     const slug = projectSegment?.match(/^g-p-[0-9a-f]{32}-(.+)$/i)?.[1];
