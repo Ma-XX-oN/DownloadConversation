@@ -71,19 +71,54 @@
     panel.querySelector('[data-role="jump"]').addEventListener('click', () => void runJump());
     const {
       communicationLogNameViewport,
+      changeCommunicationLogDirectoryButton,
       renameCommunicationLogButton,
       duplicateCommunicationLogButton,
       resetCommunicationLogButton
     } = communicationLogPanelControls(panel);
+    if (changeCommunicationLogDirectoryButton) changeCommunicationLogDirectoryButton.innerHTML = renameIconMarkup();
     if (renameCommunicationLogButton) renameCommunicationLogButton.innerHTML = renameIconMarkup();
     if (duplicateCommunicationLogButton) duplicateCommunicationLogButton.innerHTML = duplicateIconMarkup();
     if (resetCommunicationLogButton) resetCommunicationLogButton.innerHTML =
       '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 6v5h5"/><path d="M5.5 11a8 8 0 1 1 .8 5"/></svg>';
     communicationLogNameViewport?.addEventListener('pointerenter', refreshCommunicationLogNameOverflow);
+    changeCommunicationLogDirectoryButton?.addEventListener('click', () => {
+      if (communicationLogUiActionInProgress || communicationLogDirectoryPickerOpening) return;
+      const pickerWindow = typeof unsafeWindow !== 'undefined' ? unsafeWindow : window;
+      if (typeof pickerWindow.showDirectoryPicker !== 'function') {
+        setStatus('Directory chooser is unavailable in this browser.');
+        return;
+      }
+      communicationLogDirectoryPickerOpening = true;
+      let picker;
+      try {
+        picker = pickerWindow.showDirectoryPicker({ mode: 'readwrite' });
+      } catch (error) {
+        communicationLogDirectoryPickerOpening = false;
+        setStatus('Directory selection failed: ' + errorMessage(error));
+        return;
+      }
+      void Promise.resolve(picker).then(async handle => {
+        if (await communicationLogPermissionState(handle) !== 'granted') {
+          throw new Error('Read/write permission was not granted.');
+        }
+        await communicationLogWriteChain;
+        await communicationLogStoreDirectoryHandle(handle);
+        await communicationLogActivateDirectory(handle);
+        setStatus('Communication log destination changed to ' + handle.name + '.');
+      }).catch(error => {
+        if (error?.name !== 'AbortError') setStatus('Directory selection failed: ' + errorMessage(error));
+      }).finally(() => {
+        communicationLogDirectoryPickerOpening = false;
+        refreshStatus();
+      });
+    });
     renameCommunicationLogButton?.addEventListener('click', () => {
       if (renameCommunicationLogButton.disabled || communicationLogUiActionInProgress || !communicationLogFileName) return;
-      const requestedName = window.prompt('Rename communication log', communicationLogFileName);
-      if (requestedName === null || requestedName === communicationLogFileName) return;
+      const currentBase = communicationLogDisplayLocation(communicationLogDirectoryHandle, communicationLogFileName).base;
+      const requestedBase = window.prompt('Rename communication log filename base', currentBase);
+      if (requestedBase === null || requestedBase === currentBase) return;
+      const requestedName = requestedBase + '.jsonl';
       void runCommunicationLogPanelAction(renameCommunicationLogButton, {
         idleLabel: 'Rename communication log',
         busyLabel: 'Renaming communication log',
