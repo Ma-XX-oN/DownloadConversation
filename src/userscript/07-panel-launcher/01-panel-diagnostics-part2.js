@@ -96,7 +96,8 @@
       #${PANEL_ID} .tm-md-metadata label{gap:3px}
       #${PANEL_ID} .tm-extract-formats{display:flex;justify-content:flex-start;gap:12px;flex-wrap:nowrap}
       #${PANEL_ID} .tm-extract-formats label{white-space:nowrap}
-      #${PANEL_ID} .tm-export-action{font-size:22px;line-height:1;font-weight:700;width:36px;height:32px;flex:0 0 36px;padding:0}
+      #${PANEL_ID} .tm-export-action{display:grid;place-items:center;width:36px;height:32px;flex:0 0 36px;padding:0}
+      #${PANEL_ID} .tm-export-action svg{display:block;width:23px;height:23px}
       #${PANEL_ID} .tm-export-compression{border-radius:8px;min-width:34px;flex:0 0 34px}
       #${PANEL_ID} .tm-export-compression svg{width:28px}
       #${PANEL_ID} .tm-tool-actions{border-top:1px solid #494949;padding:12px 0 3px;margin-top:4px;justify-content:space-around;gap:12px;flex-wrap:nowrap}
@@ -144,7 +145,7 @@
     const formatsSelected = Boolean(jsonl?.checked || md?.checked);
     if (extract) {
       extract.disabled = exportInProgress || testInProgress || jumpInProgress || !formatsSelected;
-      extract.textContent = exportInProgress ? '…' : '→';
+      extract.innerHTML = exportInProgress ? '…' : exportArrowIconMarkup();
       extract.setAttribute('aria-label', exportInProgress ? 'Exporting conversation' : 'Export conversation');
     }
     if (jsonl) jsonl.disabled = exportInProgress || testInProgress || jumpInProgress;
