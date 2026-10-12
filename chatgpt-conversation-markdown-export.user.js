@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         ChatGPT Conversation Markdown Recorder
 // @namespace    https://chatgpt.com/
-// @version      1.11.4-issue.243.3
+// @version      1.11.4-issue.243.4
 // @description  Exports the current ChatGPT conversation directly from the Conversation API as Markdown or JSONL.
 // @match        https://chatgpt.com/*
 // @match        https://chat.openai.com/*
@@ -7234,7 +7234,7 @@ globalThis.__dcCompressor = {
    */
   function usableConversationTitle(value) {
     const text = String(value ?? '').trim();
-    return Boolean(text) && !/^(?:skip to content|chatgpt|chatgpt conversation|unknown(?:__\\d+)?)$/i.test(text);
+    return Boolean(text) && !/^(?:skip to content|chatgpt|chatgpt conversation|unknown(?:__\d+)?)$/i.test(text);
   }
 
   /**
@@ -7253,7 +7253,7 @@ globalThis.__dcCompressor = {
         try {
           const url = new URL(anchor.href, location.href);
           if (url.origin !== location.origin
-              || url.pathname.match(/\\/c\\/([^/]+)$/)?.[1] !== conversationId) continue;
+              || url.pathname.match(/\/c\/([^/]+)$/)?.[1] !== conversationId) continue;
           const text = anchor.querySelector('[data-thread-title]')?.textContent?.trim()
             || anchor.getAttribute('aria-label')?.trim();
           if (usableConversationTitle(text)) return text;
@@ -7261,7 +7261,7 @@ globalThis.__dcCompressor = {
       }
     }
     const pageTitle = String(document.title ?? '')
-      .replace(/\\s*[-–—]\\s*ChatGPT\\s*$/i, '').trim();
+      .replace(/\s*[-–—]\s*ChatGPT\s*$/i, '').trim();
     return usableConversationTitle(pageTitle) ? pageTitle : 'ChatGPT conversation';
   }
 
@@ -8682,7 +8682,7 @@ globalThis.__dcCompressor = {
    * @returns {string|null} Current project name or null outside a project.
    */
   function conversationProjectName() {
-    const route = location.pathname.match(/^\\/g\\/(g-p-[0-9a-f]{32})(?:-[^/]+)?(?:\\/|$)/i);
+    const route = location.pathname.match(/^\/g\/(g-p-[0-9a-f]{32})(?:-[^/]+)?(?:\/|$)/i);
     if (!route) return null;
     const projectId = route[1].toLowerCase();
     const namesByRoute = conversationProjectName.byRoute ??= new Map();
@@ -8692,7 +8692,7 @@ globalThis.__dcCompressor = {
       try {
         const url = new URL(anchor.href, location.href);
         const match = url.pathname.match(
-          /^\\/g\\/(g-p-[0-9a-f]{32})(?:-[^/]+)?\\/project\\/?$/i
+          /^\/g\/(g-p-[0-9a-f]{32})(?:-[^/]+)?\/project\/?$/i
         );
         if (url.origin !== location.origin || !match
             || match[1].toLowerCase() !== projectId) continue;
