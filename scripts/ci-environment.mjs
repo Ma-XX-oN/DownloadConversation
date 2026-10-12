@@ -19,6 +19,7 @@ const pythonCommand = process.env.PYTHON ?? 'python';
 const ordinaryStages = [
   ['Modular userscript build regression', nodeCommand, ['--test', 'tests/modular-userscript-build.test.mjs', 'tests/development-version-source.test.mjs']],
   ['Recording-group per-tab identity regression', nodeCommand, ['--test', 'tests/recording-group-tab-identity.test.mjs']],
+  ['Real Chromium tab ownership acceptance', nodeCommand, ['--test', 'tests/recording-group-chromium.test.mjs']],
   ['Recorder logging-mode regression', nodeCommand, ['--test', 'tests/recording-panel-modes.test.mjs']],
   ['Combined log time-control regression', nodeCommand, ['--test', 'tests/log-extraction-dialog.test.mjs']],
   ['Merged Gen/Comm extraction regression', nodeCommand, ['--test', 'tests/merged-log-extraction.test.mjs']],
