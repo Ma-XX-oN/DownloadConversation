@@ -38,7 +38,7 @@
     const pageTitle = String(document.title ?? '')
       .replace(/\s*[-–—]\s*ChatGPT\s*$/i, '')
       .trim();
-    if (!heading || !pageTitle || pageTitle === heading) return namesByRoute.get(projectSegment) ?? projectNameFromRouteSlug(projectSegment);
+    if (!heading || !pageTitle || pageTitle === heading) return namesByRoute.get(projectSegment) ?? null;
     for (const separator of [' - ', ' – ', ' — ']) {
       if (pageTitle.endsWith(`${separator}${heading}`)) {
         const resolved = pageTitle.slice(0, -(`${separator}${heading}`).length).trim();
@@ -51,7 +51,35 @@
         return resolved || namesByRoute.get(projectSegment) || null;
       }
     }
-    return namesByRoute.get(projectSegment) ?? projectNameFromRouteSlug(projectSegment);
+    return namesByRoute.get(projectSegment) ?? null;
+  }
+
+  /**
+   * Returns one conversation-scoped manual filename override across reloads.
+   *
+   * @returns {string|null} Explicit basename or null for automatic naming.
+   */
+  function conversationFilenameOverride() {
+    const id = currentConversationId();
+    if (!id) return null;
+    try {
+      const value = localStorage.getItem('tm-recorder-filename-override:' + id);
+      return value ? sanitizeFileName(value) : null;
+    } catch { return null; }
+  }
+
+  /**
+   * Stores or resets an explicit filename base for the current conversation.
+   *
+   * @param {string|null} value - Manual basename or null to restore automatic naming.
+   * @returns {void} No value is returned.
+   */
+  function conversationFilenameSetOverride(value) {
+    const id = currentConversationId();
+    if (!id) throw new Error('Conversation identity is unavailable.');
+    const key = 'tm-recorder-filename-override:' + id;
+    if (value === null) localStorage.removeItem(key);
+    else localStorage.setItem(key, sanitizeFileName(value));
   }
 
   /**
@@ -61,10 +89,10 @@
    */
   function conversationFileBaseName() {
     const conversationName = sanitizeFileName(conversationTitle());
+    const manual = conversationFilenameOverride();
+    if (manual) return manual;
     const projectName = conversationProjectName();
-    return projectName
-      ? `${sanitizeFileName(projectName).replace(/\s+/g, '-')}__${conversationName}`
-      : conversationName;
+    return `${projectName ? sanitizeFileName(projectName).replace(/\s+/g, '-') : 'Unknown'}__${conversationName}`;
   }
 
 
@@ -104,9 +132,8 @@
       throw new Error('Filename content has no trustworthy timestamp range.');
     }
     const chatName = sanitizeFileName(chat);
-    const identity = project
-      ? `${sanitizeFileName(project).replace(/\s+/g, '-')}__${chatName}`
-      : chatName;
+    const manual = conversationFilenameOverride();
+    const identity = manual || `${project ? sanitizeFileName(project).replace(/\s+/g, '-') : 'Unknown'}__${chatName}`;
     const start = canonicalFilenameTimestamp(timestampRange.start_timestamp);
     const end = canonicalFilenameTimestamp(timestampRange.end_timestamp);
     return `${identity}_${start}-${end}`;
