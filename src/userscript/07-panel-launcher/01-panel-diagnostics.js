@@ -98,7 +98,15 @@
     };
     diagnosticLog.push(entry);
     if (diagnosticLog.length > MAX_DIAGNOSTIC_LOG_ITEMS) {
-      diagnosticLog.splice(0, diagnosticLog.length - MAX_DIAGNOSTIC_LOG_ITEMS);
+      const evicted = diagnosticLog.splice(0, diagnosticLog.length - MAX_DIAGNOSTIC_LOG_ITEMS);
+      for (const item of evicted) {
+        if (item?.level === 'lifecycle' &&
+            item.message === 'dc-version-transition' &&
+            item.data && Object.hasOwn(item.data, 'version') &&
+            (typeof item.data.version === 'string' || item.data.version === null)) {
+          diagnosticLogBaselineVersion = item.data.version;
+        }
+      }
     }
     schedulePersistDiagnosticLog();
     refreshDiagnosticLog();
