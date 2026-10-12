@@ -21,7 +21,7 @@ const descriptor = {
 function runWith(onRequest) {
   const context = {
     assert,
-    AGENT_PLUGIN_BROKER_TIMEOUT_MS: 120000,
+    AGENT_PLUGIN_DOWNLOAD_TIMEOUT_MS: 120000,
     GM_xmlhttpRequest: onRequest
   };
   vm.runInNewContext(implementation, context);
