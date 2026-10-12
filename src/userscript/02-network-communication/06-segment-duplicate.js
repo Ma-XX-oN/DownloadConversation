@@ -31,6 +31,7 @@
       try {
         record = JSON.parse(new TextDecoder().decode(line));
       } catch {
+        firstLine = false;
         continue;
       }
       if (firstLine && record && typeof record === 'object'
