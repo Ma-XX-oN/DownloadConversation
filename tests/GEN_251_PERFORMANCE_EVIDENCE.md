@@ -116,3 +116,21 @@ Node VM uses a synchronous in-memory stub, so its raw costs are distinct from br
 **#251's independent benchmarking deliverable is complete and reproducible** with provider-backed evidence. It makes no assertion of a performance SLA PASS because the issue has no specified latency threshold. The unresolved source regressions remain explicit obligations for their owning ticket/integration lane, not evidence that the hosted benchmarks failed.
 
 Hosted run: https://github.com/Ma-XX-oN/DownloadConversation/actions/runs/38300819106 . Full raw measurements and provider status: the run's `repoworkflow-result-ubuntu-node22-python313` artifact.
+
+## Follow-up source correction and full CI certification (2026-10-12)
+
+On explicit operator instruction, the two previously inherited source failures were followed through to correction on the same #251 PR branch, retaining the original implementation ownership/evidence. The bootstrap module had exceeded the enforced 16 KiB size limit; `restoreDiagnosticLog()` lacked a typed/described JSDoc `@returns` entry. During correction, the first relocated-state insertion hit an intentional inter-module JSDoc continuation, and later isolated VM harnesses included relocated declaration initializers. Both secondary failures were reproduced from GitHub-hosted provider result artifacts, diagnosed and resolved rather than waived.
+
+Final disposition: retained the original 64-module source topology, moved bounded communication-state declarations from `01-runtime/01-bootstrap.js` to `02-network-communication/06-segment-storage.js`, kept `communicationLogSessionId` UUID initialisation in bootstrap, added the missing `@returns {void}` documentation, reduced `07-panel-launcher/01-panel-diagnostics.js` below the 16 KiB limit without runtime behaviour changes, and updated the isolated communication-log reset harness to install fixture state **after** the extracted production lexical declarations.
+
+### Definitive hosted verification
+
+- Authoritative GitHub Actions run: **38305416040**, URL https://github.com/Ma-XX-oN/DownloadConversation/actions/runs/38305416040 .
+- GitHub run conclusion: **SUCCESS**; policy, prepare, validate and finalize stages succeeded.
+- Exact provider-tested/materialized candidate SHA: **`e1bf01aba3d3f29c139d26e66810e44aed99bf8b`**, version **`1.11.4-issue.251.9`**.
+- Structured artifact: `repoworkflow-result-ubuntu-node22-python313`, environment result **`status: PASS`**, `returncode: 0`. It includes raw Node/Chrome performance JSON, stdout/stderr, and the exact candidate identity.
+- Passed stages include modular source-size contract, full production JSDoc audit, JavaScript syntax, assembled TypeScript check, communication-log file controls, disk communication recorder, stock-network diagnostics, all GEN version/persistence convergence tests, Chrome storage and actual extracted GEN persistence/restore benchmarks, generated artifact verification, and all three pinned cross-consumer parity suites.
+- All previous inherited source failure entries above are **historical, resolved at this tested candidate**. There are no current failing repository-owned validation stages in this run. No CI assertions were disabled; no checks were falsely recategorized.
+- Scope boundary: a hosted Chrome benchmark of GEN's extracted production function bodies is not an end-to-end logged-in ChatGPT UI performance certification. The latter remains a separate #243 system integration concern.
+
+No merge to `main`, release, or production activation was performed.
