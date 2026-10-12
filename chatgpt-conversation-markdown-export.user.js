@@ -1,11 +1,10 @@
 // ==UserScript==
 // @name         ChatGPT Conversation Markdown Recorder
 // @namespace    https://chatgpt.com/
-// @version      1.11.4-issue.220.16
+// @version      1.11.4-issue.220.17
 // @description  Exports the current ChatGPT conversation directly from the Conversation API as Markdown or JSONL.
 // @match        https://chatgpt.com/*
 // @match        https://chat.openai.com/*
-// @match        https://github.com/*
 // @connect      github.com
 // @connect      raw.githubusercontent.com
 // @grant        GM_xmlhttpRequest
@@ -6396,262 +6395,11 @@ async function loadAgent(id, { loadModule, context = {} } = {}) {
 // END bundled AIConversationCore
 
 (() => {
-
-  /** Shared Tampermonkey storage key carrying the newest private-plugin request. */
-  const AGENT_PLUGIN_REQUEST_KEY = 'downloadconversation:agent-plugin-request';
-  /** Shared Tampermonkey storage prefix for one private-plugin broker response. */
-  const AGENT_PLUGIN_RESPONSE_PREFIX = 'downloadconversation:agent-plugin-response:';
-  /** Shared Tampermonkey storage prefix for GitHub-side broker progress diagnostics. */
-  const AGENT_PLUGIN_TRACE_PREFIX = 'downloadconversation:agent-plugin-trace:';
-  /** Shared Tampermonkey storage prefix for verified plugin source cache entries. */
+  /** Shared cache prefix for verified direct-download artifacts. */
   const AGENT_PLUGIN_CACHE_PREFIX = 'downloadconversation:agent-plugin-cache:';
-  /** Maximum age accepted for a browser-broker request. */
-  const AGENT_PLUGIN_REQUEST_MAX_AGE_MS = 2 * 60 * 1000;
-  /** Maximum time the ChatGPT tab waits for one broker response. */
-  const AGENT_PLUGIN_BROKER_TIMEOUT_MS = 2 * 60 * 1000;
+  /** Direct GitHub-origin retrieval timeout in milliseconds. */
+  const AGENT_PLUGIN_DOWNLOAD_TIMEOUT_MS = 2 * 60 * 1000;
 
-  /**
-   * Resolves one agent artifact through the AICC catalogue bundled into this build.
-   * DownloadConversation never owns provider repository/ref/version/hash metadata.
-   *
-   * @param {string} pluginId - Provider-neutral AICC agent ID.
-   * @returns {Object|null} Core-owned artifact descriptor, or null when unavailable.
-   */
-  function coreAgentPluginArtifact(pluginId) {
-    const core = globalThis.AIConversationCore;
-    if (typeof core?.getAgentPluginArtifact !== 'function') return null;
-    try {
-      return core.getAgentPluginArtifact(pluginId);
-    } catch {
-      return null;
-    }
-  }
-
-  /**
-   * Constructs the authenticated GitHub file-page URL selected by one Core-owned
-   * artifact descriptor.  Browser authentication remains owned by GitHub/Chrome.
-   *
-   * @param {Object} descriptor - Core-owned artifact selector and integrity metadata.
-   * @returns {string} HTTPS GitHub file-page URL.
-   */
-  function githubAgentPluginBlobUrl(descriptor) {
-    const [owner, repository] = String(descriptor.repository).split('/');
-    assert(owner && repository, 'Agent plugin repository identity is invalid.');
-    const artifactPath = String(descriptor.path)
-      .split('/')
-      .map(segment => encodeURIComponent(segment))
-      .join('/');
-    return `https://github.com/${encodeURIComponent(owner)}/${encodeURIComponent(repository)}`
-      + `/blob/${encodeURIComponent(descriptor.ref)}/${artifactPath}`;
-  }
-
-  /**
-   * Returns whether the current GitHub document is the exact Core-selected plugin
-   * file page rather than merely another GitHub page.
-   *
-   * @param {Object} descriptor - Core-owned artifact descriptor.
-   * @returns {boolean} `true` only on the selected GitHub file page.
-   */
-  function githubAgentPluginPageMatches(descriptor) {
-    if (location.origin !== 'https://github.com') return false;
-    const expected = new URL(githubAgentPluginBlobUrl(descriptor));
-    return location.pathname === expected.pathname;
-  }
-
-  /**
-   * Publishes one GitHub-side broker progress event to shared userscript storage.
-   * This carries only stage metadata; plugin source and GitHub credentials are
-   * never included in diagnostic events.
-   *
-   * @param {Object} request - Active broker request.
-   * @param {string} stage - Stable broker progress stage.
-   * @param {Object} [detail={}] - Non-sensitive diagnostic detail.
-   * @returns {void} No value is returned.
-   */
-  function publishGitHubAgentPluginTrace(request, stage, detail = {}) {
-    if (!request || typeof request.request_id !== 'string') return;
-    GM_setValue(`${AGENT_PLUGIN_TRACE_PREFIX}${request.request_id}`, {
-      request_id: request.request_id,
-      stage,
-      at: Date.now(),
-      ...detail
-    });
-  }
-
-  /**
-   * Reads GitHub's read-only code textarea once the file view has rendered.
-   * The textarea value is the browser-decoded file text, not HTML markup.
-   *
-   * @returns {string|null} Current file source, or null until GitHub renders it.
-   */
-  function githubAgentPluginSourceFromPage() {
-    const textarea = document.querySelector(
-      'textarea[data-testid="read-only-cursor-text-area"][aria-label="file content"]'
-    );
-    if (!textarea || String(textarea.tagName ?? '').toUpperCase() !== 'TEXTAREA'
-        || typeof textarea.value !== 'string') return null;
-    return textarea.value.length ? textarea.value : null;
-  }
-
-  /**
-   * Restores GitHub file-view's omitted terminal LF only when AICC's descriptor
-   * proves the displayed UTF-8 text is exactly one byte shorter than the selected
-   * artifact.  The ChatGPT side still verifies the full Git blob SHA-1.
-   *
-   * @param {Object} descriptor - Core-owned exact artifact descriptor.
-   * @param {string} source - Source text read from GitHub's file-view textarea.
-   * @returns {{source: string, displayed_byte_length: number, transferred_byte_length: number, terminal_lf_restored: boolean}}
-   *   Source transfer result and non-sensitive byte-length diagnostics.
-   */
-  function normalizeGitHubAgentPluginSource(descriptor, source) {
-    const displayedByteLength = new TextEncoder().encode(source).byteLength;
-    const shouldRestoreTerminalLf = displayedByteLength + 1 === descriptor.byteLength
-      && !source.endsWith('\n');
-    const normalized = shouldRestoreTerminalLf ? `${source}\n` : source;
-    return {
-      source: normalized,
-      displayed_byte_length: displayedByteLength,
-      transferred_byte_length: new TextEncoder().encode(normalized).byteLength,
-      terminal_lf_restored: shouldRestoreTerminalLf
-    };
-  }
-
-  /**
-   * Waits for GitHub's file viewer to materialize its read-only source textarea.
-   *
-   * @returns {Promise<string>} Exact source text displayed by GitHub.
-   */
-  function waitForGitHubAgentPluginSource() {
-    const immediate = githubAgentPluginSourceFromPage();
-    if (immediate !== null) return Promise.resolve(immediate);
-    return new Promise((resolve, reject) => {
-      let settled = false;
-      let observer = null;
-      let timer = null;
-      const finish = (error, source = null) => {
-        if (settled) return;
-        settled = true;
-        observer?.disconnect();
-        if (timer !== null) clearTimeout(timer);
-        if (error) reject(error);
-        else resolve(source);
-      };
-      const check = () => {
-        const source = githubAgentPluginSourceFromPage();
-        if (source !== null) finish(null, source);
-      };
-      observer = new MutationObserver(check);
-      observer.observe(document.documentElement, { childList: true, subtree: true });
-      timer = setTimeout(() => {
-        finish(new Error('GitHub file content did not become available.'));
-      }, AGENT_PLUGIN_BROKER_TIMEOUT_MS);
-      check();
-    });
-  }
-
-  /**
-   * Returns whether a shared request exactly matches AICC's selected artifact.
-   * This keeps the GitHub-side broker an authenticated transport, not a selector.
-   *
-   * @param {Object} request - Shared-storage request from an AI-agent tab.
-   * @param {Object} descriptor - Core-owned artifact descriptor.
-   * @returns {boolean} `true` only for the exact AICC-selected artifact.
-   */
-  function githubAgentPluginRequestMatches(request, descriptor) {
-    return request?.plugin_id === descriptor?.id
-      && request?.repository === descriptor?.repository
-      && request?.ref === descriptor?.ref
-      && request?.path === descriptor?.path
-      && request?.version === descriptor?.version
-      && request?.api_version === descriptor?.apiVersion
-      && request?.git_blob_sha1 === descriptor?.gitBlobSha1
-      && request?.byte_length === descriptor?.byteLength;
-  }
-
-  /**
-   * Handles one Core-selected artifact request inside GitHub's authenticated file
-   * view. Only the file text shown by GitHub is transferred through userscript
-   * storage; browser credentials never leave GitHub/Chrome.
-   *
-   * @param {Object} request - Shared-storage request from an AI-agent tab.
-   * @returns {Promise<void>} Resolves after a success/failure response is published.
-   */
-  async function handleGitHubAgentPluginRequest(request) {
-    if (!request || typeof request.request_id !== 'string') return;
-    const descriptor = coreAgentPluginArtifact(request.plugin_id);
-    if (!descriptor || !githubAgentPluginRequestMatches(request, descriptor)) return;
-    const age = Date.now() - Number(request.requested_at ?? 0);
-    if (!Number.isFinite(age) || age < 0 || age > AGENT_PLUGIN_REQUEST_MAX_AGE_MS) return;
-
-    const responseKey = `${AGENT_PLUGIN_RESPONSE_PREFIX}${request.request_id}`;
-    publishGitHubAgentPluginTrace(request, 'request-accepted', {
-      pathname: location.pathname
-    });
-    try {
-      if (!githubAgentPluginPageMatches(descriptor)) {
-        publishGitHubAgentPluginTrace(request, 'wrong-file-page', {
-          pathname: location.pathname
-        });
-        GM_setValue(responseKey, {
-          request_id: request.request_id,
-          ok: false,
-          reason: 'WRONG_GITHUB_FILE_PAGE'
-        });
-        return;
-      }
-      publishGitHubAgentPluginTrace(request, 'waiting-for-file-content');
-      const displayedSource = await waitForGitHubAgentPluginSource();
-      const normalized = normalizeGitHubAgentPluginSource(descriptor, displayedSource);
-      publishGitHubAgentPluginTrace(request, 'file-content-read', {
-        character_length: displayedSource.length,
-        displayed_byte_length: normalized.displayed_byte_length,
-        transferred_byte_length: normalized.transferred_byte_length,
-        terminal_lf_restored: normalized.terminal_lf_restored
-      });
-      GM_setValue(responseKey, {
-        request_id: request.request_id,
-        ok: true,
-        source: normalized.source
-      });
-      publishGitHubAgentPluginTrace(request, 'response-published', {
-        transferred_byte_length: normalized.transferred_byte_length,
-        terminal_lf_restored: normalized.terminal_lf_restored
-      });
-      window.close();
-    } catch (error) {
-      const message = error instanceof Error ? error.message : String(error);
-      publishGitHubAgentPluginTrace(request, 'file-view-error', { message });
-      GM_setValue(responseKey, {
-        request_id: request.request_id,
-        ok: false,
-        status: null,
-        reason: 'FILE_VIEW_ERROR',
-        message
-      });
-    }
-  }
-
-  /**
-   * Installs the generic GitHub-side artifact broker. The active provider/repository
-   * is resolved from AICC only after a shared request arrives.
-   *
-   * @returns {boolean} `true` when GitHub broker mode owns this userscript realm.
-   */
-  function installGitHubAgentPluginBroker() {
-    if (location.hostname !== 'github.com') return false;
-    const dispatch = value => {
-      handleGitHubAgentPluginRequest(value).catch(error => {
-        console.error('[DownloadConversation] GitHub plugin broker failed', error);
-      });
-    };
-    GM_addValueChangeListener(AGENT_PLUGIN_REQUEST_KEY, (_name, _oldValue, newValue) => {
-      dispatch(newValue);
-    });
-    dispatch(GM_getValue(AGENT_PLUGIN_REQUEST_KEY, null));
-    return true;
-  }
-
-  if (installGitHubAgentPluginBroker()) return;
   /** Promise for the one AICC-selected ChatGPT plugin module import in this page realm. */
   let chatGPTPluginModulePromise = null;
   /** Provider-owned ChatGPT agent instance created through AICC. */
@@ -6732,7 +6480,7 @@ async function loadAgent(id, { loadModule, context = {} } = {}) {
       GM_xmlhttpRequest({
         method: 'GET',
         url,
-        timeout: AGENT_PLUGIN_BROKER_TIMEOUT_MS,
+        timeout: AGENT_PLUGIN_DOWNLOAD_TIMEOUT_MS,
         onload(response) {
           if (response.status !== 200) {
             reject(new Error(`Private plugin download returned HTTP ${response.status}.`));
@@ -22334,20 +22082,20 @@ Image elapsed: ${formatDuration(imageElapsed)} — Completed: ${imageCompleted}/
     style.textContent = `
       #${LAUNCHER_ID}{position:fixed;right:16px;bottom:16px;z-index:2147483647;width:36px;height:32px;box-sizing:border-box;border:1px solid #777;border-radius:9px;background:#242424;color:#fff;padding:0;display:grid;place-items:center;box-shadow:0 1px 3px rgba(0,0,0,.35);cursor:pointer}
       #${LAUNCHER_ID}::before{content:'';width:16px;height:16px;border-radius:50%;background:#d0d0d0;display:block}
-      #${PANEL_ID}{position:fixed;right:16px;bottom:54px;z-index:2147483647;width:300px;box-sizing:border-box;padding:12px;border:1px solid rgba(127,127,127,.55);border-radius:12px;background:rgba(24,24,24,.97);color:#f2f2f2;box-shadow:0 6px 24px rgba(0,0,0,.35);font:13px/1.35 system-ui,sans-serif}
-      #${PANEL_ID} .tm-title{font-size:16px;margin:0 28px 8px 0}
+      #${PANEL_ID}{position:fixed;right:16px;bottom:54px;z-index:2147483647;width:min(390px,calc(100vw - 20px));max-height:calc(100dvh - 76px);overflow-y:auto;overflow-x:hidden;overscroll-behavior:contain;box-sizing:border-box;padding:10px;border:1px solid rgba(127,127,127,.55);border-radius:12px;background:rgba(24,24,24,.97);color:#f2f2f2;box-shadow:0 6px 24px rgba(0,0,0,.35);font:13px/1.35 system-ui,sans-serif}
+      #${PANEL_ID} .tm-title{font-size:13px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;margin:0 32px 6px 0;font-weight:600}
       #${PANEL_ID} .tm-close{position:absolute;right:9px;top:7px;border:0;background:transparent;color:#fff;font-size:24px;cursor:pointer}
-      #${PANEL_ID} .tm-status{white-space:pre-wrap;margin:10px 0 12px;min-height:24px}
-      #${PANEL_ID} .tm-row{display:flex;gap:10px;align-items:center;flex-wrap:wrap;margin-top:10px}
+      #${PANEL_ID} .tm-status{white-space:nowrap;overflow:hidden;text-overflow:ellipsis;margin:2px 0 4px;min-height:0;max-width:100%;font-size:12px;color:#bbb}
+      #${PANEL_ID} .tm-row{display:flex;gap:6px;align-items:center;flex-wrap:wrap;margin-top:6px;min-width:0}
       #${PANEL_ID} .tm-sound-control-row{position:relative}
       #${PANEL_ID} .tm-sound-control{min-width:92px}
       #${PANEL_ID} .tm-sound-popup[hidden]{display:none}
       #${PANEL_ID} .tm-sound-popup{position:absolute;left:0;top:calc(100% + 6px);z-index:3;display:flex;flex-direction:column;align-items:center;gap:6px;padding:9px;border:1px solid rgba(127,127,127,.55);border-radius:9px;background:rgba(24,24,24,.99);box-shadow:0 4px 14px rgba(0,0,0,.4)}
       #${PANEL_ID} .tm-sound-volume-slider{writing-mode:vertical-lr;direction:rtl;width:24px;height:120px}
       #${PANEL_ID} .tm-sound-volume-value{min-width:2ch;text-align:center;font-variant-numeric:tabular-nums}
-      #${PANEL_ID} .tm-communication-log-row{flex-wrap:nowrap}
+      #${PANEL_ID} .tm-communication-log-row{flex-wrap:nowrap;min-width:0;gap:5px}
       #${PANEL_ID} .tm-log-name-viewport{flex:1 1 auto;min-width:0;overflow:hidden;color:#fff;box-sizing:border-box}
-      #${PANEL_ID} .tm-log-name-text{display:block;width:max-content;min-width:100%;box-sizing:border-box;padding:7px 0;white-space:nowrap;transform:translateX(0);transition:transform var(--tm-log-name-duration,1.5s) linear .35s}
+      #${PANEL_ID} .tm-log-name-text{display:block;width:max-content;min-width:100%;box-sizing:border-box;padding:5px 0;white-space:nowrap;transform:translateX(0);transition:transform var(--tm-log-name-duration,1.5s) linear .35s}
       #${PANEL_ID} .tm-log-name-viewport:hover .tm-log-name-text{transform:translateX(calc(-1 * var(--tm-log-name-overflow,0px)))}
       #${PANEL_ID} .tm-communication-log-row button{flex:0 0 auto}
       #${PANEL_ID} select,#${PANEL_ID} button,#${TEST_MATRIX_ID} button{border:1px solid #666;background:#292929;color:#fff;font:inherit}
@@ -22368,22 +22116,36 @@ Image elapsed: ${formatDuration(imageElapsed)} — Completed: ${imageCompleted}/
       #${TEST_MATRIX_ID} .tm-test-table td:nth-child(2),#${TEST_MATRIX_ID} .tm-test-table td:nth-child(3),#${TEST_MATRIX_ID} .tm-test-table td:nth-child(4){white-space:nowrap}
       #${TEST_MATRIX_ID} button{border-radius:8px;padding:7px 10px}
       #${TEST_MATRIX_ID} .tm-test-actions{justify-content:flex-end;border-top:1px solid #555}
-      #${PANEL_ID} .tm-log-head{display:flex;align-items:center;gap:6px;margin-top:4px}
+      #${PANEL_ID} .tm-log-head{display:flex;align-items:center;gap:6px;margin-top:3px}
       #${PANEL_ID} .tm-log-head [data-role="log-count"]{margin-right:auto}
-      #${PANEL_ID} .tm-icon-button{box-sizing:border-box;width:30px;height:28px;padding:4px;display:grid;place-items:center;transition:opacity .2s ease}
+      #${PANEL_ID} .tm-icon-button{box-sizing:border-box;flex:0 0 28px;width:28px;height:27px;padding:3px;display:grid;place-items:center;transition:opacity .2s ease}
       #${PANEL_ID} .tm-icon-button svg{width:16px;height:16px;fill:none;stroke:currentColor;stroke-width:2;stroke-linecap:round;stroke-linejoin:round}
       #${PANEL_ID} .tm-icon-button img{width:16px;height:16px;display:block;object-fit:contain}
       #${PANEL_ID} .tm-copy-fade{opacity:0}
       #${PANEL_ID} .tm-log-output{margin:6px 0 10px;max-height:190px;overflow:auto;border:1px solid #555;border-radius:8px;background:#111;font:11px/1.35 ui-monospace,SFMono-Regular,Consolas,monospace;color:#ddd}
       #${PANEL_ID} .tm-log-row{padding:6px 8px;white-space:pre-wrap;overflow-wrap:anywhere}
       #${PANEL_ID} .tm-log-row:nth-child(even){background:rgba(255,255,255,.055)}
-      #${PANEL_ID} .tm-switch{margin-left:auto;width:42px;height:24px;padding:2px;border-radius:999px;position:relative}
+      #${PANEL_ID} .tm-switch{margin-left:auto;width:42px;height:24px;padding:2px;flex:0 0 42px;border-radius:999px;position:relative}
       #${PANEL_ID} .tm-switch-thumb{display:block;width:18px;height:18px;border-radius:50%;background:#aaa;transform:translateX(0);transition:transform .16s ease,background .16s ease}
       #${PANEL_ID} .tm-switch[aria-checked="true"] .tm-switch-thumb{transform:translateX(16px);background:#fff}
-      #${PANEL_ID} .tm-extract-formats{display:grid;grid-template-columns:auto auto auto auto;gap:6px 12px;align-items:center}
+      #${PANEL_ID} .tm-extract-formats{display:flex;flex-wrap:wrap;gap:6px 12px;align-items:center}
       #${PANEL_ID} .tm-export-compression{width:34px;height:28px;padding:3px 4px;display:flex;align-items:center;justify-content:center}
       #${PANEL_ID} .tm-export-compression svg{display:block;width:28px;height:20px}
       #${PANEL_ID} .tm-extract-formats label{display:flex;gap:5px;align-items:center}
+      #${PANEL_ID} .tm-last-log-problem{display:block;max-width:100%;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;font-size:12px;color:#e5b6a0;margin:2px 0}
+      #${PANEL_ID} .tm-last-log-problem[hidden],#${PANEL_ID} .tm-log-output[hidden]{display:none}
+      #${PANEL_ID} .tm-recording-options{display:grid;grid-template-columns:auto minmax(0,1fr);gap:5px 8px}
+      #${PANEL_ID} .tm-recording-options select{min-width:0;width:100%;padding:6px 8px}
+      #${PANEL_ID} .tm-recording-modes{grid-column:1/-1;display:flex;flex-wrap:wrap;align-items:center;gap:4px 14px}
+      #${PANEL_ID} .tm-recording-modes label,#${PANEL_ID} .tm-md-metadata label{display:inline-flex;align-items:center;gap:4px;white-space:nowrap}
+      #${PANEL_ID} .tm-recording-modes input,#${PANEL_ID} .tm-md-metadata input{margin:0}
+      #${PANEL_ID} .tm-file-label{flex:0 0 auto}
+      #${PANEL_ID} .tm-communication-log-row .tm-icon-button{width:28px;min-width:28px}
+      #${PANEL_ID} .tm-capture-options .tm-label{flex:1 1 auto;min-width:0}
+      #${PANEL_ID} .tm-md-metadata{gap:5px 10px}
+      #${PANEL_ID} button[data-role="jump"],#${PANEL_ID} button[data-role="test"],#${PANEL_ID} button[data-role="extract"]{padding:6px 10px}
+      #${PANEL_ID} .tm-sound-control{padding:6px 9px}
+      @media(max-width:430px){#${PANEL_ID}{right:10px;bottom:48px;max-height:calc(100dvh - 58px);padding:8px}#${PANEL_ID} .tm-recording-modes{gap:4px 9px}#${PANEL_ID} .tm-communication-log-row{gap:3px}}
     `;
     (document.head || document.documentElement).append(style);
   }
@@ -23062,11 +22824,9 @@ Image elapsed: ${formatDuration(imageElapsed)} — Completed: ${imageCompleted}/
       <div class="tm-last-log-problem" data-role="last-log-problem" role="status" hidden></div>
       <div class="tm-log-output" data-role="log-output" hidden></div>
       <div class="tm-status" data-role="status"></div>
-      <div class="tm-row"><span class="tm-label">Diagnostics</span><select data-role="diagnostics"><option value="errors">Errors</option><option value="warnings">Warnings</option><option value="debug">Debug</option><option value="verbose">Verbose</option></select></div>
-      <div class="tm-row tm-recording-modes"><label><input data-role="record-general" type="checkbox" checked> Gen</label><label><input data-role="record-communication" type="checkbox" checked> Comm</label><label><input data-role="console-diagnostics" type="checkbox"> Con</label><label><input data-role="record-one-group" type="checkbox"> 1</label></div>
-      <div class="tm-row"><span class="tm-label">Communication log</span></div>
-      <div class="tm-row tm-communication-log-row"><div class="tm-log-name-viewport" data-role="communication-log-name-viewport" role="textbox" aria-readonly="true" aria-label="Current communication log filename" title="Current communication log filename"><span class="tm-log-name-text" data-role="communication-log-name"></span></div><button class="tm-icon-button" data-role="rename-communication-log" type="button" aria-label="Rename communication log" title="Rename communication log"></button><button class="tm-icon-button" data-role="duplicate-communication-log" type="button" aria-label="Duplicate communication log" title="Duplicate communication log"></button><button class="tm-icon-button" data-role="reset-communication-log" type="button" aria-label="Reset communication log" title="Reset communication log"></button></div>
-      <div class="tm-row"><span class="tm-label">Screen on when extracting</span><button class="tm-switch" data-role="screen-on" type="button" role="switch" aria-checked="false" aria-label="Keep screen on while extracting"><span class="tm-switch-thumb"></span></button></div>
+      <div class="tm-row tm-recording-options"><label for="tm-recorder-diagnostics">Diagnostics</label><select id="tm-recorder-diagnostics" data-role="diagnostics"><option value="errors">Errors</option><option value="warnings">Warnings</option><option value="debug">Debug</option><option value="verbose">Verbose</option></select><span class="tm-recording-modes"><label><input data-role="record-general" type="checkbox" checked> Gen</label><label><input data-role="record-communication" type="checkbox" checked> Comm</label><label><input data-role="console-diagnostics" type="checkbox"> Con</label><label><input data-role="record-one-group" type="checkbox"> 1</label></span></div>
+      <div class="tm-row tm-communication-log-row"><span class="tm-label tm-file-label">File</span><div class="tm-log-name-viewport" data-role="communication-log-name-viewport" role="textbox" aria-readonly="true" aria-label="Current communication log filename" title="Current communication log filename"><span class="tm-log-name-text" data-role="communication-log-name"></span></div><button class="tm-icon-button" data-role="rename-communication-log" type="button" aria-label="Rename communication log" title="Rename communication log"></button><button class="tm-icon-button" data-role="duplicate-communication-log" type="button" aria-label="Duplicate communication log" title="Duplicate communication log"></button><button class="tm-icon-button" data-role="reset-communication-log" type="button" aria-label="Reset communication log" title="Reset communication log"></button></div>
+      <div class="tm-row tm-capture-options"><span class="tm-label">Screen on when extracting</span><button class="tm-switch" data-role="screen-on" type="button" role="switch" aria-checked="false" aria-label="Keep screen on while extracting"><span class="tm-switch-thumb"></span></button></div>
       <div class="tm-row tm-sound-control-row"><button class="tm-sound-control" data-role="agent-sound-control" type="button" aria-haspopup="dialog" aria-expanded="false">Sound <span data-role="agent-sound-control-value"></span></button><div class="tm-sound-popup" data-role="agent-sound-popup" hidden role="dialog" aria-label="Agent sound volume"><input class="tm-sound-volume-slider" data-role="agent-sound-volume" type="range" min="0" max="10" step="1" aria-label="Agent sound volume"><output class="tm-sound-volume-value" data-role="agent-sound-volume-value"></output></div></div>
       <div class="tm-row"><button data-role="jump" type="button">Jump</button><button data-role="test" type="button">Test</button></div>
       <div class="tm-row tm-extract-formats"><button data-role="extract" type="button">Extract</button><label><input data-role="format-jsonl" type="checkbox"> JSONL</label><label><input data-role="format-md" type="checkbox" checked> MD</label><button class="tm-export-compression" data-role="export-compression" type="button" role="switch" aria-checked="false" aria-label="Raw export output" title="Raw JSONL/MD files"></button></div>
