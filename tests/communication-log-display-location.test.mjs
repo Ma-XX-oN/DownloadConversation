@@ -11,36 +11,23 @@ vm.runInNewContext(
 
 const format = (folder, name) => {
   const result = context.display(folder, name);
-  return { display: result.display, exact: result.exact };
+  return JSON.parse(JSON.stringify(result));
 };
 
-test('display uses the selected project folder name, not a fixed DC prefix', () => {
-  const filename = 'DownloadConversation_Project Chat Export Plan.jsonl';
-  const output = format({ name: 'Actual Project Folder' }, filename);
-  assert.deepEqual(output, {
-    display: 'Actual Project Folder / Project Chat Export Plan.jsonl',
-    exact: 'Actual Project Folder / ' + filename
+test('directory and exact logical base are independent', () => {
+  assert.deepEqual(format({ name: 'Comm-logs2' }, 'Repo-Workflow__Merge readiness summary.jsonl'), {
+    directory: 'Comm-logs2',
+    base: 'Repo-Workflow__Merge readiness summary'
   });
-  assert.equal(filename, 'DownloadConversation_Project Chat Export Plan.jsonl',
-    'display formatting must not rename the logical on-disk basename');
 });
 
-test('switching folders, changing the logical basename and missing directories', () => {
-  assert.equal(format({ name: 'First Folder' }, 'DownloadConversation_Chat.jsonl')
-    .display, 'First Folder / Chat.jsonl');
-  assert.equal(format({ name: 'Second Folder' }, 'DownloadConversation_Chat.jsonl')
-    .display, 'Second Folder / Chat.jsonl');
-  assert.equal(format({ name: 'Second Folder' }, 'custom-name.jsonl')
-    .display, 'Second Folder / custom-name.jsonl');
-  assert.equal(format(null, 'DownloadConversation_Chat.jsonl')
-    .display, 'DownloadConversation_Chat.jsonl');
+test('legacy filenames are not silently transformed', () => {
+  assert.deepEqual(format({ name: 'Comm-logs2' }, 'DownloadConversation_Legacy.jsonl'), {
+    directory: 'Comm-logs2',
+    base: 'DownloadConversation_Legacy'
+  });
   assert.deepEqual(format(null, null), {
-    display: 'Not configured', exact: 'Not configured'
+    directory: 'Not configured',
+    base: 'Not configured'
   });
-});
-
-test('do not hide names that merely contain DownloadConversation in the middle', () => {
-  const filename = 'custom_DownloadConversation_chat.jsonl';
-  assert.equal(format({ name: 'My Logs' }, filename).display,
-    'My Logs / ' + filename);
 });
