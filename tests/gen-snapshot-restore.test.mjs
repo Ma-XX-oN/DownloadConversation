@@ -4,7 +4,7 @@ import vm from 'node:vm';
 import test from 'node:test';
 
 const source = readFileSync(
-  new URL('../src/userscript/01-runtime/01-bootstrap.js', import.meta.url),
+  new URL('../src/userscript/01-runtime/01-bootstrap-restore.js', import.meta.url),
   'utf8'
 );
 const beginning = source.indexOf('  function restoreDiagnosticLog() {');
