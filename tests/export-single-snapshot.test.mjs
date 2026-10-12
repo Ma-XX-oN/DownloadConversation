@@ -75,18 +75,19 @@ function identityHarness({ pathname, heading, title, links }) {
     querySelector: selector => selector === 'h1' ? { textContent: heading } : null,
     querySelectorAll: selector => selector === 'a[href]' ? links : []
   };
-  return new Function('document', 'location', 'URL', `
+  return new Function('document', 'location', 'URL', 'localStorage', `
     ${conversationTitle}
     ${sanitizeFileName}
     ${currentConversationId}
     ${projectSlug}
     ${projectName}
+    ${functionSource(identitySource, 'conversationFilenameOverride')}
     ${fileBase}
     return {
       projectName: conversationProjectName(),
       fileBase: conversationFileBaseName()
     };
-  `)(document, location, URL);
+  `)(document, location, URL, { getItem() { return null; } });
 }
 
 function exportHarness() {
@@ -302,7 +303,7 @@ test('Issue 172 standalone chat keeps conversation-only filename base', () => {
   });
   assert.deepEqual(result, {
     projectName: null,
-    fileBase: 'Browser XZ Comparison'
+    fileBase: 'Unknown__Browser XZ Comparison'
   });
 });
 
@@ -331,7 +332,7 @@ test('filename uses conversation identity and not unrelated numeric page heading
     links: []
   });
   assert.deepEqual(result, {
-    projectName: 'Download Conversation',
-    fileBase: 'Download-Conversation__Filename Layout Revision'
+    projectName: null,
+    fileBase: 'Unknown__Filename Layout Revision'
   });
 });
