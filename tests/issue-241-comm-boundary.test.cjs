@@ -39,3 +39,16 @@ test('ignores incomplete JSONL tail without applying future versions', () => {
 test('rejects invalid boundaries', () => {
   assert.throws(() => resolve([first], 'invalid'), /Invalid COMM/);
 });
+
+test('session-start script versions override immutable fragment headers after upgrades', () => {
+  const upgraded = encode(line({version:{comm:'v1'}})
+    + line({timestamp:stamp(1),type:'communication_session_start',script_version:'v1'})
+    + line({timestamp:stamp(3),type:'communication_session_start',script_version:'v2'})
+    + line({timestamp:stamp(4),message:'after'}));
+  assert.equal(resolve([upgraded], stamp(2)), 'v1');
+  assert.equal(resolve([upgraded], stamp(3)), 'v2');
+  assert.equal(resolve([upgraded], stamp(4)), 'v2');
+  const legacy = encode(line({timestamp:stamp(1),type:'communication_session_start',
+    script_version:'unknown'}));
+  assert.equal(resolve([legacy], stamp(2)), null);
+});
