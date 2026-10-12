@@ -69,3 +69,42 @@ test('header runs before an appended event and upon rotation before compression'
   assert.match(rotate, /await communicationLogEnsureFragmentHeader\(\);\s*void communicationLogQueueSegmentCompression/);
   assert.doesNotMatch(source.slice(source.indexOf('const line =')), /timestamp:/);
 });
+
+test('production append places header before the only timestamped event', async () => {
+  const execute = new Function(`
+    const VERSION = '1.11.4';
+    let communicationLogActiveSegmentBytes = 0;
+    let communicationLogActiveLastTimestamp = null;
+    let communicationLogWriterDirty = false;
+    let communicationLogRotationHold = 0;
+    let communicationLogRotationPending = false;
+    const COMMUNICATION_LOG_SEGMENT_TARGET_BYTES = 10000;
+    const writes = [];
+    let seals = 0;
+    const communicationLogActiveFileSnapshot = async () => ({ file: { size: 0 } });
+    const communicationLogOpenWriter = async () => {};
+    const communicationLogWritable = { write: async line => writes.push(line) };
+    const communicationLogEnqueue = (_stage, task) => ({ operation: task() });
+    const communicationLogSealActiveSegment = async () => { seals += 1; };
+    ${source}
+    ${append}
+    return async () => {
+      await communicationLogStorageAppendRecord({
+        timestamp: '2026-10-12T18:00:00Z', type: 'fixture'
+      });
+      return { writes, bytes: communicationLogActiveSegmentBytes,
+        lastTimestamp: communicationLogActiveLastTimestamp, seals };
+    };
+  `)();
+  const result = await execute();
+  assert.equal(result.writes.length, 2);
+  assert.deepEqual(JSON.parse(result.writes[0]), {
+    version: { gen: '1.11.4', comm: '1.11.4' }
+  });
+  assert.deepEqual(JSON.parse(result.writes[1]), {
+    timestamp: '2026-10-12T18:00:00Z', type: 'fixture'
+  });
+  assert.equal(result.lastTimestamp, '2026-10-12T18:00:00Z');
+  assert.equal(result.seals, 0);
+  assert.equal(result.bytes, Buffer.byteLength(result.writes.join('')));
+});
