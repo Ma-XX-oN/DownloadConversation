@@ -129,7 +129,11 @@ test('Issue 134 filename controls are present', () => {
   assert.match(userscript, /data-role="communication-log-name"/);
   assert.match(userscript, /data-role="rename-communication-log"/);
   assert.match(userscript, /aria-label="Rename communication log"/);
-  assert.match(userscript, /class="tm-icon-button" data-role="duplicate-communication-log"[^>]*aria-label="Duplicate communication log"/);
+  const ui = userscript.slice(userscript.indexOf('panel.innerHTML = `'),
+    userscript.indexOf('panel.innerHTML = `') + 5500);
+  assert.doesNotMatch(ui, /data-role="duplicate-communication-log"/);
+  assert.match(ui, /data-role="save-log"/);
+  assert.match(ui, /data-role="reset-communication-log"/);
   assert.match(userscript, /querySelector\('\[data-role="rename-communication-log"\]'\)/);
   assert.match(userscript, /querySelector\('\[data-role="duplicate-communication-log"\]'\)/);
 });
