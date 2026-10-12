@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         ChatGPT Conversation Markdown Recorder
 // @namespace    https://chatgpt.com/
-// @version      1.11.4-issue.220.17
+// @version      1.11.4-issue.220.18
 // @description  Exports the current ChatGPT conversation directly from the Conversation API as Markdown or JSONL.
 // @match        https://chatgpt.com/*
 // @match        https://chat.openai.com/*
@@ -16566,6 +16566,7 @@ Image elapsed: ${formatDuration(imageElapsed)} — Completed: ${imageCompleted}/
     } else {
       status.textContent = statusText;
     }
+    status.title = status.textContent;
   }
 
   /**
@@ -21982,6 +21983,7 @@ Image elapsed: ${formatDuration(imageElapsed)} — Completed: ${imageCompleted}/
       lastProblem.textContent = problem
         ? `${problem.level}: ${problem.message}` : '';
       lastProblem.hidden = !problem;
+      lastProblem.title = lastProblem.textContent;
     }
     if (output && diagnosticLogExpanded) {
       output.replaceChildren(...diagnosticLog.map(entry => {
@@ -22159,7 +22161,10 @@ Image elapsed: ${formatDuration(imageElapsed)} — Completed: ${imageCompleted}/
     const panel = document.getElementById(PANEL_ID);
     if (!panel) return;
     const title = panel.querySelector('[data-role="title"]');
-    if (title) title.textContent = `ChatGPT Recorder v${VERSION}`;
+    if (title) {
+      title.textContent = `ChatGPT Recorder v${VERSION}`;
+      title.title = title.textContent;
+    }
     const extract = panel.querySelector('[data-role="extract"]');
     const jsonl = panel.querySelector('[data-role="format-jsonl"]');
     const md = panel.querySelector('[data-role="format-md"]');
