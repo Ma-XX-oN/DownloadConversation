@@ -113,9 +113,24 @@
    * @returns {string} The string produced by `conversationTitle`.
    */
   function conversationTitle() {
-    const heading = document.querySelector('h1')?.textContent?.trim();
-    const title = heading || document.title || 'ChatGPT conversation';
-    return title.replace(/\s*[-–—]\s*ChatGPT\s*$/i, '').trim() || 'ChatGPT conversation';
+    const conversationId = currentConversationId();
+    if (conversationId) {
+      for (const anchor of document.querySelectorAll('a[href]')) {
+        try {
+          const target = new URL(anchor.href, location.href);
+          if (target.origin !== location.origin
+              || target.pathname.match(/\/c\/([^/]+)$/)?.[1] !== conversationId) continue;
+          const label = anchor.getAttribute?.('aria-label')?.trim()
+            || anchor.querySelector?.('[title]')?.getAttribute('title')?.trim()
+            || anchor.textContent?.trim();
+          if (label && !/^\d+$/.test(label) && label !== 'ChatGPT') return label;
+        } catch {}
+      }
+    }
+    const tabTitle = String(document.title ?? '')
+      .replace(/\s*[-–—]\s*ChatGPT\s*$/i, '').trim();
+    if (tabTitle && tabTitle !== 'ChatGPT' && !/^\d+$/.test(tabTitle)) return tabTitle;
+    return 'ChatGPT conversation';
   }
 
   /**
