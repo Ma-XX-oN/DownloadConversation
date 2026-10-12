@@ -36,6 +36,7 @@ function harness({ storage = null, level = 'errors' } = {}) {
     MAX_PERSISTED_DIAGNOSTIC_LOG_ITEMS: 5000,
     DIAGNOSTIC_LEVELS: { errors: 0, warnings: 1, debug: 2, verbose: 3 },
     diagnosticsLevel: level,
+    localStorage: { getItem: () => null },
     diagnosticLog: [],
     diagnosticLogBaselineVersion: null,
     VERSION: 'v1',
