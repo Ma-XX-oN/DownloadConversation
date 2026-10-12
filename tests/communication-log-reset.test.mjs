@@ -27,7 +27,7 @@ communicationLogDirectoryHandle = this.communicationLogDirectoryHandle;
 communicationLogFileName = this.communicationLogFileName;
 communicationLogReady = this.communicationLogReady;
 communicationLogWriteChain = this.communicationLogWriteChain;
-communicationLogResetSegmentHistory = async () => {};`
+communicationLogResetSegmentHistory = async () => {};
 communicationLogReportFailure = (stage, error) => {
   this.__issue133Events.push(\`failure:\${stage}:\${error?.message ?? error}\`);
 };
