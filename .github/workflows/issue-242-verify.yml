@@ -2,6 +2,8 @@ name: Issue 242 Combined Version Verification
 on:
   push:
     branches: [issue-242-combined-version-export-v3]
+  pull_request:
+    branches: [main]
 permissions:
   contents: write
 jobs:
