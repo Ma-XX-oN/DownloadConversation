@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         ChatGPT Conversation Markdown Recorder
 // @namespace    https://chatgpt.com/
-// @version      1.11.4-issue.220.36
+// @version      1.11.4-issue.220.37
 // @description  Exports the current ChatGPT conversation directly from the Conversation API as Markdown or JSONL.
 // @match        https://chatgpt.com/*
 // @match        https://chat.openai.com/*
@@ -7193,9 +7193,24 @@ globalThis.__dcCompressor = {
    * @returns {string} The string produced by `conversationTitle`.
    */
   function conversationTitle() {
-    const heading = document.querySelector('h1')?.textContent?.trim();
-    const title = heading || document.title || 'ChatGPT conversation';
-    return title.replace(/\s*[-–—]\s*ChatGPT\s*$/i, '').trim() || 'ChatGPT conversation';
+    const conversationId = currentConversationId();
+    if (conversationId) {
+      for (const anchor of document.querySelectorAll('a[href]')) {
+        try {
+          const target = new URL(anchor.href, location.href);
+          if (target.origin !== location.origin
+              || target.pathname.match(/\/c\/([^/]+)$/)?.[1] !== conversationId) continue;
+          const label = anchor.getAttribute?.('aria-label')?.trim()
+            || anchor.querySelector?.('[title]')?.getAttribute('title')?.trim()
+            || anchor.textContent?.trim();
+          if (label && !/^\d+$/.test(label) && label !== 'ChatGPT') return label;
+        } catch {}
+      }
+    }
+    const tabTitle = String(document.title ?? '')
+      .replace(/\s*[-–—]\s*ChatGPT\s*$/i, '').trim();
+    if (tabTitle && tabTitle !== 'ChatGPT' && !/^\d+$/.test(tabTitle)) return tabTitle;
+    return 'ChatGPT conversation';
   }
 
   /**
@@ -8578,6 +8593,12 @@ globalThis.__dcCompressor = {
    *
    * @returns {string|null} Visible project name, or null for standalone/unresolved chats.
    */
+  function projectNameFromRouteSlug(projectSegment) {
+    const slug = projectSegment?.match(/^g-p-[0-9a-f]{32}-(.+)$/i)?.[1];
+    return slug ? slug.split('-').filter(Boolean)
+      .map(word => word.charAt(0).toUpperCase() + word.slice(1)).join(' ') : null;
+  }
+
   function conversationProjectName() {
     const namesByRoute = conversationProjectName.byRoute ??= new Map();
     const projectSegment = location.pathname.match(/^\/g\/([^/]+)(?:\/|$)/)?.[1] ?? null;
@@ -8600,7 +8621,7 @@ globalThis.__dcCompressor = {
     const pageTitle = String(document.title ?? '')
       .replace(/\s*[-–—]\s*ChatGPT\s*$/i, '')
       .trim();
-    if (!heading || !pageTitle || pageTitle === heading) return namesByRoute.get(projectSegment) ?? null;
+    if (!heading || !pageTitle || pageTitle === heading) return namesByRoute.get(projectSegment) ?? projectNameFromRouteSlug(projectSegment);
     for (const separator of [' - ', ' – ', ' — ']) {
       if (pageTitle.endsWith(`${separator}${heading}`)) {
         const resolved = pageTitle.slice(0, -(`${separator}${heading}`).length).trim();
@@ -8613,7 +8634,7 @@ globalThis.__dcCompressor = {
         return resolved || namesByRoute.get(projectSegment) || null;
       }
     }
-    return namesByRoute.get(projectSegment) ?? null;
+    return namesByRoute.get(projectSegment) ?? projectNameFromRouteSlug(projectSegment);
   }
 
   /**
