@@ -73,11 +73,14 @@
       communicationLogNameViewport,
       changeCommunicationLogDirectoryButton,
       renameCommunicationLogButton,
+      resetCommunicationLogFilenameButton,
       duplicateCommunicationLogButton,
       resetCommunicationLogButton
     } = communicationLogPanelControls(panel);
     if (changeCommunicationLogDirectoryButton) changeCommunicationLogDirectoryButton.innerHTML = renameIconMarkup();
     if (renameCommunicationLogButton) renameCommunicationLogButton.innerHTML = renameIconMarkup();
+    if (resetCommunicationLogFilenameButton) resetCommunicationLogFilenameButton.innerHTML =
+      '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M3 12a9 9 0 1 1 3 6.7"/><path d="M3 4v8h8"/></svg>';
     if (duplicateCommunicationLogButton) duplicateCommunicationLogButton.innerHTML = duplicateIconMarkup();
     if (resetCommunicationLogButton) resetCommunicationLogButton.innerHTML =
       '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 6v5h5"/><path d="M5.5 11a8 8 0 1 1 .8 5"/></svg>';
@@ -124,8 +127,29 @@
         busyLabel: 'Renaming communication log',
         busyTitle: 'Renaming…',
         operation: () => communicationLogRename(requestedName),
-        onSuccess: newFileName => setStatus(`Communication log renamed to ${newFileName}.`),
+        onSuccess: newFileName => {
+          conversationFilenameSetOverride(newFileName.replace(/\.jsonl$/, ''));
+          setStatus(`Communication log renamed to ${newFileName}.`);
+        },
         failurePrefix: 'Communication log rename failed'
+      });
+    });
+    resetCommunicationLogFilenameButton?.addEventListener('click', () => {
+      if (communicationLogUiActionInProgress || !conversationFilenameOverride()) return;
+      const automaticBase = `${conversationProjectName()
+        ? sanitizeFileName(conversationProjectName()).replace(/\s+/g, '-') : 'Unknown'}__${sanitizeFileName(conversationTitle())}`;
+      void runCommunicationLogPanelAction(resetCommunicationLogFilenameButton, {
+        idleLabel: 'Reset filename',
+        busyLabel: 'Resetting filename',
+        busyTitle: 'Resetting filename…',
+        operation: async () => {
+          // Reset the explicit override only once the logical rename succeeds.
+          const name = await communicationLogRename(automaticBase + '.jsonl');
+          conversationFilenameSetOverride(null);
+          return name;
+        },
+        onSuccess: name => setStatus(`Filename reset to ${name}.`),
+        failurePrefix: 'Filename reset failed'
       });
     });
     duplicateCommunicationLogButton?.addEventListener('click', () => {
