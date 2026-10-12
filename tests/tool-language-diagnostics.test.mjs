@@ -75,7 +75,8 @@ test('issue 119 keeps Markdown-ready diagnostics compact after removing full-doc
 test('issue 119 keeps high-volume diagnostics cheap while the log UI is collapsed', () => {
   assert.match(userscript, /function schedulePersistDiagnosticLog\(\)/);
   assert.match(userscript, /schedulePersistDiagnosticLog\(\);\n    refreshDiagnosticLog\(\);/);
-  assert.match(userscript, /diagnosticLog\.slice\(-MAX_PERSISTED_DIAGNOSTIC_LOG_ITEMS\)/);
+  assert.match(userscript, /diagnosticLog\.slice\(tailStart\)/);
+  assert.match(userscript, /version_before_persisted: versionBeforeTail/);
   assert.match(userscript, /if \(output && diagnosticLogExpanded\) \{/);
 });
 

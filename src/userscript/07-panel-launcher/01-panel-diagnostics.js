@@ -64,8 +64,6 @@
   /**
    * Writes recorder diagnostics to DevTools during startup or when continued console output is enabled.
    *
-   * This gate is independent of the panel's severity filter and covers direct lifecycle messages too.
-   *
    * @param {'errors'|'warnings'|'debug'|'verbose'} level - Severity selecting the DevTools console method.
    * @param {string} message - Console message, including its recorder prefix.
    * @param {Object|null} data - Diagnostic payload redacted before console output.
@@ -98,7 +96,15 @@
     };
     diagnosticLog.push(entry);
     if (diagnosticLog.length > MAX_DIAGNOSTIC_LOG_ITEMS) {
-      diagnosticLog.splice(0, diagnosticLog.length - MAX_DIAGNOSTIC_LOG_ITEMS);
+      const evicted = diagnosticLog.splice(0, diagnosticLog.length - MAX_DIAGNOSTIC_LOG_ITEMS);
+      for (const item of evicted) {
+        if (item?.level === 'lifecycle' &&
+            item.message === 'dc-version-transition' &&
+            item.data && Object.hasOwn(item.data, 'version') &&
+            (typeof item.data.version === 'string' || item.data.version === null)) {
+          diagnosticLogBaselineVersion = item.data.version;
+        }
+      }
     }
     schedulePersistDiagnosticLog();
     refreshDiagnosticLog();

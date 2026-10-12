@@ -26,6 +26,10 @@ def run(command: list[str]) -> int:
 def main() -> int:
   results = [
     run(["node", "benchmarks/issue166-browser-segment-benchmark.mjs"]),
+    run(["node", "tests/gen-persistence-performance.bench.mjs", "HEAD"]),
+    run(["node", "tests/gen-persistence-performance.bench.mjs", "origin/main"]),
+    run(["node", "tests/gen-browser-storage-ci.mjs"]),
+    run(["node", "tests/gen-browser-gen-startup-ci.mjs"]),
     run(["node", "scripts/ci-environment.mjs"]),
     run([sys.executable, "-m", "unittest", "tests/test_repoworkflow_validation.py"]),
   ]
