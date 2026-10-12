@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict';
 import { access, readFile } from 'node:fs/promises';
 import test from 'node:test';
+import { userscript } from './helpers/userscript-source.mjs';
 
 const manifest = JSON.parse(await readFile(
   new URL('../src/userscript-manifest.json', import.meta.url), 'utf8'
@@ -18,11 +19,6 @@ const bridge = await readFile(
   new URL('../src/userscript/04-conversation-rendering/08-agent-plugin-bridge.js',
     import.meta.url), 'utf8'
 );
-const userscript = await readFile(
-  new URL('../chatgpt-conversation-markdown-export.user.js', import.meta.url),
-  'utf8'
-);
-
 test('provider selection remains owned by AICC, not DownloadConversation', () => {
   assert.equal(Object.hasOwn(manifest, 'agent_plugins'), false);
   assert.deepEqual(manifest.dependencies.map(entry => entry.name),
