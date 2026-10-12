@@ -107,6 +107,10 @@
       #${PANEL_ID} .tm-sound-volume-slider::-webkit-slider-runnable-track{background:repeating-linear-gradient(to top,#8192a8 0 2px,#323b49 2px 15px);border-radius:6px;border:1px solid #a4b1c3;width:12px}
       #${PANEL_ID} .tm-sound-volume-slider::-webkit-slider-thumb{appearance:none;background:#b2d8ff;border:2px solid #fff;box-shadow:0 0 0 2px #296ca8;width:22px;height:14px;border-radius:5px}
       #${PANEL_ID} .tm-sound-volume-value{font-size:14px;font-weight:700;color:#fff}
+      #${PANEL_ID} .tm-sound-popup{flex-direction:row;align-items:center;flex-wrap:wrap;justify-content:center}
+      #${PANEL_ID} .tm-volume-ticks{height:145px;display:flex;flex-direction:column;justify-content:space-between;font:700 12px/1 system-ui,sans-serif;color:#fff;text-shadow:0 1px 2px #000}
+      #${PANEL_ID} .tm-sound-volume-value{flex:0 0 100%;text-align:center}
+
       #${PANEL_ID} .tm-status{margin:0;max-height:0;overflow:hidden}
       #${PANEL_ID} .tm-status:not(:empty){max-height:2px}
       @media(max-width:390px){#${PANEL_ID} .tm-md-metadata{font-size:11px;gap:2px}#${PANEL_ID} .tm-recording-modes{gap:2px}#${PANEL_ID} .tm-extract-formats{gap:8px}}
