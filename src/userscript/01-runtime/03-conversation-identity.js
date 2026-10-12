@@ -1,6 +1,10 @@
 
   /**
-   * Resolves the containing ChatGPT project name for a project conversation.
+   * Provides a readable project name from a route UUID suffix as a fallback.
+   *
+   * @param {string|null} projectSegment - Full project route identifier.
+   * @returns {string|null} Capitalized slug, or null if the route has no slug.
+   */
    *
    * The project route segment supplies stable identity while the matching project
    * navigation link supplies the user-visible name. A document-title split is a
@@ -14,6 +18,11 @@
       .map(word => word.charAt(0).toUpperCase() + word.slice(1)).join(' ') : null;
   }
 
+  /**
+   * Resolves the project name using project navigation, tab title, or route slug.
+   *
+   * @returns {string|null} Current visible or route-derived project name.
+   */
   function conversationProjectName() {
     const namesByRoute = conversationProjectName.byRoute ??= new Map();
     const projectSegment = location.pathname.match(/^\/g\/([^/]+)(?:\/|$)/)?.[1] ?? null;
