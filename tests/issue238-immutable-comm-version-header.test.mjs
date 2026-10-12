@@ -64,9 +64,11 @@ test('header write failure propagates without marking bytes or dirty', async () 
   assert.equal(result.dirty, false);
 });
 
-test('header runs before an appended event and upon rotation before compression', () => {
+test('append writes header before content; rotation does not create empty metadata fragments', () => {
   assert.match(append, /await communicationLogEnsureFragmentHeader\(\);\s*await communicationLogWritable\.write\(line\)/);
-  assert.match(rotate, /await communicationLogEnsureFragmentHeader\(\);\s*void communicationLogQueueSegmentCompression/);
+  assert.match(rotate, /await communicationLogSwitchActiveFile\(alternate\);/);
+  assert.doesNotMatch(rotate, /await communicationLogEnsureFragmentHeader\(\)/);
+  assert.doesNotMatch(rotate, /await communicationLogOpenWriter\(\)/);
   assert.doesNotMatch(source.slice(source.indexOf('const line =')), /timestamp:/);
 });
 
