@@ -8,16 +8,21 @@
    *
    * @returns {string|null} Visible project name, or null for standalone/unresolved chats.
    */
+  const conversationProjectNamesByRoute = new Map();
   function conversationProjectName() {
     const projectSegment = location.pathname.match(/^\/g\/([^/]+)(?:\/|$)/)?.[1] ?? null;
     if (!projectSegment) return null;
     const projectPath = `/g/${projectSegment}/project`;
+    const projectRoot = `/g/${projectSegment}`;
     for (const anchor of document.querySelectorAll('a[href]')) {
       try {
         const target = new URL(anchor.href, location.href);
-        if (target.origin !== location.origin || target.pathname !== projectPath) continue;
+        if (target.origin !== location.origin || ![projectPath, projectRoot].includes(target.pathname.replace(/\/$/, ''))) continue;
         const visibleName = anchor.textContent?.trim();
-        if (visibleName) return visibleName;
+        if (visibleName) {
+          conversationProjectNamesByRoute.set(projectSegment, visibleName);
+          return visibleName;
+        }
       } catch {}
     }
 
@@ -25,16 +30,20 @@
     const pageTitle = String(document.title ?? '')
       .replace(/\s*[-–—]\s*ChatGPT\s*$/i, '')
       .trim();
-    if (!heading || !pageTitle || pageTitle === heading) return null;
+    if (!heading || !pageTitle || pageTitle === heading) return conversationProjectNamesByRoute.get(projectSegment) ?? null;
     for (const separator of [' - ', ' – ', ' — ']) {
       if (pageTitle.endsWith(`${separator}${heading}`)) {
-        return pageTitle.slice(0, -(`${separator}${heading}`).length).trim() || null;
+        const resolved = pageTitle.slice(0, -(`${separator}${heading}`).length).trim();
+        if (resolved) conversationProjectNamesByRoute.set(projectSegment, resolved);
+        return resolved || conversationProjectNamesByRoute.get(projectSegment) || null;
       }
       if (pageTitle.startsWith(`${heading}${separator}`)) {
-        return pageTitle.slice(`${heading}${separator}`.length).trim() || null;
+        const resolved = pageTitle.slice(`${heading}${separator}`.length).trim();
+        if (resolved) conversationProjectNamesByRoute.set(projectSegment, resolved);
+        return resolved || conversationProjectNamesByRoute.get(projectSegment) || null;
       }
     }
-    return null;
+    return conversationProjectNamesByRoute.get(projectSegment) ?? null;
   }
 
   /**
@@ -46,7 +55,7 @@
     const conversationName = sanitizeFileName(conversationTitle());
     const projectName = conversationProjectName();
     return projectName
-      ? `${sanitizeFileName(projectName)} - ${conversationName}`
+      ? `${sanitizeFileName(projectName).replace(/\s+/g, '-')}__${conversationName}`
       : conversationName;
   }
 
@@ -88,11 +97,11 @@
     }
     const chatName = sanitizeFileName(chat);
     const identity = project
-      ? `${sanitizeFileName(project)} - ${chatName}`
+      ? `${sanitizeFileName(project).replace(/\s+/g, '-')}__${chatName}`
       : chatName;
     const start = canonicalFilenameTimestamp(timestampRange.start_timestamp);
     const end = canonicalFilenameTimestamp(timestampRange.end_timestamp);
-    return `DownloadConversation_${identity}_${start}-${end}`;
+    return `${identity}_${start}-${end}`;
   }
 
   /**
