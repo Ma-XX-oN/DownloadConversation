@@ -139,3 +139,10 @@ test('inconsistent original source ordering remains unchanged and explicitly fla
   assert.deepEqual(result.entries.map(item => item.record.capture_order.ordinal),
     [9, 2, 3]);
 });
+
+
+test('merged exports use the mlog extension with the existing compressor', () => {
+  const exporter = productionFunctionSource('saveMergedLogs');
+  assert.match(exporter, /const suffix = '\.mlog' \+ compressorExtension\(\);/);
+  assert.doesNotMatch(exporter, /\.merged\.log/);
+});
