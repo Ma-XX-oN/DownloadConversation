@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         ChatGPT Conversation Markdown Recorder
 // @namespace    https://chatgpt.com/
-// @version      1.11.4-issue.220.29
+// @version      1.11.4-issue.220.30
 // @description  Exports the current ChatGPT conversation directly from the Conversation API as Markdown or JSONL.
 // @match        https://chatgpt.com/*
 // @match        https://chat.openai.com/*
@@ -16485,6 +16485,8 @@ Image elapsed: ${formatDuration(imageElapsed)} — Completed: ${imageCompleted}/
   function communicationLogPanelControls(panel = document.getElementById(PANEL_ID)) {
     const root = panel instanceof Element ? panel : null;
     return {
+      communicationLogDirectoryText: root?.querySelector('[data-role="communication-log-directory"]') ?? null,
+      changeCommunicationLogDirectoryButton: root?.querySelector('[data-role="change-communication-log-directory"]') ?? null,
       communicationLogNameViewport: root?.querySelector('[data-role="communication-log-name-viewport"]') ?? null,
       communicationLogNameText: root?.querySelector('[data-role="communication-log-name"]') ?? null,
       renameCommunicationLogButton: root?.querySelector('[data-role="rename-communication-log"]') ?? null,
@@ -16541,14 +16543,18 @@ Image elapsed: ${formatDuration(imageElapsed)} — Completed: ${imageCompleted}/
    * @returns {Object} Short display location and exact folder/filename.
    */
   function communicationLogDisplayLocation(directory, filename) {
-    if (!filename) return { display: 'Not configured', exact: 'Not configured' };
-    const folderName = typeof directory?.name === 'string'
+    const directoryName = typeof directory?.name === 'string'
       ? directory.name.trim() : '';
-    const shortName = filename.replace(/^DownloadConversation_/, '');
-    return {
-      display: folderName ? `${folderName} / ${shortName}` : filename,
-      exact: folderName ? `${folderName} / ${filename}` : filename
-    };
+    if (!filename) return { directory: directoryName || 'Not configured', base: 'Not configured' };
+    const logicalBase = filename.replace(/\\.[^.]+$/, '').replace(/^DownloadConversation_/, '');
+    const projectName = conversationProjectName();
+    const title = sanitizeFileName(conversationTitle());
+    const normalizedProject = projectName ? sanitizeFileName(projectName).replace(/\\s+/g, '-') : '';
+    const legacyPrefix = projectName ? sanitizeFileName(projectName) + ' - ' : '';
+    const base = normalizedProject && logicalBase.startsWith(legacyPrefix)
+      ? normalizedProject + '__' + logicalBase.slice(legacyPrefix.length)
+      : logicalBase;
+    return { directory: directoryName || 'Not configured', base };
   }
 
   /**
@@ -16560,6 +16566,8 @@ Image elapsed: ${formatDuration(imageElapsed)} — Completed: ${imageCompleted}/
     const status = document.querySelector(`#${PANEL_ID} [data-role="status"]`);
     if (!status) return;
     const {
+      communicationLogDirectoryText,
+      changeCommunicationLogDirectoryButton,
       communicationLogNameViewport,
       communicationLogNameText,
       renameCommunicationLogButton,
@@ -16571,13 +16579,15 @@ Image elapsed: ${formatDuration(imageElapsed)} — Completed: ${imageCompleted}/
       communicationLogDirectoryHandle,
       communicationLogAvailable ? communicationLogFileName : null
     );
-    if (communicationLogNameText) communicationLogNameText.textContent = location.display;
+    if (communicationLogDirectoryText) communicationLogDirectoryText.textContent = location.directory + '/';
+    if (changeCommunicationLogDirectoryButton) changeCommunicationLogDirectoryButton.disabled = communicationLogUiActionInProgress || communicationLogDirectoryPickerOpening;
+    if (communicationLogNameText) communicationLogNameText.textContent = location.base;
     if (communicationLogNameViewport) {
-      communicationLogNameViewport.title = location.exact;
+      communicationLogNameViewport.title = location.base;
       communicationLogNameViewport.setAttribute(
         'aria-label',
         communicationLogAvailable
-          ? `Current communication log location: ${location.exact}`
+          ? `Current communication log filename base: ${location.base}`
           : 'Current communication log location: not configured'
       );
       requestAnimationFrame(refreshCommunicationLogNameOverflow);
@@ -22124,6 +22134,7 @@ Image elapsed: ${formatDuration(imageElapsed)} — Completed: ${imageCompleted}/
       #${PANEL_ID} .tm-sound-volume-slider{writing-mode:vertical-lr;direction:rtl;width:24px;height:120px}
       #${PANEL_ID} .tm-sound-volume-value{min-width:2ch;text-align:center;font-variant-numeric:tabular-nums}
       #${PANEL_ID} .tm-communication-log-row{flex-wrap:nowrap;min-width:0;gap:5px}
+      #${PANEL_ID} .tm-recording-location{display:flex;flex-direction:column;gap:3px;min-width:0}
       #${PANEL_ID} .tm-log-name-viewport{flex:1 1 auto;min-width:0;overflow:hidden;color:#fff;box-sizing:border-box}
       #${PANEL_ID} .tm-log-name-text{display:block;width:max-content;min-width:100%;box-sizing:border-box;padding:5px 0;white-space:nowrap;transform:translateX(0);transition:transform var(--tm-log-name-duration,1.5s) linear .35s}
       #${PANEL_ID} .tm-log-name-viewport:hover .tm-log-name-text{transform:translateX(calc(-1 * var(--tm-log-name-overflow,0px)))}
@@ -22909,7 +22920,7 @@ Image elapsed: ${formatDuration(imageElapsed)} — Completed: ${imageCompleted}/
       <div class="tm-log-output" data-role="log-output" hidden></div>
       <div class="tm-row tm-diagnostics-row"><label for="tm-recorder-diagnostics">Diagnostics:</label><select id="tm-recorder-diagnostics" data-role="diagnostics"><option value="errors">Errors</option><option value="warnings">Warnings</option><option value="debug">Debug</option><option value="verbose">Verbose</option></select></div>
       <div class="tm-recorder-section tm-recording-section">
-        <div class="tm-row tm-communication-log-row"><div class="tm-log-name-viewport" data-role="communication-log-name-viewport" role="textbox" aria-readonly="true" aria-label="Current communication log filename" title="Current communication log filename"><span class="tm-log-name-text" data-role="communication-log-name"></span></div><button class="tm-icon-button" data-role="rename-communication-log" type="button" aria-label="Rename communication log" title="Rename communication log"></button></div>
+        <div class="tm-recording-location"><div class="tm-row tm-communication-log-row"><div class="tm-log-name-viewport" data-role="communication-log-directory" aria-label="Destination directory"></div><button class="tm-icon-button" data-role="change-communication-log-directory" type="button" aria-label="Change destination directory" title="Change destination directory"></button></div><div class="tm-row tm-communication-log-row"><div class="tm-log-name-viewport" data-role="communication-log-name-viewport" role="textbox" aria-readonly="true" aria-label="Current communication log filename base" title="Current communication log filename base"><span class="tm-log-name-text" data-role="communication-log-name"></span></div><button class="tm-icon-button" data-role="rename-communication-log" type="button" aria-label="Rename communication log" title="Rename communication log"></button></div></div>
         <div class="tm-row tm-recording-modes"><label><input data-role="record-general" type="checkbox" checked> Gen</label><label><input data-role="record-communication" type="checkbox" checked> Comm</label><label><input data-role="console-diagnostics" type="checkbox"> Con</label><label><input data-role="record-one-group" type="checkbox"> 1</label></div>
         <div class="tm-row tm-recording-actions"><button class="tm-icon-button" data-role="save-log" type="button" aria-label="Save merged log" title="Save merged log"></button><button class="tm-icon-button" data-role="reset-communication-log" type="button" aria-label="Reset communication log" title="Reset communication log"></button></div>
       </div>
@@ -22996,19 +23007,54 @@ Image elapsed: ${formatDuration(imageElapsed)} — Completed: ${imageCompleted}/
     panel.querySelector('[data-role="jump"]').addEventListener('click', () => void runJump());
     const {
       communicationLogNameViewport,
+      changeCommunicationLogDirectoryButton,
       renameCommunicationLogButton,
       duplicateCommunicationLogButton,
       resetCommunicationLogButton
     } = communicationLogPanelControls(panel);
+    if (changeCommunicationLogDirectoryButton) changeCommunicationLogDirectoryButton.innerHTML = renameIconMarkup();
     if (renameCommunicationLogButton) renameCommunicationLogButton.innerHTML = renameIconMarkup();
     if (duplicateCommunicationLogButton) duplicateCommunicationLogButton.innerHTML = duplicateIconMarkup();
     if (resetCommunicationLogButton) resetCommunicationLogButton.innerHTML =
       '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 6v5h5"/><path d="M5.5 11a8 8 0 1 1 .8 5"/></svg>';
     communicationLogNameViewport?.addEventListener('pointerenter', refreshCommunicationLogNameOverflow);
+    changeCommunicationLogDirectoryButton?.addEventListener('click', () => {
+      if (communicationLogUiActionInProgress || communicationLogDirectoryPickerOpening) return;
+      const pickerWindow = typeof unsafeWindow !== 'undefined' ? unsafeWindow : window;
+      if (typeof pickerWindow.showDirectoryPicker !== 'function') {
+        setStatus('Directory chooser is unavailable in this browser.');
+        return;
+      }
+      communicationLogDirectoryPickerOpening = true;
+      let picker;
+      try {
+        picker = pickerWindow.showDirectoryPicker({ mode: 'readwrite' });
+      } catch (error) {
+        communicationLogDirectoryPickerOpening = false;
+        setStatus('Directory selection failed: ' + errorMessage(error));
+        return;
+      }
+      void Promise.resolve(picker).then(async handle => {
+        if (await communicationLogPermissionState(handle) !== 'granted') {
+          throw new Error('Read/write permission was not granted.');
+        }
+        await communicationLogWriteChain;
+        await communicationLogStoreDirectoryHandle(handle);
+        await communicationLogActivateDirectory(handle);
+        setStatus('Communication log destination changed to ' + handle.name + '.');
+      }).catch(error => {
+        if (error?.name !== 'AbortError') setStatus('Directory selection failed: ' + errorMessage(error));
+      }).finally(() => {
+        communicationLogDirectoryPickerOpening = false;
+        refreshStatus();
+      });
+    });
     renameCommunicationLogButton?.addEventListener('click', () => {
       if (renameCommunicationLogButton.disabled || communicationLogUiActionInProgress || !communicationLogFileName) return;
-      const requestedName = window.prompt('Rename communication log', communicationLogFileName);
-      if (requestedName === null || requestedName === communicationLogFileName) return;
+      const currentBase = communicationLogDisplayLocation(communicationLogDirectoryHandle, communicationLogFileName).base;
+      const requestedBase = window.prompt('Rename communication log filename base', currentBase);
+      if (requestedBase === null || requestedBase === currentBase) return;
+      const requestedName = requestedBase + '.jsonl';
       void runCommunicationLogPanelAction(renameCommunicationLogButton, {
         idleLabel: 'Rename communication log',
         busyLabel: 'Renaming communication log',
