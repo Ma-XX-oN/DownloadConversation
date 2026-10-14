@@ -238,6 +238,18 @@
     }
     const terminal = agentTerminalNormalize(capture, event);
     if (!terminal) return null;
+    // A new request is already in flight: do not let an older capture
+    // terminate its stopwatch before the newer backend ID is associated.
+    if (typeof agentStopwatchState !== 'undefined' && agentStopwatchState?.active &&
+        agentStopwatchState.pending_capture &&
+        agentStopwatchState.pending_capture !== capture &&
+        Number.isFinite(agentStopwatchState.pending_submission_at_ms) &&
+        agentStopwatchState.pending_submission_at_ms > agentStopwatchState.started_at_ms) {
+      logDiagnostic('debug', 'agent-terminal-rejected-older-capture-after-submission', {
+        exchange_id: terminal.exchange_id
+      });
+      return null;
+    }
     if (typeof agentStopwatchState !== 'undefined' && agentStopwatchState?.active &&
         terminal.exchange_id !== agentStopwatchState.exchange_id) {
       logDiagnostic('debug', 'agent-terminal-rejected-active-exchange-mismatch', {
