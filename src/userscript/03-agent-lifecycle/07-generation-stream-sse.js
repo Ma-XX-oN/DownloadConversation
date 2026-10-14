@@ -51,6 +51,9 @@
       try { parsed = JSON.parse(data); } catch { continue; }
       if (typeof parsed === 'string') continue;
       streamTailApplyEvent(capture, parsed);
+      if (typeof agentStopwatchObserveProviderIdentity === 'function') {
+        agentStopwatchObserveProviderIdentity(capture, parsed);
+      }
       agentStopwatchObserveStreamEvent(capture, parsed);
       agentTerminalObserve(capture, parsed);
     }
