@@ -60,6 +60,7 @@ function functionSource(source, name) {
 
 function identityHarness({ pathname, heading, title, links }) {
   const conversationTitle = functionSource(identitySource, 'conversationTitle');
+  const usableTitle = functionSource(identitySource, 'usableConversationTitle');
   const sanitizeFileName = functionSource(identitySource, 'sanitizeFileName');
   const projectName = functionSource(identitySource, 'conversationProjectName');
   const fileBase = functionSource(identitySource, 'conversationFileBaseName');
@@ -75,6 +76,7 @@ function identityHarness({ pathname, heading, title, links }) {
   };
   return new Function('document', 'location', 'URL', `
     function currentConversationId() { return 'conversation-1'; }
+    ${usableTitle}
     ${conversationTitle}
     ${sanitizeFileName}
     ${projectName}
