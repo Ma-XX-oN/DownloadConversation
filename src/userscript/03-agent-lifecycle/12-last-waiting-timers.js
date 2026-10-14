@@ -216,11 +216,11 @@
   /** Existing terminal hook, extended without re-inferring state from the DOM. */
   const agentTimingOriginalTerminalObserve = agentTerminalObserve;
   agentTerminalObserve = function agentTimingTerminalObserve(capture, event = null) {
-    const finishedAtMs = performance.now();
-    const terminal = agentTerminalNormalize(capture, event);
-    const result = agentTimingOriginalTerminalObserve(capture, event);
-    agentTimingObserveTerminal(terminal, finishedAtMs);
-    return result;
+    const terminal = agentTimingOriginalTerminalObserve(capture, event);
+    if (terminal?.kind === 'success') {
+      agentTimingObserveTerminal(terminal, terminal.completed_at_ms);
+    }
+    return terminal;
   };
 
   /** Existing generation submission hook, extended to reset Waiting. */
