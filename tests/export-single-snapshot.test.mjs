@@ -74,6 +74,7 @@ function identityHarness({ pathname, heading, title, links }) {
     querySelectorAll: selector => selector === 'a[href]' ? links : []
   };
   return new Function('document', 'location', 'URL', `
+    function currentConversationId() { return 'conversation-1'; }
     ${conversationTitle}
     ${sanitizeFileName}
     ${projectName}
