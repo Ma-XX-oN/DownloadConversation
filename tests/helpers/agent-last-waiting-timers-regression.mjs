@@ -86,7 +86,7 @@ function timingHarness() {
       agentStopwatchState.total_ms = terminal.total_ms;
       agentStopwatchStopTimer();
       agentStopwatchRender(performance.now());
-      return terminal;
+      return { ...terminal, completed_at_ms: performance.now() };
     }
 
     function agentStopwatchObserveRequest(capture) {
