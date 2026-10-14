@@ -138,7 +138,7 @@
     document.addEventListener('keydown', handleLiveTailPromptKeydown, true);
     liveTailRootObserver = new MutationObserver(() => {
       if (document.querySelector('#thread') !== liveTailObservedThread) bindLiveTailThread();
-      bindConnectionRecoveryRoot();
+      if (!connectionRecoveryRoot?.isConnected) bindConnectionRecoveryRoot();
     });
     if (document.documentElement) {
       liveTailRootObserver.observe(document.documentElement, { childList: true, subtree: true });
