@@ -152,3 +152,5 @@
       </div>
       <div class="tm-status" data-role="status" role="status"></div>
     `;
+    const title = panel.querySelector('[data-role="title"]');
+    if (title) title.textContent = `ChatGPT Recorder v${VERSION}`;
