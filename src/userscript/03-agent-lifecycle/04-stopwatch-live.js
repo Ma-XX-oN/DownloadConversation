@@ -63,7 +63,9 @@
       total_ms: null,
       exchange_id: null,
       pending_submission_at_ms: null,
-      pending_message_id: null
+      pending_message_id: null,
+      pending_capture: null,
+      bound_capture: null
     };
     agentStopwatchRender(submittedAtMs);
     agentStopwatchStartTimer();
@@ -101,6 +103,7 @@
     if (!agentStopwatchState?.active) agentStopwatchStartNew(submittedAtMs);
     agentStopwatchState.pending_submission_at_ms = submittedAtMs;
     agentStopwatchState.pending_message_id = userMessage?.id ?? null;
+    agentStopwatchState.pending_capture = capture;
     agentStopwatchRender(performance.now());
   }
 
@@ -138,22 +141,95 @@
     if (message?.author?.role !== 'user' || !agentStopwatchState?.active) return;
     const pendingId = agentStopwatchState.pending_message_id;
     if (pendingId && message?.id && message.id !== pendingId) return;
-    const submittedAtMs = agentStopwatchState.pending_submission_at_ms;
-    if (!Number.isFinite(submittedAtMs)) return;
     const exchangeId = agentStopwatchExchangeId(message);
-    if (!exchangeId) return;
-    capture.stopwatch_exchange_id = exchangeId;
-    if (!agentStopwatchState.exchange_id) {
-      agentStopwatchState.exchange_id = exchangeId;
-    } else if (exchangeId !== agentStopwatchState.exchange_id) {
-      agentStopwatchStartNew(submittedAtMs);
-      agentStopwatchState.exchange_id = exchangeId;
-    } else {
-      agentStopwatchRecordLap(submittedAtMs);
+    if (agentStopwatchBindExchange(capture, exchangeId)) {
+      agentStopwatchRender(performance.now());
     }
+  }
+
+  /**
+   * Binds authoritative provider identity to the originating request capture.
+   * The capture association prevents late metadata from an older stream from
+   * replacing the currently active run's identity.
+   *
+   * @param {Object} capture - Capture associated with the provider response.
+   * @param {string|null} exchangeId - Authoritative backend exchange identity.
+   * @returns {boolean} Whether the identity belongs to the active run.
+   */
+  function agentStopwatchBindExchange(capture, exchangeId) {
+    if (typeof exchangeId !== 'string' || !exchangeId || !agentStopwatchState?.active) return false;
+    const state = agentStopwatchState;
+    const pending = state.pending_capture === capture &&
+      Number.isFinite(state.pending_submission_at_ms);
+    if (!pending && state.bound_capture !== capture) return false;
+    // A previous response must not consume a newer request's pending identity.
+    if (!pending && state.pending_capture && state.pending_capture !== capture) return false;
+    if (capture.stopwatch_exchange_id && capture.stopwatch_exchange_id !== exchangeId) {
+      logDiagnostic('warnings', 'agent-stopwatch-exchange-identity-conflict', {
+        previous_exchange_id: capture.stopwatch_exchange_id,
+        received_exchange_id: exchangeId
+      });
+      return false;
+    }
+    if ((state.exchange_id && state.exchange_id !== exchangeId) ||
+        (!state.exchange_id && pending &&
+         state.started_at_ms !== state.pending_submission_at_ms)) {
+      if (!pending) return false;
+      const submittedAtMs = state.pending_submission_at_ms;
+      agentStopwatchStartNew(submittedAtMs);
+    } else if (pending && state.exchange_id === exchangeId &&
+               state.started_at_ms !== state.pending_submission_at_ms) {
+      agentStopwatchRecordLap(state.pending_submission_at_ms);
+    }
+    capture.stopwatch_exchange_id = exchangeId;
+    agentStopwatchState.exchange_id = exchangeId;
+    agentStopwatchState.bound_capture = capture;
+    agentStopwatchState.pending_capture = null;
     agentStopwatchState.pending_submission_at_ms = null;
     agentStopwatchState.pending_message_id = null;
-    agentStopwatchRender(performance.now());
+    return true;
+  }
+
+  /**
+   * Extracts the exchange identity from the observed, request-owned resume
+   * token. The token is transport metadata, not an authentication credential
+   * for this userscript; this only decodes its JSON payload.
+   *
+   * @param {Object} event - Provider SSE event.
+   * @returns {string|null} Exchange identity, when present.
+   */
+  function agentStopwatchResumeTokenExchange(event) {
+    if (event?.type !== 'resume_conversation_token' ||
+        typeof event.token !== 'string' || typeof atob !== 'function') return null;
+    try {
+      const payload = event.token.split('.')[1];
+      if (!payload || payload.length > 8192) return null;
+      const decoded = JSON.parse(atob(payload.replace(/-/g, '+').replace(/_/g, '/')));
+      const topic = decoded?.turn_topic_id;
+      if (typeof topic !== 'string' || !topic.startsWith('conversation-turn-')) return null;
+      return topic.slice('conversation-turn-'.length) || null;
+    } catch {
+      return null;
+    }
+  }
+
+  /**
+   * Observes backend identity after the request-owned SSE capture was updated.
+   *
+   * @param {Object} capture - Source response capture.
+   * @param {Object} event - Latest parsed backend event.
+   * @returns {void} No value is returned.
+   */
+  function agentStopwatchObserveProviderIdentity(capture, event) {
+    if (!capture || !agentStopwatchState?.active) return;
+    if (event?.type === 'resume_conversation_token' &&
+        event.conversation_id && capture.conversation_id &&
+        event.conversation_id !== capture.conversation_id) return;
+    const tokenId = agentStopwatchResumeTokenExchange(event);
+    const messageId = [...(capture.stream_messages ?? [])].reverse()
+      .map(message => agentStopwatchExchangeId(message))
+      .find(Boolean) ?? null;
+    agentStopwatchBindExchange(capture, tokenId || messageId);
   }
 
   /**

@@ -1,0 +1,62 @@
+'use strict';
+const test = require('node:test');
+const assert = require('node:assert/strict');
+const fs = require('node:fs');
+const source = fs.readFileSync(
+  'src/userscript/02-network-communication/06-comm-version-boundary.js', 'utf8'
+);
+const resolve = new Function(source +
+  '\nreturn communicationLogResolveCommVersionAtBoundary;')();
+const encode = value => new TextEncoder().encode(value);
+const line = value => JSON.stringify(value) + '\n';
+const stamp = n => `2026-10-12T00:00:0${n}.000Z`;
+const first = encode(line({version:{comm:'v1'}}) +
+  line({timestamp:stamp(1),version:{comm:'v2'}}));
+const second = encode(line({version:{comm:'v2'}}) +
+  line({timestamp:stamp(3),version:{comm:'v3'}}));
+const future = encode(line({version:{comm:'v9'}}) +
+  line({timestamp:stamp(4),message:'later'}));
+
+test('inclusive transition and cross-fragment effective version', () => {
+  assert.equal(resolve([first], stamp(1)), 'v2');
+  assert.equal(resolve([first, second], stamp(2)), 'v2');
+  assert.equal(resolve([first, second], stamp(3)), 'v3');
+});
+test('a future immutable fragment header cannot rewrite prior history', () => {
+  assert.equal(resolve([first, second, future], stamp(2)), 'v2');
+  assert.equal(resolve([future], stamp(2)), null);
+});
+test('legacy absence and an explicit null do not invent version', () => {
+  assert.equal(resolve([encode(line({timestamp:stamp(1),message:'old'}))], stamp(2)), null);
+  assert.equal(resolve([encode(line({version:{comm:null}}) +
+    line({timestamp:stamp(1),message:'old'}))], stamp(2)), null);
+});
+test('ignores incomplete JSONL tail without applying future versions', () => {
+  const incomplete = encode(line({version:{comm:'v1'}}) +
+    JSON.stringify({timestamp:stamp(1),version:{comm:'v2'}}));
+  assert.equal(resolve([incomplete], stamp(2)), null);
+});
+test('rejects invalid boundaries', () => {
+  assert.throws(() => resolve([first], 'invalid'), /Invalid COMM/);
+});
+
+test('session-start script versions override immutable fragment headers after upgrades', () => {
+  const upgraded = encode(line({version:{comm:'v1'}})
+    + line({timestamp:stamp(1),type:'communication_session_start',script_version:'v1'})
+    + line({timestamp:stamp(3),type:'communication_session_start',script_version:'v2'})
+    + line({timestamp:stamp(4),message:'after'}));
+  assert.equal(resolve([upgraded], stamp(2)), 'v1');
+  assert.equal(resolve([upgraded], stamp(3)), 'v2');
+  assert.equal(resolve([upgraded], stamp(4)), 'v2');
+  const legacy = encode(line({timestamp:stamp(1),type:'communication_session_start',
+    script_version:'unknown'}));
+  assert.equal(resolve([legacy], stamp(2)), null);
+});
+
+test('clock rollback does not discard later source-order version events', () => {
+  const reversed = encode(line({version:{comm:'v1'}})
+    + line({timestamp:stamp(1),type:'communication_session_start',script_version:'v1'})
+    + line({timestamp:stamp(4),message:'future clock'})
+    + line({timestamp:stamp(2),type:'communication_session_start',script_version:'v2'}));
+  assert.equal(resolve([reversed], stamp(3)), 'v2');
+});

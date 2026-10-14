@@ -46,8 +46,19 @@
       if (kinds.length) await runExport(kinds, { compressed: exportCompressionEnabled });
     };
     panel.querySelector('[data-role="extract"]').addEventListener('click', () => void runSelectedExports());
-    panel.querySelector('[data-role="format-jsonl"]').addEventListener('change', updateUi);
-    panel.querySelector('[data-role="format-md"]').addEventListener('change', updateUi);
+    for (const [role, key, fallback] of [
+      ['format-jsonl', EXPORT_JSONL_STORAGE_KEY, false],
+      ['format-md', EXPORT_MD_STORAGE_KEY, true]
+    ]) {
+      const input = panel.querySelector(`[data-role="${role}"]`);
+      if (!(input instanceof HTMLInputElement)) continue;
+      const stored = localStorage.getItem(key);
+      input.checked = stored === null ? fallback : stored === 'true';
+      input.addEventListener('change', () => {
+        localStorage.setItem(key, String(input.checked));
+        updateUi();
+      });
+    }
     panel.addEventListener('mouseleave', () => {
       if (!panel.matches(':focus-within') && !exportInProgress && !testInProgress) {
         panel.style.display = 'none';
@@ -176,6 +187,9 @@
     installLauncherRemovalDiagnostics();
     installLauncherTopologyDiagnostics();
   }
+  // Capture sequencing and recording-group state are now initialized.
+  // Record the current version once per page initialization, unfiltered.
+  logDiagnostic('lifecycle', 'dc-version-transition', { version: VERSION });
   communicationLogInitializationPromise = initializeCommunicationDiskRecorder();
   installLiveTailTracking();
   /** Persisted scalar volume present when the userscript was initialized. */

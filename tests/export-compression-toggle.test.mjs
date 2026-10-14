@@ -84,13 +84,13 @@ function harness() {
 test('Issue 173 panel places an explicit raw/compressed toggle after MD', () => {
   assert.match(userscript, /format-md[^\n]+data-role="export-compression"/);
   assert.match(userscript, /data-role="export-compression"[^>]+role="switch"/);
-  assert.match(userscript, /aria-label="Raw export output"/);
+  assert.match(userscript, /aria-label="Save uncompressed"/);
 });
 
 test('Issue 173 toggle exposes large-circle raw and small-circle compressed semantics with tooltips', () => {
   assert.match(userscript, /exportCompressionIconMarkup/);
-  assert.match(userscript, /Raw JSONL\/MD files/);
-  assert.match(userscript, /Compress JSONL\/MD files/);
+  assert.match(userscript, /radius = compressed \? 4 : 8/);
+  assert.match(userscript, /aria-label="Save uncompressed"/);
   assert.match(userscript, /aria-checked/);
 });
 

@@ -199,14 +199,14 @@
     const conversationId = currentConversationId();
     const storageKey = `${COMMUNICATION_LOG_TITLE_STORAGE_PREFIX}${conversationId ?? 'unknown'}`;
     const current = sanitizeFileName(conversationTitle());
-    const currentUsable = !/^(?:ChatGPT|ChatGPT conversation)$/i.test(current);
+    const currentUsable = usableConversationTitle(current);
     if (currentUsable) {
       try { localStorage.setItem(storageKey, current); } catch {}
       return current;
     }
     try {
       const stored = localStorage.getItem(storageKey);
-      return stored ? sanitizeFileName(stored) : null;
+      return stored && usableConversationTitle(stored) ? sanitizeFileName(stored) : null;
     } catch {
       return null;
     }

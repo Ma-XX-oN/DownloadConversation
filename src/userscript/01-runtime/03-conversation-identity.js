@@ -1,40 +1,75 @@
 
   /**
-   * Resolves the containing ChatGPT project name for a project conversation.
+   * Provides a readable project name from a route UUID suffix as a fallback.
    *
-   * The project route segment supplies stable identity while the matching project
-   * navigation link supplies the user-visible name. A document-title split is a
-   * secondary source when ChatGPT has not mounted that navigation link yet.
+   * @param {string|null} projectSegment - Full project route identifier.
+   * @returns {string|null} Capitalized slug, or null if the route has no slug.
+   */
+  function projectNameFromRouteSlug(projectSegment) {
+    const slug = projectSegment?.match(/^g-p-[0-9a-f]{32}-(.+)$/i)?.[1];
+    return slug ? slug.split('-').filter(Boolean)
+      .map(word => word.charAt(0).toUpperCase() + word.slice(1)).join(' ') : null;
+  }
+
+  /**
+   * Resolves the active project by its stable route ID, using the breadcrumb
+   * visible in the saved ChatGPT DOM. Project routes may include or omit
+   * the human-readable slug while referring to the same project.
    *
-   * @returns {string|null} Visible project name, or null for standalone/unresolved chats.
+   * @returns {string|null} Current project name or null outside a project.
    */
   function conversationProjectName() {
-    const projectSegment = location.pathname.match(/^\/g\/([^/]+)(?:\/|$)/)?.[1] ?? null;
-    if (!projectSegment) return null;
-    const projectPath = `/g/${projectSegment}/project`;
-    for (const anchor of document.querySelectorAll('a[href]')) {
+    const route = location.pathname.match(/^\/g\/(g-p-[0-9a-f]{32})(?:-[^/]+)?(?:\/|$)/i);
+    if (!route) return null;
+    const projectId = route[1].toLowerCase();
+    const namesByRoute = conversationProjectName.byRoute ??= new Map();
+    for (const anchor of document.querySelectorAll(
+      'nav[aria-label="Breadcrumb"] a[href]'
+    )) {
       try {
-        const target = new URL(anchor.href, location.href);
-        if (target.origin !== location.origin || target.pathname !== projectPath) continue;
-        const visibleName = anchor.textContent?.trim();
-        if (visibleName) return visibleName;
+        const url = new URL(anchor.href, location.href);
+        const match = url.pathname.match(
+          /^\/g\/(g-p-[0-9a-f]{32})(?:-[^/]+)?\/project\/?$/i
+        );
+        if (url.origin !== location.origin || !match
+            || match[1].toLowerCase() !== projectId) continue;
+        const name = anchor.textContent?.trim();
+        if (name) {
+          namesByRoute.set(projectId, name);
+          return name;
+        }
       } catch {}
     }
+    return namesByRoute.get(projectId)
+      ?? projectNameFromRouteSlug(location.pathname.split('/')[2]) ?? null;
+  }
 
-    const heading = document.querySelector('h1')?.textContent?.trim();
-    const pageTitle = String(document.title ?? '')
-      .replace(/\s*[-–—]\s*ChatGPT\s*$/i, '')
-      .trim();
-    if (!heading || !pageTitle || pageTitle === heading) return null;
-    for (const separator of [' - ', ' – ', ' — ']) {
-      if (pageTitle.endsWith(`${separator}${heading}`)) {
-        return pageTitle.slice(0, -(`${separator}${heading}`).length).trim() || null;
-      }
-      if (pageTitle.startsWith(`${heading}${separator}`)) {
-        return pageTitle.slice(`${heading}${separator}`.length).trim() || null;
-      }
-    }
-    return null;
+  /**
+   * Returns one conversation-scoped manual filename override across reloads.
+   *
+   * @returns {string|null} Explicit basename or null for automatic naming.
+   */
+  function conversationFilenameOverride() {
+    const id = currentConversationId();
+    if (!id) return null;
+    try {
+      const value = localStorage.getItem('tm-recorder-filename-override:' + id);
+      return value ? sanitizeFileName(value) : null;
+    } catch { return null; }
+  }
+
+  /**
+   * Stores or resets an explicit filename base for the current conversation.
+   *
+   * @param {string|null} value - Manual basename or null to restore automatic naming.
+   * @returns {void} No value is returned.
+   */
+  function conversationFilenameSetOverride(value) {
+    const id = currentConversationId();
+    if (!id) throw new Error('Conversation identity is unavailable.');
+    const key = 'tm-recorder-filename-override:' + id;
+    if (value === null) localStorage.removeItem(key);
+    else localStorage.setItem(key, sanitizeFileName(value));
   }
 
   /**
@@ -44,10 +79,10 @@
    */
   function conversationFileBaseName() {
     const conversationName = sanitizeFileName(conversationTitle());
+    const manual = conversationFilenameOverride();
+    if (manual) return manual;
     const projectName = conversationProjectName();
-    return projectName
-      ? `${sanitizeFileName(projectName)} - ${conversationName}`
-      : conversationName;
+    return `${projectName ? sanitizeFileName(projectName).replace(/\s+/g, '-') : 'Unknown'}__${conversationName}`;
   }
 
 
@@ -87,12 +122,11 @@
       throw new Error('Filename content has no trustworthy timestamp range.');
     }
     const chatName = sanitizeFileName(chat);
-    const identity = project
-      ? `${sanitizeFileName(project)} - ${chatName}`
-      : chatName;
+    const manual = conversationFilenameOverride();
+    const identity = manual || `${project ? sanitizeFileName(project).replace(/\s+/g, '-') : 'Unknown'}__${chatName}`;
     const start = canonicalFilenameTimestamp(timestampRange.start_timestamp);
     const end = canonicalFilenameTimestamp(timestampRange.end_timestamp);
-    return `DownloadConversation_${identity}_${start}-${end}`;
+    return `${identity}_${start}-${end}`;
   }
 
   /**

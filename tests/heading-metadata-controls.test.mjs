@@ -27,7 +27,7 @@ test('four independent Markdown heading controls remain persistent UI state', ()
   assert.match(userscript, /data-role="show-timestamps" type="checkbox"> Timestamp/);
   assert.match(userscript, /data-role="show-record-numbers" type="checkbox"> Record #/);
   assert.match(userscript, /data-role="show-turn-ids" type="checkbox"> Turn ID/);
-  assert.match(userscript, /data-role="show-debug-provenance" type="checkbox"> provenance/);
+  assert.match(userscript, /data-role="show-debug-provenance" type="checkbox"> Provenance/);
   assert.match(userscript, /bindStoredCheckbox\(panel, 'show-turn-ids', SHOW_TURN_IDS_STORAGE_KEY, showTurnIds/);
   assert.match(userscript, /bindStoredCheckbox\(panel, 'show-debug-provenance', SHOW_DEBUG_PROVENANCE_STORAGE_KEY, showDebugProvenance/);
   assert.match(userscript, /localStorage\.setItem\(storageKey, String\(checkbox\.checked\)\)/);

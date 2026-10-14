@@ -1,3 +1,6 @@
+  /**
+   * Normalizes one thrown value to readable diagnostic text.
+   *
    * @param {unknown} error - Thrown value to describe.
    * @returns {string} Readable error text.
    */
@@ -108,14 +111,42 @@
   }
 
   /**
-   * Handles conversation title.
+   * Rejects UI labels that cannot identify a conversation.
    *
-   * @returns {string} The string produced by `conversationTitle`.
+   * @param {string|null} value - Candidate visible conversation title.
+   * @returns {boolean} True only for a usable conversation title.
+   */
+  function usableConversationTitle(value) {
+    const text = String(value ?? '').trim();
+    return Boolean(text) && !/^(?:skip to content|chatgpt|chatgpt conversation|unknown(?:__\d+)?)$/i.test(text);
+  }
+
+  /**
+   * Resolves the current conversation from its active sidebar row first.
+   * The saved ChatGPT DOM identifies the row by aria-current and data-thread-title.
+   * Ignore headings and unrelated sidebar rows; document.title is the fallback.
+   *
+   * @returns {string} Current conversation name or a neutral fallback.
    */
   function conversationTitle() {
-    const heading = document.querySelector('h1')?.textContent?.trim();
-    const title = heading || document.title || 'ChatGPT conversation';
-    return title.replace(/\s*[-–—]\s*ChatGPT\s*$/i, '').trim() || 'ChatGPT conversation';
+    const conversationId = currentConversationId();
+    if (conversationId) {
+      for (const anchor of document.querySelectorAll(
+        'a[data-interactive-row-link][aria-current="page"][href]'
+      )) {
+        try {
+          const url = new URL(anchor.href, location.href);
+          if (url.origin !== location.origin
+              || url.pathname.match(/\/c\/([^/]+)$/)?.[1] !== conversationId) continue;
+          const text = anchor.querySelector('[data-thread-title]')?.textContent?.trim()
+            || anchor.getAttribute('aria-label')?.trim();
+          if (usableConversationTitle(text)) return text;
+        } catch {}
+      }
+    }
+    const pageTitle = String(document.title ?? '')
+      .replace(/\s*[-–—]\s*ChatGPT\s*$/i, '').trim();
+    return usableConversationTitle(pageTitle) ? pageTitle : 'ChatGPT conversation';
   }
 
   /**

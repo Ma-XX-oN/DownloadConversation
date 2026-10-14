@@ -7,6 +7,10 @@
       duplicateCommunicationLogButton.disabled = !communicationLogAvailable || communicationLogUiActionInProgress;
     }
     if (resetCommunicationLogButton) resetCommunicationLogButton.disabled = communicationLogUiActionInProgress;
+    const feedback = document.querySelector(`#${PANEL_ID} [data-role="user-feedback"]`);
+    if (feedback) feedback.textContent = progressState
+      ? progressStatus(exportKind === 'md' ? 'Extract MD' : 'Extract JSONL')
+      : statusText;
     if (progressState) {
       status.textContent = progressStatus(exportKind === 'md' ? 'Extract MD' : 'Extract JSONL');
     } else {

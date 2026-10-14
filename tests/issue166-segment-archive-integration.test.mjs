@@ -258,12 +258,14 @@ test('Issue 166 production rotation switches active files before compression', a
     'communicationLogCompressSealedSegment',
     'communicationLogQueueSegmentCompression',
     'communicationLogSealActiveSegment',
-    'communicationLogStorageAppendRecord'
+    'communicationLogStorageAppendRecord',
+    'communicationLogEnsureFragmentHeader'
   ];
   const production = names.map(productionFunctionSource).join('\n\n');
 
   const AsyncFunction = Object.getPrototypeOf(async function () {}).constructor;
   const run = new AsyncFunction('webcrypto', `
+    const VERSION = '1.11.4-test';
     const encoder = new TextEncoder();
     const cloneBytes = value => typeof value === 'string'
       ? encoder.encode(value)

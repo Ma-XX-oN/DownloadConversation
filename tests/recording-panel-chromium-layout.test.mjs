@@ -1,0 +1,205 @@
+import assert from 'node:assert/strict';
+import { spawnSync } from 'node:child_process';
+import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import os from 'node:os';
+import path from 'node:path';
+import test from 'node:test';
+import { productionFunctionSource } from './helpers/userscript-source.mjs';
+
+const cssModule = readFileSync(new URL(
+  '../src/userscript/07-panel-launcher/01-panel-diagnostics-part2.js',
+  import.meta.url), 'utf8');
+const markupModule = readFileSync(new URL(
+  '../src/userscript/07-panel-launcher/04-launcher-removal.js',
+  import.meta.url), 'utf8');
+const start = cssModule.indexOf('style.textContent = `');
+const end = cssModule.indexOf('`;\n    (document.head', start);
+assert.ok(start >= 0 && end > start, 'Could not locate production CSS template');
+const css = new Function('PANEL_ID', 'LAUNCHER_ID', 'TEST_MATRIX_ID',
+  'return `' + cssModule.slice(start + 'style.textContent = `'.length, end) + '`;')(
+  'dc-panel', 'dc-launcher', 'dc-tests');
+const mark = markupModule.indexOf('panel.innerHTML = `');
+const markEnd = markupModule.indexOf('`;', mark);
+assert.ok(mark >= 0 && markEnd > mark);
+const html = markupModule.slice(mark + 'panel.innerHTML = `'.length, markEnd);
+const arrowMarkup = new Function(
+  productionFunctionSource('exportArrowIconMarkup') +
+  '\nreturn exportArrowIconMarkup();'
+)();
+const circleMarkup = new Function(
+  productionFunctionSource('exportCompressionIconMarkup') +
+  '\nreturn exportCompressionIconMarkup(false);'
+)();
+
+function run(width, height) {
+  const doc = `<!doctype html><meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<style>${css}</style>
+<div id="dc-panel" style="display:block">${html}</div>
+<pre id="layout-result">PENDING</pre>
+<script>
+const panel = document.getElementById('dc-panel');
+panel.querySelector('[data-role="title"]').textContent =
+  'ChatGPT Recorder v1.11.4-issue.220.16';
+panel.querySelector('[data-role="log-count"]').textContent = 'Log: 5199 items';
+panel.querySelector('[data-role="last-log-problem"]').hidden = false;
+panel.querySelector('[data-role="last-log-problem"]').textContent =
+  'warnings: communication-log-response-body-incomplete after repeated requests and retries';
+panel.querySelector('[data-role="user-feedback"]').textContent =
+  'Merged logs: 989 records saved';
+panel.querySelector('[data-role="extract"]').innerHTML = ${JSON.stringify(arrowMarkup)};
+panel.querySelector('[data-role="export-compression"]').innerHTML = ${JSON.stringify(circleMarkup)};
+panel.querySelector('[data-role="status"]').textContent =
+  'segment_2026,10,11;22,31,25-2026,10,11;22,31,26.seg.zst verified; recording continues';
+panel.querySelector('[data-role="communication-log-name"]').textContent =
+  'Repo-Workflow__' + 'LongConversationName_'.repeat(14) + '.jsonl';
+const box = element => element.getBoundingClientRect();
+const result = { width: innerWidth, height: innerHeight,
+  panel: {left:box(panel).left,right:box(panel).right,top:box(panel).top,
+    bottom:box(panel).bottom,height:box(panel).height},
+  overflow: panel.scrollHeight > panel.clientHeight,
+  issues: [] };
+const background = getComputedStyle(panel).backgroundColor;
+if (background !== 'rgb(24, 24, 24)') {
+  result.issues.push('popup background is translucent: ' + background);
+}
+const bounds = box(panel);
+if (bounds.left < -1 || bounds.right > innerWidth + 1 ||
+    bounds.top < -1 || bounds.bottom > innerHeight + 1) {
+  result.issues.push('panel outside viewport');
+}
+const title = panel.querySelector('[data-role="title"]');
+if (box(title).height > 30) result.issues.push('title wraps');
+for (const role of ['last-log-problem', 'status']) {
+  const el = panel.querySelector('[data-role="' + role + '"]');
+  if (box(el).height > 24) result.issues.push(role + ' uses multiple rows');
+}
+for (const role of ['record-general','record-communication','console-diagnostics',
+  'record-one-group','diagnostics','change-communication-log-directory','rename-communication-log',
+  'reset-communication-log',
+  'jump','test','extract']) {
+  if (!panel.querySelector('[data-role="' + role + '"]')) {
+    result.issues.push('missing ' + role);
+  }
+}
+const filename = box(panel.querySelector('[data-role="communication-log-name-viewport"]'));
+const destination = box(panel.querySelector('[data-role="communication-log-directory"]'));
+if (destination.bottom > filename.top + 1) {
+  result.issues.push('destination directory and filename rows overlap');
+}
+const arrowSvg = panel.querySelector('[data-role="extract"] svg');
+const circleSvg = panel.querySelector('[data-role="export-compression"] svg');
+if (!arrowSvg || !circleSvg) result.issues.push('export symbols missing');
+else {
+  const midY = element => (box(element).top + box(element).bottom) / 2;
+  if (Math.abs(midY(arrowSvg) - midY(circleSvg)) > 1.25) {
+    result.issues.push('export arrow and compression circle vertical centres differ');
+  }
+}
+const rename = box(panel.querySelector('[data-role="rename-communication-log"]'));
+if (filename.right > rename.left + 1 || filename.width < 24) {
+  result.issues.push('filename overlaps action buttons');
+}
+const orderedRoles = ['title','log-count','last-log-problem','user-feedback',
+  'diagnostics','communication-log-directory','change-communication-log-directory',
+  'communication-log-name-viewport','rename-communication-log',
+  'record-general','record-communication','console-diagnostics','record-one-group',
+  'save-log','reset-communication-log','show-timestamps','show-record-numbers',
+  'show-turn-ids','show-debug-provenance','format-jsonl','format-md',
+  'extract','export-compression','agent-sound-control','jump','test'];
+for (let index = 1; index < orderedRoles.length; index++) {
+  const previous = panel.querySelector('[data-role="' + orderedRoles[index - 1] + '"]');
+  const current = panel.querySelector('[data-role="' + orderedRoles[index] + '"]');
+  if (!previous || !current ||
+      !(previous.compareDocumentPosition(current) & Node.DOCUMENT_POSITION_FOLLOWING)) {
+    result.issues.push('wrong markup order: ' + orderedRoles[index]);
+  }
+}
+const slider = panel.querySelector('[data-role="agent-sound-volume"]');
+const sliderColor = getComputedStyle(slider).accentColor;
+if (sliderColor === 'auto' || sliderColor === 'rgb(0, 0, 0)') {
+  result.issues.push('slider has no contrasting accent color');
+}
+const bottom = ['agent-sound-control','jump','test']
+  .map(role => panel.querySelector('[data-role="' + role + '"]'))
+  .map(box);
+if (Math.max(...bottom.map(b => b.top)) - Math.min(...bottom.map(b => b.top)) > 3) {
+  result.issues.push('sound, jump and test are not on the same bottom row');
+}
+const rows = [...panel.querySelectorAll('.tm-row')];
+const warning = box(panel.querySelector('[data-role="last-log-problem"]'));
+const status = box(panel.querySelector('[data-role="status"]'));
+const feedback = box(panel.querySelector('[data-role="user-feedback"]'));
+if (feedback.top < warning.bottom - 1 || feedback.height < 10) {
+  result.issues.push('feedback missing or overlaps warning');
+}
+if (status.top < warning.bottom - 1) result.issues.push('warning/status overlap');
+for (let i = 1; i < rows.length; i++) {
+  if (box(rows[i]).top < box(rows[i - 1]).bottom - 1) {
+    result.issues.push('vertically overlapping rows ' + i);
+  }
+}
+const popup = panel.querySelector('[data-role="agent-sound-popup"]');
+popup.hidden = false;
+const tickLabels = [...panel.querySelectorAll('.tm-volume-ticks span')];
+if (tickLabels.map(tick => tick.textContent).join(',') !== '10,5,0') {
+  result.issues.push('sound volume markers missing');
+}
+for (const tick of tickLabels) {
+  const color = getComputedStyle(tick).color;
+  if (color !== 'rgb(255, 255, 255)') {
+    result.issues.push('low contrast sound marker: ' + color);
+  }
+}
+const popupBox = box(popup);
+if (popupBox.width < 40 || popupBox.height < 120) {
+  result.issues.push('volume popup collapsed');
+}
+const output = document.getElementById('layout-result');
+output.textContent = JSON.stringify(result);
+<\/script>`;
+  const dir = mkdtempSync(path.join(os.tmpdir(), 'dc-popup-layout-'));
+  try {
+    const file = path.join(dir, 'index.html');
+    writeFileSync(file, doc, 'utf8');
+    const candidates = process.platform === 'win32'
+      ? ['chrome.exe'] : ['google-chrome', 'chromium', 'chromium-browser'];
+    const binary = candidates.find(name => {
+      const check = spawnSync(process.platform === 'win32' ? 'where' : 'which',
+        [name], { encoding: 'utf8' });
+      return check.status === 0;
+    });
+    assert.ok(binary, 'Headless Chromium required for UI acceptance test');
+    const chrome = spawnSync(binary,
+      ['--headless=new','--no-sandbox','--disable-gpu',
+        '--disable-dev-shm-usage','--no-first-run',
+        '--window-size=' + width + ',' + height,
+        '--user-data-dir=' + path.join(dir, 'profile'),
+        '--dump-dom', 'file://' + file],
+      { encoding:'utf8', timeout:25000, maxBuffer:4*1024*1024 });
+    assert.equal(chrome.status, 0, String(chrome.stderr).slice(-2000));
+    const match = chrome.stdout.match(/<pre id="layout-result">([^<]+)<\/pre>/);
+    assert.ok(match && match[1] !== 'PENDING', 'Browser layout did not execute');
+    return JSON.parse(match[1].replace(/&quot;/g, '"').replace(/&amp;/g, '&'));
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+}
+
+for (const [width, height] of [[430, 800], [800, 600], [900, 450]]) {
+  test('real Chromium popup layout is contained at ' + width + 'x' + height,
+    { timeout: 35000 }, () => {
+      const result = run(width, height);
+      assert.deepEqual(result.issues, [], JSON.stringify(result));
+      assert.ok(result.panel.height > 100);
+    });
+}
+
+
+test('separate warning and export-feedback render contracts are connected', () => {
+  const refresh = productionFunctionSource('refreshStatus');
+  assert.match(refresh, /data-role="user-feedback"/);
+  assert.match(refresh, /feedback\.textContent/);
+  assert.match(refresh, /progressStatus/);
+  assert.match(refresh, /statusText/);
+});

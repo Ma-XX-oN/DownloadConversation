@@ -22,8 +22,15 @@
   const MAX_PAGES = 10000;
   /** Local-storage key for the keep-screen-on capture preference. */
   const SCREEN_ON_STORAGE_KEY = 'tm-conversation-recorder-screen-on-when-capturing';
-  /** Whether selected JSONL/Markdown exports are compressed as archives. */
-  let exportCompressionEnabled = false;
+  /** Persistent JSONL conversation export preference. */
+  const EXPORT_JSONL_STORAGE_KEY = 'tm-conversation-recorder-export-jsonl';
+  /** Persistent Markdown conversation export preference. */
+  const EXPORT_MD_STORAGE_KEY = 'tm-conversation-recorder-export-md';
+  /** Persistent compressed/raw conversation export preference. */
+  const EXPORT_COMPRESSION_STORAGE_KEY = 'tm-conversation-recorder-export-compressed';
+  /** Whether selected JSONL/Markdown exports use compressed archives. */
+  let exportCompressionEnabled =
+    localStorage.getItem(EXPORT_COMPRESSION_STORAGE_KEY) === 'true';
   /** Local-storage key for Markdown heading timestamp visibility. */
   const SHOW_TIMESTAMPS_STORAGE_KEY = 'tm-conversation-recorder-show-timestamps';
   /** Local-storage key for Markdown JSONL record-number visibility. */
@@ -168,6 +175,8 @@
   let activeClickDiagnostic = null;
   /** In-memory diagnostic history mirrored to session storage for the panel. */
   let diagnosticLog = [];
+  /** Effective DC version immediately before the first retained GEN record. */
+  let diagnosticLogBaselineVersion = null;
   /** Pending debounced diagnostic-log persistence timer, or null when no write is scheduled. */
   let diagnosticPersistTimer = null;
   /** Whether the recorder panel currently shows the expanded diagnostic history. */
@@ -228,13 +237,6 @@
   let communicationLogUiActionInProgress = false;
   /** Unique identity correlating all communication records produced by this page lifetime. */
   const communicationLogSessionId = crypto.randomUUID();
-  try {
-    const storedDiagnosticLog = JSON.parse(sessionStorage.getItem(DIAGNOSTIC_LOG_STORAGE_KEY) || '[]');
-    if (Array.isArray(storedDiagnosticLog)) diagnosticLog = storedDiagnosticLog.slice(-MAX_DIAGNOSTIC_LOG_ITEMS);
-  } catch {}
-
-  logConsoleDiagnostic('debug', `[DownloadConversation v${VERSION} | AIConversationCore v${CORE_VERSION}] version identity`);
-
   /**
    * Handles assert.
    *
@@ -246,6 +248,3 @@
     if (!condition) throw new Error(message);
   }
 
-  /**
-   * Normalizes one thrown value to readable diagnostic text.
-   *

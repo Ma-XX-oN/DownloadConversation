@@ -3,28 +3,21 @@ import assert from 'node:assert/strict';
 import { createHash } from 'node:crypto';
 import test from 'node:test';
 
-test('Issue 134 keeps filename and all three file actions on one non-wrapping row', () => {
+test('filename controls remain non-wrapping and recording actions are separated', () => {
   assert.match(userscript,
-    /#\$\{PANEL_ID\} \.tm-communication-log-row\{[^}]*flex-wrap:nowrap[^}]*\}/,
-    'The active filename/control row must explicitly prohibit wrapping.');
-
-  const rowStart = userscript.indexOf('class="tm-row tm-communication-log-row"');
-  assert.ok(rowStart >= 0, 'The dedicated communication-log filename/control row is missing.');
-  const nextRowStart = userscript.indexOf('<div class="tm-row">', rowStart + 1);
-  assert.ok(nextRowStart > rowStart, 'The row following the communication-log controls is missing.');
-  const row = userscript.slice(rowStart, nextRowStart);
-
-  assert.match(row, /data-role="communication-log-name-viewport"/);
-  assert.match(row, /class="tm-icon-button" data-role="rename-communication-log"/);
-  assert.match(row,
-    /class="tm-icon-button" data-role="duplicate-communication-log"[^>]*aria-label="Duplicate communication log"/);
-  assert.match(row,
-    /class="tm-icon-button" data-role="reset-communication-log"[^>]*aria-label="Reset communication log"/,
-    'Reset must share the same row as the filename, Rename, and Duplicate controls.');
-  assert.doesNotMatch(row, />Duplicate<\/button>/,
-    'Duplicate must be an icon-only action, not a text button.');
-  assert.doesNotMatch(row, />Reset log<\/button>/,
-    'Reset must be an icon-only action, not a text button.');
+    /#\$\{PANEL_ID\} \.tm-communication-log-row\{[^}]*flex-wrap:nowrap[^}]*\}/);
+  const location = userscript.indexOf('data-role="communication-log-directory"');
+  const filename = userscript.indexOf('data-role="communication-log-name-viewport"', location);
+  const rename = userscript.indexOf('data-role="rename-communication-log"', filename);
+  const resetName = userscript.indexOf('data-role="reset-communication-log-filename"', rename);
+  const modes = userscript.indexOf('data-role="record-general"', resetName);
+  const save = userscript.indexOf('data-role="save-log"', modes);
+  const resetLog = userscript.indexOf('data-role="reset-communication-log"', save);
+  assert.ok(location >= 0 && filename > location && rename > filename &&
+    resetName > rename && modes > resetName && save > modes && resetLog > save,
+    'Folder, filename, recording modes, and Save/Reset must follow approved order.');
+  assert.match(userscript, /data-role="save-log"[^>]*aria-label="Save merged log"/);
+  assert.match(userscript, /data-role="reset-communication-log"[^>]*aria-label="Reset communication log"/);
 });
 
 test('active filename is plain text rather than a button-like field', () => {

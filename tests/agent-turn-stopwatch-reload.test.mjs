@@ -105,6 +105,7 @@ function restoreHarness() {
     ${productionFunctionSource('agentStopwatchStopTimer')}
     ${productionFunctionSource('agentStopwatchRecordLap')}
     ${productionFunctionSource('agentStopwatchObserveInputMessage')}
+    ${productionFunctionSource('agentStopwatchBindExchange')}
     ${productionFunctionSource('agentStopwatchRecoveryScan')}
     ${productionFunctionSource('agentStopwatchCollectRecovery')}
     ${productionFunctionSource('agentStopwatchApplyRecovery')}
