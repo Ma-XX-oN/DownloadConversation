@@ -169,6 +169,106 @@
     }
   }
 
+  /**
+   * Captures startup theme evidence without polling, page-wide observation or page changes.
+   * Only html/body attribute changes trigger snapshots; lifecycle events are bounded.
+   * @returns {void} No value is returned.
+   */
+  function installThemeStartupDiagnostics() {
+    const started = performance.now();
+    let lastState = '';
+    let bodyObserver = null;
+    let trackedBody = null;
+    let pendingFrame = false;
+    let stopped = false;
+    let snapshotCount = 0;
+    /** Reads a privacy-safe background property from a mounted element. */
+    const background = element => element ? getComputedStyle(element).backgroundColor : null;
+    /** Reads a bounded snapshot of root theme state and background colours. */
+    const capture = reason => {
+      if (stopped) return;
+      const html = document.documentElement;
+      const body = document.body;
+      const app = document.querySelector('#__next, #root, [data-testid="conversation-turns"]');
+      const data = {
+        reason,
+        elapsed_ms: Math.round(performance.now() - started),
+        theme: html?.getAttribute('data-theme') ?? null,
+        appearance_theme: html?.getAttribute('data-appearance-theme') ?? null,
+        html_class: html?.className?.toString().slice(0, 150) ?? null,
+        prefers_dark: window.matchMedia('(prefers-color-scheme: dark)').matches,
+        html_background: background(html),
+        body_background: background(body),
+        app_background: background(app),
+        body_replaced: trackedBody !== null && trackedBody !== body,
+        ready_state: document.readyState
+      };
+      const state = JSON.stringify({ ...data, reason: null, elapsed_ms: null });
+      if (state === lastState) return;
+      lastState = state;
+      snapshotCount += 1;
+      logDiagnostic('debug', 'theme-startup-snapshot', data);
+    };
+    /** Coalesces synchronous DOM changes to a single post-style calculation. */
+    const schedule = reason => {
+      if (pendingFrame || stopped) return;
+      pendingFrame = true;
+      requestAnimationFrame(() => {
+        pendingFrame = false;
+        capture(reason);
+      });
+    };
+    /** Attaches an attribute-only observer to the active body if it exists. */
+    const bindBody = () => {
+      if (trackedBody === document.body) return;
+      bodyObserver?.disconnect();
+      trackedBody = document.body;
+      if (trackedBody) {
+        bodyObserver = new MutationObserver(() => schedule('body-attribute'));
+        bodyObserver.observe(trackedBody, {
+          attributes: true,
+          attributeFilter: ['class', 'style', 'data-theme', 'data-appearance-theme']
+        });
+      }
+      schedule('body-bound');
+    };
+    const htmlObserver = new MutationObserver(() => schedule('html-attribute'));
+    htmlObserver.observe(document.documentElement, {
+      attributes: true,
+      attributeFilter: ['class', 'style', 'data-theme', 'data-appearance-theme']
+    });
+    const onReady = () => {
+      bindBody();
+      schedule('dom-content-loaded');
+    };
+    const onLoad = () => {
+      bindBody();
+      schedule('load');
+    };
+    const onShow = () => {
+      bindBody();
+      schedule('pageshow');
+    };
+    document.addEventListener('DOMContentLoaded', onReady, { once: true });
+    window.addEventListener('load', onLoad, { once: true });
+    window.addEventListener('pageshow', onShow);
+    window.addEventListener('pagehide', () => {
+      stopped = true;
+      htmlObserver.disconnect();
+      bodyObserver?.disconnect();
+      window.removeEventListener('pageshow', onShow);
+      logDiagnostic('debug', 'theme-startup-observer-stopped', {
+        elapsed_ms: Math.round(performance.now() - started),
+        snapshots: snapshotCount
+      });
+    }, { once: true });
+    bindBody();
+    capture('installation');
+    schedule('first-animation-frame');
+  }
+
+  installThemeStartupDiagnostics();
+
   document.addEventListener('visibilitychange', () => {
     if (document.visibilityState === 'visible') void acquireWakeLock();
     else void releaseWakeLock();
