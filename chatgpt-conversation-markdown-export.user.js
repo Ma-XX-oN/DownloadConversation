@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         ChatGPT Conversation Markdown Recorder
 // @namespace    https://chatgpt.com/
-// @version      1.11.4-issue.226.3
+// @version      1.11.4-issue.279.1
 // @description  Exports the current ChatGPT conversation directly from the Conversation API as Markdown or JSONL.
 // @match        https://chatgpt.com/*
 // @match        https://chat.openai.com/*
@@ -17083,6 +17083,89 @@ Image elapsed: ${formatDuration(imageElapsed)} — Completed: ${imageCompleted}/
     scheduleLiveTailScan('thread-bound');
   }
 
+  /** Selector taken from the stock ChatGPT connection-recovery notice. */
+  const CONNECTION_RECOVERY_SELECTOR = '[role="status"] > .text-chatgpt-recovery';
+  /** Conversation root scoped to the current page, independent of the recorder UI. */
+  let connectionRecoveryRoot = null;
+  let connectionRecoveryObserver = null;
+  let connectionRecoveryNotice = null;
+  let connectionRecoveryStarted = 0;
+
+  /**
+   * Emits one transition per visible warning occurrence, without changing agent state.
+   * @param {Element|null} notice - Current stock recovery notice, or null.
+   * @returns {void} No value is returned.
+   */
+  function setConnectionRecoveryNotice(notice) {
+    if (notice === connectionRecoveryNotice) return;
+    if (connectionRecoveryNotice) {
+      logDiagnostic('lifecycle', 'connection_restored', {
+        conversation_id: currentConversationId(),
+        dom_turn_id: connectionRecoveryNotice.closest('[data-turn-key]')?.getAttribute('data-turn-key') ?? null,
+        duration_ms: Math.max(0, Math.round(performance.now() - connectionRecoveryStarted)),
+        reason: 'warning-removed'
+      });
+    }
+    connectionRecoveryNotice = notice;
+    if (notice) {
+      connectionRecoveryStarted = performance.now();
+      logDiagnostic('warnings', 'connection_interrupted', {
+        conversation_id: currentConversationId(),
+        dom_turn_id: notice.closest('[data-turn-key]')?.getAttribute('data-turn-key') ?? null,
+        reason: 'stock-recovery-warning-visible'
+      });
+    }
+  }
+
+  /**
+   * Rebinds only when the stock conversation content root changes.
+   * The existing live-tail root observer invokes this; no extra document observer.
+   * @returns {void} No value is returned.
+   */
+  function bindConnectionRecoveryRoot() {
+    const root = document.querySelector('[data-chatgpt-conversation-selection-target="true"]');
+    if (root === connectionRecoveryRoot) return;
+    connectionRecoveryObserver?.disconnect();
+    connectionRecoveryObserver = null;
+    setConnectionRecoveryNotice(null);
+    connectionRecoveryRoot = root;
+    if (!(root instanceof Element)) return;
+    setConnectionRecoveryNotice(root.querySelector(CONNECTION_RECOVERY_SELECTOR));
+    connectionRecoveryObserver = new MutationObserver(records => {
+      let relevant = false;
+      for (const record of records) {
+        if (record.type !== 'childList') continue;
+        if (connectionRecoveryNotice && !root.contains(connectionRecoveryNotice)) {
+          relevant = true;
+          break;
+        }
+        for (const node of [...record.addedNodes, ...record.removedNodes]) {
+          if (!(node instanceof Element)) continue;
+          if (node.matches(CONNECTION_RECOVERY_SELECTOR) ||
+            node.querySelector(CONNECTION_RECOVERY_SELECTOR) ||
+            node.contains(connectionRecoveryNotice)) {
+            relevant = true;
+            break;
+          }
+        }
+        if (relevant) break;
+      }
+      if (relevant) setConnectionRecoveryNotice(root.querySelector(CONNECTION_RECOVERY_SELECTOR));
+    });
+    connectionRecoveryObserver.observe(root, { childList: true, subtree: true });
+  }
+
+  /**
+   * Releases the warning observer when the page is unloaded.
+   * @returns {void} No value is returned.
+   */
+  function releaseConnectionRecoveryObserver() {
+    connectionRecoveryObserver?.disconnect();
+    connectionRecoveryObserver = null;
+    connectionRecoveryRoot = null;
+    connectionRecoveryNotice = null;
+  }
+
   /**
    * Installs the passive bounded high-water tracker used only for export consistency evidence.
    *
@@ -17096,11 +17179,14 @@ Image elapsed: ${formatDuration(imageElapsed)} — Completed: ${imageCompleted}/
     document.addEventListener('keydown', handleLiveTailPromptKeydown, true);
     liveTailRootObserver = new MutationObserver(() => {
       if (document.querySelector('#thread') !== liveTailObservedThread) bindLiveTailThread();
+      if (!connectionRecoveryRoot?.isConnected) bindConnectionRecoveryRoot();
     });
     if (document.documentElement) {
       liveTailRootObserver.observe(document.documentElement, { childList: true, subtree: true });
     }
     bindLiveTailThread();
+    bindConnectionRecoveryRoot();
+    window.addEventListener('pagehide', releaseConnectionRecoveryObserver, { once: true });
   }
 
   /**
