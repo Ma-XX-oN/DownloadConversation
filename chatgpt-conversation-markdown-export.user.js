@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         ChatGPT Conversation Markdown Recorder
 // @namespace    https://chatgpt.com/
-// @version      1.11.4-issue.274.2
+// @version      1.11.4-issue.274.3
 // @description  Exports the current ChatGPT conversation directly from the Conversation API as Markdown or JSONL.
 // @match        https://chatgpt.com/*
 // @match        https://chat.openai.com/*
@@ -23435,6 +23435,8 @@ Image elapsed: ${formatDuration(imageElapsed)} — Completed: ${imageCompleted}/
       </div>
       <div class="tm-status" data-role="status" role="status"></div>
     `;
+    const title = panel.querySelector('[data-role="title"]');
+    if (title) title.textContent = `ChatGPT Recorder v${VERSION}`;
     panel.querySelector('.tm-close').addEventListener('click', () => {
       panel.style.display = 'none';
       const launcher = document.getElementById(LAUNCHER_ID);
