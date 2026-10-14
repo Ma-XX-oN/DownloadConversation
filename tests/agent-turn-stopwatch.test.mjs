@@ -55,6 +55,7 @@ function stopwatchHarness() {
     ${productionFunctionSource('agentStopwatchRecordLap')}
     ${productionFunctionSource('agentStopwatchObserveRequest')}
     ${productionFunctionSource('agentStopwatchObserveInputMessage')}
+    ${productionFunctionSource('agentStopwatchBindExchange')}
     ${productionFunctionSource('agentTerminalIsPollingTimeout')}
     ${productionFunctionSource('agentTerminalHasFinishedAssistant')}
     ${productionFunctionSource('agentTerminalIsConversationTurnComplete')}
