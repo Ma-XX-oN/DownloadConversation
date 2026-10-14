@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         ChatGPT Conversation Markdown Recorder
 // @namespace    https://chatgpt.com/
-// @version      1.11.4-issue.279.1
+// @version      1.11.4-issue.279.2
 // @description  Exports the current ChatGPT conversation directly from the Conversation API as Markdown or JSONL.
 // @match        https://chatgpt.com/*
 // @match        https://chat.openai.com/*
@@ -17087,8 +17087,11 @@ Image elapsed: ${formatDuration(imageElapsed)} — Completed: ${imageCompleted}/
   const CONNECTION_RECOVERY_SELECTOR = '[role="status"] > .text-chatgpt-recovery';
   /** Conversation root scoped to the current page, independent of the recorder UI. */
   let connectionRecoveryRoot = null;
+  /** Mutation observer attached only to the current conversation content root. */
   let connectionRecoveryObserver = null;
+  /** Exact stock warning element currently visible, or null when cleared. */
   let connectionRecoveryNotice = null;
+  /** Monotonic time when the current warning first appeared. */
   let connectionRecoveryStarted = 0;
 
   /**
