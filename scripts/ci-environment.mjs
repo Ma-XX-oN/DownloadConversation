@@ -48,6 +48,7 @@ const ordinaryStages = [
   ['Communication log file controls regression', nodeCommand, ['--test', 'tests/communication-log-file-controls.test.mjs', 'tests/communication-log-layout-contract.test.mjs', 'tests/communication-log-reset.test.mjs', 'tests/dry-contract.test.mjs']],
   ['Issue 166 archive runtime regression', nodeCommand, ['--test', 'tests/archive-runtime.test.mjs', 'tests/issue188-compressor-contract.test.mjs', 'tests/issue166-segment-archive-integration.test.mjs', 'tests/issue166-remaining-acceptance.test.mjs', 'tests/issue166-dual-active-rotation.test.mjs', 'tests/communication-log-duplicate-progress.test.mjs', 'tests/local-datetime-range-dialog.test.mjs']],
   ['Tail consistency regression', nodeCommand, ['--test', 'tests/tail-consistency.test.mjs']],
+  ['Connection recovery warning regression', nodeCommand, ['--test', 'tests/connection-recovery-observer.test.mjs']],
   ['Stream tail recovery regression', nodeCommand, ['--test', 'tests/stream-tail-recovery.test.mjs', 'tests/generation-response-clone-timing.test.mjs']],
   ['Stock network diagnostics regression', nodeCommand, ['--test', 'tests/stock-network-diagnostics.test.mjs']],
   ['Conversation API rate-limit regression', nodeCommand, ['--test', 'tests/conversation-api-rate-limit.test.mjs']],
