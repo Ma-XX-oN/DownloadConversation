@@ -96,6 +96,20 @@ test('recorded V1 shape binds exchange before terminal even without input_messag
   assert.equal(h.state().started_at_ms, 31000);
 });
 
+test('a new request replaces stale unidentified active run on first authoritative ID', () => {
+  const h = harness();
+  const a = capture(1000, 'user-a');
+  h.request(a);
+  const b = capture(12000, 'user-b');
+  h.request(b);
+  h.identify(b, resumeToken('exchange-b'));
+  assert.equal(h.state().exchange_id, 'exchange-b');
+  assert.equal(h.state().started_at_ms, 12000);
+  assert.deepEqual(Array.from(h.state().laps_ms), []);
+  h.identify(a, resumeToken('exchange-a'));
+  assert.equal(h.state().exchange_id, 'exchange-b');
+});
+
 test('late metadata for older capture cannot rebind a new run', () => {
   const h = harness();
   const a = capture(1000, 'user-a');
