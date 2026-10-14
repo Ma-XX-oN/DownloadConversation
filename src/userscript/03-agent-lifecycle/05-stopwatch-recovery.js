@@ -238,7 +238,7 @@
     }
     const terminal = agentTerminalNormalize(capture, event);
     if (!terminal) return null;
-    if (agentStopwatchState?.active &&
+    if (typeof agentStopwatchState !== 'undefined' && agentStopwatchState?.active &&
         terminal.exchange_id !== agentStopwatchState.exchange_id) {
       logDiagnostic('debug', 'agent-terminal-rejected-active-exchange-mismatch', {
         exchange_id: terminal.exchange_id,
