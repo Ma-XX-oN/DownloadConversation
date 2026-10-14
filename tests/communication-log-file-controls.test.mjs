@@ -129,9 +129,9 @@ test('Issue 134 filename controls are present', () => {
   assert.match(userscript, /data-role="communication-log-name"/);
   assert.match(userscript, /data-role="rename-communication-log"/);
   assert.match(userscript, /aria-label="Rename communication log"/);
-  assert.match(userscript, /class="tm-icon-button" data-role="duplicate-communication-log"[^>]*aria-label="Duplicate communication log"/);
+  assert.match(userscript, /data-role="reset-communication-log-filename"[^>]*aria-label="Reset filename to project and conversation"/);
+  assert.match(userscript, /data-role="save-log"[^>]*aria-label="Save merged log"/);
   assert.match(userscript, /querySelector\('\[data-role="rename-communication-log"\]'\)/);
-  assert.match(userscript, /querySelector\('\[data-role="duplicate-communication-log"\]'\)/);
 });
 
 test('long active filename uses a dark hover-scroll viewport instead of a readonly text input', () => {
