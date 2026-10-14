@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         ChatGPT Conversation Markdown Recorder
 // @namespace    https://chatgpt.com/
-// @version      1.11.4-issue.273.2
+// @version      1.11.4-issue.273.3
 // @description  Exports the current ChatGPT conversation directly from the Conversation API as Markdown or JSONL.
 // @match        https://chatgpt.com/*
 // @match        https://chat.openai.com/*
@@ -12475,6 +12475,8 @@ globalThis.__dcCompressor = {
     const pending = state.pending_capture === capture &&
       Number.isFinite(state.pending_submission_at_ms);
     if (!pending && state.bound_capture !== capture) return false;
+    // A previous response must not consume a newer request's pending identity.
+    if (!pending && state.pending_capture && state.pending_capture !== capture) return false;
     if (capture.stopwatch_exchange_id && capture.stopwatch_exchange_id !== exchangeId) {
       logDiagnostic('warnings', 'agent-stopwatch-exchange-identity-conflict', {
         previous_exchange_id: capture.stopwatch_exchange_id,
@@ -12893,6 +12895,18 @@ globalThis.__dcCompressor = {
     }
     const terminal = agentTerminalNormalize(capture, event);
     if (!terminal) return null;
+    // A new request is already in flight: do not let an older capture
+    // terminate its stopwatch before the newer backend ID is associated.
+    if (typeof agentStopwatchState !== 'undefined' && agentStopwatchState?.active &&
+        agentStopwatchState.pending_capture &&
+        agentStopwatchState.pending_capture !== capture &&
+        Number.isFinite(agentStopwatchState.pending_submission_at_ms) &&
+        agentStopwatchState.pending_submission_at_ms > agentStopwatchState.started_at_ms) {
+      logDiagnostic('debug', 'agent-terminal-rejected-older-capture-after-submission', {
+        exchange_id: terminal.exchange_id
+      });
+      return null;
+    }
     if (typeof agentStopwatchState !== 'undefined' && agentStopwatchState?.active &&
         terminal.exchange_id !== agentStopwatchState.exchange_id) {
       logDiagnostic('debug', 'agent-terminal-rejected-active-exchange-mismatch', {
