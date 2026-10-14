@@ -233,10 +233,12 @@
       schedule('body-bound');
     };
     const htmlObserver = new MutationObserver(() => schedule('html-attribute'));
-    htmlObserver.observe(document.documentElement, {
-      attributes: true,
-      attributeFilter: ['class', 'style', 'data-theme', 'data-appearance-theme']
-    });
+    if (document.documentElement) {
+      htmlObserver.observe(document.documentElement, {
+        attributes: true,
+        attributeFilter: ['class', 'style', 'data-theme', 'data-appearance-theme']
+      });
+    }
     const onReady = () => {
       bindBody();
       schedule('dom-content-loaded');
