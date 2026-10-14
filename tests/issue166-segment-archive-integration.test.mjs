@@ -258,7 +258,8 @@ test('Issue 166 production rotation switches active files before compression', a
     'communicationLogCompressSealedSegment',
     'communicationLogQueueSegmentCompression',
     'communicationLogSealActiveSegment',
-    'communicationLogStorageAppendRecord'
+    'communicationLogStorageAppendRecord',
+    'communicationLogEnsureFragmentHeader'
   ];
   const production = names.map(productionFunctionSource).join('\n\n');
 
