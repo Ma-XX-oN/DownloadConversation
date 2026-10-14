@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         ChatGPT Conversation Markdown Recorder
 // @namespace    https://chatgpt.com/
-// @version      1.11.4-issue.274.1
+// @version      1.11.4-issue.273.1
 // @description  Exports the current ChatGPT conversation directly from the Conversation API as Markdown or JSONL.
 // @match        https://chatgpt.com/*
 // @match        https://chat.openai.com/*
@@ -12482,7 +12482,9 @@ globalThis.__dcCompressor = {
       });
       return false;
     }
-    if (state.exchange_id && state.exchange_id !== exchangeId) {
+    if ((state.exchange_id && state.exchange_id !== exchangeId) ||
+        (!state.exchange_id && pending &&
+         state.started_at_ms !== state.pending_submission_at_ms)) {
       if (!pending) return false;
       const submittedAtMs = state.pending_submission_at_ms;
       agentStopwatchStartNew(submittedAtMs);
@@ -12891,7 +12893,7 @@ globalThis.__dcCompressor = {
     }
     const terminal = agentTerminalNormalize(capture, event);
     if (!terminal) return null;
-    if (agentStopwatchState?.active &&
+    if (typeof agentStopwatchState !== 'undefined' && agentStopwatchState?.active &&
         terminal.exchange_id !== agentStopwatchState.exchange_id) {
       logDiagnostic('debug', 'agent-terminal-rejected-active-exchange-mismatch', {
         exchange_id: terminal.exchange_id,
