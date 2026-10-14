@@ -46,8 +46,11 @@
   const CONNECTION_RECOVERY_SELECTOR = '[role="status"] > .text-chatgpt-recovery';
   /** Conversation root scoped to the current page, independent of the recorder UI. */
   let connectionRecoveryRoot = null;
+  /** Mutation observer attached only to the current conversation content root. */
   let connectionRecoveryObserver = null;
+  /** Exact stock warning element currently visible, or null when cleared. */
   let connectionRecoveryNotice = null;
+  /** Monotonic time when the current warning first appeared. */
   let connectionRecoveryStarted = 0;
 
   /**
