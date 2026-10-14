@@ -74,6 +74,22 @@ test('recovery warning transitions, de-duplication, teardown and narrow observat
   assert.equal(observers[0].options.characterData, undefined);
   assert.equal(observers[0].options.attributes, undefined);
 
+  let selectorScans = 0;
+  const originalQuery = root.querySelector.bind(root);
+  root.querySelector = selector => {
+    selectorScans += 1;
+    return originalQuery(selector);
+  };
+  for (let index = 0; index < 1000; index += 1) {
+    observers[0].callback([{
+      type: 'childList',
+      addedNodes: [new Element('unrelated')],
+      removedNodes: []
+    }]);
+  }
+  assert.equal(selectorScans, 0, 'unrelated mutations must not rescan conversation subtree');
+  assert.equal(events.length, 0, 'unrelated mutations must not emit recovery events');
+
   const notice = new Element('notice');
   root.notice = notice;
   observers[0].callback([{ type: 'childList', addedNodes: [notice], removedNodes: [] }]);
