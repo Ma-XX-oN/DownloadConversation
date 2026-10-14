@@ -63,6 +63,8 @@ function identityHarness({ pathname, heading, title, links }) {
   const usableTitle = functionSource(identitySource, 'usableConversationTitle');
   const sanitizeFileName = functionSource(identitySource, 'sanitizeFileName');
   const projectName = functionSource(identitySource, 'conversationProjectName');
+  const routeSlug = functionSource(identitySource, 'projectNameFromRouteSlug');
+  const override = functionSource(identitySource, 'conversationFilenameOverride');
   const fileBase = functionSource(identitySource, 'conversationFileBaseName');
   const location = {
     origin: 'https://chatgpt.com',
@@ -72,20 +74,22 @@ function identityHarness({ pathname, heading, title, links }) {
   const document = {
     title,
     querySelector: selector => selector === 'h1' ? { textContent: heading } : null,
-    querySelectorAll: selector => selector === 'a[href]' ? links : []
+    querySelectorAll: selector => selector === 'nav[aria-label="Breadcrumb"] a[href]' ? links : []
   };
-  return new Function('document', 'location', 'URL', `
+  return new Function('document', 'location', 'URL', 'localStorage', `
     function currentConversationId() { return 'conversation-1'; }
     ${usableTitle}
     ${conversationTitle}
     ${sanitizeFileName}
+    ${routeSlug}
+    ${override}
     ${projectName}
     ${fileBase}
     return {
       projectName: conversationProjectName(),
       fileBase: conversationFileBaseName()
     };
-  `)(document, location, URL);
+  `)(document, location, URL, { getItem() { return null; } });
 }
 
 function exportHarness() {
@@ -276,7 +280,7 @@ test('UI submits each checkbox combination as one operation, or none when unsele
 });
 
 test('Issue 172 project chat resolves project name and canonical project-conversation base', () => {
-  const projectSegment = 'g-p-1234567890-download-conversation';
+  const projectSegment = 'g-p-' + 'a'.repeat(32) + '-download-conversation';
   const result = identityHarness({
     pathname: `/g/${projectSegment}/c/conversation-1`,
     heading: 'Browser XZ Comparison',
@@ -288,7 +292,7 @@ test('Issue 172 project chat resolves project name and canonical project-convers
   });
   assert.deepEqual(result, {
     projectName: 'Download Conversation',
-    fileBase: 'Download Conversation - Browser XZ Comparison'
+    fileBase: 'Download-Conversation__Browser XZ Comparison'
   });
 });
 
@@ -301,7 +305,7 @@ test('Issue 172 standalone chat keeps conversation-only filename base', () => {
   });
   assert.deepEqual(result, {
     projectName: null,
-    fileBase: 'Browser XZ Comparison'
+    fileBase: 'Unknown__Browser XZ Comparison'
   });
 });
 
