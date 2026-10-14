@@ -169,7 +169,9 @@
       });
       return false;
     }
-    if (state.exchange_id && state.exchange_id !== exchangeId) {
+    if ((state.exchange_id && state.exchange_id !== exchangeId) ||
+        (!state.exchange_id && pending &&
+         state.started_at_ms !== state.pending_submission_at_ms)) {
       if (!pending) return false;
       const submittedAtMs = state.pending_submission_at_ms;
       agentStopwatchStartNew(submittedAtMs);
