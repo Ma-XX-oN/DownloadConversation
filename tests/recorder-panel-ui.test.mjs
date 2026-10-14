@@ -27,9 +27,9 @@ test('recorder panel restores dialog/log/switch/extract UI contracts', () => {
   assert.match(userscript, /data-role="log-output" hidden/);
   assert.match(userscript, /\.tm-log-row:nth-child\(even\)/);
 
-  assert.match(userscript, /data-role="screen-on"[^>]*role="switch"[^>]*aria-checked="false"/);
-  assert.match(userscript, /class="tm-switch-thumb"/);
-  assert.match(userscript, /screen\.setAttribute\('aria-checked', String\(screenOnWhenCapturing\)\)/);
+  assert.match(userscript, /data-role="record-general" type="checkbox" checked> Gen/);
+  assert.match(userscript, /data-role="record-communication" type="checkbox" checked> Comm/);
+  assert.match(userscript, /data-role="record-one-group" type="checkbox"> 1/);
 
   assert.match(userscript, /data-role="extract" type="button" aria-label="Export conversation"/);
   assert.match(userscript, /data-role="format-jsonl" type="checkbox"> JSONL/);
