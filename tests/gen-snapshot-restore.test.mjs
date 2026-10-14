@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict';
+import { downloadConversationSource } from './helpers/userscript-source.mjs';
 import { readFileSync } from 'node:fs';
 import vm from 'node:vm';
 import test from 'node:test';
@@ -87,8 +88,8 @@ test('invalid discriminators do not change a trimmed baseline', () => {
 
 test('bootstrap emits exactly one ordinary startup transition after restore', () => {
   const startup = source.slice(source.indexOf('  restoreDiagnosticLog();'));
-  assert.match(startup, /restoreDiagnosticLog\(\);\s*\/\/ #234 provenance:[^\n]*\n[^\n]*\n\s*logDiagnostic\('lifecycle', 'dc-version-transition', \{ version: VERSION \}\)/);
-  assert.equal(source.match(/logDiagnostic\('lifecycle', 'dc-version-transition', \{ version: VERSION \}\)/g)?.length, 1);
+  assert.match(startup, /restoreDiagnosticLog\(\);[\s\S]*Version transition is recorded after capture-order state initializes/);
+  assert.equal(downloadConversationSource.match(/logDiagnostic\('lifecycle', 'dc-version-transition', \{ version: VERSION \}\)/g)?.length, 1);
 });
 
 test('session storage access failures preserve unknown historical provenance', () => {
