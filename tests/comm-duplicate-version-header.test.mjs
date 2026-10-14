@@ -45,7 +45,7 @@ test('empty selected event range omits orphan metadata', () => {
   assert.equal(result.end_timestamp, null);
 });
 
-test('upper-bound scan stops at the first later timestamp', () => {
+test('upper-bound scan retains later in-range records after a clock reversal', () => {
   const input = header + event(t0, 0) + event(t2, 2) + event(t1, 1);
   assert.equal(decode(filter(encode(input), null, Date.parse(t1)).bytes),
     header + event(t0, 0));
