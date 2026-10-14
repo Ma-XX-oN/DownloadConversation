@@ -162,6 +162,8 @@
     const pending = state.pending_capture === capture &&
       Number.isFinite(state.pending_submission_at_ms);
     if (!pending && state.bound_capture !== capture) return false;
+    // A previous response must not consume a newer request's pending identity.
+    if (!pending && state.pending_capture && state.pending_capture !== capture) return false;
     if (capture.stopwatch_exchange_id && capture.stopwatch_exchange_id !== exchangeId) {
       logDiagnostic('warnings', 'agent-stopwatch-exchange-identity-conflict', {
         previous_exchange_id: capture.stopwatch_exchange_id,
