@@ -34,6 +34,7 @@ function harness() {
     'agentStopwatchBindExchange',
     'agentStopwatchResumeTokenExchange',
     'agentStopwatchObserveProviderIdentity',
+    'agentTerminalObserve',
     'agentTerminalSuccessfulFinal',
     'agentTerminalExchangeId',
     'agentStopwatchHandleTerminal'
@@ -44,7 +45,14 @@ function harness() {
     let agentStopwatchState = null;
     let agentStopwatchTimer = null;
     ${functions.map(productionFunctionSource).join('\n')}
+    function agentTerminalNormalize(_capture, event) { return event?.terminal ?? null; }
+    const agentTerminalHandlers = Object.freeze([agentStopwatchHandleTerminal]);
     this.api = {
+      terminal(capture, exchangeId, atMs) {
+        return agentTerminalObserve(capture, { terminal: {
+          kind: 'success', exchange_id: exchangeId, completed_at_ms: atMs
+        } });
+      },
       request: agentStopwatchObserveRequest,
       identify: agentStopwatchObserveProviderIdentity,
       handle: agentStopwatchHandleTerminal,
@@ -135,6 +143,25 @@ test('conflicting exchange identity does not overwrite the bound capture', () =>
   assert.ok(h.diagnostics.some(item =>
     item.name === 'agent-stopwatch-exchange-identity-conflict'
   ));
+});
+
+test('late prior completion during unidentified new request is rejected', () => {
+  const h = harness();
+  const old = capture(1000, 'user-old');
+  h.request(old);
+  h.identify(old, resumeToken('exchange-old'));
+  const next = capture(5000, 'user-new');
+  h.request(next);
+  h.identify(old, resumeToken('exchange-old'));
+  assert.equal(h.state().pending_capture, next);
+  const rejected = h.terminal(old, 'exchange-old', 6000);
+  assert.equal(rejected, null);
+  assert.equal(h.state().active, true);
+  h.identify(next, resumeToken('exchange-new'));
+  assert.equal(h.state().exchange_id, 'exchange-new');
+  const accepted = h.terminal(next, 'exchange-new', 9000);
+  assert.equal(accepted?.kind, 'success');
+  assert.equal(h.state().active, false);
 });
 
 test('same exchange on a subsequent prompt preserves total and records lap', () => {
