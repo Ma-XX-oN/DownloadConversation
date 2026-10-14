@@ -15,9 +15,9 @@ test('recorder panel restores dialog/log/switch/extract UI contracts', () => {
 
   const titleAt = userscript.indexOf('<div class="tm-title" data-role="title"></div>');
   const logAt = userscript.indexOf('<div class="tm-log-head">', titleAt);
-  const statusAt = userscript.indexOf('<div class="tm-status" data-role="status"></div>', titleAt);
+  const statusAt = userscript.indexOf('<div class="tm-status" data-role="status" role="status"></div>', titleAt);
   assert.ok(titleAt >= 0 && logAt > titleAt && statusAt > logAt, 'Log must be directly below title, before status/other controls.');
-  assert.match(userscript, /data-role="copy-log"[^>]*aria-label="Copy diagnostic log"/);
+  assert.match(userscript, /data-role="save-log"[^>]*aria-label="Save merged log"/);
   assert.match(userscript, /checkIconMarkup\(\)/);
   assert.match(userscript, /button\.classList\.add\('tm-copy-fade'\)/,
     'Copy confirmation must fade before the copy icon returns.');
@@ -31,7 +31,7 @@ test('recorder panel restores dialog/log/switch/extract UI contracts', () => {
   assert.match(userscript, /class="tm-switch-thumb"/);
   assert.match(userscript, /screen\.setAttribute\('aria-checked', String\(screenOnWhenCapturing\)\)/);
 
-  assert.match(userscript, /data-role="extract" type="button">Extract<\/button>/);
+  assert.match(userscript, /data-role="extract" type="button" aria-label="Export conversation"/);
   assert.match(userscript, /data-role="format-jsonl" type="checkbox"> JSONL/);
   assert.doesNotMatch(userscript, /data-role="format-jsonl" type="checkbox" checked/);
   assert.match(userscript, /data-role="format-md" type="checkbox" checked> MD/);
@@ -119,14 +119,11 @@ test('recorder panel restores dialog/log/switch/extract UI contracts', () => {
 });
 
 
-test('Issue 166 diagnostic Save is immediately left of Copy', () => {
-  const head = userscript.match(/<div class="tm-log-head">[^\n]+<\/div>/)?.[0] ?? '';
-  assert.match(head, /data-role="save-log"[^>]*aria-label="Save diagnostic log"[^>]*title="Save log"/);
-  const saveAt = head.indexOf('data-role="save-log"');
-  const copyAt = head.indexOf('data-role="copy-log"');
-  const toggleAt = head.indexOf('data-role="toggle-log"');
-  assert.ok(saveAt >= 0 && copyAt > saveAt && toggleAt > copyAt,
-    'Diagnostic controls must be ordered Save, Copy, Expand.');
+test('merged-log Save precedes Reset in the dedicated recording actions', () => {
+  const row = userscript.match(/<div class="tm-row tm-recording-actions">[^\n]+<\/div>/)?.[0] ?? '';
+  assert.match(row, /data-role="save-log"[^>]*aria-label="Save merged log"/);
+  assert.match(row, /data-role="reset-communication-log"[^>]*aria-label="Reset communication log"/);
+  assert.ok(row.indexOf('data-role="save-log"') < row.indexOf('data-role="reset-communication-log"'));
 });
 
 
