@@ -1,6 +1,7 @@
   /**
    * Keeps ChatGPT's startup dark appearance stable without covering its UI.
    * Stops suppressing theme changes after a bounded startup window.
+   * @returns {void} No value is returned.
    */
   function installStartupDarkThemeGuard() {
     if (!window.matchMedia('(prefers-color-scheme: dark)').matches) return;
