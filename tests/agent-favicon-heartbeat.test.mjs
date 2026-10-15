@@ -52,7 +52,7 @@ test('completion becomes white only on visible focused tab', async () => {
   assert.deepEqual(h.rendered, ['acknowledged']);
 });
 
-test('pulse interval samples every 2000ms and stops on cleanup', () => {
+test('pulse interval samples every 1000ms and stops on cleanup', () => {
   const callbacks = [];
   const intervals = [];
   const h = {
@@ -61,7 +61,7 @@ test('pulse interval samples every 2000ms and stops on cleanup', () => {
     rendered: []
   };
   vm.runInNewContext(`
-    const AGENT_FAVICON_PULSE_INTERVAL_MS = 2000;
+    const AGENT_FAVICON_PULSE_INTERVAL_MS = 1000;
     let agentFaviconPulseTimer = null;
     let agentFaviconVisibleState = 'completed';
     function agentFaviconRenderState(state, heartbeat) {
@@ -74,10 +74,10 @@ test('pulse interval samples every 2000ms and stops on cleanup', () => {
   `, h);
   h.start();
   h.start();
-  assert.deepEqual(intervals, [2000]);
+  assert.deepEqual(intervals, [1000]);
   callbacks[0]();
   assert.deepEqual(JSON.parse(JSON.stringify(h.rendered)), [['completed', true]]);
   h.stop();
   h.start();
-  assert.deepEqual(intervals, [2000, 2000]);
+  assert.deepEqual(intervals, [1000, 1000]);
 });
