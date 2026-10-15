@@ -63,6 +63,7 @@ function renderHarness() {
         };
       }
       if (tag === 'canvas') {
+        currentPixels = null;
         return {
           width: 0,
           height: 0,
@@ -70,7 +71,7 @@ function renderHarness() {
             return {
               drawImage() {},
               getImageData() {
-                return { data: new Uint8ClampedArray([255, 255, 255, 255]) };
+                return { data: new Uint8ClampedArray(currentPixels ?? [255, 255, 255, 255]) };
               },
               putImageData(imageData) {
                 currentPixels = Array.from(imageData.data);
