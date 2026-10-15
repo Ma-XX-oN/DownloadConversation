@@ -6,7 +6,7 @@ import { productionFunctionSource } from './helpers/userscript-source.mjs';
 test('ten-second sine heartbeat stays between 50% and 100% opacity', () => {
   const h = { performance: { now: () => 0 } };
   vm.runInNewContext(`
-    const AGENT_FAVICON_PULSE_PERIOD_MS = 10000;
+    const AGENT_FAVICON_PULSE_INTERVAL_MS = 10000;
     ${productionFunctionSource('agentFaviconPulseOpacity')}
     this.sample = agentFaviconPulseOpacity;
   `, h);
@@ -52,7 +52,7 @@ test('completion becomes white only on visible focused tab', async () => {
   assert.deepEqual(h.rendered, ['acknowledged']);
 });
 
-test('pulse interval samples every 2000ms and stops on cleanup', () => {
+test('pulse update samples every 250ms independently of pulse interval and stops on cleanup', () => {
   const callbacks = [];
   const intervals = [];
   const h = {
@@ -61,7 +61,7 @@ test('pulse interval samples every 2000ms and stops on cleanup', () => {
     rendered: []
   };
   vm.runInNewContext(`
-    const AGENT_FAVICON_PULSE_INTERVAL_MS = 2000;
+    const AGENT_FAVICON_PULSE_UPDATE_MS = 250;
     let agentFaviconPulseTimer = null;
     let agentFaviconVisibleState = 'completed';
     function agentFaviconRenderState(state, heartbeat) {
@@ -74,10 +74,10 @@ test('pulse interval samples every 2000ms and stops on cleanup', () => {
   `, h);
   h.start();
   h.start();
-  assert.deepEqual(intervals, [2000]);
+  assert.deepEqual(intervals, [250]);
   callbacks[0]();
   assert.deepEqual(JSON.parse(JSON.stringify(h.rendered)), [['completed', true]]);
   h.stop();
   h.start();
-  assert.deepEqual(intervals, [2000, 2000]);
+  assert.deepEqual(intervals, [250, 250]);
 });
