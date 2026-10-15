@@ -186,7 +186,14 @@
     const nativeSetAttribute = Element.prototype.setAttribute;
     /** Original native removeAttribute implementation, restored at page exit. */
     const nativeRemoveAttribute = Element.prototype.removeAttribute;
-    /** Records a bounded call site, never a full stack containing user content. */
+    /**
+     * Records a bounded call site without recording application message text.
+     * @param {string} operation - Attribute operation name.
+     * @param {string} name - Attribute name.
+     * @param {string|null} before - Previous attribute value.
+     * @param {string|null} after - New attribute value.
+     * @returns {void} No value is returned.
+     */
     const recordWriter = (operation, name, before, after) => {
       if (before === after) return;
       const stack = new Error().stack?.split('\\n').slice(2, 7)
@@ -198,7 +205,12 @@
       });
       schedule('theme-writer');
     };
-    /** Traces direct JavaScript writes to the root's relevant theme attributes. */
+    /**
+     * Traces direct JavaScript writes to relevant root theme attributes.
+     * @param {string} name - Attribute name.
+     * @param {string} value - Attribute value.
+     * @returns {void} The original method's result is returned.
+     */
     const tracedSetAttribute = function(name, value) {
       if (this !== document.documentElement ||
         (name !== 'data-theme' && name !== 'data-appearance-theme')) {
@@ -209,7 +221,11 @@
       recordWriter('setAttribute', name, before, this.getAttribute(name));
       return result;
     };
-    /** Traces direct JavaScript removals from the root's theme attributes. */
+    /**
+     * Traces direct JavaScript removals from root theme attributes.
+     * @param {string} name - Attribute name.
+     * @returns {void} The original method's result is returned.
+     */
     const tracedRemoveAttribute = function(name) {
       if (this !== document.documentElement ||
         (name !== 'data-theme' && name !== 'data-appearance-theme')) {
