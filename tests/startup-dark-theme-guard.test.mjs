@@ -42,6 +42,7 @@ test('attribute observer repairs a bypassed light change', () => {
 });
 test('guard is loaded before theme tracer and no overlay or polling is added', () => {
   const files = manifest.modules.flatMap(group => group.files);
-  assert.ok(files.indexOf('src/userscript/07-panel-launcher/04-startup-dark-theme-guard.js') < files.indexOf('src/userscript/07-panel-launcher/05-bootstrap.js'));
+  assert.ok(files.indexOf('src/userscript/07-panel-launcher/05-bootstrap.js') < files.indexOf('src/userscript/07-panel-launcher/04-startup-dark-theme-guard.js'));
+  assert.ok(files.indexOf('src/userscript/07-panel-launcher/04-startup-dark-theme-guard.js') < files.indexOf('src/userscript/07-panel-launcher/05-bootstrap-part2.js'));
   assert.doesNotMatch(source, /setInterval|subtree:\\s*true|position:\\s*fixed|createElement\\('div'\\)/);
 });
