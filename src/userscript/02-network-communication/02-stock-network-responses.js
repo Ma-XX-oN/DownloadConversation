@@ -51,6 +51,7 @@
       response_type: xhr?.responseType || null,
       headers: stockNetworkRequestHeaderSummary(info?.headers)
     });
+    aicc127LiveOnRequest(trace);
     return trace;
   }
 
@@ -80,6 +81,7 @@
    * @returns {void} No value is returned.
    */
   function stockNetworkTraceXhrResponse(xhr, trace) {
+    aicc127LiveOnXhrResponse(xhr, trace);
     const headerLookup = stockNetworkXhrHeaderLookup(xhr);
     const contentType = headerLookup.get('content-type') ?? '';
     let bodyIdentity = null;

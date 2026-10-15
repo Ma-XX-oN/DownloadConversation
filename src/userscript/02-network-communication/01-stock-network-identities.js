@@ -170,6 +170,7 @@
       redirect: request?.redirect ?? null,
       headers: stockNetworkRequestHeaderSummary(request?.headers)
     });
+    aicc127LiveOnRequest(trace);
     return trace;
   }
 
@@ -224,6 +225,7 @@
     try {
       const bounded = await stockNetworkReadBoundedText(response);
       const contentType = response.headers?.get?.('content-type') ?? '';
+      aicc127LiveOnFetchResponse(trace, response.status, bounded);
       const identity = stockNetworkBodyIdentity(bounded.text, contentType);
       logDiagnostic('debug', 'stock-network-fetch-body-summary', {
         network_sequence: trace.sequence,

@@ -6,12 +6,12 @@
     {
       "name": "AIConversationCore",
       "repository": "Ma-XX-oN/AIConversationCore",
-      "ref": "main",
-      "commit": "9e18441a1f68a1cac5ebb6e20dead945dd36d7dd",
+      "ref": "issue-127-core-convergence-v1",
+      "commit": "1a70e7df14a0648c8e144ce3ef0da5e02bc90cd4",
       "path": "dist/aiconversationcore.chatgpt.browser.js",
-      "url": "https://raw.githubusercontent.com/Ma-XX-oN/AIConversationCore/9e18441a1f68a1cac5ebb6e20dead945dd36d7dd/dist/aiconversationcore.chatgpt.browser.js",
-      "git_blob_sha1": "47efb4f379f5bb27ae710a53d1cb84388aeeb1a2",
-      "byte_length": 282178
+      "url": "https://raw.githubusercontent.com/Ma-XX-oN/AIConversationCore/1a70e7df14a0648c8e144ce3ef0da5e02bc90cd4/dist/aiconversationcore.chatgpt.browser.js",
+      "git_blob_sha1": "27ac39398a164b91f05dfeb3be6513cbbbbee8f8",
+      "byte_length": 282215
     }
   ],
   "modules": [
@@ -94,7 +94,8 @@
         "src/userscript/06-image-export-tests/03-export-tests-transition.js",
         "src/userscript/06-image-export-tests/04-tests-modal-transition.js",
         "src/userscript/06-image-export-tests/05-modal-contract.js",
-        "src/userscript/06-image-export-tests/06-agent-plugin-readiness.js"
+        "src/userscript/06-image-export-tests/06-agent-plugin-readiness.js",
+        "src/userscript/06-image-export-tests/07-issue127-live-test.js"
       ]
     },
     {
