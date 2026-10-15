@@ -3,7 +3,7 @@ import test from 'node:test';
 import vm from 'node:vm';
 import { productionFunctionSource } from './helpers/userscript-source.mjs';
 
-test('ten-second sine heartbeat samples with a two-second period', () => {
+test('ten-second sine heartbeat stays between 50% and 100% opacity', () => {
   const h = { performance: { now: () => 0 } };
   vm.runInNewContext(`
     const AGENT_FAVICON_PULSE_PERIOD_MS = 10000;
@@ -11,9 +11,9 @@ test('ten-second sine heartbeat samples with a two-second period', () => {
     this.sample = agentFaviconPulseOpacity;
   `, h);
   assert.equal(h.sample(0), 1);
-  assert.ok(Math.abs(h.sample(2000) - 0.6545084971874737) < 1e-12);
-  assert.ok(Math.abs(h.sample(4000) - 0.09549150281252627) < 1e-12);
-  assert.equal(h.sample(5000), 0);
+  assert.ok(Math.abs(h.sample(2000) - 0.8272542485937369) < 1e-12);
+  assert.ok(Math.abs(h.sample(4000) - 0.5477457514062631) < 1e-12);
+  assert.equal(h.sample(5000), 0.5);
   assert.equal(h.sample(10000), 1);
 });
 
