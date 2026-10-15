@@ -5,12 +5,15 @@ const read = name => readFileSync(new URL('../src/userscript/' + name,
   import.meta.url), 'utf8');
 test('#127 live test matrix includes actionable three-stage capture and export', () => {
   const ui = read('06-image-export-tests/04-tests-modal-transition.js');
+  const modal = read('06-image-export-tests/05-modal-contract.js');
   for (const label of ['AICC #127 staged artifact', 'AICC #127 live project identity',
-    'AICC #127 live standalone', 'Export #127 evidence']) {
+    'AICC #127 live standalone', ]) {
     assert.ok(ui.includes(label), label + ' missing');
   }
+  assert.ok(modal.includes('Export #127 evidence'));
+  assert.ok(modal.includes("name.startsWith('AICC #127') ? 'Live'"));
   assert.match(ui, /result\?\.status === 'INCOMPLETE'/);
-  assert.match(ui, /aicc127ExportEvidence\(\)/);
+  assert.match(modal, /aicc127ExportEvidence\(\)/);
 });
 test('#127 uses existing fetch and XHR events, never initiates identity traffic', () => {
   const live = read('06-image-export-tests/07-issue127-live-test.js');
