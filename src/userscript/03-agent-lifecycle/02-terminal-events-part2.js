@@ -265,6 +265,7 @@
    * @param {number} generation - Monotonic favicon render generation.
    * @param {number} ordinal - One-based candidate ordinal for diagnostics.
    * @param {number} total - Total current favicon candidate count.
+   * @param {boolean} heartbeat - Suppress instrumentation for timer-driven redraws.
    * @returns {Promise<Object>} Candidate render result for aggregate state diagnostics.
    */
   function agentFaviconRenderCandidate(candidate, targetRgb, state, generation, ordinal, total, heartbeat = false) {
