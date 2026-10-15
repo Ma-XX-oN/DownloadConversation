@@ -72,6 +72,7 @@ const ordinaryStages = [
   ['Tail consistency regression', nodeCommand, ['--test', 'tests/tail-consistency.test.mjs']],
   ['Connection recovery warning regression', nodeCommand, ['--test', 'tests/connection-recovery-observer.test.mjs']],
   ['Theme startup diagnostics regression', nodeCommand, ['--test', 'tests/theme-startup-diagnostics.test.mjs']],
+  ['Startup dark-theme guard regression', nodeCommand, ['--test', 'tests/startup-dark-theme-guard.test.mjs']],
   ['Stream tail recovery regression', nodeCommand, ['--test', 'tests/stream-tail-recovery.test.mjs', 'tests/generation-response-clone-timing.test.mjs']],
   ['Stock network diagnostics regression', nodeCommand, ['--test', 'tests/stock-network-diagnostics.test.mjs']],
   ['Conversation API rate-limit regression', nodeCommand, ['--test', 'tests/conversation-api-rate-limit.test.mjs']],
