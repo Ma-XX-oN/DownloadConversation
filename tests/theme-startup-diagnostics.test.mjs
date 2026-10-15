@@ -31,3 +31,9 @@ test('direct root theme attribute writes are traced without changing native resu
   assert.match(observer, /Element\.prototype\.setAttribute = nativeSetAttribute/);
   assert.match(observer, /Element\.prototype\.removeAttribute = nativeRemoveAttribute/);
 });
+
+test('theme writer stack uses real newline separator', () => {
+  const observer = source.slice(start, end);
+  assert.match(observer, /\.split\(\/\\r\?\\n\/\)\.slice\(2, 7\)/);
+  assert.doesNotMatch(observer, /\.split\('\\\\n'\)/);
+});
