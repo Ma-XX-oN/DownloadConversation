@@ -40,6 +40,22 @@ test('attribute observer repairs a bypassed light change', () => {
   f.mutation();
   assert.equal(f.root.getAttribute('data-theme'), 'dark');
 });
+test('a bypassed theme removal is repaired, including a null attribute', () => {
+  const f = fixture();
+  f.attrs.delete('data-theme');
+  f.mutation();
+  assert.equal(f.root.getAttribute('data-theme'), 'dark');
+  f.restore();
+  f.attrs.delete('data-theme');
+  f.mutation();
+  assert.equal(f.root.getAttribute('data-theme'), null);
+});
+test('preventing a light setAttribute leaves an explicit dark attribute', () => {
+  const f = fixture();
+  f.root.setAttribute('data-theme', 'light');
+  assert.equal(f.attrs.has('data-theme'), true);
+  assert.equal(f.attrs.get('data-theme'), 'dark');
+});
 test('guard is loaded before theme tracer and no overlay or polling is added', () => {
   const files = manifest.modules.flatMap(group => group.files);
   assert.ok(files.indexOf('src/userscript/07-panel-launcher/05-bootstrap.js') < files.indexOf('src/userscript/07-panel-launcher/04-startup-dark-theme-guard.js'));
