@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         ChatGPT Conversation Markdown Recorder
 // @namespace    https://chatgpt.com/
-// @version      1.11.4-issue.288.6
+// @version      1.11.4-issue.288.7
 // @description  Exports the current ChatGPT conversation directly from the Conversation API as Markdown or JSONL.
 // @match        https://chatgpt.com/*
 // @match        https://chat.openai.com/*
@@ -12012,16 +12012,16 @@ globalThis.__dcCompressor = {
   /**
    * Computes the ten-second cyclic opacity.
    * @param {number} nowMs - Current monotonic time.
-   * @returns {number} Alpha multiplier from zero to one.
+   * @returns {number} Alpha multiplier from 0.5 to one.
    */
   function agentFaviconPulseOpacity(nowMs = performance.now()) {
-    return (1 + Math.cos(2 * Math.PI * nowMs / AGENT_FAVICON_PULSE_PERIOD_MS)) / 2;
+    return 0.75 + 0.25 * Math.cos(2 * Math.PI * nowMs / AGENT_FAVICON_PULSE_PERIOD_MS);
   }
 
   /**
    * Applies the same alpha multiplier to all composited pixels.
    * @param {Uint8ClampedArray} data - Composited RGBA pixels.
-   * @param {number} opacity - Target multiplier from zero to one.
+   * @param {number} opacity - Target multiplier from 0.5 to one.
    * @returns {void} Mutates the pixel buffer.
    */
   function agentFaviconApplyOpacity(data, opacity) {
