@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         ChatGPT Conversation Markdown Recorder
 // @namespace    https://chatgpt.com/
-// @version      1.11.7-issue.127.2
+// @version      1.11.7-issue.127.3
 // @description  Exports the current ChatGPT conversation directly from the Conversation API as Markdown or JSONL.
 // @match        https://chatgpt.com/*
 // @match        https://chat.openai.com/*
@@ -19474,7 +19474,7 @@ Image elapsed: ${formatDuration(imageElapsed)} — Completed: ${imageCompleted}/
               ${tests.map(([name]) => `
                 <tr data-test-name="${escapeHtmlAttribute(name)}">
                   <td>${escapeHtmlText(name)}</td>
-                  <td>Automatic</td>
+                  <td>${name.startsWith('AICC #127') ? 'Live' : 'Automatic'}</td>
                   <td data-role="previous-result">—</td>
                   <td data-role="current-result">—</td>
                   <td><button type="button" data-role="run-test">Run</button></td>
@@ -19483,6 +19483,7 @@ Image elapsed: ${formatDuration(imageElapsed)} — Completed: ${imageCompleted}/
           </table>
         </div>
         <div class="tm-test-actions">
+          <button type="button" data-role="export-aicc127-evidence">Export #127 evidence</button>
           <button type="button" data-role="run-all-tests">Run All</button>
           <button type="button" data-role="close-test-matrix">Close</button>
         </div>
@@ -19504,6 +19505,7 @@ Image elapsed: ${formatDuration(imageElapsed)} — Completed: ${imageCompleted}/
         if (test) void runOneTest(test[0], test[1]);
         return;
       }
+      if (target.closest('[data-role="export-aicc127-evidence"]')) { aicc127ExportEvidence(); return; }
       if (target.closest('[data-role="run-all-tests"]')) void runTests();
     });
     document.body.append(overlay);
@@ -19702,6 +19704,7 @@ Image elapsed: ${formatDuration(imageElapsed)} — Completed: ${imageCompleted}/
   };
   // #127 staging-only browser verification. No production identity or filenames.
   // The source is the page's EXISTING observed fetch/XHR, not new API requests.
+  /** Session-scoped redacted evidence storage key. */
   const AICC127_EVIDENCE_KEY = 'dc-issue127-live-observations';
   /** Exact immutable provider commit required by the #127 witness. */
   const AICC127_PROVIDER_SHA = 'cf521202e78dede9152840193dc5ca140703b240';
@@ -19711,8 +19714,14 @@ Image elapsed: ${formatDuration(imageElapsed)} — Completed: ${imageCompleted}/
   const AICC127_BLOB_SHA = '32182498480ba061367ce60dbb4104c0c0d55fe7';
   /** Memory-only observer and host bridge enabled explicitly by the test button. */
   let aicc127Runtime = null;
+  /** Tab-scoped explicit opt-in retained across ChatGPT page reloads. */
+  const AICC127_ARMED_KEY = 'dc-issue127-live-armed';
 
-  /** Constructs the redacted per-tab witness record without names or IDs. */
+  /**
+   * Constructs the redacted per-tab witness record without names or IDs.
+   *
+   * @returns {Object} Returns the aicc127MinimalEvidence result.
+   */
   function aicc127MinimalEvidence() {
     try {
       const item = JSON.parse(sessionStorage.getItem(AICC127_EVIDENCE_KEY) || 'null');
@@ -19729,7 +19738,11 @@ Image elapsed: ${formatDuration(imageElapsed)} — Completed: ${imageCompleted}/
     };
   }
 
-  /** Persists the bounded privacy-minimized witness across test invocations. */
+  /**
+   * Persists the bounded privacy-minimized witness across test invocations.
+   *
+   * @returns {void} No value is returned.
+   */
   function aicc127SaveEvidence() {
     if (!aicc127Runtime) return;
     try {
@@ -19738,7 +19751,11 @@ Image elapsed: ${formatDuration(imageElapsed)} — Completed: ${imageCompleted}/
     } catch {}
   }
 
-  /** Connects the staged Core-owned agent to a test-only subject observer. */
+  /**
+   * Connects the staged Core-owned agent to a test-only subject observer.
+   *
+   * @returns {Promise<Object>} Returns the aicc127Start result.
+   */
   async function aicc127Start() {
     if (aicc127Runtime) return aicc127Runtime;
     const core = canonicalCore();
@@ -19756,18 +19773,23 @@ Image elapsed: ${formatDuration(imageElapsed)} — Completed: ${imageCompleted}/
       'Provider does not expose host traffic bridge');
     const evidence = aicc127MinimalEvidence();
     const state = { agent, evidence, host: null, conversationId: null,
-      observed: null, snapshots: 0, pending: new Set(), module };
+      observed: null, snapshots: 0, pending: new Set(), module, unsubscribe: null };
     aicc127Runtime = state;
-    agent.observeState(snapshot => {
+    state.unsubscribe = agent.observeState(snapshot => {
       state.observed = snapshot;
       state.snapshots += 1;
     }, 'subject-identification');
     aicc127BeginForCurrentConversation();
+    sessionStorage.setItem(AICC127_ARMED_KEY, 'true');
     aicc127SaveEvidence();
     return state;
   }
 
-  /** Rejects previous navigation epochs before correlated responses arrive. */
+  /**
+   * Rejects previous navigation epochs before correlated responses arrive.
+   *
+   * @returns {void} No value is returned.
+   */
   function aicc127BeginForCurrentConversation() {
     const state = aicc127Runtime;
     if (!state) return;
@@ -19783,7 +19805,12 @@ Image elapsed: ${formatDuration(imageElapsed)} — Completed: ${imageCompleted}/
     aicc127SaveEvidence();
   }
 
-  /** Classifies only allowed same-origin backend identity GET requests. */
+  /**
+   * Classifies only allowed same-origin backend identity GET requests.
+   *
+   * @param {Object} trace - A network request observed by DC.
+   * @returns {string|null} Returns the aicc127LiveRequestKind result.
+   */
   function aicc127LiveRequestKind(trace) {
     if (trace?.method !== 'GET') return null;
     try {
@@ -19797,7 +19824,12 @@ Image elapsed: ${formatDuration(imageElapsed)} — Completed: ${imageCompleted}/
     return null;
   }
 
-  /** Observes a request already captured by DownloadConversation. */
+  /**
+   * Observes a request already captured by DownloadConversation.
+   *
+   * @param {Object} trace - A network request observed by DC.
+   * @returns {void} No value is returned.
+   */
   function aicc127LiveOnRequest(trace) {
     const state = aicc127Runtime;
     if (!state) return;
@@ -19809,7 +19841,14 @@ Image elapsed: ${formatDuration(imageElapsed)} — Completed: ${imageCompleted}/
     })) state.pending.add(trace.sequence);
   }
 
-  /** Correlates genuine backend identity JSON with observer publication. */
+  /**
+   * Correlates genuine backend identity JSON with observer publication.
+   *
+   * @param {Object} trace - Correlated network request.
+   * @param {number} status - Actual HTTP status.
+   * @param {Object} bounded - Bounded existing response body.
+   * @returns {void} No value is returned.
+   */
   function aicc127LiveAcceptResponse(trace, status, bounded) {
     const state = aicc127Runtime;
     if (!state || !state.pending.delete(trace.sequence)) return;
@@ -19849,13 +19888,26 @@ Image elapsed: ${formatDuration(imageElapsed)} — Completed: ${imageCompleted}/
     aicc127SaveEvidence();
   }
 
-  /** Observes a cloned existing fetch response without new network requests. */
+  /**
+   * Observes a cloned existing fetch response without new network requests.
+   *
+   * @param {Object} trace - Original request correlation.
+   * @param {number} status - Actual HTTP status.
+   * @param {Object} bounded - Existing cloned response body.
+   * @returns {void} No value is returned.
+   */
   function aicc127LiveOnFetchResponse(trace, status, bounded) {
     if (!aicc127Runtime?.pending.has(trace.sequence)) return;
     aicc127LiveAcceptResponse(trace, status, bounded);
   }
 
-  /** Observes a completed existing XHR without new network requests. */
+  /**
+   * Observes a completed existing XHR without new network requests.
+   *
+   * @param {Object} xhr - Completed page XHR instance.
+   * @param {Object} trace - Original request correlation.
+   * @returns {void} No value is returned.
+   */
   function aicc127LiveOnXhrResponse(xhr, trace) {
     if (!aicc127Runtime?.pending.has(trace.sequence)) return;
     try {
@@ -19869,26 +19921,42 @@ Image elapsed: ${formatDuration(imageElapsed)} — Completed: ${imageCompleted}/
     } catch {}
   }
 
-  /** Verifies that the current test build matches exact Core and provider identities. */
+  /**
+   * Verifies that the current test build matches exact Core and provider identities.
+   *
+   * @returns {Promise<void>} Returns the testAicc127StagedArtifact result.
+   */
   async function testAicc127StagedArtifact() {
     await aicc127Start();
   }
 
-  /** Reports PASS only after backend project data reaches the observer. */
+  /**
+   * Reports PASS only after backend project data reaches the observer.
+   *
+   * @returns {Promise<Object|undefined>} Returns the testAicc127LiveProject result.
+   */
   async function testAicc127LiveProject() {
     const state = await aicc127Start();
     return state.evidence.project_backend_and_observer ? undefined :
       { status: 'INCOMPLETE', detail: 'Await authenticated project metadata. Navigate to a project conversation and rerun.' };
   }
 
-  /** Reports PASS only after backend explicit null reaches the observer. */
+  /**
+   * Reports PASS only after backend explicit null reaches the observer.
+   *
+   * @returns {Promise<Object|undefined>} Returns the testAicc127LiveStandalone result.
+   */
   async function testAicc127LiveStandalone() {
     const state = await aicc127Start();
     return state.evidence.standalone_backend_and_observer ? undefined :
       { status: 'INCOMPLETE', detail: 'Await observed backend gizmo_id:null. Navigate to standalone chat and rerun.' };
   }
 
-  /** Exports the redacted local evidence on user click. */
+  /**
+   * Exports the redacted local evidence on user click.
+   *
+   * @returns {void} No value is returned.
+   */
   function aicc127ExportEvidence() {
     const evidence = aicc127Runtime?.evidence || aicc127MinimalEvidence();
     const blob = new Blob([JSON.stringify(evidence, null, 2) + '\n'],
@@ -19901,6 +19969,18 @@ Image elapsed: ${formatDuration(imageElapsed)} — Completed: ${imageCompleted}/
     a.click();
     a.remove();
     setTimeout(() => URL.revokeObjectURL(url), 1000);
+    sessionStorage.removeItem(AICC127_ARMED_KEY);
+    aicc127Runtime?.unsubscribe?.();
+    aicc127Runtime = null;
+  }
+
+  // Only continue an already user-armed witness across a same-tab reload.
+  if (sessionStorage.getItem(AICC127_ARMED_KEY) === 'true') {
+    Promise.resolve().then(() => aicc127Start()).catch(error => {
+      logDiagnostic('warnings', 'aicc127-live-witness-rearm-failed', {
+        message: boundedDiagnosticText(errorMessage(error), 500)
+      });
+    });
   }
   // BEGIN Issue #163 WorkStack continuation state
   /** DOM id of the floating WorkStack continuation control. */
