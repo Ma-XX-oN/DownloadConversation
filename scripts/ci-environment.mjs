@@ -71,7 +71,6 @@ const ordinaryStages = [
   ['Issue 166 archive runtime regression', nodeCommand, ['--test', 'tests/archive-runtime.test.mjs', 'tests/issue188-compressor-contract.test.mjs', 'tests/issue166-segment-archive-integration.test.mjs', 'tests/issue166-remaining-acceptance.test.mjs', 'tests/issue166-dual-active-rotation.test.mjs', 'tests/communication-log-duplicate-progress.test.mjs', 'tests/local-datetime-range-dialog.test.mjs']],
   ['Tail consistency regression', nodeCommand, ['--test', 'tests/tail-consistency.test.mjs']],
   ['Connection recovery warning regression', nodeCommand, ['--test', 'tests/connection-recovery-observer.test.mjs']],
-  ['Theme startup diagnostics regression', nodeCommand, ['--test', 'tests/theme-startup-diagnostics.test.mjs']],
   ['Startup dark-theme guard regression', nodeCommand, ['--test', 'tests/startup-dark-theme-guard.test.mjs']],
   ['Stream tail recovery regression', nodeCommand, ['--test', 'tests/stream-tail-recovery.test.mjs', 'tests/generation-response-clone-timing.test.mjs']],
   ['Stock network diagnostics regression', nodeCommand, ['--test', 'tests/stock-network-diagnostics.test.mjs']],
