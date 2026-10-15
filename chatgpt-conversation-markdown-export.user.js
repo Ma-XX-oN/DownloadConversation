@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         ChatGPT Conversation Markdown Recorder
 // @namespace    https://chatgpt.com/
-// @version      1.11.4-issue.288.3
+// @version      1.11.4-issue.288.4
 // @description  Exports the current ChatGPT conversation directly from the Conversation API as Markdown or JSONL.
 // @match        https://chatgpt.com/*
 // @match        https://chat.openai.com/*
@@ -12006,10 +12006,12 @@ globalThis.__dcCompressor = {
   let agentFaviconPulseTimer = null;
   let agentFaviconVisibleState = 'original';
 
+  /** agentFaviconPulseOpacity heartbeat helper. */
   function agentFaviconPulseOpacity(nowMs = performance.now()) {
     return (1 + Math.cos(2 * Math.PI * nowMs / AGENT_FAVICON_PULSE_PERIOD_MS)) / 2;
   }
 
+  /** agentFaviconApplyOpacity heartbeat helper. */
   function agentFaviconApplyOpacity(data, opacity) {
     assert(Number.isFinite(opacity) && opacity >= 0 && opacity <= 1,
       'Favicon pulse opacity must be between zero and one.');
@@ -12018,6 +12020,7 @@ globalThis.__dcCompressor = {
     }
   }
 
+  /** agentFaviconStartPulse heartbeat helper. */
   function agentFaviconStartPulse() {
     if (agentFaviconPulseTimer !== null) return;
     agentFaviconPulseTimer = setInterval(() => {
@@ -12027,20 +12030,93 @@ globalThis.__dcCompressor = {
     }, AGENT_FAVICON_PULSE_INTERVAL_MS);
   }
 
+  /** agentFaviconStopPulse heartbeat helper. */
   function agentFaviconStopPulse() {
     if (agentFaviconPulseTimer === null) return;
     clearInterval(agentFaviconPulseTimer);
     agentFaviconPulseTimer = null;
   }
 
+  /** agentFaviconAcknowledgeCompletion heartbeat helper. */
   function agentFaviconAcknowledgeCompletion() {
     if (document.visibilityState !== 'visible' || !document.hasFocus()) return;
     if (agentFaviconVisibleState !== 'completed') return;
     void agentFaviconRenderState('acknowledged');
   }
 
+  /** Register attention notifications for the existing tab. */
   document.addEventListener('visibilitychange', agentFaviconAcknowledgeCompletion);
   window.addEventListener('focus', agentFaviconAcknowledgeCompletion);
+
+  /** Five-minute thresholds comprising one thirty-minute Agent working interval. */
+  const AGENT_FAVICON_RING_STEP_MS = 5 * 60 * 1000;
+  /** The last projected progress step; reset whenever processing begins again. */
+  let agentFaviconRingRenderedStep = 0;
+
+  /**
+   * Derives the step from the stopwatch.
+   *
+   * @param {number} nowMs - Monotonic current time.
+   * @returns {number} Clamped step from zero through six.
+   */
+  function agentFaviconRingStep(nowMs = performance.now()) {
+    if (!agentStopwatchState || !Number.isFinite(agentStopwatchState.started_at_ms)) return 0;
+    const elapsed = agentStopwatchState.active
+      ? Math.max(0, nowMs - agentStopwatchState.started_at_ms)
+      : Math.max(0, agentStopwatchState.total_ms ?? 0);
+    return Math.min(6, Math.floor(elapsed / AGENT_FAVICON_RING_STEP_MS));
+  }
+
+  /**
+   * Returns the step colour.
+   *
+   * @param {number} step - Completed five-minute intervals, one through six.
+   * @returns {string} A CSS colour for the visible progress arc.
+   */
+  function agentFaviconRingColor(step) {
+    return ['#00cc00', '#55cc00', '#aacc00', '#ffcc00', '#ff7700', '#ff0000'][
+      Math.min(6, Math.max(1, step)) - 1
+    ];
+  }
+
+  /**
+   * Fill the pie beneath the logo.
+   * @param {CanvasRenderingContext2D} context - Canvas.
+   * @param {number} width - Width.
+   * @param {number} height - Height.
+   * @param {number} step - Step.
+   * @returns {void} No result.
+   */
+  function agentFaviconDrawPieSlice(context, width, height, step) {
+    if (step < 1) return;
+    const size = Math.min(width, height);
+    context.beginPath();
+    context.moveTo(width / 2, height / 2);
+    context.fillStyle = agentFaviconRingColor(step);
+    context.arc(width / 2, height / 2, size * 0.49,
+      -Math.PI / 2, -Math.PI / 2 + Math.PI * 2 * step / 6);
+    context.closePath();
+    context.fill();
+  }
+
+  /**
+   * Draw ring above logo.
+   * @param {CanvasRenderingContext2D} context - Canvas.
+   * @param {number} width - Width.
+   * @param {number} height - Height.
+   * @param {number} step - Step.
+   * @returns {void} No result.
+   */
+  function agentFaviconDrawRing(context, width, height, step) {
+    if (step < 1) return;
+    const size = Math.min(width, height);
+    context.beginPath();
+    context.strokeStyle = agentFaviconRingColor(step);
+    context.lineWidth = Math.max(1, size * 0.12);
+    context.arc(width / 2, height / 2, size * 0.43,
+      -Math.PI / 2, -Math.PI / 2 + Math.PI * 2 * step / 6);
+    context.stroke();
+  }
 
   /**
    * Returns current stock favicon candidates and captures each candidate's original source once.
@@ -12198,76 +12274,6 @@ globalThis.__dcCompressor = {
       };
       image.src = candidate.original_href;
     });
-  }
-
-  /** Five-minute thresholds comprising one thirty-minute Agent working interval. */
-  const AGENT_FAVICON_RING_STEP_MS = 5 * 60 * 1000;
-  /** The last projected progress step; reset whenever processing begins again. */
-  let agentFaviconRingRenderedStep = 0;
-
-  /**
-   * Derives the step from the stopwatch.
-   *
-   * @param {number} nowMs - Monotonic current time.
-   * @returns {number} Clamped step from zero through six.
-   */
-  function agentFaviconRingStep(nowMs = performance.now()) {
-    if (!agentStopwatchState || !Number.isFinite(agentStopwatchState.started_at_ms)) return 0;
-    const elapsed = agentStopwatchState.active
-      ? Math.max(0, nowMs - agentStopwatchState.started_at_ms)
-      : Math.max(0, agentStopwatchState.total_ms ?? 0);
-    return Math.min(6, Math.floor(elapsed / AGENT_FAVICON_RING_STEP_MS));
-  }
-
-  /**
-   * Returns the step colour.
-   *
-   * @param {number} step - Completed five-minute intervals, one through six.
-   * @returns {string} A CSS colour for the visible progress arc.
-   */
-  function agentFaviconRingColor(step) {
-    return ['#00cc00', '#55cc00', '#aacc00', '#ffcc00', '#ff7700', '#ff0000'][
-      Math.min(6, Math.max(1, step)) - 1
-    ];
-  }
-
-  /**
-   * Fill the pie beneath the logo.
-   * @param {CanvasRenderingContext2D} context - Canvas.
-   * @param {number} width - Width.
-   * @param {number} height - Height.
-   * @param {number} step - Step.
-   * @returns {void} No result.
-   */
-  function agentFaviconDrawPieSlice(context, width, height, step) {
-    if (step < 1) return;
-    const size = Math.min(width, height);
-    context.beginPath();
-    context.moveTo(width / 2, height / 2);
-    context.fillStyle = agentFaviconRingColor(step);
-    context.arc(width / 2, height / 2, size * 0.49,
-      -Math.PI / 2, -Math.PI / 2 + Math.PI * 2 * step / 6);
-    context.closePath();
-    context.fill();
-  }
-
-  /**
-   * Draw ring above logo.
-   * @param {CanvasRenderingContext2D} context - Canvas.
-   * @param {number} width - Width.
-   * @param {number} height - Height.
-   * @param {number} step - Step.
-   * @returns {void} No result.
-   */
-  function agentFaviconDrawRing(context, width, height, step) {
-    if (step < 1) return;
-    const size = Math.min(width, height);
-    context.beginPath();
-    context.strokeStyle = agentFaviconRingColor(step);
-    context.lineWidth = Math.max(1, size * 0.12);
-    context.arc(width / 2, height / 2, size * 0.43,
-      -Math.PI / 2, -Math.PI / 2 + Math.PI * 2 * step / 6);
-    context.stroke();
   }
 
   /**
