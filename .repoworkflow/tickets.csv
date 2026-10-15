@@ -1,0 +1,12 @@
+issue,title,dependencies
+233,"Track GEN and COMM starting versions in combined exports","243"
+234,"Define version provenance record and boundary contract",""
+235,"Record unconditional GEN initialisation version transition","234"
+236,"Maintain GEN baseline across 10000-record memory eviction","234"
+237,"Persist GEN 5000-record tail and effective baseline together","235;236"
+238,"Prefix each new COMM fragment with immutable version metadata","234"
+239,"Preserve COMM fragment metadata through storage lifecycle","238"
+240,"Resolve GEN effective version at selected export boundary","237"
+241,"Resolve COMM effective version at selected export boundary","239"
+242,"Emit combined GEN/COMM version record from range resolvers","240;241"
+243,"Certify provenance end-to-end and build browser artifact","242"
