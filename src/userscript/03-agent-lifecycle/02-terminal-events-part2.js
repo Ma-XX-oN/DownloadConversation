@@ -59,6 +59,145 @@
   }
 
 
+  /** Ten-second heartbeat sampled every two seconds. */
+  const AGENT_FAVICON_PULSE_PERIOD_MS = 10000;
+  /** Milliseconds between alpha-redraw samples. */
+  const AGENT_FAVICON_PULSE_INTERVAL_MS = 2000;
+  /** Running periodic redraw handle, or null when idle. */
+  let agentFaviconPulseTimer = null;
+  /** Current composited colour/attention state. */
+  let agentFaviconVisibleState = 'original';
+
+  /**
+   * Computes the ten-second cyclic opacity.
+   * @param {number} nowMs - Current monotonic time.
+   * @returns {number} Alpha multiplier from 0.5 to one.
+   */
+  function agentFaviconPulseOpacity(nowMs = performance.now()) {
+    return 0.75 + 0.25 * Math.cos(2 * Math.PI * nowMs / AGENT_FAVICON_PULSE_PERIOD_MS);
+  }
+
+  /**
+   * Applies the same alpha multiplier to all composited pixels.
+   * @param {Uint8ClampedArray} data - Composited RGBA pixels.
+   * @param {number} opacity - Target multiplier from 0.5 to one.
+   * @returns {void} Mutates the pixel buffer.
+   */
+  function agentFaviconApplyOpacity(data, opacity) {
+    assert(Number.isFinite(opacity) && opacity >= 0 && opacity <= 1,
+      'Favicon pulse opacity must be between zero and one.');
+    for (let index = 3; index < data.length; index += 4) {
+      data[index] = Math.round(data[index] * opacity);
+    }
+  }
+
+  /**
+   * Starts a single periodic favicon redraw.
+   * @returns {void} No result.
+   */
+  function agentFaviconStartPulse() {
+    if (agentFaviconPulseTimer !== null) return;
+    agentFaviconPulseTimer = setInterval(() => {
+      if (agentFaviconVisibleState !== 'original') {
+        void agentFaviconRenderState(agentFaviconVisibleState, true);
+      }
+    }, AGENT_FAVICON_PULSE_INTERVAL_MS);
+  }
+
+  /**
+   * Stops the heartbeat timer when restoring the original favicon.
+   * @returns {void} No result.
+   */
+  function agentFaviconStopPulse() {
+    if (agentFaviconPulseTimer === null) return;
+    clearInterval(agentFaviconPulseTimer);
+    agentFaviconPulseTimer = null;
+  }
+
+  /**
+   * Marks a completed prompt as attended only in a focused visible tab.
+   * @returns {void} No result.
+   */
+  function agentFaviconAcknowledgeCompletion() {
+    if (document.visibilityState !== 'visible' || !document.hasFocus()) return;
+    if (agentFaviconVisibleState !== 'completed') return;
+    void agentFaviconRenderState('acknowledged');
+  }
+
+  /** Register attention notifications for the existing tab. */
+  document.addEventListener('visibilitychange', agentFaviconAcknowledgeCompletion);
+  window.addEventListener('focus', agentFaviconAcknowledgeCompletion);
+
+  /** Five-minute thresholds comprising one thirty-minute Agent working interval. */
+  const AGENT_FAVICON_RING_STEP_MS = 5 * 60 * 1000;
+  /** The last projected progress step; reset whenever processing begins again. */
+  let agentFaviconRingRenderedStep = 0;
+
+  /**
+   * Derives the step from the stopwatch.
+   *
+   * @param {number} nowMs - Monotonic current time.
+   * @returns {number} Clamped step from zero through six.
+   */
+  function agentFaviconRingStep(nowMs = performance.now()) {
+    if (!agentStopwatchState || !Number.isFinite(agentStopwatchState.started_at_ms)) return 0;
+    const elapsed = agentStopwatchState.active
+      ? Math.max(0, nowMs - agentStopwatchState.started_at_ms)
+      : Math.max(0, agentStopwatchState.total_ms ?? 0);
+    return Math.min(6, Math.floor(elapsed / AGENT_FAVICON_RING_STEP_MS));
+  }
+
+  /**
+   * Returns the step colour.
+   *
+   * @param {number} step - Completed five-minute intervals, one through six.
+   * @returns {string} A CSS colour for the visible progress arc.
+   */
+  function agentFaviconRingColor(step) {
+    return ['#00cc00', '#55cc00', '#aacc00', '#ffcc00', '#ff7700', '#ff0000'][
+      Math.min(6, Math.max(1, step)) - 1
+    ];
+  }
+
+  /**
+   * Fill the pie beneath the logo.
+   * @param {CanvasRenderingContext2D} context - Canvas.
+   * @param {number} width - Width.
+   * @param {number} height - Height.
+   * @param {number} step - Step.
+   * @returns {void} No result.
+   */
+  function agentFaviconDrawPieSlice(context, width, height, step) {
+    if (step < 1) return;
+    const size = Math.min(width, height);
+    context.beginPath();
+    context.moveTo(width / 2, height / 2);
+    context.fillStyle = agentFaviconRingColor(step);
+    context.arc(width / 2, height / 2, size * 0.49,
+      -Math.PI / 2, -Math.PI / 2 + Math.PI * 2 * step / 6);
+    context.closePath();
+    context.fill();
+  }
+
+  /**
+   * Draw ring above logo.
+   * @param {CanvasRenderingContext2D} context - Canvas.
+   * @param {number} width - Width.
+   * @param {number} height - Height.
+   * @param {number} step - Step.
+   * @returns {void} No result.
+   */
+  function agentFaviconDrawRing(context, width, height, step) {
+    if (step < 1) return;
+    const size = Math.min(width, height);
+    context.beginPath();
+    context.strokeStyle = agentFaviconRingColor(step);
+    context.lineWidth = Math.max(1, size * 0.12);
+    context.arc(width / 2, height / 2, size * 0.43,
+      -Math.PI / 2, -Math.PI / 2 + Math.PI * 2 * step / 6);
+    context.stroke();
+  }
+
   /**
    * Returns current stock favicon candidates and captures each candidate's original source once.
    *
@@ -126,9 +265,10 @@
    * @param {number} generation - Monotonic favicon render generation.
    * @param {number} ordinal - One-based candidate ordinal for diagnostics.
    * @param {number} total - Total current favicon candidate count.
+   * @param {boolean} heartbeat - Suppress instrumentation for timer-driven redraws.
    * @returns {Promise<Object>} Candidate render result for aggregate state diagnostics.
    */
-  function agentFaviconRenderCandidate(candidate, targetRgb, state, generation, ordinal, total) {
+  function agentFaviconRenderCandidate(candidate, targetRgb, state, generation, ordinal, total, heartbeat = false) {
     return new Promise(resolve => {
       const image = new Image();
       image.onload = () => {
@@ -162,7 +302,8 @@
           const pixels = context.getImageData(0, 0, width, height);
           const changed = agentFaviconRecolorPixels(pixels.data, targetRgb);
           context.putImageData(pixels, 0, 0);
-          const ringStep = state === 'processing' || state === 'completed'
+          const ringStep = state === 'processing' || state === 'completed' ||
+            state === 'acknowledged'
             ? agentFaviconRingStep() : 0;
           if (ringStep > 0) {
             context.globalCompositeOperation = 'destination-over';
@@ -173,12 +314,16 @@
             }
             agentFaviconDrawRing(context, width, height, ringStep);
           }
+          // Pulse the fully composed icon: coloured logo, underlay and ring.
+          const composite = context.getImageData(0, 0, width, height);
+          agentFaviconApplyOpacity(composite.data, agentFaviconPulseOpacity());
+          context.putImageData(composite, 0, 0);
           if (generation !== agentFaviconRenderGeneration) {
             resolve({ applied: false, stale: true, recolored_pixels: changed, width, height });
             return;
           }
           candidate.link.href = canvas.toDataURL('image/png');
-          logDiagnostic('debug', 'agent-favicon-candidate-rendered', {
+          if (!heartbeat) logDiagnostic('debug', 'agent-favicon-candidate-rendered', {
             state,
             candidate_ordinal: ordinal,
             candidate_count: total,
