@@ -162,7 +162,8 @@
           const pixels = context.getImageData(0, 0, width, height);
           const changed = agentFaviconRecolorPixels(pixels.data, targetRgb);
           context.putImageData(pixels, 0, 0);
-          const ringStep = state === 'processing' || state === 'completed'
+          const ringStep = state === 'processing' || state === 'completed' ||
+            state === 'acknowledged'
             ? agentFaviconRingStep() : 0;
           if (ringStep > 0) {
             context.globalCompositeOperation = 'destination-over';
@@ -173,6 +174,10 @@
             }
             agentFaviconDrawRing(context, width, height, ringStep);
           }
+          // Pulse the fully composed icon: coloured logo, underlay and ring.
+          const composite = context.getImageData(0, 0, width, height);
+          agentFaviconApplyOpacity(composite.data, agentFaviconPulseOpacity());
+          context.putImageData(composite, 0, 0);
           if (generation !== agentFaviconRenderGeneration) {
             resolve({ applied: false, stale: true, recolored_pixels: changed, width, height });
             return;
