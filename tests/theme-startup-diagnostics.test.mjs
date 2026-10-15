@@ -19,3 +19,15 @@ test('theme observer records bounded transitions without polling or subtree obse
   assert.match(observer, /bodyObserver\?\.disconnect\(\)/);
   assert.doesNotMatch(observer, /setInterval|setTimeout|subtree:\s*true|childList:\s*true/);
 });
+
+test('direct root theme attribute writes are traced without changing native results', () => {
+  const observer = source.slice(start, end);
+  assert.match(observer, /Element\.prototype\.setAttribute = tracedSetAttribute/);
+  assert.match(observer, /Element\.prototype\.removeAttribute = tracedRemoveAttribute/);
+  assert.match(observer, /this !== document\.documentElement/);
+  assert.match(observer, /theme-attribute-writer/);
+  assert.match(observer, /Reflect\.apply\(nativeSetAttribute, this, \[name, value\]\)/);
+  assert.match(observer, /Reflect\.apply\(nativeRemoveAttribute, this, \[name\]\)/);
+  assert.match(observer, /Element\.prototype\.setAttribute = nativeSetAttribute/);
+  assert.match(observer, /Element\.prototype\.removeAttribute = nativeRemoveAttribute/);
+});
