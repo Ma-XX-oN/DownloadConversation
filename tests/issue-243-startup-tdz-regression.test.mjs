@@ -5,7 +5,7 @@ import vm from 'node:vm';
 
 const artifact = fs.readFileSync('chatgpt-conversation-markdown-export.user.js', 'utf8');
 const restore = fs.readFileSync('src/userscript/01-runtime/01-bootstrap-restore.js', 'utf8');
-const startup = fs.readFileSync('src/userscript/07-panel-launcher/05-bootstrap.js', 'utf8');
+const startup = fs.readFileSync('src/userscript/07-panel-launcher/05-bootstrap-part2.js', 'utf8');
 
 test('startup transition runs after capture-order declarations', () => {
   const event = "logDiagnostic('lifecycle', 'dc-version-transition', { version: VERSION });";
