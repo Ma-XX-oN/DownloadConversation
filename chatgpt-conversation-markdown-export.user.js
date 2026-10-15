@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         ChatGPT Conversation Markdown Recorder
 // @namespace    https://chatgpt.com/
-// @version      1.11.4-issue.282.4
+// @version      1.11.4-issue.282.6
 // @description  Exports the current ChatGPT conversation directly from the Conversation API as Markdown or JSONL.
 // @match        https://chatgpt.com/*
 // @match        https://chat.openai.com/*
@@ -23930,6 +23930,63 @@ Image elapsed: ${formatDuration(imageElapsed)} — Completed: ${imageCompleted}/
     let pendingFrame = false;
     let stopped = false;
     let snapshotCount = 0;
+    /** Original native setAttribute implementation, restored at page exit. */
+    const nativeSetAttribute = Element.prototype.setAttribute;
+    /** Original native removeAttribute implementation, restored at page exit. */
+    const nativeRemoveAttribute = Element.prototype.removeAttribute;
+    /**
+     * Records a bounded call site without recording application message text.
+     * @param {string} operation - Attribute operation name.
+     * @param {string} name - Attribute name.
+     * @param {string|null} before - Previous attribute value.
+     * @param {string|null} after - New attribute value.
+     * @returns {void} No value is returned.
+     */
+    const recordWriter = (operation, name, before, after) => {
+      if (before === after) return;
+      const stack = new Error().stack?.split('\\n').slice(2, 7)
+        .map(line => line.trim().slice(0, 240)) ?? [];
+      logDiagnostic('debug', 'theme-attribute-writer', {
+        operation, attribute: name, before, after,
+        elapsed_ms: Math.round(performance.now() - started),
+        stack
+      });
+      schedule('theme-writer');
+    };
+    /**
+     * Traces direct JavaScript writes to relevant root theme attributes.
+     * @param {string} name - Attribute name.
+     * @param {string} value - Attribute value.
+     * @returns {void} The original method's result is returned.
+     */
+    const tracedSetAttribute = function(name, value) {
+      if (this !== document.documentElement ||
+        (name !== 'data-theme' && name !== 'data-appearance-theme')) {
+        return Reflect.apply(nativeSetAttribute, this, [name, value]);
+      }
+      const before = this.getAttribute(name);
+      const result = Reflect.apply(nativeSetAttribute, this, [name, value]);
+      recordWriter('setAttribute', name, before, this.getAttribute(name));
+      return result;
+    };
+    /**
+     * Traces direct JavaScript removals from root theme attributes.
+     * @param {string} name - Attribute name.
+     * @returns {void} The original method's result is returned.
+     */
+    const tracedRemoveAttribute = function(name) {
+      if (this !== document.documentElement ||
+        (name !== 'data-theme' && name !== 'data-appearance-theme')) {
+        return Reflect.apply(nativeRemoveAttribute, this, [name]);
+      }
+      const before = this.getAttribute(name);
+      const result = Reflect.apply(nativeRemoveAttribute, this, [name]);
+      recordWriter('removeAttribute', name, before, this.getAttribute(name));
+      return result;
+    };
+    Element.prototype.setAttribute = tracedSetAttribute;
+    Element.prototype.removeAttribute = tracedRemoveAttribute;
+
     /**
      * Reads a privacy-safe background property from a mounted element.
      * @param {Element|null} element - DOM element to inspect.
@@ -24031,6 +24088,12 @@ Image elapsed: ${formatDuration(imageElapsed)} — Completed: ${imageCompleted}/
     window.addEventListener('pageshow', onShow);
     window.addEventListener('pagehide', () => {
       stopped = true;
+      if (Element.prototype.setAttribute === tracedSetAttribute) {
+        Element.prototype.setAttribute = nativeSetAttribute;
+      }
+      if (Element.prototype.removeAttribute === tracedRemoveAttribute) {
+        Element.prototype.removeAttribute = nativeRemoveAttribute;
+      }
       htmlObserver.disconnect();
       bodyObserver?.disconnect();
       window.removeEventListener('pageshow', onShow);
