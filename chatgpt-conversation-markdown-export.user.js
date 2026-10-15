@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         ChatGPT Conversation Markdown Recorder
 // @namespace    https://chatgpt.com/
-// @version      1.11.4-issue.282.3
+// @version      1.11.4-issue.282.4
 // @description  Exports the current ChatGPT conversation directly from the Conversation API as Markdown or JSONL.
 // @match        https://chatgpt.com/*
 // @match        https://chat.openai.com/*
@@ -24002,17 +24002,26 @@ Image elapsed: ${formatDuration(imageElapsed)} — Completed: ${imageCompleted}/
         attributeFilter: ['class', 'style', 'data-theme', 'data-appearance-theme']
       });
     }
-    /** @returns {void} Captures DOM readiness. */
+    /**
+     * Captures DOM readiness.
+     * @returns {void} No value is returned.
+     */
     const onReady = () => {
       bindBody();
       schedule('dom-content-loaded');
     };
-    /** @returns {void} Captures load completion. */
+    /**
+     * Captures load completion.
+     * @returns {void} No value is returned.
+     */
     const onLoad = () => {
       bindBody();
       schedule('load');
     };
-    /** @returns {void} Captures page restoration. */
+    /**
+     * Captures page restoration.
+     * @returns {void} No value is returned.
+     */
     const onShow = () => {
       bindBody();
       schedule('pageshow');
