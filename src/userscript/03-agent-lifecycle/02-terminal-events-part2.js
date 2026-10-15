@@ -128,7 +128,7 @@
    * @param {number} total - Total current favicon candidate count.
    * @returns {Promise<Object>} Candidate render result for aggregate state diagnostics.
    */
-  function agentFaviconRenderCandidate(candidate, targetRgb, state, generation, ordinal, total) {
+  function agentFaviconRenderCandidate(candidate, targetRgb, state, generation, ordinal, total, heartbeat = false) {
     return new Promise(resolve => {
       const image = new Image();
       image.onload = () => {
@@ -183,7 +183,7 @@
             return;
           }
           candidate.link.href = canvas.toDataURL('image/png');
-          logDiagnostic('debug', 'agent-favicon-candidate-rendered', {
+          if (!heartbeat) logDiagnostic('debug', 'agent-favicon-candidate-rendered', {
             state,
             candidate_ordinal: ordinal,
             candidate_count: total,
