@@ -360,7 +360,7 @@
             const root = document.documentElement;
             let settled = false;
             /**
-             * Releases deferred storage.
+             * Releases storage.
              * @returns {void} No value is returned.
              */
             const release = () => {
