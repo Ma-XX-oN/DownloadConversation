@@ -39,7 +39,8 @@
   /**
    * Renders every stock favicon candidate.
    *
-   * @param {string} state - `processing`, `completed`, `error`, or `original`.
+   * @param {string} state - Processing, completed, acknowledged, error or original.
+   * @param {boolean} heartbeat - Whether this redraw is an automatic pulse.
    * @returns {Promise<boolean>} Whether every candidate updated.
    */
   function agentFaviconRenderState(state, heartbeat = false) {
