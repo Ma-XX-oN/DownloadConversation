@@ -349,10 +349,49 @@
    * @param {Object} record - Complete structured communication record.
    * @returns {Promise<void>} Resolves after the record is accepted by active storage.
    */
+  /**
+   * Waits during the temporary light startup, bounded to eight seconds.
+   * @returns {Promise<void>} Resolves on dark theme, timeout or pagehide.
+   */
+  function communicationLogStartupThemeGate() {
+    const root = document.documentElement;
+    if (!root || document.readyState === 'complete' ||
+        !window.matchMedia('(prefers-color-scheme: dark)').matches ||
+        root.getAttribute('data-theme') !== 'light') return Promise.resolve();
+    return new Promise(resolve => {
+      let complete = false;
+      /**
+       * Resolves the bounded wait and detaches every listener.
+       * @returns {void} No value is returned.
+       */
+      const done = () => {
+        if (complete) return;
+        complete = true;
+        observer.disconnect();
+        clearTimeout(timeout);
+        window.removeEventListener('pagehide', done);
+        resolve();
+      };
+      /**
+       * Checks for restoration of the requested dark theme.
+       * @returns {void} No value is returned.
+       */
+      const check = () => {
+        if (root.getAttribute('data-theme') !== 'light') done();
+      };
+      const observer = new MutationObserver(check);
+      observer.observe(root, { attributes: true, attributeFilter: ['data-theme'] });
+      const timeout = setTimeout(done, 8000);
+      window.addEventListener('pagehide', done, { once: true });
+      check();
+    });
+  }
+
   async function communicationLogStorageAppendRecord(record) {
-    const line = `${JSON.stringify(record)}\n`;
-    const lineBytes = new TextEncoder().encode(line).byteLength;
     const queued = communicationLogEnqueue('storage-append', async () => {
+      await communicationLogStartupThemeGate();
+      const line = `${JSON.stringify(record)}\n`;
+      const lineBytes = new TextEncoder().encode(line).byteLength;
       await communicationLogOpenWriter();
       await communicationLogEnsureFragmentHeader();
       await communicationLogWritable.write(line);
