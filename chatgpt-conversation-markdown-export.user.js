@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         ChatGPT Conversation Markdown Recorder
 // @namespace    https://chatgpt.com/
-// @version      1.11.4-issue.288.2
+// @version      1.11.4-issue.288.3
 // @description  Exports the current ChatGPT conversation directly from the Conversation API as Markdown or JSONL.
 // @match        https://chatgpt.com/*
 // @match        https://chat.openai.com/*
@@ -12000,6 +12000,48 @@ globalThis.__dcCompressor = {
   }
 
 
+  /** Ten-second heartbeat sampled every two seconds. */
+  const AGENT_FAVICON_PULSE_PERIOD_MS = 10000;
+  const AGENT_FAVICON_PULSE_INTERVAL_MS = 2000;
+  let agentFaviconPulseTimer = null;
+  let agentFaviconVisibleState = 'original';
+
+  function agentFaviconPulseOpacity(nowMs = performance.now()) {
+    return (1 + Math.cos(2 * Math.PI * nowMs / AGENT_FAVICON_PULSE_PERIOD_MS)) / 2;
+  }
+
+  function agentFaviconApplyOpacity(data, opacity) {
+    assert(Number.isFinite(opacity) && opacity >= 0 && opacity <= 1,
+      'Favicon pulse opacity must be between zero and one.');
+    for (let index = 3; index < data.length; index += 4) {
+      data[index] = Math.round(data[index] * opacity);
+    }
+  }
+
+  function agentFaviconStartPulse() {
+    if (agentFaviconPulseTimer !== null) return;
+    agentFaviconPulseTimer = setInterval(() => {
+      if (agentFaviconVisibleState !== 'original') {
+        void agentFaviconRenderState(agentFaviconVisibleState, true);
+      }
+    }, AGENT_FAVICON_PULSE_INTERVAL_MS);
+  }
+
+  function agentFaviconStopPulse() {
+    if (agentFaviconPulseTimer === null) return;
+    clearInterval(agentFaviconPulseTimer);
+    agentFaviconPulseTimer = null;
+  }
+
+  function agentFaviconAcknowledgeCompletion() {
+    if (document.visibilityState !== 'visible' || !document.hasFocus()) return;
+    if (agentFaviconVisibleState !== 'completed') return;
+    void agentFaviconRenderState('acknowledged');
+  }
+
+  document.addEventListener('visibilitychange', agentFaviconAcknowledgeCompletion);
+  window.addEventListener('focus', agentFaviconAcknowledgeCompletion);
+
   /**
    * Returns current stock favicon candidates and captures each candidate's original source once.
    *
@@ -12157,48 +12199,6 @@ globalThis.__dcCompressor = {
       image.src = candidate.original_href;
     });
   }
-
-  /** Ten-second heartbeat sampled every two seconds. */
-  const AGENT_FAVICON_PULSE_PERIOD_MS = 10000;
-  const AGENT_FAVICON_PULSE_INTERVAL_MS = 2000;
-  let agentFaviconPulseTimer = null;
-  let agentFaviconVisibleState = 'original';
-
-  function agentFaviconPulseOpacity(nowMs = performance.now()) {
-    return (1 + Math.cos(2 * Math.PI * nowMs / AGENT_FAVICON_PULSE_PERIOD_MS)) / 2;
-  }
-
-  function agentFaviconApplyOpacity(data, opacity) {
-    assert(Number.isFinite(opacity) && opacity >= 0 && opacity <= 1,
-      'Favicon pulse opacity must be between zero and one.');
-    for (let index = 3; index < data.length; index += 4) {
-      data[index] = Math.round(data[index] * opacity);
-    }
-  }
-
-  function agentFaviconStartPulse() {
-    if (agentFaviconPulseTimer !== null) return;
-    agentFaviconPulseTimer = setInterval(() => {
-      if (agentFaviconVisibleState !== 'original') {
-        void agentFaviconRenderState(agentFaviconVisibleState, true);
-      }
-    }, AGENT_FAVICON_PULSE_INTERVAL_MS);
-  }
-
-  function agentFaviconStopPulse() {
-    if (agentFaviconPulseTimer === null) return;
-    clearInterval(agentFaviconPulseTimer);
-    agentFaviconPulseTimer = null;
-  }
-
-  function agentFaviconAcknowledgeCompletion() {
-    if (document.visibilityState !== 'visible' || !document.hasFocus()) return;
-    if (agentFaviconVisibleState !== 'completed') return;
-    void agentFaviconRenderState('acknowledged');
-  }
-
-  document.addEventListener('visibilitychange', agentFaviconAcknowledgeCompletion);
-  window.addEventListener('focus', agentFaviconAcknowledgeCompletion);
 
   /** Five-minute thresholds comprising one thirty-minute Agent working interval. */
   const AGENT_FAVICON_RING_STEP_MS = 5 * 60 * 1000;
