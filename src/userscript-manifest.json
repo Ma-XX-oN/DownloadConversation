@@ -125,7 +125,9 @@
         "src/userscript/07-panel-launcher/03-launcher-topology.js",
         "src/userscript/07-panel-launcher/04-launcher-removal.js",
         "src/userscript/07-panel-launcher/04-launcher-removal-part2.js",
-        "src/userscript/07-panel-launcher/05-bootstrap.js"
+        "src/userscript/07-panel-launcher/05-bootstrap.js",
+        "src/userscript/07-panel-launcher/04-startup-dark-theme-guard.js",
+        "src/userscript/07-panel-launcher/05-bootstrap-part2.js"
       ]
     }
   ],

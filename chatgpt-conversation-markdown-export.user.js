@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         ChatGPT Conversation Markdown Recorder
 // @namespace    https://chatgpt.com/
-// @version      1.11.4-issue.274.4
+// @version      1.11.4-issue.286.5
 // @description  Exports the current ChatGPT conversation directly from the Conversation API as Markdown or JSONL.
 // @match        https://chatgpt.com/*
 // @match        https://chat.openai.com/*
@@ -17479,6 +17479,92 @@ Image elapsed: ${formatDuration(imageElapsed)} — Completed: ${imageCompleted}/
     scheduleLiveTailScan('thread-bound');
   }
 
+  /** Selector taken from the stock ChatGPT connection-recovery notice. */
+  const CONNECTION_RECOVERY_SELECTOR = '[role="status"] > .text-chatgpt-recovery';
+  /** Conversation root scoped to the current page, independent of the recorder UI. */
+  let connectionRecoveryRoot = null;
+  /** Mutation observer attached only to the current conversation content root. */
+  let connectionRecoveryObserver = null;
+  /** Exact stock warning element currently visible, or null when cleared. */
+  let connectionRecoveryNotice = null;
+  /** Monotonic time when the current warning first appeared. */
+  let connectionRecoveryStarted = 0;
+
+  /**
+   * Emits one transition per visible warning occurrence, without changing agent state.
+   * @param {Element|null} notice - Current stock recovery notice, or null.
+   * @returns {void} No value is returned.
+   */
+  function setConnectionRecoveryNotice(notice) {
+    if (notice === connectionRecoveryNotice) return;
+    if (connectionRecoveryNotice) {
+      logDiagnostic('lifecycle', 'connection_restored', {
+        conversation_id: currentConversationId(),
+        dom_turn_id: connectionRecoveryNotice.closest('[data-turn-key]')?.getAttribute('data-turn-key') ?? null,
+        duration_ms: Math.max(0, Math.round(performance.now() - connectionRecoveryStarted)),
+        reason: 'warning-removed'
+      });
+    }
+    connectionRecoveryNotice = notice;
+    if (notice) {
+      connectionRecoveryStarted = performance.now();
+      logDiagnostic('warnings', 'connection_interrupted', {
+        conversation_id: currentConversationId(),
+        dom_turn_id: notice.closest('[data-turn-key]')?.getAttribute('data-turn-key') ?? null,
+        reason: 'stock-recovery-warning-visible'
+      });
+    }
+  }
+
+  /**
+   * Rebinds only when the stock conversation content root changes.
+   * The existing live-tail root observer invokes this; no extra document observer.
+   * @returns {void} No value is returned.
+   */
+  function bindConnectionRecoveryRoot() {
+    const root = document.querySelector('[data-chatgpt-conversation-selection-target="true"]');
+    if (root === connectionRecoveryRoot) return;
+    connectionRecoveryObserver?.disconnect();
+    connectionRecoveryObserver = null;
+    setConnectionRecoveryNotice(null);
+    connectionRecoveryRoot = root;
+    if (!(root instanceof Element)) return;
+    setConnectionRecoveryNotice(root.querySelector(CONNECTION_RECOVERY_SELECTOR));
+    connectionRecoveryObserver = new MutationObserver(records => {
+      let relevant = false;
+      for (const record of records) {
+        if (record.type !== 'childList') continue;
+        if (connectionRecoveryNotice && !root.contains(connectionRecoveryNotice)) {
+          relevant = true;
+          break;
+        }
+        for (const node of [...record.addedNodes, ...record.removedNodes]) {
+          if (!(node instanceof Element)) continue;
+          if (node.matches(CONNECTION_RECOVERY_SELECTOR) ||
+            node.querySelector(CONNECTION_RECOVERY_SELECTOR) ||
+            node.contains(connectionRecoveryNotice)) {
+            relevant = true;
+            break;
+          }
+        }
+        if (relevant) break;
+      }
+      if (relevant) setConnectionRecoveryNotice(root.querySelector(CONNECTION_RECOVERY_SELECTOR));
+    });
+    connectionRecoveryObserver.observe(root, { childList: true, subtree: true });
+  }
+
+  /**
+   * Releases the warning observer when the page is unloaded.
+   * @returns {void} No value is returned.
+   */
+  function releaseConnectionRecoveryObserver() {
+    connectionRecoveryObserver?.disconnect();
+    connectionRecoveryObserver = null;
+    connectionRecoveryRoot = null;
+    connectionRecoveryNotice = null;
+  }
+
   /**
    * Installs the passive bounded high-water tracker used only for export consistency evidence.
    *
@@ -17492,11 +17578,14 @@ Image elapsed: ${formatDuration(imageElapsed)} — Completed: ${imageCompleted}/
     document.addEventListener('keydown', handleLiveTailPromptKeydown, true);
     liveTailRootObserver = new MutationObserver(() => {
       if (document.querySelector('#thread') !== liveTailObservedThread) bindLiveTailThread();
+      if (!connectionRecoveryRoot?.isConnected) bindConnectionRecoveryRoot();
     });
     if (document.documentElement) {
       liveTailRootObserver.observe(document.documentElement, { childList: true, subtree: true });
     }
     bindLiveTailThread();
+    bindConnectionRecoveryRoot();
+    window.addEventListener('pagehide', releaseConnectionRecoveryObserver, { once: true });
   }
 
   /**
@@ -23827,6 +23916,278 @@ Image elapsed: ${formatDuration(imageElapsed)} — Completed: ${imageCompleted}/
       }, { once: true });
     }
   }
+
+  /**
+   * Keeps ChatGPT's startup dark appearance stable without covering its UI.
+   * Stops suppressing theme changes after a bounded startup window.
+   * @returns {void} No value is returned.
+   */
+  function installStartupDarkThemeGuard() {
+    if (!window.matchMedia('(prefers-color-scheme: dark)').matches) return;
+    const root = document.documentElement;
+    if (!root) return;
+    const nativeSet = Element.prototype.setAttribute;
+    const nativeRemove = Element.prototype.removeAttribute;
+    let seenDark = root.getAttribute('data-theme') === 'dark';
+    let active = true;
+    /**
+     * Restores normal theme writes at the end of startup.
+     * @returns {void} No value is returned.
+     */
+    const stop = () => {
+      active = false;
+      observer.disconnect();
+      if (Element.prototype.setAttribute === setGuard) Element.prototype.setAttribute = nativeSet;
+      if (Element.prototype.removeAttribute === removeGuard) Element.prototype.removeAttribute = nativeRemove;
+      clearTimeout(deadline);
+      window.removeEventListener('pagehide', stop);
+    };
+    /**
+     * Logs attempts to replace dark mode with light mode.
+     * @param {string} method - Intercepted method.
+     * @returns {void} No value is returned.
+     */
+    const prevented = method => {
+      logDiagnostic('debug', 'theme-startup-light-prevented', {
+        method, elapsed_ms: Math.round(performance.now())
+      });
+    };
+    /**
+     * Intercepts only transient light writes to the document root.
+     * @param {string} name - Attribute name.
+     * @param {string} value - Requested attribute value.
+     * @returns {void} Preserves native setAttribute behaviour otherwise.
+     */
+    const setGuard = function(name, value) {
+      if (this === root && name === 'data-theme') {
+        if (value === 'dark') seenDark = true;
+        if (active && seenDark && value === 'light') {
+          prevented('setAttribute');
+          return Reflect.apply(nativeSet, this, [name, 'dark']);
+        }
+      }
+      return Reflect.apply(nativeSet, this, [name, value]);
+    };
+    /**
+     * Preserves dark mode through removal/reassignment during startup.
+     * @param {string} name - Attribute name.
+     * @returns {void} Preserves native removeAttribute behaviour otherwise.
+     */
+    const removeGuard = function(name) {
+      if (this === root && name === 'data-theme' && active && seenDark) {
+        prevented('removeAttribute');
+        return;
+      }
+      return Reflect.apply(nativeRemove, this, [name]);
+    };
+    /** Restores dark mode if a dataset/property write bypasses the method hooks. */
+    const observer = new MutationObserver(() => {
+      const theme = root.getAttribute('data-theme');
+      if (theme === 'dark') seenDark = true;
+      if (active && seenDark && theme !== 'dark') {
+        Reflect.apply(nativeSet, root, ['data-theme', 'dark']);
+        prevented('attribute-observer');
+      }
+    });
+    observer.observe(root, { attributes: true, attributeFilter: ['data-theme'] });
+    Element.prototype.setAttribute = setGuard;
+    Element.prototype.removeAttribute = removeGuard;
+    const deadline = setTimeout(stop, 15000);
+    window.addEventListener('pagehide', stop, { once: true });
+  }
+
+  installStartupDarkThemeGuard();
+  /**
+   * Captures startup theme evidence without polling, page-wide observation or page changes.
+   * Only html/body attribute changes trigger snapshots; lifecycle events are bounded.
+   * @returns {void} No value is returned.
+   */
+  function installThemeStartupDiagnostics() {
+    const started = performance.now();
+    let lastState = '';
+    let bodyObserver = null;
+    let trackedBody = null;
+    let pendingFrame = false;
+    let stopped = false;
+    let snapshotCount = 0;
+    /** Original native setAttribute implementation, restored at page exit. */
+    const nativeSetAttribute = Element.prototype.setAttribute;
+    /** Original native removeAttribute implementation, restored at page exit. */
+    const nativeRemoveAttribute = Element.prototype.removeAttribute;
+    /**
+     * Records a bounded call site without recording application message text.
+     * @param {string} operation - Attribute operation name.
+     * @param {string} name - Attribute name.
+     * @param {string|null} before - Previous attribute value.
+     * @param {string|null} after - New attribute value.
+     * @returns {void} No value is returned.
+     */
+    const recordWriter = (operation, name, before, after) => {
+      if (before === after) return;
+      const stack = new Error().stack?.split(/\r?\n/).slice(2, 7)
+        .map(line => line.trim().slice(0, 240)) ?? [];
+      logDiagnostic('debug', 'theme-attribute-writer', {
+        operation, attribute: name, before, after,
+        elapsed_ms: Math.round(performance.now() - started),
+        stack
+      });
+      schedule('theme-writer');
+    };
+    /**
+     * Traces direct JavaScript writes to relevant root theme attributes.
+     * @param {string} name - Attribute name.
+     * @param {string} value - Attribute value.
+     * @returns {void} The original method's result is returned.
+     */
+    const tracedSetAttribute = function(name, value) {
+      if (this !== document.documentElement ||
+        (name !== 'data-theme' && name !== 'data-appearance-theme')) {
+        return Reflect.apply(nativeSetAttribute, this, [name, value]);
+      }
+      const before = this.getAttribute(name);
+      const result = Reflect.apply(nativeSetAttribute, this, [name, value]);
+      recordWriter('setAttribute', name, before, this.getAttribute(name));
+      return result;
+    };
+    /**
+     * Traces direct JavaScript removals from root theme attributes.
+     * @param {string} name - Attribute name.
+     * @returns {void} The original method's result is returned.
+     */
+    const tracedRemoveAttribute = function(name) {
+      if (this !== document.documentElement ||
+        (name !== 'data-theme' && name !== 'data-appearance-theme')) {
+        return Reflect.apply(nativeRemoveAttribute, this, [name]);
+      }
+      const before = this.getAttribute(name);
+      const result = Reflect.apply(nativeRemoveAttribute, this, [name]);
+      recordWriter('removeAttribute', name, before, this.getAttribute(name));
+      return result;
+    };
+    Element.prototype.setAttribute = tracedSetAttribute;
+    Element.prototype.removeAttribute = tracedRemoveAttribute;
+
+    /**
+     * Reads a privacy-safe background property from a mounted element.
+     * @param {Element|null} element - DOM element to inspect.
+     * @returns {string|null} Computed background colour, or null.
+     */
+    const background = element => element ? getComputedStyle(element).backgroundColor : null;
+    /**
+     * Reads a bounded snapshot of root theme state and background colours.
+     * @param {string} reason - Lifecycle checkpoint.
+     * @returns {void} No value is returned.
+     */
+    const capture = reason => {
+      if (stopped) return;
+      const html = document.documentElement;
+      const body = document.body;
+      const app = document.querySelector('#__next, #root, [data-testid="conversation-turns"]');
+      const data = {
+        reason,
+        elapsed_ms: Math.round(performance.now() - started),
+        theme: html?.getAttribute('data-theme') ?? null,
+        appearance_theme: html?.getAttribute('data-appearance-theme') ?? null,
+        html_class: html?.className?.toString().slice(0, 150) ?? null,
+        prefers_dark: window.matchMedia('(prefers-color-scheme: dark)').matches,
+        html_background: background(html),
+        body_background: background(body),
+        app_background: background(app),
+        body_replaced: trackedBody !== null && trackedBody !== body,
+        ready_state: document.readyState
+      };
+      const state = JSON.stringify({ ...data, reason: null, elapsed_ms: null });
+      if (state === lastState) return;
+      lastState = state;
+      snapshotCount += 1;
+      logDiagnostic('debug', 'theme-startup-snapshot', data);
+    };
+    /**
+     * Coalesces synchronous DOM changes to a single post-style calculation.
+     * @param {string} reason - Reason for the snapshot.
+     * @returns {void} No value is returned.
+     */
+    const schedule = reason => {
+      if (pendingFrame || stopped) return;
+      pendingFrame = true;
+      requestAnimationFrame(() => {
+        pendingFrame = false;
+        capture(reason);
+      });
+    };
+    /**
+     * Attaches an attribute-only observer to the active body if it exists.
+     * @returns {void} No value is returned.
+     */
+    const bindBody = () => {
+      if (trackedBody === document.body) return;
+      bodyObserver?.disconnect();
+      trackedBody = document.body;
+      if (trackedBody) {
+        bodyObserver = new MutationObserver(() => schedule('body-attribute'));
+        bodyObserver.observe(trackedBody, {
+          attributes: true,
+          attributeFilter: ['class', 'style', 'data-theme', 'data-appearance-theme']
+        });
+      }
+      schedule('body-bound');
+    };
+    const htmlObserver = new MutationObserver(() => schedule('html-attribute'));
+    if (document.documentElement) {
+      htmlObserver.observe(document.documentElement, {
+        attributes: true,
+        attributeFilter: ['class', 'style', 'data-theme', 'data-appearance-theme']
+      });
+    }
+    /**
+     * Captures DOM readiness.
+     * @returns {void} No value is returned.
+     */
+    const onReady = () => {
+      bindBody();
+      schedule('dom-content-loaded');
+    };
+    /**
+     * Captures load completion.
+     * @returns {void} No value is returned.
+     */
+    const onLoad = () => {
+      bindBody();
+      schedule('load');
+    };
+    /**
+     * Captures page restoration.
+     * @returns {void} No value is returned.
+     */
+    const onShow = () => {
+      bindBody();
+      schedule('pageshow');
+    };
+    document.addEventListener('DOMContentLoaded', onReady, { once: true });
+    window.addEventListener('load', onLoad, { once: true });
+    window.addEventListener('pageshow', onShow);
+    window.addEventListener('pagehide', () => {
+      stopped = true;
+      if (Element.prototype.setAttribute === tracedSetAttribute) {
+        Element.prototype.setAttribute = nativeSetAttribute;
+      }
+      if (Element.prototype.removeAttribute === tracedRemoveAttribute) {
+        Element.prototype.removeAttribute = nativeRemoveAttribute;
+      }
+      htmlObserver.disconnect();
+      bodyObserver?.disconnect();
+      window.removeEventListener('pageshow', onShow);
+      logDiagnostic('debug', 'theme-startup-observer-stopped', {
+        elapsed_ms: Math.round(performance.now() - started),
+        snapshots: snapshotCount
+      });
+    }, { once: true });
+    bindBody();
+    capture('installation');
+    schedule('first-animation-frame');
+  }
+
+  installThemeStartupDiagnostics();
 
   document.addEventListener('visibilitychange', () => {
     if (document.visibilityState === 'visible') void acquireWakeLock();
