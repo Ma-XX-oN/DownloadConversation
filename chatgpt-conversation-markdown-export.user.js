@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         ChatGPT Conversation Markdown Recorder
 // @namespace    https://chatgpt.com/
-// @version      1.11.4-issue.282.2
+// @version      1.11.4-issue.282.3
 // @description  Exports the current ChatGPT conversation directly from the Conversation API as Markdown or JSONL.
 // @match        https://chatgpt.com/*
 // @match        https://chat.openai.com/*
@@ -23930,9 +23930,17 @@ Image elapsed: ${formatDuration(imageElapsed)} — Completed: ${imageCompleted}/
     let pendingFrame = false;
     let stopped = false;
     let snapshotCount = 0;
-    /** Reads a privacy-safe background property from a mounted element. */
+    /**
+     * Reads a privacy-safe background property from a mounted element.
+     * @param {Element|null} element - DOM element to inspect.
+     * @returns {string|null} Computed background colour, or null.
+     */
     const background = element => element ? getComputedStyle(element).backgroundColor : null;
-    /** Reads a bounded snapshot of root theme state and background colours. */
+    /**
+     * Reads a bounded snapshot of root theme state and background colours.
+     * @param {string} reason - Lifecycle checkpoint.
+     * @returns {void} No value is returned.
+     */
     const capture = reason => {
       if (stopped) return;
       const html = document.documentElement;
@@ -23957,7 +23965,11 @@ Image elapsed: ${formatDuration(imageElapsed)} — Completed: ${imageCompleted}/
       snapshotCount += 1;
       logDiagnostic('debug', 'theme-startup-snapshot', data);
     };
-    /** Coalesces synchronous DOM changes to a single post-style calculation. */
+    /**
+     * Coalesces synchronous DOM changes to a single post-style calculation.
+     * @param {string} reason - Reason for the snapshot.
+     * @returns {void} No value is returned.
+     */
     const schedule = reason => {
       if (pendingFrame || stopped) return;
       pendingFrame = true;
@@ -23966,7 +23978,10 @@ Image elapsed: ${formatDuration(imageElapsed)} — Completed: ${imageCompleted}/
         capture(reason);
       });
     };
-    /** Attaches an attribute-only observer to the active body if it exists. */
+    /**
+     * Attaches an attribute-only observer to the active body if it exists.
+     * @returns {void} No value is returned.
+     */
     const bindBody = () => {
       if (trackedBody === document.body) return;
       bodyObserver?.disconnect();
@@ -23987,14 +24002,17 @@ Image elapsed: ${formatDuration(imageElapsed)} — Completed: ${imageCompleted}/
         attributeFilter: ['class', 'style', 'data-theme', 'data-appearance-theme']
       });
     }
+    /** @returns {void} Captures DOM readiness. */
     const onReady = () => {
       bindBody();
       schedule('dom-content-loaded');
     };
+    /** @returns {void} Captures load completion. */
     const onLoad = () => {
       bindBody();
       schedule('load');
     };
+    /** @returns {void} Captures page restoration. */
     const onShow = () => {
       bindBody();
       schedule('pageshow');
