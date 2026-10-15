@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         ChatGPT Conversation Markdown Recorder
 // @namespace    https://chatgpt.com/
-// @version      1.11.4-issue.288.4
+// @version      1.11.4-issue.288.5
 // @description  Exports the current ChatGPT conversation directly from the Conversation API as Markdown or JSONL.
 // @match        https://chatgpt.com/*
 // @match        https://chat.openai.com/*
@@ -12002,16 +12002,28 @@ globalThis.__dcCompressor = {
 
   /** Ten-second heartbeat sampled every two seconds. */
   const AGENT_FAVICON_PULSE_PERIOD_MS = 10000;
+  /** Milliseconds between alpha-redraw samples. */
   const AGENT_FAVICON_PULSE_INTERVAL_MS = 2000;
+  /** Running periodic redraw handle, or null when idle. */
   let agentFaviconPulseTimer = null;
+  /** Current composited colour/attention state. */
   let agentFaviconVisibleState = 'original';
 
-  /** agentFaviconPulseOpacity heartbeat helper. */
+  /**
+   * Computes the ten-second cyclic opacity.
+   * @param {number} nowMs - Current monotonic time.
+   * @returns {number} Alpha multiplier from zero to one.
+   */
   function agentFaviconPulseOpacity(nowMs = performance.now()) {
     return (1 + Math.cos(2 * Math.PI * nowMs / AGENT_FAVICON_PULSE_PERIOD_MS)) / 2;
   }
 
-  /** agentFaviconApplyOpacity heartbeat helper. */
+  /**
+   * Applies the same alpha multiplier to all composited pixels.
+   * @param {Uint8ClampedArray} data - Composited RGBA pixels.
+   * @param {number} opacity - Target multiplier from zero to one.
+   * @returns {void} Mutates the pixel buffer.
+   */
   function agentFaviconApplyOpacity(data, opacity) {
     assert(Number.isFinite(opacity) && opacity >= 0 && opacity <= 1,
       'Favicon pulse opacity must be between zero and one.');
@@ -12020,7 +12032,10 @@ globalThis.__dcCompressor = {
     }
   }
 
-  /** agentFaviconStartPulse heartbeat helper. */
+  /**
+   * Starts a single periodic favicon redraw.
+   * @returns {void} No result.
+   */
   function agentFaviconStartPulse() {
     if (agentFaviconPulseTimer !== null) return;
     agentFaviconPulseTimer = setInterval(() => {
@@ -12030,14 +12045,20 @@ globalThis.__dcCompressor = {
     }, AGENT_FAVICON_PULSE_INTERVAL_MS);
   }
 
-  /** agentFaviconStopPulse heartbeat helper. */
+  /**
+   * Stops the heartbeat timer when restoring the original favicon.
+   * @returns {void} No result.
+   */
   function agentFaviconStopPulse() {
     if (agentFaviconPulseTimer === null) return;
     clearInterval(agentFaviconPulseTimer);
     agentFaviconPulseTimer = null;
   }
 
-  /** agentFaviconAcknowledgeCompletion heartbeat helper. */
+  /**
+   * Marks a completed prompt as attended only in a focused visible tab.
+   * @returns {void} No result.
+   */
   function agentFaviconAcknowledgeCompletion() {
     if (document.visibilityState !== 'visible' || !document.hasFocus()) return;
     if (agentFaviconVisibleState !== 'completed') return;
@@ -12185,6 +12206,7 @@ globalThis.__dcCompressor = {
    * @param {number} generation - Monotonic favicon render generation.
    * @param {number} ordinal - One-based candidate ordinal for diagnostics.
    * @param {number} total - Total current favicon candidate count.
+   * @param {boolean} heartbeat - Suppress instrumentation for timer-driven redraws.
    * @returns {Promise<Object>} Candidate render result for aggregate state diagnostics.
    */
   function agentFaviconRenderCandidate(candidate, targetRgb, state, generation, ordinal, total, heartbeat = false) {
@@ -12292,7 +12314,8 @@ globalThis.__dcCompressor = {
   /**
    * Renders every stock favicon candidate.
    *
-   * @param {string} state - `processing`, `completed`, `error`, or `original`.
+   * @param {string} state - Processing, completed, acknowledged, error or original.
+   * @param {boolean} heartbeat - Whether this redraw is an automatic pulse.
    * @returns {Promise<boolean>} Whether every candidate updated.
    */
   function agentFaviconRenderState(state, heartbeat = false) {
