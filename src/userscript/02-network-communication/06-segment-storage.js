@@ -343,21 +343,15 @@
     await communicationLogSealActiveSegment();
   }
 
-  /**
-   * Appends one complete JSONL record and rotates only after its record boundary.
-   *
-   * @param {Object} record - Complete structured communication record.
-   * @returns {Promise<void>} Resolves after the record is accepted by active storage.
-   */
-  /**
-   * Waits during the temporary light startup, bounded to eight seconds.
-   * @returns {Promise<void>} Resolves on dark theme, timeout or pagehide.
-   */
   /** The one allowed deferred-startup gate for this document. */
   let communicationLogStartupGatePromise = null;
   /** Prevents repeated eight-second waits if the page remains light. */
   let communicationLogStartupGateSettled = false;
 
+  /**
+   * Waits during the temporary light startup, bounded to eight seconds.
+   * @returns {Promise<void>} Resolves on dark theme, timeout or pagehide.
+   */
   function communicationLogStartupThemeGate() {
     if (communicationLogStartupGateSettled) return Promise.resolve();
     if (communicationLogStartupGatePromise) return communicationLogStartupGatePromise;
@@ -396,6 +390,12 @@
     return communicationLogStartupGatePromise;
   }
 
+  /**
+   * Appends one complete JSONL record and rotates only after its record boundary.
+   *
+   * @param {Object} record - Complete structured communication record.
+   * @returns {Promise<void>} Resolves after the record is accepted by active storage.
+   */
   async function communicationLogStorageAppendRecord(record) {
     const queued = communicationLogEnqueue('storage-append', async () => {
       await communicationLogStartupThemeGate();
