@@ -2,7 +2,7 @@ import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import test from 'node:test';
 
-const source = readFileSync(new URL('../src/userscript/07-panel-launcher/05-bootstrap.js', import.meta.url), 'utf8');
+const source = readFileSync(new URL('../src/userscript/07-panel-launcher/05-bootstrap-part2.js', import.meta.url), 'utf8');
 const start = source.indexOf('  function installThemeStartupDiagnostics() {');
 const end = source.indexOf('\n  installThemeStartupDiagnostics();', start);
 test('theme observer records bounded transitions without polling or subtree observation', () => {
