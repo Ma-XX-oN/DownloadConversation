@@ -351,8 +351,7 @@
    */
   async function communicationLogStorageAppendRecord(record) {
     const queued = communicationLogEnqueue('storage-append', async () => {
-      if (typeof document !== 'undefined' && typeof window !== 'undefined' &&
-          !communicationLogStorageAppendRecord.startupGateSettled &&
+      if (typeof document !== 'undefined' && typeof window !== 'undefined' && !communicationLogStorageAppendRecord.startupGateSettled &&
           document.documentElement?.getAttribute('data-theme') === 'light' &&
           document.readyState !== 'complete' &&
           window.matchMedia?.('(prefers-color-scheme: dark)').matches) {
@@ -360,7 +359,10 @@
           communicationLogStorageAppendRecord.startupGate = new Promise(resolve => {
             const root = document.documentElement;
             let settled = false;
-            /** @returns {void} Releases deferred startup storage. */
+            /**
+             * Releases deferred storage.
+             * @returns {void} No value is returned.
+             */
             const release = () => {
               if (settled) return;
               settled = true;
