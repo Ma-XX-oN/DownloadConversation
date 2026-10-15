@@ -344,10 +344,10 @@
   }
 
   /**
-   * Appends one complete JSONL record and rotates only after its record boundary.
+   * Appends a complete JSONL record, with bounded startup deferral.
    *
    * @param {Object} record - Complete structured communication record.
-   * @returns {Promise<void>} Resolves after the record is accepted by active storage.
+   * @returns {Promise<void>} Resolves after storage accepts the record.
    */
   async function communicationLogStorageAppendRecord(record) {
     const queued = communicationLogEnqueue('storage-append', async () => {
@@ -360,6 +360,7 @@
           communicationLogStorageAppendRecord.startupGate = new Promise(resolve => {
             const root = document.documentElement;
             let settled = false;
+            /** @returns {void} Releases deferred startup storage. */
             const release = () => {
               if (settled) return;
               settled = true;
