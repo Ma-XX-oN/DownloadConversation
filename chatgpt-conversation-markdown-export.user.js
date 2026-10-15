@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         ChatGPT Conversation Markdown Recorder
 // @namespace    https://chatgpt.com/
-// @version      1.11.4-issue.284.2
+// @version      1.11.4-issue.284.3
 // @description  Exports the current ChatGPT conversation directly from the Conversation API as Markdown or JSONL.
 // @match        https://chatgpt.com/*
 // @match        https://chat.openai.com/*
@@ -8535,8 +8535,7 @@ globalThis.__dcCompressor = {
    */
   async function communicationLogStorageAppendRecord(record) {
     const queued = communicationLogEnqueue('storage-append', async () => {
-      if (typeof document !== 'undefined' && typeof window !== 'undefined' &&
-          !communicationLogStorageAppendRecord.startupGateSettled &&
+      if (typeof document !== 'undefined' && typeof window !== 'undefined' && !communicationLogStorageAppendRecord.startupGateSettled &&
           document.documentElement?.getAttribute('data-theme') === 'light' &&
           document.readyState !== 'complete' &&
           window.matchMedia?.('(prefers-color-scheme: dark)').matches) {
@@ -8544,7 +8543,10 @@ globalThis.__dcCompressor = {
           communicationLogStorageAppendRecord.startupGate = new Promise(resolve => {
             const root = document.documentElement;
             let settled = false;
-            /** @returns {void} Releases deferred startup storage. */
+            /**
+             * Releases storage.
+             * @returns {void} No value is returned.
+             */
             const release = () => {
               if (settled) return;
               settled = true;
