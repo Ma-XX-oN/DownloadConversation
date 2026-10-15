@@ -113,7 +113,7 @@
               ${tests.map(([name]) => `
                 <tr data-test-name="${escapeHtmlAttribute(name)}">
                   <td>${escapeHtmlText(name)}</td>
-                  <td>Automatic</td>
+                  <td>${name.startsWith('AICC #127') ? 'Live' : 'Automatic'}</td>
                   <td data-role="previous-result">—</td>
                   <td data-role="current-result">—</td>
                   <td><button type="button" data-role="run-test">Run</button></td>
@@ -122,6 +122,7 @@
           </table>
         </div>
         <div class="tm-test-actions">
+          <button type="button" data-role="export-aicc127-evidence">Export #127 evidence</button>
           <button type="button" data-role="run-all-tests">Run All</button>
           <button type="button" data-role="close-test-matrix">Close</button>
         </div>
@@ -143,6 +144,7 @@
         if (test) void runOneTest(test[0], test[1]);
         return;
       }
+      if (target.closest('[data-role="export-aicc127-evidence"]')) { aicc127ExportEvidence(); return; }
       if (target.closest('[data-role="run-all-tests"]')) void runTests();
     });
     document.body.append(overlay);
