@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         ChatGPT Conversation Markdown Recorder
 // @namespace    https://chatgpt.com/
-// @version      1.11.4-issue.282.6
+// @version      1.11.4-issue.282.7
 // @description  Exports the current ChatGPT conversation directly from the Conversation API as Markdown or JSONL.
 // @match        https://chatgpt.com/*
 // @match        https://chat.openai.com/*
@@ -23944,7 +23944,7 @@ Image elapsed: ${formatDuration(imageElapsed)} — Completed: ${imageCompleted}/
      */
     const recordWriter = (operation, name, before, after) => {
       if (before === after) return;
-      const stack = new Error().stack?.split('\\n').slice(2, 7)
+      const stack = new Error().stack?.split(/\r?\n/).slice(2, 7)
         .map(line => line.trim().slice(0, 240)) ?? [];
       logDiagnostic('debug', 'theme-attribute-writer', {
         operation, attribute: name, before, after,
