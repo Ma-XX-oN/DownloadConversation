@@ -44,7 +44,7 @@
         if (value === 'dark') seenDark = true;
         if (active && seenDark && value === 'light') {
           prevented('setAttribute');
-          return;
+          return Reflect.apply(nativeSet, this, [name, 'dark']);
         }
       }
       return Reflect.apply(nativeSet, this, [name, value]);
@@ -65,7 +65,7 @@
     const observer = new MutationObserver(() => {
       const theme = root.getAttribute('data-theme');
       if (theme === 'dark') seenDark = true;
-      if (active && seenDark && theme === 'light') {
+      if (active && seenDark && theme !== 'dark') {
         Reflect.apply(nativeSet, root, ['data-theme', 'dark']);
         prevented('attribute-observer');
       }
