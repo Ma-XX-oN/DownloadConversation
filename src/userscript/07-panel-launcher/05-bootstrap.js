@@ -254,17 +254,26 @@
         attributeFilter: ['class', 'style', 'data-theme', 'data-appearance-theme']
       });
     }
-    /** @returns {void} Captures DOM readiness. */
+    /**
+     * Captures DOM readiness.
+     * @returns {void} No value is returned.
+     */
     const onReady = () => {
       bindBody();
       schedule('dom-content-loaded');
     };
-    /** @returns {void} Captures load completion. */
+    /**
+     * Captures load completion.
+     * @returns {void} No value is returned.
+     */
     const onLoad = () => {
       bindBody();
       schedule('load');
     };
-    /** @returns {void} Captures page restoration. */
+    /**
+     * Captures page restoration.
+     * @returns {void} No value is returned.
+     */
     const onShow = () => {
       bindBody();
       schedule('pageshow');
