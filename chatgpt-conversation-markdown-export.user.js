@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         ChatGPT Conversation Markdown Recorder
 // @namespace    https://chatgpt.com/
-// @version      1.11.4-issue.286.4
+// @version      1.11.4-issue.286.5
 // @description  Exports the current ChatGPT conversation directly from the Conversation API as Markdown or JSONL.
 // @match        https://chatgpt.com/*
 // @match        https://chat.openai.com/*
@@ -23963,7 +23963,7 @@ Image elapsed: ${formatDuration(imageElapsed)} — Completed: ${imageCompleted}/
         if (value === 'dark') seenDark = true;
         if (active && seenDark && value === 'light') {
           prevented('setAttribute');
-          return;
+          return Reflect.apply(nativeSet, this, [name, 'dark']);
         }
       }
       return Reflect.apply(nativeSet, this, [name, value]);
@@ -23984,7 +23984,7 @@ Image elapsed: ${formatDuration(imageElapsed)} — Completed: ${imageCompleted}/
     const observer = new MutationObserver(() => {
       const theme = root.getAttribute('data-theme');
       if (theme === 'dark') seenDark = true;
-      if (active && seenDark && theme === 'light') {
+      if (active && seenDark && theme !== 'dark') {
         Reflect.apply(nativeSet, root, ['data-theme', 'dark']);
         prevented('attribute-observer');
       }
