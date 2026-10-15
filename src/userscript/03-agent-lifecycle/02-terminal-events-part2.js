@@ -59,10 +59,10 @@
   }
 
 
-  /** Ten-second heartbeat sampled every two seconds. */
+  /** Ten-second heartbeat sampled every second. */
   const AGENT_FAVICON_PULSE_PERIOD_MS = 10000;
   /** Milliseconds between alpha-redraw samples. */
-  const AGENT_FAVICON_PULSE_INTERVAL_MS = 2000;
+  const AGENT_FAVICON_PULSE_INTERVAL_MS = 1000;
   /** Running periodic redraw handle, or null when idle. */
   let agentFaviconPulseTimer = null;
   /** Current composited colour/attention state. */
