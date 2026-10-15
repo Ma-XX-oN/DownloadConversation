@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         ChatGPT Conversation Markdown Recorder
 // @namespace    https://chatgpt.com/
-// @version      1.11.4-issue.282.7
+// @version      1.11.4-issue.284.1
 // @description  Exports the current ChatGPT conversation directly from the Conversation API as Markdown or JSONL.
 // @match        https://chatgpt.com/*
 // @match        https://chat.openai.com/*
@@ -8533,10 +8533,58 @@ globalThis.__dcCompressor = {
    * @param {Object} record - Complete structured communication record.
    * @returns {Promise<void>} Resolves after the record is accepted by active storage.
    */
+  /**
+   * Waits during the temporary light startup, bounded to eight seconds.
+   * @returns {Promise<void>} Resolves on dark theme, timeout or pagehide.
+   */
+  /** The one allowed deferred-startup gate for this document. */
+  let communicationLogStartupGatePromise = null;
+  /** Prevents repeated eight-second waits if the page remains light. */
+  let communicationLogStartupGateSettled = false;
+
+  function communicationLogStartupThemeGate() {
+    if (communicationLogStartupGateSettled) return Promise.resolve();
+    if (communicationLogStartupGatePromise) return communicationLogStartupGatePromise;
+    const root = document.documentElement;
+    if (!root || document.readyState === 'complete' ||
+        !window.matchMedia('(prefers-color-scheme: dark)').matches ||
+        root.getAttribute('data-theme') !== 'light') return Promise.resolve();
+    communicationLogStartupGatePromise = new Promise(resolve => {
+      let complete = false;
+      /**
+       * Resolves the bounded wait and detaches every listener.
+       * @returns {void} No value is returned.
+       */
+      const done = () => {
+        if (complete) return;
+        complete = true;
+        communicationLogStartupGateSettled = true;
+        observer.disconnect();
+        clearTimeout(timeout);
+        window.removeEventListener('pagehide', done);
+        resolve();
+      };
+      /**
+       * Checks for restoration of the requested dark theme.
+       * @returns {void} No value is returned.
+       */
+      const check = () => {
+        if (root.getAttribute('data-theme') !== 'light') done();
+      };
+      const observer = new MutationObserver(check);
+      observer.observe(root, { attributes: true, attributeFilter: ['data-theme'] });
+      const timeout = setTimeout(done, 8000);
+      window.addEventListener('pagehide', done, { once: true });
+      check();
+    });
+    return communicationLogStartupGatePromise;
+  }
+
   async function communicationLogStorageAppendRecord(record) {
-    const line = `${JSON.stringify(record)}\n`;
-    const lineBytes = new TextEncoder().encode(line).byteLength;
     const queued = communicationLogEnqueue('storage-append', async () => {
+      await communicationLogStartupThemeGate();
+      const line = `${JSON.stringify(record)}\n`;
+      const lineBytes = new TextEncoder().encode(line).byteLength;
       await communicationLogOpenWriter();
       await communicationLogEnsureFragmentHeader();
       await communicationLogWritable.write(line);
