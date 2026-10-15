@@ -182,9 +182,17 @@
     let pendingFrame = false;
     let stopped = false;
     let snapshotCount = 0;
-    /** Reads a privacy-safe background property from a mounted element. */
+    /**
+     * Reads a privacy-safe background property from a mounted element.
+     * @param {Element|null} element - DOM element to inspect.
+     * @returns {string|null} Computed background colour, or null.
+     */
     const background = element => element ? getComputedStyle(element).backgroundColor : null;
-    /** Reads a bounded snapshot of root theme state and background colours. */
+    /**
+     * Reads a bounded snapshot of root theme state and background colours.
+     * @param {string} reason - Lifecycle checkpoint.
+     * @returns {void} No value is returned.
+     */
     const capture = reason => {
       if (stopped) return;
       const html = document.documentElement;
@@ -209,7 +217,11 @@
       snapshotCount += 1;
       logDiagnostic('debug', 'theme-startup-snapshot', data);
     };
-    /** Coalesces synchronous DOM changes to a single post-style calculation. */
+    /**
+     * Coalesces synchronous DOM changes to a single post-style calculation.
+     * @param {string} reason - Reason for the snapshot.
+     * @returns {void} No value is returned.
+     */
     const schedule = reason => {
       if (pendingFrame || stopped) return;
       pendingFrame = true;
@@ -218,7 +230,10 @@
         capture(reason);
       });
     };
-    /** Attaches an attribute-only observer to the active body if it exists. */
+    /**
+     * Attaches an attribute-only observer to the active body if it exists.
+     * @returns {void} No value is returned.
+     */
     const bindBody = () => {
       if (trackedBody === document.body) return;
       bodyObserver?.disconnect();
@@ -239,14 +254,17 @@
         attributeFilter: ['class', 'style', 'data-theme', 'data-appearance-theme']
       });
     }
+    /** @returns {void} Captures DOM readiness. */
     const onReady = () => {
       bindBody();
       schedule('dom-content-loaded');
     };
+    /** @returns {void} Captures load completion. */
     const onLoad = () => {
       bindBody();
       schedule('load');
     };
+    /** @returns {void} Captures page restoration. */
     const onShow = () => {
       bindBody();
       schedule('pageshow');
