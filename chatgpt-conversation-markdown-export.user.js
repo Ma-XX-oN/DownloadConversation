@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         ChatGPT Conversation Markdown Recorder
 // @namespace    https://chatgpt.com/
-// @version      1.11.4-issue.284.1
+// @version      1.11.4-issue.284.2
 // @description  Exports the current ChatGPT conversation directly from the Conversation API as Markdown or JSONL.
 // @match        https://chatgpt.com/*
 // @match        https://chat.openai.com/*
@@ -8528,61 +8528,41 @@ globalThis.__dcCompressor = {
   }
 
   /**
-   * Appends one complete JSONL record and rotates only after its record boundary.
+   * Appends one JSONL record.
    *
    * @param {Object} record - Complete structured communication record.
-   * @returns {Promise<void>} Resolves after the record is accepted by active storage.
+   * @returns {Promise<void>} Resolves on append.
    */
-  /**
-   * Waits during the temporary light startup, bounded to eight seconds.
-   * @returns {Promise<void>} Resolves on dark theme, timeout or pagehide.
-   */
-  /** The one allowed deferred-startup gate for this document. */
-  let communicationLogStartupGatePromise = null;
-  /** Prevents repeated eight-second waits if the page remains light. */
-  let communicationLogStartupGateSettled = false;
-
-  function communicationLogStartupThemeGate() {
-    if (communicationLogStartupGateSettled) return Promise.resolve();
-    if (communicationLogStartupGatePromise) return communicationLogStartupGatePromise;
-    const root = document.documentElement;
-    if (!root || document.readyState === 'complete' ||
-        !window.matchMedia('(prefers-color-scheme: dark)').matches ||
-        root.getAttribute('data-theme') !== 'light') return Promise.resolve();
-    communicationLogStartupGatePromise = new Promise(resolve => {
-      let complete = false;
-      /**
-       * Resolves the bounded wait and detaches every listener.
-       * @returns {void} No value is returned.
-       */
-      const done = () => {
-        if (complete) return;
-        complete = true;
-        communicationLogStartupGateSettled = true;
-        observer.disconnect();
-        clearTimeout(timeout);
-        window.removeEventListener('pagehide', done);
-        resolve();
-      };
-      /**
-       * Checks for restoration of the requested dark theme.
-       * @returns {void} No value is returned.
-       */
-      const check = () => {
-        if (root.getAttribute('data-theme') !== 'light') done();
-      };
-      const observer = new MutationObserver(check);
-      observer.observe(root, { attributes: true, attributeFilter: ['data-theme'] });
-      const timeout = setTimeout(done, 8000);
-      window.addEventListener('pagehide', done, { once: true });
-      check();
-    });
-    return communicationLogStartupGatePromise;
-  }
-
   async function communicationLogStorageAppendRecord(record) {
     const queued = communicationLogEnqueue('storage-append', async () => {
-      await communicationLogStartupThemeGate();
+      if (typeof document !== 'undefined' && typeof window !== 'undefined' &&
+          !communicationLogStorageAppendRecord.startupGateSettled &&
+          document.documentElement?.getAttribute('data-theme') === 'light' &&
+          document.readyState !== 'complete' &&
+          window.matchMedia?.('(prefers-color-scheme: dark)').matches) {
+        if (!communicationLogStorageAppendRecord.startupGate) {
+          communicationLogStorageAppendRecord.startupGate = new Promise(resolve => {
+            const root = document.documentElement;
+            let settled = false;
+            /** @returns {void} Releases deferred startup storage. */
+            const release = () => {
+              if (settled) return;
+              settled = true;
+              communicationLogStorageAppendRecord.startupGateSettled = true;
+              observer.disconnect();
+              clearTimeout(timeout);
+              window.removeEventListener('pagehide', release);
+              resolve();
+            };
+            const observer = new MutationObserver(() => { if (root.getAttribute('data-theme') !== 'light') release(); });
+            observer.observe(root, { attributes: true, attributeFilter: ['data-theme'] });
+            const timeout = setTimeout(release, 8000);
+            window.addEventListener('pagehide', release, { once: true });
+            if (root.getAttribute('data-theme') !== 'light') release();
+          });
+        }
+        await communicationLogStorageAppendRecord.startupGate;
+      }
       const line = `${JSON.stringify(record)}\n`;
       const lineBytes = new TextEncoder().encode(line).byteLength;
       await communicationLogOpenWriter();
