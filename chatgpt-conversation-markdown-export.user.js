@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         ChatGPT Conversation Markdown Recorder
 // @namespace    https://chatgpt.com/
-// @version      1.11.6-issue.295.3
+// @version      1.11.6-issue.295.4
 // @description  Exports the current ChatGPT conversation directly from the Conversation API as Markdown or JSONL.
 // @match        https://chatgpt.com/*
 // @match        https://chat.openai.com/*
@@ -12000,10 +12000,10 @@ globalThis.__dcCompressor = {
   }
 
 
-  /** Ten-second heartbeat sampled every second. */
-  const AGENT_FAVICON_PULSE_PERIOD_MS = 10000;
-  /** Milliseconds between alpha-redraw samples. */
-  const AGENT_FAVICON_PULSE_INTERVAL_MS = 1000;
+  /** Ten-second heartbeat sampled four times per second. */
+  const AGENT_FAVICON_PULSE_INTERVAL_MS = 10000;
+  /** Milliseconds between favicon alpha-redraw samples; independent of pulse cycle. */
+  const AGENT_FAVICON_PULSE_UPDATE_MS = 250;
   /** Running periodic redraw handle, or null when idle. */
   let agentFaviconPulseTimer = null;
   /** Current composited colour/attention state. */
@@ -12015,7 +12015,7 @@ globalThis.__dcCompressor = {
    * @returns {number} Alpha multiplier from 0.5 to one.
    */
   function agentFaviconPulseOpacity(nowMs = performance.now()) {
-    return 0.75 + 0.25 * Math.cos(2 * Math.PI * nowMs / AGENT_FAVICON_PULSE_PERIOD_MS);
+    return 0.75 + 0.25 * Math.cos(2 * Math.PI * nowMs / AGENT_FAVICON_PULSE_INTERVAL_MS);
   }
 
   /**
@@ -12042,7 +12042,7 @@ globalThis.__dcCompressor = {
       if (agentFaviconVisibleState !== 'original') {
         void agentFaviconRenderState(agentFaviconVisibleState, true);
       }
-    }, AGENT_FAVICON_PULSE_INTERVAL_MS);
+    }, AGENT_FAVICON_PULSE_UPDATE_MS);
   }
 
   /**
