@@ -344,10 +344,10 @@
   }
 
   /**
-   * Appends a complete JSONL record, with bounded startup deferral.
+   * Appends one JSONL record.
    *
    * @param {Object} record - Complete structured communication record.
-   * @returns {Promise<void>} Resolves after storage accepts the record.
+   * @returns {Promise<void>} Resolves on append.
    */
   async function communicationLogStorageAppendRecord(record) {
     const queued = communicationLogEnqueue('storage-append', async () => {
@@ -370,9 +370,7 @@
               window.removeEventListener('pagehide', release);
               resolve();
             };
-            const observer = new MutationObserver(() => {
-              if (root.getAttribute('data-theme') !== 'light') release();
-            });
+            const observer = new MutationObserver(() => { if (root.getAttribute('data-theme') !== 'light') release(); });
             observer.observe(root, { attributes: true, attributeFilter: ['data-theme'] });
             const timeout = setTimeout(release, 8000);
             window.addEventListener('pagehide', release, { once: true });
