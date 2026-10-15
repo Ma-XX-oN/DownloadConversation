@@ -61,16 +61,28 @@
 
   /** Ten-second heartbeat sampled every two seconds. */
   const AGENT_FAVICON_PULSE_PERIOD_MS = 10000;
+  /** Milliseconds between alpha-redraw samples. */
   const AGENT_FAVICON_PULSE_INTERVAL_MS = 2000;
+  /** Running periodic redraw handle, or null when idle. */
   let agentFaviconPulseTimer = null;
+  /** Current composited colour/attention state. */
   let agentFaviconVisibleState = 'original';
 
-  /** agentFaviconPulseOpacity heartbeat helper. */
+  /**
+   * Computes the ten-second cyclic opacity.
+   * @param {number} nowMs - Current monotonic time.
+   * @returns {number} Alpha multiplier from zero to one.
+   */
   function agentFaviconPulseOpacity(nowMs = performance.now()) {
     return (1 + Math.cos(2 * Math.PI * nowMs / AGENT_FAVICON_PULSE_PERIOD_MS)) / 2;
   }
 
-  /** agentFaviconApplyOpacity heartbeat helper. */
+  /**
+   * Applies the same alpha multiplier to all composited pixels.
+   * @param {Uint8ClampedArray} data - Composited RGBA pixels.
+   * @param {number} opacity - Target multiplier from zero to one.
+   * @returns {void} Mutates the pixel buffer.
+   */
   function agentFaviconApplyOpacity(data, opacity) {
     assert(Number.isFinite(opacity) && opacity >= 0 && opacity <= 1,
       'Favicon pulse opacity must be between zero and one.');
@@ -79,7 +91,10 @@
     }
   }
 
-  /** agentFaviconStartPulse heartbeat helper. */
+  /**
+   * Starts a single periodic favicon redraw.
+   * @returns {void} No result.
+   */
   function agentFaviconStartPulse() {
     if (agentFaviconPulseTimer !== null) return;
     agentFaviconPulseTimer = setInterval(() => {
@@ -89,14 +104,20 @@
     }, AGENT_FAVICON_PULSE_INTERVAL_MS);
   }
 
-  /** agentFaviconStopPulse heartbeat helper. */
+  /**
+   * Stops the heartbeat timer when restoring the original favicon.
+   * @returns {void} No result.
+   */
   function agentFaviconStopPulse() {
     if (agentFaviconPulseTimer === null) return;
     clearInterval(agentFaviconPulseTimer);
     agentFaviconPulseTimer = null;
   }
 
-  /** agentFaviconAcknowledgeCompletion heartbeat helper. */
+  /**
+   * Marks a completed prompt as attended only in a focused visible tab.
+   * @returns {void} No result.
+   */
   function agentFaviconAcknowledgeCompletion() {
     if (document.visibilityState !== 'visible' || !document.hasFocus()) return;
     if (agentFaviconVisibleState !== 'completed') return;
