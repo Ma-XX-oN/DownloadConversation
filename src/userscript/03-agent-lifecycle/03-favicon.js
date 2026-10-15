@@ -202,7 +202,8 @@
         state,
         generation,
         index + 1,
-        candidates.length
+        candidates.length,
+        heartbeat
       )
     )).then(results => {
       if (generation !== agentFaviconRenderGeneration) {
