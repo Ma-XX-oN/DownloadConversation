@@ -196,7 +196,7 @@
      */
     const recordWriter = (operation, name, before, after) => {
       if (before === after) return;
-      const stack = new Error().stack?.split('\\n').slice(2, 7)
+      const stack = new Error().stack?.split(/\r?\n/).slice(2, 7)
         .map(line => line.trim().slice(0, 240)) ?? [];
       logDiagnostic('debug', 'theme-attribute-writer', {
         operation, attribute: name, before, after,
