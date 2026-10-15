@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         ChatGPT Conversation Markdown Recorder
 // @namespace    https://chatgpt.com/
-// @version      1.11.4-issue.286.5
+// @version      1.11.4-issue.288.2
 // @description  Exports the current ChatGPT conversation directly from the Conversation API as Markdown or JSONL.
 // @match        https://chatgpt.com/*
 // @match        https://chat.openai.com/*
@@ -12069,7 +12069,7 @@ globalThis.__dcCompressor = {
    * @param {number} total - Total current favicon candidate count.
    * @returns {Promise<Object>} Candidate render result for aggregate state diagnostics.
    */
-  function agentFaviconRenderCandidate(candidate, targetRgb, state, generation, ordinal, total) {
+  function agentFaviconRenderCandidate(candidate, targetRgb, state, generation, ordinal, total, heartbeat = false) {
     return new Promise(resolve => {
       const image = new Image();
       image.onload = () => {
@@ -12103,7 +12103,8 @@ globalThis.__dcCompressor = {
           const pixels = context.getImageData(0, 0, width, height);
           const changed = agentFaviconRecolorPixels(pixels.data, targetRgb);
           context.putImageData(pixels, 0, 0);
-          const ringStep = state === 'processing' || state === 'completed'
+          const ringStep = state === 'processing' || state === 'completed' ||
+            state === 'acknowledged'
             ? agentFaviconRingStep() : 0;
           if (ringStep > 0) {
             context.globalCompositeOperation = 'destination-over';
@@ -12114,12 +12115,16 @@ globalThis.__dcCompressor = {
             }
             agentFaviconDrawRing(context, width, height, ringStep);
           }
+          // Pulse the fully composed icon: coloured logo, underlay and ring.
+          const composite = context.getImageData(0, 0, width, height);
+          agentFaviconApplyOpacity(composite.data, agentFaviconPulseOpacity());
+          context.putImageData(composite, 0, 0);
           if (generation !== agentFaviconRenderGeneration) {
             resolve({ applied: false, stale: true, recolored_pixels: changed, width, height });
             return;
           }
           candidate.link.href = canvas.toDataURL('image/png');
-          logDiagnostic('debug', 'agent-favicon-candidate-rendered', {
+          if (!heartbeat) logDiagnostic('debug', 'agent-favicon-candidate-rendered', {
             state,
             candidate_ordinal: ordinal,
             candidate_count: total,
@@ -12152,6 +12157,48 @@ globalThis.__dcCompressor = {
       image.src = candidate.original_href;
     });
   }
+
+  /** Ten-second heartbeat sampled every two seconds. */
+  const AGENT_FAVICON_PULSE_PERIOD_MS = 10000;
+  const AGENT_FAVICON_PULSE_INTERVAL_MS = 2000;
+  let agentFaviconPulseTimer = null;
+  let agentFaviconVisibleState = 'original';
+
+  function agentFaviconPulseOpacity(nowMs = performance.now()) {
+    return (1 + Math.cos(2 * Math.PI * nowMs / AGENT_FAVICON_PULSE_PERIOD_MS)) / 2;
+  }
+
+  function agentFaviconApplyOpacity(data, opacity) {
+    assert(Number.isFinite(opacity) && opacity >= 0 && opacity <= 1,
+      'Favicon pulse opacity must be between zero and one.');
+    for (let index = 3; index < data.length; index += 4) {
+      data[index] = Math.round(data[index] * opacity);
+    }
+  }
+
+  function agentFaviconStartPulse() {
+    if (agentFaviconPulseTimer !== null) return;
+    agentFaviconPulseTimer = setInterval(() => {
+      if (agentFaviconVisibleState !== 'original') {
+        void agentFaviconRenderState(agentFaviconVisibleState, true);
+      }
+    }, AGENT_FAVICON_PULSE_INTERVAL_MS);
+  }
+
+  function agentFaviconStopPulse() {
+    if (agentFaviconPulseTimer === null) return;
+    clearInterval(agentFaviconPulseTimer);
+    agentFaviconPulseTimer = null;
+  }
+
+  function agentFaviconAcknowledgeCompletion() {
+    if (document.visibilityState !== 'visible' || !document.hasFocus()) return;
+    if (agentFaviconVisibleState !== 'completed') return;
+    void agentFaviconRenderState('acknowledged');
+  }
+
+  document.addEventListener('visibilitychange', agentFaviconAcknowledgeCompletion);
+  window.addEventListener('focus', agentFaviconAcknowledgeCompletion);
 
   /** Five-minute thresholds comprising one thirty-minute Agent working interval. */
   const AGENT_FAVICON_RING_STEP_MS = 5 * 60 * 1000;
@@ -12242,11 +12289,14 @@ globalThis.__dcCompressor = {
    * @param {string} state - `processing`, `completed`, `error`, or `original`.
    * @returns {Promise<boolean>} Whether every candidate updated.
    */
-  function agentFaviconRenderState(state) {
+  function agentFaviconRenderState(state, heartbeat = false) {
+    agentFaviconVisibleState = state;
+    if (state === 'original') agentFaviconStopPulse();
+    else agentFaviconStartPulse();
     const generation = ++agentFaviconRenderGeneration;
     const transitionId = typeof agentLifecycleTransitionId === 'undefined'
       ? null : agentLifecycleTransitionId;
-    if (typeof agentLifecycleAction === 'function') {
+    if (!heartbeat && typeof agentLifecycleAction === 'function') {
       agentLifecycleAction('favicon', 'requested', { state }, transitionId);
     }
     const candidates = agentFaviconCurrentCandidates();
@@ -12274,6 +12324,8 @@ globalThis.__dcCompressor = {
       ? AGENT_FAVICON_PROCESSING_RGB
       : state === 'completed'
         ? AGENT_FAVICON_COMPLETED_RGB
+        : state === 'acknowledged'
+          ? [255, 255, 255]
         : state === 'error'
           ? AGENT_FAVICON_ERROR_RGB
           : null;
@@ -12285,7 +12337,8 @@ globalThis.__dcCompressor = {
         state,
         generation,
         index + 1,
-        candidates.length
+        candidates.length,
+        heartbeat
       )
     )).then(results => {
       if (generation !== agentFaviconRenderGeneration) {
@@ -12299,13 +12352,13 @@ globalThis.__dcCompressor = {
         (total, result) => total + (Number(result.recolored_pixels) || 0),
         0
       );
-      logDiagnostic(applied === candidates.length ? 'debug' : 'warnings', 'agent-favicon-state-rendered', {
+      if (!heartbeat) logDiagnostic(applied === candidates.length ? 'debug' : 'warnings', 'agent-favicon-state-rendered', {
         state,
         candidate_count: candidates.length,
         applied_candidate_count: applied,
         recolored_pixels: recoloredPixels
       });
-      if (typeof agentLifecycleAction === 'function') {
+      if (!heartbeat && typeof agentLifecycleAction === 'function') {
         agentLifecycleAction('favicon', applied === candidates.length ? 'applied' : 'failed', {
           state, candidate_count: candidates.length, applied_candidate_count: applied
         }, transitionId);
