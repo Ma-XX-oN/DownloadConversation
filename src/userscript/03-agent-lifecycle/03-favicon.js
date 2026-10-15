@@ -23,76 +23,6 @@
     });
   }
 
-  /** Five-minute thresholds comprising one thirty-minute Agent working interval. */
-  const AGENT_FAVICON_RING_STEP_MS = 5 * 60 * 1000;
-  /** The last projected progress step; reset whenever processing begins again. */
-  let agentFaviconRingRenderedStep = 0;
-
-  /**
-   * Derives the step from the stopwatch.
-   *
-   * @param {number} nowMs - Monotonic current time.
-   * @returns {number} Clamped step from zero through six.
-   */
-  function agentFaviconRingStep(nowMs = performance.now()) {
-    if (!agentStopwatchState || !Number.isFinite(agentStopwatchState.started_at_ms)) return 0;
-    const elapsed = agentStopwatchState.active
-      ? Math.max(0, nowMs - agentStopwatchState.started_at_ms)
-      : Math.max(0, agentStopwatchState.total_ms ?? 0);
-    return Math.min(6, Math.floor(elapsed / AGENT_FAVICON_RING_STEP_MS));
-  }
-
-  /**
-   * Returns the step colour.
-   *
-   * @param {number} step - Completed five-minute intervals, one through six.
-   * @returns {string} A CSS colour for the visible progress arc.
-   */
-  function agentFaviconRingColor(step) {
-    return ['#00cc00', '#55cc00', '#aacc00', '#ffcc00', '#ff7700', '#ff0000'][
-      Math.min(6, Math.max(1, step)) - 1
-    ];
-  }
-
-  /**
-   * Fill the pie beneath the logo.
-   * @param {CanvasRenderingContext2D} context - Canvas.
-   * @param {number} width - Width.
-   * @param {number} height - Height.
-   * @param {number} step - Step.
-   * @returns {void} No result.
-   */
-  function agentFaviconDrawPieSlice(context, width, height, step) {
-    if (step < 1) return;
-    const size = Math.min(width, height);
-    context.beginPath();
-    context.moveTo(width / 2, height / 2);
-    context.fillStyle = agentFaviconRingColor(step);
-    context.arc(width / 2, height / 2, size * 0.49,
-      -Math.PI / 2, -Math.PI / 2 + Math.PI * 2 * step / 6);
-    context.closePath();
-    context.fill();
-  }
-
-  /**
-   * Draw ring above logo.
-   * @param {CanvasRenderingContext2D} context - Canvas.
-   * @param {number} width - Width.
-   * @param {number} height - Height.
-   * @param {number} step - Step.
-   * @returns {void} No result.
-   */
-  function agentFaviconDrawRing(context, width, height, step) {
-    if (step < 1) return;
-    const size = Math.min(width, height);
-    context.beginPath();
-    context.strokeStyle = agentFaviconRingColor(step);
-    context.lineWidth = Math.max(1, size * 0.12);
-    context.arc(width / 2, height / 2, size * 0.43,
-      -Math.PI / 2, -Math.PI / 2 + Math.PI * 2 * step / 6);
-    context.stroke();
-  }
-
   /**
    * Refresh on stopwatch ticks.
    * @param {number} nowMs - Monotonic time.
@@ -109,14 +39,18 @@
   /**
    * Renders every stock favicon candidate.
    *
-   * @param {string} state - `processing`, `completed`, `error`, or `original`.
+   * @param {string} state - Processing, completed, acknowledged, error or original.
+   * @param {boolean} heartbeat - Whether this redraw is an automatic pulse.
    * @returns {Promise<boolean>} Whether every candidate updated.
    */
-  function agentFaviconRenderState(state) {
+  function agentFaviconRenderState(state, heartbeat = false) {
+    agentFaviconVisibleState = state;
+    if (state === 'original') agentFaviconStopPulse();
+    else agentFaviconStartPulse();
     const generation = ++agentFaviconRenderGeneration;
     const transitionId = typeof agentLifecycleTransitionId === 'undefined'
       ? null : agentLifecycleTransitionId;
-    if (typeof agentLifecycleAction === 'function') {
+    if (!heartbeat && typeof agentLifecycleAction === 'function') {
       agentLifecycleAction('favicon', 'requested', { state }, transitionId);
     }
     const candidates = agentFaviconCurrentCandidates();
@@ -144,6 +78,8 @@
       ? AGENT_FAVICON_PROCESSING_RGB
       : state === 'completed'
         ? AGENT_FAVICON_COMPLETED_RGB
+        : state === 'acknowledged'
+          ? [255, 255, 255]
         : state === 'error'
           ? AGENT_FAVICON_ERROR_RGB
           : null;
@@ -155,7 +91,8 @@
         state,
         generation,
         index + 1,
-        candidates.length
+        candidates.length,
+        heartbeat
       )
     )).then(results => {
       if (generation !== agentFaviconRenderGeneration) {
@@ -169,13 +106,13 @@
         (total, result) => total + (Number(result.recolored_pixels) || 0),
         0
       );
-      logDiagnostic(applied === candidates.length ? 'debug' : 'warnings', 'agent-favicon-state-rendered', {
+      if (!heartbeat) logDiagnostic(applied === candidates.length ? 'debug' : 'warnings', 'agent-favicon-state-rendered', {
         state,
         candidate_count: candidates.length,
         applied_candidate_count: applied,
         recolored_pixels: recoloredPixels
       });
-      if (typeof agentLifecycleAction === 'function') {
+      if (!heartbeat && typeof agentLifecycleAction === 'function') {
         agentLifecycleAction('favicon', applied === candidates.length ? 'applied' : 'failed', {
           state, candidate_count: candidates.length, applied_candidate_count: applied
         }, transitionId);

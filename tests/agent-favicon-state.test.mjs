@@ -63,6 +63,7 @@ function renderHarness() {
         };
       }
       if (tag === 'canvas') {
+        currentPixels = null;
         return {
           width: 0,
           height: 0,
@@ -70,7 +71,7 @@ function renderHarness() {
             return {
               drawImage() {},
               getImageData() {
-                return { data: new Uint8ClampedArray([255, 255, 255, 255]) };
+                return { data: new Uint8ClampedArray(currentPixels ?? [255, 255, 255, 255]) };
               },
               putImageData(imageData) {
                 currentPixels = Array.from(imageData.data);
@@ -117,6 +118,12 @@ function renderHarness() {
     const AGENT_FAVICON_ERROR_RGB = Object.freeze([255, 0, 0]);
     const agentFaviconOriginalSources = new Map();
     let agentFaviconRenderGeneration = 0;
+    let agentFaviconVisibleState = 'original';
+    function agentFaviconStartPulse() {}
+    function agentFaviconStopPulse() {}
+    function agentFaviconPulseOpacity() { return 1; }
+    function agentFaviconApplyOpacity() {}
+ 
     let agentStopwatchState = null;
     function logDiagnostic(level, name, details) { this.diagnostics.push({ level, name, details }); }
     ${productionFunctionSource('errorMessage')}
