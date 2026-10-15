@@ -5,8 +5,8 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 import vm from 'node:vm';
 
-assert.equal(coreDependency.commit, '9e18441a1f68a1cac5ebb6e20dead945dd36d7dd');
-assert.equal(coreDependency.git_blob_sha1, '47efb4f379f5bb27ae710a53d1cb84388aeeb1a2');
+assert.equal(coreDependency.commit, '1a70e7df14a0648c8e144ce3ef0da5e02bc90cd4');
+assert.equal(coreDependency.git_blob_sha1, '27ac39398a164b91f05dfeb3be6513cbbbbee8f8');
 
 const bundle = coreBundle;
 const context = {};

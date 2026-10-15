@@ -104,7 +104,7 @@ const contractPluginModule = {
 
 test('AICC owns the complete artifact identity used by DC transport', () => {
   assert.equal(chatGPTPluginArtifact.id, 'chatgpt-web');
-  assert.equal(chatGPTPluginArtifact.ref, 'main');
+  assert.equal(chatGPTPluginArtifact.ref, 'cf521202e78dede9152840193dc5ca140703b240');
   assert.match(chatGPTPluginArtifact.commit, /^[0-9a-f]{40}$/);
   assert.match(chatGPTPluginArtifact.gitBlobSha1, /^[0-9a-f]{40}$/);
   assert.ok(Number.isSafeInteger(chatGPTPluginArtifact.byteLength));

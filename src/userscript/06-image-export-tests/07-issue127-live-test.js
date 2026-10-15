@@ -1,11 +1,16 @@
   // #127 staging-only browser verification. No production identity or filenames.
   // The source is the page's EXISTING observed fetch/XHR, not new API requests.
   const AICC127_EVIDENCE_KEY = 'dc-issue127-live-observations';
+  /** Exact immutable provider commit required by the #127 witness. */
   const AICC127_PROVIDER_SHA = 'cf521202e78dede9152840193dc5ca140703b240';
+  /** Exact immutable staged Core commit required by the #127 witness. */
   const AICC127_CORE_SHA = '1a70e7df14a0648c8e144ce3ef0da5e02bc90cd4';
+  /** Expected Git blob of the certified private provider artifact. */
   const AICC127_BLOB_SHA = '32182498480ba061367ce60dbb4104c0c0d55fe7';
+  /** Memory-only observer and host bridge enabled explicitly by the test button. */
   let aicc127Runtime = null;
 
+  /** Constructs the redacted per-tab witness record without names or IDs. */
   function aicc127MinimalEvidence() {
     try {
       const item = JSON.parse(sessionStorage.getItem(AICC127_EVIDENCE_KEY) || 'null');
@@ -22,6 +27,7 @@
     };
   }
 
+  /** Persists the bounded privacy-minimized witness across test invocations. */
   function aicc127SaveEvidence() {
     if (!aicc127Runtime) return;
     try {
@@ -30,6 +36,7 @@
     } catch {}
   }
 
+  /** Connects the staged Core-owned agent to a test-only subject observer. */
   async function aicc127Start() {
     if (aicc127Runtime) return aicc127Runtime;
     const core = canonicalCore();
@@ -58,6 +65,7 @@
     return state;
   }
 
+  /** Rejects previous navigation epochs before correlated responses arrive. */
   function aicc127BeginForCurrentConversation() {
     const state = aicc127Runtime;
     if (!state) return;
@@ -73,6 +81,7 @@
     aicc127SaveEvidence();
   }
 
+  /** Classifies only allowed same-origin backend identity GET requests. */
   function aicc127LiveRequestKind(trace) {
     if (trace?.method !== 'GET') return null;
     try {
@@ -86,6 +95,7 @@
     return null;
   }
 
+  /** Observes a request already captured by DownloadConversation. */
   function aicc127LiveOnRequest(trace) {
     const state = aicc127Runtime;
     if (!state) return;
@@ -97,6 +107,7 @@
     })) state.pending.add(trace.sequence);
   }
 
+  /** Correlates genuine backend identity JSON with observer publication. */
   function aicc127LiveAcceptResponse(trace, status, bounded) {
     const state = aicc127Runtime;
     if (!state || !state.pending.delete(trace.sequence)) return;
@@ -136,11 +147,13 @@
     aicc127SaveEvidence();
   }
 
+  /** Observes a cloned existing fetch response without new network requests. */
   function aicc127LiveOnFetchResponse(trace, status, bounded) {
     if (!aicc127Runtime?.pending.has(trace.sequence)) return;
     aicc127LiveAcceptResponse(trace, status, bounded);
   }
 
+  /** Observes a completed existing XHR without new network requests. */
   function aicc127LiveOnXhrResponse(xhr, trace) {
     if (!aicc127Runtime?.pending.has(trace.sequence)) return;
     try {
@@ -154,22 +167,26 @@
     } catch {}
   }
 
+  /** Verifies that the current test build matches exact Core and provider identities. */
   async function testAicc127StagedArtifact() {
     await aicc127Start();
   }
 
+  /** Reports PASS only after backend project data reaches the observer. */
   async function testAicc127LiveProject() {
     const state = await aicc127Start();
     return state.evidence.project_backend_and_observer ? undefined :
       { status: 'INCOMPLETE', detail: 'Await authenticated project metadata. Navigate to a project conversation and rerun.' };
   }
 
+  /** Reports PASS only after backend explicit null reaches the observer. */
   async function testAicc127LiveStandalone() {
     const state = await aicc127Start();
     return state.evidence.standalone_backend_and_observer ? undefined :
       { status: 'INCOMPLETE', detail: 'Await observed backend gizmo_id:null. Navigate to standalone chat and rerun.' };
   }
 
+  /** Exports the redacted local evidence on user click. */
   function aicc127ExportEvidence() {
     const evidence = aicc127Runtime?.evidence || aicc127MinimalEvidence();
     const blob = new Blob([JSON.stringify(evidence, null, 2) + '\n'],
