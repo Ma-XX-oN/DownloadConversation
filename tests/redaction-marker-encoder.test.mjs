@@ -226,6 +226,9 @@ test('registry exposes sparse applicable contexts and no universal text detector
   }
   assert.equal(api.registry.U.identify(fixture.vectors[0].original, 'json.string').type, 'U');
   assert.equal(api.registry.U.identify(fixture.vectors[0].original, 'text.plain'), null);
+  assert.equal(api.registry.O.identify(fixture.vectors[5].original, 'json.string'), null);
+  assert.equal(api.registry.O.identify(fixture.vectors[5].original,
+    { id: 'json.string', secret_span: true }).type, 'O');
 });
 
 test('simulated reload rotates scope and HMAC identity with no equality inference', async () => {
