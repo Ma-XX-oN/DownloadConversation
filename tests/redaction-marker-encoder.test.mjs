@@ -239,3 +239,10 @@ test('simulated reload rotates scope and HMAC identity with no equality inferenc
   assert.equal(await first.make(value, 'json.string'), left);
   assert.equal(await second.make(value, 'json.string'), right);
 });
+
+test('URL fragments are omitted because V1 has no fragment-inspection context', async () => {
+  const api = harness();
+  const result = await api.safeUrl('https://chatgpt.com/backend-api?q=%5Bok%5D#token=private-fragment-secret');
+  assert.equal(result.includes('private-fragment-secret'), false);
+  assert.equal(new URL(result).hash, '');
+});
