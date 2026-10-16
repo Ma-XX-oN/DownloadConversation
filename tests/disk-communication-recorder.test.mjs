@@ -384,6 +384,7 @@ function issue301ProductionEncoderHarness() {
     COMMUNICATION_LOG_BODY_CHUNK_CHARS: 2048,
     TextDecoder, TextEncoder, crypto: webcrypto,
     Uint8Array, DataView, atob, btoa, URL,
+    rawHeadersToObject: headers => headers, boundedDiagnosticText: value => value,
     location: { href: 'https://chatgpt.com/', origin: 'https://chatgpt.com' }
   };
   vm.runInNewContext(
@@ -391,12 +392,13 @@ function issue301ProductionEncoderHarness() {
     'communicationLogRecord = async (type, data) => {\n' +
     '  this.__records.push({ type, data });\n};\n' +
     'this.__stream = communicationLogStreamBody;\n' +
-    'this.__textBody = communicationLogTextBody;',
+    'this.__textBody = communicationLogTextBody;\n' +
+    'this.__headers = communicationLogSafeHeaders;',
     context
   );
   return {
     records: context.__records, stream: context.__stream,
-    textBody: context.__textBody
+    textBody: context.__textBody, headers: context.__headers
   };
 }
 
@@ -451,4 +453,17 @@ test('materialized WebSocket/XHR JSON failure never persists secret fragments', 
   assert.equal(summary.redaction_failed, true);
   assert.equal(summary.chunk_count, 0);
   assert.equal(api.records.length, 0);
+});
+
+test('sensitive headers with unsupported values are omitted without source leakage', async () => {
+  const api = issue301ProductionEncoderHarness();
+  const safe = await api.headers({
+    authorization: 'Bearer unrecognized SECRET header',
+    'x-request-id': '550e8400-e29b-41d4-a716-446655440000',
+    'content-type': 'application/json'
+  });
+  assert.equal(safe.authorization, null);
+  assert.equal(safe['content-type'], 'application/json');
+  assert.match(safe['x-request-id'], /^\[[0-9a-f]{32}\/U\/[0-9a-f]{48}\]$/);
+  assert.equal(JSON.stringify(safe).includes('unrecognized SECRET header'), false);
 });
