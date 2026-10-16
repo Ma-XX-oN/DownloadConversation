@@ -41,11 +41,10 @@ are literal, not URL-encoded. The grammar is:
 - `BODY` is exactly `TYPE + "/" + ID` with `"/" + PARAMS` appended
   only when present. Use ASCII/UTF-8 bytes (equivalent for this grammar).
 - `CHECK = lowerhex(first 16 bytes of SHA-256(
-   UTF8("DC-SECRET-MARKER-V1\\0") || ASCII(BODY)))`.
-  The notation `\\0` in that displayed string denotes **one 0x00
-  byte**, not backslash and digit zero.
+   ASCII("DC-SECRET-MARKER-V1") || 0x00 || ASCII(BODY)))`.
+  The domain separator is exactly one 0x00 byte.
 - `ID = lowerhex(first 24 bytes of HMAC-SHA-256(K,
-   UTF8("DC-SECRET-ID-V1\\0") || uint32be(byteLength(value)) ||
+   ASCII("DC-SECRET-ID-V1") || 0x00 || uint32be(byteLength(value)) ||
    UTF8(value)))`. Length is an unsigned four-byte big-endian integer;
    accept at most 1 MiB of candidate bytes and reject larger input.
    No NFC/NFD conversion, case folding, whitespace trim or re-encoding:
@@ -171,7 +170,7 @@ Decoder `cacheKey` is the length-prefixed tuple
 `(formatVersion, scope, TYPE, ID, PARAMS-or-absent)`, NOT a concatenation
 without delimiters, and is stable independent of decode order.
 Use a deterministic synthetic random stream keyed by the tuple's
-SHA-256 (with domain `DC-SECRET-SYNTH-V1\\0`), so independent decoders
+SHA-256 (with domain ASCII("DC-SECRET-SYNTH-V1") || 0x00), so independent decoders
 make the same replacement without `K`. This is deterministic
 pseudo-randomness, NOT secret cryptographic reconstruction. Two
 different IDs must not be forced equal, though format-shaped random
