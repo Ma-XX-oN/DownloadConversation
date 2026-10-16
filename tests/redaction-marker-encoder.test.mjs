@@ -146,3 +146,70 @@ test('same scope repeats identity and new ephemeral key does not', async () => {
   assert.equal(twice[0], twice[1]);
   assert.equal(api.scope, fixture.test_scope);
 });
+
+test('nested key context never inherits a sibling or ancestor secret label', async () => {
+  const api = harness();
+  const state = api.create();
+  const source = '{"token":"YWJjZA","nested":{"ordinary":"hello world"},"other":"[ok]"}';
+  const result = await api.feed(state, source, true);
+  const output = JSON.parse(result);
+  assert.equal(output.token, fixture.vectors[3].marker);
+  assert.equal(output.nested.ordinary, 'hello world');
+  assert.equal(output.other, '[ok]');
+});
+
+test('noncanonical malformed objects, arrays and trailing comma fail closed', async () => {
+  const api = harness();
+  const invalid = ['{"token":"YWJjZA",}', '{"token":"YWJjZA" garbage}',
+    '{"x":[1,]}', '{"x":tru}', '{"x":1 "y":2}', '{"x":1} trailing'];
+  for (const source of invalid) {
+    await assert.rejects(() => api.feed(api.create(), source, true),
+      /redaction-(?:invalid|incomplete)/, source);
+  }
+});
+
+test('unknown sensitive values never survive as raw body text', async () => {
+  const api = harness();
+  const input = '{"password":"opaque credential that is not a registered shape"}';
+  await assert.rejects(() => api.feed(api.create(), input, true),
+    /redaction-unsupported-sensitive-value/);
+});
+
+test('valid checked source markers fail collision check; invalid checks remain ordinary', async () => {
+  const api = harness();
+  const checked = '{"ordinary":"' + fixture.vectors[0].marker + '"}';
+  await assert.rejects(() => api.feed(api.create(), checked, true),
+    /redaction-literal-marker-collision/);
+  const invalid = fixture.scenarios.find(x => x.name === 'invalid-checksum').marker;
+  const result = await api.feed(api.create(), '{"ordinary":"' + invalid + '"}', true);
+  assert.equal(JSON.parse(result).ordinary, invalid);
+});
+
+test('SSE [DONE] terminal sentinel is preserved without redaction', async () => {
+  const api = harness();
+  const data = 'data: {"token":"YWJjZA"}\n\ndata: [DONE]\n\n';
+  const output = await api.bodyFeed(api.bodyState('text/event-stream', 'fetch'), data, true);
+  assert.equal(output.split('data: [DONE]').length, 2);
+  assert.equal(output.includes(fixture.vectors[3].original), false);
+  assert.ok(output.includes(fixture.vectors[3].marker));
+});
+
+test('URL sensitive unknown format drops the complete URL', async () => {
+  const api = harness();
+  const result = await api.safeUrl('https://chatgpt.com/x?token=unrecognised.secret');
+  assert.equal(result, '[redaction-failed-url]');
+  assert.equal(result.includes('unrecognised.secret'), false);
+});
+
+test('JSON token scanning holds secrets across every two-chunk split', async () => {
+  const api = harness();
+  const original = '{"nested":{"credential":"550e8400-e29b-41d4-a716-446655440000"}}';
+  for (let split = 0; split <= original.length; split++) {
+    const state = api.create();
+    const first = await api.feed(state, original.slice(0, split));
+    const second = await api.feed(state, original.slice(split), true);
+    const output = JSON.parse(first + second);
+    assert.equal(output.nested.credential, fixture.vectors[0].marker, String(split));
+    assert.equal((first + second).includes(fixture.vectors[0].original), false);
+  }
+});
