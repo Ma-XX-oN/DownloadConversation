@@ -404,11 +404,15 @@
         const line = lines[index];
         const prefix = /^data: ?/.exec(line)[0];
         const body = line.slice(prefix.length);
-        if (!body.trimStart().startsWith('{') && !body.trimStart().startsWith('[')) {
-          throw new Error('redaction-unsupported-sse-data');
+        if (body === '[DONE]') {
+          lines[index] = line;
+        } else {
+          if (!body.trimStart().startsWith('{') && !body.trimStart().startsWith('[')) {
+            throw new Error('redaction-unsupported-sse-data');
+          }
+          const encoder = communicationMarkerV1JsonState('sse.data.json.string');
+          lines[index] = prefix + await communicationMarkerV1JsonFeed(encoder, body, true);
         }
-        const encoder = communicationMarkerV1JsonState('sse.data.json.string');
-        lines[index] = prefix + await communicationMarkerV1JsonFeed(encoder, body, true);
       } else if (dataIndices.length > 1) {
         throw new Error('redaction-unsupported-multiline-sse');
       }
