@@ -246,3 +246,12 @@ test('URL fragments are omitted because V1 has no fragment-inspection context', 
   assert.equal(result.includes('private-fragment-secret'), false);
   assert.equal(new URL(result).hash, '');
 });
+
+test('noncanonical JWT Base64URL pad bits fail closed in sensitive JSON value', async () => {
+  const api = harness();
+  const parts = fixture.vectors[4].original.split('.');
+  parts[0] = parts[0].slice(0, -1) + '1';
+  const source = JSON.stringify({ jwt: parts.join('.') });
+  await assert.rejects(() => api.feed(api.create(), source, true),
+    /redaction-unsupported-sensitive-value/);
+});
