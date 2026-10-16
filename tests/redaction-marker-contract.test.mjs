@@ -30,10 +30,17 @@ function parseMarker(text) {
   if (!m || text.length > 342) return null;
   const [, check, type, id, params] = m;
   if ((type === 'U' || type === 'P') && params !== undefined) return null;
-  if (type === 'H' && !/^(?:[2-9]|[1-9][0-9]{1,2})$/.test(params ?? '')) return null;
-  if (type === 'B' && !/^[1-9][0-9]{0,2}$/.test(params ?? '')) return null;
+  if (type === 'H' && (!/^[1-9][0-9]{0,2}$/.test(params ?? '') ||
+    Number(params) < 2 || Number(params) > 256 || Number(params) % 2)) return null;
+  if (type === 'B' && (!/^[1-9][0-9]{0,2}$/.test(params ?? '') ||
+    Number(params) < 4 || Number(params) > 256 || Number(params) % 4 === 1)) return null;
   if (type === 'O' && !/^[1234]{1,128}$/.test(params ?? '')) return null;
-  if (type === 'J' && !/^[1-9][0-9]{0,2}(?:,[1-9][0-9]{0,2}){2}$/.test(params ?? '')) return null;
+  if (type === 'J') {
+    if (!/^[1-9][0-9]{0,2}(?:,[1-9][0-9]{0,2}){2}$/.test(params ?? '')) return null;
+    const parts = params.split(',').map(Number);
+    if (parts.some(n => n < 4 || n > 512 || n % 4 === 1) ||
+      parts.reduce((a, b) => a + b, 0) > 1024) return null;
+  }
   const body = type + '/' + id + (params === undefined ? '' : '/' + params);
   const wanted = createHash('sha256').update(markerPre)
     .update(body, 'ascii').digest('hex').slice(0, 32);
@@ -79,6 +86,17 @@ test('malformed, unknown and noncanonical strings fail validation', () => {
   assert.equal(parseMarker('[redacted]'), null);
   assert.equal(parseMarker('[[plain]'), null);
   assert.equal(parseMarker('[abc/U/def]'), null);
+});
+
+test('rechecks canonical parameter shapes despite a correctly forged checksum', () => {
+  const id = fixture.vectors[0].id;
+  for (const [type, params] of [['H', '3'], ['H', '257'],
+    ['B', '5'], ['J', '4,5,4'], ['O', '0'], ['U', '12']]) {
+    const body = type + '/' + id + '/' + params;
+    const sum = createHash('sha256').update(markerPre)
+      .update(body, 'ascii').digest('hex').slice(0, 32);
+    assert.equal(parseMarker('[' + sum + '/' + body + ']'), null);
+  }
 });
 
 test('record lengths are not marker lengths', () => {
