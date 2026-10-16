@@ -274,7 +274,7 @@
     const raw = rawHeadersToObject(headers);
     const safe = {};
     for (const [name, value] of Object.entries(raw).slice(0, 200)) {
-      const classified = /(?:authorization|cookie|session|jwt|secret|token|api[_-]?key|password|credential)/i
+      const classified = /(?:authorization|set-cookie|cookie|session|jwt|secret|token|api[_-]?key|password|credential)/i
         .test(name);
       try {
         communicationMarkerV1RejectCollision(String(value));
