@@ -3,6 +3,7 @@ import './communication-log-reset.test.mjs';
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import vm from 'node:vm';
+import { webcrypto } from 'node:crypto';
 
 function apiFetchBlock() {
   const start = userscript.indexOf('  async function apiFetch(url)');
@@ -376,4 +377,78 @@ test('occupied alternate is preflighted before an oversized active writer is clo
     'Reload/recording must not close and recreate Chromium crswap while the alternate is occupied.');
   assert.match(seal, /if \(!alternate\)[\s\S]*return null/,
     'An occupied alternate must defer rotation without touching the current writer.');
+});
+
+function issue301ProductionEncoderHarness() {
+  const context = {
+    COMMUNICATION_LOG_BODY_CHUNK_CHARS: 2048,
+    TextDecoder, TextEncoder, crypto: webcrypto,
+    Uint8Array, DataView, atob, btoa, URL,
+    location: { href: 'https://chatgpt.com/', origin: 'https://chatgpt.com' }
+  };
+  vm.runInNewContext(
+    diskHarnessSource() + '\nthis.__records = [];\n' +
+    'communicationLogRecord = async (type, data) => {\n' +
+    '  this.__records.push({ type, data });\n};\n' +
+    'this.__stream = communicationLogStreamBody;\n' +
+    'this.__textBody = communicationLogTextBody;',
+    context
+  );
+  return {
+    records: context.__records, stream: context.__stream,
+    textBody: context.__textBody
+  };
+}
+
+test('V1 production stream redacts credentials without additional requests', async () => {
+  const api = issue301ProductionEncoderHarness();
+  const raw = '{"credential":"550e8400-e29b-41d4-a716-446655440000","ordinary":"[ok]"}';
+  const bytes = new TextEncoder().encode(raw);
+  const summary = await api.stream(issue132Body([
+    { value: bytes.slice(0, 17) },
+    { value: bytes.slice(17, 38) },
+    { value: bytes.slice(38) },
+    { done: true }
+  ]), 'communication_response_chunk', {
+    content_type: 'application/json', transport: 'fetch', network_sequence: 301
+  });
+  assert.equal(summary.redaction_failed, undefined);
+  assert.equal(summary.byte_count, bytes.byteLength);
+  assert.equal(summary.raw_chunk_count, 3);
+  assert.equal(summary.chunk_count, 1);
+  const safe = api.records.map(item => item.data.data).join('');
+  assert.equal(safe.includes('550e8400-e29b-41d4-a716-446655440000'), false);
+  assert.match(JSON.parse(safe).credential, /^\[[0-9a-f]{32}\/U\/[0-9a-f]{48}\]$/);
+  assert.equal(JSON.parse(safe).ordinary, '[ok]');
+  assert.equal(api.records[0].data.redaction_format, 'dc-secret-marker/1');
+  assert.match(api.records[0].data.redaction_scope, /^[a-f0-9]{32}$/);
+});
+
+test('streaming parser never commits preceding chunks on late malformed JSON', async () => {
+  const api = issue301ProductionEncoderHarness();
+  const raw = '{"credential":"550e8400-e29b-41d4-a716-446655440000","data":' +
+    JSON.stringify('normal text '.repeat(2000)) + ',"secret":"unrecognized plain credential"}';
+  const bytes = new TextEncoder().encode(raw);
+  const summary = await api.stream(issue132Body([
+    { value: bytes.slice(0, 8000) },
+    { value: bytes.slice(8000) },
+    { done: true }
+  ]), 'communication_response_chunk', {
+    content_type: 'application/json', transport: 'fetch', network_sequence: 302
+  });
+  assert.equal(summary.redaction_failed, true);
+  assert.equal(summary.byte_count, bytes.length);
+  assert.equal(summary.chunk_count, 0);
+  assert.equal(api.records.length, 0);
+});
+
+test('materialized WebSocket/XHR JSON failure never persists secret fragments', async () => {
+  const api = issue301ProductionEncoderHarness();
+  const source = '{"token":"550e8400-e29b-41d4-a716-446655440000","password":"not supported"}';
+  const summary = await api.textBody(source, 'communication_request_chunk', {
+    transport: 'websocket', content_type: 'application/json'
+  });
+  assert.equal(summary.redaction_failed, true);
+  assert.equal(summary.chunk_count, 0);
+  assert.equal(api.records.length, 0);
 });
