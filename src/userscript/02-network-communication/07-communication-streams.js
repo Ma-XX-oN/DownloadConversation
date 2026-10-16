@@ -1,12 +1,10 @@
     let chunkCount = 0;
-    // Terminal cloned-body read error; null means the reader reached clean EOF.
     let streamErrorMessage = null;
     try {
       for (;;) {
-        let result = null;
-        try {
-          result = await reader.read();
-        } catch (error) {
+        let result;
+        try { result = await reader.read(); }
+        catch {
           streamErrorMessage = 'body-stream-read-failed';
           break;
         }
@@ -15,59 +13,42 @@
         byteCount += result.value.byteLength;
         rawChunkCount += 1;
         safePending += await communicationMarkerV1BodyFeed(
-          redactionState,
-          decoder.decode(result.value, { stream: true }),
-          false
+          redactionState, decoder.decode(result.value, { stream: true }), false
         );
-        while (safePending.length >= COMMUNICATION_LOG_BODY_CHUNK_CHARS) {
-          const chunk = safePending.slice(0, COMMUNICATION_LOG_BODY_CHUNK_CHARS);
-          safePending = safePending.slice(COMMUNICATION_LOG_BODY_CHUNK_CHARS);
-          chunkCount += 1;
-          await communicationLogRecord(recordType, {
-            ...context,
-            redaction_format: COMMUNICATION_MARKER_FORMAT,
-            redaction_scope: communicationMarkerV1Scope,
-            chunk_ordinal: chunkCount,
-            data: chunk
-          });
+        if (safePending.length > COMMUNICATION_MARKER_MAX_STAGED_CHARS) {
+          throw new Error('redaction-body-too-long');
         }
       }
-      safePending += await communicationMarkerV1BodyFeed(redactionState, decoder.decode(), true);
-      while (safePending.length >= COMMUNICATION_LOG_BODY_CHUNK_CHARS) {
-        const chunk = safePending.slice(0, COMMUNICATION_LOG_BODY_CHUNK_CHARS);
-        safePending = safePending.slice(COMMUNICATION_LOG_BODY_CHUNK_CHARS);
-        chunkCount += 1;
-        await communicationLogRecord(recordType, {
-          ...context,
-          chunk_ordinal: chunkCount,
-          data: chunk
-        });
-      }
-      if (safePending) {
-        chunkCount += 1;
-        await communicationLogRecord(recordType, {
-          ...context,
-          chunk_ordinal: chunkCount,
-          data: safePending
-        });
-      }
-      const summary = { byte_count: byteCount, chunk_count: chunkCount,
-        raw_chunk_count: rawChunkCount,
-        redaction_format: COMMUNICATION_MARKER_FORMAT,
-        redaction_scope: communicationMarkerV1Scope };
       if (streamErrorMessage !== null) {
-        summary.body_incomplete = true;
-        summary.error_message = streamErrorMessage;
+        throw new Error('redaction-incomplete-stream');
       }
-      return summary;
+      safePending += await communicationMarkerV1BodyFeed(redactionState, decoder.decode(), true);
+      if (safePending.length > COMMUNICATION_MARKER_MAX_STAGED_CHARS) {
+        throw new Error('redaction-body-too-long');
+      }
+      for (let offset = 0; offset < safePending.length; offset += COMMUNICATION_LOG_BODY_CHUNK_CHARS) {
+        chunkCount += 1;
+        await communicationLogRecord(recordType, {
+          ...context,
+          redaction_format: COMMUNICATION_MARKER_FORMAT,
+          redaction_scope: communicationMarkerV1Scope,
+          chunk_ordinal: chunkCount,
+          data: safePending.slice(offset, offset + COMMUNICATION_LOG_BODY_CHUNK_CHARS)
+        });
+      }
+      return {
+        byte_count: byteCount, raw_chunk_count: rawChunkCount,
+        chunk_count: chunkCount, redaction_format: COMMUNICATION_MARKER_FORMAT,
+        redaction_scope: communicationMarkerV1Scope
+      };
     } catch {
       return {
-        byte_count: byteCount,
-        chunk_count: chunkCount,
-        raw_chunk_count: rawChunkCount,
-        redaction_failed: true,
+        byte_count: byteCount, raw_chunk_count: rawChunkCount,
+        chunk_count: 0, redaction_failed: true,
         redaction_error: 'redaction-fail-closed',
-        ...(streamErrorMessage !== null ? { body_incomplete: true } : {})
+        ...(streamErrorMessage !== null ? {
+          body_incomplete: true, error_message: streamErrorMessage
+        } : {})
       };
     } finally {
       releaseReaderLockQuietly(reader);
@@ -75,65 +56,52 @@
   }
 
   /**
-   * Persists one already-materialized textual body in bounded chunks.
+   * Stage an already-materialized text body until its entire structure validates.
    *
-   * @param {string} text - Raw body text already held by XHR/WebSocket/page code.
+   * @param {string} text - Original XHR or WebSocket textual body.
    * @param {string} recordType - JSONL chunk record type.
-   * @param {Object} context - Correlation metadata repeated on each chunk.
-   * @returns {Promise<Object>} Persisted character/chunk counts.
+   * @param {Object} context - Transport and content-type metadata.
+   * @returns {Promise<Object>} Raw sizes and committed redacted chunk count.
    */
   async function communicationLogTextBody(text, recordType, context) {
     const value = String(text ?? '');
-    const redactionState = communicationMarkerV1BodyState(context.content_type, context.transport);
-    let safePending = '';
-    let chunkCount = 0;
+    let count = 0;
     try {
-    for (let offset = 0; offset < value.length; offset += COMMUNICATION_LOG_BODY_CHUNK_CHARS) {
-      safePending += await communicationMarkerV1BodyFeed(
-        redactionState,
-        value.slice(offset, offset + COMMUNICATION_LOG_BODY_CHUNK_CHARS),
-        false
-      );
-      while (safePending.length >= COMMUNICATION_LOG_BODY_CHUNK_CHARS) {
-        const chunk = safePending.slice(0, COMMUNICATION_LOG_BODY_CHUNK_CHARS);
-        safePending = safePending.slice(COMMUNICATION_LOG_BODY_CHUNK_CHARS);
-        chunkCount += 1;
+      if (value.length > COMMUNICATION_MARKER_MAX_STAGED_CHARS) {
+        throw new Error('redaction-body-too-long');
+      }
+      const state = communicationMarkerV1BodyState(context.content_type, context.transport);
+      let safe = '';
+      for (let offset = 0; offset < value.length; offset += COMMUNICATION_LOG_BODY_CHUNK_CHARS) {
+        safe += await communicationMarkerV1BodyFeed(
+          state, value.slice(offset, offset + COMMUNICATION_LOG_BODY_CHUNK_CHARS), false
+        );
+        if (safe.length > COMMUNICATION_MARKER_MAX_STAGED_CHARS) {
+          throw new Error('redaction-body-too-long');
+        }
+      }
+      safe += await communicationMarkerV1BodyFeed(state, '', true);
+      if (safe.length > COMMUNICATION_MARKER_MAX_STAGED_CHARS) {
+        throw new Error('redaction-body-too-long');
+      }
+      for (let offset = 0; offset < safe.length; offset += COMMUNICATION_LOG_BODY_CHUNK_CHARS) {
+        count += 1;
         await communicationLogRecord(recordType, {
-          ...context,
-          chunk_ordinal: chunkCount,
-          data: chunk
+          ...context, redaction_format: COMMUNICATION_MARKER_FORMAT,
+          redaction_scope: communicationMarkerV1Scope,
+          chunk_ordinal: count, data: safe.slice(offset, offset + COMMUNICATION_LOG_BODY_CHUNK_CHARS)
         });
       }
-    }
-    safePending += await communicationMarkerV1BodyFeed(redactionState, '', true);
-    while (safePending.length >= COMMUNICATION_LOG_BODY_CHUNK_CHARS) {
-      const chunk = safePending.slice(0, COMMUNICATION_LOG_BODY_CHUNK_CHARS);
-      safePending = safePending.slice(COMMUNICATION_LOG_BODY_CHUNK_CHARS);
-      chunkCount += 1;
-      await communicationLogRecord(recordType, {
-        ...context,
+      return {
+        character_count: value.length, chunk_count: count,
         redaction_format: COMMUNICATION_MARKER_FORMAT,
-        redaction_scope: communicationMarkerV1Scope,
-        chunk_ordinal: chunkCount,
-        data: chunk
-      });
-    }
-    if (safePending) {
-      chunkCount += 1;
-      await communicationLogRecord(recordType, {
-        ...context,
-        redaction_format: COMMUNICATION_MARKER_FORMAT,
-        redaction_scope: communicationMarkerV1Scope,
-        chunk_ordinal: chunkCount,
-        data: safePending
-      });
-    }
-    return { character_count: value.length, chunk_count: chunkCount,
-      redaction_format: COMMUNICATION_MARKER_FORMAT,
-      redaction_scope: communicationMarkerV1Scope };
+        redaction_scope: communicationMarkerV1Scope
+      };
     } catch {
-      return { character_count: value.length, chunk_count: chunkCount,
-        redaction_failed: true, redaction_error: 'redaction-fail-closed' };
+      return {
+        character_count: value.length, chunk_count: 0,
+        redaction_failed: true, redaction_error: 'redaction-fail-closed'
+      };
     }
   }
 
