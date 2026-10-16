@@ -189,7 +189,7 @@
   function communicationMarkerV1JsonState(context = 'json.string') {
     return {
       context, stack: [], root: 'value', quoted: false, escaped: false,
-      token: '', role: null, primitive: ''
+      token: '', tokenBytes: 0, role: null, primitive: ''
     };
   }
 
@@ -259,14 +259,16 @@
       const char = source[index];
       if (state.quoted) {
         state.token += char;
-        if (communicationMarkerEncoder.encode(state.token).length >
-            COMMUNICATION_MARKER_MAX_VALUE) {
+        state.tokenBytes += communicationMarkerEncoder.encode(char).length;
+        if (state.tokenBytes > COMMUNICATION_MARKER_MAX_VALUE) {
           throw new Error('redaction-candidate-too-long');
         }
         if (state.escaped) state.escaped = false;
         else if (char === '\\') state.escaped = true;
         else if (char === '"') {
-          const parsed = JSON.parse(state.token);
+          let parsed;
+          try { parsed = JSON.parse(state.token); }
+          catch { throw new Error('redaction-invalid-json-string'); }
           if (state.role === 'key') {
             state.stack.at(-1).key = parsed;
             state.stack.at(-1).phase = 'colon';
@@ -275,6 +277,7 @@
           if (state.role === 'value') communicationMarkerV1JsonComplete(state);
           state.quoted = false;
           state.token = '';
+          state.tokenBytes = 0;
           state.role = null;
         }
         continue;
@@ -290,13 +293,14 @@
       if (/\s/.test(char)) { output.push(char); continue; }
       const frame = state.stack.at(-1);
       if (char === '"') {
-        const key = frame?.kind === 'object' && frame.phase === 'keyOrEnd';
+        const key = frame?.kind === 'object' && ['keyOrEnd', 'key'].includes(frame.phase);
         if (!key && !communicationMarkerV1JsonExpectsValue(state)) {
           throw new Error('redaction-invalid-json');
         }
         state.quoted = true;
         state.role = key ? 'key' : 'value';
         state.token = '"';
+        state.tokenBytes = 1;
       } else if (char === '{' || char === '[') {
         if (!communicationMarkerV1JsonExpectsValue(state)) {
           throw new Error('redaction-invalid-json');
@@ -324,7 +328,7 @@
         if (!frame || frame.phase !== 'commaOrEnd') {
           throw new Error('redaction-invalid-json');
         }
-        frame.phase = frame.kind === 'object' ? 'keyOrEnd' : 'valueOrEnd';
+        frame.phase = frame.kind === 'object' ? 'key' : 'value';
         frame.key = null;
         output.push(char);
       } else if (/[-0-9tfn]/.test(char) &&
