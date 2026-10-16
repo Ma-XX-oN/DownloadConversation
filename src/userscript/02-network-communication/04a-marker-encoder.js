@@ -98,8 +98,13 @@
       } catch {}
     }
     const parts = value.split('.');
-    if (parts.length === 3 && parts.every(part =>
-      /^[A-Za-z0-9_-]{4,512}$/.test(part) && part.length % 4 !== 1)) {
+    const jwtAlphabet = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-_';
+    if (parts.length === 3 && parts.every(part => {
+      const mod = part.length % 4;
+      const padMask = mod === 2 ? 15 : mod === 3 ? 3 : 0;
+      return /^[A-Za-z0-9_-]{4,512}$/.test(part) && mod !== 1 &&
+        (jwtAlphabet.indexOf(part.at(-1)) & padMask) === 0;
+    })) {
       try {
         const decoded = parts.slice(0, 2).map(part =>
           JSON.parse(new TextDecoder('utf-8', { fatal: true }).decode(
