@@ -1,0 +1,26 @@
+name: DC RWF codec convergence V1
+on:
+  pull_request:
+    paths:
+      - 'tests/redaction-codec-convergence.test.mjs'
+      - 'tests/vendor/rwf673-secret-marker-decoder.mjs'
+      - '.github/workflows/issue-302-convergence.yml'
+  workflow_dispatch:
+jobs:
+  converge:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - name: Verify exact checked-out candidate and pinned decoder blob
+        run: |
+          git rev-parse HEAD
+          test "$(git hash-object tests/vendor/rwf673-secret-marker-decoder.mjs)" = 0ecf54f608c70d5f55a4643a4f01f9377332d859
+      - name: Execute cross-project codec acceptance
+        run: node --test tests/redaction-codec-convergence.test.mjs
