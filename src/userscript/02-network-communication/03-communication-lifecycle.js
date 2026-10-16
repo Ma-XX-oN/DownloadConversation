@@ -277,7 +277,7 @@
       const classified = /(?:authorization|set-cookie|cookie|session|jwt|secret|token|api[_-]?key|password|credential)/i
         .test(name);
       try {
-        communicationMarkerV1RejectCollision(String(value));
+        await communicationMarkerV1RejectCollision(String(value));
         const marker = await communicationMarkerV1Make(
           String(value), 'http.header.value'
         );
