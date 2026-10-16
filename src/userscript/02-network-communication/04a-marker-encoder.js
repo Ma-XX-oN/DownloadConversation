@@ -146,14 +146,19 @@
   }
 
   /**
-   * Reject literal checked-marker syntax before recording source text.
+   * Reject only fully checksum-validated marker syntax as a literal collision.
    *
-   * @param {string} value - Original logical text to validate.
-   * @returns {void} Throws on a reserved marker collision.
+   * @param {string} value - Complete source string to examine.
+   * @returns {Promise<void>} Rejects reserved syntax, not ordinary brackets.
    */
-  function communicationMarkerV1RejectCollision(value) {
-    if (/\[[0-9a-f]{32}\/[UHBPJO]\/[0-9a-f]{48}(?:\/[a-z0-9,]{1,256})?\]/.test(value)) {
-      throw new Error('redaction-literal-marker-collision');
+  async function communicationMarkerV1RejectCollision(value) {
+    const pattern = /\[([0-9a-f]{32})\/([UHBPJO]\/[0-9a-f]{48}(?:\/[a-z0-9,]{1,256})?)\]/g;
+    for (const match of String(value).matchAll(pattern)) {
+      const expected = communicationMarkerV1Hex(
+        await crypto.subtle.digest('SHA-256',
+          communicationMarkerEncoder.encode('DC-SECRET-MARKER-V1\0' + match[2])), 16
+      );
+      if (match[1] === expected) throw new Error('redaction-literal-marker-collision');
     }
   }
 
@@ -172,7 +177,7 @@
     if (role === 'key') return token;
     const frame = state.stack.at(-1);
     const key = frame?.kind === 'object' ? frame.key : null;
-    communicationMarkerV1RejectCollision(value);
+    await communicationMarkerV1RejectCollision(value);
     const marker = await communicationMarkerV1Make(value, state.context);
     if (marker !== null) return JSON.stringify(marker);
     if (/(?:authorization|cookie|session|jwt|secret|token|api[_-]?key|password|credential)/i
@@ -434,7 +439,7 @@
       for (const [name, original] of parsed.searchParams) {
         const classified = /(?:token|secret|auth|key|jwt|signature|session|cookie|password)/i
           .test(name);
-        communicationMarkerV1RejectCollision(original);
+        await communicationMarkerV1RejectCollision(original);
         const marker = await communicationMarkerV1Make(
           original, 'http.query.value'
         );
