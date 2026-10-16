@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         ChatGPT Conversation Markdown Recorder
 // @namespace    https://chatgpt.com/
-// @version      1.11.7-issue.301.2
+// @version      1.11.7-issue.301.3
 // @description  Exports the current ChatGPT conversation directly from the Conversation API as Markdown or JSONL.
 // @match        https://chatgpt.com/*
 // @match        https://chat.openai.com/*
@@ -8156,7 +8156,7 @@ globalThis.__dcCompressor = {
     const raw = rawHeadersToObject(headers);
     const safe = {};
     for (const [name, value] of Object.entries(raw).slice(0, 200)) {
-      const classified = /(?:authorization|cookie|session|jwt|secret|token|api[_-]?key|password|credential)/i
+      const classified = /(?:authorization|set-cookie|cookie|session|jwt|secret|token|api[_-]?key|password|credential)/i
         .test(name);
       try {
         communicationMarkerV1RejectCollision(String(value));
@@ -9819,14 +9819,16 @@ globalThis.__dcCompressor = {
 
   /** V1 per-page secret-redaction identity. Neither key nor CryptoKey is serialized. */
   /** Public random scope label bytes; never derive these from the secret key. */
-  const communicationMarkerV1ScopeBytes = crypto.getRandomValues(new Uint8Array(16));
+  const communicationMarkerV1ScopeBytes = typeof crypto === 'undefined'
+    ? null : crypto.getRandomValues(new Uint8Array(16));
   /** Ephemeral 256-bit HMAC key material; cleared after import. */
-  const communicationMarkerV1Secret = crypto.getRandomValues(new Uint8Array(32));
+  const communicationMarkerV1Secret = typeof crypto === 'undefined'
+    ? null : crypto.getRandomValues(new Uint8Array(32));
   /** Lowercase public recorder-instance identity label. */
-  const communicationMarkerV1Scope = Array.from(communicationMarkerV1ScopeBytes,
+  const communicationMarkerV1Scope = communicationMarkerV1ScopeBytes && Array.from(communicationMarkerV1ScopeBytes,
     byte => byte.toString(16).padStart(2, '0')).join('');
   /** Nonextractable in-memory HMAC signing key promise. */
-  const communicationMarkerV1Key = crypto.subtle.importKey(
+  const communicationMarkerV1Key = communicationMarkerV1Secret && crypto.subtle.importKey(
     'raw', communicationMarkerV1Secret, { name: 'HMAC', hash: 'SHA-256' },
     false, ['sign']
   ).then(key => {
@@ -9931,6 +9933,7 @@ globalThis.__dcCompressor = {
       value.replace(/[\ud800-\udbff][\udc00-\udfff]/gu, ''))) {
       throw new Error('redaction-invalid-unicode');
     }
+    if (!communicationMarkerV1Key) throw new Error('redaction-crypto-unavailable');
     const choices = communicationMarkerV1Candidates(value, context, classified)
       .filter(item => enabledTypes === null || enabledTypes.includes(item.type));
     if (choices.length > 1) throw new Error('redaction-ambiguous-type');
@@ -10095,6 +10098,7 @@ globalThis.__dcCompressor = {
    * @returns {Promise<string>} Safely checked marker-bearing text for disk storage.
    */
   async function communicationMarkerV1BodyFeed(state, input, flush = false) {
+    if (!communicationMarkerV1Key) throw new Error('redaction-crypto-unavailable');
     if (state.kind === 'json') return communicationMarkerV1JsonFeed(state.json, input, flush);
     if (state.kind !== 'sse') throw new Error('redaction-unsupported-content-type');
     state.pendingEvent += String(input ?? '');
