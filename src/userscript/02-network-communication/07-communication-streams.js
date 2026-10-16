@@ -7,12 +7,13 @@
         try {
           result = await reader.read();
         } catch (error) {
-          streamErrorMessage = errorMessage(error);
+          streamErrorMessage = 'body-stream-read-failed';
           break;
         }
         if (result.done) break;
         if (!result.value?.byteLength) continue;
         byteCount += result.value.byteLength;
+        rawChunkCount += 1;
         safePending += await communicationMarkerV1BodyFeed(
           redactionState,
           decoder.decode(result.value, { stream: true }),
@@ -51,6 +52,7 @@
         });
       }
       const summary = { byte_count: byteCount, chunk_count: chunkCount,
+        raw_chunk_count: rawChunkCount,
         redaction_format: COMMUNICATION_MARKER_FORMAT,
         redaction_scope: communicationMarkerV1Scope };
       if (streamErrorMessage !== null) {
@@ -62,6 +64,7 @@
       return {
         byte_count: byteCount,
         chunk_count: chunkCount,
+        raw_chunk_count: rawChunkCount,
         redaction_failed: true,
         redaction_error: 'redaction-fail-closed',
         ...(streamErrorMessage !== null ? { body_incomplete: true } : {})
