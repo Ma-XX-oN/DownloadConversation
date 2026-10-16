@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         ChatGPT Conversation Markdown Recorder
 // @namespace    https://chatgpt.com/
-// @version      1.11.7-issue.301.7
+// @version      1.11.7-issue.301.8
 // @description  Exports the current ChatGPT conversation directly from the Conversation API as Markdown or JSONL.
 // @match        https://chatgpt.com/*
 // @match        https://chat.openai.com/*
@@ -9845,6 +9845,31 @@ globalThis.__dcCompressor = {
   /** Reusable strict UTF-8 encoder for canonical marker inputs. */
   const communicationMarkerEncoder = typeof TextEncoder === 'undefined' ? null : new TextEncoder();
 
+  /** Shared V1 application contexts; absent means a detector is inapplicable. */
+  const communicationMarkerV1Contexts = Object.freeze({
+    'http.header.value': true, 'http.query.value': true,
+    'json.string': true, 'sse.data.json.string': true,
+    'ws.text.json.string': true
+  });
+  /**
+   * Explicit type/context registry for secret value recognition.
+   * Synthetic reconstruction belongs to the separate RWF decoder.
+   */
+  const communicationMarkerV1Registry = Object.freeze(
+    Object.fromEntries(['U', 'H', 'B', 'P', 'J', 'O'].map(type => [
+      type, Object.freeze({
+        contexts: communicationMarkerV1Contexts,
+        identify(text, context) {
+          return communicationMarkerV1Candidates(text, context)
+            .find(item => item.type === type) ?? null;
+        },
+        reconstruct() {
+          throw new Error('redaction-decoder-only');
+        }
+      })
+    ]))
+  );
+
   /**
    * Convert a digest prefix into canonical lowercase hexadecimal.
    *
@@ -9919,7 +9944,9 @@ globalThis.__dcCompressor = {
         });
       }
     }
-    return matches;
+    return matches.filter(item =>
+      communicationMarkerV1Registry[item.type]?.contexts[context] === true
+    );
   }
 
   /**
