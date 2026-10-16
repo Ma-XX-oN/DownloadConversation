@@ -27,9 +27,13 @@ function harness() {
     'scope: communicationMarkerV1Scope,' +
     'make: communicationMarkerV1Make,' +
     'create: communicationMarkerV1JsonState,' +
-    'feed: communicationMarkerV1JsonFeed' +
+    'feed: communicationMarkerV1JsonFeed,' +
+    'bodyState: communicationMarkerV1BodyState,' +
+    'bodyFeed: communicationMarkerV1BodyFeed,' +
+    'safeUrl: communicationMarkerV1SafeUrl' +
     '};})()',
-    { crypto, TextEncoder, TextDecoder, Uint8Array, DataView, atob, btoa }
+    { crypto, TextEncoder, TextDecoder, Uint8Array, DataView, atob, btoa,
+      URL, location: { href: 'https://chatgpt.com/', origin: 'https://chatgpt.com' } }
   );
 }
 
@@ -83,4 +87,62 @@ test('unknown classified secret and incomplete JSON fail closed', async () => {
     /redaction-incomplete-json/);
   await assert.rejects(() => api.make('a'.repeat(129), 'json.string', true),
     /redaction-unsupported-sensitive-value/);
+});
+
+test('SSE data JSON is valid and preserves event framing across all splits', async () => {
+  const api = harness();
+  const source = 'event: message\ndata: {"token":"YWJjZA","normal":"[ok]"}\n\n';
+  let canonical = null;
+  for (let split = 0; split <= source.length; split++) {
+    const state = api.bodyState('text/event-stream', 'fetch');
+    const output = await api.bodyFeed(state, source.slice(0, split)) +
+      await api.bodyFeed(state, source.slice(split), true);
+    assert.match(output, /^event: message\ndata: /);
+    assert.equal(JSON.parse(output.split('\n')[1].slice(6)).token,
+      fixture.vectors[3].marker);
+    assert.equal(JSON.parse(output.split('\n')[1].slice(6)).normal, '[ok]');
+    if (canonical !== null) assert.equal(output, canonical, String(split));
+    canonical = output;
+  }
+});
+
+test('one large network chunk can contain many bounded safe SSE events', async () => {
+  const api = harness();
+  const state = api.bodyState('text/event-stream', 'fetch');
+  const event = 'data: {"ordinary":"text"}\n\n';
+  const original = event.repeat(50000);
+  assert.ok(Buffer.byteLength(original) > 1024 * 1024);
+  const output = await api.bodyFeed(state, original, true);
+  assert.equal(output, original);
+});
+
+test('unsupported classified values and media fail closed', async () => {
+  const api = harness();
+  const plain = api.bodyState('text/plain', 'fetch');
+  await assert.rejects(() => api.bodyFeed(plain, 'Authorization: secret', true),
+    /redaction-unsupported-content-type/);
+  const event = api.bodyState('text/event-stream', 'fetch');
+  await assert.rejects(() => api.bodyFeed(event, 'data: unknown-secret\n\n', true),
+    /redaction-unsupported-sse-data/);
+});
+
+test('query values become typed markers without exposing originals', async () => {
+  const api = harness();
+  const value = fixture.vectors[0];
+  const url = await api.safeUrl('https://chatgpt.com/backend-api/?token=' +
+    value.original + '&regular=%5Bok%5D');
+  const parsed = new URL(url);
+  assert.equal(parsed.searchParams.get('token'), value.marker);
+  assert.equal(parsed.searchParams.get('regular'), '[ok]');
+  assert.equal(url.includes(value.original), false);
+});
+
+test('same scope repeats identity and new ephemeral key does not', async () => {
+  const api = harness();
+  const row = fixture.vectors[0];
+  const twice = await Promise.all([
+    api.make(row.original, 'json.string'), api.make(row.original, 'json.string')
+  ]);
+  assert.equal(twice[0], twice[1]);
+  assert.equal(api.scope, fixture.test_scope);
 });
