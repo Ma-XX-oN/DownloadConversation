@@ -59,7 +59,7 @@ function harness() {
     }
   };
   const context = {
-    URL, Date, Promise, JSON, Object, Set, Blob, console,
+    URL, Date, Promise, JSON, Object, Set, Blob, Response, console,
     location: { origin: 'https://chatgpt.com', href: 'https://chatgpt.com/c/A' },
     sessionStorage: {
       getItem: key => storage.get(key) ?? null,
@@ -87,6 +87,7 @@ function harness() {
       start: aicc127Start,
       request: aicc127LiveOnRequest,
       response: aicc127LiveOnFetchResponse,
+      fullResponse: aicc127LiveOnFullFetchResponse,
       project: testAicc127LiveProject,
       standalone: testAicc127LiveStandalone,
       evidence: aicc127MinimalEvidence
@@ -144,4 +145,25 @@ test('wrong-origin and non-GET requests do not produce identity evidence', async
   response(f, 8, { conversation_id: 'A', gizmo_id: null });
   assert.equal((await f.standalone()).status, 'INCOMPLETE');
   assert.equal(f.evidence().captures.length, 0);
+});
+
+test('full cloned identity response supports JSON beyond the diagnostic limit', async () => {
+  const { functions: f } = harness();
+  await f.start();
+  f.request(req(31, 'A'));
+  const payload = {
+    conversation_id: 'A', title: 'Large conversation', gizmo_id: null,
+    messages: ['non-identity-test-data'.repeat(70000)]
+  };
+  const response = new Response(JSON.stringify(payload), {
+    status: 200, headers: { 'content-type': 'application/json' }
+  });
+  assert.ok(Number(response.headers.get('content-length') ?? 0) === 0);
+  assert.ok(JSON.stringify(payload).length > 1048576);
+  assert.equal(await f.fullResponse(req(31, 'A'), response), true);
+  assert.equal(await f.standalone(), undefined);
+  const exported = JSON.stringify(f.evidence());
+  assert.ok(!exported.includes('non-identity-test-data'));
+  assert.ok(!exported.includes('Large conversation'));
+  assert.equal(f.evidence().captures.at(-1).observer_published, true);
 });
