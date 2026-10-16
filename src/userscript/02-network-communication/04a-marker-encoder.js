@@ -20,6 +20,8 @@
   const COMMUNICATION_MARKER_FORMAT = 'dc-secret-marker/1';
   /** Upper bound on one withheld logical candidate in UTF-8 bytes. */
   const COMMUNICATION_MARKER_MAX_VALUE = 1024 * 1024;
+  /** Maximum staged encoded body size before the entire body is withheld. */
+  const COMMUNICATION_MARKER_MAX_STAGED_CHARS = 16 * 1024 * 1024;
   /** Reusable strict UTF-8 encoder for canonical marker inputs. */
   const communicationMarkerEncoder = typeof TextEncoder === 'undefined' ? null : new TextEncoder();
 
@@ -430,8 +432,9 @@
           .test(name);
         communicationMarkerV1RejectCollision(original);
         const marker = await communicationMarkerV1Make(
-          original, 'http.query.value', classified
+          original, 'http.query.value'
         );
+        if (classified && marker === null) throw new Error('redaction-unsupported-query');
         if (marker !== null) parsed.searchParams.set(name, marker);
       }
       parsed.username = '';
