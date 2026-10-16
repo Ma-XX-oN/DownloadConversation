@@ -269,6 +269,9 @@ function issue132StreamBodyHarness() {
   };
   vm.runInNewContext(
     `${diskHarnessSource()}
+// Source I/O tests intentionally stub the codec; encoder behavior has a dedicated suite.
+communicationMarkerV1BodyState = () => ({});
+communicationMarkerV1BodyFeed = async (_state, value) => String(value ?? '');
 this.__issue132Records = [];
 communicationLogRecord = async (type, data) => {
   this.__issue132Records.push({ type, data });
@@ -313,7 +316,7 @@ test('aborted cloned response stream persists sub-chunk partial body and reports
   );
 
   assert.equal(summary.body_incomplete, true);
-  assert.equal(summary.error_message, 'BodyStreamBuffer was aborted');
+  assert.equal(summary.error_message, 'body-stream-read-failed');
   assert.equal(summary.byte_count, bytes.byteLength);
   assert.equal(summary.chunk_count, 1);
   assert.equal(api.records.length, 1);
@@ -336,7 +339,7 @@ test('aborted cloned response stream flushes final remainder after full persiste
   );
 
   assert.equal(summary.body_incomplete, true);
-  assert.equal(summary.error_message, 'BodyStreamBuffer was aborted');
+  assert.equal(summary.error_message, 'body-stream-read-failed');
   assert.equal(summary.byte_count, bytes.byteLength);
   assert.equal(summary.chunk_count, 2);
   assert.deepEqual(Array.from(api.records, record => record.data.chunk_ordinal), [1, 2]);
@@ -352,7 +355,7 @@ test('aborted cloned response stream before any bytes reports zero counts withou
   );
 
   assert.equal(summary.body_incomplete, true);
-  assert.equal(summary.error_message, 'BodyStreamBuffer was aborted');
+  assert.equal(summary.error_message, 'body-stream-read-failed');
   assert.equal(summary.byte_count, 0);
   assert.equal(summary.chunk_count, 0);
   assert.equal(api.records.length, 0);
