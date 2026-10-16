@@ -13,7 +13,7 @@
         if (result.done) break;
         if (!result.value?.byteLength) continue;
         byteCount += result.value.byteLength;
-        safePending += communicationLogRedactStreamFeed(
+        safePending += await communicationMarkerV1BodyFeed(
           redactionState,
           decoder.decode(result.value, { stream: true }),
           false
@@ -24,12 +24,14 @@
           chunkCount += 1;
           await communicationLogRecord(recordType, {
             ...context,
+            redaction_format: COMMUNICATION_MARKER_FORMAT,
+            redaction_scope: communicationMarkerV1Scope,
             chunk_ordinal: chunkCount,
             data: chunk
           });
         }
       }
-      safePending += communicationLogRedactStreamFeed(redactionState, decoder.decode(), true);
+      safePending += await communicationMarkerV1BodyFeed(redactionState, decoder.decode(), true);
       while (safePending.length >= COMMUNICATION_LOG_BODY_CHUNK_CHARS) {
         const chunk = safePending.slice(0, COMMUNICATION_LOG_BODY_CHUNK_CHARS);
         safePending = safePending.slice(COMMUNICATION_LOG_BODY_CHUNK_CHARS);
@@ -48,12 +50,22 @@
           data: safePending
         });
       }
-      const summary = { byte_count: byteCount, chunk_count: chunkCount };
+      const summary = { byte_count: byteCount, chunk_count: chunkCount,
+        redaction_format: COMMUNICATION_MARKER_FORMAT,
+        redaction_scope: communicationMarkerV1Scope };
       if (streamErrorMessage !== null) {
         summary.body_incomplete = true;
         summary.error_message = streamErrorMessage;
       }
       return summary;
+    } catch {
+      return {
+        byte_count: byteCount,
+        chunk_count: chunkCount,
+        redaction_failed: true,
+        redaction_error: 'redaction-fail-closed',
+        ...(streamErrorMessage !== null ? { body_incomplete: true } : {})
+      };
     } finally {
       releaseReaderLockQuietly(reader);
     }
@@ -69,11 +81,12 @@
    */
   async function communicationLogTextBody(text, recordType, context) {
     const value = String(text ?? '');
-    const redactionState = communicationLogCreateRedactionState();
+    const redactionState = communicationMarkerV1BodyState(context.content_type, context.transport);
     let safePending = '';
     let chunkCount = 0;
+    try {
     for (let offset = 0; offset < value.length; offset += COMMUNICATION_LOG_BODY_CHUNK_CHARS) {
-      safePending += communicationLogRedactStreamFeed(
+      safePending += await communicationMarkerV1BodyFeed(
         redactionState,
         value.slice(offset, offset + COMMUNICATION_LOG_BODY_CHUNK_CHARS),
         false
@@ -89,13 +102,15 @@
         });
       }
     }
-    safePending += communicationLogRedactStreamFeed(redactionState, '', true);
+    safePending += await communicationMarkerV1BodyFeed(redactionState, '', true);
     while (safePending.length >= COMMUNICATION_LOG_BODY_CHUNK_CHARS) {
       const chunk = safePending.slice(0, COMMUNICATION_LOG_BODY_CHUNK_CHARS);
       safePending = safePending.slice(COMMUNICATION_LOG_BODY_CHUNK_CHARS);
       chunkCount += 1;
       await communicationLogRecord(recordType, {
         ...context,
+        redaction_format: COMMUNICATION_MARKER_FORMAT,
+        redaction_scope: communicationMarkerV1Scope,
         chunk_ordinal: chunkCount,
         data: chunk
       });
@@ -104,11 +119,19 @@
       chunkCount += 1;
       await communicationLogRecord(recordType, {
         ...context,
+        redaction_format: COMMUNICATION_MARKER_FORMAT,
+        redaction_scope: communicationMarkerV1Scope,
         chunk_ordinal: chunkCount,
         data: safePending
       });
     }
-    return { character_count: value.length, chunk_count: chunkCount };
+    return { character_count: value.length, chunk_count: chunkCount,
+      redaction_format: COMMUNICATION_MARKER_FORMAT,
+      redaction_scope: communicationMarkerV1Scope };
+    } catch {
+      return { character_count: value.length, chunk_count: chunkCount,
+        redaction_failed: true, redaction_error: 'redaction-fail-closed' };
+    }
   }
 
   /**
@@ -137,6 +160,7 @@
     });
     if (cloned?.body && communicationLogShouldCaptureBody(request?.url ?? trace?.url ?? '', contentType)) {
       const summary = await communicationLogStreamBody(cloned.body, 'communication_request_chunk', {
+        content_type: contentType,
         transport: 'fetch',
         network_sequence: trace?.sequence ?? null
       });
@@ -182,6 +206,7 @@
     });
     if (cloned?.body && communicationLogShouldCaptureBody(responseUrl, contentType)) {
       const summary = await communicationLogStreamBody(cloned.body, 'communication_response_chunk', {
+        content_type: contentType,
         transport: 'fetch',
         network_sequence: trace?.sequence ?? null
       });
@@ -229,6 +254,7 @@
     if (typeof body === 'string' || body instanceof URLSearchParams) {
       await communicationLogTextBody(String(body), 'communication_request_chunk', {
         transport: 'xmlhttprequest',
+        content_type: contentType,
         network_sequence: trace?.sequence ?? null
       });
     } else if (body != null) {
