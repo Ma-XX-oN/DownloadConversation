@@ -198,6 +198,63 @@
   }
 
   /**
+   * Reports whether the staged witness is awaiting this fetch response.
+   * @param {Object} trace - Request correlation record.
+   * @returns {boolean} True for an armed and tracked identity response.
+   */
+  function aicc127LiveWantsFullFetchResponse(trace) {
+    return Boolean(aicc127Runtime?.pending.has(trace.sequence));
+  }
+
+  /**
+   * Extracts only backend-authoritative subject fields from parsed JSON.
+   * The complete conversation is never stored in witness evidence.
+   * @param {Object} trace - Correlated request.
+   * @param {Object} value - Ephemeral parsed response.
+   * @returns {Object|null} Minimum provider input or null.
+   */
+  function aicc127LiveIdentityProjection(trace, value) {
+    if (!value || typeof value !== 'object' || Array.isArray(value)) return null;
+    const kind = aicc127LiveRequestKind(trace);
+    if (kind === 'conversation') {
+      if (typeof value.conversation_id !== 'string') return null;
+      const item = { conversation_id: value.conversation_id };
+      if (Object.hasOwn(value, 'title')) item.title = value.title;
+      if (Object.hasOwn(value, 'gizmo_id')) item.gizmo_id = value.gizmo_id;
+      return item;
+    }
+    if (kind === 'project' && value.gizmo &&
+        typeof value.gizmo.id === 'string') {
+      return { gizmo: {
+        id: value.gizmo.id, display: { name: value.gizmo.display?.name }
+      } };
+    }
+    return null;
+  }
+
+  /**
+   * Reads an already-cloned authenticated response without the diagnostic
+   * truncation limit, then forwards only identity fields. No HTTP request.
+   * @param {Object} trace - Existing network correlation.
+   * @param {Response} response - Dedicated cloned response.
+   * @returns {Promise<boolean>} True if handled, including cached metadata.
+   */
+  async function aicc127LiveOnFullFetchResponse(trace, response) {
+    if (!aicc127LiveWantsFullFetchResponse(trace)) return false;
+    try {
+      const parsed = await response.json();
+      const identity = aicc127LiveIdentityProjection(trace, parsed);
+      if (!identity) return false;
+      aicc127LiveAcceptResponse(trace, response.status, {
+        text: JSON.stringify(identity), truncated: false
+      });
+      return true;
+    } catch {
+      return false;
+    }
+  }
+
+  /**
    * Observes a completed existing XHR without new network requests.
    *
    * @param {Object} xhr - Completed page XHR instance.
