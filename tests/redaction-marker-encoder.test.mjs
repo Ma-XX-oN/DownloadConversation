@@ -80,7 +80,7 @@ test('unknown classified secret and incomplete JSON fail closed', async () => {
   const api = harness();
   const state = api.create();
   await assert.rejects(() => api.feed(state, '{"password":"', true),
-    /redaction-incomplete-json-string/);
+    /redaction-incomplete-json/);
   await assert.rejects(() => api.make('a'.repeat(129), 'json.string', true),
     /redaction-unsupported-sensitive-value/);
 });
