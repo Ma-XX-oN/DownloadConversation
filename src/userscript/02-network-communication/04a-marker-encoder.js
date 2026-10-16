@@ -40,7 +40,9 @@
       type, Object.freeze({
         contexts: communicationMarkerV1Contexts,
         identify(text, context) {
-          return communicationMarkerV1Candidates(text, context)
+          const contextId = typeof context === 'string' ? context : context?.id;
+          const explicitlySecret = typeof context === 'object' && context?.secret_span === true;
+          return communicationMarkerV1Candidates(text, contextId, explicitlySecret)
             .find(item => item.type === type) ?? null;
         },
         reconstruct() {
