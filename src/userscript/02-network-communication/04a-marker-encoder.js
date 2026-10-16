@@ -21,7 +21,7 @@
   /** Upper bound on one withheld logical candidate in UTF-8 bytes. */
   const COMMUNICATION_MARKER_MAX_VALUE = 1024 * 1024;
   /** Reusable strict UTF-8 encoder for canonical marker inputs. */
-  const communicationMarkerEncoder = new TextEncoder();
+  const communicationMarkerEncoder = typeof TextEncoder === 'undefined' ? null : new TextEncoder();
 
   /**
    * Convert a digest prefix into canonical lowercase hexadecimal.
@@ -114,7 +114,7 @@
       value.replace(/[\ud800-\udbff][\udc00-\udfff]/gu, ''))) {
       throw new Error('redaction-invalid-unicode');
     }
-    if (!communicationMarkerV1Key) throw new Error('redaction-crypto-unavailable');
+    if (!communicationMarkerV1Key || !communicationMarkerEncoder) throw new Error('redaction-crypto-unavailable');
     const choices = communicationMarkerV1Candidates(value, context, classified)
       .filter(item => enabledTypes === null || enabledTypes.includes(item.type));
     if (choices.length > 1) throw new Error('redaction-ambiguous-type');
@@ -279,7 +279,7 @@
    * @returns {Promise<string>} Safely checked marker-bearing text for disk storage.
    */
   async function communicationMarkerV1BodyFeed(state, input, flush = false) {
-    if (!communicationMarkerV1Key) throw new Error('redaction-crypto-unavailable');
+    if (!communicationMarkerV1Key || !communicationMarkerEncoder) throw new Error('redaction-crypto-unavailable');
     if (state.kind === 'json') return communicationMarkerV1JsonFeed(state.json, input, flush);
     if (state.kind !== 'sse') throw new Error('redaction-unsupported-content-type');
     state.pendingEvent += String(input ?? '');
