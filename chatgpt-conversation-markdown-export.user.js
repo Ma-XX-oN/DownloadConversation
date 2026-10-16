@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         ChatGPT Conversation Markdown Recorder
 // @namespace    https://chatgpt.com/
-// @version      1.11.7-issue.300.1
+// @version      1.11.7-issue.301.2
 // @description  Exports the current ChatGPT conversation directly from the Conversation API as Markdown or JSONL.
 // @match        https://chatgpt.com/*
 // @match        https://chat.openai.com/*
@@ -7968,6 +7968,8 @@ globalThis.__dcCompressor = {
       page_url: stockNetworkSafeUrl(location.href),
       navigation_type: navigation?.type ?? null,
       time_origin: performance.timeOrigin,
+      redaction_format: COMMUNICATION_MARKER_FORMAT,
+      redaction_scope: communicationMarkerV1Scope,
       dropped_before_ready: communicationLogDroppedBeforeReady
     });
     communicationLogDroppedBeforeReady = 0;
@@ -8150,14 +8152,21 @@ globalThis.__dcCompressor = {
    * @param {Object} headers - Headers-like or plain header collection.
    * @returns {Object} Header map safe to persist to the communication log.
    */
-  function communicationLogSafeHeaders(headers) {
+  async function communicationLogSafeHeaders(headers) {
     const raw = rawHeadersToObject(headers);
     const safe = {};
     for (const [name, value] of Object.entries(raw).slice(0, 200)) {
-      if (/(?:^|[-_])(?:authorization|cookie|set-cookie|proxy-authorization|access-token|refresh-token|api-key|csrf|xsrf|session|jwt|secret)(?:$|[-_])/i.test(name)) {
-        safe[name] = '[redacted]';
-      } else {
-        safe[name] = boundedDiagnosticText(communicationLogRedactText(value), 4000);
+      const classified = /(?:authorization|cookie|session|jwt|secret|token|api[_-]?key|password|credential)/i
+        .test(name);
+      try {
+        communicationMarkerV1RejectCollision(String(value));
+        const marker = await communicationMarkerV1Make(
+          String(value), 'http.header.value', classified
+        );
+        safe[name] = marker === null
+          ? boundedDiagnosticText(String(value), 4000) : marker;
+      } catch {
+        safe[name] = null;
       }
     }
     return safe;
@@ -9808,6 +9817,345 @@ globalThis.__dcCompressor = {
     }
   }
 
+  /** V1 per-page secret-redaction identity. Neither key nor CryptoKey is serialized. */
+  /** Public random scope label bytes; never derive these from the secret key. */
+  const communicationMarkerV1ScopeBytes = crypto.getRandomValues(new Uint8Array(16));
+  /** Ephemeral 256-bit HMAC key material; cleared after import. */
+  const communicationMarkerV1Secret = crypto.getRandomValues(new Uint8Array(32));
+  /** Lowercase public recorder-instance identity label. */
+  const communicationMarkerV1Scope = Array.from(communicationMarkerV1ScopeBytes,
+    byte => byte.toString(16).padStart(2, '0')).join('');
+  /** Nonextractable in-memory HMAC signing key promise. */
+  const communicationMarkerV1Key = crypto.subtle.importKey(
+    'raw', communicationMarkerV1Secret, { name: 'HMAC', hash: 'SHA-256' },
+    false, ['sign']
+  ).then(key => {
+    communicationMarkerV1Secret.fill(0);
+    return key;
+  });
+  /** Explicit marker format negotiated by each recording segment. */
+  const COMMUNICATION_MARKER_FORMAT = 'dc-secret-marker/1';
+  /** Upper bound on one withheld logical candidate in UTF-8 bytes. */
+  const COMMUNICATION_MARKER_MAX_VALUE = 1024 * 1024;
+  /** Reusable strict UTF-8 encoder for canonical marker inputs. */
+  const communicationMarkerEncoder = new TextEncoder();
+
+  /**
+   * Convert a digest prefix into canonical lowercase hexadecimal.
+   *
+   * @param {ArrayBuffer|Uint8Array} bytes - Hash or HMAC result bytes.
+   * @param {number} count - Number of digest bytes to retain.
+   * @returns {string} Lowercase hexadecimal digest prefix.
+   */
+  function communicationMarkerV1Hex(bytes, count) {
+    return Array.from(new Uint8Array(bytes).slice(0, count),
+      byte => byte.toString(16).padStart(2, '0')).join('');
+  }
+
+  /**
+   * Identify complete values only in explicitly supported contexts.
+   *
+   * @param {string} value - Complete unescaped logical value.
+   * @param {string} context - Registered transport-specific value context.
+   * @param {boolean} classified - Whether an explicit sensitive span allows opaque values.
+   * @returns {Array<Object>} All matching canonical type descriptors.
+   */
+  function communicationMarkerV1Candidates(value, context, classified = false) {
+    const allowed = ['http.header.value', 'http.query.value', 'json.string',
+      'sse.data.json.string', 'ws.text.json.string'];
+    if (!allowed.includes(context)) return [];
+    const matches = [];
+    if (/^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/.test(value)) {
+      matches.push({ type: 'U', params: null });
+    }
+    if (/^g-p-[0-9a-f]{32}$/.test(value)) {
+      matches.push({ type: 'P', params: null });
+    }
+    if (/^[0-9a-f]{2,256}$/.test(value) && value.length % 2 === 0) {
+      matches.push({ type: 'H', params: String(value.length) });
+    }
+    if (!matches.some(item => item.type === 'U' || item.type === 'P') &&
+        /^[A-Za-z0-9_-]{4,256}$/.test(value) && value.length % 4 !== 1) {
+      try {
+        const raw = atob(value.replace(/-/g, '+').replace(/_/g, '/') +
+          '='.repeat((4 - value.length % 4) % 4));
+        const alphabet = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-_';
+        const last = alphabet.indexOf(value.at(-1));
+        const padBits = value.length % 4 === 2 ? 15 : value.length % 4 === 3 ? 3 : 0;
+        if (raw.length > 0 && (last & padBits) === 0) {
+          matches.push({ type: 'B', params: String(value.length) });
+        }
+      } catch {}
+    }
+    const parts = value.split('.');
+    if (parts.length === 3 && parts.every(part =>
+      /^[A-Za-z0-9_-]{4,512}$/.test(part) && part.length % 4 !== 1)) {
+      try {
+        const decoded = parts.slice(0, 2).map(part =>
+          JSON.parse(new TextDecoder('utf-8', { fatal: true }).decode(
+            Uint8Array.from(atob(part.replace(/-/g, '+').replace(/_/g, '/') +
+              '='.repeat((4 - part.length % 4) % 4)), char => char.charCodeAt(0))
+          )));
+        if (decoded.every(part => part !== null && typeof part === 'object' &&
+            !Array.isArray(part)) && parts.join('').length <= 1024) {
+          matches.push({ type: 'J', params: parts.map(part => part.length).join(',') });
+        }
+      } catch {}
+    }
+    if (classified && matches.length === 0 && value.length > 0) {
+      const scalars = Array.from(value);
+      if (scalars.length <= 128 && scalars.every(character =>
+        !/[\u0000-\u001f\u007f]/u.test(character) &&
+        !/[\ud800-\udfff]/u.test(character))) {
+        matches.push({
+          type: 'O',
+          params: scalars.map(character =>
+            String(communicationMarkerEncoder.encode(character).length)).join('')
+        });
+      }
+    }
+    return matches;
+  }
+
+  /**
+   * Derive a checked synthetic marker without returning the source value.
+   *
+   * @param {string} value - Complete unescaped logical value.
+   * @param {string} context - Registered inspection context.
+   * @param {boolean} classified - Whether this value has explicit secret-span metadata.
+   * @param {Array<string>|null} enabledTypes - Optional strict type selection for a registered context.
+   * @returns {Promise<string|null>} Checked marker or null for an ordinary unclassified value.
+   */
+  async function communicationMarkerV1Make(value, context, classified = false, enabledTypes = null) {
+    if (typeof value !== 'string' || /[\ud800-\udfff]/u.test(
+      value.replace(/[\ud800-\udbff][\udc00-\udfff]/gu, ''))) {
+      throw new Error('redaction-invalid-unicode');
+    }
+    const choices = communicationMarkerV1Candidates(value, context, classified)
+      .filter(item => enabledTypes === null || enabledTypes.includes(item.type));
+    if (choices.length > 1) throw new Error('redaction-ambiguous-type');
+    if (choices.length === 0) {
+      if (classified) throw new Error('redaction-unsupported-sensitive-value');
+      return null;
+    }
+    const bytes = communicationMarkerEncoder.encode(value);
+    if (bytes.length > COMMUNICATION_MARKER_MAX_VALUE) {
+      throw new Error('redaction-candidate-too-long');
+    }
+    const size = new Uint8Array(4);
+    new DataView(size.buffer).setUint32(0, bytes.length, false);
+    const prefix = communicationMarkerEncoder.encode('DC-SECRET-ID-V1\0');
+    const message = new Uint8Array(prefix.length + size.length + bytes.length);
+    message.set(prefix);
+    message.set(size, prefix.length);
+    message.set(bytes, prefix.length + size.length);
+    const id = communicationMarkerV1Hex(
+      await crypto.subtle.sign('HMAC', await communicationMarkerV1Key, message), 24
+    );
+    const { type, params } = choices[0];
+    const body = type + '/' + id + (params === null ? '' : '/' + params);
+    const checksum = communicationMarkerEncoder.encode('DC-SECRET-MARKER-V1\0' + body);
+    const check = communicationMarkerV1Hex(await crypto.subtle.digest('SHA-256', checksum), 16);
+    return '[' + check + '/' + body + ']';
+  }
+
+  /**
+   * Reject literal checked-marker syntax before recording source text.
+   *
+   * @param {string} value - Original logical text to validate.
+   * @returns {void} Throws on a reserved marker collision.
+   */
+  function communicationMarkerV1RejectCollision(value) {
+    if (/\[[0-9a-f]{32}\/[UHBPJO]\/[0-9a-f]{48}(?:\/[a-z0-9,]{1,256})?\]/.test(value)) {
+      throw new Error('redaction-literal-marker-collision');
+    }
+  }
+
+  /**
+   * Classify one complete JSON string without exposing unfinished secrets.
+   *
+   * @param {Object} state - Mutable JSON token parser state.
+   * @param {string} source - Original serialized JSON string token.
+   * @returns {Promise<string>} Safe serialized JSON token or checked marker.
+   */
+  async function communicationMarkerV1JsonString(state, source) {
+    let decoded;
+    try { decoded = JSON.parse(source); } catch { throw new Error('redaction-invalid-json-string'); }
+    if (state.expectKey) {
+      state.key = decoded;
+      state.expectKey = false;
+      return source;
+    }
+    const sensitive = /(?:authorization|cookie|session|jwt|secret|token|api[_-]?key|password|credential)/i
+      .test(String(state.key ?? ''));
+    communicationMarkerV1RejectCollision(decoded);
+    const marker = await communicationMarkerV1Make(decoded, state.context, sensitive);
+    return marker === null ? source : JSON.stringify(marker);
+  }
+
+  /**
+   * Initialize state for one streamed logical JSON document.
+   *
+   * @param {string} context - Type registry context for string values.
+   * @returns {Object} Bounded lexical JSON parser state.
+   */
+  function communicationMarkerV1JsonState(context = 'json.string') {
+    return {
+      context, quoted: false, escaped: false, token: '', stack: [],
+      key: null, expectKey: false
+    };
+  }
+
+  /**
+   * Encode a JSON text stream with secret values withheld across chunks.
+   *
+   * @param {Object} state - Mutable lexical state across source chunks.
+   * @param {string} input - Next decoded UTF-8 text fragment.
+   * @param {boolean} flush - Whether the logical stream has ended.
+   * @returns {Promise<string>} Safe emitted JSON prefix for persistence.
+   */
+  async function communicationMarkerV1JsonFeed(state, input, flush = false) {
+    const out = [];
+    let plain = '';
+    for (const char of String(input ?? '')) {
+      if (state.quoted) {
+        state.token += char;
+        if (state.token.length > COMMUNICATION_MARKER_MAX_VALUE) {
+          throw new Error('redaction-candidate-too-long');
+        }
+        if (state.escaped) state.escaped = false;
+        else if (char === '\\') state.escaped = true;
+        else if (char === '"') {
+          out.push(plain);
+          plain = '';
+          out.push(await communicationMarkerV1JsonString(state, state.token));
+          state.token = '';
+          state.quoted = false;
+        }
+        continue;
+      }
+      if (char === '"') {
+        state.quoted = true;
+        state.token = '"';
+        continue;
+      }
+      plain += char;
+      if (char === '{') state.stack.push({ kind: 'object', key: null });
+      else if (char === '[') state.stack.push({ kind: 'array' });
+      else if (char === '}' || char === ']') state.stack.pop();
+      else if (char === ',' && state.stack.at(-1)?.kind === 'object') {
+        state.stack.at(-1).key = null;
+      }
+      state.expectKey = state.stack.at(-1)?.kind === 'object' &&
+        state.stack.at(-1).key === null &&
+        !/:\s*$/.test(plain);
+      if (char === ':' && state.stack.at(-1)?.kind === 'object') {
+        state.stack.at(-1).key = state.key;
+        state.expectKey = false;
+      }
+      if (state.stack.at(-1)?.kind === 'object' &&
+          state.stack.at(-1).key !== null) state.key = state.stack.at(-1).key;
+    }
+    out.push(plain);
+    if (flush && (state.quoted || state.stack.length > 0)) {
+      throw new Error('redaction-incomplete-json');
+    }
+    return out.join('');
+  }
+
+  /**
+   * Select the protocol parser from the actual transport and media type.
+   *
+   * @param {string} contentType - Declared HTTP media type.
+   * @param {string} transport - Source network transport.
+   * @returns {Object} Scoped bounded streaming-body encoder state.
+   */
+  function communicationMarkerV1BodyState(contentType, transport) {
+    const media = String(contentType ?? '').split(';', 1)[0].trim().toLowerCase();
+    const kind = media === 'text/event-stream' ? 'sse' :
+      /(?:^application\/(?:json|[^/]+\+json|x-component)$)/.test(media) ||
+      (transport === 'websocket' && media === 'application/json') ? 'json' : null;
+    return {
+      kind,
+      context: kind === 'sse' ? 'sse.data.json.string' :
+        transport === 'websocket' ? 'ws.text.json.string' : 'json.string',
+      json: kind === 'json'
+        ? communicationMarkerV1JsonState(transport === 'websocket'
+          ? 'ws.text.json.string' : 'json.string') : null,
+      pendingEvent: ''
+    };
+  }
+
+  /**
+   * Process JSON or complete SSE events, rejecting unsupported bodies.
+   *
+   * @param {Object} state - Mutable transport-aware encoding state.
+   * @param {string} input - Next source body text fragment.
+   * @param {boolean} flush - Whether the source body reached terminal EOF.
+   * @returns {Promise<string>} Safely checked marker-bearing text for disk storage.
+   */
+  async function communicationMarkerV1BodyFeed(state, input, flush = false) {
+    if (state.kind === 'json') return communicationMarkerV1JsonFeed(state.json, input, flush);
+    if (state.kind !== 'sse') throw new Error('redaction-unsupported-content-type');
+    state.pendingEvent += String(input ?? '');
+    let output = '';
+    for (;;) {
+      const boundary = /\r?\n\r?\n/.exec(state.pendingEvent);
+      if (!boundary) {
+        if (state.pendingEvent.length > COMMUNICATION_MARKER_MAX_VALUE) {
+          throw new Error('redaction-event-too-long');
+        }
+        break;
+      }
+      const event = state.pendingEvent.slice(0, boundary.index);
+      state.pendingEvent = state.pendingEvent.slice(boundary.index + boundary[0].length);
+      const lines = event.split(/\r?\n/);
+      const dataIndices = lines.map((line, index) =>
+        /^data:/.test(line) ? index : -1).filter(index => index >= 0);
+      if (dataIndices.length === 1) {
+        const index = dataIndices[0];
+        const line = lines[index];
+        const prefix = /^data: ?/.exec(line)[0];
+        const body = line.slice(prefix.length);
+        if (!body.trimStart().startsWith('{') && !body.trimStart().startsWith('[')) {
+          throw new Error('redaction-unsupported-sse-data');
+        }
+        const encoder = communicationMarkerV1JsonState('sse.data.json.string');
+        lines[index] = prefix + await communicationMarkerV1JsonFeed(encoder, body, true);
+      } else if (dataIndices.length > 1) {
+        throw new Error('redaction-unsupported-multiline-sse');
+      }
+      output += lines.join(event.includes('\r\n') ? '\r\n' : '\n') + boundary[0];
+    }
+    if (flush && state.pendingEvent) throw new Error('redaction-incomplete-sse-event');
+    return output;
+  }
+
+  /**
+   * Replace supported URL query values with checked synthetic markers.
+   *
+   * @param {string} url - Untrusted original request or response URL.
+   * @returns {Promise<string>} Sanitized URL or a constant fail-closed placeholder.
+   */
+  async function communicationMarkerV1SafeUrl(url) {
+    try {
+      const parsed = new URL(String(url ?? ''), location.href);
+      for (const [name, original] of parsed.searchParams) {
+        const classified = /(?:token|secret|auth|key|jwt|signature|session|cookie|password)/i
+          .test(name);
+        communicationMarkerV1RejectCollision(original);
+        const marker = await communicationMarkerV1Make(
+          original, 'http.query.value', classified
+        );
+        if (marker !== null) parsed.searchParams.set(name, marker);
+      }
+      parsed.username = '';
+      parsed.password = '';
+      return parsed.href;
+    } catch {
+      return '[redaction-failed-url]';
+    }
+  }
   /**
    * Creates independent state for one request/response body redaction stream.
    *
@@ -10622,10 +10970,11 @@ globalThis.__dcCompressor = {
   async function communicationLogStreamBody(body, recordType, context) {
     if (!body) return { byte_count: 0, chunk_count: 0 };
     const reader = body.getReader();
-    const decoder = new TextDecoder();
-    const redactionState = communicationLogCreateRedactionState();
+    const decoder = new TextDecoder('utf-8', { fatal: true });
+    const redactionState = communicationMarkerV1BodyState(context.content_type, context.transport);
     let safePending = '';
     let byteCount = 0;
+    let rawChunkCount = 0;
     let chunkCount = 0;
     // Terminal cloned-body read error; null means the reader reached clean EOF.
     let streamErrorMessage = null;
@@ -10635,13 +10984,14 @@ globalThis.__dcCompressor = {
         try {
           result = await reader.read();
         } catch (error) {
-          streamErrorMessage = errorMessage(error);
+          streamErrorMessage = 'body-stream-read-failed';
           break;
         }
         if (result.done) break;
         if (!result.value?.byteLength) continue;
         byteCount += result.value.byteLength;
-        safePending += communicationLogRedactStreamFeed(
+        rawChunkCount += 1;
+        safePending += await communicationMarkerV1BodyFeed(
           redactionState,
           decoder.decode(result.value, { stream: true }),
           false
@@ -10652,12 +11002,14 @@ globalThis.__dcCompressor = {
           chunkCount += 1;
           await communicationLogRecord(recordType, {
             ...context,
+            redaction_format: COMMUNICATION_MARKER_FORMAT,
+            redaction_scope: communicationMarkerV1Scope,
             chunk_ordinal: chunkCount,
             data: chunk
           });
         }
       }
-      safePending += communicationLogRedactStreamFeed(redactionState, decoder.decode(), true);
+      safePending += await communicationMarkerV1BodyFeed(redactionState, decoder.decode(), true);
       while (safePending.length >= COMMUNICATION_LOG_BODY_CHUNK_CHARS) {
         const chunk = safePending.slice(0, COMMUNICATION_LOG_BODY_CHUNK_CHARS);
         safePending = safePending.slice(COMMUNICATION_LOG_BODY_CHUNK_CHARS);
@@ -10676,12 +11028,24 @@ globalThis.__dcCompressor = {
           data: safePending
         });
       }
-      const summary = { byte_count: byteCount, chunk_count: chunkCount };
+      const summary = { byte_count: byteCount, chunk_count: chunkCount,
+        raw_chunk_count: rawChunkCount,
+        redaction_format: COMMUNICATION_MARKER_FORMAT,
+        redaction_scope: communicationMarkerV1Scope };
       if (streamErrorMessage !== null) {
         summary.body_incomplete = true;
         summary.error_message = streamErrorMessage;
       }
       return summary;
+    } catch {
+      return {
+        byte_count: byteCount,
+        chunk_count: chunkCount,
+        raw_chunk_count: rawChunkCount,
+        redaction_failed: true,
+        redaction_error: 'redaction-fail-closed',
+        ...(streamErrorMessage !== null ? { body_incomplete: true } : {})
+      };
     } finally {
       releaseReaderLockQuietly(reader);
     }
@@ -10697,11 +11061,12 @@ globalThis.__dcCompressor = {
    */
   async function communicationLogTextBody(text, recordType, context) {
     const value = String(text ?? '');
-    const redactionState = communicationLogCreateRedactionState();
+    const redactionState = communicationMarkerV1BodyState(context.content_type, context.transport);
     let safePending = '';
     let chunkCount = 0;
+    try {
     for (let offset = 0; offset < value.length; offset += COMMUNICATION_LOG_BODY_CHUNK_CHARS) {
-      safePending += communicationLogRedactStreamFeed(
+      safePending += await communicationMarkerV1BodyFeed(
         redactionState,
         value.slice(offset, offset + COMMUNICATION_LOG_BODY_CHUNK_CHARS),
         false
@@ -10717,13 +11082,15 @@ globalThis.__dcCompressor = {
         });
       }
     }
-    safePending += communicationLogRedactStreamFeed(redactionState, '', true);
+    safePending += await communicationMarkerV1BodyFeed(redactionState, '', true);
     while (safePending.length >= COMMUNICATION_LOG_BODY_CHUNK_CHARS) {
       const chunk = safePending.slice(0, COMMUNICATION_LOG_BODY_CHUNK_CHARS);
       safePending = safePending.slice(COMMUNICATION_LOG_BODY_CHUNK_CHARS);
       chunkCount += 1;
       await communicationLogRecord(recordType, {
         ...context,
+        redaction_format: COMMUNICATION_MARKER_FORMAT,
+        redaction_scope: communicationMarkerV1Scope,
         chunk_ordinal: chunkCount,
         data: chunk
       });
@@ -10732,11 +11099,19 @@ globalThis.__dcCompressor = {
       chunkCount += 1;
       await communicationLogRecord(recordType, {
         ...context,
+        redaction_format: COMMUNICATION_MARKER_FORMAT,
+        redaction_scope: communicationMarkerV1Scope,
         chunk_ordinal: chunkCount,
         data: safePending
       });
     }
-    return { character_count: value.length, chunk_count: chunkCount };
+    return { character_count: value.length, chunk_count: chunkCount,
+      redaction_format: COMMUNICATION_MARKER_FORMAT,
+      redaction_scope: communicationMarkerV1Scope };
+    } catch {
+      return { character_count: value.length, chunk_count: chunkCount,
+        redaction_failed: true, redaction_error: 'redaction-fail-closed' };
+    }
   }
 
   /**
@@ -10754,17 +11129,20 @@ globalThis.__dcCompressor = {
       origin: trace?.origin ?? 'stock-chatgpt',
       network_sequence: trace?.sequence ?? null,
       method: String(request?.method ?? trace?.method ?? 'GET').toUpperCase(),
-      url: stockNetworkSafeUrl(request?.url ?? trace?.url ?? ''),
+      url: await communicationMarkerV1SafeUrl(request?.url ?? trace?.url ?? ''),
       cache_mode: request?.cache ?? null,
       request_mode: request?.mode ?? null,
       credentials_mode: request?.credentials ?? null,
       destination: request?.destination ?? null,
       redirect_mode: request?.redirect ?? null,
       content_type: contentType,
-      headers: communicationLogSafeHeaders(request?.headers)
+      redaction_format: COMMUNICATION_MARKER_FORMAT,
+      redaction_scope: communicationMarkerV1Scope,
+      headers: await communicationLogSafeHeaders(request?.headers)
     });
     if (cloned?.body && communicationLogShouldCaptureBody(request?.url ?? trace?.url ?? '', contentType)) {
       const summary = await communicationLogStreamBody(cloned.body, 'communication_request_chunk', {
+        content_type: contentType,
         transport: 'fetch',
         network_sequence: trace?.sequence ?? null
       });
@@ -10798,18 +11176,21 @@ globalThis.__dcCompressor = {
       origin: trace?.origin ?? 'stock-chatgpt',
       network_sequence: trace?.sequence ?? null,
       method: trace?.method ?? null,
-      request_url: trace?.url ?? null,
-      response_url: stockNetworkSafeUrl(responseUrl),
+      request_url: trace?.url ? await communicationMarkerV1SafeUrl(trace.url) : null,
+      response_url: await communicationMarkerV1SafeUrl(responseUrl),
       status: response?.status ?? null,
       ok: response?.ok === true,
       redirected: response?.redirected === true,
       response_type: response?.type ?? null,
       duration_ms: trace?.started_at == null ? null : Math.round(performance.now() - trace.started_at),
       content_type: contentType,
-      headers: communicationLogSafeHeaders(response?.headers)
+      redaction_format: COMMUNICATION_MARKER_FORMAT,
+      redaction_scope: communicationMarkerV1Scope,
+      headers: await communicationLogSafeHeaders(response?.headers)
     });
     if (cloned?.body && communicationLogShouldCaptureBody(responseUrl, contentType)) {
       const summary = await communicationLogStreamBody(cloned.body, 'communication_response_chunk', {
+        content_type: contentType,
         transport: 'fetch',
         network_sequence: trace?.sequence ?? null
       });
@@ -10820,7 +11201,7 @@ globalThis.__dcCompressor = {
       if (summary.body_incomplete) {
         logDiagnostic('warnings', 'communication-log-response-body-incomplete', {
           network_sequence: trace?.sequence ?? null,
-          response_url: stockNetworkSafeUrl(responseUrl),
+          response_url: await communicationMarkerV1SafeUrl(responseUrl),
           byte_count: summary.byte_count,
           chunk_count: summary.chunk_count,
           message: summary.error_message
@@ -10850,13 +11231,16 @@ globalThis.__dcCompressor = {
     await communicationLogRecord('communication_xhr_request', {
       network_sequence: trace?.sequence ?? null,
       method: String(info?.method ?? 'GET').toUpperCase(),
-      url: stockNetworkSafeUrl(info?.url ?? ''),
+      url: await communicationMarkerV1SafeUrl(info?.url ?? ''),
       content_type: contentType,
-      headers: communicationLogSafeHeaders(info?.headers)
+      redaction_format: COMMUNICATION_MARKER_FORMAT,
+      redaction_scope: communicationMarkerV1Scope,
+      headers: await communicationLogSafeHeaders(info?.headers)
     });
     if (typeof body === 'string' || body instanceof URLSearchParams) {
       await communicationLogTextBody(String(body), 'communication_request_chunk', {
         transport: 'xmlhttprequest',
+        content_type: contentType,
         network_sequence: trace?.sequence ?? null
       });
     } else if (body != null) {
@@ -10890,13 +11274,15 @@ globalThis.__dcCompressor = {
     await communicationLogRecord('communication_xhr_response', {
       network_sequence: trace?.sequence ?? null,
       method: trace?.method ?? null,
-      request_url: trace?.url ?? null,
-      response_url: stockNetworkSafeUrl(responseUrl),
+      request_url: trace?.url ? await communicationMarkerV1SafeUrl(trace.url) : null,
+      response_url: await communicationMarkerV1SafeUrl(responseUrl),
       status: Number.isFinite(xhr?.status) ? xhr.status : null,
       response_type: xhr?.responseType || 'text',
       duration_ms: trace?.started_at == null ? null : Math.round(performance.now() - trace.started_at),
       content_type: contentType,
-      headers: communicationLogSafeHeaders(responseHeaders)
+      redaction_format: COMMUNICATION_MARKER_FORMAT,
+      redaction_scope: communicationMarkerV1Scope,
+      headers: await communicationLogSafeHeaders(responseHeaders)
     });
     if (!communicationLogShouldCaptureBody(responseUrl, contentType)) {
       await communicationLogRecord('communication_xhr_response_body_end', {
@@ -10914,6 +11300,7 @@ globalThis.__dcCompressor = {
     if (typeof text === 'string') {
       const summary = await communicationLogTextBody(text, 'communication_response_chunk', {
         transport: 'xmlhttprequest',
+        content_type: contentType,
         network_sequence: trace?.sequence ?? null
       });
       await communicationLogRecord('communication_xhr_response_body_end', {
@@ -10939,11 +11326,12 @@ globalThis.__dcCompressor = {
   async function communicationLogWebSocketSend(url, data) {
     if (!(await communicationLogAwaitReadyOrDrop())) return;
     await communicationLogRecord('communication_websocket_send', {
-      url: stockNetworkSafeUrl(url),
+      url: await communicationMarkerV1SafeUrl(url),
       data_type: typeof data === 'string' ? 'text' : Object.prototype.toString.call(data)
     });
     if (typeof data === 'string') {
-      await communicationLogTextBody(data, 'communication_request_chunk', { transport: 'websocket' });
+      await communicationLogTextBody(data, 'communication_request_chunk', { transport: 'websocket',
+        content_type: /^\s*[\[{]/.test(data) ? 'application/json' : '' });
     } else {
       await communicationLogRecord('communication_websocket_send_body_end', {
         binary_body_omitted: true,
@@ -10962,11 +11350,12 @@ globalThis.__dcCompressor = {
   async function communicationLogWebSocketMessage(url, data) {
     if (!(await communicationLogAwaitReadyOrDrop())) return;
     await communicationLogRecord('communication_websocket_message', {
-      url: stockNetworkSafeUrl(url),
+      url: await communicationMarkerV1SafeUrl(url),
       data_type: typeof data === 'string' ? 'text' : Object.prototype.toString.call(data)
     });
     if (typeof data === 'string') {
-      await communicationLogTextBody(data, 'communication_response_chunk', { transport: 'websocket' });
+      await communicationLogTextBody(data, 'communication_response_chunk', { transport: 'websocket',
+        content_type: /^\s*[\[{]/.test(data) ? 'application/json' : '' });
     } else {
       await communicationLogRecord('communication_websocket_message_body_end', {
         binary_body_omitted: true,
