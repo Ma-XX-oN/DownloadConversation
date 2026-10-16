@@ -173,10 +173,12 @@ Use a deterministic synthetic random stream keyed by the tuple's
 SHA-256 (with domain ASCII("DC-SECRET-SYNTH-V1") || 0x00), so independent decoders
 make the same replacement without `K`. This is deterministic
 pseudo-randomness, NOT secret cryptographic reconstruction. Two
-different IDs must not be forced equal, though format-shaped random
-outputs have a nonzero collision risk; generated synthetic values
-must be unique within a scope per type by deterministic collision
-resolution with tuple-keyed counters. Different scopes must not
+different IDs must not be forced equal. A synthetic collision within
+one scope/type is an error: reject the conflicting output instead of
+resolving it according to encounter order. An independently replayed
+record may discover this conflict later, so collision detection must
+invalidate the affected scope/type outputs, not retroactively assert
+equality. This preserves out-of-order decoder determinism. Different scopes must not
 share equality caches. Within one scope a repeated identical tuple
 must reconstruct to the same synthetic value and lengths.
 
