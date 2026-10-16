@@ -60,8 +60,12 @@
       try {
         const raw = atob(value.replace(/-/g, '+').replace(/_/g, '/') +
           '='.repeat((4 - value.length % 4) % 4));
-        const canonical = btoa(raw).replace(/=/g, '').replace(/\+/g, '-').replace(/\//g, '_');
-        if (canonical === value) matches.push({ type: 'B', params: String(value.length) });
+        const alphabet = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-_';
+        const last = alphabet.indexOf(value.at(-1));
+        const padBits = value.length % 4 === 2 ? 15 : value.length % 4 === 3 ? 3 : 0;
+        if (raw.length > 0 && (last & padBits) === 0) {
+          matches.push({ type: 'B', params: String(value.length) });
+        }
       } catch {}
     }
     const parts = value.split('.');
