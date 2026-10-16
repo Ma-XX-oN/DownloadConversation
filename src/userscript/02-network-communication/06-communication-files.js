@@ -311,7 +311,8 @@
   async function communicationLogStreamBody(body, recordType, context) {
     if (!body) return { byte_count: 0, chunk_count: 0 };
     const reader = body.getReader();
-    const decoder = new TextDecoder();
-    const redactionState = communicationLogCreateRedactionState();
+    const decoder = new TextDecoder('utf-8', { fatal: true });
+    const redactionState = communicationMarkerV1BodyState(context.content_type, context.transport);
     let safePending = '';
     let byteCount = 0;
+    let rawChunkCount = 0;
