@@ -156,95 +156,191 @@
   }
 
   /**
-   * Classify one complete JSON string without exposing unfinished secrets.
+   * Encode one complete JSON string token, preserving object-key identity.
    *
-   * @param {Object} state - Mutable JSON token parser state.
-   * @param {string} source - Original serialized JSON string token.
-   * @returns {Promise<string>} Safe serialized JSON token or checked marker.
+   * @param {Object} state - Current JSON lexical state.
+   * @param {string} token - Complete JSON string token.
+   * @param {string} role - Whether token is object key or value.
+   * @returns {Promise<string>} Safe JSON token.
    */
-  async function communicationMarkerV1JsonString(state, source) {
-    let decoded;
-    try { decoded = JSON.parse(source); } catch { throw new Error('redaction-invalid-json-string'); }
-    if (state.expectKey) {
-      state.key = decoded;
-      state.expectKey = false;
-      return source;
+  async function communicationMarkerV1JsonString(state, token, role) {
+    let value;
+    try { value = JSON.parse(token); }
+    catch { throw new Error('redaction-invalid-json-string'); }
+    if (role === 'key') return token;
+    const frame = state.stack.at(-1);
+    const key = frame?.kind === 'object' ? frame.key : null;
+    communicationMarkerV1RejectCollision(value);
+    const marker = await communicationMarkerV1Make(value, state.context);
+    if (marker !== null) return JSON.stringify(marker);
+    if (/(?:authorization|cookie|session|jwt|secret|token|api[_-]?key|password|credential)/i
+      .test(String(key ?? ''))) {
+      throw new Error('redaction-unsupported-sensitive-value');
     }
-    const sensitive = /(?:authorization|cookie|session|jwt|secret|token|api[_-]?key|password|credential)/i
-      .test(String(state.key ?? ''));
-    communicationMarkerV1RejectCollision(decoded);
-    const marker = await communicationMarkerV1Make(decoded, state.context, sensitive);
-    return marker === null ? source : JSON.stringify(marker);
+    return token;
   }
 
   /**
-   * Initialize state for one streamed logical JSON document.
+   * Create strict incremental JSON container state.
    *
-   * @param {string} context - Type registry context for string values.
-   * @returns {Object} Bounded lexical JSON parser state.
+   * @param {string} context - Registered transport context.
+   * @returns {Object} Mutable token and container state.
    */
   function communicationMarkerV1JsonState(context = 'json.string') {
     return {
-      context, quoted: false, escaped: false, token: '', stack: [],
-      key: null, expectKey: false
+      context, stack: [], root: 'value', quoted: false, escaped: false,
+      token: '', role: null, primitive: ''
     };
   }
 
   /**
-   * Encode a JSON text stream with secret values withheld across chunks.
+   * Identify where a JSON value is legal in the current container.
    *
-   * @param {Object} state - Mutable lexical state across source chunks.
-   * @param {string} input - Next decoded UTF-8 text fragment.
-   * @param {boolean} flush - Whether the logical stream has ended.
-   * @returns {Promise<string>} Safe emitted JSON prefix for persistence.
+   * @param {Object} state - Incremental JSON parser state.
+   * @returns {boolean} Whether a value can begin.
+   */
+  function communicationMarkerV1JsonExpectsValue(state) {
+    const frame = state.stack.at(-1);
+    return frame ? frame.phase === 'value' || frame.phase === 'valueOrEnd'
+      : state.root === 'value';
+  }
+
+  /**
+   * Complete a value within its immediate parent, never changing outer keys.
+   *
+   * @param {Object} state - Incremental JSON parser state.
+   * @returns {void} No return value.
+   */
+  function communicationMarkerV1JsonComplete(state) {
+    const frame = state.stack.at(-1);
+    if (!frame) {
+      if (state.root !== 'value') throw new Error('redaction-invalid-json');
+      state.root = 'done';
+    } else {
+      if (frame.phase !== 'value' && frame.phase !== 'valueOrEnd') {
+        throw new Error('redaction-invalid-json');
+      }
+      frame.phase = 'commaOrEnd';
+    }
+  }
+
+  /**
+   * Parse a complete primitive without accepting invalid literals or numbers.
+   *
+   * @param {Object} state - Mutable JSON parser state.
+   * @param {Array<string>} output - Safe emitted-token fragments.
+   * @returns {void} No return value.
+   */
+  function communicationMarkerV1JsonPrimitive(state, output) {
+    try {
+      const parsed = JSON.parse(state.primitive);
+      if (parsed !== null && typeof parsed !== 'boolean' &&
+          (typeof parsed !== 'number' || !Number.isFinite(parsed))) {
+        throw new Error('invalid');
+      }
+    } catch { throw new Error('redaction-invalid-json-primitive'); }
+    output.push(state.primitive);
+    state.primitive = '';
+    communicationMarkerV1JsonComplete(state);
+  }
+
+  /**
+   * Incrementally validate JSON and encode complete strings across splits.
+   *
+   * @param {Object} state - Mutable lexical state.
+   * @param {string} input - Next UTF-16 fragment from a decoder.
+   * @param {boolean} flush - True only at logical EOF.
+   * @returns {Promise<string>} Safe completed JSON prefix.
    */
   async function communicationMarkerV1JsonFeed(state, input, flush = false) {
-    const out = [];
-    let plain = '';
-    for (const char of String(input ?? '')) {
+    const output = [];
+    const source = String(input ?? '');
+    for (let index = 0; index < source.length; index += 1) {
+      const char = source[index];
       if (state.quoted) {
         state.token += char;
-        if (state.token.length > COMMUNICATION_MARKER_MAX_VALUE) {
+        if (communicationMarkerEncoder.encode(state.token).length >
+            COMMUNICATION_MARKER_MAX_VALUE) {
           throw new Error('redaction-candidate-too-long');
         }
         if (state.escaped) state.escaped = false;
         else if (char === '\\') state.escaped = true;
         else if (char === '"') {
-          out.push(plain);
-          plain = '';
-          out.push(await communicationMarkerV1JsonString(state, state.token));
-          state.token = '';
+          const parsed = JSON.parse(state.token);
+          if (state.role === 'key') {
+            state.stack.at(-1).key = parsed;
+            state.stack.at(-1).phase = 'colon';
+          }
+          output.push(await communicationMarkerV1JsonString(state, state.token, state.role));
+          if (state.role === 'value') communicationMarkerV1JsonComplete(state);
           state.quoted = false;
+          state.token = '';
+          state.role = null;
         }
         continue;
       }
+      if (state.primitive) {
+        if (!/[\s,\]\}]/.test(char)) {
+          state.primitive += char;
+          if (state.primitive.length > 128) throw new Error('redaction-invalid-json-primitive');
+          continue;
+        }
+        communicationMarkerV1JsonPrimitive(state, output);
+      }
+      if (/\s/.test(char)) { output.push(char); continue; }
+      const frame = state.stack.at(-1);
       if (char === '"') {
+        const key = frame?.kind === 'object' && frame.phase === 'keyOrEnd';
+        if (!key && !communicationMarkerV1JsonExpectsValue(state)) {
+          throw new Error('redaction-invalid-json');
+        }
         state.quoted = true;
+        state.role = key ? 'key' : 'value';
         state.token = '"';
-        continue;
+      } else if (char === '{' || char === '[') {
+        if (!communicationMarkerV1JsonExpectsValue(state)) {
+          throw new Error('redaction-invalid-json');
+        }
+        state.stack.push(char === '{'
+          ? { kind: 'object', phase: 'keyOrEnd', key: null }
+          : { kind: 'array', phase: 'valueOrEnd' });
+        output.push(char);
+      } else if (char === '}' || char === ']') {
+        const kind = char === '}' ? 'object' : 'array';
+        if (!frame || frame.kind !== kind ||
+            !['keyOrEnd', 'valueOrEnd', 'commaOrEnd'].includes(frame.phase)) {
+          throw new Error('redaction-invalid-json');
+        }
+        state.stack.pop();
+        communicationMarkerV1JsonComplete(state);
+        output.push(char);
+      } else if (char === ':') {
+        if (!frame || frame.kind !== 'object' || frame.phase !== 'colon') {
+          throw new Error('redaction-invalid-json');
+        }
+        frame.phase = 'value';
+        output.push(char);
+      } else if (char === ',') {
+        if (!frame || frame.phase !== 'commaOrEnd') {
+          throw new Error('redaction-invalid-json');
+        }
+        frame.phase = frame.kind === 'object' ? 'keyOrEnd' : 'valueOrEnd';
+        frame.key = null;
+        output.push(char);
+      } else if (/[-0-9tfn]/.test(char) &&
+                 communicationMarkerV1JsonExpectsValue(state)) {
+        state.primitive = char;
+      } else {
+        throw new Error('redaction-invalid-json');
       }
-      plain += char;
-      if (char === '{') state.stack.push({ kind: 'object', key: null });
-      else if (char === '[') state.stack.push({ kind: 'array' });
-      else if (char === '}' || char === ']') state.stack.pop();
-      else if (char === ',' && state.stack.at(-1)?.kind === 'object') {
-        state.stack.at(-1).key = null;
-      }
-      state.expectKey = state.stack.at(-1)?.kind === 'object' &&
-        state.stack.at(-1).key === null &&
-        !/:\s*$/.test(plain);
-      if (char === ':' && state.stack.at(-1)?.kind === 'object') {
-        state.stack.at(-1).key = state.key;
-        state.expectKey = false;
-      }
-      if (state.stack.at(-1)?.kind === 'object' &&
-          state.stack.at(-1).key !== null) state.key = state.stack.at(-1).key;
     }
-    out.push(plain);
-    if (flush && (state.quoted || state.stack.length > 0)) {
-      throw new Error('redaction-incomplete-json');
+    if (flush) {
+      if (state.primitive) communicationMarkerV1JsonPrimitive(state, output);
+      if (state.quoted || state.stack.length || state.root !== 'done') {
+        throw new Error('redaction-incomplete-json');
+      }
     }
-    return out.join('');
+    return output.join('');
   }
 
   /**
