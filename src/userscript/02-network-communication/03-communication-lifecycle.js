@@ -86,6 +86,8 @@
       page_url: stockNetworkSafeUrl(location.href),
       navigation_type: navigation?.type ?? null,
       time_origin: performance.timeOrigin,
+      redaction_format: COMMUNICATION_MARKER_FORMAT,
+      redaction_scope: communicationMarkerV1Scope,
       dropped_before_ready: communicationLogDroppedBeforeReady
     });
     communicationLogDroppedBeforeReady = 0;
@@ -268,14 +270,21 @@
    * @param {Object} headers - Headers-like or plain header collection.
    * @returns {Object} Header map safe to persist to the communication log.
    */
-  function communicationLogSafeHeaders(headers) {
+  async function communicationLogSafeHeaders(headers) {
     const raw = rawHeadersToObject(headers);
     const safe = {};
     for (const [name, value] of Object.entries(raw).slice(0, 200)) {
-      if (/(?:^|[-_])(?:authorization|cookie|set-cookie|proxy-authorization|access-token|refresh-token|api-key|csrf|xsrf|session|jwt|secret)(?:$|[-_])/i.test(name)) {
-        safe[name] = '[redacted]';
-      } else {
-        safe[name] = boundedDiagnosticText(communicationLogRedactText(value), 4000);
+      const classified = /(?:authorization|cookie|session|jwt|secret|token|api[_-]?key|password|credential)/i
+        .test(name);
+      try {
+        communicationMarkerV1RejectCollision(String(value));
+        const marker = await communicationMarkerV1Make(
+          String(value), 'http.header.value', classified
+        );
+        safe[name] = marker === null
+          ? boundedDiagnosticText(String(value), 4000) : marker;
+      } catch {
+        safe[name] = null;
       }
     }
     return safe;
