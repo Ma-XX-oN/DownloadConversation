@@ -9,6 +9,8 @@ const fixture = JSON.parse(readFileSync(
 ));
 const source = readFileSync(new URL(
   '../src/userscript/02-network-communication/04a-marker-encoder.js', import.meta.url
+), 'utf8') + '\n' + readFileSync(new URL(
+  '../src/userscript/02-network-communication/04b-marker-encoder-stream.js', import.meta.url
 ), 'utf8');
 
 function harness() {
