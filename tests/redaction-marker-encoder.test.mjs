@@ -13,13 +13,13 @@ const source = readFileSync(new URL(
   '../src/userscript/02-network-communication/04b-marker-encoder-stream.js', import.meta.url
 ), 'utf8');
 
-function harness() {
+function harness(testKey = fixture.test_hmac_key_hex, testScope = fixture.test_scope) {
   let calls = 0;
   const crypto = {
     subtle: webcrypto.subtle,
     getRandomValues(bytes) {
       const fixtureHex = calls++ === 0
-        ? fixture.test_scope : fixture.test_hmac_key_hex;
+        ? testScope : testKey;
       bytes.set(Buffer.from(fixtureHex, 'hex'));
       return bytes;
     }
@@ -27,6 +27,7 @@ function harness() {
   return vm.runInNewContext(
     '(function () {' + source + '\nreturn {' +
     'scope: communicationMarkerV1Scope,' +
+    'registry: communicationMarkerV1Registry,' +
     'make: communicationMarkerV1Make,' +
     'create: communicationMarkerV1JsonState,' +
     'feed: communicationMarkerV1JsonFeed,' +
@@ -214,4 +215,27 @@ test('JSON token scanning holds secrets across every two-chunk split', async () 
     assert.equal(output.nested.credential, fixture.vectors[0].marker, String(split));
     assert.equal((first + second).includes(fixture.vectors[0].original), false);
   }
+});
+
+test('registry exposes sparse applicable contexts and no universal text detector', () => {
+  const api = harness();
+  for (const type of ['U', 'H', 'B', 'P', 'J', 'O']) {
+    assert.equal(api.registry[type].contexts['json.string'], true);
+    assert.equal(api.registry[type].contexts['text.plain'], undefined);
+    assert.equal(api.registry[type].contexts['ws.text.plain'], undefined);
+  }
+  assert.equal(api.registry.U.identify(fixture.vectors[0].original, 'json.string').type, 'U');
+  assert.equal(api.registry.U.identify(fixture.vectors[0].original, 'text.plain'), null);
+});
+
+test('simulated reload rotates scope and HMAC identity with no equality inference', async () => {
+  const first = harness();
+  const second = harness('a4'.repeat(32), 'ffeeddccbbaa99887766554433221100');
+  const value = fixture.vectors[0].original;
+  const left = await first.make(value, 'json.string');
+  const right = await second.make(value, 'json.string');
+  assert.notEqual(first.scope, second.scope);
+  assert.notEqual(left, right);
+  assert.equal(await first.make(value, 'json.string'), left);
+  assert.equal(await second.make(value, 'json.string'), right);
 });
