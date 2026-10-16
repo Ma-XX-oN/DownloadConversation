@@ -38,7 +38,7 @@ test('golden checked markers use contract-identical crypto and scope', async () 
   assert.equal(api.scope, fixture.test_scope);
   for (const row of fixture.vectors) {
     const classified = row.type === 'O';
-    assert.equal(await api.make(row.original, 'json.string', classified),
+    assert.equal(await api.make(row.original, 'json.string', classified, [row.type]),
       row.marker, row.name);
   }
 });
