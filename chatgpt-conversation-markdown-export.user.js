@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         ChatGPT Conversation Markdown Recorder
 // @namespace    https://chatgpt.com/
-// @version      1.11.7-issue.301.10
+// @version      1.11.7-issue.301.12
 // @description  Exports the current ChatGPT conversation directly from the Conversation API as Markdown or JSONL.
 // @match        https://chatgpt.com/*
 // @match        https://chat.openai.com/*
@@ -9860,7 +9860,9 @@ globalThis.__dcCompressor = {
       type, Object.freeze({
         contexts: communicationMarkerV1Contexts,
         identify(text, context) {
-          return communicationMarkerV1Candidates(text, context)
+          const contextId = typeof context === 'string' ? context : context?.id;
+          const explicitlySecret = typeof context === 'object' && context?.secret_span === true;
+          return communicationMarkerV1Candidates(text, contextId, explicitlySecret)
             .find(item => item.type === type) ?? null;
         },
         reconstruct() {
@@ -9918,8 +9920,13 @@ globalThis.__dcCompressor = {
       } catch {}
     }
     const parts = value.split('.');
-    if (parts.length === 3 && parts.every(part =>
-      /^[A-Za-z0-9_-]{4,512}$/.test(part) && part.length % 4 !== 1)) {
+    const jwtAlphabet = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-_';
+    if (parts.length === 3 && parts.every(part => {
+      const mod = part.length % 4;
+      const padMask = mod === 2 ? 15 : mod === 3 ? 3 : 0;
+      return /^[A-Za-z0-9_-]{4,512}$/.test(part) && mod !== 1 &&
+        (jwtAlphabet.indexOf(part.at(-1)) & padMask) === 0;
+    })) {
       try {
         const decoded = parts.slice(0, 2).map(part =>
           JSON.parse(new TextDecoder('utf-8', { fatal: true }).decode(
