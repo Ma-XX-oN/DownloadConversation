@@ -83,7 +83,7 @@
       conversation_name: conversationName,
       project_name: conversationProjectName(),
       file_name: communicationLogFileName,
-      page_url: stockNetworkSafeUrl(location.href),
+      page_url: await communicationMarkerV1SafeUrl(location.href),
       navigation_type: navigation?.type ?? null,
       time_origin: performance.timeOrigin,
       redaction_format: COMMUNICATION_MARKER_FORMAT,
@@ -279,8 +279,9 @@
       try {
         communicationMarkerV1RejectCollision(String(value));
         const marker = await communicationMarkerV1Make(
-          String(value), 'http.header.value', classified
+          String(value), 'http.header.value'
         );
+        if (classified && marker === null) throw new Error('redaction-unsupported-header');
         safe[name] = marker === null
           ? boundedDiagnosticText(String(value), 4000) : marker;
       } catch {
