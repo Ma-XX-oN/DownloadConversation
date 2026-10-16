@@ -284,6 +284,7 @@
       }
       parsed.username = '';
       parsed.password = '';
+      parsed.hash = '';
       return parsed.href;
     } catch {
       return '[redaction-failed-url]';
