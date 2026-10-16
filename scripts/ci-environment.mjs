@@ -77,6 +77,7 @@ const ordinaryStages = [
   ['Stream tail recovery regression', nodeCommand, ['--test', 'tests/stream-tail-recovery.test.mjs', 'tests/generation-response-clone-timing.test.mjs']],
   ['Stock network diagnostics regression', nodeCommand, ['--test', 'tests/stock-network-diagnostics.test.mjs']],
   ['Conversation API rate-limit regression', nodeCommand, ['--test', 'tests/conversation-api-rate-limit.test.mjs']],
+  ['Independent redaction codec convergence', nodeCommand, ['--test', 'tests/redaction-codec-convergence.test.mjs']],
   ['Disk communication recorder regression', nodeCommand, ['--test', 'tests/disk-communication-recorder.test.mjs']],
   ['Directory picker gesture regression', nodeCommand, ['--test', 'tests/directory-picker-gesture.test.mjs']],
   ['Console lifecycle and provenance controls', nodeCommand, ['--test', 'tests/console-diagnostics.test.mjs']],
