@@ -302,48 +302,34 @@ function issue132Body(steps) {
   };
 }
 
-test('aborted cloned response stream persists sub-chunk partial body and reports the abort', async () => {
+test('aborted cloned response stream drops staged data rather than leaking incomplete body', async () => {
   const api = issue132StreamBodyHarness();
-  const text = 'event: delta\ndata: {"v":"partial streamed text"}\n\n';
+  const text = 'event: delta\ndata: {"token":"partial-secret"}\n\n';
   const bytes = new TextEncoder().encode(text);
   const summary = await api.communicationLogStreamBody(
-    issue132Body([
-      { value: bytes },
-      { error: 'BodyStreamBuffer was aborted' }
-    ]),
-    'communication_response_chunk',
-    { transport: 'fetch', network_sequence: 17 }
+    issue132Body([{ value: bytes }, { error: 'BodyStreamBuffer was aborted' }]),
+    'communication_response_chunk', { transport: 'fetch', network_sequence: 17 }
   );
-
   assert.equal(summary.body_incomplete, true);
   assert.equal(summary.error_message, 'body-stream-read-failed');
+  assert.equal(summary.redaction_failed, true);
   assert.equal(summary.byte_count, bytes.byteLength);
-  assert.equal(summary.chunk_count, 1);
-  assert.equal(api.records.length, 1);
-  assert.equal(api.records[0].type, 'communication_response_chunk');
-  assert.equal(api.records[0].data.chunk_ordinal, 1);
-  assert.equal(api.records[0].data.data, text);
+  assert.equal(summary.raw_chunk_count, 1);
+  assert.equal(summary.chunk_count, 0);
+  assert.equal(api.records.length, 0);
 });
 
-test('aborted cloned response stream flushes final remainder after full persisted chunks', async () => {
+test('aborted cloned response over the output threshold never commits staged fragments', async () => {
   const api = issue132StreamBodyHarness();
-  const text = 'x'.repeat((256 * 1024) + 4096);
-  const bytes = new TextEncoder().encode(text);
+  const bytes = new TextEncoder().encode('x'.repeat((256 * 1024) + 4096));
   const summary = await api.communicationLogStreamBody(
-    issue132Body([
-      { value: bytes },
-      { error: 'BodyStreamBuffer was aborted' }
-    ]),
-    'communication_response_chunk',
-    { transport: 'fetch', network_sequence: 18 }
+    issue132Body([{ value: bytes }, { error: 'BodyStreamBuffer was aborted' }]),
+    'communication_response_chunk', { transport: 'fetch', network_sequence: 18 }
   );
-
   assert.equal(summary.body_incomplete, true);
-  assert.equal(summary.error_message, 'body-stream-read-failed');
   assert.equal(summary.byte_count, bytes.byteLength);
-  assert.equal(summary.chunk_count, 2);
-  assert.deepEqual(Array.from(api.records, record => record.data.chunk_ordinal), [1, 2]);
-  assert.equal(Array.from(api.records, record => record.data.data).join(''), text);
+  assert.equal(summary.chunk_count, 0);
+  assert.equal(api.records.length, 0);
 });
 
 test('aborted cloned response stream before any bytes reports zero counts without fabricating a chunk', async () => {
