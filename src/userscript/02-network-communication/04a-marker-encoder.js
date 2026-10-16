@@ -6,8 +6,10 @@
   const communicationMarkerV1Key = crypto.subtle.importKey(
     'raw', communicationMarkerV1Secret, { name: 'HMAC', hash: 'SHA-256' },
     false, ['sign']
-  );
-  communicationMarkerV1Secret.fill(0);
+  ).then(key => {
+    communicationMarkerV1Secret.fill(0);
+    return key;
+  });
   const COMMUNICATION_MARKER_FORMAT = 'dc-secret-marker/1';
   const COMMUNICATION_MARKER_MAX_VALUE = 1024 * 1024;
   const communicationMarkerEncoder = new TextEncoder();
@@ -33,7 +35,8 @@
     if (/^[0-9a-f]{2,256}$/.test(value) && value.length % 2 === 0) {
       matches.push({ type: 'H', params: String(value.length) });
     }
-    if (/^[A-Za-z0-9_-]{4,256}$/.test(value) && value.length % 4 !== 1) {
+    if (!matches.some(item => item.type === 'U' || item.type === 'P') &&
+        /^[A-Za-z0-9_-]{4,256}$/.test(value) && value.length % 4 !== 1) {
       try {
         const raw = atob(value.replace(/-/g, '+').replace(/_/g, '/') +
           '='.repeat((4 - value.length % 4) % 4));
@@ -72,12 +75,13 @@
   }
 
   /** Produce one contract-exact checked marker, never returning the secret itself. */
-  async function communicationMarkerV1Make(value, context, classified = false) {
+  async function communicationMarkerV1Make(value, context, classified = false, enabledTypes = null) {
     if (typeof value !== 'string' || /[\ud800-\udfff]/u.test(
       value.replace(/[\ud800-\udbff][\udc00-\udfff]/gu, ''))) {
       throw new Error('redaction-invalid-unicode');
     }
-    const choices = communicationMarkerV1Candidates(value, context, classified);
+    const choices = communicationMarkerV1Candidates(value, context, classified)
+      .filter(item => enabledTypes === null || enabledTypes.includes(item.type));
     if (choices.length > 1) throw new Error('redaction-ambiguous-type');
     if (choices.length === 0) {
       if (classified) throw new Error('redaction-unsupported-sensitive-value');
