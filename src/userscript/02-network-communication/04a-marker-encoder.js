@@ -1,8 +1,12 @@
   /** V1 per-page secret-redaction identity. Neither key nor CryptoKey is serialized. */
+  /** Public random scope label bytes; never derive these from the secret key. */
   const communicationMarkerV1ScopeBytes = crypto.getRandomValues(new Uint8Array(16));
+  /** Ephemeral 256-bit HMAC key material; cleared after import. */
   const communicationMarkerV1Secret = crypto.getRandomValues(new Uint8Array(32));
+  /** Lowercase public recorder-instance identity label. */
   const communicationMarkerV1Scope = Array.from(communicationMarkerV1ScopeBytes,
     byte => byte.toString(16).padStart(2, '0')).join('');
+  /** Nonextractable in-memory HMAC signing key promise. */
   const communicationMarkerV1Key = crypto.subtle.importKey(
     'raw', communicationMarkerV1Secret, { name: 'HMAC', hash: 'SHA-256' },
     false, ['sign']
@@ -10,17 +14,33 @@
     communicationMarkerV1Secret.fill(0);
     return key;
   });
+  /** Explicit marker format negotiated by each recording segment. */
   const COMMUNICATION_MARKER_FORMAT = 'dc-secret-marker/1';
+  /** Upper bound on one withheld logical candidate in UTF-8 bytes. */
   const COMMUNICATION_MARKER_MAX_VALUE = 1024 * 1024;
+  /** Reusable strict UTF-8 encoder for canonical marker inputs. */
   const communicationMarkerEncoder = new TextEncoder();
 
-  /** Convert digest bytes to lowercase hexadecimal. */
+  /**
+   * Convert a digest prefix into canonical lowercase hexadecimal.
+   *
+   * @param {ArrayBuffer|Uint8Array} bytes - Hash or HMAC result bytes.
+   * @param {number} count - Number of digest bytes to retain.
+   * @returns {string} Lowercase hexadecimal digest prefix.
+   */
   function communicationMarkerV1Hex(bytes, count) {
     return Array.from(new Uint8Array(bytes).slice(0, count),
       byte => byte.toString(16).padStart(2, '0')).join('');
   }
 
-  /** Restrict recognition to canonical complete logical values. */
+  /**
+   * Identify complete values only in explicitly supported contexts.
+   *
+   * @param {string} value - Complete unescaped logical value.
+   * @param {string} context - Registered transport-specific value context.
+   * @param {boolean} classified - Whether an explicit sensitive span allows opaque values.
+   * @returns {Array<Object>} All matching canonical type descriptors.
+   */
   function communicationMarkerV1Candidates(value, context, classified = false) {
     const allowed = ['http.header.value', 'http.query.value', 'json.string',
       'sse.data.json.string', 'ws.text.json.string'];
@@ -74,7 +94,15 @@
     return matches;
   }
 
-  /** Produce one contract-exact checked marker, never returning the secret itself. */
+  /**
+   * Derive a checked synthetic marker without returning the source value.
+   *
+   * @param {string} value - Complete unescaped logical value.
+   * @param {string} context - Registered inspection context.
+   * @param {boolean} classified - Whether this value has explicit secret-span metadata.
+   * @param {Array<string>|null} enabledTypes - Optional strict type selection for a registered context.
+   * @returns {Promise<string|null>} Checked marker or null for an ordinary unclassified value.
+   */
   async function communicationMarkerV1Make(value, context, classified = false, enabledTypes = null) {
     if (typeof value !== 'string' || /[\ud800-\udfff]/u.test(
       value.replace(/[\ud800-\udbff][\udc00-\udfff]/gu, ''))) {
@@ -108,14 +136,25 @@
     return '[' + check + '/' + body + ']';
   }
 
-  /** Explicitly reject already checked markers as ambiguous literal user data. */
+  /**
+   * Reject literal checked-marker syntax before recording source text.
+   *
+   * @param {string} value - Original logical text to validate.
+   * @returns {void} Throws on a reserved marker collision.
+   */
   function communicationMarkerV1RejectCollision(value) {
     if (/\[[0-9a-f]{32}\/[UHBPJO]\/[0-9a-f]{48}(?:\/[a-z0-9,]{1,256})?\]/.test(value)) {
       throw new Error('redaction-literal-marker-collision');
     }
   }
 
-  /** Read exactly one JSON string token without exposing an unfinished value. */
+  /**
+   * Classify one complete JSON string without exposing unfinished secrets.
+   *
+   * @param {Object} state - Mutable JSON token parser state.
+   * @param {string} source - Original serialized JSON string token.
+   * @returns {Promise<string>} Safe serialized JSON token or checked marker.
+   */
   async function communicationMarkerV1JsonString(state, source) {
     let decoded;
     try { decoded = JSON.parse(source); } catch { throw new Error('redaction-invalid-json-string'); }
@@ -131,7 +170,12 @@
     return marker === null ? source : JSON.stringify(marker);
   }
 
-  /** Create a bounded streaming JSON-token encoder; no persisted secret buffers. */
+  /**
+   * Initialize state for one streamed logical JSON document.
+   *
+   * @param {string} context - Type registry context for string values.
+   * @returns {Object} Bounded lexical JSON parser state.
+   */
   function communicationMarkerV1JsonState(context = 'json.string') {
     return {
       context, quoted: false, escaped: false, token: '', stack: [],
@@ -139,7 +183,14 @@
     };
   }
 
-  /** Encode original JSON in one left-to-right pass over arbitrary chunks. */
+  /**
+   * Encode a JSON text stream with secret values withheld across chunks.
+   *
+   * @param {Object} state - Mutable lexical state across source chunks.
+   * @param {string} input - Next decoded UTF-8 text fragment.
+   * @param {boolean} flush - Whether the logical stream has ended.
+   * @returns {Promise<string>} Safe emitted JSON prefix for persistence.
+   */
   async function communicationMarkerV1JsonFeed(state, input, flush = false) {
     const out = [];
     let plain = '';
@@ -189,7 +240,13 @@
     return out.join('');
   }
 
-  /** Keep incomplete protocol framing private until one complete SSE event. */
+  /**
+   * Select the protocol parser from the actual transport and media type.
+   *
+   * @param {string} contentType - Declared HTTP media type.
+   * @param {string} transport - Source network transport.
+   * @returns {Object} Scoped bounded streaming-body encoder state.
+   */
   function communicationMarkerV1BodyState(contentType, transport) {
     const media = String(contentType ?? '').split(';', 1)[0].trim().toLowerCase();
     const kind = media === 'text/event-stream' ? 'sse' :
@@ -206,7 +263,14 @@
     };
   }
 
-  /** Perform a single forward scan without returning unsupported body bytes. */
+  /**
+   * Process JSON or complete SSE events, rejecting unsupported bodies.
+   *
+   * @param {Object} state - Mutable transport-aware encoding state.
+   * @param {string} input - Next source body text fragment.
+   * @param {boolean} flush - Whether the source body reached terminal EOF.
+   * @returns {Promise<string>} Safely checked marker-bearing text for disk storage.
+   */
   async function communicationMarkerV1BodyFeed(state, input, flush = false) {
     if (state.kind === 'json') return communicationMarkerV1JsonFeed(state.json, input, flush);
     if (state.kind !== 'sse') throw new Error('redaction-unsupported-content-type');
@@ -242,7 +306,12 @@
     return output;
   }
 
-  /** Encode URL query values by context, never storing a failed sensitive URL. */
+  /**
+   * Replace supported URL query values with checked synthetic markers.
+   *
+   * @param {string} url - Untrusted original request or response URL.
+   * @returns {Promise<string>} Sanitized URL or a constant fail-closed placeholder.
+   */
   async function communicationMarkerV1SafeUrl(url) {
     try {
       const parsed = new URL(String(url ?? ''), location.href);
