@@ -279,13 +279,15 @@
     if (state.kind === 'json') return communicationMarkerV1JsonFeed(state.json, input, flush);
     if (state.kind !== 'sse') throw new Error('redaction-unsupported-content-type');
     state.pendingEvent += String(input ?? '');
-    if (state.pendingEvent.length > COMMUNICATION_MARKER_MAX_VALUE) {
-      throw new Error('redaction-event-too-long');
-    }
     let output = '';
     for (;;) {
       const boundary = /\r?\n\r?\n/.exec(state.pendingEvent);
-      if (!boundary) break;
+      if (!boundary) {
+        if (state.pendingEvent.length > COMMUNICATION_MARKER_MAX_VALUE) {
+          throw new Error('redaction-event-too-long');
+        }
+        break;
+      }
       const event = state.pendingEvent.slice(0, boundary.index);
       state.pendingEvent = state.pendingEvent.slice(boundary.index + boundary[0].length);
       const lines = event.split(/\r?\n/);
