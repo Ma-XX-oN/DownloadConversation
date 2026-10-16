@@ -149,14 +149,16 @@
       origin: trace?.origin ?? 'stock-chatgpt',
       network_sequence: trace?.sequence ?? null,
       method: String(request?.method ?? trace?.method ?? 'GET').toUpperCase(),
-      url: stockNetworkSafeUrl(request?.url ?? trace?.url ?? ''),
+      url: await communicationMarkerV1SafeUrl(request?.url ?? trace?.url ?? ''),
       cache_mode: request?.cache ?? null,
       request_mode: request?.mode ?? null,
       credentials_mode: request?.credentials ?? null,
       destination: request?.destination ?? null,
       redirect_mode: request?.redirect ?? null,
       content_type: contentType,
-      headers: communicationLogSafeHeaders(request?.headers)
+      redaction_format: COMMUNICATION_MARKER_FORMAT,
+      redaction_scope: communicationMarkerV1Scope,
+      headers: await communicationLogSafeHeaders(request?.headers)
     });
     if (cloned?.body && communicationLogShouldCaptureBody(request?.url ?? trace?.url ?? '', contentType)) {
       const summary = await communicationLogStreamBody(cloned.body, 'communication_request_chunk', {
@@ -194,15 +196,17 @@
       origin: trace?.origin ?? 'stock-chatgpt',
       network_sequence: trace?.sequence ?? null,
       method: trace?.method ?? null,
-      request_url: trace?.url ?? null,
-      response_url: stockNetworkSafeUrl(responseUrl),
+      request_url: trace?.url ? await communicationMarkerV1SafeUrl(trace.url) : null,
+      response_url: await communicationMarkerV1SafeUrl(responseUrl),
       status: response?.status ?? null,
       ok: response?.ok === true,
       redirected: response?.redirected === true,
       response_type: response?.type ?? null,
       duration_ms: trace?.started_at == null ? null : Math.round(performance.now() - trace.started_at),
       content_type: contentType,
-      headers: communicationLogSafeHeaders(response?.headers)
+      redaction_format: COMMUNICATION_MARKER_FORMAT,
+      redaction_scope: communicationMarkerV1Scope,
+      headers: await communicationLogSafeHeaders(response?.headers)
     });
     if (cloned?.body && communicationLogShouldCaptureBody(responseUrl, contentType)) {
       const summary = await communicationLogStreamBody(cloned.body, 'communication_response_chunk', {
@@ -217,7 +221,7 @@
       if (summary.body_incomplete) {
         logDiagnostic('warnings', 'communication-log-response-body-incomplete', {
           network_sequence: trace?.sequence ?? null,
-          response_url: stockNetworkSafeUrl(responseUrl),
+          response_url: await communicationMarkerV1SafeUrl(responseUrl),
           byte_count: summary.byte_count,
           chunk_count: summary.chunk_count,
           message: summary.error_message
@@ -247,9 +251,11 @@
     await communicationLogRecord('communication_xhr_request', {
       network_sequence: trace?.sequence ?? null,
       method: String(info?.method ?? 'GET').toUpperCase(),
-      url: stockNetworkSafeUrl(info?.url ?? ''),
+      url: await communicationMarkerV1SafeUrl(info?.url ?? ''),
       content_type: contentType,
-      headers: communicationLogSafeHeaders(info?.headers)
+      redaction_format: COMMUNICATION_MARKER_FORMAT,
+      redaction_scope: communicationMarkerV1Scope,
+      headers: await communicationLogSafeHeaders(info?.headers)
     });
     if (typeof body === 'string' || body instanceof URLSearchParams) {
       await communicationLogTextBody(String(body), 'communication_request_chunk', {
