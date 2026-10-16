@@ -467,3 +467,20 @@ test('sensitive headers with unsupported values are omitted without source leaka
   assert.match(safe['x-request-id'], /^\[[0-9a-f]{32}\/U\/[0-9a-f]{48}\]$/);
   assert.equal(JSON.stringify(safe).includes('unrecognized SECRET header'), false);
 });
+
+test('actual producer processes >1MiB SSE input preserving original stream byte count', async () => {
+  const api = issue301ProductionEncoderHarness();
+  const text = 'data: {"ordinary":"hello world"}\n\n'.repeat(32000);
+  const bytes = new TextEncoder().encode(text);
+  assert.ok(bytes.length > 1024 * 1024);
+  const summary = await api.stream(issue132Body([
+    { value: bytes }, { done: true }
+  ]), 'communication_response_chunk', {
+    content_type: 'text/event-stream', transport: 'fetch', network_sequence: 304
+  });
+  assert.equal(summary.redaction_failed, undefined);
+  assert.equal(summary.byte_count, bytes.length);
+  assert.equal(summary.raw_chunk_count, 1);
+  assert.ok(summary.chunk_count > 1);
+  assert.equal(api.records.map(row => row.data.data).join(''), text);
+});
