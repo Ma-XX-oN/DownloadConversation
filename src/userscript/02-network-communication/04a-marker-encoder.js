@@ -183,7 +183,9 @@
           state.stack.at(-1).key !== null) state.key = state.stack.at(-1).key;
     }
     out.push(plain);
-    if (flush && state.quoted) throw new Error('redaction-incomplete-json-string');
+    if (flush && (state.quoted || state.stack.length > 0)) {
+      throw new Error('redaction-incomplete-json');
+    }
     return out.join('');
   }
 
@@ -238,4 +240,25 @@
     }
     if (flush && state.pendingEvent) throw new Error('redaction-incomplete-sse-event');
     return output;
+  }
+
+  /** Encode URL query values by context, never storing a failed sensitive URL. */
+  async function communicationMarkerV1SafeUrl(url) {
+    try {
+      const parsed = new URL(String(url ?? ''), location.href);
+      for (const [name, original] of parsed.searchParams) {
+        const classified = /(?:token|secret|auth|key|jwt|signature|session|cookie|password)/i
+          .test(name);
+        communicationMarkerV1RejectCollision(original);
+        const marker = await communicationMarkerV1Make(
+          original, 'http.query.value', classified
+        );
+        if (marker !== null) parsed.searchParams.set(name, marker);
+      }
+      parsed.username = '';
+      parsed.password = '';
+      return parsed.href;
+    } catch {
+      return '[redaction-failed-url]';
+    }
   }
