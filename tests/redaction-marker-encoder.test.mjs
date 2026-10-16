@@ -109,7 +109,7 @@ test('SSE data JSON is valid and preserves event framing across all splits', asy
 test('one large network chunk can contain many bounded safe SSE events', async () => {
   const api = harness();
   const state = api.bodyState('text/event-stream', 'fetch');
-  const event = 'data: {"ordinary":"text"}\n\n';
+  const event = 'data: {"ordinary":"hello world"}\n\n';
   const original = event.repeat(50000);
   assert.ok(Buffer.byteLength(original) > 1024 * 1024);
   const output = await api.bodyFeed(state, original, true);
