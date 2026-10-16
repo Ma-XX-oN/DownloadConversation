@@ -186,3 +186,56 @@
     if (flush && state.quoted) throw new Error('redaction-incomplete-json-string');
     return out.join('');
   }
+
+  /** Keep incomplete protocol framing private until one complete SSE event. */
+  function communicationMarkerV1BodyState(contentType, transport) {
+    const media = String(contentType ?? '').split(';', 1)[0].trim().toLowerCase();
+    const kind = media === 'text/event-stream' ? 'sse' :
+      /(?:^application\/(?:json|[^/]+\+json|x-component)$)/.test(media) ||
+      (transport === 'websocket' && media === 'application/json') ? 'json' : null;
+    return {
+      kind,
+      context: kind === 'sse' ? 'sse.data.json.string' :
+        transport === 'websocket' ? 'ws.text.json.string' : 'json.string',
+      json: kind === 'json'
+        ? communicationMarkerV1JsonState(transport === 'websocket'
+          ? 'ws.text.json.string' : 'json.string') : null,
+      pendingEvent: ''
+    };
+  }
+
+  /** Perform a single forward scan without returning unsupported body bytes. */
+  async function communicationMarkerV1BodyFeed(state, input, flush = false) {
+    if (state.kind === 'json') return communicationMarkerV1JsonFeed(state.json, input, flush);
+    if (state.kind !== 'sse') throw new Error('redaction-unsupported-content-type');
+    state.pendingEvent += String(input ?? '');
+    if (state.pendingEvent.length > COMMUNICATION_MARKER_MAX_VALUE) {
+      throw new Error('redaction-event-too-long');
+    }
+    let output = '';
+    for (;;) {
+      const boundary = /\r?\n\r?\n/.exec(state.pendingEvent);
+      if (!boundary) break;
+      const event = state.pendingEvent.slice(0, boundary.index);
+      state.pendingEvent = state.pendingEvent.slice(boundary.index + boundary[0].length);
+      const lines = event.split(/\r?\n/);
+      const dataIndices = lines.map((line, index) =>
+        /^data:/.test(line) ? index : -1).filter(index => index >= 0);
+      if (dataIndices.length === 1) {
+        const index = dataIndices[0];
+        const line = lines[index];
+        const prefix = /^data: ?/.exec(line)[0];
+        const body = line.slice(prefix.length);
+        if (!body.trimStart().startsWith('{') && !body.trimStart().startsWith('[')) {
+          throw new Error('redaction-unsupported-sse-data');
+        }
+        const encoder = communicationMarkerV1JsonState('sse.data.json.string');
+        lines[index] = prefix + await communicationMarkerV1JsonFeed(encoder, body, true);
+      } else if (dataIndices.length > 1) {
+        throw new Error('redaction-unsupported-multiline-sse');
+      }
+      output += lines.join(event.includes('\r\n') ? '\r\n' : '\n') + boundary[0];
+    }
+    if (flush && state.pendingEvent) throw new Error('redaction-incomplete-sse-event');
+    return output;
+  }
