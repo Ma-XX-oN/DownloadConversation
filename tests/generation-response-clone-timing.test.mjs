@@ -66,6 +66,8 @@ function baseContext(pageWindow, originalResponse) {
     agentStopwatchObserveSteerTurn() {},
     agentStopwatchObserveConversationResponse: async () => {},
     stockNetworkTraceFetchResponse() {},
+    agentPluginObserveNetworkRequest: () => null,
+    agentPluginObserveFetchResponse: async () => {},
     communicationLogFetchResponse: async () => {},
     cloneSafely(value) {
       try { return value.clone(); } catch { return null; }
