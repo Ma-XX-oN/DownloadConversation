@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         ChatGPT Conversation Markdown Recorder
 // @namespace    https://chatgpt.com/
-// @version      1.11.7-issue.127.20
+// @version      1.11.7-issue.127.21
 // @description  Exports the current ChatGPT conversation directly from the Conversation API as Markdown or JSONL.
 // @match        https://chatgpt.com/*
 // @match        https://chat.openai.com/*
@@ -6669,7 +6669,10 @@ async function loadAgent(id, { loadModule, context = {} } = {}) {
             // the destination identity, avoiding an A/B epoch mismatch.
             if (typeof aicc127Runtime !== 'undefined' && aicc127Runtime)
               aicc127NavigationChanged();
-            host.navigation(event);
+            const accepted = host.navigation(event);
+            // Diagnostic-only: report route acceptance and safe status fields.
+            if (typeof aicc127NavigationTransportObserved === 'function')
+              aicc127NavigationTransportObserved(accepted, host.snapshot);
           } catch (error) {
             logDiagnostic('warnings', 'agent-plugin-navigation-publish-failed', {
               error: boundedDiagnosticText(errorMessage(error), 200)
@@ -20378,6 +20381,27 @@ Image elapsed: ${formatDuration(imageElapsed)} — Completed: ${imageCompleted}/
     return null;
   }
 
+  /**
+   * Records only whether the private provider accepted a changed route and
+   * the status of its resulting subject snapshot. No URLs/IDs/names persist.
+   * @param {boolean} accepted - Result of provider navigation({url}).
+   * @param {Object|null} snapshot - Provider canonical identity state.
+   * @returns {void} No value is returned.
+   */
+  function aicc127NavigationTransportObserved(accepted, snapshot) {
+    const step = aicc127Runtime?.navigation?.steps?.at(-1);
+    if (!step) return;
+    step.navigation_events = (step.navigation_events || 0) + 1;
+    step.navigation_accepted = accepted === true;
+    const valid = new Set(['identified', 'unresolved', 'none']);
+    const conversation = snapshot?.conversation?.status;
+    const project = snapshot?.project?.status;
+    step.provider_conversation_status = valid.has(conversation)
+      ? conversation : 'unknown';
+    step.provider_project_status = valid.has(project)
+      ? project : 'unknown';
+    aicc127SaveNavigation();
+  }
   /** Test-only checkpoint key; salt and fingerprints never export. */
   const AICC127_NAV_KEY = 'dc-issue127-navigation-checkpoint';
   /**
@@ -20426,6 +20450,10 @@ Image elapsed: ${formatDuration(imageElapsed)} — Completed: ${imageCompleted}/
       conversation_requests: step.conversation_requests || 0,
       conversation_responses: step.conversation_responses || 0,
       observer_updates: step.observer_updates || 0,
+      navigation_events: step.navigation_events || 0,
+      navigation_accepted: step.navigation_accepted === true,
+      provider_conversation_status: step.provider_conversation_status || 'unknown',
+      provider_project_status: step.provider_project_status || 'unknown',
       project_visual_reason: step.project_visual_reason || 'unresolved',
       observer_matches_backend: step.observer_matches_backend,
       visible_conversation_match: step.visible_conversation_match,
