@@ -5,7 +5,7 @@ import vm from 'node:vm';
 
 const source = readFileSync(new URL(
   '../src/userscript/06-image-export-tests/07-issue127-live-test.js',
-  import.meta.url), 'utf8');
+  import.meta.url), 'utf8') + readFileSync(new URL('../src/userscript/06-image-export-tests/07a-issue127-navigation.js', import.meta.url), 'utf8');
 
 function createHarness(shared = new Map()) {
   const state = { id: 'A', title: 'Conversation A', project: 'Project A',
