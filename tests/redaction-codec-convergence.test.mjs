@@ -33,3 +33,98 @@ test('golden vectors from producer through checked decoder', async () => {
     assert.equal(decoder.decodeMarker(checked), value);
   }
 });
+
+test('JSON HTTP, fetch, XHR and WebSocket producer output round-trips synthetically', async () => {
+  const producer = makeProducer();
+  for (const transport of ['fetch', 'xhr', 'websocket']) {
+    const frame = JSON.stringify({ token: fixture.vectors[0].original,
+      nested: [fixture.vectors[1].original, '[ordinary]'], count: 3 });
+    const state = producer.bodyState('application/json', transport);
+    let encoded = '';
+    for (const fragment of frame) encoded += await producer.bodyFeed(state, fragment);
+    encoded += await producer.bodyFeed(state, '', true);
+    assert.equal(encoded.includes(fixture.vectors[0].original), false);
+    assert.equal(encoded.includes(fixture.vectors[1].original), false);
+    const metadata = { redaction_format: fixture.format, redaction_scope: producer.scope };
+    const parsed = JSON.parse(encoded);
+    const decoded = JSON.parse(decodeText(encoded, metadata));
+    assert.equal(parsed.token, fixture.vectors[0].marker);
+    assert.equal(parsed.nested[1], '[ordinary]');
+    assert.equal(decoded.nested[1], '[ordinary]');
+    assert.deepEqual(measureLogicalLength(decoded.token),
+      [fixture.vectors[0].utf8_bytes, fixture.vectors[0].utf16_units]);
+  }
+});
+
+test('synthetic SSE framing, out-of-order playback and every marker split', async () => {
+  const producer = makeProducer();
+  const event = 'event: message\ndata: ' +
+    JSON.stringify({ token: fixture.vectors[3].original, note: '[ok]' }) +
+    '\n\ndata: [DONE]\n\n';
+  const state = producer.bodyState('text/event-stream', 'fetch');
+  const encoded = await producer.bodyFeed(state, event, true);
+  assert.equal(encoded.includes(fixture.vectors[3].original), false);
+  const metadata = { redaction_format: fixture.format, redaction_scope: producer.scope };
+  let expected = null;
+  for (let split = 0; split <= encoded.length; split++) {
+    const decoder = new SecretMarkerDecoder(metadata);
+    const result = decoder.feed(encoded.slice(0, split)) +
+      decoder.feed(encoded.slice(split), true);
+    if (expected !== null) assert.equal(result, expected, 'split ' + split);
+    expected = result;
+  }
+  assert.ok(expected.endsWith('data: [DONE]\n\n'));
+  assert.equal(JSON.parse(expected.split('\n')[1].slice(6)).note, '[ok]');
+  const decoder = new SecretMarkerDecoder(metadata);
+  const reversed = [fixture.vectors[3], fixture.vectors[0]].reverse();
+  const first = reversed.map(row => decoder.decodeMarker(row.marker));
+  const second = reversed.map(row => decoder.decodeMarker(row.marker));
+  assert.deepEqual(first, second);
+});
+
+test('literal brackets survive while checked collisions and forged markers fail', async () => {
+  const producer = makeProducer();
+  const state = producer.jsonState('json.string');
+  const malformed = fixture.scenarios.find(row => row.name === 'invalid-checksum').marker;
+  const safe = await producer.jsonFeed(state,
+    JSON.stringify({ note: '[plain] ' + malformed }), true);
+  assert.equal(JSON.parse(safe).note, '[plain] ' + malformed);
+  const collision = JSON.stringify({ note: fixture.vectors[0].marker });
+  await assert.rejects(() => producer.jsonFeed(producer.jsonState('json.string'),
+    collision, true), /redaction-literal-marker-collision/);
+  const decoder = new SecretMarkerDecoder({
+    redaction_format: fixture.format, redaction_scope: producer.scope
+  });
+  assert.throws(() => decoder.decodeMarker(malformed));
+  assert.throws(() => new SecretMarkerDecoder({
+    redaction_format: 'dc-secret-marker/2', redaction_scope: producer.scope
+  }), /UNSUPPORTED_REDACTION_FORMAT/);
+});
+
+test('independent recorder scope rotates synthetic identity on reload', async () => {
+  const producer = makeProducer();
+  const row = fixture.vectors[0];
+  const first = await producer.make(row.original, 'json.string', false, ['U']);
+  assert.equal(first, await producer.make(row.original, 'json.string', false, ['U']));
+  const otherScope = 'ffeeddccbbaa99887766554433221100';
+  const left = new SecretMarkerDecoder({
+    redaction_format: fixture.format, redaction_scope: producer.scope
+  }).decodeMarker(first);
+  const right = new SecretMarkerDecoder({
+    redaction_format: fixture.format, redaction_scope: otherScope
+  }).decodeMarker(first);
+  assert.notEqual(left, right);
+});
+
+test('unsupported media, ambiguous type and incomplete streams reject source secrets', async () => {
+  const producer = makeProducer();
+  await assert.rejects(() => producer.bodyFeed(
+    producer.bodyState('text/plain', 'fetch'), fixture.vectors[0].original, true
+  ), /redaction-unsupported-content-type/);
+  await assert.rejects(() => producer.make('deadbeefcafe', 'json.string'),
+    /redaction-ambiguous-type/);
+  await assert.rejects(() => producer.bodyFeed(
+    producer.bodyState('application/json', 'xhr'),
+    '{"token":"' + fixture.vectors[0].original, true
+  ), /redaction-incomplete-json/);
+});
