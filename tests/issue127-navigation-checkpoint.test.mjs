@@ -202,6 +202,9 @@ test('shared observer validates verified A on return without a backend request',
   assert.equal(await h.f.navigation(), undefined);
   const steps = h.f.evidence().navigation_steps;
   assert.equal(steps[2].backend_source, 'verified-session-cache');
+  assert.equal(steps[2].conversation_requests, 0);
+  assert.equal(steps[2].conversation_responses, 0);
+  assert.ok(steps[2].observer_updates > 0);
   assert.equal(steps[2].observer_matches_backend, true);
   assert.equal(steps.length, 3);
 });
@@ -258,4 +261,17 @@ test('shared-host standalone requires affirmative backend null and matching obse
   await h.visit('A', 'Standalone A', null, 15);
   assert.equal(await h.f.standalone(), undefined);
   assert.equal((await h.f.project()).status, 'INCOMPLETE');
+});
+
+test('fresh conversation response supersedes prior cached A provenance', async () => {
+  const h = createHarness(new Map(), true);
+  await h.f.start();
+  await h.visit('A', 'Conversation A', 'Project A', 21);
+  await h.visit('B', 'Conversation B', 'Project B', 22);
+  h.navigateWithoutBackend('A', 'Conversation A', 'Project A');
+  assert.equal(h.f.evidence().navigation_steps[2].backend_source, 'verified-session-cache');
+  await h.visit('A', 'Conversation A', 'Project A', 23);
+  const result = h.f.evidence().navigation_steps[2];
+  assert.equal(result.backend_source, 'network-response');
+  assert.equal(result.conversation_responses, 1);
 });

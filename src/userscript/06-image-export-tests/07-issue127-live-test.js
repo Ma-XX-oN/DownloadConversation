@@ -82,11 +82,14 @@
       chatGPTSubjectHost !== null;
     const state = { agent, evidence, navigation,
       host: sharedHost ? chatGPTSubjectHost : null, sharedHost, conversationId: null,
-      observed: null, snapshots: 0, pending: new Set(), module, unsubscribe: null };
+      observed: null, snapshots: 0, pending: new Set(), requestSteps: new Map(),
+      module, unsubscribe: null };
     aicc127Runtime = state;
     state.unsubscribe = agent.observeState(snapshot => {
       state.observed = snapshot;
       state.snapshots += 1;
+      const step = state.navigation.steps.at(-1);
+      if (step) step.observer_updates = (step.observer_updates || 0) + 1;
       aicc127NavigationRefreshFromObserver();
     }, 'subject-identification');
     aicc127BeginForCurrentConversation();
@@ -112,6 +115,7 @@
     state.conversationId = id;
     aicc127NavigationVisit(id);
     state.pending.clear();
+    state.requestSteps.clear();
     if (state.sharedHost) {
       // The #306 host owns navigation, backend traffic and identity cache.
       // A second host would reset the canonical agent's published state.
@@ -155,7 +159,13 @@
     if (state.sharedHost || state.host.request({
       network_sequence: trace.sequence, method: trace.method,
       request_url: trace.url
-    })) state.pending.add(trace.sequence);
+    })) {
+      state.pending.add(trace.sequence);
+      const step = state.navigation.steps.at(-1);
+      state.requestSteps.set(trace.sequence, step);
+      if (step && aicc127LiveRequestKind(trace) === 'conversation')
+        step.conversation_requests = (step.conversation_requests || 0) + 1;
+    }
   }
   /**
    * Correlates genuine backend identity JSON with observer publication.
@@ -168,6 +178,9 @@
   function aicc127LiveAcceptResponse(trace, status, bounded) {
     const state = aicc127Runtime;
     if (!state || !state.pending.delete(trace.sequence)) return;
+    const requestStep = state.requestSteps.get(trace.sequence);
+    state.requestSteps.delete(trace.sequence);
+    if (!requestStep || requestStep !== state.navigation.steps.at(-1)) return;
     // Never store raw body, IDs, names, headers, cookies or URL parameters.
     if (status !== 200 || bounded.truncated || bounded.text.length > 1048576) return;
     let body;
@@ -181,6 +194,11 @@
     const after = state.observed;
     aicc127NavigationObserved(kind, body, accepted,
       state.sharedHost ? -1 : before);
+    if (kind === 'conversation') {
+      requestStep.conversation_responses = (requestStep.conversation_responses || 0) + 1;
+      requestStep.reused_verified_backend = false;
+      aicc127SaveNavigation();
+    }
     const correlated = accepted && state.snapshots > before;
     const record = {
       kind, network_sequence: trace.sequence, status,

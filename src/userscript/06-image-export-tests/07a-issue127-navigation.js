@@ -40,8 +40,13 @@
     } catch {}
     state.evidence.navigation_steps = state.navigation.steps.map(step => ({
       slot: step.slot, backend_observed: step.backend_observed,
-      backend_source: step.reused_verified_backend ? 'verified-session-cache'
-        : step.backend_observed ? 'network-response' : 'unresolved',
+      backend_source: (step.conversation_responses || 0) > 0 ? 'network-response'
+        : step.reused_verified_backend ? 'verified-session-cache'
+          : step.backend_observed ? 'network-response' : 'unresolved',
+      conversation_requests: step.conversation_requests || 0,
+      conversation_responses: step.conversation_responses || 0,
+      observer_updates: step.observer_updates || 0,
+      project_visual_reason: step.project_visual_reason || 'unresolved',
       observer_matches_backend: step.observer_matches_backend,
       visible_conversation_match: step.visible_conversation_match,
       visible_project_match: step.visible_project_match,
@@ -75,6 +80,7 @@
       : nav.steps.length === 1 ? 'B'
       : key === nav.steps[0].key ? 'A-return' : 'other';
     nav.steps.push({ slot, key, backend_observed: false,
+      conversation_requests: 0, conversation_responses: 0, observer_updates: 0,
       observer_matches_backend: false, visible_conversation_match: null,
       visible_project_match: null, changed_from_previous: null });
     if (nav.steps.length > 20) nav.steps.shift();
@@ -140,7 +146,10 @@
       ? (visibleProject ? false : true)
       : !project || !visibleProject ? null :
         normalized(project) === normalized(visibleProject);
-    return { conversationMatch, projectMatch };
+    return { conversationMatch, projectMatch,
+      projectReason: !visibleProject ? 'breadcrumb-absent'
+        : !project ? 'observer-project-name-absent'
+          : projectMatch ? 'match' : 'breadcrumb-name-mismatch' };
   }
   /**
    * Correlates backend, observer and visible labels.
@@ -158,6 +167,7 @@
     const salt = state.navigation.salt;
     if (kind === 'conversation' && accepted) {
       step.backend_observed = true;
+      step.reused_verified_backend = false;
       step.backend_conversation_key = aicc127Fingerprint(body.conversation_id, salt);
       step.backend_title_key = aicc127Fingerprint(body.title, salt);
       step.backend_project_key = aicc127Fingerprint(body.gizmo_id, salt);
@@ -178,6 +188,7 @@
     const visual = aicc127VisibleComparison(subject);
     step.visible_conversation_match = visual.conversationMatch;
     step.visible_project_match = visual.projectMatch;
+    step.project_visual_reason = visual.projectReason;
     step.name_key = aicc127Fingerprint(subject?.conversation?.name, salt);
     step.project_key = aicc127Fingerprint(subject?.project?.name, salt);
     const prior = state.navigation.steps.at(-2);
@@ -206,7 +217,7 @@
       step.backend_observed = true;
       step.reused_verified_backend = true;
     }
-    if (!step.backend_observed) return;
+    if (!step.backend_observed || !step.observer_updates) return;
     const subject = state.observed;
     const matchesConversation = subject?.conversation?.status === 'identified' &&
       aicc127Fingerprint(subject.conversation.id, salt) === step.backend_conversation_key &&
@@ -220,6 +231,7 @@
     const visual = aicc127VisibleComparison(subject);
     step.visible_conversation_match = visual.conversationMatch;
     step.visible_project_match = visual.projectMatch;
+    step.project_visual_reason = visual.projectReason;
     step.name_key = aicc127Fingerprint(subject?.conversation?.name, salt);
     step.project_key = aicc127Fingerprint(subject?.project?.name, salt);
     const prior = state.navigation.steps.at(-2);
