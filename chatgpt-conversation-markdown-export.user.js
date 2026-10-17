@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         ChatGPT Conversation Markdown Recorder
 // @namespace    https://chatgpt.com/
-// @version      1.11.7-issue.127.13
+// @version      1.11.7-issue.127.14
 // @description  Exports the current ChatGPT conversation directly from the Conversation API as Markdown or JSONL.
 // @match        https://chatgpt.com/*
 // @match        https://chat.openai.com/*
@@ -6666,6 +6666,9 @@ async function loadAgent(id, { loadModule, context = {} } = {}) {
         event => {
           try {
             host.navigation(event);
+            // Reuse the one provider-neutral navigation observer for staged witness.
+            if (typeof aicc127Runtime !== 'undefined' && aicc127Runtime)
+              aicc127NavigationChanged();
           } catch (error) {
             logDiagnostic('warnings', 'agent-plugin-navigation-publish-failed', {
               error: boundedDiagnosticText(errorMessage(error), 200)
@@ -20075,7 +20078,7 @@ Image elapsed: ${formatDuration(imageElapsed)} — Completed: ${imageCompleted}/
       aicc127NavigationRefreshFromObserver();
     }, 'subject-identification');
     aicc127BeginForCurrentConversation();
-    if (typeof window !== 'undefined') {
+    if (typeof window !== 'undefined' && !state.sharedHost) {
       const target = window.navigation?.addEventListener ? window.navigation : window;
       state.navigationEvent = target === window ? 'popstate' : 'currententrychange';
       target.addEventListener(state.navigationEvent, aicc127NavigationChanged);
