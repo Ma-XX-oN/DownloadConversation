@@ -10,6 +10,7 @@
   const AICC127_BLOB_SHA = '32182498480ba061367ce60dbb4104c0c0d55fe7';
   /** Memory-only observer and host bridge enabled explicitly by the test button. */
   let aicc127Runtime = null;
+  let aicc127StartPending = null;
   /** Tab-scoped explicit opt-in retained across ChatGPT page reloads. */
   const AICC127_ARMED_KEY = 'dc-issue127-live-armed';
   /**
@@ -101,7 +102,6 @@
     if (nav.steps.length > 20) nav.steps.shift();
     aicc127SaveNavigation();
   }
-
   function aicc127VisibleComparison(snapshot) {
     const conversation = snapshot?.conversation?.name;
     const project = snapshot?.project?.name;
@@ -141,7 +141,6 @@
         normalized(project) === normalized(visibleProject);
     return { conversationMatch, projectMatch };
   }
-
   function aicc127NavigationObserved(kind, body, accepted, before) {
     const state = aicc127Runtime;
     if (!state?.navigation || kind !== 'conversation') return;
@@ -168,7 +167,6 @@
       step.name_key !== prior.name_key && step.project_key !== prior.project_key;
     aicc127SaveNavigation();
   }
-
   async function testAicc127Navigation() {
     await aicc127Start();
     const steps = aicc127Runtime.navigation.steps;
@@ -190,13 +188,17 @@
     return { status: 'INCOMPLETE', detail: reason +
       ' This same-tab session also resumes after reload.' };
   }
-
   /**
    * Connects the staged Core-owned agent to a test-only subject observer.
    *
    * @returns {Promise<Object>} Returns the aicc127Start result.
    */
   async function aicc127Start() {
+    if (!aicc127StartPending) aicc127StartPending = aicc127StartImpl();
+    try { return await aicc127StartPending; }
+    finally { aicc127StartPending = null; }
+  }
+  async function aicc127StartImpl() {
     if (aicc127Runtime) return aicc127Runtime;
     const core = canonicalCore();
     assert(core.getVersion() === '1.1.0-issue.127.19',
@@ -231,7 +233,6 @@
     aicc127SaveNavigation();
     return state;
   }
-
   /**
    * Rejects previous navigation epochs before correlated responses arrive.
    *
@@ -252,7 +253,6 @@
     state.evidence.navigation_count += 1;
     aicc127SaveEvidence();
   }
-
   /**
    * Classifies only allowed same-origin backend identity GET requests.
    *
@@ -271,7 +271,6 @@
     } catch {}
     return null;
   }
-
   /**
    * Observes a request already captured by DownloadConversation.
    *
@@ -288,7 +287,6 @@
       request_url: trace.url
     })) state.pending.add(trace.sequence);
   }
-
   /**
    * Correlates genuine backend identity JSON with observer publication.
    *
@@ -336,7 +334,6 @@
       state.evidence.project_backend_and_observer = true;
     aicc127SaveEvidence();
   }
-
   /**
    * Observes a cloned existing fetch response without new network requests.
    *
