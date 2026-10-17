@@ -85,7 +85,8 @@
       ['Conversation API access/schema', testConversationApiAccessAndSchema],
       ['AICC #127 staged artifact', testAicc127StagedArtifact],
       ['AICC #127 live project identity', testAicc127LiveProject],
-      ['AICC #127 live standalone', testAicc127LiveStandalone]
+      ['AICC #127 live standalone', testAicc127LiveStandalone],
+      ['AICC #127 navigation A-B-A', testAicc127Navigation]
     ];
   }
 
