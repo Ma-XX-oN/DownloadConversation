@@ -82,7 +82,10 @@ test(
       ],
       'identity and segment runtime must remain at verified top-level source boundaries'
     );
-    assert.equal(sourcePaths.length, 76);
+    assert.equal(sourcePaths.length, 77);
+    assert.ok(sourcePaths.includes(
+      'src/userscript/06-image-export-tests/07a-issue127-navigation.js'
+    ));
     assert.equal(new Set(sourcePaths).size, sourcePaths.length);
     assert.ok(sourcePaths.every(sourcePath => {
       return sourcePath.startsWith('src/userscript/');
