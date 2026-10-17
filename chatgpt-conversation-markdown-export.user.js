@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         ChatGPT Conversation Markdown Recorder
 // @namespace    https://chatgpt.com/
-// @version      1.11.7-issue.306.1
+// @version      1.11.7-issue.306.2
 // @description  Exports the current ChatGPT conversation directly from the Conversation API as Markdown or JSONL.
 // @match        https://chatgpt.com/*
 // @match        https://chat.openai.com/*
@@ -16502,7 +16502,7 @@ globalThis.__dcCompressor = {
    * The caller owns the listener's lifetime and decides how to use each URL.
    *
    * @param {Window} browser - Browser page realm whose history is observed.
-   * @param {(event: {url: string}) => void} publish - Generic URL consumer.
+   * @param {Function} publish - Generic URL consumer.
    * @returns {() => void} Restores history methods and unregisters listeners.
    */
   function observeGenericBrowserNavigation(browser, publish) {
