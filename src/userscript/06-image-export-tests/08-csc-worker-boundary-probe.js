@@ -6,6 +6,12 @@
    * @returns {void} Installs the independent test task receiver.
    */
   function cscProbeWorkerEntrypoint() {
+    /**
+     * Synthetic fixture octet at one absolute offset.
+     *
+     * @param {number} offset - Byte position.
+     * @returns {number} The deterministic byte value.
+     */
     const expectedByte = offset => (Math.imul(offset, 29) + 7) & 255;
 
     /**
@@ -185,6 +191,13 @@
       worker = new realm.Worker(url);
       return await new Promise((resolve, reject) => {
         let finished = false;
+        /**
+         * Settle a Worker task exactly once.
+         *
+         * @param {Error|null} error - Terminal failure, if any.
+         * @param {Object} result - Worker result, if successful.
+         * @returns {void} Settles the task Promise.
+         */
         const finish = (error, result) => {
           if (finished) return;
           finished = true;
