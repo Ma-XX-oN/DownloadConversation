@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         ChatGPT Conversation Markdown Recorder
 // @namespace    https://chatgpt.com/
-// @version      1.11.7-issue.306.3
+// @version      1.11.7-issue.306.4
 // @description  Exports the current ChatGPT conversation directly from the Conversation API as Markdown or JSONL.
 // @match        https://chatgpt.com/*
 // @match        https://chat.openai.com/*
@@ -6639,22 +6639,39 @@ async function loadAgent(id, { loadModule, context = {} } = {}) {
    */
   function reconnectChatGPTSubjectHost() {
     if (chatGPTSubjectHost || !chatGPTAgent) return;
-    assert(typeof chatGPTPluginModule?.connectChatGPTSubjectHost === 'function',
-      'Pinned provider artifact has no verified navigation host interface.');
+    if (typeof chatGPTPluginModule?.connectChatGPTSubjectHost !== 'function') {
+      logDiagnostic('warnings', 'agent-plugin-navigation-interface-unavailable', {
+        reason: 'Core catalogue does not yet pin the navigation-capable private provider'
+      });
+      return;
+    }
     const host = chatGPTPluginModule.connectChatGPTSubjectHost({
       agent: chatGPTAgent,
       origin: agentPluginPageWindow.location.origin,
       conversationId: null
     });
-    assert(host && typeof host.navigation === 'function'
-      && typeof host.request === 'function'
-      && typeof host.response === 'function'
-      && typeof host.dispose === 'function',
-      'Pinned provider navigation host is incomplete.');
+    if (!host || typeof host.navigation !== 'function'
+        || typeof host.request !== 'function'
+        || typeof host.response !== 'function'
+        || typeof host.dispose !== 'function') {
+      host?.dispose?.();
+      logDiagnostic('warnings', 'agent-plugin-navigation-interface-unavailable', {
+        reason: 'Core catalogue selected an older provider navigation interface'
+      });
+      return;
+    }
     let disconnect = null;
     try {
       disconnect = observeGenericBrowserNavigation(agentPluginPageWindow,
-        event => host.navigation(event));
+        event => {
+          try {
+            host.navigation(event);
+          } catch (error) {
+            logDiagnostic('warnings', 'agent-plugin-navigation-publish-failed', {
+              error: boundedDiagnosticText(errorMessage(error), 200)
+            });
+          }
+        });
       assert(typeof disconnect === 'function',
         'Generic navigation observer returned no teardown.');
     } catch (error) {
@@ -6677,11 +6694,19 @@ async function loadAgent(id, { loadModule, context = {} } = {}) {
   function agentPluginObserveNetworkRequest(trace) {
     const host = chatGPTSubjectHost;
     if (!host || !Number.isSafeInteger(trace?.sequence)) return null;
-    return host.request({
-      network_sequence: trace.sequence,
-      method: trace.method,
-      request_url: trace.url
-    }) ? host : null;
+    try {
+      return host.request({
+        network_sequence: trace.sequence,
+        method: trace.method,
+        request_url: trace.url
+      }) ? host : null;
+    } catch (error) {
+      logDiagnostic('warnings', 'agent-plugin-subject-request-failed', {
+        network_sequence: trace.sequence,
+        error: boundedDiagnosticText(errorMessage(error), 200)
+      });
+      return null;
+    }
   }
 
   /**
@@ -6728,11 +6753,18 @@ async function loadAgent(id, { loadModule, context = {} } = {}) {
       }
     } catch {}
     if (body && typeof body === 'object' && !Array.isArray(body)) {
-      accepted.response({
-        network_sequence: trace.sequence,
-        status: xhr.status,
-        body
-      });
+      try {
+        accepted.response({
+          network_sequence: trace.sequence,
+          status: xhr.status,
+          body
+        });
+      } catch (error) {
+        logDiagnostic('warnings', 'agent-plugin-subject-xhr-response-failed', {
+          network_sequence: trace.sequence,
+          error: boundedDiagnosticText(errorMessage(error), 200)
+        });
+      }
     }
   }
 
@@ -7214,6 +7246,71 @@ globalThis.__dcCompressor = {
     if (!condition) throw new Error(message);
   }
 
+
+  /**
+   * Observes browser route changes without interpreting provider-specific URLs.
+   * The caller owns the listener's lifetime and decides how to use each URL.
+   *
+   * @param {Window} browser - Browser page realm whose history is observed.
+   * @param {Function} publish - Generic URL consumer.
+   * @returns {() => void} Restores history methods and unregisters listeners.
+   */
+  function observeGenericBrowserNavigation(browser, publish) {
+    assert(browser && typeof publish === 'function',
+      'Navigation observer requires a browser and a URL receiver.');
+    /** Last route delivered to this observer, including the initial snapshot. */
+    let lastUrl = null;
+    /** Whether teardown has permanently disabled event delivery. */
+    let disposed = false;
+    /** History object whose methods are wrapped during this connection. */
+    const history = browser.history;
+    /** Original pushState implementation for exact teardown restoration. */
+    const pushState = history.pushState;
+    /** Original replaceState implementation for exact teardown restoration. */
+    const replaceState = history.replaceState;
+
+    /**
+     * Delivers a changed absolute URL without guessing a provider identity.
+     * @returns {void} No value is returned.
+     */
+    function publishCurrentUrl() {
+      if (disposed) return;
+      const url = String(browser.location.href);
+      if (url === lastUrl) return;
+      lastUrl = url;
+      publish({ url });
+    }
+
+    /**
+     * Wraps a history mutation while preserving its native return/exception.
+     * @param {Function} original - Unmodified native history method.
+     * @returns {Function} History wrapper for the current observer.
+     */
+    function wrapHistory(original) {
+      return function(...args) {
+        const result = Reflect.apply(original, this, args);
+        publishCurrentUrl();
+        return result;
+      };
+    }
+
+    /** Observer-owned history wrappers, removed only if still installed. */
+    const wrappedPush = wrapHistory(pushState);
+    const wrappedReplace = wrapHistory(replaceState);
+    history.pushState = wrappedPush;
+    history.replaceState = wrappedReplace;
+    browser.addEventListener('popstate', publishCurrentUrl);
+    browser.navigation?.addEventListener?.('currententrychange', publishCurrentUrl);
+    publishCurrentUrl();
+    return () => {
+      if (disposed) return;
+      disposed = true;
+      browser.removeEventListener('popstate', publishCurrentUrl);
+      browser.navigation?.removeEventListener?.('currententrychange', publishCurrentUrl);
+      if (history.pushState === wrappedPush) history.pushState = pushState;
+      if (history.replaceState === wrappedReplace) history.replaceState = replaceState;
+    };
+  }
   /**
    * Restores the GEN diagnostic tail and its historical version baseline.
    * Older plain-array snapshots have no trustworthy prior version.
@@ -16643,71 +16740,6 @@ globalThis.__dcCompressor = {
     // checked individually above, so do not reject the whole segment by scanning
     // rendered tool payload text.
     return Boolean(rendered.trim());
-
-  /**
-   * Observes browser route changes without interpreting provider-specific URLs.
-   * The caller owns the listener's lifetime and decides how to use each URL.
-   *
-   * @param {Window} browser - Browser page realm whose history is observed.
-   * @param {Function} publish - Generic URL consumer.
-   * @returns {() => void} Restores history methods and unregisters listeners.
-   */
-  function observeGenericBrowserNavigation(browser, publish) {
-    assert(browser && typeof publish === 'function',
-      'Navigation observer requires a browser and a URL receiver.');
-    /** Last route delivered to this observer, including the initial snapshot. */
-    let lastUrl = null;
-    /** Whether teardown has permanently disabled event delivery. */
-    let disposed = false;
-    /** History object whose methods are wrapped during this connection. */
-    const history = browser.history;
-    /** Original pushState implementation for exact teardown restoration. */
-    const pushState = history.pushState;
-    /** Original replaceState implementation for exact teardown restoration. */
-    const replaceState = history.replaceState;
-
-    /**
-     * Delivers a changed absolute URL without guessing a provider identity.
-     * @returns {void} No value is returned.
-     */
-    function publishCurrentUrl() {
-      if (disposed) return;
-      const url = String(browser.location.href);
-      if (url === lastUrl) return;
-      lastUrl = url;
-      publish({ url });
-    }
-
-    /**
-     * Wraps a history mutation while preserving its native return/exception.
-     * @param {Function} original - Unmodified native history method.
-     * @returns {Function} History wrapper for the current observer.
-     */
-    function wrapHistory(original) {
-      return function(...args) {
-        const result = Reflect.apply(original, this, args);
-        publishCurrentUrl();
-        return result;
-      };
-    }
-
-    /** Observer-owned history wrappers, removed only if still installed. */
-    const wrappedPush = wrapHistory(pushState);
-    const wrappedReplace = wrapHistory(replaceState);
-    history.pushState = wrappedPush;
-    history.replaceState = wrappedReplace;
-    browser.addEventListener('popstate', publishCurrentUrl);
-    browser.navigation?.addEventListener?.('currententrychange', publishCurrentUrl);
-    publishCurrentUrl();
-    return () => {
-      if (disposed) return;
-      disposed = true;
-      browser.removeEventListener('popstate', publishCurrentUrl);
-      browser.navigation?.removeEventListener?.('currententrychange', publishCurrentUrl);
-      if (history.pushState === wrappedPush) history.pushState = pushState;
-      if (history.replaceState === wrappedReplace) history.replaceState = replaceState;
-    };
-  }
   }
 
   /**
