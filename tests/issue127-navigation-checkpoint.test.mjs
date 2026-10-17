@@ -7,7 +7,7 @@ const source = readFileSync(new URL(
   '../src/userscript/06-image-export-tests/07-issue127-live-test.js',
   import.meta.url), 'utf8') + readFileSync(new URL('../src/userscript/06-image-export-tests/07a-issue127-navigation.js', import.meta.url), 'utf8');
 
-function createHarness(shared = new Map()) {
+function createHarness(shared = new Map(), useSharedHost = false) {
   const state = { id: 'A', title: 'Conversation A', project: 'Project A',
     projectId: 'g-p-A', projectNamePending: false };
   const pending = new Map();
@@ -69,6 +69,10 @@ function createHarness(shared = new Map()) {
     }
   };
   const context = {
+    chatGPTSubjectHost: useSharedHost ? {
+      navigation() { return true; }, request() { return true; },
+      response() { return true; }, dispose() {}
+    } : null,
     window: { navigation: {
       addEventListener(name, fn) { listeners.set(name, fn); },
       removeEventListener(name) { listeners.delete(name); }
@@ -97,6 +101,20 @@ function createHarness(shared = new Map()) {
     globalThis.capture = {start:aicc127Start, request:aicc127LiveOnRequest,
       response:aicc127LiveOnFetchResponse, navigation:testAicc127Navigation,
       evidence:aicc127MinimalEvidence};`, context);
+  function publishCurrent() {
+    subscriber?.({ readiness: 'resolved',
+      conversation: { status: 'identified', id: state.id, name: state.title },
+      project: state.project
+        ? { status: 'identified', id: state.projectId, name: state.project }
+        : { status: 'none', id: null, name: null } });
+  }
+  function navigateWithoutBackend(id, title, project, publish = true) {
+    state.id = id; state.title = title; state.visibleTitle = title;
+    state.project = project;
+    state.projectId = 'g-p-' + (project ? id : 'none');
+    listeners.get('currententrychange')?.();
+    if (publish) publishCurrent();
+  }
   async function visit(id, title, project, sequence, visibleTitle = title) {
     state.id = id; state.title = title; state.visibleTitle = visibleTitle;
     state.project = project;
@@ -105,12 +123,13 @@ function createHarness(shared = new Map()) {
     const trace = {sequence, method:'GET',
       url:'/backend-api/conversations/' + id};
     context.capture.request(trace);
+    if (useSharedHost) publishCurrent();
     context.capture.response(trace, 200, {
       text:JSON.stringify({conversation_id:id, title,
         gizmo_id:project ? state.projectId : null}), truncated:false
     });
   }
-  return { f: context.capture, state, visit, shared };
+  return { f: context.capture, state, visit, navigateWithoutBackend, shared };
 }
 
 test('A-B-A checks actual observer identity against visible sidebar and project', async () => {
@@ -162,4 +181,27 @@ test('late project-name publication upgrades already observed conversation step'
   }), truncated: false });
   assert.equal(h.f.evidence().navigation_steps[0].observer_matches_backend, true);
   assert.equal(h.f.evidence().navigation_steps[0].visible_project_match, true);
+});
+
+test('shared observer validates verified A on return without a backend request', async () => {
+  const h = createHarness(new Map(), true);
+  await h.f.start();
+  await h.visit('A', 'Conversation A', 'Project A', 1);
+  await h.visit('B', 'Conversation B', 'Project B', 2);
+  h.navigateWithoutBackend('A', 'Conversation A', 'Project A');
+  assert.equal(await h.f.navigation(), undefined);
+  const steps = h.f.evidence().navigation_steps;
+  assert.equal(steps[2].backend_source, 'verified-session-cache');
+  assert.equal(steps[2].observer_matches_backend, true);
+  assert.equal(steps.length, 3);
+});
+
+test('cached return does not pass while observer still reports B', async () => {
+  const h = createHarness(new Map(), true);
+  await h.f.start();
+  await h.visit('A', 'Conversation A', 'Project A', 1);
+  await h.visit('B', 'Conversation B', 'Project B', 2);
+  h.navigateWithoutBackend('A', 'Conversation A', 'Project A', false);
+  assert.equal((await h.f.navigation()).status, 'INCOMPLETE');
+  assert.equal(h.f.evidence().navigation_steps[2].observer_matches_backend, false);
 });

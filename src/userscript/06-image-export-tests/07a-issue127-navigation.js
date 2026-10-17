@@ -40,6 +40,8 @@
     } catch {}
     state.evidence.navigation_steps = state.navigation.steps.map(step => ({
       slot: step.slot, backend_observed: step.backend_observed,
+      backend_source: step.reused_verified_backend ? 'verified-session-cache'
+        : step.backend_observed ? 'network-response' : 'unresolved',
       observer_matches_backend: step.observer_matches_backend,
       visible_conversation_match: step.visible_conversation_match,
       visible_project_match: step.visible_project_match,

@@ -21,7 +21,7 @@ const root = path.resolve(
 const CORE_COMMIT =
   '80b3e1354005e381c4fc1a81a26be3c45b45dd30';
 const CORE_BLOB =
-  '27ac39398a164b91f05dfeb3be6513cbbbbee8f8';
+  '76dfc50ecaa0d7fdca9c110d97a61b3f74b13789';
 const LEGACY_BLOB =
   '44a4ab373a6515caed5527aeb19cbdff7ce91e07';
 const MIGRATION_SNAPSHOT_COMMIT =
