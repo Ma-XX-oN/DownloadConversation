@@ -1,0 +1,53 @@
+import assert from 'node:assert/strict';
+import { createHash, createHmac } from 'node:crypto';
+import { readFileSync } from 'node:fs';
+
+const fixture = JSON.parse(readFileSync(
+  new URL('./fixtures/redaction-marker-v2.json', import.meta.url), 'utf8'));
+const hex = (bytes) => bytes.toString('hex');
+const digest = (key, value) => {
+  const raw = Buffer.from(value, 'utf8');
+  const length = Buffer.alloc(4);
+  length.writeUInt32BE(raw.length);
+  return createHmac('sha256', Buffer.from(key, 'hex'))
+    .update(Buffer.from('DC-SECRET-ID-V1\0', 'utf8'))
+    .update(length).update(raw).digest('hex').slice(0, 48);
+};
+const checksum = (body) => createHash('sha256')
+  .update(Buffer.from('DC-SECRET-MARKER-V1\0', 'utf8'))
+  .update(body, 'ascii').digest('hex').slice(0, 32);
+const validMetadata = (g) => Number.isSafeInteger(g.epoch) &&
+  g.epoch > 0 && /^[0-9a-f]{32}$/.test(g.scope) &&
+  g.scope === g.generation;
+assert.equal(fixture.format, 'dc-secret-marker/2');
+assert.equal(fixture.synthetic_only, true);
+assert.equal(Buffer.byteLength(fixture.secret), 10);
+assert.equal(fixture.secret.length, 5);
+const markers = [];
+for (const generation of fixture.generations) {
+  const metadata = { ...generation, generation: generation.scope };
+  assert.ok(validMetadata(metadata));
+  const id = digest(generation.key_hex, fixture.secret);
+  const body = fixture.type + '/' + id + '/' + fixture.params;
+  const check = checksum(body);
+  assert.equal(id, generation.id);
+  assert.equal(check, generation.check);
+  const marker = '[' + check + '/' + body + ']';
+  markers.push(marker);
+  const reload = digest(generation.key_hex, fixture.secret);
+  assert.equal(reload, id);
+  for (let i = 0; i <= marker.length; i++) {
+    assert.equal(marker.slice(0, i) + marker.slice(i), marker);
+  }
+  assert.notEqual(checksum('O/' + id + '/4321'), check);
+}
+assert.notEqual(markers[0], markers[1]);
+assert.notEqual(fixture.generations[0].scope, fixture.generations[1].scope);
+assert.equal(validMetadata({ epoch: 0, scope: fixture.generations[0].scope,
+  generation: fixture.generations[0].scope }), false);
+assert.equal(validMetadata({ epoch: 1, scope: fixture.generations[0].scope,
+  generation: fixture.generations[1].scope }), false);
+assert.equal(validMetadata({ epoch: 1, scope: undefined,
+  generation: fixture.generations[0].scope }), false);
+assert.equal(fixture.scenarios.length, 10);
+console.log('PASS: V2 independent HMAC/checksum, reload, rotation, Unicode, splits and negatives');
