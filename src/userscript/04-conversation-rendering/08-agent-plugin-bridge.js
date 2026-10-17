@@ -242,18 +242,27 @@
    */
   function reconnectChatGPTSubjectHost() {
     if (chatGPTSubjectHost || !chatGPTAgent) return;
-    assert(typeof chatGPTPluginModule?.connectChatGPTSubjectHost === 'function',
-      'Pinned provider artifact has no verified navigation host interface.');
+    if (typeof chatGPTPluginModule?.connectChatGPTSubjectHost !== 'function') {
+      logDiagnostic('warnings', 'agent-plugin-navigation-interface-unavailable', {
+        reason: 'Core catalogue does not yet pin the navigation-capable private provider'
+      });
+      return;
+    }
     const host = chatGPTPluginModule.connectChatGPTSubjectHost({
       agent: chatGPTAgent,
       origin: agentPluginPageWindow.location.origin,
       conversationId: null
     });
-    assert(host && typeof host.navigation === 'function'
-      && typeof host.request === 'function'
-      && typeof host.response === 'function'
-      && typeof host.dispose === 'function',
-      'Pinned provider navigation host is incomplete.');
+    if (!host || typeof host.navigation !== 'function'
+        || typeof host.request !== 'function'
+        || typeof host.response !== 'function'
+        || typeof host.dispose !== 'function') {
+      host?.dispose?.();
+      logDiagnostic('warnings', 'agent-plugin-navigation-interface-unavailable', {
+        reason: 'Core catalogue selected an older provider navigation interface'
+      });
+      return;
+    }
     let disconnect = null;
     try {
       disconnect = observeGenericBrowserNavigation(agentPluginPageWindow,
