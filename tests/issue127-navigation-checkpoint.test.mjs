@@ -105,7 +105,8 @@ function createHarness(shared = new Map(), useSharedHost = false) {
     globalThis.capture = {start:aicc127Start, request:aicc127LiveOnRequest,
       response:aicc127LiveOnFetchResponse, navigation:testAicc127Navigation,
       project:testAicc127LiveProject, standalone:testAicc127LiveStandalone,
-      evidence:aicc127MinimalEvidence, navEvent:aicc127NavigationChanged};`, context);
+      evidence:aicc127MinimalEvidence, navEvent:aicc127NavigationChanged,
+      refresh:aicc127NavigationRefreshFromObserver};`, context);
   function publishCurrent() {
     subscriber?.({ readiness: 'resolved',
       conversation: { status: 'identified', id: state.id, name: state.title },
@@ -234,6 +235,7 @@ test('delayed visible-title render can recover, but cannot invent an observer up
   h.flushVisualChecks();
   h.navigateWithoutBackend('A', 'Conversation A', 'Project A');
   h.state.visibleTitle = 'Still rendering B';
+  h.f.refresh();
   assert.equal((await h.f.navigation()).status, 'INCOMPLETE');
   h.state.visibleTitle = 'Conversation A';
   h.flushVisualChecks();
