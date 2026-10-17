@@ -37,7 +37,10 @@
    * @returns {Promise<void>} Resolves after the original runner completes.
    */
   runOneTest = async function runOneTestAfterChatGPTPluginReady(name, fn) {
-    if (name !== 'Worker + Zstd/CSP') await ensureChatGPTCanonicalAgent();
+    if (name !== 'Worker + Zstd/CSP'
+      && name !== 'CSC Worker stream + directory') {
+      await ensureChatGPTCanonicalAgent();
+    }
     return runOneTestWithCanonicalAgent(name, fn);
   };
 

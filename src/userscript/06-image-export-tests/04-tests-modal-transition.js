@@ -83,7 +83,8 @@
       ['Generated sandbox download link', testGeneratedSandboxDownloadLink],
       ['Jump identifier resolution', testJumpIdentifierResolution],
       ['Conversation API access/schema', testConversationApiAccessAndSchema],
-      ['Worker + Zstd/CSP', testWorkerZstdCsp]
+      ['Worker + Zstd/CSP', testWorkerZstdCsp],
+      ['CSC Worker stream + directory', testCscWorkerBoundary]
     ];
   }
 
