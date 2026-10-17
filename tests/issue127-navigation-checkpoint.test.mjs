@@ -104,6 +104,7 @@ function createHarness(shared = new Map(), useSharedHost = false) {
   vm.runInNewContext(source + `
     globalThis.capture = {start:aicc127Start, request:aicc127LiveOnRequest,
       response:aicc127LiveOnFetchResponse, navigation:testAicc127Navigation,
+      project:testAicc127LiveProject, standalone:testAicc127LiveStandalone,
       evidence:aicc127MinimalEvidence, navEvent:aicc127NavigationChanged};`, context);
   function publishCurrent() {
     subscriber?.({ readiness: 'resolved',
@@ -238,4 +239,21 @@ test('delayed visible-title render can recover, but cannot invent an observer up
   h.flushVisualChecks();
   assert.equal(await h.f.navigation(), undefined);
   assert.equal(h.f.evidence().navigation_steps[2].backend_source, 'verified-session-cache');
+});
+
+test('shared-host project witness accepts independently published verified identity', async () => {
+  const h = createHarness(new Map(), true);
+  await h.f.start();
+  assert.equal((await h.f.project()).status, 'INCOMPLETE');
+  await h.visit('A', 'Conversation A', 'Project A', 14);
+  assert.equal(await h.f.project(), undefined);
+  assert.equal((await h.f.standalone()).status, 'INCOMPLETE');
+});
+
+test('shared-host standalone requires affirmative backend null and matching observer', async () => {
+  const h = createHarness(new Map(), true);
+  await h.f.start();
+  await h.visit('A', 'Standalone A', null, 15);
+  assert.equal(await h.f.standalone(), undefined);
+  assert.equal((await h.f.project()).status, 'INCOMPLETE');
 });

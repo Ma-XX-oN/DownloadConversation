@@ -311,8 +311,12 @@
    */
   async function testAicc127LiveProject() {
     const state = await aicc127Start();
-    return state.evidence.project_backend_and_observer ? undefined :
-      { status: 'INCOMPLETE', detail: 'Await authenticated project metadata. Navigate to a project conversation and rerun.' };
+    const verified = state.navigation.steps.some(step =>
+      step.backend_observed && !step.reused_verified_backend &&
+      !step.backend_standalone && step.observer_matches_backend &&
+      step.visible_project_match === true);
+    return state.evidence.project_backend_and_observer || verified ? undefined :
+      { status: 'INCOMPLETE', detail: 'Await authenticated project metadata and matching AICC observer. Navigate to a project conversation and rerun.' };
   }
 
   /**
@@ -322,8 +326,12 @@
    */
   async function testAicc127LiveStandalone() {
     const state = await aicc127Start();
-    return state.evidence.standalone_backend_and_observer ? undefined :
-      { status: 'INCOMPLETE', detail: 'Await observed backend gizmo_id:null. Navigate to standalone chat and rerun.' };
+    const verified = state.navigation.steps.some(step =>
+      step.backend_observed && !step.reused_verified_backend &&
+      step.backend_standalone && step.observer_matches_backend &&
+      step.visible_project_match === true);
+    return state.evidence.standalone_backend_and_observer || verified ? undefined :
+      { status: 'INCOMPLETE', detail: 'Await actual backend gizmo_id:null and matching AICC observer. Navigate to standalone chat and rerun.' };
   }
 
   /**
