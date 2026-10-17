@@ -102,7 +102,7 @@ for (const context of [
 const marker = markers[0];
 const jsonEnvelope = JSON.stringify({ credential: marker });
 assert.equal(JSON.parse(jsonEnvelope).credential, marker);
-const sseEnvelope = 'data: ' + jsonEnvelope + '\\n\\n';
+const sseEnvelope = 'data: ' + jsonEnvelope + '\n\n';
 assert.equal(JSON.parse(sseEnvelope.slice(6).trim()).credential, marker);
 const websocketEnvelope = JSON.stringify({ type: 'synthetic', value: marker });
 assert.equal(JSON.parse(websocketEnvelope).value, marker);
