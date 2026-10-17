@@ -4,7 +4,7 @@
    * The caller owns the listener's lifetime and decides how to use each URL.
    *
    * @param {Window} browser - Browser page realm whose history is observed.
-   * @param {(event: {url: string}) => void} publish - Generic URL consumer.
+   * @param {Function} publish - Generic URL consumer.
    * @returns {() => void} Restores history methods and unregisters listeners.
    */
   function observeGenericBrowserNavigation(browser, publish) {
