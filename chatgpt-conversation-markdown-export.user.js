@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         ChatGPT Conversation Markdown Recorder
 // @namespace    https://chatgpt.com/
-// @version      1.11.7-issue.127.14
+// @version      1.11.7-issue.127.15
 // @description  Exports the current ChatGPT conversation directly from the Conversation API as Markdown or JSONL.
 // @match        https://chatgpt.com/*
 // @match        https://chat.openai.com/*
@@ -6665,10 +6665,11 @@ async function loadAgent(id, { loadModule, context = {} } = {}) {
       disconnect = observeGenericBrowserNavigation(agentPluginPageWindow,
         event => {
           try {
-            host.navigation(event);
-            // Reuse the one provider-neutral navigation observer for staged witness.
+            // Start the witness navigation step before the provider publishes
+            // the destination identity, avoiding an A/B epoch mismatch.
             if (typeof aicc127Runtime !== 'undefined' && aicc127Runtime)
               aicc127NavigationChanged();
+            host.navigation(event);
           } catch (error) {
             logDiagnostic('warnings', 'agent-plugin-navigation-publish-failed', {
               error: boundedDiagnosticText(errorMessage(error), 200)
@@ -20100,7 +20101,11 @@ Image elapsed: ${formatDuration(imageElapsed)} — Completed: ${imageCompleted}/
     state.conversationId = id;
     aicc127NavigationVisit(id);
     state.pending.clear();
-    if (state.host && !state.sharedHost) state.host.begin(id);
+    if (state.sharedHost) {
+      // The #306 host owns navigation, backend traffic and identity cache.
+      // A second host would reset the canonical agent's published state.
+      state.host = chatGPTSubjectHost;
+    } else if (state.host) state.host.begin(id);
     else state.host = state.module.connectChatGPTSubjectHost({
       agent: state.agent, origin: location.origin, conversationId: id
     });
