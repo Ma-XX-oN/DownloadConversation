@@ -4,6 +4,9 @@ import { readFileSync } from 'node:fs';
 
 const fixture = JSON.parse(readFileSync(
   new URL('./fixtures/redaction-marker-v2.json', import.meta.url), 'utf8'));
+const v1 = JSON.parse(readFileSync(
+  new URL('./fixtures/redaction-marker-v1.json', import.meta.url), 'utf8'));
+assert.equal(v1.format, 'dc-secret-marker/1');
 const digest = (key, value) => {
   const raw = Buffer.from(value, 'utf8');
   const length = Buffer.alloc(4);
@@ -60,4 +63,16 @@ assert.equal(validMetadata({ epoch: 1, scope: fixture.generations[0].scope,
 assert.equal(validMetadata({ epoch: 1, scope: undefined,
   generation: fixture.generations[0].scope }), false);
 assert.equal(fixture.scenarios.length, 10);
+for (const vector of v1.vectors) {
+  assert.equal(digest(v1.test_hmac_key_hex, vector.original), vector.id);
+  const body = vector.type + '/' + vector.id +
+    (vector.params === null ? '' : '/' + vector.params);
+  assert.equal(checksum(body), vector.check);
+  assert.deepEqual(parseMarker(vector.marker), {
+    type: vector.type, id: vector.id,
+    params: vector.params === null ? undefined : vector.params
+  });
+}
+assert.equal(parseMarker('[redacted]'), null);
+assert.equal(parseMarker(markers[0].replace('/O/', '/Z/')), null);
 console.log('PASS: V2 independent HMAC/checksum, reload, rotation, Unicode, splits and negatives');
