@@ -5,6 +5,7 @@ import vm from 'node:vm';
 
 const script = readFileSync(new URL(
   '../src/userscript/06-image-export-tests/07-issue127-live-test.js', import.meta.url), 'utf8');
+const navigationSource = readFileSync(new URL('../src/userscript/06-image-export-tests/07a-issue127-navigation.js', import.meta.url), 'utf8');
 const noop = () => {};
 const providerCommit = 'cf521202e78dede9152840193dc5ca140703b240';
 const providerBlob = '32182498480ba061367ce60dbb4104c0c0d55fe7';
@@ -82,7 +83,7 @@ function harness() {
     errorMessage: String,
     logDiagnostic: noop
   };
-  vm.runInNewContext(script + `
+  vm.runInNewContext(script + navigationSource + `
     globalThis.harness = {
       start: aicc127Start,
       request: aicc127LiveOnRequest,
