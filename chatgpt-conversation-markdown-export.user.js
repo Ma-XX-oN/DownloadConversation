@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         ChatGPT Conversation Markdown Recorder
 // @namespace    https://chatgpt.com/
-// @version      1.11.7-issue.127.12
+// @version      1.11.7-issue.127.13
 // @description  Exports the current ChatGPT conversation directly from the Conversation API as Markdown or JSONL.
 // @match        https://chatgpt.com/*
 // @match        https://chat.openai.com/*
@@ -20160,7 +20160,8 @@ Image elapsed: ${formatDuration(imageElapsed)} — Completed: ${imageCompleted}/
       network_sequence: trace.sequence, status, body
     });
     const after = state.observed;
-    aicc127NavigationObserved(kind, body, accepted, before);
+    aicc127NavigationObserved(kind, body, accepted,
+      state.sharedHost ? -1 : before);
     const correlated = accepted && state.snapshots > before;
     const record = {
       kind, network_sequence: trace.sequence, status,
@@ -20384,6 +20385,8 @@ Image elapsed: ${formatDuration(imageElapsed)} — Completed: ${imageCompleted}/
     } catch {}
     state.evidence.navigation_steps = state.navigation.steps.map(step => ({
       slot: step.slot, backend_observed: step.backend_observed,
+      backend_source: step.reused_verified_backend ? 'verified-session-cache'
+        : step.backend_observed ? 'network-response' : 'unresolved',
       observer_matches_backend: step.observer_matches_backend,
       visible_conversation_match: step.visible_conversation_match,
       visible_project_match: step.visible_project_match,
