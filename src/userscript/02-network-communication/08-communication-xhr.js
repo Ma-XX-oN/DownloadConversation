@@ -22,13 +22,15 @@
     await communicationLogRecord('communication_xhr_response', {
       network_sequence: trace?.sequence ?? null,
       method: trace?.method ?? null,
-      request_url: trace?.url ?? null,
-      response_url: stockNetworkSafeUrl(responseUrl),
+      request_url: trace?.url ? await communicationMarkerV1SafeUrl(trace.url) : null,
+      response_url: await communicationMarkerV1SafeUrl(responseUrl),
       status: Number.isFinite(xhr?.status) ? xhr.status : null,
       response_type: xhr?.responseType || 'text',
       duration_ms: trace?.started_at == null ? null : Math.round(performance.now() - trace.started_at),
       content_type: contentType,
-      headers: communicationLogSafeHeaders(responseHeaders)
+      redaction_format: COMMUNICATION_MARKER_FORMAT,
+      redaction_scope: communicationMarkerV1Scope,
+      headers: await communicationLogSafeHeaders(responseHeaders)
     });
     if (!communicationLogShouldCaptureBody(responseUrl, contentType)) {
       await communicationLogRecord('communication_xhr_response_body_end', {
@@ -46,6 +48,7 @@
     if (typeof text === 'string') {
       const summary = await communicationLogTextBody(text, 'communication_response_chunk', {
         transport: 'xmlhttprequest',
+        content_type: contentType,
         network_sequence: trace?.sequence ?? null
       });
       await communicationLogRecord('communication_xhr_response_body_end', {
@@ -71,11 +74,12 @@
   async function communicationLogWebSocketSend(url, data) {
     if (!(await communicationLogAwaitReadyOrDrop())) return;
     await communicationLogRecord('communication_websocket_send', {
-      url: stockNetworkSafeUrl(url),
+      url: await communicationMarkerV1SafeUrl(url),
       data_type: typeof data === 'string' ? 'text' : Object.prototype.toString.call(data)
     });
     if (typeof data === 'string') {
-      await communicationLogTextBody(data, 'communication_request_chunk', { transport: 'websocket' });
+      await communicationLogTextBody(data, 'communication_request_chunk', { transport: 'websocket',
+        content_type: /^\s*[\[{]/.test(data) ? 'application/json' : '' });
     } else {
       await communicationLogRecord('communication_websocket_send_body_end', {
         binary_body_omitted: true,
@@ -94,11 +98,12 @@
   async function communicationLogWebSocketMessage(url, data) {
     if (!(await communicationLogAwaitReadyOrDrop())) return;
     await communicationLogRecord('communication_websocket_message', {
-      url: stockNetworkSafeUrl(url),
+      url: await communicationMarkerV1SafeUrl(url),
       data_type: typeof data === 'string' ? 'text' : Object.prototype.toString.call(data)
     });
     if (typeof data === 'string') {
-      await communicationLogTextBody(data, 'communication_response_chunk', { transport: 'websocket' });
+      await communicationLogTextBody(data, 'communication_response_chunk', { transport: 'websocket',
+        content_type: /^\s*[\[{]/.test(data) ? 'application/json' : '' });
     } else {
       await communicationLogRecord('communication_websocket_message_body_end', {
         binary_body_omitted: true,

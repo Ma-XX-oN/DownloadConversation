@@ -17,6 +17,8 @@ const npmArguments = process.platform === 'win32'
 const pythonCommand = process.env.PYTHON ?? 'python';
 
 const ordinaryStages = [
+  ['#300 redaction marker contract vectors', nodeCommand, ['--test', 'tests/redaction-marker-contract.test.mjs']],
+  ['#301 streaming redaction encoder vectors', nodeCommand, ['--test', 'tests/redaction-marker-encoder.test.mjs']],
   ['Modular userscript build regression', nodeCommand, ['--test', 'tests/modular-userscript-build.test.mjs', 'tests/development-version-source.test.mjs']],
   ['Agent plugin authenticated background fetch regression', nodeCommand, ['--test', 'tests/agent-plugin-background-fetch.test.mjs']],
   ['#243 provenance and #274 lifecycle regressions', nodeCommand, ['--test',
@@ -75,6 +77,7 @@ const ordinaryStages = [
   ['Stream tail recovery regression', nodeCommand, ['--test', 'tests/stream-tail-recovery.test.mjs', 'tests/generation-response-clone-timing.test.mjs']],
   ['Stock network diagnostics regression', nodeCommand, ['--test', 'tests/stock-network-diagnostics.test.mjs']],
   ['Conversation API rate-limit regression', nodeCommand, ['--test', 'tests/conversation-api-rate-limit.test.mjs']],
+  ['Independent redaction codec convergence', nodeCommand, ['--test', 'tests/redaction-codec-convergence.test.mjs']],
   ['Disk communication recorder regression', nodeCommand, ['--test', 'tests/disk-communication-recorder.test.mjs']],
   ['Directory picker gesture regression', nodeCommand, ['--test', 'tests/directory-picker-gesture.test.mjs']],
   ['Console lifecycle and provenance controls', nodeCommand, ['--test', 'tests/console-diagnostics.test.mjs']],

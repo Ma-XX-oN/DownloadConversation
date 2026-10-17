@@ -3,6 +3,7 @@ import './communication-log-reset.test.mjs';
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import vm from 'node:vm';
+import { webcrypto } from 'node:crypto';
 
 function apiFetchBlock() {
   const start = userscript.indexOf('  async function apiFetch(url)');
@@ -269,6 +270,9 @@ function issue132StreamBodyHarness() {
   };
   vm.runInNewContext(
     `${diskHarnessSource()}
+// Source I/O tests intentionally stub the codec; encoder behavior has a dedicated suite.
+communicationMarkerV1BodyState = () => ({});
+communicationMarkerV1BodyFeed = async (_state, value) => String(value ?? '');
 this.__issue132Records = [];
 communicationLogRecord = async (type, data) => {
   this.__issue132Records.push({ type, data });
@@ -299,48 +303,34 @@ function issue132Body(steps) {
   };
 }
 
-test('aborted cloned response stream persists sub-chunk partial body and reports the abort', async () => {
+test('aborted cloned response stream drops staged data rather than leaking incomplete body', async () => {
   const api = issue132StreamBodyHarness();
-  const text = 'event: delta\ndata: {"v":"partial streamed text"}\n\n';
+  const text = 'event: delta\ndata: {"token":"partial-secret"}\n\n';
   const bytes = new TextEncoder().encode(text);
   const summary = await api.communicationLogStreamBody(
-    issue132Body([
-      { value: bytes },
-      { error: 'BodyStreamBuffer was aborted' }
-    ]),
-    'communication_response_chunk',
-    { transport: 'fetch', network_sequence: 17 }
+    issue132Body([{ value: bytes }, { error: 'BodyStreamBuffer was aborted' }]),
+    'communication_response_chunk', { transport: 'fetch', network_sequence: 17 }
   );
-
   assert.equal(summary.body_incomplete, true);
-  assert.equal(summary.error_message, 'BodyStreamBuffer was aborted');
+  assert.equal(summary.error_message, 'body-stream-read-failed');
+  assert.equal(summary.redaction_failed, true);
   assert.equal(summary.byte_count, bytes.byteLength);
-  assert.equal(summary.chunk_count, 1);
-  assert.equal(api.records.length, 1);
-  assert.equal(api.records[0].type, 'communication_response_chunk');
-  assert.equal(api.records[0].data.chunk_ordinal, 1);
-  assert.equal(api.records[0].data.data, text);
+  assert.equal(summary.raw_chunk_count, 1);
+  assert.equal(summary.chunk_count, 0);
+  assert.equal(api.records.length, 0);
 });
 
-test('aborted cloned response stream flushes final remainder after full persisted chunks', async () => {
+test('aborted cloned response over the output threshold never commits staged fragments', async () => {
   const api = issue132StreamBodyHarness();
-  const text = 'x'.repeat((256 * 1024) + 4096);
-  const bytes = new TextEncoder().encode(text);
+  const bytes = new TextEncoder().encode('x'.repeat((256 * 1024) + 4096));
   const summary = await api.communicationLogStreamBody(
-    issue132Body([
-      { value: bytes },
-      { error: 'BodyStreamBuffer was aborted' }
-    ]),
-    'communication_response_chunk',
-    { transport: 'fetch', network_sequence: 18 }
+    issue132Body([{ value: bytes }, { error: 'BodyStreamBuffer was aborted' }]),
+    'communication_response_chunk', { transport: 'fetch', network_sequence: 18 }
   );
-
   assert.equal(summary.body_incomplete, true);
-  assert.equal(summary.error_message, 'BodyStreamBuffer was aborted');
   assert.equal(summary.byte_count, bytes.byteLength);
-  assert.equal(summary.chunk_count, 2);
-  assert.deepEqual(Array.from(api.records, record => record.data.chunk_ordinal), [1, 2]);
-  assert.equal(Array.from(api.records, record => record.data.data).join(''), text);
+  assert.equal(summary.chunk_count, 0);
+  assert.equal(api.records.length, 0);
 });
 
 test('aborted cloned response stream before any bytes reports zero counts without fabricating a chunk', async () => {
@@ -352,7 +342,7 @@ test('aborted cloned response stream before any bytes reports zero counts withou
   );
 
   assert.equal(summary.body_incomplete, true);
-  assert.equal(summary.error_message, 'BodyStreamBuffer was aborted');
+  assert.equal(summary.error_message, 'body-stream-read-failed');
   assert.equal(summary.byte_count, 0);
   assert.equal(summary.chunk_count, 0);
   assert.equal(api.records.length, 0);
@@ -387,4 +377,110 @@ test('occupied alternate is preflighted before an oversized active writer is clo
     'Reload/recording must not close and recreate Chromium crswap while the alternate is occupied.');
   assert.match(seal, /if \(!alternate\)[\s\S]*return null/,
     'An occupied alternate must defer rotation without touching the current writer.');
+});
+
+function issue301ProductionEncoderHarness() {
+  const context = {
+    COMMUNICATION_LOG_BODY_CHUNK_CHARS: 2048,
+    TextDecoder, TextEncoder, crypto: webcrypto,
+    Uint8Array, DataView, atob, btoa, URL,
+    rawHeadersToObject: headers => headers, boundedDiagnosticText: value => value,
+    location: { href: 'https://chatgpt.com/', origin: 'https://chatgpt.com' }
+  };
+  vm.runInNewContext(
+    diskHarnessSource() + '\nthis.__records = [];\n' +
+    'communicationLogRecord = async (type, data) => {\n' +
+    '  this.__records.push({ type, data });\n};\n' +
+    'this.__stream = communicationLogStreamBody;\n' +
+    'this.__textBody = communicationLogTextBody;\n' +
+    'this.__headers = communicationLogSafeHeaders;',
+    context
+  );
+  return {
+    records: context.__records, stream: context.__stream,
+    textBody: context.__textBody, headers: context.__headers
+  };
+}
+
+test('V1 production stream redacts credentials without additional requests', async () => {
+  const api = issue301ProductionEncoderHarness();
+  const raw = '{"credential":"550e8400-e29b-41d4-a716-446655440000","ordinary":"[ok]"}';
+  const bytes = new TextEncoder().encode(raw);
+  const summary = await api.stream(issue132Body([
+    { value: bytes.slice(0, 17) },
+    { value: bytes.slice(17, 38) },
+    { value: bytes.slice(38) },
+    { done: true }
+  ]), 'communication_response_chunk', {
+    content_type: 'application/json', transport: 'fetch', network_sequence: 301
+  });
+  assert.equal(summary.redaction_failed, undefined);
+  assert.equal(summary.byte_count, bytes.byteLength);
+  assert.equal(summary.raw_chunk_count, 3);
+  assert.equal(summary.chunk_count, 1);
+  const safe = api.records.map(item => item.data.data).join('');
+  assert.equal(safe.includes('550e8400-e29b-41d4-a716-446655440000'), false);
+  assert.match(JSON.parse(safe).credential, /^\[[0-9a-f]{32}\/U\/[0-9a-f]{48}\]$/);
+  assert.equal(JSON.parse(safe).ordinary, '[ok]');
+  assert.equal(api.records[0].data.redaction_format, 'dc-secret-marker/1');
+  assert.match(api.records[0].data.redaction_scope, /^[a-f0-9]{32}$/);
+});
+
+test('streaming parser never commits preceding chunks on late malformed JSON', async () => {
+  const api = issue301ProductionEncoderHarness();
+  const raw = '{"credential":"550e8400-e29b-41d4-a716-446655440000","data":' +
+    JSON.stringify('normal text '.repeat(2000)) + ',"secret":"unrecognized plain credential"}';
+  const bytes = new TextEncoder().encode(raw);
+  const summary = await api.stream(issue132Body([
+    { value: bytes.slice(0, 8000) },
+    { value: bytes.slice(8000) },
+    { done: true }
+  ]), 'communication_response_chunk', {
+    content_type: 'application/json', transport: 'fetch', network_sequence: 302
+  });
+  assert.equal(summary.redaction_failed, true);
+  assert.equal(summary.byte_count, bytes.length);
+  assert.equal(summary.chunk_count, 0);
+  assert.equal(api.records.length, 0);
+});
+
+test('materialized WebSocket/XHR JSON failure never persists secret fragments', async () => {
+  const api = issue301ProductionEncoderHarness();
+  const source = '{"token":"550e8400-e29b-41d4-a716-446655440000","password":"not supported"}';
+  const summary = await api.textBody(source, 'communication_request_chunk', {
+    transport: 'websocket', content_type: 'application/json'
+  });
+  assert.equal(summary.redaction_failed, true);
+  assert.equal(summary.chunk_count, 0);
+  assert.equal(api.records.length, 0);
+});
+
+test('sensitive headers with unsupported values are omitted without source leakage', async () => {
+  const api = issue301ProductionEncoderHarness();
+  const safe = await api.headers({
+    authorization: 'Bearer unrecognized SECRET header',
+    'x-request-id': '550e8400-e29b-41d4-a716-446655440000',
+    'content-type': 'application/json'
+  });
+  assert.equal(safe.authorization, null);
+  assert.equal(safe['content-type'], 'application/json');
+  assert.match(safe['x-request-id'], /^\[[0-9a-f]{32}\/U\/[0-9a-f]{48}\]$/);
+  assert.equal(JSON.stringify(safe).includes('unrecognized SECRET header'), false);
+});
+
+test('actual producer processes >1MiB SSE input preserving original stream byte count', async () => {
+  const api = issue301ProductionEncoderHarness();
+  const text = 'data: {"ordinary":"hello world"}\n\n'.repeat(32000);
+  const bytes = new TextEncoder().encode(text);
+  assert.ok(bytes.length > 1024 * 1024);
+  const summary = await api.stream(issue132Body([
+    { value: bytes }, { done: true }
+  ]), 'communication_response_chunk', {
+    content_type: 'text/event-stream', transport: 'fetch', network_sequence: 304
+  });
+  assert.equal(summary.redaction_failed, undefined);
+  assert.equal(summary.byte_count, bytes.length);
+  assert.equal(summary.raw_chunk_count, 1);
+  assert.ok(summary.chunk_count > 1);
+  assert.equal(api.records.map(row => row.data.data).join(''), text);
 });

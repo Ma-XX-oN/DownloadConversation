@@ -78,11 +78,11 @@ test(
         'src/userscript/02-network-communication/06-segment-snapshot.js',
         'src/userscript/02-network-communication/06-comm-version-boundary.js',
         'src/userscript/02-network-communication/06-segment-duplicate.js',
-        'src/userscript/02-network-communication/04-communication-redaction.js'
+        'src/userscript/02-network-communication/04a-marker-encoder.js'
       ],
       'identity and segment runtime must remain at verified top-level source boundaries'
     );
-    assert.equal(sourcePaths.length, 75);
+    assert.equal(sourcePaths.length, 77);
     assert.equal(new Set(sourcePaths).size, sourcePaths.length);
     assert.ok(sourcePaths.every(sourcePath => {
       return sourcePath.startsWith('src/userscript/');
