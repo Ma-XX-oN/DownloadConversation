@@ -70,7 +70,7 @@ function harness({ pageWorks = true, sandboxWorks = true, messageError = null } 
     'class CompressorEncoder {}',
     'function __dcCompressorDecompress() {}',
     probe,
-    'globalThis.__dcCompressor = { Encoder: CompressorEncoder,',
+    'globalThis.__dcCompressor = { init: __dcCompressorInit, Encoder: CompressorEncoder,',
     'decompress: __dcCompressorDecompress,',
     "wasmGzipBase64: 'synthetic-gzip', _compression_level: 6 };",
     'this.runProbe = testWorkerZstdCsp;'
