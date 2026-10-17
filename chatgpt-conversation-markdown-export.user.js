@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         ChatGPT Conversation Markdown Recorder
 // @namespace    https://chatgpt.com/
-// @version      1.11.7-issue.127.19
+// @version      1.11.7-issue.127.20
 // @description  Exports the current ChatGPT conversation directly from the Conversation API as Markdown or JSONL.
 // @match        https://chatgpt.com/*
 // @match        https://chat.openai.com/*
@@ -20234,31 +20234,6 @@ Image elapsed: ${formatDuration(imageElapsed)} — Completed: ${imageCompleted}/
     return Boolean(aicc127Runtime?.pending.has(trace.sequence));
   }
 
-  /**
-   * Extracts only backend-authoritative subject fields from parsed JSON.
-   * The complete conversation is never stored in witness evidence.
-   * @param {Object} trace - Correlated request.
-   * @param {Object} value - Ephemeral parsed response.
-   * @returns {Object|null} Minimum provider input or null.
-   */
-  function aicc127LiveIdentityProjection(trace, value) {
-    if (!value || typeof value !== 'object' || Array.isArray(value)) return null;
-    const kind = aicc127LiveRequestKind(trace);
-    if (kind === 'conversation') {
-      if (typeof value.conversation_id !== 'string') return null;
-      const item = { conversation_id: value.conversation_id };
-      if (Object.hasOwn(value, 'title')) item.title = value.title;
-      if (Object.hasOwn(value, 'gizmo_id')) item.gizmo_id = value.gizmo_id;
-      return item;
-    }
-    if (kind === 'project' && value.gizmo &&
-        typeof value.gizmo.id === 'string') {
-      return { gizmo: {
-        id: value.gizmo.id, display: { name: value.gizmo.display?.name }
-      } };
-    }
-    return null;
-  }
 
   /**
    * Reads an already-cloned authenticated response without the diagnostic
@@ -20377,6 +20352,32 @@ Image elapsed: ${formatDuration(imageElapsed)} — Completed: ${imageCompleted}/
       });
     });
   }
+  /**
+   * Extracts only backend-authoritative subject fields from parsed JSON.
+   * The complete conversation is never stored in witness evidence.
+   * @param {Object} trace - Correlated request.
+   * @param {Object} value - Ephemeral parsed response.
+   * @returns {Object|null} Minimum provider input or null.
+   */
+  function aicc127LiveIdentityProjection(trace, value) {
+    if (!value || typeof value !== 'object' || Array.isArray(value)) return null;
+    const kind = aicc127LiveRequestKind(trace);
+    if (kind === 'conversation') {
+      if (typeof value.conversation_id !== 'string') return null;
+      const item = { conversation_id: value.conversation_id };
+      if (Object.hasOwn(value, 'title')) item.title = value.title;
+      if (Object.hasOwn(value, 'gizmo_id')) item.gizmo_id = value.gizmo_id;
+      return item;
+    }
+    if (kind === 'project' && value.gizmo &&
+        typeof value.gizmo.id === 'string') {
+      return { gizmo: {
+        id: value.gizmo.id, display: { name: value.gizmo.display?.name }
+      } };
+    }
+    return null;
+  }
+
   /** Test-only checkpoint key; salt and fingerprints never export. */
   const AICC127_NAV_KEY = 'dc-issue127-navigation-checkpoint';
   /**
