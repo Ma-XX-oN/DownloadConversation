@@ -6,12 +6,12 @@
     {
       "name": "AIConversationCore",
       "repository": "Ma-XX-oN/AIConversationCore",
-      "ref": "main",
-      "commit": "9e18441a1f68a1cac5ebb6e20dead945dd36d7dd",
+      "ref": "issue-127-core-convergence-v1",
+      "commit": "80b3e1354005e381c4fc1a81a26be3c45b45dd30",
       "path": "dist/aiconversationcore.chatgpt.browser.js",
-      "url": "https://raw.githubusercontent.com/Ma-XX-oN/AIConversationCore/9e18441a1f68a1cac5ebb6e20dead945dd36d7dd/dist/aiconversationcore.chatgpt.browser.js",
-      "git_blob_sha1": "47efb4f379f5bb27ae710a53d1cb84388aeeb1a2",
-      "byte_length": 282178
+      "url": "https://raw.githubusercontent.com/Ma-XX-oN/AIConversationCore/80b3e1354005e381c4fc1a81a26be3c45b45dd30/dist/aiconversationcore.chatgpt.browser.js",
+      "git_blob_sha1": "3ca1895a997c8c5c493371359275381ee18d66b9",
+      "byte_length": 282215
     }
   ],
   "modules": [
