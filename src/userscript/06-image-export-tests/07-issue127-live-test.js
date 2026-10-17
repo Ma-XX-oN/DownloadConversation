@@ -56,7 +56,10 @@
     try { return await aicc127StartPending; }
     finally { aicc127StartPending = null; }
   }
-  /** Builds the single staged observer and host bridge. */
+  /**
+   * Builds the single staged observer and host bridge.
+   * @returns {Promise<Object>} Runtime state.
+   */
   async function aicc127StartImpl() {
     if (aicc127Runtime) return aicc127Runtime;
     const core = canonicalCore();
