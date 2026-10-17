@@ -55,6 +55,7 @@ function fixture(withNavigation = true) {
   };
   const events = [];
   const instances = [];
+  let witnessCalls = 0;
   const agent = {
     version: () => ({ plugin: 'chatgpt-web', version: 'provider-v1' }),
     publishSubjectIdentity(value) { events.push(value); }
@@ -116,6 +117,8 @@ function fixture(withNavigation = true) {
     chatGPTSubjectHost: null,
     disconnectChatGPTNavigation: null,
     chatGPTPluginModule: module,
+    aicc127Runtime: {},
+    aicc127NavigationChanged: () => { witnessCalls++; },
     importAgentPluginModule: async () => module,
     canonicalCore: () => ({ loadAgent: async () => ({
       agent, session: { events: [] }
@@ -129,6 +132,7 @@ function fixture(withNavigation = true) {
   vm.runInNewContext(navigation + '\n' + methods + '\nthis.api = {ensureChatGPTCanonicalAgent, reconnectChatGPTSubjectHost, agentPluginObserveNetworkRequest, agentPluginObserveFetchResponse, agentPluginObserveXhrResponse, disconnectChatGPTSubjectHost};', context);
   return {
     api: context.api, events, instances, browser, listeners, navListeners,
+    get witnessCalls() { return witnessCalls; },
     route(path) { browser.history.pushState({}, '', path); },
     pageRestore() { context.api.reconnectChatGPTSubjectHost(); }
   };
@@ -243,4 +247,15 @@ test('assembled userscript contains exact public Core catalogue pin for private 
   ]) {
     assert.ok(generated.includes(expected), 'Assembled Core/provider pin missing: ' + expected);
   }
+});
+
+test('shared browser History fallback forwards route to active AICC live witness once', async () => {
+  const f = fixture();
+  await f.api.ensureChatGPTCanonicalAgent();
+  const before = f.witnessCalls;
+  f.route('/c/11111111-1111-4111-8111-111111111111');
+  assert.equal(f.witnessCalls, before + 1);
+  f.api.disconnectChatGPTSubjectHost();
+  f.route('/c/22222222-2222-4222-8222-222222222222');
+  assert.equal(f.witnessCalls, before + 1, 'Disposed host cannot notify witness.');
 });

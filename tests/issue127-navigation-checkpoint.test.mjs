@@ -100,7 +100,7 @@ function createHarness(shared = new Map(), useSharedHost = false) {
   vm.runInNewContext(source + `
     globalThis.capture = {start:aicc127Start, request:aicc127LiveOnRequest,
       response:aicc127LiveOnFetchResponse, navigation:testAicc127Navigation,
-      evidence:aicc127MinimalEvidence};`, context);
+      evidence:aicc127MinimalEvidence, navEvent:aicc127NavigationChanged};`, context);
   function publishCurrent() {
     subscriber?.({ readiness: 'resolved',
       conversation: { status: 'identified', id: state.id, name: state.title },
@@ -112,14 +112,16 @@ function createHarness(shared = new Map(), useSharedHost = false) {
     state.id = id; state.title = title; state.visibleTitle = title;
     state.project = project;
     state.projectId = 'g-p-' + (project ? id : 'none');
-    listeners.get('currententrychange')?.();
+    if (useSharedHost) context.capture.navEvent();
+    else listeners.get('currententrychange')?.();
     if (publish) publishCurrent();
   }
   async function visit(id, title, project, sequence, visibleTitle = title) {
     state.id = id; state.title = title; state.visibleTitle = visibleTitle;
     state.project = project;
     state.projectId = 'g-p-' + (project ? id : 'none');
-    listeners.get('currententrychange')?.();
+    if (useSharedHost) context.capture.navEvent();
+    else listeners.get('currententrychange')?.();
     const trace = {sequence, method:'GET',
       url:'/backend-api/conversations/' + id};
     context.capture.request(trace);

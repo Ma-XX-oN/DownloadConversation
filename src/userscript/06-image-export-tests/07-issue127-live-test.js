@@ -90,7 +90,7 @@
       aicc127NavigationRefreshFromObserver();
     }, 'subject-identification');
     aicc127BeginForCurrentConversation();
-    if (typeof window !== 'undefined') {
+    if (typeof window !== 'undefined' && !state.sharedHost) {
       const target = window.navigation?.addEventListener ? window.navigation : window;
       state.navigationEvent = target === window ? 'popstate' : 'currententrychange';
       target.addEventListener(state.navigationEvent, aicc127NavigationChanged);

@@ -269,6 +269,9 @@
         event => {
           try {
             host.navigation(event);
+            // Reuse the one provider-neutral navigation observer for staged witness.
+            if (typeof aicc127Runtime !== 'undefined' && aicc127Runtime)
+              aicc127NavigationChanged();
           } catch (error) {
             logDiagnostic('warnings', 'agent-plugin-navigation-publish-failed', {
               error: boundedDiagnosticText(errorMessage(error), 200)
