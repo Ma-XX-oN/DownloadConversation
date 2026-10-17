@@ -182,7 +182,7 @@
   async function cscProbeWorkerTask(realm, task, transfer = []) {
     assert(typeof realm?.Worker === 'function', 'Worker constructor unavailable.');
     const url = realm.URL.createObjectURL(new realm.Blob(
-      ["'use strict';", '(' + cscProbeWorkerEntrypoint.toString() + ')();'].join('\n'),
+      [["'use strict';", '(' + cscProbeWorkerEntrypoint.toString() + ')();'].join('\n')],
       { type: 'text/javascript' }
     ));
     let worker = null;
@@ -251,6 +251,7 @@
       metadata: { url: 'https://example.invalid/csc-synthetic', status: 200 },
       body, expected_bytes: length, delay_ms: 120
     }, [body]);
+    assert(body.locked, 'Stream was not locked on transfer.');
     const originalBytes = new Uint8Array(await original.arrayBuffer());
     assert(originalBytes.byteLength === length, 'Original ' + kind + ' lost bytes.');
     for (let i = 0; i < originalBytes.length; i += 1) {
@@ -258,7 +259,6 @@
         'Original ' + kind + ' changed at byte ' + i);
     }
     const result = await transferred;
-    assert(body.locked, 'Stream ownership was not transferred.');
     assert(result.bytes === length && !result.cancelled,
       'Worker did not confirm exact transferred stream.');
     return kind + ' ' + result.bytes + ' bytes exact/stock intact';

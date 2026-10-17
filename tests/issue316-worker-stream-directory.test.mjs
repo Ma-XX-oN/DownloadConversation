@@ -126,6 +126,7 @@ test('#316 has one opt-in Test row, no start-up invocation or new network reques
   assert.match(source, /cloneSafely\(original\)/);
   assert.match(source, /\[body\]/);
   assert.match(source, /showDirectoryPicker\(\{ mode: 'readwrite' \}\)/);
+  assert.match(registry, /if \(name === 'CSC Worker stream \+ directory'\) continue;/);
   assert.doesNotMatch(source, /GM_xmlhttpRequest|fetch\s*\(|send\s*\(|\.text\s*\(/);
 });
 

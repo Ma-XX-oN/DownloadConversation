@@ -220,6 +220,8 @@
     refreshTestMatrix();
     try {
       for (const [name, fn] of builtInTests()) {
+        // Directory selection requires an explicit, individual Run gesture.
+        if (name === 'CSC Worker stream + directory') continue;
         await executeBuiltInTest(name, fn);
       }
     } finally {
