@@ -147,3 +147,42 @@ test('two independent tabs do not exchange navigation or recording identities', 
   closeOne();
   closeTwo();
 });
+
+test('failed Navigation API registration restores History API and popstate listener', () => {
+  const f = fixture();
+  f.browser.navigation.addEventListener = () => {
+    throw new Error('navigation permission denied');
+  };
+  assert.throws(() => f.connect(), /navigation permission denied/);
+  assert.equal(f.originals(), true);
+  assert.equal(f.listeners.size, 0);
+  f.browser.history.pushState(null, '', '/b');
+  assert.deepEqual(f.emitted, []);
+});
+
+test('failed initial publication cleans up an otherwise completed registration', () => {
+  const f = fixture();
+  const sourceWithFailure = source +
+    '\nthis.observe = observeGenericBrowserNavigation;';
+  const context = { assert, Reflect };
+  vm.runInNewContext(sourceWithFailure, context);
+  assert.throws(() => context.observe(f.browser, () => {
+    throw new Error('subscriber rejected initial route');
+  }), /subscriber rejected initial route/);
+  assert.equal(f.originals(), true);
+  assert.equal(f.listeners.size, 0);
+  assert.equal(f.navListeners.size, 0);
+});
+
+test('a failed History API assignment does not leak the successful first wrapper', () => {
+  const f = fixture(false);
+  const original = f.browser.history.replaceState;
+  Object.defineProperty(f.browser.history, 'replaceState', {
+    configurable: true,
+    get() { return original; },
+    set() { throw new Error('history is readonly'); }
+  });
+  assert.throws(() => f.connect(), /history is readonly/);
+  assert.equal(f.originals(), true);
+  assert.equal(f.listeners.size, 0);
+});
