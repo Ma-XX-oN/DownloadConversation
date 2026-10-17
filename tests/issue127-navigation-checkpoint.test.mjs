@@ -9,10 +9,11 @@ const source = readFileSync(new URL(
 
 function createHarness(shared = new Map()) {
   const state = { id: 'A', title: 'Conversation A', project: 'Project A',
-    projectId: 'g-p-A' };
+    projectId: 'g-p-A', projectNamePending: false };
   const pending = new Map();
   const listeners = new Map();
   let subscriber;
+  let lastConversation = null;
   const agent = {
     version: () => ({ version: '0.1.0-issue.1.21' }),
     observeState(callback) {
@@ -26,19 +27,28 @@ function createHarness(shared = new Map()) {
   const module = {
     connectChatGPTSubjectHost() {
       return {
-        begin() { pending.clear(); },
+        begin() { pending.clear(); lastConversation = null; },
         request({ network_sequence, request_url }) {
           pending.set(network_sequence, request_url); return true;
         },
         response({ network_sequence, body }) {
+          const url = pending.get(network_sequence);
           if (!pending.delete(network_sequence)) return false;
+          if (url.includes('/gizmos/')) {
+            if (lastConversation) subscriber?.({ readiness: 'resolved',
+              conversation: { status: 'identified', ...lastConversation },
+              project: { status: 'identified', id: state.projectId,
+                name: state.project } });
+            return true;
+          }
+          lastConversation = { id: body.conversation_id, name: body.title };
           subscriber?.({ readiness: 'resolved',
             conversation: { status: 'identified',
               id: body.conversation_id, name: body.title },
             project: body.gizmo_id === null
               ? { status: 'none', id: null, name: null }
               : { status: 'identified', id: body.gizmo_id,
-                  name: state.project } });
+                  name: state.projectNamePending ? null : state.project } });
           return true;
         }
       };
@@ -136,4 +146,20 @@ test('sessionStorage checkpoint survives reload without publishing private names
   assert.equal(resumed.f.evidence().reload_count, 1);
   assert.equal(resumed.f.evidence().navigation_steps.length, 1);
   assert.ok(!JSON.stringify(resumed.f.evidence()).includes('Conversation A'));
+});
+
+test('late project-name publication upgrades already observed conversation step', async () => {
+  const h = createHarness();
+  h.state.projectNamePending = true;
+  await h.f.start();
+  await h.visit('A', 'Conversation A', 'Project A', 1);
+  assert.equal(h.f.evidence().navigation_steps[0].observer_matches_backend, false);
+  const trace = { sequence: 2, method: 'GET',
+    url: '/backend-api/gizmos/g-p-A' };
+  h.f.request(trace);
+  h.f.response(trace, 200, { text: JSON.stringify({
+    gizmo: { id: 'g-p-A', display: { name: 'Project A' } }
+  }), truncated: false });
+  assert.equal(h.f.evidence().navigation_steps[0].observer_matches_backend, true);
+  assert.equal(h.f.evidence().navigation_steps[0].visible_project_match, true);
 });
