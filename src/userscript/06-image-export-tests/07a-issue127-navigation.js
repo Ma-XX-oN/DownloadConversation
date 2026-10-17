@@ -2,7 +2,7 @@
   const AICC127_NAV_KEY = 'dc-issue127-navigation-checkpoint';
   /**
    * Hashes a local label with a per-tab salt.
-    * @param {string} value - Identity or display label.
+   * @param {string} value - Identity or display label.
    * @param {string} salt - Tab-scoped salt.
    * @returns {string} Nonreversible local fingerprint.
    */
@@ -15,7 +15,7 @@
   }
   /**
    * Restores a bounded same-tab checkpoint after reload.
-    * @returns {Object} Existing checkpoint or new state.
+   * @returns {Object} Existing checkpoint or new state.
    */
   function aicc127NavigationCheckpoint() {
     try {
@@ -30,7 +30,7 @@
   }
   /**
    * Persists fingerprints apart from redacted export.
-    * @returns {void} No value.
+   * @returns {void} No value.
    */
   function aicc127SaveNavigation() {
     const state = aicc127Runtime;
@@ -52,14 +52,14 @@
   // Navigation API is the primary SPA signal; request ingress is the fallback.
   /**
    * Captures SPA navigation on route change.
-    * @returns {void} No value.
+   * @returns {void} No value.
    */
   function aicc127NavigationChanged() {
     aicc127BeginForCurrentConversation();
   }
   /**
    * Records A, B and restored A slots.
-    * @param {string} id - Current conversation ID (local only).
+   * @param {string} id - Current conversation ID (local only).
    * @returns {void} No value.
    */
   function aicc127NavigationVisit(id) {
@@ -80,7 +80,7 @@
   }
   /**
    * Compares observer values with visible labels.
-    * @param {Object} snapshot - Current observer state.
+   * @param {Object} snapshot - Current observer state.
    * @returns {Object} Comparison flags without private labels.
    */
   function aicc127VisibleComparison(snapshot) {
@@ -129,7 +129,7 @@
   }
   /**
    * Correlates backend, observer and visible labels.
-    * @param {string} kind - Endpoint classification.
+   * @param {string} kind - Endpoint classification.
    * @param {Object} body - Ephemeral identity payload.
    * @param {boolean} accepted - Whether the provider accepted the event.
    * @param {number} before - Previous snapshot count.
@@ -163,7 +163,7 @@
   }
   /**
    * Checks the A to B to A navigation test.
-    * @returns {Promise<Object|undefined>} Incomplete detail or PASS.
+   * @returns {Promise<Object|undefined>} Incomplete detail or PASS.
    */
   async function testAicc127Navigation() {
     await aicc127Start();
