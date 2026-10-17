@@ -1,0 +1,37 @@
+{
+  "format": "dc-secret-marker/2",
+  "fixture_version": 2,
+  "synthetic_only": true,
+  "public_test_keys_only": true,
+  "secret": "Aé界𐐀",
+  "type": "O",
+  "params": "1234",
+  "generations": [
+    {
+      "epoch": 1,
+      "scope": "00112233445566778899aabbccddeeff",
+      "key_hex": "000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f",
+      "id": "9d3f1627b52faacb890d379407303a69afe844186da05371",
+      "check": "189db1163cef21040f2a9e9b14e41c84"
+    },
+    {
+      "epoch": 2,
+      "scope": "ffeeddccbbaa99887766554433221100",
+      "key_hex": "202122232425262728292a2b2c2d2e2f303132333435363738393a3b3c3d3e3f",
+      "id": "aeb658a2a5374443a815d742c48d606e969e25cc0dc2a646",
+      "check": "4382b61b36e19915132063b4590567ce"
+    }
+  ],
+  "scenarios": [
+    "same generation across two tabs and reload",
+    "new generation after rotation",
+    "invalid epoch",
+    "scope generation mismatch",
+    "missing metadata",
+    "legacy opaque",
+    "unknown version",
+    "tampered checksum",
+    "all marker split points",
+    "unicode width"
+  ]
+}
