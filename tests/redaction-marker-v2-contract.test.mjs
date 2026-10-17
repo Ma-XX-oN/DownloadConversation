@@ -73,6 +73,25 @@ for (const vector of v1.vectors) {
     params: vector.params === null ? undefined : vector.params
   });
 }
+for (let i = 0; i < v1.vectors.length; i++) {
+  const source = v1.vectors[i];
+  const rotated = fixture.rotated_vectors[i];
+  assert.equal(rotated.type, source.type);
+  const actualId = digest(fixture.generations[1].key_hex, source.original);
+  assert.equal(actualId, rotated.id);
+  const body = source.type + '/' + actualId +
+    (source.params === null ? '' : '/' + source.params);
+  assert.equal(checksum(body), rotated.check);
+  assert.notEqual(rotated.id, source.id);
+}
+assert.deepEqual(fixture.channels.map((c) => c.context), [
+  'http.header.value', 'http.query.value', 'json.string',
+  'sse.data.json.string', 'ws.text.json.string',
+  'text.plain', 'ws.binary'
+]);
+assert.equal(fixture.race_cases.length, 10);
+assert.equal(fixture.channels[5].expected, 'UNINSPECTED_OR_UNSUPPORTED');
+assert.equal(fixture.channels[6].expected, 'UNINSPECTED_OR_UNSUPPORTED');
 assert.equal(parseMarker('[redacted]'), null);
 assert.equal(parseMarker(markers[0].replace('/O/', '/Z/')), null);
 console.log('PASS: V2 independent HMAC/checksum, reload, rotation, Unicode, splits and negatives');
