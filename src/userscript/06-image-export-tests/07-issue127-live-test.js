@@ -12,7 +12,6 @@
   let aicc127Runtime = null;
   /** Tab-scoped explicit opt-in retained across ChatGPT page reloads. */
   const AICC127_ARMED_KEY = 'dc-issue127-live-armed';
-
   /**
    * Constructs the redacted per-tab witness record without names or IDs.
    *
@@ -33,7 +32,6 @@
       captures: [], navigation_count: 0, notes: 'Existing page traffic only; names, IDs, messages and credentials omitted'
     };
   }
-
   /**
    * Persists the bounded privacy-minimized witness across test invocations.
    *
@@ -46,8 +44,6 @@
         JSON.stringify(aicc127Runtime.evidence));
     } catch {}
   }
-
-
   // Test-only navigation checkpoint.  The salt and fingerprints never export.
   const AICC127_NAV_KEY = 'dc-issue127-navigation-checkpoint';
   function aicc127Fingerprint(value, salt) {
@@ -57,7 +53,6 @@
     }
     return (hash >>> 0).toString(16);
   }
-
   function aicc127NavigationCheckpoint() {
     try {
       const prior = JSON.parse(sessionStorage.getItem(AICC127_NAV_KEY) || 'null');
@@ -69,7 +64,6 @@
       salt: Math.random().toString(36).slice(2) + Date.now().toString(36),
       steps: [], reload_count: 0 };
   }
-
   function aicc127SaveNavigation() {
     const state = aicc127Runtime;
     if (!state?.navigation) return;
@@ -87,12 +81,10 @@
     state.evidence.reload_count = state.navigation.reload_count;
     aicc127SaveEvidence();
   }
-
   // Navigation API is the primary SPA signal; request ingress is the fallback.
   function aicc127NavigationChanged() {
     aicc127BeginForCurrentConversation();
   }
-
   function aicc127NavigationVisit(id) {
     const state = aicc127Runtime;
     if (!state?.navigation) return;
