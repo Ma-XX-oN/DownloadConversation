@@ -6,6 +6,7 @@
 
   document.addEventListener('click', captureConversationClickDiagnostic, true);
   window.addEventListener('pagehide', () => {
+    disconnectChatGPTSubjectHost();
     finishConversationClickDiagnostic(activeClickDiagnostic, 'pagehide');
     if (diagnosticPersistTimer !== null) {
       clearTimeout(diagnosticPersistTimer);
