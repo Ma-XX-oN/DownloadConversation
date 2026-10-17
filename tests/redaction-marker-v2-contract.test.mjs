@@ -26,7 +26,9 @@ const parseMarker = (text) => {
   const body = type + '/' + id + (params === undefined ? '' : '/' + params);
   return checksum(body) === check ? { type, id, params } : null;
 };
-const validMetadata = (g) => Number.isSafeInteger(g.epoch) &&
+const validMetadata = (g) => g.format === 'dc-secret-marker/2' &&
+  g.storage === 'tampermonkey-script-installation' &&
+  Number.isSafeInteger(g.epoch) &&
   g.epoch > 0 && /^[0-9a-f]{32}$/.test(g.scope) &&
   g.scope === g.generation;
 assert.equal(fixture.format, 'dc-secret-marker/2');
@@ -35,7 +37,9 @@ assert.equal(Buffer.byteLength(fixture.secret), 10);
 assert.equal(fixture.secret.length, 5);
 const markers = [];
 for (const generation of fixture.generations) {
-  const metadata = { ...generation, generation: generation.scope };
+  const metadata = { ...generation, format: fixture.format,
+    storage: 'tampermonkey-script-installation',
+    generation: generation.scope };
   assert.ok(validMetadata(metadata));
   const id = digest(generation.key_hex, fixture.secret);
   const body = fixture.type + '/' + id + '/' + fixture.params;
@@ -62,6 +66,26 @@ assert.equal(validMetadata({ epoch: 1, scope: fixture.generations[0].scope,
   generation: fixture.generations[1].scope }), false);
 assert.equal(validMetadata({ epoch: 1, scope: undefined,
   generation: fixture.generations[0].scope }), false);
+for (const bad of [
+  { format: 'dc-secret-marker/1' },
+  { format: 'dc-secret-marker/3' },
+  { storage: 'unknown' },
+  { epoch: 0 },
+  { epoch: Number.MAX_SAFE_INTEGER + 1 },
+  { scope: 'A'.repeat(32) },
+  { generation: 'f'.repeat(32) }
+]) {
+  const source = fixture.generations[0];
+  const metadata = {
+    format: fixture.format,
+    storage: 'tampermonkey-script-installation',
+    epoch: source.epoch,
+    scope: source.scope,
+    generation: source.scope,
+    ...bad
+  };
+  assert.equal(validMetadata(metadata), false);
+}
 assert.equal(fixture.scenarios.length, 10);
 for (const vector of v1.vectors) {
   assert.equal(digest(v1.test_hmac_key_hex, vector.original), vector.id);
