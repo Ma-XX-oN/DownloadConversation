@@ -120,11 +120,14 @@
     });
     const visibleConversation = String(sidebar?.textContent || '').trim();
     const normalized = text => String(text).trim().toLocaleLowerCase();
+    const visibleSidebarMatch = !visibleConversation ||
+      normalized(visibleConversation) === normalized(conversation);
+    const visibleTitleMatch = !visibleTitle ||
+      normalized(visibleTitle) === normalized(conversation) ||
+      normalized(visibleTitle).startsWith(normalized(conversation) + ' - ');
     const conversationMatch = !conversation ? null :
-      (visibleConversation ? normalized(visibleConversation) === normalized(conversation)
-        : visibleTitle ? normalized(visibleTitle) === normalized(conversation) ||
-          normalized(visibleTitle).startsWith(normalized(conversation) + ' - ')
-          : null);
+      !visibleConversation && !visibleTitle ? null :
+        visibleSidebarMatch && visibleTitleMatch;
     const breadcrumb = [...document.querySelectorAll(
       'nav[aria-label="Breadcrumb"] a[href]')].find(anchor => {
       try {
@@ -225,7 +228,7 @@
       target.addEventListener(state.navigationEvent, aicc127NavigationChanged);
     }
     sessionStorage.setItem(AICC127_ARMED_KEY, 'true');
-    aicc127SaveEvidence();
+    aicc127SaveNavigation();
     return state;
   }
 
