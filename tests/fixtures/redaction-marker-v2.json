@@ -33,5 +33,88 @@
     "tampered checksum",
     "all marker split points",
     "unicode width"
+  ],
+  "rotated_vectors": [
+    {
+      "type": "U",
+      "id": "9573219ead976f0f8988fc6638ccb88afa368e6b8adb24c0",
+      "check": "126701366aa059153064a4322937a334"
+    },
+    {
+      "type": "P",
+      "id": "6a5721b0e7ec0c3dcf617cc5290c4127c59d4463d9fefd30",
+      "check": "1f12bcc1f357ee83ad66addfc870429f"
+    },
+    {
+      "type": "H",
+      "id": "7d6a0fbb38ceb59cffc21ea2f1e98768b8537e56c292c537",
+      "check": "656443df82a904f5afc24c99e4666822"
+    },
+    {
+      "type": "B",
+      "id": "9fdaaca5927a7cd3943287b3d00234508ee5bbe4239e651b",
+      "check": "1ecaeb0c5797152bb7837cfe09eabcee"
+    },
+    {
+      "type": "J",
+      "id": "724072a721d8605dea8ee119c4a4a79015dd4ca71e4f4fc3",
+      "check": "5e88eb1fe6ac6f59c8b6221939e14943"
+    },
+    {
+      "type": "O",
+      "id": "aeb658a2a5374443a815d742c48d606e969e25cc0dc2a646",
+      "check": "4382b61b36e19915132063b4590567ce"
+    }
+  ],
+  "channels": [
+    {
+      "context": "http.header.value",
+      "field": "X-Synthetic-Credential",
+      "type": "U"
+    },
+    {
+      "context": "http.query.value",
+      "field": "synthetic",
+      "type": "B"
+    },
+    {
+      "context": "json.string",
+      "field": "credential",
+      "type": "P"
+    },
+    {
+      "context": "sse.data.json.string",
+      "field": "synthetic",
+      "type": "H"
+    },
+    {
+      "context": "ws.text.json.string",
+      "field": "synthetic",
+      "type": "J"
+    },
+    {
+      "context": "text.plain",
+      "field": "opaque-explicit-only",
+      "type": "O",
+      "expected": "UNINSPECTED_OR_UNSUPPORTED"
+    },
+    {
+      "context": "ws.binary",
+      "field": "opaque",
+      "type": "O",
+      "expected": "UNINSPECTED_OR_UNSUPPORTED"
+    }
+  ],
+  "race_cases": [
+    "two tabs initialize while record absent",
+    "two tabs concurrently Randomize",
+    "old-tab capture after rotated generation",
+    "lock stolen or timed out",
+    "cross-origin chatgpt.com vs chat.openai.com without common authority",
+    "storage missing partial and corrupt",
+    "ambiguous commit readback",
+    "key snapshot held during in-flight stream",
+    "worker failure after key provision",
+    "epoch overflow"
   ]
 }
