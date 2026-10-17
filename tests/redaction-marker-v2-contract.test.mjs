@@ -4,7 +4,6 @@ import { readFileSync } from 'node:fs';
 
 const fixture = JSON.parse(readFileSync(
   new URL('./fixtures/redaction-marker-v2.json', import.meta.url), 'utf8'));
-const hex = (bytes) => bytes.toString('hex');
 const digest = (key, value) => {
   const raw = Buffer.from(value, 'utf8');
   const length = Buffer.alloc(4);
@@ -16,6 +15,14 @@ const digest = (key, value) => {
 const checksum = (body) => createHash('sha256')
   .update(Buffer.from('DC-SECRET-MARKER-V1\0', 'utf8'))
   .update(body, 'ascii').digest('hex').slice(0, 32);
+const parseMarker = (text) => {
+  const match = /^\\[([0-9a-f]{32})\\/([UHBPJO])\\/([0-9a-f]{48})(?:\\/([a-z0-9,]{1,256}))?\\]$/
+    .exec(text);
+  if (!match) return null;
+  const [, check, type, id, params] = match;
+  const body = type + '/' + id + (params === undefined ? '' : '/' + params);
+  return checksum(body) === check ? { type, id, params } : null;
+};
 const validMetadata = (g) => Number.isSafeInteger(g.epoch) &&
   g.epoch > 0 && /^[0-9a-f]{32}$/.test(g.scope) &&
   g.scope === g.generation;
@@ -37,8 +44,11 @@ for (const generation of fixture.generations) {
   const reload = digest(generation.key_hex, fixture.secret);
   assert.equal(reload, id);
   for (let i = 0; i <= marker.length; i++) {
-    assert.equal(marker.slice(0, i) + marker.slice(i), marker);
+    assert.deepEqual(parseMarker(marker.slice(0, i) + marker.slice(i)),
+      { type: fixture.type, id, params: fixture.params });
   }
+  assert.equal(parseMarker(marker.replace(check, '0'.repeat(32))), null);
+  assert.equal(parseMarker(marker.replace('/1234]', '/01234]')), null);
   assert.notEqual(checksum('O/' + id + '/4321'), check);
 }
 assert.notEqual(markers[0], markers[1]);
