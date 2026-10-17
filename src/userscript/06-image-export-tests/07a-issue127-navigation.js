@@ -80,6 +80,18 @@
     if (nav.steps.length > 20) nav.steps.shift();
     aicc127SaveNavigation();
     aicc127NavigationRefreshFromObserver();
+    // The observer may publish before ChatGPT paints the new breadcrumb.
+    // Recheck visible labels only, never infer identity from those labels.
+    // Each callback is tied to this exact step to reject later navigation.
+    if (typeof setTimeout === 'function') {
+      const step = nav.steps.at(-1);
+      for (const delay of [350, 1100]) {
+        setTimeout(() => {
+          if (aicc127Runtime === state && nav.steps.at(-1) === step)
+            aicc127NavigationRefreshFromObserver();
+        }, delay);
+      }
+    }
   }
   /**
    * Compares observer values with visible labels.

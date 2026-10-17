@@ -12,6 +12,7 @@ function createHarness(shared = new Map(), useSharedHost = false) {
     projectId: 'g-p-A', projectNamePending: false };
   const pending = new Map();
   const listeners = new Map();
+  const delayed = [];
   let subscriber;
   let connectCalls = 0;
   let lastConversation = null;
@@ -80,6 +81,7 @@ function createHarness(shared = new Map(), useSharedHost = false) {
       removeEventListener(name) { listeners.delete(name); }
     } },
     document, URL, Date, Promise, Object, Set, Math, JSON, Blob, Response,
+    setTimeout(callback) { delayed.push(callback); },
     location: { origin: 'https://chatgpt.com',
       href: 'https://chatgpt.com/c/A' },
     sessionStorage: {
@@ -134,6 +136,7 @@ function createHarness(shared = new Map(), useSharedHost = false) {
     });
   }
   return { f: context.capture, state, visit, navigateWithoutBackend, shared,
+    flushVisualChecks() { while (delayed.length) delayed.shift()(); },
     get connectCalls() { return connectCalls; } };
 }
 
@@ -219,4 +222,20 @@ test('shared provider host is never re-created by witness on A-B-A', async () =>
   h.navigateWithoutBackend('A', 'Conversation A', 'Project A');
   assert.equal(h.connectCalls, 0, 'Only the existing #306 host may own the canonical agent.');
   assert.equal(await h.f.navigation(), undefined);
+});
+
+test('delayed visible-title render can recover, but cannot invent an observer update', async () => {
+  const h = createHarness(new Map(), true);
+  await h.f.start();
+  await h.visit('A', 'Conversation A', 'Project A', 10);
+  h.flushVisualChecks();
+  await h.visit('B', 'Conversation B', 'Project B', 11);
+  h.flushVisualChecks();
+  h.navigateWithoutBackend('A', 'Conversation A', 'Project A');
+  h.state.visibleTitle = 'Still rendering B';
+  assert.equal((await h.f.navigation()).status, 'INCOMPLETE');
+  h.state.visibleTitle = 'Conversation A';
+  h.flushVisualChecks();
+  assert.equal(await h.f.navigation(), undefined);
+  assert.equal(h.f.evidence().navigation_steps[2].backend_source, 'verified-session-cache');
 });
