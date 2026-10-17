@@ -1,6 +1,6 @@
 # Persistent HMAC scope amendment — DC #312 (V2)
 
-Status: frozen design candidate, pending independent hosted acceptance.
+Status: frozen V2 design amendment; exact hosted evidence is recorded on DC #312.
 Base: DC #300 `docs/REDACTION_MARKER_V1.md` at
 `4cd39bded9cc85ddce32617a6d5338237c6bafb1`.
 This amendment does NOT change V1 marker grammar, checksums, ID derivation,
