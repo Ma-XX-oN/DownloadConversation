@@ -228,3 +228,19 @@ test('older Core catalogue provider leaves existing agent export usable', async 
   assert.equal(f.navListeners.size, 0);
   f.api.disconnectChatGPTSubjectHost();
 });
+
+test('assembled userscript contains exact public Core catalogue pin for private provider 1.29', () => {
+  const generated = readFileSync(
+    new URL('../chatgpt-conversation-markdown-export.user.js', import.meta.url),
+    'utf8'
+  );
+  for (const expected of [
+    '80b3e1354005e381c4fc1a81a26be3c45b45dd30',
+    '76dfc50ecaa0d7fdca9c110d97a61b3f74b13789',
+    'db7e3450aac94eb2990fba0de54d090e377dafa3',
+    'c731721005aefbc14a61bfc97270d7270aa80ea0',
+    '0.1.0-issue.1.29'
+  ]) {
+    assert.ok(generated.includes(expected), 'Assembled Core/provider pin missing: ' + expected);
+  }
+});
