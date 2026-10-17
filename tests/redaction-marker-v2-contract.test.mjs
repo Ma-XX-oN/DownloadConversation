@@ -16,7 +16,7 @@ const checksum = (body) => createHash('sha256')
   .update(Buffer.from('DC-SECRET-MARKER-V1\0', 'utf8'))
   .update(body, 'ascii').digest('hex').slice(0, 32);
 const parseMarker = (text) => {
-  const match = /^\\[([0-9a-f]{32})\\/([UHBPJO])\\/([0-9a-f]{48})(?:\\/([a-z0-9,]{1,256}))?\\]$/
+  const match = /^\[([0-9a-f]{32})\/([UHBPJO])\/([0-9a-f]{48})(?:\/([a-z0-9,]{1,256}))?\]$/
     .exec(text);
   if (!match) return null;
   const [, check, type, id, params] = match;
