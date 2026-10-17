@@ -131,21 +131,50 @@
       return { bytes: length, written: true, read_back_verified: true, deleted: true };
     }
 
-    self.onmessage = async event => {
+    /** Worker-local event envelopes; the page never queues COMM probe work. */
+    const eventQueue = [];
+    /** True while the Worker drains its own queue in arrival order. */
+    let draining = false;
+
+    /**
+     * Serially execute queued synthetic stream/file event envelopes.
+     *
+     * @returns {Promise<void>} Resolves when this Worker queue is idle.
+     */
+    async function drainEventQueue() {
+      if (draining) return;
+      draining = true;
       try {
-        const task = event.data;
-        const result = task.kind === 'stream'
-          ? await readTransferred(task)
-          : task.kind === 'directory' ? await verifyDirectory(task)
-            : (() => { throw new Error('Unknown CSC probe task.'); })();
-        self.postMessage({ ok: true, ...result });
-      } catch (error) {
-        self.postMessage({
-          ok: false,
-          name: String(error?.name || 'Error'),
-          message: String(error?.message ?? error).slice(0, 500)
-        });
+        while (eventQueue.length) {
+          const envelope = eventQueue.shift();
+          const task = envelope.task;
+          try {
+            const result = envelope.kind === 'stream'
+              ? await readTransferred(task)
+              : envelope.kind === 'directory' ? await verifyDirectory(task)
+                : (() => { throw new Error('Unknown CSC probe task.'); })();
+            self.postMessage({ ok: true, ...result });
+          } catch (error) {
+            self.postMessage({
+              ok: false,
+              name: String(error?.name || 'Error'),
+              message: String(error?.message ?? error).slice(0, 500)
+            });
+          }
+        }
+      } finally {
+        draining = false;
       }
+    }
+
+    self.onmessage = event => {
+      const task = event.data;
+      eventQueue.push({
+        kind: task.kind,
+        metadata: task.metadata ?? null,
+        task
+      });
+      void drainEventQueue();
     };
   }
 

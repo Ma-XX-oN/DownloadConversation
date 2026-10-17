@@ -124,6 +124,8 @@ test('#316 has one opt-in Test row, no start-up invocation or new network reques
   const modules = manifest.modules.flatMap(m => m.files);
   assert.equal(modules.filter(f => f.endsWith('08-csc-worker-boundary-probe.js')).length, 1);
   assert.match(source, /cloneSafely\(original\)/);
+  assert.match(source, /eventQueue\.push\(\{/);
+  assert.match(source, /async function drainEventQueue\(\)/);
   assert.match(source, /\[body\]/);
   assert.match(source, /showDirectoryPicker\(\{ mode: 'readwrite' \}\)/);
   assert.match(registry, /if \(name === 'CSC Worker stream \+ directory'\) continue;/);
