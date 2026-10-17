@@ -1,4 +1,8 @@
 
+  window.addEventListener('pageshow', event => {
+    if (event.persisted) reconnectChatGPTSubjectHost();
+  });
+
   document.addEventListener('visibilitychange', () => {
     if (document.visibilityState === 'visible') void acquireWakeLock();
     else void releaseWakeLock();
