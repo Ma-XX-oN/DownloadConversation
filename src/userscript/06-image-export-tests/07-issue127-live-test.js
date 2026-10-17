@@ -114,6 +114,9 @@
     const conversation = snapshot?.conversation?.name;
     const project = snapshot?.project?.name;
     const currentId = aicc127Runtime?.conversationId;
+    if (typeof document === 'undefined') return {
+      conversationMatch: null, projectMatch: null
+    };
     const visibleTitle = String(document.title || '').trim();
     const sidebar = [...document.querySelectorAll('a[href]')].find(anchor => {
       try {
@@ -224,10 +227,11 @@
       state.snapshots += 1;
     }, 'subject-identification');
     aicc127BeginForCurrentConversation();
-    const navEvent = window.navigation?.addEventListener ? 'currententrychange' : 'popstate';
-    (window.navigation?.addEventListener ? window.navigation : window)
-      .addEventListener(navEvent, aicc127NavigationChanged);
-    state.navigationEvent = navEvent;
+    if (typeof window !== 'undefined') {
+      const target = window.navigation?.addEventListener ? window.navigation : window;
+      state.navigationEvent = target === window ? 'popstate' : 'currententrychange';
+      target.addEventListener(state.navigationEvent, aicc127NavigationChanged);
+    }
     sessionStorage.setItem(AICC127_ARMED_KEY, 'true');
     aicc127SaveEvidence();
     return state;
@@ -478,7 +482,7 @@
     setTimeout(() => URL.revokeObjectURL(url), 1000);
     sessionStorage.removeItem(AICC127_ARMED_KEY);
     aicc127Runtime?.unsubscribe?.();
-    if (aicc127Runtime?.navigationEvent) {
+    if (aicc127Runtime?.navigationEvent && typeof window !== 'undefined') {
       const listener = aicc127Runtime.navigationEvent === 'currententrychange'
         ? window.navigation : window;
       listener.removeEventListener(aicc127Runtime.navigationEvent, aicc127NavigationChanged);
