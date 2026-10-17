@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         ChatGPT Conversation Markdown Recorder
 // @namespace    https://chatgpt.com/
-// @version      1.11.7-issue.316.1
+// @version      1.11.7-issue.316.2
 // @description  Exports the current ChatGPT conversation directly from the Conversation API as Markdown or JSONL.
 // @match        https://chatgpt.com/*
 // @match        https://chat.openai.com/*
@@ -19328,6 +19328,8 @@ Image elapsed: ${formatDuration(imageElapsed)} — Completed: ${imageCompleted}/
     refreshTestMatrix();
     try {
       for (const [name, fn] of builtInTests()) {
+        // Directory selection requires an explicit, individual Run gesture.
+        if (name === 'CSC Worker stream + directory') continue;
         await executeBuiltInTest(name, fn);
       }
     } finally {
@@ -20073,7 +20075,7 @@ Image elapsed: ${formatDuration(imageElapsed)} — Completed: ${imageCompleted}/
   async function cscProbeWorkerTask(realm, task, transfer = []) {
     assert(typeof realm?.Worker === 'function', 'Worker constructor unavailable.');
     const url = realm.URL.createObjectURL(new realm.Blob(
-      ["'use strict';", '(' + cscProbeWorkerEntrypoint.toString() + ')();'].join('\n'),
+      [["'use strict';", '(' + cscProbeWorkerEntrypoint.toString() + ')();'].join('\n')],
       { type: 'text/javascript' }
     ));
     let worker = null;
@@ -20142,6 +20144,7 @@ Image elapsed: ${formatDuration(imageElapsed)} — Completed: ${imageCompleted}/
       metadata: { url: 'https://example.invalid/csc-synthetic', status: 200 },
       body, expected_bytes: length, delay_ms: 120
     }, [body]);
+    assert(body.locked, 'Stream was not locked on transfer.');
     const originalBytes = new Uint8Array(await original.arrayBuffer());
     assert(originalBytes.byteLength === length, 'Original ' + kind + ' lost bytes.');
     for (let i = 0; i < originalBytes.length; i += 1) {
@@ -20149,7 +20152,6 @@ Image elapsed: ${formatDuration(imageElapsed)} — Completed: ${imageCompleted}/
         'Original ' + kind + ' changed at byte ' + i);
     }
     const result = await transferred;
-    assert(body.locked, 'Stream ownership was not transferred.');
     assert(result.bytes === length && !result.cancelled,
       'Worker did not confirm exact transferred stream.');
     return kind + ' ' + result.bytes + ' bytes exact/stock intact';
