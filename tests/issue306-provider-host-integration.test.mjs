@@ -56,6 +56,7 @@ function fixture(withNavigation = true) {
   const events = [];
   const instances = [];
   let witnessCalls = 0;
+  const witnessedTransport = [];
   const agent = {
     version: () => ({ plugin: 'chatgpt-web', version: 'provider-v1' }),
     publishSubjectIdentity(value) { events.push(value); }
@@ -119,6 +120,9 @@ function fixture(withNavigation = true) {
     chatGPTPluginModule: module,
     aicc127Runtime: {},
     aicc127NavigationChanged: () => { witnessCalls++; },
+    aicc127NavigationTransportObserved: (accepted, snapshot) => {
+      witnessedTransport.push({ accepted, status: snapshot?.status });
+    },
     importAgentPluginModule: async () => module,
     canonicalCore: () => ({ loadAgent: async () => ({
       agent, session: { events: [] }
@@ -133,6 +137,7 @@ function fixture(withNavigation = true) {
   return {
     api: context.api, events, instances, browser, listeners, navListeners,
     get witnessCalls() { return witnessCalls; },
+    witnessedTransport,
     route(path) { browser.history.pushState({}, '', path); },
     pageRestore() { context.api.reconnectChatGPTSubjectHost(); }
   };
@@ -265,4 +270,16 @@ test('witness step advances before provider emits destination observer identity'
   const publish = bridge.indexOf('host.navigation(event);');
   assert.ok(start >= 0 && publish > start,
     'Record current navigation step before subject observer publication.');
+});
+
+test('generic transport reports changed navigation and safe provider state to witness', async () => {
+  const f = fixture();
+  await f.api.ensureChatGPTCanonicalAgent();
+  f.route('/c/11111111-1111-4111-8111-111111111111');
+  assert.equal(f.witnessedTransport.at(-1).accepted, true);
+  assert.equal(f.witnessedTransport.at(-1).status, 'unresolved');
+  const count = f.witnessedTransport.length;
+  f.route('/c/11111111-1111-4111-8111-111111111111');
+  assert.equal(f.witnessedTransport.length, count);
+  f.api.disconnectChatGPTSubjectHost();
 });

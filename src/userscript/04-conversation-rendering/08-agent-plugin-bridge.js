@@ -272,7 +272,10 @@
             // the destination identity, avoiding an A/B epoch mismatch.
             if (typeof aicc127Runtime !== 'undefined' && aicc127Runtime)
               aicc127NavigationChanged();
-            host.navigation(event);
+            const accepted = host.navigation(event);
+            // Diagnostic-only: report route acceptance and safe status fields.
+            if (typeof aicc127NavigationTransportObserved === 'function')
+              aicc127NavigationTransportObserved(accepted, host.snapshot);
           } catch (error) {
             logDiagnostic('warnings', 'agent-plugin-navigation-publish-failed', {
               error: boundedDiagnosticText(errorMessage(error), 200)

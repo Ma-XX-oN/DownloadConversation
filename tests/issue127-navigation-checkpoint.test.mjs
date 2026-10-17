@@ -275,3 +275,12 @@ test('fresh conversation response supersedes prior cached A provenance', async (
   assert.equal(result.backend_source, 'network-response');
   assert.equal(result.conversation_responses, 1);
 });
+
+test('witness exports only boolean navigation acceptance and safe status labels', async () => {
+  const h = createHarness(new Map(), true);
+  await h.f.start();
+  await h.visit('A', 'Conversation A', 'Project A', 10);
+  const safe = JSON.stringify(h.f.evidence());
+  assert.ok(!safe.includes('Conversation A'));
+  assert.ok(!safe.includes('Project A'));
+});
