@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         ChatGPT Conversation Markdown Recorder
 // @namespace    https://chatgpt.com/
-// @version      1.11.7-issue.127.9
+// @version      1.11.7-issue.127.10
 // @description  Exports the current ChatGPT conversation directly from the Conversation API as Markdown or JSONL.
 // @match        https://chatgpt.com/*
 // @match        https://chat.openai.com/*
@@ -19769,7 +19769,10 @@ Image elapsed: ${formatDuration(imageElapsed)} — Completed: ${imageCompleted}/
     try { return await aicc127StartPending; }
     finally { aicc127StartPending = null; }
   }
-  /** Builds the single staged observer and host bridge. */
+  /**
+   * Builds the single staged observer and host bridge.
+   * @returns {Promise<Object>} Runtime state.
+   */
   async function aicc127StartImpl() {
     if (aicc127Runtime) return aicc127Runtime;
     const core = canonicalCore();
@@ -20065,7 +20068,12 @@ Image elapsed: ${formatDuration(imageElapsed)} — Completed: ${imageCompleted}/
   }
   /** Test-only checkpoint key; salt and fingerprints never export. */
   const AICC127_NAV_KEY = 'dc-issue127-navigation-checkpoint';
-  /** Hashes a local label with a per-tab salt; raw names never export. */
+  /**
+   * Hashes a local label with a per-tab salt.
+   * @param {string} value - Identity or display label.
+   * @param {string} salt - Tab-scoped salt.
+   * @returns {string} Nonreversible local fingerprint.
+   */
   function aicc127Fingerprint(value, salt) {
     let hash = 2166136261;
     for (const char of salt + String(value ?? '')) {
@@ -20073,7 +20081,10 @@ Image elapsed: ${formatDuration(imageElapsed)} — Completed: ${imageCompleted}/
     }
     return (hash >>> 0).toString(16);
   }
-  /** Restores a bounded same-tab checkpoint after reload. */
+  /**
+   * Restores a bounded same-tab checkpoint after reload.
+   * @returns {Object} Existing checkpoint or new state.
+   */
   function aicc127NavigationCheckpoint() {
     try {
       const prior = JSON.parse(sessionStorage.getItem(AICC127_NAV_KEY) || 'null');
@@ -20085,7 +20096,10 @@ Image elapsed: ${formatDuration(imageElapsed)} — Completed: ${imageCompleted}/
       salt: Math.random().toString(36).slice(2) + Date.now().toString(36),
       steps: [], reload_count: 0 };
   }
-  /** Persists private fingerprints separately from the redacted export. */
+  /**
+   * Persists fingerprints apart from redacted export.
+   * @returns {void} No value.
+   */
   function aicc127SaveNavigation() {
     const state = aicc127Runtime;
     if (!state?.navigation) return;
@@ -20104,11 +20118,18 @@ Image elapsed: ${formatDuration(imageElapsed)} — Completed: ${imageCompleted}/
     aicc127SaveEvidence();
   }
   // Navigation API is the primary SPA signal; request ingress is the fallback.
-  /** Captures SPA navigation when the route changes. */
+  /**
+   * Captures SPA navigation on route change.
+   * @returns {void} No value.
+   */
   function aicc127NavigationChanged() {
     aicc127BeginForCurrentConversation();
   }
-  /** Records the A, B and restored A navigation slots. */
+  /**
+   * Records A, B and restored A slots.
+   * @param {string} id - Current conversation ID (local only).
+   * @returns {void} No value.
+   */
   function aicc127NavigationVisit(id) {
     const state = aicc127Runtime;
     if (!state?.navigation) return;
@@ -20125,7 +20146,11 @@ Image elapsed: ${formatDuration(imageElapsed)} — Completed: ${imageCompleted}/
     if (nav.steps.length > 20) nav.steps.shift();
     aicc127SaveNavigation();
   }
-  /** Compares current observer names with browser-visible labels. */
+  /**
+   * Compares observer values with visible labels.
+   * @param {Object} snapshot - Current observer state.
+   * @returns {Object} Comparison flags without private labels.
+   */
   function aicc127VisibleComparison(snapshot) {
     const conversation = snapshot?.conversation?.name;
     const project = snapshot?.project?.name;
@@ -20143,7 +20168,11 @@ Image elapsed: ${formatDuration(imageElapsed)} — Completed: ${imageCompleted}/
       } catch { return false; }
     });
     const visibleConversation = String(sidebar?.textContent || '').trim();
-    /** Normalizes a transient visible label for comparison. */
+    /**
+     * Normalizes a transient visible label for comparison.
+     * @param {string} text - Display label.
+     * @returns {string} Normalized label.
+     */
     const normalized = text => String(text).trim().toLocaleLowerCase();
     const visibleSidebarMatch = !visibleConversation ||
       normalized(visibleConversation) === normalized(conversation);
@@ -20166,34 +20195,53 @@ Image elapsed: ${formatDuration(imageElapsed)} — Completed: ${imageCompleted}/
         normalized(project) === normalized(visibleProject);
     return { conversationMatch, projectMatch };
   }
-  /** Correlates a backend response, observer update and visible labels. */
+  /**
+   * Correlates backend, observer and visible labels.
+   * @param {string} kind - Endpoint classification.
+   * @param {Object} body - Ephemeral identity payload.
+   * @param {boolean} accepted - Whether the provider accepted the event.
+   * @param {number} before - Previous snapshot count.
+   * @returns {void} No value.
+   */
   function aicc127NavigationObserved(kind, body, accepted, before) {
     const state = aicc127Runtime;
-    if (!state?.navigation || kind !== 'conversation') return;
+    if (!state?.navigation) return;
     const step = state.navigation.steps.at(-1);
-    if (!step || !accepted || state.snapshots <= before) return;
+    if (!step) return;
+    const salt = state.navigation.salt;
+    if (kind === 'conversation' && accepted) {
+      step.backend_observed = true;
+      step.backend_conversation_key = aicc127Fingerprint(body.conversation_id, salt);
+      step.backend_title_key = aicc127Fingerprint(body.title, salt);
+      step.backend_project_key = aicc127Fingerprint(body.gizmo_id, salt);
+      step.backend_standalone = body.gizmo_id === null;
+    }
+    if (kind !== 'conversation' && kind !== 'project') return;
+    if (!step.backend_observed || state.snapshots <= before) return;
     const subject = state.observed;
-    const matchedConversation = subject?.conversation?.id === body.conversation_id &&
-      subject?.conversation?.name === body.title;
-    const matchedProject = body.gizmo_id === null
+    const matchedConversation = subject?.conversation?.status === 'identified' &&
+      aicc127Fingerprint(subject.conversation.id, salt) === step.backend_conversation_key &&
+      aicc127Fingerprint(subject.conversation.name, salt) === step.backend_title_key;
+    const matchedProject = step.backend_standalone
       ? subject?.project?.status === 'none'
-      : typeof body.gizmo_id === 'string' &&
-        subject?.project?.status === 'identified' &&
-        subject?.project?.id === body.gizmo_id &&
-        typeof subject?.project?.name === 'string';
-    step.backend_observed = true;
+      : subject?.project?.status === 'identified' &&
+        aicc127Fingerprint(subject.project.id, salt) === step.backend_project_key &&
+        typeof subject.project.name === 'string';
     step.observer_matches_backend = Boolean(matchedConversation && matchedProject);
     const visual = aicc127VisibleComparison(subject);
     step.visible_conversation_match = visual.conversationMatch;
     step.visible_project_match = visual.projectMatch;
-    step.name_key = aicc127Fingerprint(subject?.conversation?.name, state.navigation.salt);
-    step.project_key = aicc127Fingerprint(subject?.project?.name, state.navigation.salt);
+    step.name_key = aicc127Fingerprint(subject?.conversation?.name, salt);
+    step.project_key = aicc127Fingerprint(subject?.project?.name, salt);
     const prior = state.navigation.steps.at(-2);
     if (prior?.name_key) step.changed_from_previous =
       step.name_key !== prior.name_key && step.project_key !== prior.project_key;
     aicc127SaveNavigation();
   }
-  /** Reports whether the A to B to A sequence is fully verified. */
+  /**
+   * Checks the A to B to A navigation test.
+   * @returns {Promise<Object|undefined>} Incomplete detail or PASS.
+   */
   async function testAicc127Navigation() {
     await aicc127Start();
     const steps = aicc127Runtime.navigation.steps;
