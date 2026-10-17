@@ -175,7 +175,8 @@
       network_sequence: trace.sequence, status, body
     });
     const after = state.observed;
-    aicc127NavigationObserved(kind, body, accepted, before);
+    aicc127NavigationObserved(kind, body, accepted,
+      state.sharedHost ? -1 : before);
     const correlated = accepted && state.snapshots > before;
     const record = {
       kind, network_sequence: trace.sequence, status,
