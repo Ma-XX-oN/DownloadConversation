@@ -142,6 +142,9 @@ test('real recorder stream preserves raw byte_count and writes only synthetic ch
       href: 'https://chatgpt.com/', origin: 'https://chatgpt.com'
     } };
   vm.runInNewContext(diskHarnessSource() + `
+    rawHeadersToObject = headers => headers;
+    boundedDiagnosticText = value => String(value);
+    this.__integrationHeaders = communicationLogSafeHeaders;
     this.__integrationRecords = [];
     communicationLogRecord = async (type, data) => {
       this.__integrationRecords.push({ type, data });
@@ -180,4 +183,13 @@ test('real recorder stream preserves raw byte_count and writes only synthetic ch
     'https://chatgpt.com/?token=' + fixture.vectors[0].original + '&ordinary=%5Bok%5D');
   assert.equal(new URL(url).searchParams.get('token'), fixture.vectors[0].marker);
   assert.equal(url.includes(fixture.vectors[0].original), false);
+  const headers = await context.__integrationHeaders({
+    Authorization: fixture.vectors[0].original,
+    Cookie: 'unrecognised.private-secret',
+    'X-Ordinary': '[ok]'
+  });
+  assert.equal(headers.Authorization, fixture.vectors[0].marker);
+  assert.equal(headers.Cookie, null);
+  assert.equal(headers['X-Ordinary'], '[ok]');
+  assert.equal(JSON.stringify(headers).includes(fixture.vectors[0].original), false);
 });
