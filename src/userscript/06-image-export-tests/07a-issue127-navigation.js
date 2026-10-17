@@ -1,4 +1,4 @@
-  // Test-only navigation checkpoint.  The salt and fingerprints never export.
+  /** Test-only checkpoint key; salt and fingerprints never export. */
   const AICC127_NAV_KEY = 'dc-issue127-navigation-checkpoint';
   /** Hashes a local label with a per-tab salt; raw names never export. */
   function aicc127Fingerprint(value, salt) {
