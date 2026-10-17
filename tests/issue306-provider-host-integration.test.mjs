@@ -29,7 +29,7 @@ const methods = names.map(name => {
  * Builds a real production observer/bridge with a simulated provider transport.
  * @returns {Object} Test API with fake network, routes, and identity notifications.
  */
-function fixture() {
+function fixture(withNavigation = true) {
   const listeners = new Map();
   const navListeners = new Map();
   const browser = {
@@ -103,6 +103,7 @@ function fixture() {
         get disposed() { return disposed; }
       };
       instances.push(host);
+      if (!withNavigation) delete host.navigation;
       return host;
     }
   };
@@ -211,5 +212,18 @@ test('a completed fetch clone is forwarded only to original active provider host
   const before = f.events.length;
   await f.api.agentPluginObserveFetchResponse(response, { sequence: 17 }, accepted);
   assert.equal(f.events.length, before);
+  f.api.disconnectChatGPTSubjectHost();
+});
+
+test('older Core catalogue provider leaves existing agent export usable', async () => {
+  const f = fixture(false);
+  const agent = await f.api.ensureChatGPTCanonicalAgent();
+  assert.equal(agent.version().plugin, 'chatgpt-web');
+  assert.equal(f.instances[0].disposed, true);
+  assert.equal(f.api.agentPluginObserveNetworkRequest({
+    sequence: 1, method: 'GET', url: '/backend-api/conversations/a'
+  }), null);
+  assert.equal(f.listeners.size, 0);
+  assert.equal(f.navListeners.size, 0);
   f.api.disconnectChatGPTSubjectHost();
 });
