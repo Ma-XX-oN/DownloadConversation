@@ -82,7 +82,11 @@
       ['AI-transcript renderer parity', testRendererParityFeatures],
       ['Generated sandbox download link', testGeneratedSandboxDownloadLink],
       ['Jump identifier resolution', testJumpIdentifierResolution],
-      ['Conversation API access/schema', testConversationApiAccessAndSchema]
+      ['Conversation API access/schema', testConversationApiAccessAndSchema],
+      ['AICC #127 staged artifact', testAicc127StagedArtifact],
+      ['AICC #127 live project identity', testAicc127LiveProject],
+      ['AICC #127 live standalone', testAicc127LiveStandalone],
+      ['AICC #127 navigation A-B-A', testAicc127Navigation]
     ];
   }
 
@@ -95,7 +99,7 @@
     try {
       const parsed = JSON.parse(localStorage.getItem(TEST_RESULT_HISTORY_KEY) || '{}');
       if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) return new Map();
-      return new Map(Object.entries(parsed).filter(([, value]) => value === 'PASS' || value === 'FAIL'));
+      return new Map(Object.entries(parsed).filter(([, value]) => value === 'PASS' || value === 'FAIL' || value === 'INCOMPLETE'));
     } catch {
       return new Map();
     }
@@ -154,9 +158,10 @@
    */
   async function executeBuiltInTest(name, fn) {
     try {
-      await fn();
-      testMatrixCurrentResults.set(name, { status: 'PASS', detail: '' });
-      return `✅ ${name}`;
+      const result = await fn();
+      const status = result?.status === 'INCOMPLETE' ? 'INCOMPLETE' : 'PASS';
+      testMatrixCurrentResults.set(name, { status, detail: result?.detail || '' });
+      return `${testMatrixCurrentResults.get(name).status === 'PASS' ? '✅' : '⏳'} ${name}`;
     } catch (error) {
       const detail = errorMessage(error);
       testMatrixCurrentResults.set(name, { status: 'FAIL', detail });
@@ -177,7 +182,7 @@
       .filter(([name]) => testMatrixCurrentResults.has(name))
       .map(([name]) => {
         const result = testMatrixCurrentResults.get(name);
-        return result.status === 'PASS' ? `✅ ${name}` : `❌ ${name}: ${result.detail}`;
+        return result.status === 'PASS' ? `✅ ${name}` : result.status === 'INCOMPLETE' ? `⏳ ${name}: ${result.detail}` : `❌ ${name}: ${result.detail}`;
       });
   }
 

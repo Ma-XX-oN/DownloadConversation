@@ -170,6 +170,7 @@
       redirect: request?.redirect ?? null,
       headers: stockNetworkRequestHeaderSummary(request?.headers)
     });
+    aicc127LiveOnRequest(trace);
     return trace;
   }
 
@@ -222,8 +223,17 @@
    */
   async function stockNetworkInspectFetchBody(response, trace) {
     try {
+      // The diagnostic reader is intentionally capped. The staged #127
+      // witness needs the complete original JSON for identity projection.
+      const fullClone = aicc127LiveWantsFullFetchResponse(trace)
+        ? cloneSafely(response) : null;
+      const identityDelivery = fullClone
+        ? aicc127LiveOnFullFetchResponse(trace, fullClone) : null;
       const bounded = await stockNetworkReadBoundedText(response);
       const contentType = response.headers?.get?.('content-type') ?? '';
+      if (!identityDelivery || !(await identityDelivery)) {
+        aicc127LiveOnFetchResponse(trace, response.status, bounded);
+      }
       const identity = stockNetworkBodyIdentity(bounded.text, contentType);
       logDiagnostic('debug', 'stock-network-fetch-body-summary', {
         network_sequence: trace.sequence,

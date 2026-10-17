@@ -17,6 +17,8 @@ const npmArguments = process.platform === 'win32'
 const pythonCommand = process.env.PYTHON ?? 'python';
 
 const ordinaryStages = [
+  ['#306 generic browser navigation fixtures', nodeCommand, ['--test', 'tests/issue306-generic-browser-navigation.test.mjs']],
+  ['#306 provider host bridge integration', nodeCommand, ['--test', 'tests/issue306-provider-host-integration.test.mjs']],
   ['Modular userscript build regression', nodeCommand, ['--test', 'tests/modular-userscript-build.test.mjs', 'tests/development-version-source.test.mjs']],
   ['Agent plugin authenticated background fetch regression', nodeCommand, ['--test', 'tests/agent-plugin-background-fetch.test.mjs']],
   ['#243 provenance and #274 lifecycle regressions', nodeCommand, ['--test',
@@ -41,6 +43,9 @@ const ordinaryStages = [
     'tests/recording-panel-modes.test.mjs',
     'tests/agent-stopwatch-v1-identity.test.mjs'
   ]],
+  ['#127 live test matrix contract and evidence replay', nodeCommand, ['--test', 'tests/issue127-live-test-matrix.test.mjs',
+    'tests/issue127-live-witness-runtime.test.mjs',
+    'tests/issue127-navigation-checkpoint.test.mjs']],
   ['CI test inventory regression', nodeCommand, ['--test', 'tests/ci-test-inventory.test.mjs']],
   ['Actions policy regression', nodeCommand, ['--test', 'tests/actions-policy.test.mjs']],
   ['RepoWorkflow adoption contract', nodeCommand, ['--test', 'tests/repoworkflow-adoption.test.mjs']],

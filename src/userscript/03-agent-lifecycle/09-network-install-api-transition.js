@@ -46,10 +46,12 @@
       XHR.prototype.send = function(body) {
         const info = this.__tmApiRequest || { method: 'GET', url: '', headers: {} };
         const stockTrace = stockNetworkTraceXhrStart(this, info);
+        const providerIdentityRequestAccepted = agentPluginObserveNetworkRequest(stockTrace);
         void communicationLogXhrRequest(info, body, stockTrace)
           .catch(communicationError => communicationLogReportFailure('xhr-request', communicationError));
         this.addEventListener('loadend', () => {
           stockNetworkTraceXhrResponse(this, stockTrace);
+          agentPluginObserveXhrResponse(this, stockTrace, providerIdentityRequestAccepted);
           void communicationLogXhrResponse(this, stockTrace)
             .catch(communicationError => communicationLogReportFailure('xhr-response', communicationError));
         }, { once: true });
