@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         ChatGPT Conversation Markdown Recorder
 // @namespace    https://chatgpt.com/
-// @version      1.11.7-issue.306.8
+// @version      1.11.7-issue.306.9
 // @description  Exports the current ChatGPT conversation directly from the Conversation API as Markdown or JSONL.
 // @match        https://chatgpt.com/*
 // @match        https://chat.openai.com/*
@@ -7297,19 +7297,47 @@ globalThis.__dcCompressor = {
     /** Observer-owned history wrappers, removed only if still installed. */
     const wrappedPush = wrapHistory(pushState);
     const wrappedReplace = wrapHistory(replaceState);
-    history.pushState = wrappedPush;
-    history.replaceState = wrappedReplace;
-    browser.addEventListener('popstate', publishCurrentUrl);
-    browser.navigation?.addEventListener?.('currententrychange', publishCurrentUrl);
-    publishCurrentUrl();
-    return () => {
+    /** Whether the History API popstate listener was successfully registered. */
+    let popstateInstalled = false;
+    /** Whether the Navigation API listener was successfully registered. */
+    let navigationInstalled = false;
+    /**
+     * Restores only observer-owned browser hooks after dispose or failed setup.
+     * @returns {void} No value is returned.
+     */
+    function disconnect() {
       if (disposed) return;
       disposed = true;
-      browser.removeEventListener('popstate', publishCurrentUrl);
-      browser.navigation?.removeEventListener?.('currententrychange', publishCurrentUrl);
-      if (history.pushState === wrappedPush) history.pushState = pushState;
-      if (history.replaceState === wrappedReplace) history.replaceState = replaceState;
-    };
+      try {
+        if (navigationInstalled) {
+          browser.navigation?.removeEventListener?.('currententrychange', publishCurrentUrl);
+        }
+      } finally {
+        try {
+          if (popstateInstalled) {
+            browser.removeEventListener('popstate', publishCurrentUrl);
+          }
+        } finally {
+          if (history.pushState === wrappedPush) history.pushState = pushState;
+          if (history.replaceState === wrappedReplace) history.replaceState = replaceState;
+        }
+      }
+    }
+    try {
+      history.pushState = wrappedPush;
+      history.replaceState = wrappedReplace;
+      browser.addEventListener('popstate', publishCurrentUrl);
+      popstateInstalled = true;
+      if (typeof browser.navigation?.addEventListener === 'function') {
+        browser.navigation.addEventListener('currententrychange', publishCurrentUrl);
+        navigationInstalled = true;
+      }
+      publishCurrentUrl();
+    } catch (error) {
+      disconnect();
+      throw error;
+    }
+    return disconnect;
   }
   /**
    * Restores the GEN diagnostic tail and its historical version baseline.
