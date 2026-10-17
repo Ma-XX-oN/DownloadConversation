@@ -1,6 +1,11 @@
   /** Test-only checkpoint key; salt and fingerprints never export. */
   const AICC127_NAV_KEY = 'dc-issue127-navigation-checkpoint';
-  /** Hashes a local label with a per-tab salt; raw names never export. */
+  /**
+   * Hashes a local label with a per-tab salt.
+    * @param {string} value - Identity or display label.
+   * @param {string} salt - Tab-scoped salt.
+   * @returns {string} Nonreversible local fingerprint.
+   */
   function aicc127Fingerprint(value, salt) {
     let hash = 2166136261;
     for (const char of salt + String(value ?? '')) {
@@ -8,7 +13,10 @@
     }
     return (hash >>> 0).toString(16);
   }
-  /** Restores a bounded same-tab checkpoint after reload. */
+  /**
+   * Restores a bounded same-tab checkpoint after reload.
+    * @returns {Object} Existing checkpoint or new state.
+   */
   function aicc127NavigationCheckpoint() {
     try {
       const prior = JSON.parse(sessionStorage.getItem(AICC127_NAV_KEY) || 'null');
@@ -20,7 +28,10 @@
       salt: Math.random().toString(36).slice(2) + Date.now().toString(36),
       steps: [], reload_count: 0 };
   }
-  /** Persists private fingerprints separately from the redacted export. */
+  /**
+   * Persists fingerprints apart from redacted export.
+    * @returns {void} No value.
+   */
   function aicc127SaveNavigation() {
     const state = aicc127Runtime;
     if (!state?.navigation) return;
@@ -39,11 +50,18 @@
     aicc127SaveEvidence();
   }
   // Navigation API is the primary SPA signal; request ingress is the fallback.
-  /** Captures SPA navigation when the route changes. */
+  /**
+   * Captures SPA navigation on route change.
+    * @returns {void} No value.
+   */
   function aicc127NavigationChanged() {
     aicc127BeginForCurrentConversation();
   }
-  /** Records the A, B and restored A navigation slots. */
+  /**
+   * Records A, B and restored A slots.
+    * @param {string} id - Current conversation ID (local only).
+   * @returns {void} No value.
+   */
   function aicc127NavigationVisit(id) {
     const state = aicc127Runtime;
     if (!state?.navigation) return;
@@ -60,7 +78,11 @@
     if (nav.steps.length > 20) nav.steps.shift();
     aicc127SaveNavigation();
   }
-  /** Compares current observer names with browser-visible labels. */
+  /**
+   * Compares observer values with visible labels.
+    * @param {Object} snapshot - Current observer state.
+   * @returns {Object} Comparison flags without private labels.
+   */
   function aicc127VisibleComparison(snapshot) {
     const conversation = snapshot?.conversation?.name;
     const project = snapshot?.project?.name;
@@ -78,7 +100,11 @@
       } catch { return false; }
     });
     const visibleConversation = String(sidebar?.textContent || '').trim();
-    /** Normalizes a transient visible label for comparison. */
+    /**
+     * Normalizes a transient visible label for comparison.
+     * @param {string} text - Display label.
+     * @returns {string} Normalized label.
+     */
     const normalized = text => String(text).trim().toLocaleLowerCase();
     const visibleSidebarMatch = !visibleConversation ||
       normalized(visibleConversation) === normalized(conversation);
@@ -101,7 +127,14 @@
         normalized(project) === normalized(visibleProject);
     return { conversationMatch, projectMatch };
   }
-  /** Correlates a backend response, observer update and visible labels. */
+  /**
+   * Correlates backend, observer and visible labels.
+    * @param {string} kind - Endpoint classification.
+   * @param {Object} body - Ephemeral identity payload.
+   * @param {boolean} accepted - Whether the provider accepted the event.
+   * @param {number} before - Previous snapshot count.
+   * @returns {void} No value.
+   */
   function aicc127NavigationObserved(kind, body, accepted, before) {
     const state = aicc127Runtime;
     if (!state?.navigation || kind !== 'conversation') return;
@@ -128,7 +161,10 @@
       step.name_key !== prior.name_key && step.project_key !== prior.project_key;
     aicc127SaveNavigation();
   }
-  /** Reports whether the A to B to A sequence is fully verified. */
+  /**
+   * Checks the A to B to A navigation test.
+    * @returns {Promise<Object|undefined>} Incomplete detail or PASS.
+   */
   async function testAicc127Navigation() {
     await aicc127Start();
     const steps = aicc127Runtime.navigation.steps;
