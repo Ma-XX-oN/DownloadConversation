@@ -17,6 +17,7 @@ const npmArguments = process.platform === 'win32'
 const pythonCommand = process.env.PYTHON ?? 'python';
 
 const ordinaryStages = [
+  ['#312 persistent marker V2 contract vectors', nodeCommand, ['--test', 'tests/redaction-marker-v2-contract.test.mjs']],
   ['#300 redaction marker contract vectors', nodeCommand, ['--test', 'tests/redaction-marker-contract.test.mjs']],
   ['Modular userscript build regression', nodeCommand, ['--test', 'tests/modular-userscript-build.test.mjs', 'tests/development-version-source.test.mjs']],
   ['Agent plugin authenticated background fetch regression', nodeCommand, ['--test', 'tests/agent-plugin-background-fetch.test.mjs']],
