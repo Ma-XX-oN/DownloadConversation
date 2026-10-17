@@ -1,4 +1,8 @@
 
+  window.addEventListener('pageshow', event => {
+    if (event.persisted) reconnectChatGPTSubjectHost();
+  });
+
   document.addEventListener('visibilitychange', () => {
     if (document.visibilityState === 'visible') void acquireWakeLock();
     else void releaseWakeLock();
@@ -6,6 +10,7 @@
 
   document.addEventListener('click', captureConversationClickDiagnostic, true);
   window.addEventListener('pagehide', () => {
+    disconnectChatGPTSubjectHost();
     finishConversationClickDiagnostic(activeClickDiagnostic, 'pagehide');
     if (diagnosticPersistTimer !== null) {
       clearTimeout(diagnosticPersistTimer);

@@ -19,7 +19,7 @@ const root = path.resolve(
   '..'
 );
 const CORE_COMMIT =
-  '1a70e7df14a0648c8e144ce3ef0da5e02bc90cd4';
+  '80b3e1354005e381c4fc1a81a26be3c45b45dd30';
 const CORE_BLOB =
   '27ac39398a164b91f05dfeb3be6513cbbbbee8f8';
 const LEGACY_BLOB =
@@ -82,7 +82,7 @@ test(
       ],
       'identity and segment runtime must remain at verified top-level source boundaries'
     );
-    assert.equal(sourcePaths.length, 77);
+    assert.equal(sourcePaths.length, 78);
     assert.ok(sourcePaths.includes(
       'src/userscript/06-image-export-tests/07a-issue127-navigation.js'
     ));

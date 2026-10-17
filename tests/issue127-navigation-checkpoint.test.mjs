@@ -15,7 +15,7 @@ function createHarness(shared = new Map()) {
   let subscriber;
   let lastConversation = null;
   const agent = {
-    version: () => ({ version: '0.1.0-issue.1.21' }),
+    version: () => ({ version: '0.1.0-issue.1.29' }),
     observeState(callback) {
       subscriber = callback;
       callback({ readiness: 'unresolved',
@@ -82,10 +82,10 @@ function createHarness(shared = new Map()) {
       removeItem: key => shared.delete(key)
     },
     canonicalCore: () => ({
-      getVersion: () => '1.1.0-issue.127.19',
+      getVersion: () => '1.1.0-issue.127.22',
       getAgentPluginArtifact: () => ({
-        commit: 'cf521202e78dede9152840193dc5ca140703b240',
-        gitBlobSha1: '32182498480ba061367ce60dbb4104c0c0d55fe7'
+        commit: 'db7e3450aac94eb2990fba0de54d090e377dafa3',
+        gitBlobSha1: 'c731721005aefbc14a61bfc97270d7270aa80ea0'
       })
     }),
     assert(condition, message) { assert.ok(condition, message); },

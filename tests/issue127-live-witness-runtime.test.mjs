@@ -7,14 +7,14 @@ const script = readFileSync(new URL(
   '../src/userscript/06-image-export-tests/07-issue127-live-test.js', import.meta.url), 'utf8');
 const navigationSource = readFileSync(new URL('../src/userscript/06-image-export-tests/07a-issue127-navigation.js', import.meta.url), 'utf8');
 const noop = () => {};
-const providerCommit = 'cf521202e78dede9152840193dc5ca140703b240';
-const providerBlob = '32182498480ba061367ce60dbb4104c0c0d55fe7';
+const providerCommit = 'db7e3450aac94eb2990fba0de54d090e377dafa3';
+const providerBlob = 'c731721005aefbc14a61bfc97270d7270aa80ea0';
 
 function harness() {
   const storage = new Map();
   const state = { browserObservations: [], networkCreated: 0 };
   const agent = {
-    version() { return { version: '0.1.0-issue.1.21' }; },
+    version() { return { version: '0.1.0-issue.1.29' }; },
     observeState(callback) {
       state.publish = callback;
       callback({ readiness: 'unresolved',
@@ -68,7 +68,7 @@ function harness() {
       removeItem: key => storage.delete(key)
     },
     canonicalCore: () => ({
-      getVersion: () => '1.1.0-issue.127.19',
+      getVersion: () => '1.1.0-issue.127.22',
       getAgentPluginArtifact: () => ({
         commit: providerCommit, gitBlobSha1: providerBlob
       })

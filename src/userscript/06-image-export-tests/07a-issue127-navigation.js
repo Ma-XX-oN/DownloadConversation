@@ -77,6 +77,7 @@
       visible_project_match: null, changed_from_previous: null });
     if (nav.steps.length > 20) nav.steps.shift();
     aicc127SaveNavigation();
+    aicc127NavigationRefreshFromObserver();
   }
   /**
    * Compares observer values with visible labels.
@@ -160,6 +161,48 @@
         aicc127Fingerprint(subject.project.id, salt) === step.backend_project_key &&
         typeof subject.project.name === 'string';
     step.observer_matches_backend = Boolean(matchedConversation && matchedProject);
+    const visual = aicc127VisibleComparison(subject);
+    step.visible_conversation_match = visual.conversationMatch;
+    step.visible_project_match = visual.projectMatch;
+    step.name_key = aicc127Fingerprint(subject?.conversation?.name, salt);
+    step.project_key = aicc127Fingerprint(subject?.project?.name, salt);
+    const prior = state.navigation.steps.at(-2);
+    if (prior?.name_key) step.changed_from_previous =
+      step.name_key !== prior.name_key && step.project_key !== prior.project_key;
+    aicc127SaveNavigation();
+    if (state.sharedHost) aicc127NavigationRefreshFromObserver();
+  }
+  /**
+   * Verifies actual Core observer publication against backend-verified A,
+   * including a cache-only return with no fresh request. Never invents data.
+   * @returns {void} No value.
+   */
+  function aicc127NavigationRefreshFromObserver() {
+    const state = aicc127Runtime;
+    if (!state?.navigation?.steps.length || !state.observed) return;
+    const step = state.navigation.steps.at(-1);
+    const initial = state.navigation.steps[0];
+    const salt = state.navigation.salt;
+    if (step.slot === 'A-return' && initial?.observer_matches_backend &&
+        initial.backend_observed && !step.backend_observed) {
+      step.backend_conversation_key = initial.backend_conversation_key;
+      step.backend_title_key = initial.backend_title_key;
+      step.backend_project_key = initial.backend_project_key;
+      step.backend_standalone = initial.backend_standalone;
+      step.backend_observed = true;
+      step.reused_verified_backend = true;
+    }
+    if (!step.backend_observed) return;
+    const subject = state.observed;
+    const matchesConversation = subject?.conversation?.status === 'identified' &&
+      aicc127Fingerprint(subject.conversation.id, salt) === step.backend_conversation_key &&
+      aicc127Fingerprint(subject.conversation.name, salt) === step.backend_title_key;
+    const matchesProject = step.backend_standalone
+      ? subject?.project?.status === 'none'
+      : subject?.project?.status === 'identified' &&
+        aicc127Fingerprint(subject.project.id, salt) === step.backend_project_key &&
+        typeof subject.project.name === 'string';
+    step.observer_matches_backend = Boolean(matchesConversation && matchesProject);
     const visual = aicc127VisibleComparison(subject);
     step.visible_conversation_match = visual.conversationMatch;
     step.visible_project_match = visual.projectMatch;

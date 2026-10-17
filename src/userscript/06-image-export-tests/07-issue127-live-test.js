@@ -3,11 +3,11 @@
   /** Session-scoped redacted evidence storage key. */
   const AICC127_EVIDENCE_KEY = 'dc-issue127-live-observations';
   /** Exact immutable provider commit required by the #127 witness. */
-  const AICC127_PROVIDER_SHA = 'cf521202e78dede9152840193dc5ca140703b240';
+  const AICC127_PROVIDER_SHA = 'db7e3450aac94eb2990fba0de54d090e377dafa3';
   /** Exact immutable staged Core commit required by the #127 witness. */
-  const AICC127_CORE_SHA = '1a70e7df14a0648c8e144ce3ef0da5e02bc90cd4';
+  const AICC127_CORE_SHA = '80b3e1354005e381c4fc1a81a26be3c45b45dd30';
   /** Expected Git blob of the certified private provider artifact. */
-  const AICC127_BLOB_SHA = '32182498480ba061367ce60dbb4104c0c0d55fe7';
+  const AICC127_BLOB_SHA = 'c731721005aefbc14a61bfc97270d7270aa80ea0';
   /** Memory-only observer and host bridge enabled explicitly by the test button. */
   let aicc127Runtime = null;
   /** Prevents concurrent manual and reload rearming of one agent. */
@@ -63,14 +63,14 @@
   async function aicc127StartImpl() {
     if (aicc127Runtime) return aicc127Runtime;
     const core = canonicalCore();
-    assert(core.getVersion() === '1.1.0-issue.127.19',
-      'AICC #127 test branch must load Core .127.19');
+    assert(core.getVersion() === '1.1.0-issue.127.22',
+      'AICC #127 test branch must load Core .127.22');
     const descriptor = core.getAgentPluginArtifact('chatgpt-web');
     assert(descriptor.commit === AICC127_PROVIDER_SHA &&
       descriptor.gitBlobSha1 === AICC127_BLOB_SHA,
     'AICC catalogue does not pin the certified private provider');
     const agent = await ensureChatGPTCanonicalAgent();
-    assert(agent.version().version === '0.1.0-issue.1.21',
+    assert(agent.version().version === '0.1.0-issue.1.29',
       'Wrong provider version loaded');
     const module = await importAgentPluginModule(descriptor);
     assert(typeof module.connectChatGPTSubjectHost === 'function',
@@ -78,12 +78,16 @@
     const evidence = aicc127MinimalEvidence();
     const navigation = aicc127NavigationCheckpoint();
     if (sessionStorage.getItem(AICC127_ARMED_KEY) === 'true') navigation.reload_count++;
-    const state = { agent, evidence, navigation, host: null, conversationId: null,
+    const sharedHost = typeof chatGPTSubjectHost !== 'undefined' &&
+      chatGPTSubjectHost !== null;
+    const state = { agent, evidence, navigation,
+      host: sharedHost ? chatGPTSubjectHost : null, sharedHost, conversationId: null,
       observed: null, snapshots: 0, pending: new Set(), module, unsubscribe: null };
     aicc127Runtime = state;
     state.unsubscribe = agent.observeState(snapshot => {
       state.observed = snapshot;
       state.snapshots += 1;
+      aicc127NavigationRefreshFromObserver();
     }, 'subject-identification');
     aicc127BeginForCurrentConversation();
     if (typeof window !== 'undefined') {
@@ -108,7 +112,7 @@
     state.conversationId = id;
     aicc127NavigationVisit(id);
     state.pending.clear();
-    if (state.host) state.host.begin(id);
+    if (state.host && !state.sharedHost) state.host.begin(id);
     else state.host = state.module.connectChatGPTSubjectHost({
       agent: state.agent, origin: location.origin, conversationId: id
     });
@@ -144,7 +148,7 @@
     if (!state) return;
     aicc127BeginForCurrentConversation();
     if (!state.host || !aicc127LiveRequestKind(trace)) return;
-    if (state.host.request({
+    if (state.sharedHost || state.host.request({
       network_sequence: trace.sequence, method: trace.method,
       request_url: trace.url
     })) state.pending.add(trace.sequence);
@@ -167,7 +171,7 @@
     if (!body || typeof body !== 'object' || Array.isArray(body)) return;
     const kind = aicc127LiveRequestKind(trace);
     const before = state.snapshots;
-    const accepted = state.host.response({
+    const accepted = state.sharedHost ? true : state.host.response({
       network_sequence: trace.sequence, status, body
     });
     const after = state.observed;

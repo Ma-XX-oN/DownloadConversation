@@ -17,6 +17,8 @@ const npmArguments = process.platform === 'win32'
 const pythonCommand = process.env.PYTHON ?? 'python';
 
 const ordinaryStages = [
+  ['#306 generic browser navigation fixtures', nodeCommand, ['--test', 'tests/issue306-generic-browser-navigation.test.mjs']],
+  ['#306 provider host bridge integration', nodeCommand, ['--test', 'tests/issue306-provider-host-integration.test.mjs']],
   ['Modular userscript build regression', nodeCommand, ['--test', 'tests/modular-userscript-build.test.mjs', 'tests/development-version-source.test.mjs']],
   ['Agent plugin authenticated background fetch regression', nodeCommand, ['--test', 'tests/agent-plugin-background-fetch.test.mjs']],
   ['#243 provenance and #274 lifecycle regressions', nodeCommand, ['--test',
