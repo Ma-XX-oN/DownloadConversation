@@ -251,17 +251,24 @@
       metadata: { url: 'https://example.invalid/csc-synthetic', status: 200 },
       body, expected_bytes: length, delay_ms: 120
     }, [body]);
-    assert(body.locked, 'Stream was not locked on transfer.');
-    const originalBytes = new Uint8Array(await original.arrayBuffer());
+    const lockedAfterTransfer = body.locked;
+    // Observe both promises at once: immediate Worker errors cannot leak.
+    const [workerOutcome, stockOutcome] = await Promise.allSettled([
+      transferred, original.arrayBuffer()
+    ]);
+    if (workerOutcome.status === 'rejected') throw workerOutcome.reason;
+    if (stockOutcome.status === 'rejected') throw stockOutcome.reason;
+    assert(lockedAfterTransfer, 'Stream was not locked on transfer.');
+    const originalBytes = new Uint8Array(stockOutcome.value);
     assert(originalBytes.byteLength === length, 'Original ' + kind + ' lost bytes.');
     for (let i = 0; i < originalBytes.length; i += 1) {
       assert(originalBytes[i] === ((Math.imul(i, 29) + 7) & 255),
         'Original ' + kind + ' changed at byte ' + i);
     }
-    const result = await transferred;
+    const result = workerOutcome.value;
     assert(result.bytes === length && !result.cancelled,
       'Worker did not confirm exact transferred stream.');
-    return kind + ' ' + result.bytes + ' bytes exact/stock intact';
+    return result.bytes + ' bytes exact/stock intact';
   }
 
   /**
@@ -281,9 +288,9 @@
       }
       directoryPromise = Promise.resolve(
         pickerRealm.showDirectoryPicker({ mode: 'readwrite' })
-      );
+      ).then(handle => ({ handle }), error => ({ error }));
     } catch (error) {
-      directoryPromise = Promise.reject(error);
+      directoryPromise = Promise.resolve({ error });
     }
     return (async () => {
       const outcomes = [];
@@ -322,9 +329,10 @@
           failures.push('Stream abort: ' + errorMessage(error));
         }
       }
-      let directory;
-      try { directory = await directoryPromise; }
-      catch (error) {
+      const permission = await directoryPromise;
+      const directory = permission.handle;
+      if (permission.error) {
+        const error = permission.error;
         failures.push('Directory picker/permission: '
           + String(error?.name || 'Error') + ': ' + errorMessage(error));
       }
