@@ -41,7 +41,9 @@ const ordinaryStages = [
     'tests/recording-panel-modes.test.mjs',
     'tests/agent-stopwatch-v1-identity.test.mjs'
   ]],
-  ['#127 live test matrix contract and evidence replay', nodeCommand, ['--test', 'tests/issue127-live-test-matrix.test.mjs', 'tests/issue127-live-witness-runtime.test.mjs']],
+  ['#127 live test matrix contract and evidence replay', nodeCommand, ['--test', 'tests/issue127-live-test-matrix.test.mjs',
+    'tests/issue127-live-witness-runtime.test.mjs',
+    'tests/issue127-navigation-checkpoint.test.mjs']],
   ['CI test inventory regression', nodeCommand, ['--test', 'tests/ci-test-inventory.test.mjs']],
   ['Actions policy regression', nodeCommand, ['--test', 'tests/actions-policy.test.mjs']],
   ['RepoWorkflow adoption contract', nodeCommand, ['--test', 'tests/repoworkflow-adoption.test.mjs']],
