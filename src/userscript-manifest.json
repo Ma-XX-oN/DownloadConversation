@@ -6,12 +6,12 @@
     {
       "name": "AIConversationCore",
       "repository": "Ma-XX-oN/AIConversationCore",
-      "ref": "main",
-      "commit": "9e18441a1f68a1cac5ebb6e20dead945dd36d7dd",
+      "ref": "issue-127-core-convergence-v1",
+      "commit": "80b3e1354005e381c4fc1a81a26be3c45b45dd30",
       "path": "dist/aiconversationcore.chatgpt.browser.js",
-      "url": "https://raw.githubusercontent.com/Ma-XX-oN/AIConversationCore/9e18441a1f68a1cac5ebb6e20dead945dd36d7dd/dist/aiconversationcore.chatgpt.browser.js",
-      "git_blob_sha1": "47efb4f379f5bb27ae710a53d1cb84388aeeb1a2",
-      "byte_length": 282178
+      "url": "https://raw.githubusercontent.com/Ma-XX-oN/AIConversationCore/80b3e1354005e381c4fc1a81a26be3c45b45dd30/dist/aiconversationcore.chatgpt.browser.js",
+      "git_blob_sha1": "76dfc50ecaa0d7fdca9c110d97a61b3f74b13789",
+      "byte_length": 282215
     }
   ],
   "modules": [
@@ -19,6 +19,7 @@
       "name": "runtime",
       "files": [
         "src/userscript/01-runtime/01-bootstrap.js",
+        "src/userscript/04-conversation-rendering/08e-generic-browser-navigation.js",
         "src/userscript/01-runtime/01-bootstrap-restore.js",
         "src/userscript/01-runtime/02-shared-network-transition.js"
       ]
