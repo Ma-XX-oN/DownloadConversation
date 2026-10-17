@@ -90,6 +90,34 @@ assert.deepEqual(fixture.channels.map((c) => c.context), [
   'text.plain', 'ws.binary'
 ]);
 assert.equal(fixture.race_cases.length, 10);
+const v2Id = fixture.generations[0].id;
+assert.equal(digest(fixture.generations[0].key_hex, fixture.secret), v2Id);
+for (const context of [
+  'http.header.value', 'http.query.value', 'json.string',
+  'sse.data.json.string', 'ws.text.json.string'
+]) {
+  assert.ok(fixture.channels.some((entry) => entry.context === context));
+  assert.equal(digest(fixture.generations[0].key_hex, fixture.secret), v2Id);
+}
+const marker = markers[0];
+const jsonEnvelope = JSON.stringify({ credential: marker });
+assert.equal(JSON.parse(jsonEnvelope).credential, marker);
+const sseEnvelope = 'data: ' + jsonEnvelope + '\\n\\n';
+assert.equal(JSON.parse(sseEnvelope.slice(6).trim()).credential, marker);
+const websocketEnvelope = JSON.stringify({ type: 'synthetic', value: marker });
+assert.equal(JSON.parse(websocketEnvelope).value, marker);
+const urlEnvelope = new URL('https://synthetic.invalid/?secret=' +
+  encodeURIComponent(marker));
+assert.equal(urlEnvelope.searchParams.get('secret'), marker);
+const headerEnvelope = new Headers([['X-Synthetic-Credential', marker]]);
+assert.equal(headerEnvelope.get('x-synthetic-credential'), marker);
+const forgedBody = 'O/' + 'f'.repeat(48) + '/1234';
+const forgedMarker = '[' + checksum(forgedBody) + '/' + forgedBody + ']';
+assert.ok(parseMarker(forgedMarker));
+assert.notEqual(parseMarker(forgedMarker).id, v2Id);
+assert.equal(parseMarker(forgedMarker).id === v2Id, false);
+// Public CHECK allows forged shapes; therefore never accept as authentication.
+assert.equal(parseMarker(marker.toUpperCase()), null);
 assert.equal(fixture.channels[5].expected, 'UNINSPECTED_OR_UNSUPPORTED');
 assert.equal(fixture.channels[6].expected, 'UNINSPECTED_OR_UNSUPPORTED');
 assert.equal(parseMarker('[redacted]'), null);
