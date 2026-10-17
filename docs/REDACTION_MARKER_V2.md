@@ -86,9 +86,18 @@ notification. A failed write/readback must not advertise success;
 if commit outcome is ambiguous, re-read under lock and reconcile before
 new capture. Never roll back by overwriting a newer committed epoch.
 Concurrent Randomize requests serialize; each accepted action advances
-one epoch. All tabs must observe changes before assigning a generation
-to newly started capture. A stale tab must not write a new segment
-under old metadata after observing rotation.
+one epoch. The shared authority MUST fence new capture admissions before
+committing rotation. A tab MUST obtain an authoritative generation
+admission token, not merely rely on a cached key or eventual GM
+notification. Once rotation linearizes, stale-generation tokens are
+invalid for NEW captures. Records already admitted retain their old
+snapshot and finish in old-scope segments or fail explicitly. A
+disconnected, suspended or non-acknowledging tab MUST fail closed at
+admission, without waiting for a stale storage-change notification.
+Cross-origin racing admissions and rotation MUST have a single
+observable serialization order. If this cannot be implemented with
+the available Tampermonkey APIs, #313 MUST report an implementation
+blocker rather than weaken equality or secrecy guarantees.
 
 In-flight safety: every captured record binds immutably to its
 generation/key snapshot at capture admission. An old generation may
