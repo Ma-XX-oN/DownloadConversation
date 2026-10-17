@@ -3,6 +3,7 @@ import { webcrypto } from 'node:crypto';
 import { readFileSync } from 'node:fs';
 import test from 'node:test';
 import vm from 'node:vm';
+import { diskHarnessSource } from './helpers/userscript-source.mjs';
 import { SecretMarkerDecoder, decodeText, measureLogicalLength } from './vendor/rwf673-secret-marker-decoder.mjs';
 const fixture = JSON.parse(readFileSync(new URL('./fixtures/redaction-marker-v1.json', import.meta.url), 'utf8'));
 const source = ['../src/userscript/02-network-communication/04a-marker-encoder.js',
@@ -127,4 +128,55 @@ test('unsupported media, ambiguous type and incomplete streams reject source sec
     producer.bodyState('application/json', 'xhr'),
     '{"token":"' + fixture.vectors[0].original, true
   ), /redaction-incomplete-json/);
+});
+
+test('real recorder stream preserves raw byte_count and writes only synthetic chunks', async () => {
+  let calls = 0;
+  const crypto = { subtle: webcrypto.subtle, getRandomValues(bytes) {
+    bytes.set(Buffer.from(calls++ === 0 ? fixture.test_scope : fixture.test_hmac_key_hex, 'hex'));
+    return bytes;
+  } };
+  const context = { crypto, TextEncoder, TextDecoder, Uint8Array, DataView,
+    URL, atob, btoa, Blob, location: {
+      href: 'https://chatgpt.com/', origin: 'https://chatgpt.com'
+    } };
+  vm.runInNewContext(diskHarnessSource() + `
+    this.__integrationRecords = [];
+    communicationLogRecord = async (type, data) => {
+      this.__integrationRecords.push({ type, data });
+    };
+    this.__integrationStream = communicationLogStreamBody;
+    this.__integrationScope = communicationMarkerV1Scope;
+    this.__integrationSafeUrl = communicationMarkerV1SafeUrl;
+  `, context);
+  const original = JSON.stringify({ token: fixture.vectors[0].original,
+    note: '[brackets]', emoji: '😀' });
+  const bytes = new TextEncoder().encode(original);
+  let offset = 0;
+  const body = { getReader() { return {
+    async read() {
+      if (offset >= bytes.length) return { done: true };
+      const end = Math.min(bytes.length, offset + 7);
+      const value = bytes.slice(offset, end);
+      offset = end;
+      return { done: false, value };
+    },
+    releaseLock() {}
+  }; } };
+  const result = await context.__integrationStream(body, 'communication_response_chunk',
+    { transport: 'fetch', content_type: 'application/json' });
+  assert.equal(result.byte_count, bytes.byteLength);
+  assert.ok(result.chunk_count > 0);
+  const encoded = context.__integrationRecords.map(row => row.data.data).join('');
+  assert.equal(encoded.includes(fixture.vectors[0].original), false);
+  const reconstructed = JSON.parse(decodeText(encoded, {
+    redaction_format: result.redaction_format, redaction_scope: result.redaction_scope
+  }));
+  assert.equal(reconstructed.note, '[brackets]');
+  assert.equal(reconstructed.emoji, '😀');
+  assert.equal(Buffer.byteLength(encoded) === result.byte_count, false);
+  const url = await context.__integrationSafeUrl(
+    'https://chatgpt.com/?token=' + fixture.vectors[0].original + '&ordinary=%5Bok%5D');
+  assert.equal(new URL(url).searchParams.get('token'), fixture.vectors[0].marker);
+  assert.equal(url.includes(fixture.vectors[0].original), false);
 });
