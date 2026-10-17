@@ -80,6 +80,8 @@ const ordinaryStages = [
   ['Console lifecycle and provenance controls', nodeCommand, ['--test', 'tests/console-diagnostics.test.mjs']],
   ['CGP2 provider/Core integration', nodeCommand, ['--test', 'tests/cgp2-core-integration.test.mjs', 'tests/issue156-core-plugin-boundary.test.mjs', 'tests/private-agent-plugin-loading.test.mjs']],
   ['Canonical final-render regressions', nodeCommand, ['--test', 'tests/core-integration.test.mjs', 'tests/phase5-rich-core-integration.test.mjs', 'tests/fallback-adaptive-fence.test.mjs', 'tests/tool-language-diagnostics.test.mjs', 'tests/sediment-resolver.test.mjs']],
+  ['Worker + Zstd/CSP probe regression', nodeCommand, ['--test', 'tests/issue314-worker-zstd-csp-probe.test.mjs']],
+  ['CSC Worker stream/directory preflight regression', nodeCommand, ['--test', 'tests/issue316-worker-stream-directory.test.mjs']],
   ['Built-in test list UI regression', nodeCommand, ['--test', 'tests/test-list-ui.test.mjs']],
   ['Recorder panel UI regression', nodeCommand, ['--test', 'tests/recorder-panel-ui.test.mjs', 'tests/modal-focus-retention.test.mjs', 'tests/heading-metadata-controls.test.mjs']]
 ];

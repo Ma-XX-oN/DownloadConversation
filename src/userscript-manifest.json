@@ -94,7 +94,9 @@
         "src/userscript/06-image-export-tests/03-export-tests-transition.js",
         "src/userscript/06-image-export-tests/04-tests-modal-transition.js",
         "src/userscript/06-image-export-tests/05-modal-contract.js",
-        "src/userscript/06-image-export-tests/06-agent-plugin-readiness.js"
+        "src/userscript/06-image-export-tests/06-agent-plugin-readiness.js",
+        "src/userscript/06-image-export-tests/07-worker-zstd-csp-probe.js",
+        "src/userscript/06-image-export-tests/08-csc-worker-boundary-probe.js"
       ]
     },
     {

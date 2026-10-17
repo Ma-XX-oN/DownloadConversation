@@ -82,7 +82,9 @@
       ['AI-transcript renderer parity', testRendererParityFeatures],
       ['Generated sandbox download link', testGeneratedSandboxDownloadLink],
       ['Jump identifier resolution', testJumpIdentifierResolution],
-      ['Conversation API access/schema', testConversationApiAccessAndSchema]
+      ['Conversation API access/schema', testConversationApiAccessAndSchema],
+      ['Worker + Zstd/CSP', testWorkerZstdCsp],
+      ['CSC Worker stream + directory', testCscWorkerBoundary]
     ];
   }
 
@@ -121,7 +123,7 @@
    * @returns {string} The string produced by `testMatrixResultText`.
    */
   function testMatrixResultText(result) {
-    return result?.status || '—';
+    return result ? result.status + (result.detail ? ': ' + result.detail : '') : '—';
   }
 
   /**
@@ -154,8 +156,10 @@
    */
   async function executeBuiltInTest(name, fn) {
     try {
-      await fn();
-      testMatrixCurrentResults.set(name, { status: 'PASS', detail: '' });
+      const detail = await fn();
+      testMatrixCurrentResults.set(name, {
+        status: 'PASS', detail: typeof detail === 'string' ? detail : ''
+      });
       return `✅ ${name}`;
     } catch (error) {
       const detail = errorMessage(error);
@@ -177,7 +181,9 @@
       .filter(([name]) => testMatrixCurrentResults.has(name))
       .map(([name]) => {
         const result = testMatrixCurrentResults.get(name);
-        return result.status === 'PASS' ? `✅ ${name}` : `❌ ${name}: ${result.detail}`;
+        return result.status === 'PASS'
+          ? `✅ ${name}${result.detail ? ': ' + result.detail : ''}`
+          : `❌ ${name}: ${result.detail}`;
       });
   }
 
@@ -214,6 +220,8 @@
     refreshTestMatrix();
     try {
       for (const [name, fn] of builtInTests()) {
+        // Directory selection requires an explicit, individual Run gesture.
+        if (name === 'CSC Worker stream + directory') continue;
         await executeBuiltInTest(name, fn);
       }
     } finally {
