@@ -211,33 +211,15 @@
       const session = loaded?.session ?? null;
       assert(agent && session,
         'AIConversationCore did not create the ChatGPT agent and canonical session.');
-      assert(typeof chatGPTPluginModule?.connectChatGPTSubjectHost === 'function',
-        'Pinned provider artifact has no verified navigation host interface.');
-      const host = chatGPTPluginModule.connectChatGPTSubjectHost({
-        agent,
-        origin: agentPluginPageWindow.location.origin,
-        conversationId: null
-      });
-      assert(host && typeof host.navigation === 'function'
-        && typeof host.request === 'function'
-        && typeof host.response === 'function'
-        && typeof host.dispose === 'function',
-      'Pinned provider navigation host is incomplete.');
-      let disconnect = null;
-      try {
-        disconnect = observeGenericBrowserNavigation(agentPluginPageWindow,
-          event => host.navigation(event));
-        assert(typeof disconnect === 'function',
-          'Generic navigation observer returned no teardown.');
-      } catch (error) {
-        disconnect?.();
-        host.dispose();
-        throw error;
-      }
       chatGPTAgent = agent;
       chatGPTCanonicalSession = session;
-      chatGPTSubjectHost = host;
-      disconnectChatGPTNavigation = disconnect;
+      try {
+        reconnectChatGPTSubjectHost();
+      } catch (error) {
+        chatGPTAgent = null;
+        chatGPTCanonicalSession = null;
+        throw error;
+      }
       const identity = chatGPTAgent.version();
       logDiagnostic('debug', 'agent-plugin-ready', {
         plugin_id: identity?.plugin ?? 'unknown',
@@ -252,6 +234,39 @@
     } finally {
       chatGPTAgentPromise = null;
     }
+  }
+
+  /**
+   * Rebinds the same Core-owned agent to a fresh provider host after page restore.
+   * @returns {void} No value is returned.
+   */
+  function reconnectChatGPTSubjectHost() {
+    if (chatGPTSubjectHost || !chatGPTAgent) return;
+    assert(typeof chatGPTPluginModule?.connectChatGPTSubjectHost === 'function',
+      'Pinned provider artifact has no verified navigation host interface.');
+    const host = chatGPTPluginModule.connectChatGPTSubjectHost({
+      agent: chatGPTAgent,
+      origin: agentPluginPageWindow.location.origin,
+      conversationId: null
+    });
+    assert(host && typeof host.navigation === 'function'
+      && typeof host.request === 'function'
+      && typeof host.response === 'function'
+      && typeof host.dispose === 'function',
+      'Pinned provider navigation host is incomplete.');
+    let disconnect = null;
+    try {
+      disconnect = observeGenericBrowserNavigation(agentPluginPageWindow,
+        event => host.navigation(event));
+      assert(typeof disconnect === 'function',
+        'Generic navigation observer returned no teardown.');
+    } catch (error) {
+      disconnect?.();
+      host.dispose();
+      throw error;
+    }
+    chatGPTSubjectHost = host;
+    disconnectChatGPTNavigation = disconnect;
   }
 
   /**
@@ -332,8 +347,6 @@
     disconnectChatGPTNavigation = null;
     chatGPTSubjectHost?.dispose();
     chatGPTSubjectHost = null;
-    chatGPTAgent = null;
-    chatGPTCanonicalSession = null;
   }
 
   /**
