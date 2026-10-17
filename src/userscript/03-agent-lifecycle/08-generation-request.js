@@ -285,6 +285,7 @@
         } catch {}
         const requestUrl = request?.url ?? String(input);
         const stockTrace = stockNetworkTraceFetchStart(request, requestUrl);
+        const providerIdentityRequestAccepted = agentPluginObserveNetworkRequest(stockTrace);
         void communicationLogFetchRequest(request, stockTrace)
           .catch(communicationError => communicationLogReportFailure('fetch-request', communicationError));
         rememberApiRequestContext(requestUrl, request?.headers, init.headers);
@@ -311,6 +312,7 @@
             ? cloneSafely(response)
             : null;
           stockNetworkTraceFetchResponse(response, stockTrace);
+          void agentPluginObserveFetchResponse(response, stockTrace, providerIdentityRequestAccepted);
           void communicationLogFetchResponse(response, stockTrace)
             .catch(communicationError => communicationLogReportFailure('fetch-response', communicationError));
           if (stopwatchConversationRequest && !stopwatchConversationResponse) {
