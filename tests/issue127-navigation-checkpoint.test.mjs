@@ -45,7 +45,7 @@ function createHarness(shared = new Map()) {
     }
   };
   const document = {
-    get title() { return state.title + ' - ChatGPT'; },
+    get title() { return state.visibleTitle + ' - ChatGPT'; },
     querySelectorAll(selector) {
       if (selector === 'a[href]') return [{
         href: 'https://chatgpt.com/c/' + state.id,
@@ -87,8 +87,9 @@ function createHarness(shared = new Map()) {
     globalThis.capture = {start:aicc127Start, request:aicc127LiveOnRequest,
       response:aicc127LiveOnFetchResponse, navigation:testAicc127Navigation,
       evidence:aicc127MinimalEvidence};`, context);
-  async function visit(id, title, project, sequence) {
-    state.id = id; state.title = title; state.project = project;
+  async function visit(id, title, project, sequence, visibleTitle = title) {
+    state.id = id; state.title = title; state.visibleTitle = visibleTitle;
+    state.project = project;
     state.projectId = 'g-p-' + (project ? id : 'none');
     listeners.get('currententrychange')?.();
     const trace = {sequence, method:'GET',
@@ -122,10 +123,8 @@ test('visible-title mismatch cannot produce navigation PASS', async () => {
   await h.f.start();
   await h.visit('A', 'Conversation A', 'Project A', 1);
   await h.visit('B', 'Conversation B', 'Project B', 2);
-  h.state.title = 'Unexpected title';
-  await h.visit('A', 'Conversation A', 'Project A', 3);
-  assert.equal(await h.f.navigation(), undefined,
-    'fixture resets the visible title on visit');
+  await h.visit('A', 'Conversation A', 'Project A', 3, 'Wrong title');
+  assert.equal((await h.f.navigation()).status, 'INCOMPLETE');
 });
 
 test('sessionStorage checkpoint survives reload without publishing private names', async () => {
