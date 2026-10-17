@@ -137,6 +137,7 @@ test('real recorder stream preserves raw byte_count and writes only synthetic ch
     return bytes;
   } };
   const context = { crypto, TextEncoder, TextDecoder, Uint8Array, DataView,
+    COMMUNICATION_LOG_BODY_CHUNK_CHARS: 256 * 1024,
     URL, atob, btoa, Blob, location: {
       href: 'https://chatgpt.com/', origin: 'https://chatgpt.com'
     } };
