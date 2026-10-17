@@ -116,6 +116,7 @@ function fixture(withNavigation = true) {
     chatGPTSubjectHost: null,
     disconnectChatGPTNavigation: null,
     chatGPTPluginModule: module,
+    importAgentPluginModule: async () => module,
     canonicalCore: () => ({ loadAgent: async () => ({
       agent, session: { events: [] }
     }) }),
