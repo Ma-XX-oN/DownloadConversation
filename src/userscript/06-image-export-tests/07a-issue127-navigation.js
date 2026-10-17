@@ -137,25 +137,34 @@
    */
   function aicc127NavigationObserved(kind, body, accepted, before) {
     const state = aicc127Runtime;
-    if (!state?.navigation || kind !== 'conversation') return;
+    if (!state?.navigation) return;
     const step = state.navigation.steps.at(-1);
-    if (!step || !accepted || state.snapshots <= before) return;
+    if (!step) return;
+    const salt = state.navigation.salt;
+    if (kind === 'conversation' && accepted) {
+      step.backend_observed = true;
+      step.backend_conversation_key = aicc127Fingerprint(body.conversation_id, salt);
+      step.backend_title_key = aicc127Fingerprint(body.title, salt);
+      step.backend_project_key = aicc127Fingerprint(body.gizmo_id, salt);
+      step.backend_standalone = body.gizmo_id === null;
+    }
+    if (kind !== 'conversation' && kind !== 'project') return;
+    if (!step.backend_observed || state.snapshots <= before) return;
     const subject = state.observed;
-    const matchedConversation = subject?.conversation?.id === body.conversation_id &&
-      subject?.conversation?.name === body.title;
-    const matchedProject = body.gizmo_id === null
+    const matchedConversation = subject?.conversation?.status === 'identified' &&
+      aicc127Fingerprint(subject.conversation.id, salt) === step.backend_conversation_key &&
+      aicc127Fingerprint(subject.conversation.name, salt) === step.backend_title_key;
+    const matchedProject = step.backend_standalone
       ? subject?.project?.status === 'none'
-      : typeof body.gizmo_id === 'string' &&
-        subject?.project?.status === 'identified' &&
-        subject?.project?.id === body.gizmo_id &&
-        typeof subject?.project?.name === 'string';
-    step.backend_observed = true;
+      : subject?.project?.status === 'identified' &&
+        aicc127Fingerprint(subject.project.id, salt) === step.backend_project_key &&
+        typeof subject.project.name === 'string';
     step.observer_matches_backend = Boolean(matchedConversation && matchedProject);
     const visual = aicc127VisibleComparison(subject);
     step.visible_conversation_match = visual.conversationMatch;
     step.visible_project_match = visual.projectMatch;
-    step.name_key = aicc127Fingerprint(subject?.conversation?.name, state.navigation.salt);
-    step.project_key = aicc127Fingerprint(subject?.project?.name, state.navigation.salt);
+    step.name_key = aicc127Fingerprint(subject?.conversation?.name, salt);
+    step.project_key = aicc127Fingerprint(subject?.project?.name, salt);
     const prior = state.navigation.steps.at(-2);
     if (prior?.name_key) step.changed_from_previous =
       step.name_key !== prior.name_key && step.project_key !== prior.project_key;
