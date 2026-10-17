@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         ChatGPT Conversation Markdown Recorder
 // @namespace    https://chatgpt.com/
-// @version      1.11.7-issue.314.1
+// @version      1.11.7-issue.314.2
 // @description  Exports the current ChatGPT conversation directly from the Conversation API as Markdown or JSONL.
 // @match        https://chatgpt.com/*
 // @match        https://chat.openai.com/*
@@ -19713,7 +19713,8 @@ Image elapsed: ${formatDuration(imageElapsed)} — Completed: ${imageCompleted}/
         const stream = new Blob([compressed]).stream()
           .pipeThrough(new DecompressionStream('gzip'));
         const wasm = new Uint8Array(await new Response(stream).arrayBuffer());
-        await __dcCompressorInit(wasm);
+        const engine = self['__dcWorkerCompressorBridge'];
+        await engine.init(wasm);
 
         const bytes = new Uint8Array(10 * 1024 * 1024);
         for (let i = 0; i < bytes.length; i += 1) {
@@ -19721,7 +19722,7 @@ Image elapsed: ${formatDuration(imageElapsed)} — Completed: ${imageCompleted}/
         }
         const chunks = [];
         let length = 0;
-        const writer = new CompressorEncoder(event.data.level);
+        const writer = new engine.Encoder(event.data.level);
         try {
           for (let pos = 0; pos < bytes.length; pos += 512 * 1024) {
             const part = writer.write(bytes.subarray(pos, pos + 512 * 1024));
@@ -19738,7 +19739,7 @@ Image elapsed: ${formatDuration(imageElapsed)} — Completed: ${imageCompleted}/
           archive.set(part, written);
           written += part.length;
         }
-        const restored = __dcCompressorDecompress(archive);
+        const restored = engine.decompress(archive);
         if (restored.length !== bytes.length) {
           throw new Error('Zstd round-trip length mismatch.');
         }
@@ -19788,6 +19789,12 @@ Image elapsed: ${formatDuration(imageElapsed)} — Completed: ${imageCompleted}/
     try {
       worker = new realm.Worker(url);
       const result = await new Promise((resolve, reject) => {
+        /**
+         * Completes one Worker reply.
+         *
+         * @param {Object} value - Worker completion or failure.
+         * @returns {void} No value is returned.
+         */
         const finish = value => {
           if (value?.ok) resolve(value);
           else reject(new Error(value?.message || 'Worker returned no result.'));
@@ -19819,16 +19826,25 @@ Image elapsed: ${formatDuration(imageElapsed)} — Completed: ${imageCompleted}/
    */
   async function testWorkerZstdCsp() {
     const bridge = globalThis['__dcCompressor'];
-    assert(bridge?.Encoder === CompressorEncoder
-      && bridge?.decompress === __dcCompressorDecompress,
+    assert(typeof bridge?.init === 'function'
+      && typeof bridge?.Encoder === 'function'
+      && typeof bridge?.decompress === 'function'
+      && typeof bridge?.wasmGzipBase64 === 'string',
     'Exact bundled Zstd compressor bridge is unavailable.');
     const source = [
       "'use strict';",
       'let __dcCompressorModule = null;',
-      __dcCompressorInit.toString(),
-      __dcCompressorViews.toString(),
-      CompressorEncoder.toString(),
-      __dcCompressorDecompress.toString(),
+      'function __dcCompressorViews(module) {',
+      '  return { bytes: new Uint8Array(module.memory.buffer),',
+      '    words: new Uint32Array(module.memory.buffer) };',
+      '}',
+      bridge.init.toString(),
+      bridge.Encoder.toString(),
+      bridge.decompress.toString(),
+      "self['__dcWorkerCompressorBridge'] = {",
+      '  init: __dcCompressorInit, Encoder: CompressorEncoder,',
+      '  decompress: __dcCompressorDecompress',
+      '};',
       '(' + workerCompressorProbeEntrypoint.toString() + ')();'
     ].join('\n');
     const page = typeof unsafeWindow !== 'undefined' ? unsafeWindow : window;
