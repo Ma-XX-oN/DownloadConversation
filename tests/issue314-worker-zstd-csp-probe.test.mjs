@@ -88,13 +88,13 @@ test('Worker probe is registered exactly once, under existing Test button', () =
 });
 
 test('Worker probe uses the real bundled bridge and only synthetic bytes', () => {
-  assert.match(probe, /bridge\?\.Encoder === CompressorEncoder/);
-  assert.match(probe, /__dcCompressorInit\.toString\(\)/);
-  assert.match(probe, /CompressorEncoder\.toString\(\)/);
-  assert.match(probe, /__dcCompressorDecompress\.toString\(\)/);
-  assert.match(probe, /__dcCompressorInit\(wasm\)/);
-  assert.match(probe, /new CompressorEncoder\(event\.data\.level\)/);
-  assert.match(probe, /__dcCompressorDecompress\(archive\)/);
+  assert.match(probe, /typeof bridge\?\.Encoder === 'function'/);
+  assert.match(probe, /bridge\.init\.toString\(\)/);
+  assert.match(probe, /bridge\.Encoder\.toString\(\)/);
+  assert.match(probe, /bridge\.decompress\.toString\(\)/);
+  assert.match(probe, /engine\.init\(wasm\)/);
+  assert.match(probe, /new engine\.Encoder\(event\.data\.level\)/);
+  assert.match(probe, /engine\.decompress\(archive\)/);
   assert.match(probe, /for \(let i = 0; i < bytes\.length; i \+= 1\)/);
   assert.doesNotMatch(probe, /(?:^|[^.])fetch\s*\(/);
   assert.doesNotMatch(probe, /GM_xmlhttpRequest|currentConversationId|document\.querySelector/);
