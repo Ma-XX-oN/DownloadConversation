@@ -275,15 +275,16 @@
    * during one page/host connection, including A-B-A navigation.
    *
    * @param {Object} trace - Existing stock request sequence, method and URL.
-   * @returns {boolean} Whether the private provider accepted this observation.
+   * @returns {Object|null} Accepting provider host or null.
    */
   function agentPluginObserveNetworkRequest(trace) {
-    if (!chatGPTSubjectHost || !Number.isSafeInteger(trace?.sequence)) return false;
-    return chatGPTSubjectHost.request({
+    const host = chatGPTSubjectHost;
+    if (!host || !Number.isSafeInteger(trace?.sequence)) return null;
+    return host.request({
       network_sequence: trace.sequence,
       method: trace.method,
       request_url: trace.url
-    });
+    }) ? host : null;
   }
 
   /**
@@ -292,12 +293,12 @@
    *
    * @param {Response} response - Existing stock fetch response.
    * @param {Object} trace - Previously accepted request correlation.
-   * @param {boolean} accepted - Provider request acceptance from start.
+   * @param {Object|null} accepted - Exact accepting provider host from request start.
    * @returns {Promise<void>} Resolves after private provider response handling.
    */
   async function agentPluginObserveFetchResponse(response, trace, accepted) {
-    if (!accepted || !chatGPTSubjectHost) return;
-    const host = chatGPTSubjectHost;
+    if (!accepted || accepted !== chatGPTSubjectHost) return;
+    const host = accepted;
     if (!response || response.status !== 200) return;
     const clone = cloneSafely(response);
     if (!clone) return;
@@ -321,7 +322,7 @@
    * @returns {void} No value is returned.
    */
   function agentPluginObserveXhrResponse(xhr, trace, accepted) {
-    if (!accepted || !chatGPTSubjectHost || xhr?.status !== 200) return;
+    if (!accepted || accepted !== chatGPTSubjectHost || xhr?.status !== 200) return;
     let body = null;
     try {
       if (xhr.responseType === 'json') body = xhr.response;
@@ -330,7 +331,7 @@
       }
     } catch {}
     if (body && typeof body === 'object' && !Array.isArray(body)) {
-      chatGPTSubjectHost.response({
+      accepted.response({
         network_sequence: trace.sequence,
         status: xhr.status,
         body
