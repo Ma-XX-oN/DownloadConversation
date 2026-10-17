@@ -112,7 +112,11 @@
     state.conversationId = id;
     aicc127NavigationVisit(id);
     state.pending.clear();
-    if (state.host && !state.sharedHost) state.host.begin(id);
+    if (state.sharedHost) {
+      // The #306 host owns navigation, backend traffic and identity cache.
+      // A second host would reset the canonical agent's published state.
+      state.host = chatGPTSubjectHost;
+    } else if (state.host) state.host.begin(id);
     else state.host = state.module.connectChatGPTSubjectHost({
       agent: state.agent, origin: location.origin, conversationId: id
     });

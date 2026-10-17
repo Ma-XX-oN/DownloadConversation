@@ -268,10 +268,11 @@
       disconnect = observeGenericBrowserNavigation(agentPluginPageWindow,
         event => {
           try {
-            host.navigation(event);
-            // Reuse the one provider-neutral navigation observer for staged witness.
+            // Start the witness navigation step before the provider publishes
+            // the destination identity, avoiding an A/B epoch mismatch.
             if (typeof aicc127Runtime !== 'undefined' && aicc127Runtime)
               aicc127NavigationChanged();
+            host.navigation(event);
           } catch (error) {
             logDiagnostic('warnings', 'agent-plugin-navigation-publish-failed', {
               error: boundedDiagnosticText(errorMessage(error), 200)

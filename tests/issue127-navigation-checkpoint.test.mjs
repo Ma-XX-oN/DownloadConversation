@@ -13,6 +13,7 @@ function createHarness(shared = new Map(), useSharedHost = false) {
   const pending = new Map();
   const listeners = new Map();
   let subscriber;
+  let connectCalls = 0;
   let lastConversation = null;
   const agent = {
     version: () => ({ version: '0.1.0-issue.1.29' }),
@@ -26,6 +27,7 @@ function createHarness(shared = new Map(), useSharedHost = false) {
   };
   const module = {
     connectChatGPTSubjectHost() {
+      connectCalls++;
       return {
         begin() { pending.clear(); lastConversation = null; },
         request({ network_sequence, request_url }) {
@@ -131,7 +133,8 @@ function createHarness(shared = new Map(), useSharedHost = false) {
         gizmo_id:project ? state.projectId : null}), truncated:false
     });
   }
-  return { f: context.capture, state, visit, navigateWithoutBackend, shared };
+  return { f: context.capture, state, visit, navigateWithoutBackend, shared,
+    get connectCalls() { return connectCalls; } };
 }
 
 test('A-B-A checks actual observer identity against visible sidebar and project', async () => {
@@ -206,4 +209,14 @@ test('cached return does not pass while observer still reports B', async () => {
   h.navigateWithoutBackend('A', 'Conversation A', 'Project A', false);
   assert.equal((await h.f.navigation()).status, 'INCOMPLETE');
   assert.equal(h.f.evidence().navigation_steps[2].observer_matches_backend, false);
+});
+
+test('shared provider host is never re-created by witness on A-B-A', async () => {
+  const h = createHarness(new Map(), true);
+  await h.f.start();
+  await h.visit('A', 'Conversation A', 'Project A', 11);
+  await h.visit('B', 'Conversation B', 'Project B', 12);
+  h.navigateWithoutBackend('A', 'Conversation A', 'Project A');
+  assert.equal(h.connectCalls, 0, 'Only the existing #306 host may own the canonical agent.');
+  assert.equal(await h.f.navigation(), undefined);
 });

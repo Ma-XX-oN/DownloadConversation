@@ -259,3 +259,10 @@ test('shared browser History fallback forwards route to active AICC live witness
   f.route('/c/22222222-2222-4222-8222-222222222222');
   assert.equal(f.witnessCalls, before + 1, 'Disposed host cannot notify witness.');
 });
+
+test('witness step advances before provider emits destination observer identity', () => {
+  const start = bridge.indexOf('aicc127NavigationChanged();');
+  const publish = bridge.indexOf('host.navigation(event);');
+  assert.ok(start >= 0 && publish > start,
+    'Record current navigation step before subject observer publication.');
+});
