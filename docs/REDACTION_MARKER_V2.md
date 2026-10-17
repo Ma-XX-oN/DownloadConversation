@@ -53,11 +53,18 @@ by comparing ID alone without the generation metadata.
 
 Tampermonkey storage has no assumed cross-tab compare-and-swap or
 transactional multi-key commit. Implementations MUST use a verified
-cross-tab exclusive lock (for example Web Locks when actually available
-to every participating script context) plus a SINGLE versioned storage
+cross-tab AND cross-origin exclusive lock that is proven to cover every
+participating Tampermonkey script context plus a SINGLE versioned storage
 record containing K, generation and epoch. Do not claim GM_setValue
 alone implements atomic compare-and-swap. Every participating tab MUST
-honour the same lock and re-read the record inside it. If cross-tab
+honour the same lock and re-read the record inside it. Web Locks alone
+are origin-scoped and do NOT establish mutual exclusion across
+chatgpt.com and chat.openai.com. A GM value-change listener is a
+notification, not an atomic lock or compare-and-swap. The producer
+must either use an independently verified shared authority with a
+linearizable compare-and-swap/fencing guarantee across BOTH origins,
+or fail closed. No lease-only / read-write-verify lock is accepted as
+proof of exclusivity without an adversarial concurrency test. If cross-tab
 exclusivity cannot be established, fail closed: never independently
 initialize competing persistent keys and label them one installation.
 An implementation must verify actual Tampermonkey storage/lock
