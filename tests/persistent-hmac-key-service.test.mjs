@@ -361,3 +361,27 @@ test('ambiguous pending-admission commit is reconciled without token leakage', a
   recovered.dispose();
   assert.equal(f.raw().pending.length, 0);
 });
+
+test('failed second admission rollback cannot delete another tab pending capture', async () => {
+  const f = fixture();
+  const first = f.open();
+  const held = await first.admit();
+  const persist = f.storage.set;
+  let injected = false;
+  f.storage.set = async (name, value) => {
+    await persist(name, value);
+    if (!injected && value.pending.length === 2) {
+      injected = true;
+      throw Error('lost acknowledgement');
+    }
+  };
+  const second = f.open();
+  await assert.rejects(() => second.admit(), /storage-write-failed/);
+  assert.equal(injected, true);
+  assert.equal(f.raw().pending.length, 1);
+  assert.equal(f.raw().pending[0], held.token);
+  await first.complete(held.token);
+  assert.equal(f.raw().pending.length, 0);
+  first.dispose();
+  second.dispose();
+});
