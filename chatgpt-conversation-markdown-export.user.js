@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         ChatGPT Conversation Markdown Recorder
 // @namespace    https://chatgpt.com/
-// @version      1.11.7-issue.313.14
+// @version      1.11.7-issue.313.15
 // @description  Exports the current ChatGPT conversation directly from the Conversation API as Markdown or JSONL.
 // @match        https://chatgpt.com/*
 // @connect      github.com
@@ -9,6 +9,8 @@
 // @grant        GM_xmlhttpRequest
 // @grant        GM_getValue
 // @grant        GM_setValue
+// @grant        GM.getValue
+// @grant        GM.setValue
 // @grant        GM_addValueChangeListener
 // @grant        GM_removeValueChangeListener
 // @run-at       document-start
@@ -11455,12 +11457,11 @@ globalThis.__dcCompressor = {
    * @returns {Object|null} Storage adapter or null when GM is unavailable.
    */
   function communicationPersistentHmacTampermonkeyStorage() {
-    if (typeof GM_getValue !== 'function' || typeof GM_setValue !== 'function') {
-      return null;
-    }
+    if (typeof GM === 'undefined' || typeof GM.getValue !== 'function' ||
+        typeof GM.setValue !== 'function') return null;
     return Object.freeze({
-      async get(name, fallback) { return GM_getValue(name, fallback); },
-      async set(name, value) { await GM_setValue(name, value); }
+      get(name, fallback) { return GM.getValue(name, fallback); },
+      set(name, value) { return GM.setValue(name, value); }
     });
   }
 
