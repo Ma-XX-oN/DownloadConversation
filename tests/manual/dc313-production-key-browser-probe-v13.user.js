@@ -382,8 +382,9 @@
     try {
       if (!diagChannel) throw Error('BroadcastChannel unavailable');
       report.synchronousGM = await diagPhase('sync');
-      if (typeof GM?.getValue !== 'function' ||
-          typeof GM?.setValue !== 'function') {
+      if (typeof GM === 'undefined' ||
+          typeof GM.getValue !== 'function' ||
+          typeof GM.setValue !== 'function') {
         throw Error('GM async API unavailable');
       }
       report.asynchronousGM = await diagPhase('async');
