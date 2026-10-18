@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         ChatGPT Conversation Markdown Recorder
 // @namespace    https://chatgpt.com/
-// @version      1.11.7-issue.313.7
+// @version      1.11.7-issue.313.8
 // @description  Exports the current ChatGPT conversation directly from the Conversation API as Markdown or JSONL.
 // @match        https://chatgpt.com/*
 // @connect      github.com
@@ -11384,7 +11384,17 @@ globalThis.__dcCompressor = {
         const next = { ...stored, phase: 'draining',
           next: { key_hex: randomHex(32), generation: randomHex(16),
             epoch: stored.epoch + 1 } };
-        await write(next.pending.length === 0 ? finishRotation(next) : next);
+        const committed = next.pending.length === 0
+          ? finishRotation(next) : next;
+        try { await write(committed); }
+        catch (error) {
+          // A lost GM acknowledgement can follow a successful commit.
+          // Re-read inside the SAME lock before interpreting its outcome.
+          const observed = await read();
+          if (JSON.stringify(observed) !== JSON.stringify(committed)) {
+            throw error;
+          }
+        }
         return { state: next.pending.length ? 'DRAINING' : 'COMMITTED',
           generation: next.pending.length ? stored.generation : next.next.generation,
           epoch: next.pending.length ? stored.epoch : next.next.epoch };
