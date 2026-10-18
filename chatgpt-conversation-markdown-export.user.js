@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         ChatGPT Conversation Markdown Recorder
 // @namespace    https://chatgpt.com/
-// @version      1.11.7-issue.309.9
+// @version      1.11.7-issue.309.10
 // @description  Exports the current ChatGPT conversation directly from the Conversation API as Markdown or JSONL.
 // @match        https://chatgpt.com/*
 // @match        https://chat.openai.com/*
@@ -11217,13 +11217,14 @@ globalThis.__dcCompressor = {
   }
 
   /**
-   * Publish the original captured event to two independent consumers.
-   * The COMM stream is transferred directly, never queued or read on-page.
-   * Plugin publication sees unmodified page-visible data and original clocks.
+   * Publish one captured event to two independently owned body branches.
+   * The plugin owns one native clone; the COMM Worker owns another native
+   * clone whose stream is transferred, not cloned again at postMessage().
+   * Neither consumer can read or mutate the stock page-owned Request/Response.
    *
    * @param {Object} stamp - Captured event identity.
    * @param {Object} meta - Cloneable transport metadata.
-   * @param {Object|null} nativeBodyOwner - Request or Response to clone once.
+   * @param {Object|null} nativeBodyOwner - Stock Request/Response, never shared.
    * @param {unknown} availableValue - Already available XHR/WS body, if any.
    * @returns {void} No value is returned.
    */
@@ -11253,22 +11254,30 @@ globalThis.__dcCompressor = {
       }
     }
     if (cscPluginIngress) {
-      let source = nativeBodyOwner ?? availableValue;
-      let sourceAvailable = source !== null;
+      let source = null;
+      let sourceAvailable = false;
+      let sourceIncomplete = false;
       try {
-        // XHR/WS mutable values must not alias page-owned buffers or JSON.
-        // Request/Response remain page-owned; #310 owns safe plugin reads.
-        if (!nativeBodyOwner && source && typeof source === 'object') {
-          source = structuredClone(source);
+        if (nativeBodyOwner) {
+          // This is the plugin-owned native clone, independent of COMM.
+          // Never expose the original one-shot page-owned body to #310.
+          source = cloneSafely(nativeBodyOwner);
+          if (!source) throw new Error('Plugin Request/Response clone unavailable.');
+        } else if (availableValue && typeof availableValue === 'object') {
+          // XHR/WS page-owned mutable bytes must never alias the plugin.
+          source = structuredClone(availableValue);
+        } else {
+          source = availableValue;
         }
+        sourceAvailable = source !== null;
       } catch (error) {
-        cscIngressFailure(stamp, 'plugin-payload-copy', error);
-        source = null;
-        sourceAvailable = false;
+        sourceIncomplete = true;
+        cscIngressFailure(stamp, 'plugin-payload-clone', error);
       }
       try {
         cscPluginIngress(Object.freeze({
-          envelope, source, source_available: sourceAvailable
+          envelope, source, source_available: sourceAvailable,
+          source_incomplete: sourceIncomplete
         }));
       } catch (error) {
         cscIngressFailure(stamp, 'plugin-delivery', error);
