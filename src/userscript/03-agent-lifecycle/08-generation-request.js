@@ -289,7 +289,7 @@
         cscPublishFetch(requestStamp, request, {
           method: String(request?.method ?? init.method ?? 'GET').toUpperCase(),
           request_url: requestUrl,
-          body_available: Boolean(request?.body)
+          body_available: !!request?.body
         });
         if (!cscCommWorker) {
           void communicationLogFetchRequest(request, stockTrace)
@@ -324,10 +324,10 @@
           cscPublishFetch(responseStamp, response, {
             method: stockTrace.method,
             request_url: requestUrl,
-            response_url: response?.url ?? requestUrl,
-            status: response?.status ?? null,
-            redirected: response?.redirected === true,
-            ok: response?.ok === true
+            response_url: response.url,
+            status: response.status,
+            redirected: response.redirected,
+            ok: response.ok
           });
           if (!cscCommWorker) {
             void communicationLogFetchResponse(response, stockTrace)
