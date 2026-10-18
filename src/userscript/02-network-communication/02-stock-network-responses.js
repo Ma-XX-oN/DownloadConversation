@@ -34,6 +34,7 @@
    *
    * @param {XMLHttpRequest} xhr - Page XHR instance.
    * @param {Object} info - Captured XHR method/URL/header metadata.
+   * @param {Object|null} captured - Earliest canonical network event.
    * @returns {Object} Correlation state for loadend.
    */
   function stockNetworkTraceXhrStart(xhr, info, captured = null) {
