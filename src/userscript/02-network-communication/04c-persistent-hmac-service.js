@@ -87,10 +87,16 @@
      * @param {Function} fn - Exclusive operation.
      * @returns {Promise<*>} Exclusive result.
      */
-    async function transaction(fn) {
-      available();
+    async function transaction(fn, cleanupAfterDispose = false) {
+      if (!cleanupAfterDispose) available();
+      else if (authority?.capability !== 'linearizable-chatgpt-web-lock-fenced-v1' ||
+          typeof authority?.runExclusive !== 'function' ||
+          typeof storage?.get !== 'function' ||
+          typeof storage?.set !== 'function') {
+        throw new Error('persistent-key-cleanup-authority-unavailable');
+      }
       return authority.runExclusive(async () => {
-        if (disposed) throw new Error('persistent-key-disposed');
+        if (disposed && !cleanupAfterDispose) throw new Error('persistent-key-disposed');
         /**
          * Read and validate the atomic shared persistent key record.
          * @returns {Promise<Object|null>} Stored record or absent state.
@@ -161,6 +167,18 @@
       const key = Uint8Array.from(result.key_hex.match(/../g), x => parseInt(x, 16));
       if (disposed) {
         key.fill(0);
+        // A disposal after the admission commit must not orphan a token.
+        // Release only this never-provisioned capture under the shared lock.
+        await transaction(async (read, write) => {
+          const stored = await read();
+          if (!stored || !stored.pending.includes(result.token)) {
+            throw new Error('persistent-key-admission-not-found');
+          }
+          const pending = stored.pending.filter(item => item !== result.token);
+          const next = { ...stored, pending };
+          await write(next.phase === 'draining' && pending.length === 0
+            ? finishRotation(next) : next);
+        }, true);
         throw new Error('persistent-key-disposed');
       }
       internal.set(result.token, key);
