@@ -40,27 +40,27 @@ function exactIngressHarness() {
   return { api: context.csc, state };
 }
 
-test('#309 RED: plugin reading a raw Response must never disturb stock ChatGPT body', async () => {
+test('#309 GREEN: plugin reading a cloned Response preserves stock ChatGPT body', async () => {
   const { api, state } = exactIngressHarness();
   const stock = new Response('stock-body-must-remain-intact');
   const event = api.cscCaptureNow('fetch', 'response');
   api.cscPublishFetch(event, stock, { status: 200 });
-  assert.equal(state.clones, 1,
-    'Do not add an unauthorized second Request/Response.clone()');
+  assert.equal(state.clones, 2,
+    'Exactly one plugin branch and one COMM branch, no Worker handoff clone');
   assert.equal(state.plugin.length, 1);
   assert.equal(state.worker.length, 1);
   assert.equal(await state.plugin[0].source.text(), 'stock-body-must-remain-intact',
     'Plugin requires the unsanitized body');
   assert.equal(await stock.text(), 'stock-body-must-remain-intact',
-    'FAIL: plugin data ownership consumed the exact page-owned Response');
+    'Plugin body must never consume the original page-owned Response');
 });
 
-test('#309 RED: late plugin body access must survive stock finishing first', async () => {
+test('#309 GREEN: late plugin body access survives stock finishing first', async () => {
   const { api, state } = exactIngressHarness();
   const stock = new Response('late-plugin-raw-body');
   const event = api.cscCaptureNow('fetch', 'response');
   api.cscPublishFetch(event, stock, { status: 200 });
   assert.equal(await stock.text(), 'late-plugin-raw-body');
   assert.equal(await state.plugin[0].source.text(), 'late-plugin-raw-body',
-    'FAIL: delayed plugin queue cannot read the original already-consumed stock body');
+    'Delayed plugin queue retains an independent cloned body after stock completion');
 });
