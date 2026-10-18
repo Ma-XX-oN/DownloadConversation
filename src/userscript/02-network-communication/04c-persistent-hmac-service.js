@@ -328,3 +328,18 @@
       }
     });
   }
+
+  /**
+   * Build the production tab's lazy persistent key service.
+   * Nothing is persisted until the first admitted capture.
+   * @returns {Object} Lifecycle service with native same-origin coordination.
+   */
+  function communicationPersistentHmacCurrentTabService() {
+    return communicationPersistentHmacService({
+      storage: communicationPersistentHmacTampermonkeyStorage(),
+      authority: communicationPersistentHmacChatgptAuthority(
+        typeof navigator === 'undefined' ? null : navigator,
+        typeof location === 'undefined' ? null : location),
+      crypto: typeof crypto === 'undefined' ? null : crypto
+    });
+  }
