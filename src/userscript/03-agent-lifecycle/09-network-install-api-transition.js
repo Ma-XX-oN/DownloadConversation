@@ -86,18 +86,18 @@
               event: 'loadend', request_url: info.url,
               body_available: false, complete: false
             });
-            return;
+          } else {
+            const body = cscXhrBodySnapshot(this);
+            cscPublishValue(responseStamp, {
+              method: info.method, request_url: info.url,
+              response_url: this.responseURL ?? info.url,
+              status: Number.isFinite(this.status) ? this.status : null,
+              response_type: this.responseType || 'text',
+              headers: String(this.getAllResponseHeaders?.() ?? ''),
+              body_type: body.body_type,
+              body_available: body.body_available
+            }, body.value);
           }
-          const body = cscXhrBodySnapshot(this);
-          cscPublishValue(responseStamp, {
-            method: info.method, request_url: info.url,
-            response_url: this.responseURL ?? info.url,
-            status: Number.isFinite(this.status) ? this.status : null,
-            response_type: this.responseType || 'text',
-            headers: String(this.getAllResponseHeaders?.() ?? ''),
-            body_type: body.body_type,
-            body_available: body.body_available
-          }, body.value);
           if (!cscCommWorker) {
             void communicationLogXhrResponse(this, stockTrace)
               .catch(communicationError => communicationLogReportFailure('xhr-response', communicationError));
