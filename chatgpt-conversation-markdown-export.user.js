@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         ChatGPT Conversation Markdown Recorder
 // @namespace    https://chatgpt.com/
-// @version      1.11.7-issue.309.5
+// @version      1.11.7-issue.309.6
 // @description  Exports the current ChatGPT conversation directly from the Conversation API as Markdown or JSONL.
 // @match        https://chatgpt.com/*
 // @match        https://chat.openai.com/*
@@ -11172,6 +11172,7 @@ globalThis.__dcCompressor = {
       clock_domain: cscPageInstanceId,
       connection_id: connectionId ?? crypto.randomUUID(),
       capture_id: cscPageInstanceId + ':' + network_sequence,
+      parent_capture_id: parent?.capture_id ?? null,
       request_capture_id: parent?.request_capture_id ?? parent?.capture_id ?? null,
       network_sequence,
       capture_order,
@@ -11252,9 +11253,22 @@ globalThis.__dcCompressor = {
       }
     }
     if (cscPluginIngress) {
+      let source = nativeBodyOwner ?? availableValue;
+      let sourceAvailable = source !== null;
+      try {
+        // XHR/WS mutable values must not alias page-owned buffers or JSON.
+        // Request/Response remain page-owned; #310 owns safe plugin reads.
+        if (!nativeBodyOwner && source && typeof source === 'object') {
+          source = structuredClone(source);
+        }
+      } catch (error) {
+        cscIngressFailure(stamp, 'plugin-payload-copy', error);
+        source = null;
+        sourceAvailable = false;
+      }
       try {
         cscPluginIngress(Object.freeze({
-          envelope, source: nativeBodyOwner ?? availableValue
+          envelope, source, source_available: sourceAvailable
         }));
       } catch (error) {
         cscIngressFailure(stamp, 'plugin-delivery', error);
