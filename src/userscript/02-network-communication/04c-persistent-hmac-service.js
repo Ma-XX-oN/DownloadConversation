@@ -90,6 +90,7 @@
     async function transaction(fn) {
       available();
       return authority.runExclusive(async () => {
+        if (disposed) throw new Error('persistent-key-disposed');
         /**
          * Read and validate the atomic shared persistent key record.
          * @returns {Promise<Object|null>} Stored record or absent state.
