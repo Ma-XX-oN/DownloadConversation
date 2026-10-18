@@ -269,7 +269,7 @@
    */
   function installNetworkCapture() {
     if (captureInstalled) return;
-    // Use the page realm rather than the userscript sandbox when intercepting page networking.
+    // Intercept in the page realm.
     const pageWindow = typeof unsafeWindow !== 'undefined' ? unsafeWindow : window;
 
     if (typeof pageWindow.fetch === 'function') {
