@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         ChatGPT Conversation Markdown Recorder
 // @namespace    https://chatgpt.com/
-// @version      1.11.7-issue.313.10
+// @version      1.11.7-issue.313.11
 // @description  Exports the current ChatGPT conversation directly from the Conversation API as Markdown or JSONL.
 // @match        https://chatgpt.com/*
 // @connect      github.com
@@ -11352,7 +11352,8 @@ globalThis.__dcCompressor = {
      * @returns {Promise<void>} Storage-confirmed completion.
      */
     async function complete(token) {
-      if (!internal.has(token)) throw new Error('persistent-key-unknown-admission');
+      const key = internal.get(token);
+      if (!key) throw new Error('persistent-key-unknown-admission');
       await transaction(async (read, write) => {
         const stored = await read();
         if (!stored || !stored.pending.includes(token)) {
@@ -11363,7 +11364,7 @@ globalThis.__dcCompressor = {
         await write(next.phase === 'draining' && pending.length === 0
           ? finishRotation(next) : next);
       });
-      internal.get(token).fill(0);
+      key.fill(0);
       internal.delete(token);
     }
 
