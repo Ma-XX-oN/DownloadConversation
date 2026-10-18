@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         ChatGPT Conversation Markdown Recorder
 // @namespace    https://chatgpt.com/
-// @version      1.11.7-issue.313.4
+// @version      1.11.7-issue.313.5
 // @description  Exports the current ChatGPT conversation directly from the Conversation API as Markdown or JSONL.
 // @match        https://chatgpt.com/*
 // @connect      github.com
@@ -11207,6 +11207,7 @@ globalThis.__dcCompressor = {
     async function transaction(fn) {
       available();
       return authority.runExclusive(async () => {
+        if (disposed) throw new Error('persistent-key-disposed');
         /**
          * Read and validate the atomic shared persistent key record.
          * @returns {Promise<Object|null>} Stored record or absent state.
@@ -11275,6 +11276,10 @@ globalThis.__dcCompressor = {
         return { token, key_hex: stored.key_hex, metadata: metadata(stored) };
       });
       const key = Uint8Array.from(result.key_hex.match(/../g), x => parseInt(x, 16));
+      if (disposed) {
+        key.fill(0);
+        throw new Error('persistent-key-disposed');
+      }
       internal.set(result.token, key);
       return { token: result.token, metadata: result.metadata };
     }
@@ -11438,6 +11443,21 @@ globalThis.__dcCompressor = {
             return callback();
           });
       }
+    });
+  }
+
+  /**
+   * Build the production tab's lazy persistent key service.
+   * Nothing is persisted until the first admitted capture.
+   * @returns {Object} Lifecycle service with native same-origin coordination.
+   */
+  function communicationPersistentHmacCurrentTabService() {
+    return communicationPersistentHmacService({
+      storage: communicationPersistentHmacTampermonkeyStorage(),
+      authority: communicationPersistentHmacChatgptAuthority(
+        typeof navigator === 'undefined' ? null : navigator,
+        typeof location === 'undefined' ? null : location),
+      crypto: typeof crypto === 'undefined' ? null : crypto
     });
   }
 
