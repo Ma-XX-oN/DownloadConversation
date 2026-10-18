@@ -40,10 +40,11 @@ test('diagnostic menu is registered and never auto-starts', () => {
   assert.equal(operations, 0);
 });
 
-async function runTwoTabDiagnostic(isolatedLocks) {
+async function runTwoTabDiagnostic(isolatedLocks, staleVisibility = false) {
   const shared = new Map(), sync = [new Map(), new Map()];
   const menus = [new Map(), new Map()], members = new Map(), tails = new Map();
-  let counter = 0, done;
+  let counter = 0, done, listenerId = 0, staleReadApplied = false;
+  const listeners = new Map();
   const response = new Promise(resolve => { done = resolve; });
   class Broadcast {
     constructor(name) {
@@ -89,12 +90,31 @@ async function runTwoTabDiagnostic(isolatedLocks) {
         sync[scope].set(key, structuredClone(value)),
       GM: {
         async getValue(key, fallback) {
+          if (staleVisibility && scope === 1 &&
+              key.startsWith('dc313-gm-visibility:') &&
+              !staleReadApplied && shared.has(key)) {
+            staleReadApplied = true;
+            return fallback;
+          }
           return shared.has(key) ? structuredClone(shared.get(key)) : fallback;
         },
         async setValue(key, value) {
+          const previous = shared.get(key);
           shared.set(key, structuredClone(value));
+          for (const listener of listeners.values()) {
+            if (listener.key === key) {
+              queueMicrotask(() => listener.callback(key, previous,
+                structuredClone(value), listener.scope !== scope));
+            }
+          }
         }
       },
+      GM_addValueChangeListener: (key, callback) => {
+        const id = ++listenerId;
+        listeners.set(id, { scope, key, callback });
+        return id;
+      },
+      GM_removeValueChangeListener: id => { listeners.delete(id); },
       GM_registerMenuCommand: (name, callback) => menus[scope].set(name, callback),
       console: { warn() {}, info(label, output) {
         if (scope === 0 && label === 'DC #313 result') {
@@ -127,6 +147,13 @@ test('two-tab diagnostic distinguishes stale sync values from shared async GM', 
   assert.equal(report.visibility.status, 'PASS');
   assert.equal(report.visibility.peerSawLeaderWrite, true);
   assert.equal(report.visibility.leaderSawPeerWrite, true);
+  assert.equal(report.visibility.peerSawLeaderWriteAfter300ms, true);
+  assert.equal(report.visibility.peerSawLeaderWriteAfter1300ms, true);
+  assert.equal(report.visibility.leaderSawPeerWriteAfter1500ms, true);
+  assert.ok(report.visibility.peerRemoteEvents[0].some(
+    event => event.remote && event.sawLeaderValue));
+  assert.ok(report.visibility.leaderRemoteEvents.some(
+    event => event.remote && event.sawPeerValue));
   assert.equal(report.exclusiveWebLock.status, 'PASS');
   assert.equal(report.exclusiveWebLock.peersAttemptedWhileHeld, 1);
   assert.equal(report.exclusiveWebLock.peersAcquiredEventually, 1);
@@ -143,6 +170,19 @@ test('Web Lock diagnostic rejects isolated per-tab lock namespaces', async () =>
   assert.equal(report.exclusiveWebLock.peersAcquiredWhileHeld, 1);
   assert.equal(report.exclusiveWebLock.status, 'FAIL');
   assert.equal(report.status, 'FAIL');
+});
+
+test('visibility fails closed on first stale cross-tab read despite later GM events', async () => {
+  const report = await runTwoTabDiagnostic(false, true);
+  assert.equal(report.asynchronousGM.status, 'PASS');
+  assert.equal(report.exclusiveWebLock.status, 'PASS');
+  assert.equal(report.visibility.peerSawLeaderWrite, false);
+  assert.equal(report.visibility.peerSawLeaderWriteAfter300ms, true);
+  assert.equal(report.visibility.peerSawLeaderWriteAfter1300ms, true);
+  assert.equal(report.visibility.status, 'FAIL');
+  assert.equal(report.status, 'FAIL');
+  assert.ok(report.visibility.peerRemoteEvents[0].some(
+    event => event.remote && event.sawLeaderValue));
 });
 
 test('all probe outputs are selectable and Copy JSON works without screenshots', async () => {
