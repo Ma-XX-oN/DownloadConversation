@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         DC #313 Exact Producer HMAC Browser Probe
 // @namespace    https://chatgpt.com/dc313-probe/
-// @version      0.5.0
+// @version      0.6.0
 // @description  Synthetic HMAC producer, Web Locks, GM and Worker acceptance; no conversation access.
 // @match        https://chatgpt.com/*
 // @grant        GM_getValue
@@ -9,7 +9,7 @@
 // @grant        GM.getValue
 // @grant        GM.setValue
 // @grant        GM_registerMenuCommand
-// @require      https://raw.githubusercontent.com/Ma-XX-oN/DownloadConversation/dc329ed82eefd8a815d03b134e59c9e62f128a82/src/userscript/02-network-communication/04c-persistent-hmac-service.js
+// @require      https://raw.githubusercontent.com/Ma-XX-oN/DownloadConversation/51d65b2925af4f443fe2098cc0e756282870d376/src/userscript/02-network-communication/04c-persistent-hmac-service.js
 // @run-at       document-start
 // ==/UserScript==
 
@@ -194,8 +194,8 @@
   // All persisted test records use this probe userscript's own GM namespace.
   // No DownloadConversation recorder key, conversation or network log is read.
   const testStorage = Object.freeze({
-    get: (name, fallback) => GM_getValue('dc313-probe-exact:' + name, fallback),
-    set: (name, value) => GM_setValue('dc313-probe-exact:' + name, value)
+    get: (name, fallback) => GM.getValue('dc313-probe-exact:' + name, fallback),
+    set: (name, value) => GM.setValue('dc313-probe-exact:' + name, value)
   });
   function makeExactService() {
     return communicationPersistentHmacService({
@@ -236,7 +236,7 @@
 
   async function testExactProducer() {
     let first, second;
-    let result = { status: 'FAIL', exactSource: 'dc329ed82eefd8a815d03b134e59c9e62f128a82' };
+    let result = { status: 'FAIL', exactSource: '51d65b2925af4f443fe2098cc0e756282870d376' };
     try {
       first = makeExactService();
       second = makeExactService();
@@ -378,7 +378,7 @@
   async function diagnoseCrossTabStorage() {
     if (diagActive || inProgress) return;
     diagActive = true;
-    const report = { version: '0.5.0', status: 'FAIL' };
+    const report = { version: '0.6.0', status: 'FAIL' };
     try {
       if (!diagChannel) throw Error('BroadcastChannel unavailable');
       report.synchronousGM = await diagPhase('sync');
