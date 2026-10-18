@@ -385,3 +385,42 @@ test('failed second admission rollback cannot delete another tab pending capture
   first.dispose();
   second.dispose();
 });
+
+test('Randomize reconciles committed rotation after lost GM acknowledgement', async () => {
+  const f = fixture();
+  const s = f.open();
+  const first = await s.admit();
+  await s.complete(first.token);
+  const persist = f.storage.set;
+  let droppedAck = false;
+  f.storage.set = async (name, value) => {
+    await persist(name, value);
+    if (!droppedAck && value.epoch === 2 && value.phase === 'open') {
+      droppedAck = true;
+      throw Error('lost GM set acknowledgement');
+    }
+  };
+  const result = await s.randomize(true);
+  assert.equal(droppedAck, true);
+  assert.equal(result.state, 'COMMITTED');
+  assert.equal(result.epoch, 2);
+  assert.equal(f.raw().epoch, 2);
+  assert.equal(result.generation, f.raw().generation);
+  assert.notEqual(result.generation, first.metadata.redaction_scope);
+  s.dispose();
+});
+
+test('Randomize rejects uncommitted failed write rather than invent new scope', async () => {
+  const f = fixture();
+  const s = f.open();
+  const first = await s.admit();
+  await s.complete(first.token);
+  f.fail('write');
+  await assert.rejects(() => s.randomize(true), /storage-write-failed/);
+  assert.equal(f.raw().epoch, 1);
+  assert.equal(f.raw().generation, first.metadata.redaction_scope);
+  f.fail(null);
+  const result = await s.randomize(true);
+  assert.equal(result.epoch, 2);
+  s.dispose();
+});
