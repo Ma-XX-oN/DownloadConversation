@@ -1,11 +1,13 @@
 // ==UserScript==
 // @name         DC #313 Exact Producer HMAC Browser Probe
 // @namespace    https://chatgpt.com/dc313-probe/
-// @version      0.4.0
+// @version      0.5.0
 // @description  Synthetic HMAC producer, Web Locks, GM and Worker acceptance; no conversation access.
 // @match        https://chatgpt.com/*
 // @grant        GM_getValue
 // @grant        GM_setValue
+// @grant        GM.getValue
+// @grant        GM.setValue
 // @grant        GM_registerMenuCommand
 // @require      https://raw.githubusercontent.com/Ma-XX-oN/DownloadConversation/dc329ed82eefd8a815d03b134e59c9e62f128a82/src/userscript/02-network-communication/04c-persistent-hmac-service.js
 // @run-at       document-start
@@ -268,7 +270,136 @@
     alert(message);
   }
 
+
+  // Diagnostic only. Do not treat a local GM_ readback as proof that another
+  // tab has observed the committed storage write.
+  const diagChannel = typeof BroadcastChannel === 'function'
+    ? new BroadcastChannel('dc313-gm-cross-tab-diag-v1') : null;
+  const diagRuns = new Map();
+  let diagActive = false;
+
+  async function diagRead(mode, name) {
+    const n = mode === 'async' ? await GM.getValue(name, 0)
+      : GM_getValue(name, 0);
+    if (!Number.isSafeInteger(n) || n < 0) {
+      throw Error('invalid '+ mode +' GM counter');
+    }
+    return n;
+  }
+  async function diagWrite(mode, name, count) {
+    if (mode === 'async') await GM.setValue(name, count);
+    else await GM_setValue(name, count);
+  }
+  async function diagIncrements(mode, name) {
+    let first = null, highest = -1;
+    for (let i = 0; i < rounds; i++) {
+      await exclusive(async () => {
+        const previous = await diagRead(mode, name);
+        if (first === null) first = previous;
+        highest = Math.max(highest, previous);
+        await delay(8);
+        await diagWrite(mode, name, previous + 1);
+        if (await diagRead(mode, name) !== previous + 1) {
+          throw Error('local '+mode+' write readback mismatch');
+        }
+      });
+    }
+    return { firstRead: first, highestPriorRead: highest,
+      finishedRead: await diagRead(mode, name) };
+  }
+
+  if (diagChannel) diagChannel.onmessage = async event => {
+    const message = event.data;
+    if (!message || message.from === tabId ||
+        typeof message.run !== 'string') return;
+    if (message.type === 'prepare') {
+      if (diagActive) return;
+      diagRuns.set(message.run, { leader: message.from,
+        mode: message.mode, name: message.name });
+      diagChannel.postMessage({ type: 'ready', run: message.run,
+        from: tabId });
+    } else if (message.type === 'start') {
+      const state = diagRuns.get(message.run);
+      if (!state || state.leader !== message.from || diagActive) return;
+      diagActive = true;
+      try {
+        const detail = await diagIncrements(state.mode, state.name);
+        diagChannel.postMessage({ type: 'done', run: message.run,
+          from: tabId, detail });
+      } catch (error) {
+        diagChannel.postMessage({ type: 'error', run: message.run,
+          from: tabId, error: String(error) });
+      } finally {
+        diagRuns.delete(message.run);
+        diagActive = false;
+      }
+    } else if (['ready', 'done', 'error'].includes(message.type)) {
+      const state = diagRuns.get(message.run);
+      if (!state || state.leader) return;
+      if (message.type === 'ready') state.ready.add(message.from);
+      if (message.type === 'done') state.done.set(message.from,
+        message.detail);
+      if (message.type === 'error') state.errors.push({
+        tab: message.from, error: message.error });
+    }
+  };
+
+  async function diagPhase(mode) {
+    const run = crypto.randomUUID();
+    const name = 'dc313-gm-diag:' + mode + ':' + run;
+    const state = { ready: new Set(), done: new Map(), errors: [] };
+    diagRuns.set(run, state);
+    try {
+      await exclusive(async () => { await diagWrite(mode, name, 0); });
+      diagChannel.postMessage({ type: 'prepare', run, from: tabId,
+        mode, name });
+      await delay(1200);
+      const peers = [...state.ready];
+      if (peers.length < 1) throw Error('no participating peer');
+      diagChannel.postMessage({ type: 'start', run, from: tabId });
+      const local = await diagIncrements(mode, name);
+      const start = Date.now();
+      while (state.done.size + state.errors.length < peers.length &&
+        Date.now() - start < timeoutMs) await delay(50);
+      const observed = await exclusive(() => diagRead(mode, name));
+      await delay(500);
+      const settled = await exclusive(() => diagRead(mode, name));
+      return { mode, status: state.errors.length === 0 &&
+        state.done.size === peers.length && observed ===
+        rounds * (peers.length + 1) ? 'PASS' : 'FAIL',
+        expected: rounds * (peers.length + 1), observed,
+        observedAfter500ms: settled, local,
+        peer: [...state.done.values()], errors: state.errors };
+    } finally {
+      diagRuns.delete(run);
+    }
+  }
+
+  async function diagnoseCrossTabStorage() {
+    if (diagActive || inProgress) return;
+    diagActive = true;
+    const report = { version: '0.5.0', status: 'FAIL' };
+    try {
+      if (!diagChannel) throw Error('BroadcastChannel unavailable');
+      report.synchronousGM = await diagPhase('sync');
+      if (typeof GM?.getValue !== 'function' ||
+          typeof GM?.setValue !== 'function') {
+        throw Error('GM async API unavailable');
+      }
+      report.asynchronousGM = await diagPhase('async');
+      report.status = report.synchronousGM.status === 'PASS' &&
+        report.asynchronousGM.status === 'PASS' ? 'PASS' : 'FAIL';
+    } catch (error) { report.error = String(error); }
+    finally { diagActive = false; }
+    console.info('DC #313 GM cross-tab diagnostic', report);
+    alert('DC #313 GM diagnostic: ' + JSON.stringify(report));
+  }
+
   if (typeof GM_registerMenuCommand === 'function') {
+    GM_registerMenuCommand('DC #313: diagnose GM cross-tab storage', () => {
+      void diagnoseCrossTabStorage();
+    });
+
     GM_registerMenuCommand('DC #313: RESET synthetic producer fixture', () => {
       void (async () => {
         const authority = communicationPersistentHmacChatgptAuthority(
