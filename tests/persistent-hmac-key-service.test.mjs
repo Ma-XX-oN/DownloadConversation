@@ -7,8 +7,10 @@ import vm from 'node:vm';
 const source = readFileSync(new URL(
   '../src/userscript/02-network-communication/04c-persistent-hmac-service.js',
   import.meta.url), 'utf8');
-const create = vm.runInNewContext(source + '\ncommunicationPersistentHmacService;',
+const functions = vm.runInNewContext(source + '\n({ service: communicationPersistentHmacService, authority: communicationPersistentHmacChatgptAuthority });',
   { Uint8Array, Array, Map, Set, Object, Number, Error, JSON });
+const create = functions.service;
+const makeAuthority = functions.authority;
 const secret = '🔐é';
 
 function fixture() {
@@ -18,7 +20,7 @@ function fixture() {
   let random = 0;
   const events = [];
   const authority = {
-    capability: 'linearizable-cross-origin-fenced-v1',
+    capability: 'linearizable-chatgpt-web-lock-fenced-v1',
     async runExclusive(fn) {
       const prev = gate;
       let unlock;
@@ -83,7 +85,7 @@ function digest(key, value) {
     .update(size).update(bytes).digest('hex').slice(0, 48);
 }
 
-test('unverified cross-origin authority fails closed before first storage mutation', async () => {
+test('missing or unverified same-origin authority fails closed before first mutation', async () => {
   const f = fixture();
   for (const authority of [null, undefined, { capability: 'web-locks-origin-only',
     runExclusive: f.authority.runExclusive }]) {
@@ -95,7 +97,7 @@ test('unverified cross-origin authority fails closed before first storage mutati
   assert.equal(f.randomCount, 0);
 });
 
-test('100 racing first-use sessions across two origins converge to one persisted K', async () => {
+test('100 racing first-use sessions across chatgpt.com tabs converge to one persisted K', async () => {
   const f = fixture();
   const services = Array.from({ length: 100 }, () => f.open());
   const admissions = await Promise.all(services.map(s => s.admit()));
@@ -116,7 +118,7 @@ test('A→B→A, simulated browser restart, Unicode marker identity is stable', 
   const f = fixture();
   const keyIds = [];
   const scopes = [];
-  for (const context of ['chatgpt.com', 'chat.openai.com', 'chatgpt.com']) {
+  for (const context of ['chatgpt.com', 'chatgpt.com', 'chatgpt.com']) {
     const service = f.open();
     const admitted = await service.admit();
     scopes.push(admitted.metadata.redaction_scope);
@@ -234,4 +236,65 @@ test('admission provisioning and disposal never expose key via public status', a
   assert.throws(() => s.provision(a.token, { postMessage() {} }), /invalid-provision/);
   s.dispose();
   await assert.rejects(() => s.admit(), /disposed/);
+});
+
+
+test('native Web Locks adapter enforces chatgpt.com origin and exclusive lifetime', async () => {
+  assert.equal(makeAuthority({ locks: { request() {} } },
+    { origin: 'https://chat.openai.com' }), null);
+  assert.equal(makeAuthority({ locks: { request() {} } },
+    { origin: 'http://chatgpt.com' }), null);
+  assert.equal(makeAuthority({}, { origin: 'https://chatgpt.com' }), null);
+  let previous = Promise.resolve();
+  let active = 0;
+  let peak = 0;
+  const observedNames = new Set();
+  const browserNavigator = { locks: {
+    async request(name, options, callback) {
+      assert.equal(options.mode, 'exclusive');
+      observedNames.add(name);
+      const wait = previous;
+      let release;
+      previous = new Promise(resolve => { release = resolve; });
+      await wait;
+      try { return await callback({ mode: 'exclusive' }); }
+      finally { release(); }
+    }
+  } };
+  const origin = { origin: 'https://chatgpt.com' };
+  const authorities = Array.from({ length: 100 }, () =>
+    makeAuthority(browserNavigator, origin));
+  await Promise.all(authorities.map((a, i) => a.runExclusive(async () => {
+    active++;
+    peak = Math.max(peak, active);
+    await Promise.resolve();
+    assert.equal(active, 1);
+    active--;
+    return i;
+  })));
+  assert.equal(peak, 1);
+  assert.equal(observedNames.size, 1);
+  const other = makeAuthority(browserNavigator, origin);
+  origin.origin = 'https://chat.openai.com';
+  await assert.rejects(() => other.runExclusive(() => {}),
+    /origin-or-callback-invalid/);
+});
+
+test('failed Web Lock callback releases fence and no lock fails closed', async () => {
+  let completed = 0;
+  const navigator = { locks: {
+    async request(name, options, callback) {
+      completed++;
+      return callback({ mode: 'exclusive' });
+    }
+  } };
+  const authority = makeAuthority(navigator, { origin: 'https://chatgpt.com' });
+  await assert.rejects(() => authority.runExclusive(() => {
+    throw Error('abort');
+  }), /abort/);
+  await authority.runExclusive(() => { completed++; });
+  assert.equal(completed, 3);
+  navigator.locks.request = async (_name, _options, callback) => callback(null);
+  await assert.rejects(() => authority.runExclusive(() => {}),
+    /web-lock-not-acquired/);
 });
