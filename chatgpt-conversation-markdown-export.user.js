@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         ChatGPT Conversation Markdown Recorder
 // @namespace    https://chatgpt.com/
-// @version      1.11.7-issue.309.2
+// @version      1.11.7-issue.309.3
 // @description  Exports the current ChatGPT conversation directly from the Conversation API as Markdown or JSONL.
 // @match        https://chatgpt.com/*
 // @match        https://chat.openai.com/*
@@ -14360,6 +14360,13 @@ globalThis.__dcCompressor = {
           }
           return response;
         }, error => {
+          const failureStamp = cscCaptureNow('fetch', 'error',
+            requestStamp.connection_id, requestStamp);
+          cscPublishValue(failureStamp, {
+            method: stockTrace.method, request_url: requestUrl,
+            error_name: String(error?.name ?? 'Error'),
+            body_available: false, complete: false
+          });
           logDiagnostic('debug', 'stock-network-fetch-failed', {
             network_sequence: stockTrace.sequence,
             method: stockTrace.method,
@@ -14403,6 +14410,16 @@ globalThis.__dcCompressor = {
         if (!cscCommWorker) {
           void communicationLogXhrRequest(info, body, stockTrace)
             .catch(communicationError => communicationLogReportFailure('xhr-request', communicationError));
+        }
+        for (const name of ['abort', 'error', 'timeout']) {
+          this.addEventListener(name, () => {
+            const failureStamp = cscCaptureNow('xhr', 'error',
+              requestStamp.connection_id, requestStamp);
+            cscPublishValue(failureStamp, {
+              method: info.method, request_url: info.url,
+              event: name, body_available: false, complete: false
+            });
+          }, { once: true });
         }
         this.addEventListener('loadend', () => {
           const responseStamp = cscCaptureNow('xhr', 'response',
