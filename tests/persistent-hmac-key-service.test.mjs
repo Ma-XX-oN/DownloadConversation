@@ -298,3 +298,20 @@ test('failed Web Lock callback releases fence and no lock fails closed', async (
   await assert.rejects(() => authority.runExclusive(() => {}),
     /web-lock-not-acquired/);
 });
+
+test('disposed service waiting for native lock never admits or creates a key', async () => {
+  const f = fixture();
+  let unlock;
+  const held = f.authority.runExclusive(() => new Promise(resolve => {
+    unlock = resolve;
+  }));
+  await Promise.resolve();
+  const service = f.open();
+  const waiting = service.admit();
+  service.dispose();
+  unlock();
+  await held;
+  await assert.rejects(waiting, /disposed/);
+  assert.equal(f.raw(), null);
+  assert.equal(f.randomCount, 0);
+});
