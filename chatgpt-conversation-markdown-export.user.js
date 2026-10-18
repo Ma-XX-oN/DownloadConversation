@@ -1,10 +1,9 @@
 // ==UserScript==
 // @name         ChatGPT Conversation Markdown Recorder
 // @namespace    https://chatgpt.com/
-// @version      1.11.7-issue.313.3
+// @version      1.11.7-issue.313.4
 // @description  Exports the current ChatGPT conversation directly from the Conversation API as Markdown or JSONL.
 // @match        https://chatgpt.com/*
-// @match        https://chat.openai.com/*
 // @connect      github.com
 // @connect      raw.githubusercontent.com
 // @grant        GM_xmlhttpRequest
@@ -11117,9 +11116,9 @@ globalThis.__dcCompressor = {
     });
   }
   /**
-   * Manage V2 HMAC identity through a separately verified installation-wide
-   * transaction authority. There is deliberately NO fallback to GM notifications,
-   * per-origin Web Locks, or read/write/verify pseudo-CAS.
+   * Manage V2 HMAC identity with a verified single-origin transaction
+   * authority. There is deliberately NO fallback to GM notifications,
+   * unguarded GM read/write, or read/write/verify pseudo-CAS.
    *
    * @param {Object} dependencies - GM storage, verified authority and WebCrypto.
    * @returns {Object} Closed persistent key lifecycle API.
@@ -11133,11 +11132,11 @@ globalThis.__dcCompressor = {
     let disposed = false;
 
     /**
-     * @returns {void} Require a genuinely cross-origin serialized authority.
+     * @returns {void} Require the verified chatgpt.com serialized authority.
      */
     function available() {
       if (disposed) throw new Error('persistent-key-disposed');
-      if (!authority || authority.capability !== 'linearizable-cross-origin-fenced-v1' ||
+      if (!authority || authority.capability !== 'linearizable-chatgpt-web-lock-fenced-v1' ||
           typeof authority.runExclusive !== 'function') {
         throw new Error('persistent-key-shared-authority-unavailable');
       }
@@ -11199,9 +11198,9 @@ globalThis.__dcCompressor = {
     }
 
     /**
-     * Execute storage reads/writes solely under a verified cross-origin fence.
-     * The authority must fence all capture admissions and rotation, not only
-     * transaction writes; its real browser implementation is independently gated.
+     * Execute storage reads/writes solely under a verified same-origin fence.
+     * The authority must fence all capture admissions and rotation across
+     * every chatgpt.com tab, not merely writes. Browser testing remains gated.
      * @param {Function} fn - Exclusive operation.
      * @returns {Promise<*>} Exclusive result.
      */
@@ -11403,7 +11402,42 @@ globalThis.__dcCompressor = {
     }
     return Object.freeze({
       async get(name, fallback) { return GM_getValue(name, fallback); },
-      async set(name, value) { GM_setValue(name, value); }
+      async set(name, value) { await GM_setValue(name, value); }
+    });
+  }
+
+  /**
+   * Coordinate same-origin ChatGPT tabs using the browser's native Web Locks.
+   * All GM key reads, writes, capture admissions, and rotation operations run
+   * INSIDE one held lock. IndexedDB transactions cannot safely enclose awaits
+   * to the separate Tampermonkey GM storage API; Web Locks can.
+   * This function MUST NOT be used by another origin or a non-secure page.
+   * No key bytes are placed into page-origin IndexedDB.
+   * @param {Object} browserNavigator - Current tab's navigator.
+   * @param {Object} browserLocation - Current tab's location.
+   * @returns {Object|null} Same-origin serializing authority or unavailable.
+   */
+  function communicationPersistentHmacChatgptAuthority(
+    browserNavigator, browserLocation) {
+    const origin = 'https://chatgpt.com';
+    if (browserLocation?.origin !== origin ||
+        typeof browserNavigator?.locks?.request !== 'function') return null;
+    const name = 'downloadconversation:secret-marker-key-v2:all-tabs';
+    return Object.freeze({
+      capability: 'linearizable-chatgpt-web-lock-fenced-v1',
+      async runExclusive(callback) {
+        if (browserLocation.origin !== origin ||
+            typeof callback !== 'function') {
+          throw new Error('persistent-key-origin-or-callback-invalid');
+        }
+        return browserNavigator.locks.request(name, { mode: 'exclusive' },
+          async lock => {
+            if (!lock || lock.mode !== 'exclusive') {
+              throw new Error('persistent-key-web-lock-not-acquired');
+            }
+            return callback();
+          });
+      }
     });
   }
 
