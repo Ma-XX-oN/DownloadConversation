@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         ChatGPT Conversation Markdown Recorder
 // @namespace    https://chatgpt.com/
-// @version      1.11.7-issue.313.2
+// @version      1.11.7-issue.313.3
 // @description  Exports the current ChatGPT conversation directly from the Conversation API as Markdown or JSONL.
 // @match        https://chatgpt.com/*
 // @match        https://chat.openai.com/*
@@ -11132,7 +11132,9 @@ globalThis.__dcCompressor = {
     const internal = new Map();
     let disposed = false;
 
-    /** @returns {void} Require a genuinely cross-origin serialized authority. */
+    /**
+     * @returns {void} Require a genuinely cross-origin serialized authority.
+     */
     function available() {
       if (disposed) throw new Error('persistent-key-disposed');
       if (!authority || authority.capability !== 'linearizable-cross-origin-fenced-v1' ||
@@ -11147,13 +11149,19 @@ globalThis.__dcCompressor = {
       }
     }
 
-    /** @param {number} bytes - Requested random length. @returns {string} Hex. */
+    /**
+     * @param {number} bytes - Requested random length.
+     * @returns {string} Hex.
+     */
     function randomHex(bytes) {
       const data = secureCrypto.getRandomValues(new Uint8Array(bytes));
       return Array.from(data, n => n.toString(16).padStart(2, '0')).join('');
     }
 
-    /** @param {Object} item - Stored record. @returns {Object} Validated record. */
+    /**
+     * @param {Object} item - Stored record.
+     * @returns {Object} Validated record.
+     */
     function validated(item) {
       if (!item || typeof item !== 'object' || Array.isArray(item) ||
           item.format !== 'dc-secret-key-record/2' ||
@@ -11181,7 +11189,9 @@ globalThis.__dcCompressor = {
       return item;
     }
 
-    /** @returns {Object} Cryptographic first-generation record. */
+    /**
+     * @returns {Object} Cryptographic first-generation record.
+     */
     function initial() {
       return { format: 'dc-secret-key-record/2', key_hex: randomHex(32),
         generation: randomHex(16), epoch: 1, phase: 'open',
@@ -11198,12 +11208,21 @@ globalThis.__dcCompressor = {
     async function transaction(fn) {
       available();
       return authority.runExclusive(async () => {
+        /**
+         * Read and validate the atomic shared persistent key record.
+         * @returns {Promise<Object|null>} Stored record or absent state.
+         */
         const read = async () => {
           let stored;
           try { stored = await storage.get(recordName, null); }
           catch { throw new Error('persistent-key-storage-read-failed'); }
           return stored === null ? null : validated(stored);
         };
+        /**
+         * Persist and verify exactly one complete storage record.
+         * @param {Object} value - Complete versioned key record.
+         * @returns {Promise<void>} Resolves after successful readback.
+         */
         const write = async (value) => {
           validated(value);
           try { await storage.set(recordName, value); }
@@ -11217,7 +11236,10 @@ globalThis.__dcCompressor = {
       });
     }
 
-    /** @param {Object} stored - Record. @returns {Object} Public marker metadata. */
+    /**
+     * @param {Object} stored - Record.
+     * @returns {Object} Public marker metadata.
+     */
     function metadata(stored) {
       return Object.freeze({ redaction_format: format,
         redaction_scope: stored.generation,
@@ -11226,7 +11248,10 @@ globalThis.__dcCompressor = {
         redaction_key_storage: scopeStorage });
     }
 
-    /** @param {Object} stored - Draining record. @returns {Object} Next record. */
+    /**
+     * @param {Object} stored - Draining record.
+     * @returns {Object} Next record.
+     */
     function finishRotation(stored) {
       return { format: stored.format, key_hex: stored.next.key_hex,
         generation: stored.next.generation, epoch: stored.next.epoch,
@@ -11324,7 +11349,9 @@ globalThis.__dcCompressor = {
       });
     }
 
-    /** @returns {Promise<Object>} Nonsecret status, including interruption state. */
+    /**
+     * @returns {Promise<Object>} Nonsecret status, including interruption state.
+     */
     async function status() {
       return transaction(async read => {
         const stored = await read();
@@ -11352,7 +11379,9 @@ globalThis.__dcCompressor = {
       });
     }
 
-    /** @returns {void} Zero local key snapshots without changing shared state. */
+    /**
+     * @returns {void} Zero local key snapshots without changing shared state.
+     */
     function dispose() {
       for (const key of internal.values()) key.fill(0);
       internal.clear();
