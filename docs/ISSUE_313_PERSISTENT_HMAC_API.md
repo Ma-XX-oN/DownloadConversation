@@ -158,3 +158,60 @@ installed Chrome/Tampermonkey FAIL. Operator should update the existing
 probe to 0.8.0, refresh exactly two tabs, run the GM diagnostic in
 Tab 1 only, and paste the copied JSON with the new `exclusiveWebLock`
 field. No screenshots necessary.
+
+## Scientific-method evidence ledger — 2026-10-18 real browser
+
+**Question:** Why do two Chrome/Tampermonkey tabs finish 24 operations
+each under a named native Web Lock but leave the GM counter at 24
+rather than 48?
+
+**Observed facts** (operator's version 0.8.0 JSON at
+`2026-10-18T19:14:05.691Z`):
+
+- Synchronous GM: 24/48, and 24 after 500 ms, FAIL.
+- Asynchronous GM: 24/48, and 24 after 500 ms, FAIL.
+- Sequential bidirectional GM visibility: peer saw leader write
+  FALSE; leader saw peer write TRUE even after 500 ms; FAIL.
+- A separate explicit two-realm lock overlap test: one peer
+  attempted while leader held; ZERO peer acquisitions while held;
+  peer acquired after release; PASS.
+- No thrown errors were reported. These facts do not identify
+  which layer violates the expected atomic read/write behaviour.
+
+**H1: two tabs can concurrently hold the named exclusive Web Lock.**
+Prediction: an independent second realm acquires the lock while the
+leader still holds it. The exact 0.8.0 overlap witness instead
+observed ZERO overlap; H1 is **not supported for this tested pair and
+test timing**, though it does not prove every other environment.
+
+**H2: GM data visibility is delayed or stale even after a resolved
+`GM.setValue`.** Prediction: an immediate peer read disagrees with
+the written synthetic value, and later peer reads or remote
+`GM_addValueChangeListener` notifications may reveal propagation.
+Counterprediction: all peer reads (immediate/300 ms/1300 ms)
+consistently see the committed new value and remote notifications
+agree, without the counter recovering. Then simple propagation delay
+is insufficient as an explanation.
+
+**H3: the two tabs have completely isolated GM namespaces.**
+Prediction: neither tab can observe the other's unique synthetic
+marker at any time. The 0.8.0 witness showed leader reading the
+peer's write, contradicting total isolation. Partial/intermittent
+views remain a live possibility.
+
+**Experiment 0.9.0**: Keep same two signed-in tabs, storage
+installation, Web Lock name, and one-tab menu initiation as 0.8.0.
+Add ONLY non-mutating observation of synthetic peer read at
+0/300/1300 ms and remote change events, and repeat the existing
+two-phase counter test and overlap control. Use a simulated coherent
+GM store (positive), first-read-stale GM store (negative), and
+isolated-Web-Lock negative controls in hosted tests. The hypothesis
+ledger must be updated with real browser outcome BEFORE modifying
+production HMAC or selecting a different authority/storage design.
+
+**Safety boundary:** no real K, auth credentials, captured payloads,
+or production recording bytes in diagnostic output or IndexedDB.
+A synthetic IndexedDB/Web Locks comparison may be used later as
+an **independent, nonsecret control** if existing evidence cannot
+discriminate GM propagation from lock semantics. Never store K
+in page-visible IndexedDB as a workaround.
