@@ -176,16 +176,16 @@
       let result;
       try {
         result = await transaction(async (read, write) => {
-        let stored = await read();
-        if (!stored) { stored = initial(); await write(stored); }
-        if (stored.phase !== 'open') throw new Error('persistent-key-rotation-draining');
-        if (stored.pending.length >= 256) throw new Error('persistent-key-admission-capacity');
-        let token = randomHex(16);
-        while (stored.pending.includes(token)) token = randomHex(16);
-        unpublishedToken = token;
-        const next = { ...stored, pending: [...stored.pending, token] };
-        await write(next);
-        return { token, key_hex: stored.key_hex, metadata: metadata(stored) };
+          let stored = await read();
+          if (!stored) { stored = initial(); await write(stored); }
+          if (stored.phase !== 'open') throw new Error('persistent-key-rotation-draining');
+          if (stored.pending.length >= 256) throw new Error('persistent-key-admission-capacity');
+          let token = randomHex(16);
+          while (stored.pending.includes(token)) token = randomHex(16);
+          unpublishedToken = token;
+          const next = { ...stored, pending: [...stored.pending, token] };
+          await write(next);
+          return { token, key_hex: stored.key_hex, metadata: metadata(stored) };
         });
       } catch (error) {
         if (unpublishedToken) {
