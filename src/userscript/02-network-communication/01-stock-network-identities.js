@@ -145,6 +145,7 @@
    *
    * @param {Request|null} request - Page Request when construction succeeded.
    * @param {string} requestUrl - Effective request URL.
+   * @param {Object|null} captured - Earliest canonical network event.
    * @returns {Object} Correlation state for the response.
    */
   function stockNetworkTraceFetchStart(request, requestUrl, captured = null) {
