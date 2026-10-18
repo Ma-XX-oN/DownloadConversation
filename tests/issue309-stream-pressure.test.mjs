@@ -12,8 +12,8 @@ const mib = count => count * 1024 * 1024;
 const format = bytes => +(bytes / mib(1)).toFixed(2);
 const chunkSize = 64 * 1024;
 
-function stressHarness() {
-  const state = { transferred: [], published: 0, cloneCount: 0, warnings: [], index: 0 };
+function stressHarness({ withPlugin = false } = {}) {
+  const state = { transferred: [], pluginSources: [], published: 0, cloneCount: 0, warnings: [], index: 0 };
   const worker = {
     postMessage(payload, transfers) {
       state.transferred.push(structuredClone(payload, { transfer: transfers }));
@@ -36,7 +36,10 @@ function stressHarness() {
     ' cscBindPluginIngress, cscPublishFetch };'
   ].join(''), context);
   context.csc.cscBindCommWorker(worker);
-  context.csc.cscBindPluginIngress(() => { state.published++; });
+  if (withPlugin) context.csc.cscBindPluginIngress(event => {
+    state.published++;
+    state.pluginSources.push(event.source);
+  });
   return { api: context.csc, state };
 }
 
@@ -107,7 +110,7 @@ test('#309 10/23/40/101 MiB exact streams and three sustained >100 MiB runs', {
       status: 200
     });
     assert.equal(h.state.transferred.length, 1);
-    assert.equal(h.state.published, 1);
+    assert.equal(h.state.published, 0, 'Absent plugin causes no second native clone');
     assert.equal(h.state.cloneCount, 1);
     assert.equal(h.state.transferred[0].envelope.captured_at_epoch_ms,
       event.captured_at_epoch_ms);
@@ -134,4 +137,32 @@ test('#309 10/23/40/101 MiB exact streams and three sustained >100 MiB runs', {
       warning: 'Measured native tee can buffer entire unread cloned branch; no bounded-backpressure certification'
     }));
   }
+});
+
+test('#309 dual active 10 MiB consumers independently preserve all stock bytes', {
+  timeout: 120000
+}, async t => {
+  const len = mib(10);
+  const h = stressHarness({ withPlugin: true });
+  const origin = payloadStream(len);
+  const stock = new Response(origin.stream);
+  h.api.cscPublishFetch(h.api.cscCaptureNow('fetch', 'response'), stock,
+    { request_url: 'https://chatgpt.com/backend-api/history', status: 200 });
+  assert.equal(h.state.cloneCount, 2, 'Plugin and COMM each own one native clone');
+  assert.equal(h.state.published, 1);
+  assert.equal(h.state.transferred.length, 1);
+  assert.notEqual(h.state.pluginSources[0], stock, 'Stock Response is not shared');
+  const [stockChunks, commChunks, pluginChunks] = await Promise.all([
+    verifyAllBytes(stock.body, len),
+    verifyAllBytes(h.state.transferred[0].envelope.body, len),
+    verifyAllBytes(h.state.pluginSources[0].body, len)
+  ]);
+  assert.equal(stockChunks, commChunks);
+  assert.equal(stockChunks, pluginChunks);
+  assert.equal(h.state.warnings.length, 0);
+  t.diagnostic(JSON.stringify({
+    source: 'isolated-node22-exact-ingress',
+    branchMiB: 10, nativeClones: h.state.cloneCount,
+    originalExact: true, pluginExact: true, commExact: true
+  }));
 });
