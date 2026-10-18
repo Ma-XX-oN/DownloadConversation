@@ -1,7 +1,5 @@
   /**
-   * Manage V2 HMAC identity with a verified single-origin transaction
-   * authority. There is deliberately NO fallback to GM notifications,
-   * unguarded GM read/write, or read/write/verify pseudo-CAS.
+   * Manage persistent V2 HMAC keys under same-origin exclusive Web Locks.
    *
    * @param {Object} dependencies - GM storage, verified authority and WebCrypto.
    * @returns {Object} Closed persistent key lifecycle API.
@@ -244,8 +242,14 @@
         }
         const pending = stored.pending.filter(item => item !== token);
         const next = { ...stored, pending };
-        await write(next.phase === 'draining' && pending.length === 0
-          ? finishRotation(next) : next);
+        const committed = next.phase === 'draining' && pending.length === 0
+          ? finishRotation(next) : next;
+        try { await write(committed); }
+        catch (error) {
+          if (JSON.stringify(await read()) !== JSON.stringify(committed)) {
+            throw error;
+          }
+        }
       });
       key.fill(0);
       internal.delete(token);
