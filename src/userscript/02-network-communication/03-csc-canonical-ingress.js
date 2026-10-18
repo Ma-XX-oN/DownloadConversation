@@ -52,6 +52,7 @@
       clock_domain: cscPageInstanceId,
       connection_id: connectionId ?? crypto.randomUUID(),
       capture_id: cscPageInstanceId + ':' + network_sequence,
+      parent_capture_id: parent?.capture_id ?? null,
       request_capture_id: parent?.request_capture_id ?? parent?.capture_id ?? null,
       network_sequence,
       capture_order,
