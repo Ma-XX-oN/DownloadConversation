@@ -244,3 +244,18 @@
     return Object.freeze({ admit, provision, complete, randomize, status,
       recover, dispose });
   }
+
+  /**
+   * Expose only the Tampermonkey script-installation storage interface.
+   * A shared storage adapter is NOT an exclusive transaction authority.
+   * @returns {Object|null} Storage adapter or null when GM is unavailable.
+   */
+  function communicationPersistentHmacTampermonkeyStorage() {
+    if (typeof GM_getValue !== 'function' || typeof GM_setValue !== 'function') {
+      return null;
+    }
+    return Object.freeze({
+      async get(name, fallback) { return GM_getValue(name, fallback); },
+      async set(name, value) { GM_setValue(name, value); }
+    });
+  }
