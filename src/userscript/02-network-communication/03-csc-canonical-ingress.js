@@ -132,9 +132,22 @@
       }
     }
     if (cscPluginIngress) {
+      let source = nativeBodyOwner ?? availableValue;
+      let sourceAvailable = source !== null;
+      try {
+        // XHR/WS mutable values must not alias page-owned buffers or JSON.
+        // Request/Response remain page-owned; #310 owns safe plugin reads.
+        if (!nativeBodyOwner && source && typeof source === 'object') {
+          source = structuredClone(source);
+        }
+      } catch (error) {
+        cscIngressFailure(stamp, 'plugin-payload-copy', error);
+        source = null;
+        sourceAvailable = false;
+      }
       try {
         cscPluginIngress(Object.freeze({
-          envelope, source: nativeBodyOwner ?? availableValue
+          envelope, source, source_available: sourceAvailable
         }));
       } catch (error) {
         cscIngressFailure(stamp, 'plugin-delivery', error);
