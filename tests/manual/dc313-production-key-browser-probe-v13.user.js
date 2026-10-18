@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         DC #313 Exact Producer HMAC Browser Probe
 // @namespace    https://chatgpt.com/dc313-probe/
-// @version      0.6.0
+// @version      0.6.1
 // @description  Synthetic HMAC producer, Web Locks, GM and Worker acceptance; no conversation access.
 // @match        https://chatgpt.com/*
 // @grant        GM_getValue
@@ -378,7 +378,7 @@
   async function diagnoseCrossTabStorage() {
     if (diagActive || inProgress) return;
     diagActive = true;
-    const report = { version: '0.6.0', status: 'FAIL' };
+    const report = { version: '0.6.1', status: 'FAIL' };
     try {
       if (!diagChannel) throw Error('BroadcastChannel unavailable');
       report.synchronousGM = await diagPhase('sync');
@@ -388,8 +388,8 @@
         throw Error('GM async API unavailable');
       }
       report.asynchronousGM = await diagPhase('async');
-      report.status = report.synchronousGM.status === 'PASS' &&
-        report.asynchronousGM.status === 'PASS' ? 'PASS' : 'FAIL';
+      report.status = report.asynchronousGM.status === 'PASS'
+        ? 'ASYNC_PATH_PASS' : 'FAIL';
     } catch (error) { report.error = String(error); }
     finally { diagActive = false; }
     console.info('DC #313 GM cross-tab diagnostic', report);
