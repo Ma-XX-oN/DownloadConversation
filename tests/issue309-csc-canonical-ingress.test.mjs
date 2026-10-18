@@ -188,3 +188,17 @@ test('native clone failure reports incomplete, with no false body transfer', asy
   assert.match(state.warnings[0].detail.error, /clone unavailable/);
   assert.equal(await response.text(), 'stock-valid');
 });
+
+test('XHR native ArrayBuffer from another JS realm is still browser-accessible', () => {
+  const { api } = harness();
+  const foreign = vm.runInNewContext('new ArrayBuffer(4)');
+  assert.equal(foreign instanceof ArrayBuffer, false,
+    'Fixture must use a different native ArrayBuffer realm');
+  assert.equal(Object.prototype.toString.call(foreign), '[object ArrayBuffer]');
+  const captured = api.cscXhrBodySnapshot({
+    responseType: 'arraybuffer', response: foreign
+  });
+  assert.equal(captured.body_available, true);
+  assert.equal(captured.body_type, 'binary');
+  assert.equal(captured.value, foreign);
+});
