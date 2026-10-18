@@ -4,7 +4,6 @@
 // @version      1.11.7-issue.313.3
 // @description  Exports the current ChatGPT conversation directly from the Conversation API as Markdown or JSONL.
 // @match        https://chatgpt.com/*
-// @match        https://chat.openai.com/*
 // @connect      github.com
 // @connect      raw.githubusercontent.com
 // @grant        GM_xmlhttpRequest
