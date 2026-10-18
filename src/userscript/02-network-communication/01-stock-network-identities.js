@@ -147,9 +147,9 @@
    * @param {string} requestUrl - Effective request URL.
    * @returns {Object} Correlation state for the response.
    */
-  function stockNetworkTraceFetchStart(request, requestUrl) {
-    const sequence = ++stockNetworkSequence;
-    const startedAt = performance.now();
+  function stockNetworkTraceFetchStart(request, requestUrl, captured = null) {
+    const sequence = captured?.network_sequence ?? ++stockNetworkSequence;
+    const startedAt = captured?.captured_at_mono_ms ?? performance.now();
     let sameOrigin = false;
     try { sameOrigin = new URL(requestUrl, location.href).origin === location.origin; } catch {}
     const trace = {
