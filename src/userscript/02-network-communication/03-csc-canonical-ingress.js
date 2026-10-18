@@ -169,6 +169,38 @@
   }
 
   /**
+   * Preserve native WebSocket send/throw semantics and report rejected attempts.
+   *
+   * @param {Function} nativeSend - Original WebSocket send.
+   * @param {WebSocket} socket - Stock page socket.
+   * @param {unknown} data - Original frame bytes or text.
+   * @param {Object} connection - WebSocket connection capture.
+   * @param {Object} attempt - Original send-attempt capture.
+   * @param {string} url - WebSocket endpoint.
+   * @returns {unknown} Original native send return value.
+   */
+  function cscDispatchSocketSend(nativeSend, socket, data, connection, attempt, url) {
+    let result;
+    try {
+      result = nativeSend.call(socket, data);
+    } catch (error) {
+      const failure = cscCaptureNow('websocket', 'error',
+        connection.connection_id, attempt);
+      cscPublishValue(failure, {
+        url, event: 'send-rejected',
+        error_name: String(error?.name ?? 'Error'),
+        body_available: false, complete: false
+      });
+      throw error;
+    }
+    if (!cscCommWorker) {
+      void communicationLogWebSocketSend(url, data)
+        .catch(error => communicationLogReportFailure('websocket-send', error));
+    }
+    return result;
+  }
+
+  /**
    * Snapshot an XHR body without reading a stream or altering page-owned bytes.
    *
    * @param {XMLHttpRequest} xhr - Observed XHR.
