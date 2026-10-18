@@ -13,6 +13,13 @@
           }
           return response;
         }, error => {
+          const failureStamp = cscCaptureNow('fetch', 'error',
+            requestStamp.connection_id, requestStamp);
+          cscPublishValue(failureStamp, {
+            method: stockTrace.method, request_url: requestUrl,
+            error_name: String(error?.name ?? 'Error'),
+            body_available: false, complete: false
+          });
           logDiagnostic('debug', 'stock-network-fetch-failed', {
             network_sequence: stockTrace.sequence,
             method: stockTrace.method,
@@ -56,6 +63,16 @@
         if (!cscCommWorker) {
           void communicationLogXhrRequest(info, body, stockTrace)
             .catch(communicationError => communicationLogReportFailure('xhr-request', communicationError));
+        }
+        for (const name of ['abort', 'error', 'timeout']) {
+          this.addEventListener(name, () => {
+            const failureStamp = cscCaptureNow('xhr', 'error',
+              requestStamp.connection_id, requestStamp);
+            cscPublishValue(failureStamp, {
+              method: info.method, request_url: info.url,
+              event: name, body_available: false, complete: false
+            });
+          }, { once: true });
         }
         this.addEventListener('loadend', () => {
           const responseStamp = cscCaptureNow('xhr', 'response',
