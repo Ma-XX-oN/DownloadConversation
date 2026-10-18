@@ -285,7 +285,7 @@
     }
     return Object.freeze({
       async get(name, fallback) { return GM_getValue(name, fallback); },
-      async set(name, value) { GM_setValue(name, value); }
+      async set(name, value) { await GM_setValue(name, value); }
     });
   }
 
