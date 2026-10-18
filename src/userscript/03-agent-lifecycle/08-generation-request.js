@@ -288,8 +288,7 @@
         const stockTrace = stockNetworkTraceFetchStart(request, requestUrl, requestStamp);
         cscPublishFetch(requestStamp, request, {
           method: String(request?.method ?? init.method ?? 'GET').toUpperCase(),
-          request_url: requestUrl,
-          body_available: !!request?.body
+          request_url: requestUrl
         });
         if (!cscCommWorker) {
           void communicationLogFetchRequest(request, stockTrace)
