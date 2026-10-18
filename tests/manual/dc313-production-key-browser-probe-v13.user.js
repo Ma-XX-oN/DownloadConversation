@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         DC #313 Exact Producer HMAC Browser Probe
 // @namespace    https://chatgpt.com/dc313-probe/
-// @version      0.7.0
+// @version      0.7.1
 // @description  Synthetic HMAC producer, Web Locks, GM and Worker acceptance; no conversation access.
 // @match        https://chatgpt.com/*
 // @grant        GM_getValue
@@ -394,7 +394,42 @@
     const message = event.data;
     if (!message || message.from === tabId ||
         typeof message.run !== 'string') return;
-    if (message.type === 'prepare') {
+    if (message.type === 'visibility-prepare') {
+      if (diagActive) return;
+      diagRuns.set(message.run, { leader: message.from,
+        kind: 'visibility', name: message.name,
+        expected: message.expected, reply: message.reply });
+      diagChannel.postMessage({ type: 'visibility-ready',
+        run: message.run, from: tabId });
+    } else if (message.type === 'visibility-read') {
+      const state = diagRuns.get(message.run);
+      if (!state || state.kind !== 'visibility' ||
+          state.leader !== message.from || diagActive) return;
+      diagActive = true;
+      try {
+        const observed = await exclusive(() =>
+          GM.getValue(state.name, null));
+        await exclusive(() => GM.setValue(state.name, state.reply));
+        diagChannel.postMessage({ type: 'visibility-done',
+          run: message.run, from: tabId,
+          peerSawInitialWrite: observed === state.expected });
+      } catch (error) {
+        diagChannel.postMessage({ type: 'visibility-error',
+          run: message.run, from: tabId, error: String(error) });
+      } finally {
+        diagRuns.delete(message.run);
+        diagActive = false;
+      }
+    } else if (['visibility-ready', 'visibility-done',
+        'visibility-error'].includes(message.type)) {
+      const state = diagRuns.get(message.run);
+      if (!state || state.kind !== 'visibility-leader') return;
+      if (message.type === 'visibility-ready') state.ready.add(message.from);
+      if (message.type === 'visibility-done') {
+        state.done.set(message.from, message.peerSawInitialWrite);
+      }
+      if (message.type === 'visibility-error') state.errors.push(message.error);
+    } else if (message.type === 'prepare') {
       if (diagActive) return;
       diagRuns.set(message.run, { leader: message.from,
         mode: message.mode, name: message.name });
@@ -457,10 +492,46 @@
     }
   }
 
+  async function diagnoseVisibility() {
+    const run = crypto.randomUUID();
+    const name = 'dc313-gm-visibility:' + run;
+    const initial = 'first:' + run, reply = 'second:' + run;
+    const state = { kind: 'visibility-leader', ready: new Set(),
+      done: new Map(), errors: [] };
+    diagRuns.set(run, state);
+    try {
+      diagChannel.postMessage({ type: 'visibility-prepare',
+        from: tabId, run, name, expected: initial, reply });
+      await delay(1200);
+      const peers = [...state.ready];
+      if (!peers.length) throw Error('no peer for visibility check');
+      await exclusive(() => GM.setValue(name, initial));
+      diagChannel.postMessage({ type: 'visibility-read', from: tabId, run });
+      const start = Date.now();
+      while (state.done.size + state.errors.length < peers.length &&
+          Date.now() - start < timeoutMs) await delay(50);
+      const seen = await exclusive(() => GM.getValue(name, null));
+      await delay(500);
+      const settled = await exclusive(() => GM.getValue(name, null));
+      const result = { peers: peers.length,
+        peerSawLeaderWrite: [...state.done.values()].every(Boolean) &&
+          state.done.size === peers.length,
+        leaderSawPeerWrite: seen === reply,
+        leaderSawPeerWriteAfter500ms: settled === reply,
+        errors: state.errors };
+      result.status = result.errors.length === 0 &&
+        result.peerSawLeaderWrite && result.leaderSawPeerWrite ?
+        'PASS' : 'FAIL';
+      return result;
+    } finally {
+      diagRuns.delete(run);
+    }
+  }
+
   async function diagnoseCrossTabStorage() {
     if (diagActive || inProgress) return;
     diagActive = true;
-    const report = { version: '0.7.0', status: 'FAIL' };
+    const report = { version: '0.7.1', status: 'FAIL' };
     try {
       if (!diagChannel) throw Error('BroadcastChannel unavailable');
       report.synchronousGM = await diagPhase('sync');
@@ -470,8 +541,10 @@
         throw Error('GM async API unavailable');
       }
       report.asynchronousGM = await diagPhase('async');
-      report.status = report.asynchronousGM.status === 'PASS'
-        ? 'ASYNC_PATH_PASS' : 'FAIL';
+      report.visibility = await diagnoseVisibility();
+      report.status = report.asynchronousGM.status === 'PASS' &&
+        report.visibility.status === 'PASS' ?
+        'ASYNC_PATH_PASS' : 'FAIL';
     } catch (error) { report.error = String(error); }
     finally { diagActive = false; }
     publishResult('GM cross-tab diagnostic', report);
