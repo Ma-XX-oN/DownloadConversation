@@ -39,3 +39,83 @@ test('diagnostic menu is registered and never auto-starts', () => {
   assert.ok(menu.includes('DC #313: run two-tab test'));
   assert.equal(operations, 0);
 });
+
+test('two-tab diagnostic distinguishes stale sync values from shared async GM', async () => {
+  const shared = new Map(), sync = [new Map(), new Map()];
+  const menus = [new Map(), new Map()], members = new Map(), tails = new Map();
+  let counter = 0, done;
+  const response = new Promise(resolve => { done = resolve; });
+  class Broadcast {
+    constructor(name) {
+      this.name = name;
+      if (!members.has(name)) members.set(name, new Set());
+      members.get(name).add(this);
+      this.onmessage = null;
+    }
+    postMessage(data) {
+      for (const other of members.get(this.name)) {
+        if (other !== this) queueMicrotask(() => {
+          other.onmessage?.({ data: structuredClone(data) });
+        });
+      }
+    }
+  }
+  const locks = {
+    async request(name, options, callback) {
+      assert.equal(options.mode, 'exclusive');
+      const previous = tails.get(name) ?? Promise.resolve();
+      let release;
+      const next = new Promise(resolve => { release = resolve; });
+      tails.set(name, previous.then(() => next));
+      await previous;
+      try { return await callback({ mode: 'exclusive' }); }
+      finally { release(); }
+    }
+  };
+  for (let tab = 0; tab < 2; tab++) {
+    const scope = tab;
+    const context = {
+      location: { origin: 'https://chatgpt.com' },
+      crypto: { randomUUID: () => 'synthetic-' + scope + '-' + ++counter },
+      navigator: { locks },
+      BroadcastChannel: Broadcast,
+      setTimeout: (callback, ms) => setTimeout(callback, Math.min(8, ms)),
+      Date, Map, Set, Uint8Array,
+      GM_getValue: (key, fallback) =>
+        sync[scope].has(key) ? sync[scope].get(key) : fallback,
+      GM_setValue: (key, value) =>
+        sync[scope].set(key, structuredClone(value)),
+      GM: {
+        async getValue(key, fallback) {
+          return shared.has(key) ? structuredClone(shared.get(key)) : fallback;
+        },
+        async setValue(key, value) {
+          shared.set(key, structuredClone(value));
+        }
+      },
+      GM_registerMenuCommand: (name, callback) => menus[scope].set(name, callback),
+      alert: message => {
+        if (scope === 0 && message.startsWith('DC #313 GM diagnostic: ')) {
+          done(JSON.parse(message.slice('DC #313 GM diagnostic: '.length)));
+        }
+      },
+      console: { warn() {}, info() {} }
+    };
+    vm.runInNewContext(source, context);
+  }
+  assert.ok(menus[0].has('DC #313: diagnose GM cross-tab storage'));
+  menus[0].get('DC #313: diagnose GM cross-tab storage')();
+  const report = await Promise.race([
+    response,
+    new Promise((_, reject) => setTimeout(() =>
+      reject(Error('synthetic two-tab diagnostic timeout')), 9000))
+  ]);
+  assert.equal(report.synchronousGM.expected, 48);
+  assert.equal(report.synchronousGM.observed, 24);
+  assert.equal(report.synchronousGM.status, 'FAIL');
+  assert.equal(report.asynchronousGM.expected, 48);
+  assert.equal(report.asynchronousGM.observed, 48);
+  assert.equal(report.asynchronousGM.status, 'PASS');
+  assert.deepEqual(report.asynchronousGM.errors, []);
+  assert.equal(report.status, 'ASYNC_PATH_PASS');
+});
