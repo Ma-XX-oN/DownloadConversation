@@ -354,10 +354,10 @@ test('ambiguous pending-admission commit is reconciled without token leakage', a
   await assert.rejects(() => s.admit(), /storage-write-failed/);
   assert.equal(lostAck, true);
   assert.equal(f.raw().pending.length, 0);
-  const fresh = await f.open().admit();
-  assert.equal(fresh.metadata.redaction_key_epoch, 1);
   const recovered = f.open();
   const admitted = await recovered.admit();
+  assert.equal(admitted.metadata.redaction_key_epoch, 1);
   await recovered.complete(admitted.token);
-  assert.ok(fresh.token);
+  recovered.dispose();
+  assert.equal(f.raw().pending.length, 0);
 });
