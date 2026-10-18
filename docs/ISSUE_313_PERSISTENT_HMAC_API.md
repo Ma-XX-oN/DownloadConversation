@@ -125,3 +125,36 @@ The real recorder key remains isolated from the probe's synthetic
 storage. The production HMAC adapter still requires independent
 acceptance of actual two-tab coherence, restart persistence, and
 safe rotation before this issue can close.
+
+## Signed-in counter failure and Web Locks isolation witness
+
+The operator's real v0.7.1 diagnostic at 2026-10-18T18:37:30.400Z
+confirmed two live tabs. Both synchronous and promise-based asynchronous
+GM counter updates returned 24/48 after 500 ms, with no thrown errors.
+Both tabs independently reported 24 increments. In contrast, the
+sequential visibility exchange showed leader->peer->leader readback
+PASS in both directions. Therefore mere GM visibility across tabs is
+not enough to establish linearizable read/modify/write operations.
+
+The next manual probe version 0.8.0 (still at
+`tests/manual/dc313-production-key-browser-probe-v13.user.js`) adds
+`exclusiveWebLock` to its same copyable JSON diagnostic. Tab 1 acquires
+the named exclusive lock, starts Tab 2 attempting to acquire the same
+lock, and checks whether Tab 2 acquires it before release. A true
+same-origin exclusive lock requires
+`peersAttemptedWhileHeld=1`,
+`peersAcquiredWhileHeld=0`, and
+`peersAcquiredEventually=1` with exactly two responsive tabs.
+A positive lock result **does not** by itself establish GM atomicity;
+a negative lock result makes the producer's cross-tab authority
+inadequate for production and requires an owner-scoped fix.
+
+Synthetic regression test `tests/persistent-hmac-browser-probe.test.mjs`
+includes both: a single shared lock positive test and a separate
+per-tab-lock negative test. Frozen exact-source CI
+`v1.11.7-issue.313.21` / `a208bdcd42ad1dede23c5bc2c9f4ddec5f729c43`
+has hosted 4-stage PASS. Neither synthetic case resolves the actual
+installed Chrome/Tampermonkey FAIL. Operator should update the existing
+probe to 0.8.0, refresh exactly two tabs, run the GM diagnostic in
+Tab 1 only, and paste the copied JSON with the new `exclusiveWebLock`
+field. No screenshots necessary.
