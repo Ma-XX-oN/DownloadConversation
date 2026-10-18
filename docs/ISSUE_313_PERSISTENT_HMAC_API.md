@@ -73,3 +73,31 @@ witness is a distinct required acceptance gate. The Worker serializer and
 disk writer are separately owned by #311 and #317, with independent
 end-to-end convergence under #319. Neither tests nor this handoff imply
 production integration, full-fidelity capture or release authority.
+
+## Installed Chrome/Tampermonkey witness — OPEN failure
+
+On 2026-10-18 the v0.4.0 two-tab probe detected a real failure:
+`peers=1`, `expected=48`, `observed=24`, `responses=1`,
+`errors=[]`. Two script instances participated, but the initiating
+tab did not observe all 48 protected updates. No browser acceptance PASS
+can be claimed from the native Chromium synthetic-storage fixtures.
+
+Tampermonkey's synchronous `GM_setValue` returns no promise, so
+`await GM_setValue(...)` did not acknowledge a durable write. The
+production factory now explicitly requires `GM.getValue` and
+`GM.setValue` async APIs, with corresponding userscript grants,
+and fails closed if they are unavailable. This fixes the unsupported
+assumption; whether the installed extension's cross-tab storage is
+actually coherent remains unproven.
+
+The synthetic-only test userscript at
+`tests/manual/dc313-production-key-browser-probe-v13.user.js`
+(version 0.6.0) compares synchronous and asynchronous GM APIs in
+the SAME two chatgpt.com tabs. Invoke its
+`DC #313: diagnose GM cross-tab storage` menu item ONCE in the
+initiating tab; the peer tab participates automatically. Do not
+proceed to producer rotation or restart acceptance until the async
+phase reports 48/48, with no errors, in the installed environment.
+The probe stores synthetic counters and keys in its own Tampermonkey
+script-installation namespace; it does not access the normal recorder's
+private key or conversation/network payloads.
