@@ -101,3 +101,27 @@ phase reports 48/48, with no errors, in the installed environment.
 The probe stores synthetic counters and keys in its own Tampermonkey
 script-installation namespace; it does not access the normal recorder's
 private key or conversation/network payloads.
+
+## Follow-up signed-in cross-tab witness — still FAIL
+
+The operator ran the probe v0.6.1 in two actual Chrome/Tampermonkey
+tabs. The screenshots show `synchronousGM` **FAIL** (expected 48,
+observed 24, observedAfter500ms 24), and `asynchronousGM`
+**FAIL** (expected 48, observed 24, observedAfter500ms 24).
+Both diagnostic phases received the peer's completion with no errors.
+The detailed records show each tab started from counter 0 and advanced
+independently to around 24. Hence changing to the promise-based GM
+API alone has NOT certified cross-tab persistence or locking.
+
+The next manual probe, version 0.7.1, uses a selectable JSON panel
+with **Copy JSON**, **Download JSON**, and **Close**. It adds a
+sequential two-tab GM write/read visibility handshake to distinguish
+a stale/isolated GM storage view from concurrent read/modify/write
+interleavings. The operator should update the SAME Tampermonkey probe
+and refresh both tabs before rerunning the diagnostic ONCE in Tab 1.
+Never present a CI synthetic result as replacing the real FAIL.
+
+The real recorder key remains isolated from the probe's synthetic
+storage. The production HMAC adapter still requires independent
+acceptance of actual two-tab coherence, restart persistence, and
+safe rotation before this issue can close.
