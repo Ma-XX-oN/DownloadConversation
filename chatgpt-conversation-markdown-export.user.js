@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         ChatGPT Conversation Markdown Recorder
 // @namespace    https://chatgpt.com/
-// @version      1.11.7-issue.316.4
+// @version      1.11.7-issue.309.2
 // @description  Exports the current ChatGPT conversation directly from the Conversation API as Markdown or JSONL.
 // @match        https://chatgpt.com/*
 // @match        https://chat.openai.com/*
@@ -7537,11 +7537,12 @@ globalThis.__dcCompressor = {
    *
    * @param {Request|null} request - Page Request when construction succeeded.
    * @param {string} requestUrl - Effective request URL.
+   * @param {Object|null} captured - Earliest canonical network event.
    * @returns {Object} Correlation state for the response.
    */
-  function stockNetworkTraceFetchStart(request, requestUrl) {
-    const sequence = ++stockNetworkSequence;
-    const startedAt = performance.now();
+  function stockNetworkTraceFetchStart(request, requestUrl, captured = null) {
+    const sequence = captured?.network_sequence ?? ++stockNetworkSequence;
+    const startedAt = captured?.captured_at_mono_ms ?? performance.now();
     let sameOrigin = false;
     try { sameOrigin = new URL(requestUrl, location.href).origin === location.origin; } catch {}
     const trace = {
@@ -7661,7 +7662,7 @@ globalThis.__dcCompressor = {
       /(?:json|text|event-stream|x-component|javascript)/i.test(contentType) ||
       /\/backend-api\/(?:conversation|conversations|f\/conversation)(?:\/|\?|$)/.test(trace.url)
     );
-    if (!inspectable) return;
+    if (!inspectable || cscCommWorker) return;
     const cloned = cloneSafely(response);
     if (cloned) void stockNetworkInspectFetchBody(cloned, trace);
   }
@@ -7671,13 +7672,14 @@ globalThis.__dcCompressor = {
    *
    * @param {XMLHttpRequest} xhr - Page XHR instance.
    * @param {Object} info - Captured XHR method/URL/header metadata.
+   * @param {Object|null} captured - Earliest canonical network event.
    * @returns {Object} Correlation state for loadend.
    */
-  function stockNetworkTraceXhrStart(xhr, info) {
-    const sequence = ++stockNetworkSequence;
+  function stockNetworkTraceXhrStart(xhr, info, captured = null) {
+    const sequence = captured?.network_sequence ?? ++stockNetworkSequence;
     const trace = {
       sequence,
-      started_at: performance.now(),
+      started_at: captured?.captured_at_mono_ms ?? performance.now(),
       method: String(info?.method ?? 'GET').toUpperCase(),
       url: stockNetworkSafeUrl(info?.url ?? '')
     };
@@ -11116,6 +11118,207 @@ globalThis.__dcCompressor = {
       ...item
     });
   }
+// BEGIN #309 canonical CSC ingress. The COMM Worker is registered by #311.
+  /** Identity of the current page/clock domain, never reused after reload. */
+  const cscPageInstanceId = crypto.randomUUID();
+  /** Order of network interceptions, independent of delivery completion. */
+  let cscCaptureOrder = 0;
+  /** COMM Worker receiver, or null until the downstream Worker is ready. */
+  let cscCommWorker = null;
+  /** Main-thread plugin-queue ingress supplied by #310, not a COMM queue. */
+  let cscPluginIngress = null;
+
+  /**
+   * Attaches the dedicated COMM Worker without changing the main-thread plugin.
+   *
+   * @param {Worker|null} worker - Worker owning the receiving COMM queue.
+   * @returns {void} No value is returned.
+   */
+  function cscBindCommWorker(worker) {
+    assert(worker === null || typeof worker?.postMessage === 'function',
+      'CSC COMM receiver must implement Worker.postMessage.');
+    cscCommWorker = worker;
+  }
+
+  /**
+   * Registers synchronous delivery to the independently owned plugin queue.
+   *
+   * @param {Function|null} publish - Plugin ingress or null on disposal.
+   * @returns {void} No value is returned.
+   */
+  function cscBindPluginIngress(publish) {
+    assert(publish === null || typeof publish === 'function',
+      'CSC plugin ingress must be a function.');
+    cscPluginIngress = publish;
+  }
+
+  /**
+   * Capture clocks before any asynchronous work, body clone or queueing.
+   * network_sequence is shared with existing provider-host network correlation.
+   *
+   * @param {string} transport - fetch, xhr or websocket.
+   * @param {string} direction - request, response, incoming, outgoing or event.
+   * @param {string|null} connectionId - Stable connection/request identifier.
+   * @param {Object|null} parent - Earlier event for the same exchange.
+   * @returns {Object} Frozen original-time event identity.
+   */
+  function cscCaptureNow(transport, direction, connectionId = null, parent = null) {
+    const captured_at_epoch_ms = Date.now();
+    const captured_at_mono_ms = performance.now();
+    const network_sequence = ++stockNetworkSequence;
+    const capture_order = ++cscCaptureOrder;
+    return Object.freeze({
+      page_instance_id: cscPageInstanceId,
+      clock_domain: cscPageInstanceId,
+      connection_id: connectionId ?? crypto.randomUUID(),
+      capture_id: cscPageInstanceId + ':' + network_sequence,
+      request_capture_id: parent?.request_capture_id ?? parent?.capture_id ?? null,
+      network_sequence,
+      capture_order,
+      captured_at_epoch_ms,
+      captured_at_mono_ms,
+      transport,
+      direction
+    });
+  }
+
+  /**
+   * Convert headers to an unsanitized, structured-cloneable snapshot.
+   * Redaction belongs exclusively to the Worker, never to the plugin branch.
+   *
+   * @param {Object|null} headers - Native Headers or XHR header map.
+   * @returns {Array} Raw name/value pairs without a native Headers instance.
+   */
+  function cscRawHeaderEntries(headers) {
+    if (!headers) return [];
+    if (typeof headers.entries === 'function') {
+      try { return Array.from(headers.entries(), ([key, value]) => [key, value]); }
+      catch { return []; }
+    }
+    return Object.entries(headers).map(([key, value]) => [key, String(value)]);
+  }
+
+  /**
+   * Report a transport failure without logging body, credential or raw headers.
+   *
+   * @param {Object} stamp - Original event identity.
+   * @param {string} stage - Failed stage.
+   * @param {unknown} error - Failure cause.
+   * @returns {void} No value is returned.
+   */
+  function cscIngressFailure(stamp, stage, error) {
+    logDiagnostic('warnings', 'csc-ingress-incomplete', {
+      capture_id: stamp.capture_id,
+      network_sequence: stamp.network_sequence,
+      stage,
+      error: boundedDiagnosticText(errorMessage(error), 500)
+    });
+  }
+
+  /**
+   * Publish the original captured event to two independent consumers.
+   * The COMM stream is transferred directly, never queued or read on-page.
+   * Plugin publication sees unmodified page-visible data and original clocks.
+   *
+   * @param {Object} stamp - Captured event identity.
+   * @param {Object} meta - Cloneable transport metadata.
+   * @param {Object|null} nativeBodyOwner - Request or Response to clone once.
+   * @param {unknown} availableValue - Already available XHR/WS body, if any.
+   * @returns {void} No value is returned.
+   */
+  function cscFanOut(stamp, meta, nativeBodyOwner = null, availableValue = null) {
+    const envelope = Object.freeze({ ...stamp, ...meta });
+    if (cscCommWorker) {
+      let cloned = null;
+      try {
+        if (nativeBodyOwner) {
+          cloned = cloneSafely(nativeBodyOwner);
+          if (!cloned) throw new Error('Native Request/Response clone unavailable.');
+        }
+        const body = cloned?.body ?? null;
+        const body_state = nativeBodyOwner
+          ? (body ? 'stream-transferred' : 'unavailable')
+          : (availableValue === null ? 'none-or-unavailable' : 'cloneable-value');
+        // Never transfer a page-owned ArrayBuffer. postMessage clones XHR/WS data.
+        cscCommWorker.postMessage({
+          type: 'csc-comm-capture',
+          envelope: { ...envelope, body_state, body, value: availableValue }
+        }, body ? [body] : []);
+      } catch (error) {
+        cscIngressFailure(stamp, 'worker-transfer', error);
+        if (cloned?.body && !cloned.body.locked) {
+          void cancelReadableBodyQuietly(cloned.body);
+        }
+      }
+    }
+    if (cscPluginIngress) {
+      try {
+        cscPluginIngress(Object.freeze({
+          envelope, source: nativeBodyOwner ?? availableValue
+        }));
+      } catch (error) {
+        cscIngressFailure(stamp, 'plugin-delivery', error);
+      }
+    }
+  }
+
+  /**
+   * Snapshot an XHR body without reading a stream or altering page-owned bytes.
+   *
+   * @param {XMLHttpRequest} xhr - Observed XHR.
+   * @returns {Object} Available value and explicit body availability.
+   */
+  function cscXhrBodySnapshot(xhr) {
+    try {
+      const type = xhr.responseType || 'text';
+      if (type === 'text') {
+        return { value: xhr.responseText, body_type: 'text', body_available: true };
+      }
+      if (type === 'json') {
+        return { value: xhr.response, body_type: 'json', body_available: true };
+      }
+      if (type === 'arraybuffer' && xhr.response instanceof ArrayBuffer) {
+        return { value: xhr.response, body_type: 'binary', body_available: true };
+      }
+      if (type === 'blob' && xhr.response instanceof Blob) {
+        return { value: xhr.response, body_type: 'blob', body_available: true };
+      }
+      return { value: null, body_type: type, body_available: false };
+    } catch {
+      return { value: null, body_type: 'unavailable', body_available: false };
+    }
+  }
+
+  /**
+   * Publish a fetch request/response through the canonical ingress.
+   *
+   * @param {Object} stamp - Event identity from the earliest observation.
+   * @param {Request|Response|null} value - Unmodified stock network object.
+   * @param {Object} metadata - Method, URL, status and other raw metadata.
+   * @returns {void} No value is returned.
+   */
+  function cscPublishFetch(stamp, value, metadata) {
+    cscFanOut(stamp, {
+      ...metadata,
+      headers: cscRawHeaderEntries(value?.headers),
+      body_type: value?.headers?.get?.('content-type') ?? null,
+      body_available: Boolean(value?.body),
+      response_type: value?.type ?? null
+    }, value);
+  }
+
+  /**
+   * Publish already available XHR/WS data by structured clone, never transfer.
+   *
+   * @param {Object} stamp - Earliest synchronous observation.
+   * @param {Object} metadata - Transport event metadata.
+   * @param {unknown} data - Page-owned data or explicitly unavailable null.
+   * @returns {void} No value is returned.
+   */
+  function cscPublishValue(stamp, metadata, data = null) {
+    cscFanOut(stamp, metadata, null, data);
+  }
+  // END #309 canonical CSC ingress.
 
   /** Current authoritative Agent lifecycle state, distinct from timing state. */
   let agentLifecycleState = 'unknown';
@@ -14058,6 +14261,7 @@ globalThis.__dcCompressor = {
       const originalFetch = pageWindow.fetch;
       originalPageFetch = originalFetch;
       pageWindow.fetch = function(...args) {
+        const requestStamp = cscCaptureNow('fetch', 'request');
         const input = args[0];
         const init = args[1] || {};
         let request = null;
@@ -14066,9 +14270,16 @@ globalThis.__dcCompressor = {
           request = input instanceof PageRequest ? input : new PageRequest(input, init);
         } catch {}
         const requestUrl = request?.url ?? String(input);
-        const stockTrace = stockNetworkTraceFetchStart(request, requestUrl);
-        void communicationLogFetchRequest(request, stockTrace)
-          .catch(communicationError => communicationLogReportFailure('fetch-request', communicationError));
+        const stockTrace = stockNetworkTraceFetchStart(request, requestUrl, requestStamp);
+        cscPublishFetch(requestStamp, request, {
+          method: String(request?.method ?? init.method ?? 'GET').toUpperCase(),
+          request_url: requestUrl,
+          body_available: !!request?.body
+        });
+        if (!cscCommWorker) {
+          void communicationLogFetchRequest(request, stockTrace)
+            .catch(communicationError => communicationLogReportFailure('fetch-request', communicationError));
+        }
         rememberApiRequestContext(requestUrl, request?.headers, init.headers);
         recordClickDiagnosticNetworkRequest(requestUrl, 'fetch');
         const requestMethod = String(request?.method ?? init.method ?? 'GET').toUpperCase();
@@ -14087,14 +14298,26 @@ globalThis.__dcCompressor = {
         const resumeRequestClone = resumeRequest && request ? cloneSafely(request) : null;
         const responsePromise = originalFetch.apply(this, args);
         return responsePromise.then(response => {
+          const responseStamp = cscCaptureNow('fetch', 'response',
+            requestStamp.connection_id, requestStamp);
           const generationResponse = capturePromise ? cloneSafely(response) : null;
           const resumeResponse = resumeRequest ? cloneSafely(response) : null;
           const stopwatchConversationResponse = stopwatchConversationRequest
             ? cloneSafely(response)
             : null;
           stockNetworkTraceFetchResponse(response, stockTrace);
-          void communicationLogFetchResponse(response, stockTrace)
-            .catch(communicationError => communicationLogReportFailure('fetch-response', communicationError));
+          cscPublishFetch(responseStamp, response, {
+            method: stockTrace.method,
+            request_url: requestUrl,
+            response_url: response.url,
+            status: response.status,
+            redirected: response.redirected,
+            ok: response.ok
+          });
+          if (!cscCommWorker) {
+            void communicationLogFetchResponse(response, stockTrace)
+              .catch(communicationError => communicationLogReportFailure('fetch-response', communicationError));
+          }
           if (stopwatchConversationRequest && !stopwatchConversationResponse) {
             logDiagnostic('warnings', 'agent-stopwatch-recovery-response-clone-failure', {
               url: boundedDiagnosticText(response?.url ?? requestUrl, 320)
@@ -14168,14 +14391,37 @@ globalThis.__dcCompressor = {
         return originalSetRequestHeader.call(this, name, value);
       };
       XHR.prototype.send = function(body) {
+        const requestStamp = cscCaptureNow('xhr', 'request');
         const info = this.__tmApiRequest || { method: 'GET', url: '', headers: {} };
-        const stockTrace = stockNetworkTraceXhrStart(this, info);
-        void communicationLogXhrRequest(info, body, stockTrace)
-          .catch(communicationError => communicationLogReportFailure('xhr-request', communicationError));
+        const stockTrace = stockNetworkTraceXhrStart(this, info, requestStamp);
+        cscPublishValue(requestStamp, {
+          method: info.method, url: info.url,
+          headers: cscRawHeaderEntries(info.headers),
+          body_type: typeof body,
+          body_available: body !== null && body !== undefined
+        }, body ?? null);
+        if (!cscCommWorker) {
+          void communicationLogXhrRequest(info, body, stockTrace)
+            .catch(communicationError => communicationLogReportFailure('xhr-request', communicationError));
+        }
         this.addEventListener('loadend', () => {
+          const responseStamp = cscCaptureNow('xhr', 'response',
+            requestStamp.connection_id, requestStamp);
           stockNetworkTraceXhrResponse(this, stockTrace);
-          void communicationLogXhrResponse(this, stockTrace)
-            .catch(communicationError => communicationLogReportFailure('xhr-response', communicationError));
+          const body = cscXhrBodySnapshot(this);
+          cscPublishValue(responseStamp, {
+            method: info.method, request_url: info.url,
+            response_url: this.responseURL ?? info.url,
+            status: Number.isFinite(this.status) ? this.status : null,
+            response_type: this.responseType || 'text',
+            headers: String(this.getAllResponseHeaders?.() ?? ''),
+            body_type: body.body_type,
+            body_available: body.body_available
+          }, body.value);
+          if (!cscCommWorker) {
+            void communicationLogXhrResponse(this, stockTrace)
+              .catch(communicationError => communicationLogReportFailure('xhr-response', communicationError));
+          }
         }, { once: true });
         rememberApiRequestContext(info.url, info.headers);
         recordClickDiagnosticNetworkRequest(info.url, 'xmlhttprequest');
@@ -14187,31 +14433,66 @@ globalThis.__dcCompressor = {
       const NativeWebSocket = pageWindow.WebSocket;
       pageWindow.WebSocket = new Proxy(NativeWebSocket, {
         construct(target, args) {
+          const connectionStamp = cscCaptureNow('websocket', 'event');
           const socket = Reflect.construct(target, args, target);
           const socketUrl = String(args[0] ?? '');
           const nativeSend = socket.send;
           socket.send = function(data) {
-            void communicationLogWebSocketSend(socketUrl, data)
-              .catch(communicationError => communicationLogReportFailure('websocket-send', communicationError));
+            const stamp = cscCaptureNow('websocket', 'outgoing',
+              connectionStamp.connection_id, connectionStamp);
+            cscPublishValue(stamp, {
+              url: socketUrl, body_type: typeof data,
+              body_available: data !== null && data !== undefined
+            }, data);
+            if (!cscCommWorker) {
+              void communicationLogWebSocketSend(socketUrl, data)
+                .catch(communicationError => communicationLogReportFailure('websocket-send', communicationError));
+            }
             return nativeSend.call(this, data);
           };
           socket.addEventListener('open', () => {
-            void communicationLogRecord('communication_websocket_open', { url: stockNetworkSafeUrl(socketUrl) });
+            const stamp = cscCaptureNow('websocket', 'event',
+              connectionStamp.connection_id, connectionStamp);
+            cscPublishValue(stamp, { url: socketUrl, event: 'open' });
+            if (!cscCommWorker) {
+              void communicationLogRecord('communication_websocket_open', { url: stockNetworkSafeUrl(socketUrl) });
+            }
           });
           socket.addEventListener('message', event => {
+            const stamp = cscCaptureNow('websocket', 'incoming',
+              connectionStamp.connection_id, connectionStamp);
+            cscPublishValue(stamp, {
+              url: socketUrl, body_type: typeof event.data,
+              body_available: event.data !== null && event.data !== undefined
+            }, event.data);
             captureGenerationWebSocketFrame(event.data);
-            void communicationLogWebSocketMessage(socketUrl, event.data)
-              .catch(communicationError => communicationLogReportFailure('websocket-message', communicationError));
+            if (!cscCommWorker) {
+              void communicationLogWebSocketMessage(socketUrl, event.data)
+                .catch(communicationError => communicationLogReportFailure('websocket-message', communicationError));
+            }
           });
           socket.addEventListener('close', event => {
-            void communicationLogRecord('communication_websocket_close', {
-              url: stockNetworkSafeUrl(socketUrl),
-              code: event.code,
+            const stamp = cscCaptureNow('websocket', 'event',
+              connectionStamp.connection_id, connectionStamp);
+            cscPublishValue(stamp, {
+              url: socketUrl, event: 'close', code: event.code,
               was_clean: event.wasClean === true
             });
+            if (!cscCommWorker) {
+              void communicationLogRecord('communication_websocket_close', {
+                url: stockNetworkSafeUrl(socketUrl),
+                code: event.code,
+                was_clean: event.wasClean === true
+              });
+            }
           });
           socket.addEventListener('error', () => {
-            void communicationLogRecord('communication_websocket_error', { url: stockNetworkSafeUrl(socketUrl) });
+            const stamp = cscCaptureNow('websocket', 'event',
+              connectionStamp.connection_id, connectionStamp);
+            cscPublishValue(stamp, { url: socketUrl, event: 'error' });
+            if (!cscCommWorker) {
+              void communicationLogRecord('communication_websocket_error', { url: stockNetworkSafeUrl(socketUrl) });
+            }
           });
           return socket;
         }
