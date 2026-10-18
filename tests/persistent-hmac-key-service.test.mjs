@@ -442,3 +442,14 @@ test('completion tolerates disposal while GM write is pending', async () => {
   await completion;
   assert.equal(f.raw().pending.length, 0);
 });
+
+test('complete reconciles committed GM write with lost acknowledgement', async () => {
+  const f = fixture(), s = f.open(), a = await s.admit();
+  const original = f.storage.set;
+  f.storage.set = async (name, value) => {
+    await original(name, value);
+    if (value.pending.length === 0) throw Error('lost ack');
+  };
+  await s.complete(a.token);
+  assert.equal(f.raw().pending.length, 0);
+});
