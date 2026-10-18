@@ -120,6 +120,10 @@ test('two-tab diagnostic distinguishes stale sync values from shared async GM', 
   assert.equal(report.visibility.status, 'PASS');
   assert.equal(report.visibility.peerSawLeaderWrite, true);
   assert.equal(report.visibility.leaderSawPeerWrite, true);
+  assert.equal(report.exclusiveWebLock.status, 'PASS');
+  assert.equal(report.exclusiveWebLock.peersAttemptedWhileHeld, 1);
+  assert.equal(report.exclusiveWebLock.peersAcquiredEventually, 1);
+  assert.equal(report.exclusiveWebLock.peersAcquiredWhileHeld, 0);
   assert.equal(report.status, 'ASYNC_PATH_PASS');
 });
 
