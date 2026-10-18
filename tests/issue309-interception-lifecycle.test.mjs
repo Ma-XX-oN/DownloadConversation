@@ -183,7 +183,7 @@ test('#309 overlapping fetch responses preserve request/response identity despit
   assert.equal(events[3].request_url, urlA);
   assert.deepEqual(h.state.plugin.map(p => p.envelope.capture_id),
     events.map(e => e.capture_id));
-  assert.equal(h.state.clones, 4, 'Exactly one COMM clone for every Request/Response');
+  assert.equal(h.state.clones, 8, 'One plugin and one COMM native clone per Request/Response');
   assert.equal(h.state.wire.length, 2, 'No additional stock fetch requests');
 });
 
