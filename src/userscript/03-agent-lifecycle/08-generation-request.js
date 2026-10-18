@@ -311,7 +311,19 @@
           ? captureGenerationStreamRequest(request, generationSubmittedAtMs)
           : null;
         const resumeRequestClone = resumeRequest && request ? cloneSafely(request) : null;
-        const responsePromise = originalFetch.apply(this, args);
+        let responsePromise;
+        try {
+          responsePromise = originalFetch.apply(this, args);
+        } catch (error) {
+          const failureStamp = cscCaptureNow('fetch', 'error',
+            requestStamp.connection_id, requestStamp);
+          cscPublishValue(failureStamp, {
+            method: stockTrace.method, request_url: requestUrl,
+            error_name: String(error?.name ?? 'Error'),
+            body_available: false, complete: false
+          });
+          throw error;
+        }
         return responsePromise.then(response => {
           const responseStamp = cscCaptureNow('fetch', 'response',
             requestStamp.connection_id, requestStamp);
