@@ -159,6 +159,10 @@
         return { token, key_hex: stored.key_hex, metadata: metadata(stored) };
       });
       const key = Uint8Array.from(result.key_hex.match(/../g), x => parseInt(x, 16));
+      if (disposed) {
+        key.fill(0);
+        throw new Error('persistent-key-disposed');
+      }
       internal.set(result.token, key);
       return { token: result.token, metadata: result.metadata };
     }
