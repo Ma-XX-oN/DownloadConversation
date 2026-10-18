@@ -117,6 +117,9 @@ test('two-tab diagnostic distinguishes stale sync values from shared async GM', 
   assert.equal(report.asynchronousGM.observed, 48);
   assert.equal(report.asynchronousGM.status, 'PASS');
   assert.deepEqual(report.asynchronousGM.errors, []);
+  assert.equal(report.visibility.status, 'PASS');
+  assert.equal(report.visibility.peerSawLeaderWrite, true);
+  assert.equal(report.visibility.leaderSawPeerWrite, true);
   assert.equal(report.status, 'ASYNC_PATH_PASS');
 });
 
