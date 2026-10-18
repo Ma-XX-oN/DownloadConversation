@@ -134,10 +134,6 @@
               url: socketUrl, body_type: typeof data,
               body_available: data !== null && data !== undefined
             }, data);
-            if (!cscCommWorker) {
-              void communicationLogWebSocketSend(socketUrl, data)
-                .catch(communicationError => communicationLogReportFailure('websocket-send', communicationError));
-            }
             return cscDispatchSocketSend(nativeSend, this, data, connectionStamp, stamp, socketUrl);
           };
           socket.addEventListener('open', () => {
