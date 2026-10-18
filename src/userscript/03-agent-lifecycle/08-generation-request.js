@@ -286,13 +286,12 @@
         } catch {}
         const requestUrl = request?.url ?? String(input);
         const stockTrace = stockNetworkTraceFetchStart(request, requestUrl, requestStamp);
-        if (cscCommWorker) {
-          cscPublishFetch(requestStamp, request, {
-            method: String(request?.method ?? init.method ?? 'GET').toUpperCase(),
-            request_url: requestUrl,
-            body_available: Boolean(request?.body)
-          });
-        } else {
+        cscPublishFetch(requestStamp, request, {
+          method: String(request?.method ?? init.method ?? 'GET').toUpperCase(),
+          request_url: requestUrl,
+          body_available: Boolean(request?.body)
+        });
+        if (!cscCommWorker) {
           void communicationLogFetchRequest(request, stockTrace)
             .catch(communicationError => communicationLogReportFailure('fetch-request', communicationError));
         }
@@ -322,16 +321,15 @@
             ? cloneSafely(response)
             : null;
           stockNetworkTraceFetchResponse(response, stockTrace);
-          if (cscCommWorker) {
-            cscPublishFetch(responseStamp, response, {
-              method: stockTrace.method,
-              request_url: requestUrl,
-              response_url: response?.url ?? requestUrl,
-              status: response?.status ?? null,
-              redirected: response?.redirected === true,
-              ok: response?.ok === true
-            });
-          } else {
+          cscPublishFetch(responseStamp, response, {
+            method: stockTrace.method,
+            request_url: requestUrl,
+            response_url: response?.url ?? requestUrl,
+            status: response?.status ?? null,
+            redirected: response?.redirected === true,
+            ok: response?.ok === true
+          });
+          if (!cscCommWorker) {
             void communicationLogFetchResponse(response, stockTrace)
               .catch(communicationError => communicationLogReportFailure('fetch-response', communicationError));
           }
