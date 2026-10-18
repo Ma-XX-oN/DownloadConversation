@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         DC #313 Exact Producer HMAC Browser Probe
 // @namespace    https://chatgpt.com/dc313-probe/
-// @version      0.7.1
+// @version      0.8.0
 // @description  Synthetic HMAC producer, Web Locks, GM and Worker acceptance; no conversation access.
 // @match        https://chatgpt.com/*
 // @grant        GM_getValue
@@ -394,7 +394,44 @@
     const message = event.data;
     if (!message || message.from === tabId ||
         typeof message.run !== 'string') return;
-    if (message.type === 'visibility-prepare') {
+    if (message.type === 'lock-probe-prepare') {
+      if (diagActive) return;
+      diagRuns.set(message.run, { kind: 'lock-peer', leader: message.from });
+      diagChannel.postMessage({ type: 'lock-probe-ready',
+        run: message.run, from: tabId });
+    } else if (message.type === 'lock-probe-start') {
+      const state = diagRuns.get(message.run);
+      if (!state || state.kind !== 'lock-peer' ||
+          state.leader !== message.from || diagActive) return;
+      diagActive = true;
+      diagChannel.postMessage({ type: 'lock-probe-attempt',
+        run: message.run, from: tabId });
+      try {
+        await exclusive(() => {
+          diagChannel.postMessage({ type: 'lock-probe-acquired',
+            run: message.run, from: tabId });
+        });
+      } catch (error) {
+        diagChannel.postMessage({ type: 'lock-probe-error',
+          run: message.run, from: tabId, error: String(error) });
+      } finally {
+        diagActive = false;
+        diagRuns.delete(message.run);
+      }
+    } else if (['lock-probe-ready', 'lock-probe-attempt',
+        'lock-probe-acquired', 'lock-probe-error'].includes(message.type)) {
+      const state = diagRuns.get(message.run);
+      if (!state || state.kind !== 'lock-leader') return;
+      if (message.type === 'lock-probe-ready') state.ready.add(message.from);
+      if (message.type === 'lock-probe-attempt') state.attempts.add(message.from);
+      if (message.type === 'lock-probe-acquired') {
+        state.acquisitions.add(message.from);
+        if (state.holding) state.overlaps.add(message.from);
+      }
+      if (message.type === 'lock-probe-error') {
+        state.errors.push({ peer: message.from, error: message.error });
+      }
+    } else if (message.type === 'visibility-prepare') {
       if (diagActive) return;
       diagRuns.set(message.run, { leader: message.from,
         kind: 'visibility', name: message.name,
@@ -492,6 +529,52 @@
     }
   }
 
+  // Explicitly test that another userscript tab CANNOT acquire the same
+  // native named Web Lock while the initiating tab still holds it.
+  async function diagnoseSharedLock() {
+    const run = crypto.randomUUID();
+    const state = { kind: 'lock-leader', ready: new Set(),
+      attempts: new Set(), acquisitions: new Set(), overlaps: new Set(),
+      holding: false, errors: [] };
+    diagRuns.set(run, state);
+    try {
+      diagChannel.postMessage({ type: 'lock-probe-prepare',
+        run, from: tabId });
+      await delay(1200);
+      const peers = [...state.ready];
+      if (!peers.length) throw Error('no peer for cross-tab lock check');
+      await exclusive(async () => {
+        state.holding = true;
+        try {
+          diagChannel.postMessage({ type: 'lock-probe-start',
+            run, from: tabId, targets: peers });
+          const start = Date.now();
+          while (state.attempts.size + state.errors.length < peers.length &&
+              Date.now() - start < 3000) await delay(25);
+          // Allow the other realm time to acquire a wrongly isolated lock.
+          await delay(450);
+        } finally {
+          state.holding = false;
+        }
+      });
+      const start = Date.now();
+      while (state.acquisitions.size + state.errors.length < peers.length &&
+          Date.now() - start < 3000) await delay(25);
+      const result = { peers: peers.length,
+        peersAttemptedWhileHeld: state.attempts.size,
+        peersAcquiredEventually: state.acquisitions.size,
+        peersAcquiredWhileHeld: state.overlaps.size,
+        errors: state.errors };
+      result.status = result.errors.length === 0 &&
+        result.peersAttemptedWhileHeld === peers.length &&
+        result.peersAcquiredEventually === peers.length &&
+        result.peersAcquiredWhileHeld === 0 ? 'PASS' : 'FAIL';
+      return result;
+    } finally {
+      diagRuns.delete(run);
+    }
+  }
+
   async function diagnoseVisibility() {
     const run = crypto.randomUUID();
     const name = 'dc313-gm-visibility:' + run;
@@ -531,7 +614,7 @@
   async function diagnoseCrossTabStorage() {
     if (diagActive || inProgress) return;
     diagActive = true;
-    const report = { version: '0.7.1', status: 'FAIL' };
+    const report = { version: '0.8.0', status: 'FAIL' };
     try {
       if (!diagChannel) throw Error('BroadcastChannel unavailable');
       report.synchronousGM = await diagPhase('sync');
@@ -542,8 +625,10 @@
       }
       report.asynchronousGM = await diagPhase('async');
       report.visibility = await diagnoseVisibility();
+      report.exclusiveWebLock = await diagnoseSharedLock();
       report.status = report.asynchronousGM.status === 'PASS' &&
-        report.visibility.status === 'PASS' ?
+        report.visibility.status === 'PASS' &&
+        report.exclusiveWebLock.status === 'PASS' ?
         'ASYNC_PATH_PASS' : 'FAIL';
     } catch (error) { report.error = String(error); }
     finally { diagActive = false; }
