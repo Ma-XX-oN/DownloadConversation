@@ -88,10 +88,10 @@ async function verifyAllBytes(stream, length) {
  * COMM queue, page-side decoder, body-size omission or invented backpressure.
  * This is NODE evidence, NOT a Chrome/Tampermonkey latency certificate.
  */
-test('#309 10/23/40/101 MiB exact streams and stalled cloned-consumer risk', {
+test('#309 10/23/40/101 MiB exact streams and three sustained >100 MiB runs', {
   timeout: 120000
 }, async t => {
-  for (const sizeMiB of [10, 23, 40, 101]) {
+  for (const sizeMiB of [10, 23, 40, 101, 101, 101]) {
     const length = mib(sizeMiB);
     const h = stressHarness();
     const origin = payloadStream(length);
