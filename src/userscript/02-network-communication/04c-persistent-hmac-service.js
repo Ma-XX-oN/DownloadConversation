@@ -338,12 +338,11 @@
    * @returns {Object|null} Storage adapter or null when GM is unavailable.
    */
   function communicationPersistentHmacTampermonkeyStorage() {
-    if (typeof GM_getValue !== 'function' || typeof GM_setValue !== 'function') {
-      return null;
-    }
+    if (typeof GM === 'undefined' || typeof GM.getValue !== 'function' ||
+        typeof GM.setValue !== 'function') return null;
     return Object.freeze({
-      async get(name, fallback) { return GM_getValue(name, fallback); },
-      async set(name, value) { await GM_setValue(name, value); }
+      get(name, fallback) { return GM.getValue(name, fallback); },
+      set(name, value) { return GM.setValue(name, value); }
     });
   }
 
