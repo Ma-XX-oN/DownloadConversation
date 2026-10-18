@@ -94,12 +94,12 @@ test('two-tab diagnostic distinguishes stale sync values from shared async GM', 
         }
       },
       GM_registerMenuCommand: (name, callback) => menus[scope].set(name, callback),
-      alert: message => {
-        if (scope === 0 && message.startsWith('DC #313 GM diagnostic: ')) {
-          done(JSON.parse(message.slice('DC #313 GM diagnostic: '.length)));
+      console: { warn() {}, info(label, output) {
+        if (scope === 0 && label === 'DC #313 result') {
+          const parsed = JSON.parse(output);
+          if (parsed.test === 'GM cross-tab diagnostic') done(parsed.result);
         }
-      },
-      console: { warn() {}, info() {} }
+      } }
     };
     vm.runInNewContext(source, context);
   }
@@ -118,4 +118,58 @@ test('two-tab diagnostic distinguishes stale sync values from shared async GM', 
   assert.equal(report.asynchronousGM.status, 'PASS');
   assert.deepEqual(report.asynchronousGM.errors, []);
   assert.equal(report.status, 'ASYNC_PATH_PASS');
+});
+
+test('all probe outputs are selectable and Copy JSON works without screenshots', async () => {
+  const menus = new Map(), elements = [];
+  let clipboard = null;
+  const create = tag => {
+    const element = {
+      tag, children: [], style: {}, attributes: {}, textContent: '',
+      setAttribute(name, value) { this.attributes[name] = value; },
+      appendChild(child) { this.children.push(child); elements.push(child); },
+      append(...children) {
+        this.children.push(...children);
+        elements.push(...children);
+      },
+      remove() { this.removed = true; },
+      focus() { this.focused = true; },
+      select() { this.selected = true; }
+    };
+    elements.push(element);
+    return element;
+  };
+  const document = {
+    body: create('body'),
+    createElement: create,
+    getElementById(id) {
+      return elements.find(el => el.id === id && !el.removed) ?? null;
+    }
+  };
+  vm.runInNewContext(source, {
+    location: { origin: 'https://chatgpt.com' },
+    crypto: { randomUUID: () => 'synthetic-output-only' },
+    BroadcastChannel: class { constructor() { this.onmessage = null; } },
+    GM_registerMenuCommand: (name, fn) => menus.set(name, fn),
+    GM_setClipboard: value => { clipboard = value; },
+    document, Date, Map, Set,
+    console: { warn() {}, info() {} }
+  });
+  assert.ok(menus.has('DC #313: show latest results'));
+  menus.get('DC #313: show latest results')();
+  const field = elements.find(el => el.tag === 'textarea');
+  assert.ok(field);
+  assert.equal(field.readOnly, true);
+  assert.equal(field.selected, true);
+  assert.equal(JSON.parse(field.value).result.status, 'NOT_RUN');
+  const copy = elements.find(el =>
+    el.tag === 'button' && el.textContent === 'Copy JSON');
+  const download = elements.find(el =>
+    el.tag === 'button' && el.textContent === 'Download JSON');
+  assert.ok(copy);
+  assert.ok(download);
+  await copy.onclick();
+  assert.deepEqual(JSON.parse(clipboard), JSON.parse(field.value));
+  assert.match(elements.find(el =>
+    el.attributes.role === 'status').textContent, /Copied/);
 });
