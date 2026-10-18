@@ -40,7 +40,7 @@ test('diagnostic menu is registered and never auto-starts', () => {
   assert.equal(operations, 0);
 });
 
-test('two-tab diagnostic distinguishes stale sync values from shared async GM', async () => {
+async function runTwoTabDiagnostic(isolatedLocks) {
   const shared = new Map(), sync = [new Map(), new Map()];
   const menus = [new Map(), new Map()], members = new Map(), tails = new Map();
   let counter = 0, done;
@@ -60,7 +60,7 @@ test('two-tab diagnostic distinguishes stale sync values from shared async GM', 
       }
     }
   }
-  const locks = {
+  const createLocks = tails => ({
     async request(name, options, callback) {
       assert.equal(options.mode, 'exclusive');
       const previous = tails.get(name) ?? Promise.resolve();
@@ -71,13 +71,15 @@ test('two-tab diagnostic distinguishes stale sync values from shared async GM', 
       try { return await callback({ mode: 'exclusive' }); }
       finally { release(); }
     }
-  };
+  });
+  const locks = createLocks(tails);
+  const isolated = [createLocks(new Map()), createLocks(new Map())];
   for (let tab = 0; tab < 2; tab++) {
     const scope = tab;
     const context = {
       location: { origin: 'https://chatgpt.com' },
       crypto: { randomUUID: () => 'synthetic-' + scope + '-' + ++counter },
-      navigator: { locks },
+      navigator: { locks: isolatedLocks ? isolated[scope] : locks },
       BroadcastChannel: Broadcast,
       setTimeout: (callback, ms) => setTimeout(callback, Math.min(8, ms)),
       Date, Map, Set, Uint8Array,
@@ -110,6 +112,11 @@ test('two-tab diagnostic distinguishes stale sync values from shared async GM', 
     new Promise((_, reject) => setTimeout(() =>
       reject(Error('synthetic two-tab diagnostic timeout')), 9000))
   ]);
+  return report;
+}
+
+test('two-tab diagnostic distinguishes stale sync values from shared async GM', async () => {
+  const report = await runTwoTabDiagnostic(false);
   assert.equal(report.synchronousGM.expected, 48);
   assert.equal(report.synchronousGM.observed, 24);
   assert.equal(report.synchronousGM.status, 'FAIL');
@@ -125,6 +132,17 @@ test('two-tab diagnostic distinguishes stale sync values from shared async GM', 
   assert.equal(report.exclusiveWebLock.peersAcquiredEventually, 1);
   assert.equal(report.exclusiveWebLock.peersAcquiredWhileHeld, 0);
   assert.equal(report.status, 'ASYNC_PATH_PASS');
+});
+
+test('Web Lock diagnostic rejects isolated per-tab lock namespaces', async () => {
+  const report = await runTwoTabDiagnostic(true);
+  assert.equal(report.visibility.status, 'PASS');
+  assert.equal(report.exclusiveWebLock.peers, 1);
+  assert.equal(report.exclusiveWebLock.peersAttemptedWhileHeld, 1);
+  assert.equal(report.exclusiveWebLock.peersAcquiredEventually, 1);
+  assert.equal(report.exclusiveWebLock.peersAcquiredWhileHeld, 1);
+  assert.equal(report.exclusiveWebLock.status, 'FAIL');
+  assert.equal(report.status, 'FAIL');
 });
 
 test('all probe outputs are selectable and Copy JSON works without screenshots', async () => {
