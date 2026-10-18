@@ -57,3 +57,40 @@ test('factory rejects only synchronous GM APIs without an acknowledged write', a
     '\ncommunicationPersistentHmacCurrentTabService;', context);
   await assert.rejects(() => factory().admit(), /storage-unavailable/);
 });
+
+test('factory blocks admission until asynchronous GM write is acknowledged', async () => {
+  const records = new Map();
+  let allowCommit;
+  let reachedWrite;
+  const writeEntered = new Promise(resolve => { reachedWrite = resolve; });
+  const commitGate = new Promise(resolve => { allowCommit = resolve; });
+  const context = { crypto: webcrypto, Uint8Array, Map, Set,
+    location: { origin: 'https://chatgpt.com' },
+    navigator: { locks: { request: async (_name, _options, fn) =>
+      fn({ mode: 'exclusive' }) } },
+    GM: {
+      getValue: async (key, fallback) => records.get(key) ?? fallback,
+      async setValue(key, value) {
+        reachedWrite();
+        await commitGate;
+        records.set(key, structuredClone(value));
+      }
+    }
+  };
+  const factory = vm.runInNewContext(source +
+    '\ncommunicationPersistentHmacCurrentTabService;', context);
+  const service = factory();
+  let admitted = false;
+  const pending = service.admit().then(value => {
+    admitted = true;
+    return value;
+  });
+  await writeEntered;
+  await Promise.resolve();
+  assert.equal(admitted, false);
+  allowCommit();
+  const result = await pending;
+  assert.equal(result.metadata.redaction_key_epoch, 1);
+  await service.complete(result.token);
+  service.dispose();
+});
