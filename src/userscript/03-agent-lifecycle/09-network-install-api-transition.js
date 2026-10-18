@@ -138,7 +138,7 @@
               void communicationLogWebSocketSend(socketUrl, data)
                 .catch(communicationError => communicationLogReportFailure('websocket-send', communicationError));
             }
-            return nativeSend.call(this, data);
+            return cscDispatchSocketSend(nativeSend, this, data, connectionStamp, stamp, socketUrl);
           };
           socket.addEventListener('open', () => {
             const stamp = cscCaptureNow('websocket', 'event',
