@@ -329,7 +329,8 @@ test('#309 rejected WebSocket send retains attempted data plus explicit failure 
   assert.equal(events[1].direction, 'error');
   assert.equal(events[1].event, 'send-rejected');
   assert.equal(events[1].complete, false);
-  assert.equal(events[1].request_capture_id, events[0].capture_id);
+  assert.equal(events[1].parent_capture_id, events[0].capture_id);
+  assert.equal(events[1].request_capture_id, 'tab1-1:1');
   assert.equal(h.state.wire.length, 0);
 });
 
