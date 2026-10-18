@@ -68,7 +68,7 @@ test(
       return module.name === 'network-communication';
     });
     assert.deepEqual(
-      communicationModule?.files.slice(2, 11),
+      communicationModule?.files.slice(3, 12),
       [
         'src/userscript/02-network-communication/03-communication-lifecycle.js',
         'src/userscript/02-network-communication/06-segment-storage.js',
@@ -82,7 +82,7 @@ test(
       ],
       'identity and segment runtime must remain at verified top-level source boundaries'
     );
-    assert.equal(sourcePaths.length, 77);
+    assert.equal(sourcePaths.length, 78);
     assert.equal(new Set(sourcePaths).size, sourcePaths.length);
     assert.ok(sourcePaths.every(sourcePath => {
       return sourcePath.startsWith('src/userscript/');
