@@ -424,3 +424,21 @@ test('Randomize rejects uncommitted failed write rather than invent new scope', 
   assert.equal(result.epoch, 2);
   s.dispose();
 });
+
+test('completion tolerates disposal while GM write is pending', async () => {
+  const f = fixture(), s = f.open(), a = await s.admit();
+  const original = f.storage.set;
+  let proceed, reached;
+  const pause = new Promise(resolve => { proceed = resolve; });
+  const started = new Promise(resolve => { reached = resolve; });
+  f.storage.set = async (key, item) => {
+    if (item.pending.length === 0) { reached(); await pause; }
+    await original(key, item);
+  };
+  const completion = s.complete(a.token);
+  await started;
+  s.dispose();
+  proceed();
+  await completion;
+  assert.equal(f.raw().pending.length, 0);
+});
