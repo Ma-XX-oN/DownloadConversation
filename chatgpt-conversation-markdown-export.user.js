@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         ChatGPT Conversation Markdown Recorder
 // @namespace    https://chatgpt.com/
-// @version      1.11.7-issue.309.4
+// @version      1.11.7-issue.309.5
 // @description  Exports the current ChatGPT conversation directly from the Conversation API as Markdown or JSONL.
 // @match        https://chatgpt.com/*
 // @match        https://chat.openai.com/*
@@ -11263,6 +11263,64 @@ globalThis.__dcCompressor = {
   }
 
   /**
+   * Call stock fetch unchanged while recording synchronous dispatch failures.
+   *
+   * @param {Function} nativeFetch - Original page fetch implementation.
+   * @param {Object} receiver - Original this value.
+   * @param {Array} args - Original fetch arguments.
+   * @param {Object} requestStamp - Earliest request capture.
+   * @param {Object} trace - Shared stock-network correlation.
+   * @param {string} url - Original request URL.
+   * @returns {Promise<Response>} Unmodified native fetch result.
+   */
+  function cscDispatchObservedFetch(nativeFetch, receiver, args, requestStamp, trace, url) {
+    try {
+      return nativeFetch.apply(receiver, args);
+    } catch (error) {
+      const stamp = cscCaptureNow('fetch', 'error',
+        requestStamp.connection_id, requestStamp);
+      cscPublishValue(stamp, {
+        method: trace.method, request_url: url,
+        error_name: String(error?.name ?? 'Error'),
+        body_available: false, complete: false
+      });
+      throw error;
+    }
+  }
+
+  /**
+   * Preserve native WebSocket send/throw semantics and report rejected attempts.
+   *
+   * @param {Function} nativeSend - Original WebSocket send.
+   * @param {WebSocket} socket - Stock page socket.
+   * @param {unknown} data - Original frame bytes or text.
+   * @param {Object} connection - WebSocket connection capture.
+   * @param {Object} attempt - Original send-attempt capture.
+   * @param {string} url - WebSocket endpoint.
+   * @returns {unknown} Original native send return value.
+   */
+  function cscDispatchSocketSend(nativeSend, socket, data, connection, attempt, url) {
+    let result;
+    try {
+      result = nativeSend.call(socket, data);
+    } catch (error) {
+      const failure = cscCaptureNow('websocket', 'error',
+        connection.connection_id, attempt);
+      cscPublishValue(failure, {
+        url, event: 'send-rejected',
+        error_name: String(error?.name ?? 'Error'),
+        body_available: false, complete: false
+      });
+      throw error;
+    }
+    if (!cscCommWorker) {
+      void communicationLogWebSocketSend(url, data)
+        .catch(error => communicationLogReportFailure('websocket-send', error));
+    }
+    return result;
+  }
+
+  /**
    * Snapshot an XHR body without reading a stream or altering page-owned bytes.
    *
    * @param {XMLHttpRequest} xhr - Observed XHR.
@@ -14254,7 +14312,7 @@ globalThis.__dcCompressor = {
    */
   function installNetworkCapture() {
     if (captureInstalled) return;
-    // Use the page realm rather than the userscript sandbox when intercepting page networking.
+    // Intercept in the page realm.
     const pageWindow = typeof unsafeWindow !== 'undefined' ? unsafeWindow : window;
 
     if (typeof pageWindow.fetch === 'function') {
@@ -14273,8 +14331,7 @@ globalThis.__dcCompressor = {
         const stockTrace = stockNetworkTraceFetchStart(request, requestUrl, requestStamp);
         cscPublishFetch(requestStamp, request, {
           method: String(request?.method ?? init.method ?? 'GET').toUpperCase(),
-          request_url: requestUrl,
-          body_available: !!request?.body
+          request_url: requestUrl
         });
         if (!cscCommWorker) {
           void communicationLogFetchRequest(request, stockTrace)
@@ -14296,7 +14353,8 @@ globalThis.__dcCompressor = {
           ? captureGenerationStreamRequest(request, generationSubmittedAtMs)
           : null;
         const resumeRequestClone = resumeRequest && request ? cloneSafely(request) : null;
-        const responsePromise = originalFetch.apply(this, args);
+        const responsePromise = cscDispatchObservedFetch(
+          originalFetch, this, args, requestStamp, stockTrace, requestUrl);
         return responsePromise.then(response => {
           const responseStamp = cscCaptureNow('fetch', 'response',
             requestStamp.connection_id, requestStamp);
@@ -14461,7 +14519,17 @@ globalThis.__dcCompressor = {
       pageWindow.WebSocket = new Proxy(NativeWebSocket, {
         construct(target, args) {
           const connectionStamp = cscCaptureNow('websocket', 'event');
-          const socket = Reflect.construct(target, args, target);
+          let socket;
+          try {
+            socket = Reflect.construct(target, args, target);
+          } catch (error) {
+            cscPublishValue(connectionStamp, {
+              url: String(args[0] ?? ''), event: 'construct-failed',
+              error_name: String(error?.name ?? 'Error'),
+              body_available: false, complete: false
+            });
+            throw error;
+          }
           const socketUrl = String(args[0] ?? '');
           const nativeSend = socket.send;
           socket.send = function(data) {
@@ -14471,11 +14539,7 @@ globalThis.__dcCompressor = {
               url: socketUrl, body_type: typeof data,
               body_available: data !== null && data !== undefined
             }, data);
-            if (!cscCommWorker) {
-              void communicationLogWebSocketSend(socketUrl, data)
-                .catch(communicationError => communicationLogReportFailure('websocket-send', communicationError));
-            }
-            return nativeSend.call(this, data);
+            return cscDispatchSocketSend(nativeSend, this, data, connectionStamp, stamp, socketUrl);
           };
           socket.addEventListener('open', () => {
             const stamp = cscCaptureNow('websocket', 'event',
