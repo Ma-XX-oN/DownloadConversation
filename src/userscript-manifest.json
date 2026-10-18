@@ -28,6 +28,7 @@
       "files": [
         "src/userscript/02-network-communication/01-stock-network-identities.js",
         "src/userscript/02-network-communication/02-stock-network-responses.js",
+        "src/userscript/02-network-communication/03-csc-canonical-ingress.js",
         "src/userscript/02-network-communication/03-communication-lifecycle.js",
         "src/userscript/02-network-communication/06-segment-storage.js",
         "src/userscript/02-network-communication/06-segment-manifest.js",
