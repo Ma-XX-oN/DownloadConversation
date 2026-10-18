@@ -149,37 +149,56 @@
     }
 
     /**
+     * Remove only a never-provisioned admission, including ambiguous commits.
+     * Re-read beneath the same native fence and do not erase other captures.
+     * @param {string} token - Private 128-bit admission identifier.
+     * @returns {Promise<void>} Confirmed cleanup or explicit failure.
+     */
+    async function reconcileUnpublishedAdmission(token) {
+      await transaction(async (read, write) => {
+        const stored = await read();
+        if (!stored) throw new Error('persistent-key-admission-not-found');
+        if (!stored.pending.includes(token)) return;
+        const pending = stored.pending.filter(item => item !== token);
+        const next = { ...stored, pending };
+        await write(next.phase === 'draining' && pending.length === 0
+          ? finishRotation(next) : next);
+      }, true);
+    }
+
+    /**
      * Admit one logical capture against the freshly read authoritative epoch.
      * Captures bind to a private key copy; they never return K to page callers.
      * @returns {Promise<Object>} Nonsecret admission token and segment metadata.
      */
     async function admit() {
-      const result = await transaction(async (read, write) => {
+      let unpublishedToken = null;
+      let result;
+      try {
+        result = await transaction(async (read, write) => {
         let stored = await read();
         if (!stored) { stored = initial(); await write(stored); }
         if (stored.phase !== 'open') throw new Error('persistent-key-rotation-draining');
         if (stored.pending.length >= 256) throw new Error('persistent-key-admission-capacity');
         let token = randomHex(16);
         while (stored.pending.includes(token)) token = randomHex(16);
+        unpublishedToken = token;
         const next = { ...stored, pending: [...stored.pending, token] };
         await write(next);
         return { token, key_hex: stored.key_hex, metadata: metadata(stored) };
-      });
+        });
+      } catch (error) {
+        if (unpublishedToken) {
+          try { await reconcileUnpublishedAdmission(unpublishedToken); }
+          catch { throw new Error('persistent-key-admission-reconciliation-failed'); }
+        }
+        throw error;
+      }
       const key = Uint8Array.from(result.key_hex.match(/../g), x => parseInt(x, 16));
       if (disposed) {
         key.fill(0);
-        // A disposal after the admission commit must not orphan a token.
-        // Release only this never-provisioned capture under the shared lock.
-        await transaction(async (read, write) => {
-          const stored = await read();
-          if (!stored || !stored.pending.includes(result.token)) {
-            throw new Error('persistent-key-admission-not-found');
-          }
-          const pending = stored.pending.filter(item => item !== result.token);
-          const next = { ...stored, pending };
-          await write(next.phase === 'draining' && pending.length === 0
-            ? finishRotation(next) : next);
-        }, true);
+        // A disposal after commit must not orphan an unpublished token.
+        await reconcileUnpublishedAdmission(result.token);
         throw new Error('persistent-key-disposed');
       }
       internal.set(result.token, key);
