@@ -59,10 +59,41 @@ async function scenario() {
       next.metadata.redaction_key_epoch !== 2) {
     throw Error('rotation did not advance epoch');
   }
+  const workerCode = 'self.onmessage = event => {' +
+    'const item = event.data;const bytes = item.key_bytes;' +
+    'if(item.type !== "dc-hmac-key-v2" ||' +
+    '!(bytes instanceof Uint8Array) || bytes.length !== 32)' +
+    'throw Error("invalid synthetic Worker key");' +
+    'const length = bytes.byteLength;bytes.fill(0);' +
+    'self.postMessage({type:"synthetic-key-ack",length,token:item.token});' +
+    '}';
+  const workerUrl = URL.createObjectURL(new Blob([workerCode],
+    { type: 'text/javascript' }));
+  const worker = new Worker(workerUrl);
+  let workerAck;
+  try {
+    const acknowledgement = new Promise((resolve, reject) => {
+      const timer = setTimeout(() => reject(Error('Worker key transfer timeout')),
+        3000);
+      worker.onmessage = event => { clearTimeout(timer); resolve(event.data); };
+      worker.onerror = error => { clearTimeout(timer);
+        reject(Error('Worker key transfer failed: ' + error.message)); };
+    });
+    second.provision(next.token, worker);
+    workerAck = await acknowledgement;
+    if (workerAck.type !== 'synthetic-key-ack' ||
+        workerAck.length !== 32 || workerAck.token !== next.token) {
+      throw Error('Worker key receipt mismatch');
+    }
+  } finally {
+    worker.terminate();
+    URL.revokeObjectURL(workerUrl);
+  }
   await second.complete(next.token);
   document.getElementById('result').textContent = JSON.stringify({
     nativeWebLocks: true, sameOriginTabs: 2, firstUseAdmissions: 40,
-    singleScope: true, fenced: true, rotatedEpoch: 2
+    singleScope: true, fenced: true, rotatedEpoch: 2,
+    workerKeyReceived: workerAck.length
   });
   child.close();
 }
@@ -122,6 +153,7 @@ if (location.hash !== '#child') scenario().catch(e => {
       assert.equal(result.singleScope, true);
       assert.equal(result.fenced, true);
       assert.equal(result.rotatedEpoch, 2);
+      assert.equal(result.workerKeyReceived, 32);
     } finally {
       await new Promise(resolve => server.close(resolve));
       rmSync(tmp, { recursive: true, force: true });
