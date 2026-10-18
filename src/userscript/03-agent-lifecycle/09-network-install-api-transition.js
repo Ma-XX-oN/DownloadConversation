@@ -114,7 +114,17 @@
       pageWindow.WebSocket = new Proxy(NativeWebSocket, {
         construct(target, args) {
           const connectionStamp = cscCaptureNow('websocket', 'event');
-          const socket = Reflect.construct(target, args, target);
+          let socket;
+          try {
+            socket = Reflect.construct(target, args, target);
+          } catch (error) {
+            cscPublishValue(connectionStamp, {
+              url: String(args[0] ?? ''), event: 'construct-failed',
+              error_name: String(error?.name ?? 'Error'),
+              body_available: false, complete: false
+            });
+            throw error;
+          }
           const socketUrl = String(args[0] ?? '');
           const nativeSend = socket.send;
           socket.send = function(data) {
