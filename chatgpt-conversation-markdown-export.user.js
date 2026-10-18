@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         ChatGPT Conversation Markdown Recorder
 // @namespace    https://chatgpt.com/
-// @version      1.11.7
+// @version      1.11.7-issue.309.11
 // @description  Exports the current ChatGPT conversation directly from the Conversation API as Markdown or JSONL.
 // @match        https://chatgpt.com/*
 // @match        https://chat.openai.com/*
@@ -7537,11 +7537,12 @@ globalThis.__dcCompressor = {
    *
    * @param {Request|null} request - Page Request when construction succeeded.
    * @param {string} requestUrl - Effective request URL.
+   * @param {Object|null} captured - Earliest canonical network event.
    * @returns {Object} Correlation state for the response.
    */
-  function stockNetworkTraceFetchStart(request, requestUrl) {
-    const sequence = ++stockNetworkSequence;
-    const startedAt = performance.now();
+  function stockNetworkTraceFetchStart(request, requestUrl, captured = null) {
+    const sequence = captured?.network_sequence ?? ++stockNetworkSequence;
+    const startedAt = captured?.captured_at_mono_ms ?? performance.now();
     let sameOrigin = false;
     try { sameOrigin = new URL(requestUrl, location.href).origin === location.origin; } catch {}
     const trace = {
@@ -7661,7 +7662,7 @@ globalThis.__dcCompressor = {
       /(?:json|text|event-stream|x-component|javascript)/i.test(contentType) ||
       /\/backend-api\/(?:conversation|conversations|f\/conversation)(?:\/|\?|$)/.test(trace.url)
     );
-    if (!inspectable) return;
+    if (!inspectable || cscCommWorker) return;
     const cloned = cloneSafely(response);
     if (cloned) void stockNetworkInspectFetchBody(cloned, trace);
   }
@@ -7671,13 +7672,14 @@ globalThis.__dcCompressor = {
    *
    * @param {XMLHttpRequest} xhr - Page XHR instance.
    * @param {Object} info - Captured XHR method/URL/header metadata.
+   * @param {Object|null} captured - Earliest canonical network event.
    * @returns {Object} Correlation state for loadend.
    */
-  function stockNetworkTraceXhrStart(xhr, info) {
-    const sequence = ++stockNetworkSequence;
+  function stockNetworkTraceXhrStart(xhr, info, captured = null) {
+    const sequence = captured?.network_sequence ?? ++stockNetworkSequence;
     const trace = {
       sequence,
-      started_at: performance.now(),
+      started_at: captured?.captured_at_mono_ms ?? performance.now(),
       method: String(info?.method ?? 'GET').toUpperCase(),
       url: stockNetworkSafeUrl(info?.url ?? '')
     };
@@ -11116,6 +11118,290 @@ globalThis.__dcCompressor = {
       ...item
     });
   }
+// BEGIN #309 canonical CSC ingress. The COMM Worker is registered by #311.
+  /** Identity of the current page/clock domain, never reused after reload. */
+  const cscPageInstanceId = crypto.randomUUID();
+  /** Order of network interceptions, independent of delivery completion. */
+  let cscCaptureOrder = 0;
+  /** COMM Worker receiver, or null until the downstream Worker is ready. */
+  let cscCommWorker = null;
+  /** Main-thread plugin-queue ingress supplied by #310, not a COMM queue. */
+  let cscPluginIngress = null;
+
+  /**
+   * Attaches the dedicated COMM Worker without changing the main-thread plugin.
+   *
+   * @param {Worker|null} worker - Worker owning the receiving COMM queue.
+   * @returns {void} No value is returned.
+   */
+  function cscBindCommWorker(worker) {
+    assert(worker === null || typeof worker?.postMessage === 'function',
+      'CSC COMM receiver must implement Worker.postMessage.');
+    cscCommWorker = worker;
+  }
+
+  /**
+   * Registers synchronous delivery to the independently owned plugin queue.
+   *
+   * @param {Function|null} publish - Plugin ingress or null on disposal.
+   * @returns {void} No value is returned.
+   */
+  function cscBindPluginIngress(publish) {
+    assert(publish === null || typeof publish === 'function',
+      'CSC plugin ingress must be a function.');
+    cscPluginIngress = publish;
+  }
+
+  /**
+   * Capture clocks before any asynchronous work, body clone or queueing.
+   * network_sequence is shared with existing provider-host network correlation.
+   *
+   * @param {string} transport - fetch, xhr or websocket.
+   * @param {string} direction - request, response, incoming, outgoing or event.
+   * @param {string|null} connectionId - Stable connection/request identifier.
+   * @param {Object|null} parent - Earlier event for the same exchange.
+   * @returns {Object} Frozen original-time event identity.
+   */
+  function cscCaptureNow(transport, direction, connectionId = null, parent = null) {
+    const captured_at_epoch_ms = Date.now();
+    const captured_at_mono_ms = performance.now();
+    const network_sequence = ++stockNetworkSequence;
+    const capture_order = ++cscCaptureOrder;
+    return Object.freeze({
+      page_instance_id: cscPageInstanceId,
+      clock_domain: cscPageInstanceId,
+      connection_id: connectionId ?? crypto.randomUUID(),
+      capture_id: cscPageInstanceId + ':' + network_sequence,
+      parent_capture_id: parent?.capture_id ?? null,
+      request_capture_id: parent?.request_capture_id ?? parent?.capture_id ?? null,
+      network_sequence,
+      capture_order,
+      captured_at_epoch_ms,
+      captured_at_mono_ms,
+      transport,
+      direction
+    });
+  }
+
+  /**
+   * Convert headers to an unsanitized, structured-cloneable snapshot.
+   * Redaction belongs exclusively to the Worker, never to the plugin branch.
+   *
+   * @param {Object|null} headers - Native Headers or XHR header map.
+   * @returns {Array} Raw name/value pairs without a native Headers instance.
+   */
+  function cscRawHeaderEntries(headers) {
+    if (!headers) return [];
+    if (typeof headers.entries === 'function') {
+      try { return Array.from(headers.entries(), ([key, value]) => [key, value]); }
+      catch { return []; }
+    }
+    return Object.entries(headers).map(([key, value]) => [key, String(value)]);
+  }
+
+  /**
+   * Report a transport failure without logging body, credential or raw headers.
+   *
+   * @param {Object} stamp - Original event identity.
+   * @param {string} stage - Failed stage.
+   * @param {unknown} error - Failure cause.
+   * @returns {void} No value is returned.
+   */
+  function cscIngressFailure(stamp, stage, error) {
+    logDiagnostic('warnings', 'csc-ingress-incomplete', {
+      capture_id: stamp.capture_id,
+      network_sequence: stamp.network_sequence,
+      stage,
+      error: boundedDiagnosticText(errorMessage(error), 500)
+    });
+  }
+
+  /**
+   * Publish one captured event to two independently owned body branches.
+   * The plugin owns one native clone; the COMM Worker owns another native
+   * clone whose stream is transferred, not cloned again at postMessage().
+   * Neither consumer can read or mutate the stock page-owned Request/Response.
+   *
+   * @param {Object} stamp - Captured event identity.
+   * @param {Object} meta - Cloneable transport metadata.
+   * @param {Object|null} nativeBodyOwner - Stock Request/Response, never shared.
+   * @param {unknown} availableValue - Already available XHR/WS body, if any.
+   * @returns {void} No value is returned.
+   */
+  function cscFanOut(stamp, meta, nativeBodyOwner = null, availableValue = null) {
+    const envelope = Object.freeze({ ...stamp, ...meta });
+    if (cscCommWorker) {
+      let cloned = null;
+      try {
+        if (nativeBodyOwner) {
+          cloned = cloneSafely(nativeBodyOwner);
+          if (!cloned) throw new Error('Native Request/Response clone unavailable.');
+        }
+        const body = cloned?.body ?? null;
+        const body_state = nativeBodyOwner
+          ? (body ? 'stream-transferred' : 'unavailable')
+          : (availableValue === null ? 'none-or-unavailable' : 'cloneable-value');
+        // Never transfer a page-owned ArrayBuffer. postMessage clones XHR/WS data.
+        cscCommWorker.postMessage({
+          type: 'csc-comm-capture',
+          envelope: { ...envelope, body_state, body, value: availableValue }
+        }, body ? [body] : []);
+      } catch (error) {
+        cscIngressFailure(stamp, 'worker-transfer', error);
+        if (cloned?.body && !cloned.body.locked) {
+          void cancelReadableBodyQuietly(cloned.body);
+        }
+      }
+    }
+    if (cscPluginIngress) {
+      let source = null;
+      let sourceAvailable = false;
+      let sourceIncomplete = false;
+      try {
+        if (nativeBodyOwner) {
+          // This is the plugin-owned native clone, independent of COMM.
+          // Never expose the original one-shot page-owned body to #310.
+          source = cloneSafely(nativeBodyOwner);
+          if (!source) throw new Error('Plugin Request/Response clone unavailable.');
+        } else if (availableValue && typeof availableValue === 'object') {
+          // XHR/WS page-owned mutable bytes must never alias the plugin.
+          source = structuredClone(availableValue);
+        } else {
+          source = availableValue;
+        }
+        sourceAvailable = source !== null;
+      } catch (error) {
+        sourceIncomplete = true;
+        cscIngressFailure(stamp, 'plugin-payload-clone', error);
+      }
+      try {
+        cscPluginIngress(Object.freeze({
+          envelope, source, source_available: sourceAvailable,
+          source_incomplete: sourceIncomplete
+        }));
+      } catch (error) {
+        cscIngressFailure(stamp, 'plugin-delivery', error);
+      }
+    }
+  }
+
+  /**
+   * Call stock fetch unchanged while recording synchronous dispatch failures.
+   *
+   * @param {Function} nativeFetch - Original page fetch implementation.
+   * @param {Object} receiver - Original this value.
+   * @param {Array} args - Original fetch arguments.
+   * @param {Object} requestStamp - Earliest request capture.
+   * @param {Object} trace - Shared stock-network correlation.
+   * @param {string} url - Original request URL.
+   * @returns {Promise<Response>} Unmodified native fetch result.
+   */
+  function cscDispatchObservedFetch(nativeFetch, receiver, args, requestStamp, trace, url) {
+    try {
+      return nativeFetch.apply(receiver, args);
+    } catch (error) {
+      const stamp = cscCaptureNow('fetch', 'error',
+        requestStamp.connection_id, requestStamp);
+      cscPublishValue(stamp, {
+        method: trace.method, request_url: url,
+        error_name: String(error?.name ?? 'Error'),
+        body_available: false, complete: false
+      });
+      throw error;
+    }
+  }
+
+  /**
+   * Preserve native WebSocket send/throw semantics and report rejected attempts.
+   *
+   * @param {Function} nativeSend - Original WebSocket send.
+   * @param {WebSocket} socket - Stock page socket.
+   * @param {unknown} data - Original frame bytes or text.
+   * @param {Object} connection - WebSocket connection capture.
+   * @param {Object} attempt - Original send-attempt capture.
+   * @param {string} url - WebSocket endpoint.
+   * @returns {unknown} Original native send return value.
+   */
+  function cscDispatchSocketSend(nativeSend, socket, data, connection, attempt, url) {
+    let result;
+    try {
+      result = nativeSend.call(socket, data);
+    } catch (error) {
+      const failure = cscCaptureNow('websocket', 'error',
+        connection.connection_id, attempt);
+      cscPublishValue(failure, {
+        url, event: 'send-rejected',
+        error_name: String(error?.name ?? 'Error'),
+        body_available: false, complete: false
+      });
+      throw error;
+    }
+    if (!cscCommWorker) {
+      void communicationLogWebSocketSend(url, data)
+        .catch(error => communicationLogReportFailure('websocket-send', error));
+    }
+    return result;
+  }
+
+  /**
+   * Snapshot an XHR body without reading a stream or altering page-owned bytes.
+   *
+   * @param {XMLHttpRequest} xhr - Observed XHR.
+   * @returns {Object} Available value and explicit body availability.
+   */
+  function cscXhrBodySnapshot(xhr) {
+    try {
+      const type = xhr.responseType || 'text';
+      if (type === 'text') {
+        return { value: xhr.responseText, body_type: 'text', body_available: true };
+      }
+      if (type === 'json') {
+        return { value: xhr.response, body_type: 'json', body_available: true };
+      }
+      if (type === 'arraybuffer' && xhr.response &&
+          Object.prototype.toString.call(xhr.response) === '[object ArrayBuffer]') {
+        return { value: xhr.response, body_type: 'binary', body_available: true };
+      }
+      if (type === 'blob' && xhr.response &&
+          Object.prototype.toString.call(xhr.response) === '[object Blob]') {
+        return { value: xhr.response, body_type: 'blob', body_available: true };
+      }
+      return { value: null, body_type: type, body_available: false };
+    } catch {
+      return { value: null, body_type: 'unavailable', body_available: false };
+    }
+  }
+
+  /**
+   * Publish a fetch request/response through the canonical ingress.
+   *
+   * @param {Object} stamp - Event identity from the earliest observation.
+   * @param {Request|Response|null} value - Unmodified stock network object.
+   * @param {Object} metadata - Method, URL, status and other raw metadata.
+   * @returns {void} No value is returned.
+   */
+  function cscPublishFetch(stamp, value, metadata) {
+    cscFanOut(stamp, {
+      ...metadata,
+      headers: cscRawHeaderEntries(value?.headers),
+      body_type: value?.headers?.get?.('content-type') ?? null,
+      body_available: Boolean(value?.body),
+      response_type: value?.type ?? null
+    }, value);
+  }
+
+  /**
+   * Publish already available XHR/WS data by structured clone, never transfer.
+   *
+   * @param {Object} stamp - Earliest synchronous observation.
+   * @param {Object} metadata - Transport event metadata.
+   * @param {unknown} data - Page-owned data or explicitly unavailable null.
+   * @returns {void} No value is returned.
+   */
+  function cscPublishValue(stamp, metadata, data = null) {
+    cscFanOut(stamp, metadata, null, data);
+  }
+  // END #309 canonical CSC ingress.
 
   /** Current authoritative Agent lifecycle state, distinct from timing state. */
   let agentLifecycleState = 'unknown';
@@ -14051,13 +14337,14 @@ globalThis.__dcCompressor = {
    */
   function installNetworkCapture() {
     if (captureInstalled) return;
-    // Use the page realm rather than the userscript sandbox when intercepting page networking.
+    // Intercept in the page realm.
     const pageWindow = typeof unsafeWindow !== 'undefined' ? unsafeWindow : window;
 
     if (typeof pageWindow.fetch === 'function') {
       const originalFetch = pageWindow.fetch;
       originalPageFetch = originalFetch;
       pageWindow.fetch = function(...args) {
+        const requestStamp = cscCaptureNow('fetch', 'request');
         const input = args[0];
         const init = args[1] || {};
         let request = null;
@@ -14066,9 +14353,15 @@ globalThis.__dcCompressor = {
           request = input instanceof PageRequest ? input : new PageRequest(input, init);
         } catch {}
         const requestUrl = request?.url ?? String(input);
-        const stockTrace = stockNetworkTraceFetchStart(request, requestUrl);
-        void communicationLogFetchRequest(request, stockTrace)
-          .catch(communicationError => communicationLogReportFailure('fetch-request', communicationError));
+        const stockTrace = stockNetworkTraceFetchStart(request, requestUrl, requestStamp);
+        cscPublishFetch(requestStamp, request, {
+          method: String(request?.method ?? init.method ?? 'GET').toUpperCase(),
+          request_url: requestUrl
+        });
+        if (!cscCommWorker) {
+          void communicationLogFetchRequest(request, stockTrace)
+            .catch(communicationError => communicationLogReportFailure('fetch-request', communicationError));
+        }
         rememberApiRequestContext(requestUrl, request?.headers, init.headers);
         recordClickDiagnosticNetworkRequest(requestUrl, 'fetch');
         const requestMethod = String(request?.method ?? init.method ?? 'GET').toUpperCase();
@@ -14085,16 +14378,29 @@ globalThis.__dcCompressor = {
           ? captureGenerationStreamRequest(request, generationSubmittedAtMs)
           : null;
         const resumeRequestClone = resumeRequest && request ? cloneSafely(request) : null;
-        const responsePromise = originalFetch.apply(this, args);
+        const responsePromise = cscDispatchObservedFetch(
+          originalFetch, this, args, requestStamp, stockTrace, requestUrl);
         return responsePromise.then(response => {
+          const responseStamp = cscCaptureNow('fetch', 'response',
+            requestStamp.connection_id, requestStamp);
           const generationResponse = capturePromise ? cloneSafely(response) : null;
           const resumeResponse = resumeRequest ? cloneSafely(response) : null;
           const stopwatchConversationResponse = stopwatchConversationRequest
             ? cloneSafely(response)
             : null;
           stockNetworkTraceFetchResponse(response, stockTrace);
-          void communicationLogFetchResponse(response, stockTrace)
-            .catch(communicationError => communicationLogReportFailure('fetch-response', communicationError));
+          cscPublishFetch(responseStamp, response, {
+            method: stockTrace.method,
+            request_url: requestUrl,
+            response_url: response.url,
+            status: response.status,
+            redirected: response.redirected,
+            ok: response.ok
+          });
+          if (!cscCommWorker) {
+            void communicationLogFetchResponse(response, stockTrace)
+              .catch(communicationError => communicationLogReportFailure('fetch-response', communicationError));
+          }
           if (stopwatchConversationRequest && !stopwatchConversationResponse) {
             logDiagnostic('warnings', 'agent-stopwatch-recovery-response-clone-failure', {
               url: boundedDiagnosticText(response?.url ?? requestUrl, 320)
@@ -14137,6 +14443,13 @@ globalThis.__dcCompressor = {
           }
           return response;
         }, error => {
+          const failureStamp = cscCaptureNow('fetch', 'error',
+            requestStamp.connection_id, requestStamp);
+          cscPublishValue(failureStamp, {
+            method: stockTrace.method, request_url: requestUrl,
+            error_name: String(error?.name ?? 'Error'),
+            body_available: false, complete: false
+          });
           logDiagnostic('debug', 'stock-network-fetch-failed', {
             network_sequence: stockTrace.sequence,
             method: stockTrace.method,
@@ -14168,14 +14481,57 @@ globalThis.__dcCompressor = {
         return originalSetRequestHeader.call(this, name, value);
       };
       XHR.prototype.send = function(body) {
+        const requestStamp = cscCaptureNow('xhr', 'request');
         const info = this.__tmApiRequest || { method: 'GET', url: '', headers: {} };
-        const stockTrace = stockNetworkTraceXhrStart(this, info);
-        void communicationLogXhrRequest(info, body, stockTrace)
-          .catch(communicationError => communicationLogReportFailure('xhr-request', communicationError));
+        const stockTrace = stockNetworkTraceXhrStart(this, info, requestStamp);
+        cscPublishValue(requestStamp, {
+          method: info.method, url: info.url,
+          headers: cscRawHeaderEntries(info.headers),
+          body_type: typeof body,
+          body_available: body !== null && body !== undefined
+        }, body ?? null);
+        if (!cscCommWorker) {
+          void communicationLogXhrRequest(info, body, stockTrace)
+            .catch(communicationError => communicationLogReportFailure('xhr-request', communicationError));
+        }
+        let cscXhrTerminatedWithError = false;
+        for (const name of ['abort', 'error', 'timeout']) {
+          this.addEventListener(name, () => {
+            cscXhrTerminatedWithError = true;
+            const failureStamp = cscCaptureNow('xhr', 'error',
+              requestStamp.connection_id, requestStamp);
+            cscPublishValue(failureStamp, {
+              method: info.method, request_url: info.url,
+              event: name, body_available: false, complete: false
+            });
+          }, { once: true });
+        }
         this.addEventListener('loadend', () => {
+          const responseStamp = cscCaptureNow('xhr',
+            cscXhrTerminatedWithError ? 'event' : 'response',
+            requestStamp.connection_id, requestStamp);
           stockNetworkTraceXhrResponse(this, stockTrace);
-          void communicationLogXhrResponse(this, stockTrace)
-            .catch(communicationError => communicationLogReportFailure('xhr-response', communicationError));
+          if (cscXhrTerminatedWithError) {
+            cscPublishValue(responseStamp, {
+              event: 'loadend', request_url: info.url,
+              body_available: false, complete: false
+            });
+          } else {
+            const body = cscXhrBodySnapshot(this);
+            cscPublishValue(responseStamp, {
+              method: info.method, request_url: info.url,
+              response_url: this.responseURL ?? info.url,
+              status: Number.isFinite(this.status) ? this.status : null,
+              response_type: this.responseType || 'text',
+              headers: String(this.getAllResponseHeaders?.() ?? ''),
+              body_type: body.body_type,
+              body_available: body.body_available
+            }, body.value);
+          }
+          if (!cscCommWorker) {
+            void communicationLogXhrResponse(this, stockTrace)
+              .catch(communicationError => communicationLogReportFailure('xhr-response', communicationError));
+          }
         }, { once: true });
         rememberApiRequestContext(info.url, info.headers);
         recordClickDiagnosticNetworkRequest(info.url, 'xmlhttprequest');
@@ -14187,31 +14543,72 @@ globalThis.__dcCompressor = {
       const NativeWebSocket = pageWindow.WebSocket;
       pageWindow.WebSocket = new Proxy(NativeWebSocket, {
         construct(target, args) {
-          const socket = Reflect.construct(target, args, target);
+          const connectionStamp = cscCaptureNow('websocket', 'event');
+          let socket;
+          try {
+            socket = Reflect.construct(target, args, target);
+          } catch (error) {
+            cscPublishValue(connectionStamp, {
+              url: String(args[0] ?? ''), event: 'construct-failed',
+              error_name: String(error?.name ?? 'Error'),
+              body_available: false, complete: false
+            });
+            throw error;
+          }
           const socketUrl = String(args[0] ?? '');
           const nativeSend = socket.send;
           socket.send = function(data) {
-            void communicationLogWebSocketSend(socketUrl, data)
-              .catch(communicationError => communicationLogReportFailure('websocket-send', communicationError));
-            return nativeSend.call(this, data);
+            const stamp = cscCaptureNow('websocket', 'outgoing',
+              connectionStamp.connection_id, connectionStamp);
+            cscPublishValue(stamp, {
+              url: socketUrl, body_type: typeof data,
+              body_available: data !== null && data !== undefined
+            }, data);
+            return cscDispatchSocketSend(nativeSend, this, data, connectionStamp, stamp, socketUrl);
           };
           socket.addEventListener('open', () => {
-            void communicationLogRecord('communication_websocket_open', { url: stockNetworkSafeUrl(socketUrl) });
+            const stamp = cscCaptureNow('websocket', 'event',
+              connectionStamp.connection_id, connectionStamp);
+            cscPublishValue(stamp, { url: socketUrl, event: 'open' });
+            if (!cscCommWorker) {
+              void communicationLogRecord('communication_websocket_open', { url: stockNetworkSafeUrl(socketUrl) });
+            }
           });
           socket.addEventListener('message', event => {
+            const stamp = cscCaptureNow('websocket', 'incoming',
+              connectionStamp.connection_id, connectionStamp);
+            cscPublishValue(stamp, {
+              url: socketUrl, body_type: typeof event.data,
+              body_available: event.data !== null && event.data !== undefined
+            }, event.data);
             captureGenerationWebSocketFrame(event.data);
-            void communicationLogWebSocketMessage(socketUrl, event.data)
-              .catch(communicationError => communicationLogReportFailure('websocket-message', communicationError));
+            if (!cscCommWorker) {
+              void communicationLogWebSocketMessage(socketUrl, event.data)
+                .catch(communicationError => communicationLogReportFailure('websocket-message', communicationError));
+            }
           });
           socket.addEventListener('close', event => {
-            void communicationLogRecord('communication_websocket_close', {
-              url: stockNetworkSafeUrl(socketUrl),
-              code: event.code,
+            const stamp = cscCaptureNow('websocket', 'event',
+              connectionStamp.connection_id, connectionStamp);
+            cscPublishValue(stamp, {
+              url: socketUrl, event: 'close', code: event.code,
               was_clean: event.wasClean === true
             });
+            if (!cscCommWorker) {
+              void communicationLogRecord('communication_websocket_close', {
+                url: stockNetworkSafeUrl(socketUrl),
+                code: event.code,
+                was_clean: event.wasClean === true
+              });
+            }
           });
           socket.addEventListener('error', () => {
-            void communicationLogRecord('communication_websocket_error', { url: stockNetworkSafeUrl(socketUrl) });
+            const stamp = cscCaptureNow('websocket', 'event',
+              connectionStamp.connection_id, connectionStamp);
+            cscPublishValue(stamp, { url: socketUrl, event: 'error' });
+            if (!cscCommWorker) {
+              void communicationLogRecord('communication_websocket_error', { url: stockNetworkSafeUrl(socketUrl) });
+            }
           });
           return socket;
         }
@@ -19190,7 +19587,10 @@ Image elapsed: ${formatDuration(imageElapsed)} — Completed: ${imageCompleted}/
       ['AI-transcript renderer parity', testRendererParityFeatures],
       ['Generated sandbox download link', testGeneratedSandboxDownloadLink],
       ['Jump identifier resolution', testJumpIdentifierResolution],
-      ['Conversation API access/schema', testConversationApiAccessAndSchema]
+      ['Conversation API access/schema', testConversationApiAccessAndSchema],
+      ['Worker + Zstd/CSP', testWorkerZstdCsp],
+      ['CSC Worker stream + directory', testCscWorkerBoundary],
+      ['CSC dual clone + Worker', testCscDualCloneOwnership]
     ];
   }
 
@@ -19229,7 +19629,7 @@ Image elapsed: ${formatDuration(imageElapsed)} — Completed: ${imageCompleted}/
    * @returns {string} The string produced by `testMatrixResultText`.
    */
   function testMatrixResultText(result) {
-    return result?.status || '—';
+    return result ? result.status + (result.detail ? ': ' + result.detail : '') : '—';
   }
 
   /**
@@ -19262,8 +19662,10 @@ Image elapsed: ${formatDuration(imageElapsed)} — Completed: ${imageCompleted}/
    */
   async function executeBuiltInTest(name, fn) {
     try {
-      await fn();
-      testMatrixCurrentResults.set(name, { status: 'PASS', detail: '' });
+      const detail = await fn();
+      testMatrixCurrentResults.set(name, {
+        status: 'PASS', detail: typeof detail === 'string' ? detail : ''
+      });
       return `✅ ${name}`;
     } catch (error) {
       const detail = errorMessage(error);
@@ -19285,7 +19687,9 @@ Image elapsed: ${formatDuration(imageElapsed)} — Completed: ${imageCompleted}/
       .filter(([name]) => testMatrixCurrentResults.has(name))
       .map(([name]) => {
         const result = testMatrixCurrentResults.get(name);
-        return result.status === 'PASS' ? `✅ ${name}` : `❌ ${name}: ${result.detail}`;
+        return result.status === 'PASS'
+          ? `✅ ${name}${result.detail ? ': ' + result.detail : ''}`
+          : `❌ ${name}: ${result.detail}`;
       });
   }
 
@@ -19322,6 +19726,8 @@ Image elapsed: ${formatDuration(imageElapsed)} — Completed: ${imageCompleted}/
     refreshTestMatrix();
     try {
       for (const [name, fn] of builtInTests()) {
+        // Directory selection requires an explicit, individual Run gesture.
+        if (name === 'CSC Worker stream + directory') continue;
         await executeBuiltInTest(name, fn);
       }
     } finally {
@@ -19679,7 +20085,11 @@ Image elapsed: ${formatDuration(imageElapsed)} — Completed: ${imageCompleted}/
    * @returns {Promise<void>} Resolves after the original runner completes.
    */
   runOneTest = async function runOneTestAfterChatGPTPluginReady(name, fn) {
-    await ensureChatGPTCanonicalAgent();
+    if (name !== 'Worker + Zstd/CSP'
+      && name !== 'CSC Worker stream + directory'
+      && name !== 'CSC dual clone + Worker') {
+      await ensureChatGPTCanonicalAgent();
+    }
     return runOneTestWithCanonicalAgent(name, fn);
   };
 
@@ -19692,6 +20102,697 @@ Image elapsed: ${formatDuration(imageElapsed)} — Completed: ${imageCompleted}/
     await ensureChatGPTCanonicalAgent();
     return runTestsWithCanonicalAgent();
   };
+
+  /**
+   * Worker-side synthetic verification using the same vendored compressor bridge.
+   * Only the generated test bytes enter the Worker; no page network data is read.
+   *
+   * @returns {void} Installs the one-shot Worker message handler.
+   */
+  function workerCompressorProbeEntrypoint() {
+    self.onmessage = async event => {
+      const started = performance.now();
+      try {
+        const b64 = event.data.wasm_gzip_base64;
+        const compressed = Uint8Array.from(atob(b64), ch => ch.charCodeAt(0));
+        const stream = new Blob([compressed]).stream()
+          .pipeThrough(new DecompressionStream('gzip'));
+        const wasm = new Uint8Array(await new Response(stream).arrayBuffer());
+        const engine = self['__dcWorkerCompressorBridge'];
+        await engine.init(wasm);
+
+        const bytes = new Uint8Array(10 * 1024 * 1024);
+        for (let i = 0; i < bytes.length; i += 1) {
+          bytes[i] = (Math.imul(i, 37) ^ (i >>> 9)) & 255;
+        }
+        const chunks = [];
+        let length = 0;
+        const writer = new engine.Encoder(event.data.level);
+        try {
+          for (let pos = 0; pos < bytes.length; pos += 512 * 1024) {
+            const part = writer.write(bytes.subarray(pos, pos + 512 * 1024));
+            if (part.length) { chunks.push(part); length += part.length; }
+          }
+          const tail = writer.finish();
+          if (tail.length) { chunks.push(tail); length += tail.length; }
+        } finally {
+          writer.free();
+        }
+        const archive = new Uint8Array(length);
+        let written = 0;
+        for (const part of chunks) {
+          archive.set(part, written);
+          written += part.length;
+        }
+        const restored = engine.decompress(archive);
+        if (restored.length !== bytes.length) {
+          throw new Error('Zstd round-trip length mismatch.');
+        }
+        for (let i = 0; i < bytes.length; i += 1) {
+          if (restored[i] !== bytes[i]) {
+            throw new Error('Zstd round-trip byte mismatch at ' + i + '.');
+          }
+        }
+        // Force measurable Worker CPU work while the page's timers continue.
+        const until = performance.now() + 250;
+        let iterations = 0;
+        while (performance.now() < until) iterations += 1;
+        self.postMessage({
+          ok: true,
+          bytes: bytes.length,
+          archive_bytes: archive.length,
+          elapsed_ms: Math.round(performance.now() - started),
+          worker_cross_origin_isolated: self.crossOriginIsolated === true,
+          iterations
+        });
+      } catch (error) {
+        self.postMessage({
+          ok: false,
+          message: String(error?.message ?? error).slice(0, 350)
+        });
+      }
+    };
+  }
+
+  /**
+   * Probes one Worker realm with timeout and unconditional cleanup.
+   *
+   * @param {Window} realm - Page window or userscript window.
+   * @param {string} script - Worker script from the pinned built compressor.
+   * @param {Object} descriptor - Vendored bridge descriptor.
+   * @returns {Promise<Object>} Synthetic Worker test result and page tick count.
+   */
+  async function workerCompressorProbeRealm(realm, script, descriptor) {
+    assert(typeof realm.Worker === 'function', 'Worker constructor unavailable.');
+    const url = realm.URL.createObjectURL(new realm.Blob(
+      [script], { type: 'text/javascript' }
+    ));
+    let worker = null;
+    let heartbeat = null;
+    let timeout = null;
+    let ticks = 0;
+    try {
+      worker = new realm.Worker(url);
+      const result = await new Promise((resolve, reject) => {
+        /**
+         * Completes one Worker reply.
+         *
+         * @param {Object} value - Worker completion or failure.
+         * @returns {void} No value is returned.
+         */
+        const finish = value => {
+          if (value?.ok) resolve(value);
+          else reject(new Error(value?.message || 'Worker returned no result.'));
+        };
+        worker.addEventListener('message', event => finish(event.data), { once: true });
+        worker.addEventListener('error', event => {
+          reject(new Error(event.message || 'Worker startup or script error.'));
+        }, { once: true });
+        timeout = setTimeout(() => reject(new Error('Worker timed out (30s).')), 30000);
+        heartbeat = setInterval(() => { ticks += 1; }, 20);
+        worker.postMessage({
+          wasm_gzip_base64: descriptor.wasmGzipBase64,
+          level: descriptor._compression_level
+        });
+      });
+      return { ...result, page_ticks: ticks };
+    } finally {
+      if (timeout !== null) clearTimeout(timeout);
+      if (heartbeat !== null) clearInterval(heartbeat);
+      worker?.terminate();
+      realm.URL.revokeObjectURL(url);
+    }
+  }
+
+  /**
+   * Runs the real DC Zstd/WASM bridge in a classic dedicated Worker.
+   *
+   * @returns {Promise<string>} Short, visible browser capability evidence.
+   */
+  async function testWorkerZstdCsp() {
+    const bridge = globalThis['__dcCompressor'];
+    assert(typeof bridge?.init === 'function'
+      && typeof bridge?.Encoder === 'function'
+      && typeof bridge?.decompress === 'function'
+      && typeof bridge?.wasmGzipBase64 === 'string',
+    'Exact bundled Zstd compressor bridge is unavailable.');
+    const source = [
+      "'use strict';",
+      'let __dcCompressorModule = null;',
+      'function __dcCompressorViews(module) {',
+      '  return { bytes: new Uint8Array(module.memory.buffer),',
+      '    words: new Uint32Array(module.memory.buffer) };',
+      '}',
+      bridge.init.toString(),
+      bridge.Encoder.toString(),
+      bridge.decompress.toString(),
+      "self['__dcWorkerCompressorBridge'] = {",
+      '  init: __dcCompressorInit, Encoder: CompressorEncoder,',
+      '  decompress: __dcCompressorDecompress',
+      '};',
+      '(' + workerCompressorProbeEntrypoint.toString() + ')();'
+    ].join('\n');
+    const page = typeof unsafeWindow !== 'undefined' ? unsafeWindow : window;
+    const contexts = [
+      ['page', page],
+      ['userscript', window]
+    ];
+    const failures = [];
+    for (const [label, realm] of contexts) {
+      if (label === 'userscript' && realm === page) continue;
+      try {
+        const result = await workerCompressorProbeRealm(realm, source, bridge);
+        assert(result.bytes === 10 * 1024 * 1024, 'Incorrect test payload size.');
+        const detail = [
+          label + ' Worker',
+          '10 MiB Zstd exact-byte PASS',
+          result.elapsed_ms + 'ms',
+          result.page_ticks + ' page ticks',
+          'isolated=' + (page.crossOriginIsolated === true)
+        ].join('; ');
+        logDiagnostic('lifecycle', 'worker-zstd-csp-test-pass', {
+          realm: label,
+          bytes: result.bytes,
+          archive_bytes: result.archive_bytes,
+          worker_ms: result.elapsed_ms,
+          page_ticks: result.page_ticks,
+          cross_origin_isolated: page.crossOriginIsolated === true
+        });
+        return detail;
+      } catch (error) {
+        failures.push(label + ': ' + errorMessage(error));
+      }
+    }
+    const reason = failures.join(' | ');
+    logDiagnostic('warnings', 'worker-zstd-csp-test-fail', {
+      cross_origin_isolated: page.crossOriginIsolated === true,
+      errors: reason.slice(0, 700)
+    });
+    throw new Error(reason);
+  }
+
+  /**
+   * Synthetic-only classic Worker for CSC stream and directory capability tests.
+   * No intercepted traffic, credentials, or production archives enter this Worker.
+   *
+   * @returns {void} Installs the independent test task receiver.
+   */
+  function cscProbeWorkerEntrypoint() {
+    /**
+     * Synthetic fixture octet at one absolute offset.
+     *
+     * @param {number} offset - Byte position.
+     * @returns {number} The deterministic byte value.
+     */
+    const expectedByte = offset => (Math.imul(offset, 29) + 7) & 255;
+
+    /**
+     * Verify a transferred stream or exercise explicit cancellation.
+     *
+     * @param {Object} task - Stream fixture options and ownership-transferred body.
+     * @returns {Promise<Object>} Exact count and stream lifecycle evidence.
+     */
+    async function readTransferred(task) {
+      const reader = task.body.getReader();
+      let position = 0;
+      let chunks = 0;
+      try {
+        if (task.delay_ms) {
+          self.postMessage({ progress: 'delaying' });
+          await new Promise(resolve => setTimeout(resolve, task.delay_ms));
+        }
+        for (;;) {
+          const { done, value } = await reader.read();
+          if (done) break;
+          chunks += 1;
+          if (!(value instanceof Uint8Array)) {
+            throw new Error('Transferred body yielded a non-byte chunk.');
+          }
+          for (let i = 0; i < value.byteLength; i += 1) {
+            if (value[i] !== expectedByte(position + i)) {
+              throw new Error('Stream byte mismatch at ' + (position + i));
+            }
+          }
+          position += value.byteLength;
+          if (task.cancel_after_first) {
+            await reader.cancel('CSC synthetic abort probe');
+            return { bytes: position, chunks, cancelled: true };
+          }
+        }
+        if (position !== task.expected_bytes) {
+          throw new Error('Stream length mismatch: ' + position
+            + ' != ' + task.expected_bytes);
+        }
+        return { bytes: position, chunks, cancelled: false };
+      } finally {
+        reader.releaseLock();
+      }
+    }
+
+    /**
+     * Prove a transferred directory handle supports Worker-side durable writes.
+     *
+     * @param {Object} task - User-authorized directory and unique temporary name.
+     * @returns {Promise<Object>} Verified file byte count and cleanup state.
+     */
+    async function verifyDirectory(task) {
+      const directory = task.directory;
+      if (!directory || typeof directory.getFileHandle !== 'function'
+        || typeof directory.removeEntry !== 'function') {
+        throw new Error('FileSystemDirectoryHandle unavailable in Worker.');
+      }
+      if (typeof directory.queryPermission === 'function') {
+        const permission = await directory.queryPermission({ mode: 'readwrite' });
+        if (permission !== 'granted') {
+          throw new Error('Worker directory readwrite permission: ' + permission);
+        }
+      }
+      let existing = false;
+      try {
+        await directory.getFileHandle(task.name);
+        existing = true;
+      } catch (error) {
+        if (error?.name !== 'NotFoundError') throw error;
+      }
+      if (existing) throw new Error('Temporary probe filename already exists.');
+      let created = false;
+      let writable = null;
+      let failure = null;
+      let complete = false;
+      const length = 257 * 1024 + 17;
+      try {
+        const fileHandle = await directory.getFileHandle(task.name, { create: true });
+        created = true;
+        writable = await fileHandle.createWritable();
+        for (let offset = 0; offset < length; offset += 16384) {
+          const n = Math.min(16384, length - offset);
+          const chunk = new Uint8Array(n);
+          for (let i = 0; i < n; i += 1) chunk[i] = expectedByte(offset + i);
+          await writable.write(chunk);
+        }
+        await writable.close();
+        writable = null;
+        const readBack = new Uint8Array(await (await fileHandle.getFile()).arrayBuffer());
+        if (readBack.byteLength !== length) throw new Error('File length mismatch.');
+        for (let i = 0; i < length; i += 1) {
+          if (readBack[i] !== expectedByte(i)) {
+            throw new Error('File byte mismatch at ' + i);
+          }
+        }
+        complete = true;
+      } catch (error) {
+        failure = error;
+      } finally {
+        if (writable) {
+          try { await writable.abort(); }
+          catch (error) { failure ??= error; }
+        }
+        if (created) {
+          try { await directory.removeEntry(task.name); }
+          catch (error) { failure ??= error; }
+        }
+      }
+      if (failure) throw failure;
+      if (!complete || !created) throw new Error('Worker write did not finish.');
+      try {
+        await directory.getFileHandle(task.name);
+        throw new Error('Temporary test file still exists after deletion.');
+      } catch (error) {
+        if (error?.name !== 'NotFoundError') throw error;
+      }
+      return { bytes: length, written: true, read_back_verified: true, deleted: true };
+    }
+
+    /** Worker-local event envelopes; the page never queues COMM probe work. */
+    const eventQueue = [];
+    /** True while the Worker drains its own queue in arrival order. */
+    let draining = false;
+
+    /**
+     * Serially execute queued synthetic stream/file event envelopes.
+     *
+     * @returns {Promise<void>} Resolves when this Worker queue is idle.
+     */
+    async function drainEventQueue() {
+      if (draining) return;
+      draining = true;
+      try {
+        while (eventQueue.length) {
+          const envelope = eventQueue.shift();
+          const task = envelope.task;
+          try {
+            const result = envelope.kind === 'stream'
+              ? await readTransferred(task)
+              : envelope.kind === 'directory' ? await verifyDirectory(task)
+                : (() => { throw new Error('Unknown CSC probe task.'); })();
+            self.postMessage({ ok: true, ...result });
+          } catch (error) {
+            self.postMessage({
+              ok: false,
+              name: String(error?.name || 'Error'),
+              message: String(error?.message ?? error).slice(0, 500)
+            });
+          }
+        }
+      } finally {
+        draining = false;
+      }
+    }
+
+    self.onmessage = event => {
+      const task = event.data;
+      eventQueue.push({
+        kind: task.kind,
+        metadata: task.metadata ?? null,
+        task
+      });
+      void drainEventQueue();
+    };
+  }
+
+  /**
+   * Create a fixed-pattern byte stream without materialising its entire body.
+   *
+   * @param {number} length - Total synthetic bytes.
+   * @returns {ReadableStream} New finite synthetic stream.
+   */
+  function cscProbeByteStream(length) {
+    let offset = 0;
+    return new ReadableStream({
+      pull(controller) {
+        if (offset === length) { controller.close(); return; }
+        const size = Math.min(16384, length - offset);
+        const chunk = new Uint8Array(size);
+        for (let i = 0; i < size; i += 1) {
+          chunk[i] = (Math.imul(offset + i, 29) + 7) & 255;
+        }
+        offset += size;
+        controller.enqueue(chunk);
+      }
+    }, { highWaterMark: 1 });
+  }
+
+  /**
+   * Execute one synthetic Worker task with ownership transfer and final cleanup.
+   *
+   * @param {Window} realm - Candidate Worker realm.
+   * @param {Object} task - Cloneable task envelope.
+   * @param {Array} transfer - Stream transfer list (never stock buffers).
+   * @returns {Promise<Object>} Worker-acknowledged result.
+   */
+  async function cscProbeWorkerTask(realm, task, transfer = []) {
+    assert(typeof realm?.Worker === 'function', 'Worker constructor unavailable.');
+    const url = realm.URL.createObjectURL(new realm.Blob(
+      [["'use strict';", '(' + cscProbeWorkerEntrypoint.toString() + ')();'].join('\n')],
+      { type: 'text/javascript' }
+    ));
+    let worker = null;
+    let timeout = null;
+    try {
+      worker = new realm.Worker(url);
+      return await new Promise((resolve, reject) => {
+        let finished = false;
+        /**
+         * Settle a Worker task exactly once.
+         *
+         * @param {Error|null} error - Terminal failure, if any.
+         * @param {Object} result - Worker result, if successful.
+         * @returns {void} Settles the task Promise.
+         */
+        const finish = (error, result) => {
+          if (finished) return;
+          finished = true;
+          if (error) reject(error);
+          else resolve(result);
+        };
+        worker.addEventListener('message', event => {
+          if (event.data?.progress) return;
+          if (event.data?.ok) finish(null, event.data);
+          else finish(new Error((event.data?.name || 'WorkerError') + ': '
+            + (event.data?.message || 'No Worker result.')));
+        });
+        worker.addEventListener('error', event => {
+          finish(new Error('Worker/CSP error: ' + (event.message || 'startup failure')));
+        });
+        worker.addEventListener('messageerror', () => {
+          finish(new Error('Worker message deserialization failed.'));
+        });
+        timeout = setTimeout(() => finish(new Error('Worker probe timeout (30s).')), 30000);
+        try { worker.postMessage(task, transfer); }
+        catch (error) { finish(new Error('postMessage transfer failed: ' + error)); }
+      });
+    } finally {
+      if (timeout !== null) clearTimeout(timeout);
+      worker?.terminate();
+      realm.URL.revokeObjectURL(url);
+    }
+  }
+
+  /**
+   * Verify synthetic Request/Response clone streams in the Worker and original.
+   *
+   * @param {Window} realm - Worker realm under test.
+   * @param {string} kind - request or response.
+   * @returns {Promise<string>} Verified transfer and stock-integrity evidence.
+   */
+  async function cscProbeClonedStream(realm, kind) {
+    const length = 512 * 1024 + 11;
+    const stream = cscProbeByteStream(length);
+    const original = kind === 'request'
+      ? new Request('https://example.invalid/csc-synthetic', {
+        method: 'POST', body: stream, duplex: 'half'
+      })
+      : new Response(stream, { status: 200 });
+    const clone = cloneSafely(original);
+    assert(clone?.body instanceof ReadableStream,
+      'One existing native clone did not yield a transferable body.');
+    const body = clone.body;
+    const transferred = cscProbeWorkerTask(realm, {
+      kind: 'stream', transport: kind,
+      metadata: { url: 'https://example.invalid/csc-synthetic', status: 200 },
+      body, expected_bytes: length, delay_ms: 120
+    }, [body]);
+    const lockedAfterTransfer = body.locked;
+    // Observe both promises at once: immediate Worker errors cannot leak.
+    const [workerOutcome, stockOutcome] = await Promise.allSettled([
+      transferred, original.arrayBuffer()
+    ]);
+    if (workerOutcome.status === 'rejected') throw workerOutcome.reason;
+    if (stockOutcome.status === 'rejected') throw stockOutcome.reason;
+    assert(lockedAfterTransfer, 'Stream was not locked on transfer.');
+    const originalBytes = new Uint8Array(stockOutcome.value);
+    assert(originalBytes.byteLength === length, 'Original ' + kind + ' lost bytes.');
+    for (let i = 0; i < originalBytes.length; i += 1) {
+      assert(originalBytes[i] === ((Math.imul(i, 29) + 7) & 255),
+        'Original ' + kind + ' changed at byte ' + i);
+    }
+    const result = workerOutcome.value;
+    assert(result.bytes === length && !result.cancelled,
+      'Worker did not confirm exact transferred stream.');
+    return result.bytes + ' bytes exact/stock intact';
+  }
+
+  /**
+   * One opt-in built-in Test row. Picker opens synchronously on the Run gesture.
+   * Each capability reports independently; no real ChatGPT request is issued.
+   *
+   * @returns {Promise<string>} All stream/filesystem results or explicit failures.
+   */
+  function testCscWorkerBoundary() {
+    const page = typeof unsafeWindow !== 'undefined' ? unsafeWindow : window;
+    const pickerRealm = typeof page.showDirectoryPicker === 'function'
+      ? page : window;
+    let directoryPromise;
+    try {
+      if (typeof pickerRealm.showDirectoryPicker !== 'function') {
+        throw new Error('showDirectoryPicker unavailable in this browser/realm.');
+      }
+      directoryPromise = Promise.resolve(
+        pickerRealm.showDirectoryPicker({ mode: 'readwrite' })
+      ).then(handle => ({ handle }), error => ({ error }));
+    } catch (error) {
+      directoryPromise = Promise.resolve({ error });
+    }
+    return (async () => {
+      const outcomes = [];
+      const failures = [];
+      const realms = [['page', page], ['userscript', window]];
+      let streamRealm = null;
+      for (const [label, realm] of realms) {
+        if (label === 'userscript' && realm === page) continue;
+        if (typeof realm.Worker !== 'function') {
+          failures.push(label + ' Worker constructor unavailable');
+          continue;
+        }
+        try {
+          outcomes.push('Response: ' + await cscProbeClonedStream(realm, 'response'));
+          outcomes.push('Request: ' + await cscProbeClonedStream(realm, 'request'));
+          streamRealm = realm;
+          outcomes.push('Stream realm: ' + label);
+          break;
+        } catch (error) {
+          failures.push(label + ': ' + errorMessage(error));
+          // A transferred body is spent; synthetic retry creates a new one.
+        }
+      }
+      if (!streamRealm) failures.push('stream transfer: FAIL');
+      else {
+        try {
+          const aborted = cscProbeByteStream(32768);
+          const cancelled = await cscProbeWorkerTask(streamRealm, {
+            kind: 'stream', body: aborted, expected_bytes: 32768,
+            cancel_after_first: true
+          }, [aborted]);
+          assert(cancelled.cancelled === true && cancelled.chunks === 1,
+            'Worker cancellation was not acknowledged.');
+          outcomes.push('Stream abort: PASS');
+        } catch (error) {
+          failures.push('Stream abort: ' + errorMessage(error));
+        }
+      }
+      const permission = await directoryPromise;
+      const directory = permission.handle;
+      if (permission.error) {
+        const error = permission.error;
+        failures.push('Directory picker/permission: '
+          + String(error?.name || 'Error') + ': ' + errorMessage(error));
+      }
+      if (directory) {
+        const name = '.dc-csc-probe-' + crypto.randomUUID() + '.tmp';
+        const workerRealm = streamRealm || page;
+        try {
+          const result = await cscProbeWorkerTask(workerRealm, {
+            kind: 'directory', directory, name
+          });
+          assert(result.deleted && result.written && result.read_back_verified,
+            'Worker directory write/read/delete was not confirmed.');
+          outcomes.push('Directory: ' + result.bytes + ' bytes write/read/delete PASS');
+        } catch (error) {
+          failures.push('Directory Worker: ' + errorMessage(error));
+          // Emergency cleanup is a failure path, not a Worker-side PASS.
+          try { await directory.removeEntry(name); }
+          catch (cleanupError) {
+            if (cleanupError?.name !== 'NotFoundError') {
+              failures.push('Cleanup: ' + errorMessage(cleanupError));
+            }
+          }
+        }
+      }
+      if (failures.length) {
+        throw new Error('PASS [' + outcomes.join('; ') + ']; FAIL ['
+          + failures.join(' | ') + ']');
+      }
+      return outcomes.join('; ');
+    })();
+  }
+
+  /**
+   * Verify the deterministic original/independent-clone payload byte pattern.
+   * This test never uses a real ChatGPT request or response.
+   *
+   * @param {Request|Response} owner - Synthetic page/plugin body owner.
+   * @param {number} length - Expected synthetic byte count.
+   * @returns {Promise<number>} Independently verified byte count.
+   */
+  async function cscProbeDualVerifyBody(owner, length) {
+    const bytes = new Uint8Array(await owner.arrayBuffer());
+    assert(bytes.byteLength === length,
+      'Synthetic body length mismatch: ' + bytes.byteLength + ' != ' + length);
+    for (let i = 0; i < length; i += 1) {
+      assert(bytes[i] === ((Math.imul(i, 29) + 7) & 255),
+        'Synthetic body byte mismatch at offset ' + i);
+    }
+    return bytes.byteLength;
+  }
+
+  /**
+   * Exercise two independent native body clones and a Worker stream transfer.
+   * The page original and plugin clone remain independently readable.
+   *
+   * @param {Window} realm - Worker creation realm.
+   * @param {string} kind - 'request' or 'response'.
+   * @param {string} readFirst - 'plugin' or 'stock'.
+   * @returns {Promise<string>} Exact synthetic outcome.
+   */
+  async function cscProbeDualBodyCase(realm, kind, readFirst) {
+    const length = 512 * 1024 + 11;
+    const originalStream = cscProbeByteStream(length);
+    const original = kind === 'request'
+      ? new Request('https://example.invalid/csc-dual-fixture', {
+        method: 'POST', body: originalStream, duplex: 'half'
+      })
+      : new Response(originalStream);
+    const plugin = cloneSafely(original);
+    const comm = cloneSafely(original);
+    assert(plugin && comm && plugin !== original && comm !== original
+      && plugin !== comm, 'Independent native Request/Response clones unavailable.');
+    assert(comm.body instanceof ReadableStream,
+      'Native COMM clone did not expose a transferable ReadableStream.');
+
+    // This transfers the second clone's body, not the stock or plugin body.
+    const transferred = comm.body;
+    const pendingWorker = cscProbeWorkerTask(realm, {
+      kind: 'stream', body: transferred,
+      expected_bytes: length, delay_ms: 120,
+      metadata: { route: 'synthetic', capture_order: 1 }
+    }, [transferred]);
+    const locked = transferred.locked;
+    const firstOwner = readFirst === 'plugin' ? plugin : original;
+    const secondOwner = readFirst === 'plugin' ? original : plugin;
+    // Observe every started promise to avoid an unhandled Worker rejection.
+    const outcomes = await Promise.allSettled([
+      pendingWorker,
+      (async () => {
+        const first = await cscProbeDualVerifyBody(firstOwner, length);
+        const second = await cscProbeDualVerifyBody(secondOwner, length);
+        return [first, second];
+      })()
+    ]);
+    for (const outcome of outcomes) {
+      if (outcome.status === 'rejected') throw outcome.reason;
+    }
+    const worker = outcomes[0].value;
+    const [first, second] = outcomes[1].value;
+    assert(locked, 'COMM clone stream was not locked after transfer.');
+    assert(worker.bytes === length && worker.cancelled === false,
+      'Worker did not verify every byte of transferred COMM clone.');
+    assert(first === length && second === length,
+      'Stock and plugin failed independent byte verification.');
+    return kind + '/' + readFirst + ': stock/plugin/Worker '
+      + length + ' bytes exact';
+  }
+
+  /**
+   * Opt-in real browser capability test, using only artificial body streams.
+   * Tests native Request/Response clone ownership without altering either
+   * active recorder queue, installing hooks or requesting a directory.
+   *
+   * @returns {Promise<string>} Independent browser Worker witness or error.
+   */
+  async function testCscDualCloneOwnership() {
+    const page = typeof unsafeWindow !== 'undefined' ? unsafeWindow : window;
+    const realms = [['page', page], ['userscript', window]];
+    const failures = [];
+    for (const [label, realm] of realms) {
+      if (label === 'userscript' && page === realm) continue;
+      if (typeof realm.Worker !== 'function') {
+        failures.push(label + ': Worker constructor unavailable');
+        continue;
+      }
+      try {
+        const results = [];
+        for (const kind of ['request', 'response']) {
+          for (const order of ['plugin', 'stock']) {
+            results.push(await cscProbeDualBodyCase(realm, kind, order));
+          }
+        }
+        return label + ' Worker; ' + results.join('; ');
+      } catch (error) {
+        failures.push(label + ': ' + errorMessage(error));
+      }
+    }
+    throw new Error('CSC dual-clone witness FAIL: ' + failures.join(' | '));
+  }
   // BEGIN Issue #163 WorkStack continuation state
   /** DOM id of the floating WorkStack continuation control. */
   const WORKSTACK_CONTROL_ID = 'tm-workstack-continuation';
