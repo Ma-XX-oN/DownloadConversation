@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         ChatGPT Conversation Markdown Recorder
 // @namespace    https://chatgpt.com/
-// @version      1.11.7-issue.313.8
+// @version      1.11.7-issue.313.9
 // @description  Exports the current ChatGPT conversation directly from the Conversation API as Markdown or JSONL.
 // @match        https://chatgpt.com/*
 // @connect      github.com
@@ -11460,12 +11460,9 @@ globalThis.__dcCompressor = {
   }
 
   /**
-   * Coordinate same-origin ChatGPT tabs using the browser's native Web Locks.
-   * All GM key reads, writes, capture admissions, and rotation operations run
-   * INSIDE one held lock. IndexedDB transactions cannot safely enclose awaits
-   * to the separate Tampermonkey GM storage API; Web Locks can.
-   * This function MUST NOT be used by another origin or a non-secure page.
-   * No key bytes are placed into page-origin IndexedDB.
+   * Coordinate one HTTPS origin with native exclusive Web Locks.
+   * Keep GM operations and admission/rotation under the same lock.
+   * Never store keys in page-accessible IndexedDB.
    * @param {Object} browserNavigator - Current tab's navigator.
    * @param {Object} browserLocation - Current tab's location.
    * @returns {Object|null} Same-origin serializing authority or unavailable.
