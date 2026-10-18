@@ -221,6 +221,8 @@ test('#309 XHR captures raw binary and text, original bytes intact with independ
   assert.equal(new Uint8Array(h.state.records[0].value)[0], 1,
     'Worker received independent structured clone');
   assert.equal(h.state.plugin.length, 2);
+  assert.equal(new Uint8Array(h.state.plugin[0].source)[0], 1,
+    'Plugin snapshot must not alias page-owned request bytes');
   assert.equal(h.state.wire.filter(e => e.transport === 'xhr').length, 1);
 });
 
