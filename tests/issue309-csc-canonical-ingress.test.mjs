@@ -43,7 +43,7 @@ function harness({ workerFails = false, cloneFails = false } = {}) {
     ArrayBuffer, Blob, Request, Response, Headers, ReadableStream, Uint8Array,
     Object, Promise, String, Map
   });
-  vm.runInContext(ingress + '\\n' + [
+  vm.runInContext(ingress + '\n' + [
     'globalThis.api = { cscCaptureNow, cscBindCommWorker, cscBindPluginIngress,',
     '  cscFanOut, cscPublishFetch, cscPublishValue, cscXhrBodySnapshot,',
     '  cscRawHeaderEntries };'
@@ -67,8 +67,8 @@ test('canonical module is ordered before COMM legacy and stock interception is o
   const modules = manifest.modules.flatMap(module => module.files);
   const p = 'src/userscript/02-network-communication/03-csc-canonical-ingress.js';
   assert.equal(modules.filter(item => item === p).length, 1);
-  assert.ok(modules.indexOf(p) < modules.findIndex(item =>
-    item.endsWith('07-communication-streams.js')));
+  assert.ok(modules.indexOf(p) > modules.findIndex(item =>
+    item.endsWith('08-communication-xhr.js')));
   assert.equal((fetchInstall + captureTail).split('function installNetworkCapture()').length - 1, 1);
   assert.match(fetchInstall, /pageWindow.fetch = function\(\.\.\.args\) \{\s*const requestStamp = cscCaptureNow/);
   assert.match(captureTail, /XHR\.prototype\.send = function\(body\) \{\s*const requestStamp = cscCaptureNow/);
