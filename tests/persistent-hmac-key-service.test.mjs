@@ -315,3 +315,26 @@ test('disposed service waiting for native lock never admits or creates a key', a
   assert.equal(f.raw(), null);
   assert.equal(f.randomCount, 0);
 });
+
+test('dispose during admission commit releases an undisclosed pending token', async () => {
+  const f = fixture();
+  const service = f.open();
+  const persist = f.storage.set;
+  let disposedOnCommit = false;
+  f.storage.set = async (name, value) => {
+    await persist(name, value);
+    if (!disposedOnCommit && value.pending.length === 1) {
+      disposedOnCommit = true;
+      service.dispose();
+    }
+  };
+  await assert.rejects(() => service.admit(), /disposed/);
+  assert.equal(disposedOnCommit, true);
+  assert.equal(f.raw().phase, 'open');
+  assert.equal(f.raw().pending.length, 0);
+  const replacement = f.open();
+  const newCapture = await replacement.admit();
+  assert.equal(newCapture.metadata.redaction_key_epoch, 1);
+  await replacement.complete(newCapture.token);
+  replacement.dispose();
+});
