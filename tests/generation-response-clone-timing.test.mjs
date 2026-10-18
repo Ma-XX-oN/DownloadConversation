@@ -52,6 +52,7 @@ function baseContext(pageWindow, originalResponse) {
     cscCaptureNow: () => ({ connection_id: 'legacy-fixture', capture_id: 'test' }),
     cscPublishFetch() {},
     cscPublishValue() {},
+    cscDispatchObservedFetch: (fetch, receiver, args) => fetch.apply(receiver, args),
     stockNetworkTraceFetchStart: (_request, url) => ({
       sequence: 1,
       method: 'POST',
