@@ -22,7 +22,8 @@ const interceptor = fetchPart.slice(begin) + '\n'
  * Host only the exact production #309 ingress and interception wrapper.
  * Everything else is an explicitly simulated page or legacy observer.
  */
-function simulatedPage({ nativeSendFailure = false } = {}) {
+function simulatedPage({ nativeSendFailure = false, synchronousFetchFailure = false,
+  socketConstructFailure = false } = {}) {
   const state = { records: [], plugin: [], wire: [], logs: [], clones: 0,
     sequenceAtWire: [], now: 9000, monotonic: 100, ids: 0,
     fetchDeferred: [], xhrInstances: [], sockets: [], lifecycle: [] };
@@ -58,6 +59,7 @@ function simulatedPage({ nativeSendFailure = false } = {}) {
   }
   class FakeSocket {
     constructor(url) {
+      if (socketConstructFailure) throw new TypeError('Invalid synthetic WS URL');
       this.url = url;
       this.listeners = new Map();
       state.sockets.push(this);
@@ -80,6 +82,7 @@ function simulatedPage({ nativeSendFailure = false } = {}) {
     XMLHttpRequest: FakeXHR,
     WebSocket: FakeSocket,
     fetch(...args) {
+      if (synchronousFetchFailure) throw new TypeError('Synchronous stock fetch failure');
       let resolve;
       let reject;
       const promise = new Promise((yes, no) => { resolve = yes; reject = no; });
@@ -299,4 +302,40 @@ test('#309 opaque response explicitly declares absent browser-accessible body', 
   assert.equal(h.state.records[1].body_available, false);
   assert.equal(h.state.records[1].body_state, 'unavailable');
   assert.equal(h.state.records[1].response_type, 'opaque');
+});
+
+test('#309 synchronously throwing stock fetch still records a correlated failure', () => {
+  const h = simulatedPage({ synchronousFetchFailure: true });
+  assert.throws(() => h.pageWindow.fetch('https://chatgpt.com/backend-api/sync'),
+    /Synchronous stock fetch failure/);
+  assert.equal(h.state.records.length, 2);
+  assert.equal(h.state.records[1].direction, 'error');
+  assert.equal(h.state.records[1].request_capture_id,
+    h.state.records[0].capture_id);
+  assert.equal(h.state.records[1].complete, false);
+  assert.equal(h.state.plugin.length, 2);
+});
+
+test('#309 rejected WebSocket send retains attempted data plus explicit failure provenance', () => {
+  const h = simulatedPage({ nativeSendFailure: true });
+  const s = new h.pageWindow.WebSocket('wss://chatgpt.com/ws');
+  assert.throws(() => s.send('not accepted'), /not open/);
+  const events = h.state.records;
+  assert.equal(events.length, 2);
+  assert.equal(events[0].direction, 'outgoing');
+  assert.equal(events[0].value, 'not accepted');
+  assert.equal(events[1].direction, 'error');
+  assert.equal(events[1].event, 'send-rejected');
+  assert.equal(events[1].complete, false);
+  assert.equal(events[1].request_capture_id, events[0].capture_id);
+  assert.equal(h.state.wire.length, 0);
+});
+
+test('#309 failed WebSocket construction is published without creating a phantom connection', () => {
+  const h = simulatedPage({ socketConstructFailure: true });
+  assert.throws(() => new h.pageWindow.WebSocket('invalid'), /Invalid synthetic WS URL/);
+  assert.equal(h.state.sockets.length, 0);
+  assert.equal(h.state.records.length, 1);
+  assert.equal(h.state.records[0].event, 'construct-failed');
+  assert.equal(h.state.records[0].complete, false);
 });
