@@ -85,6 +85,7 @@
      * The authority must fence all capture admissions and rotation across
      * every chatgpt.com tab, not merely writes. Browser testing remains gated.
      * @param {Function} fn - Exclusive operation.
+     * @param {boolean} [cleanupAfterDispose] - Permit only private release.
      * @returns {Promise<*>} Exclusive result.
      */
     async function transaction(fn, cleanupAfterDispose = false) {
