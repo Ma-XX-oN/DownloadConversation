@@ -143,6 +143,32 @@
   }
 
   /**
+   * Call stock fetch unchanged while recording synchronous dispatch failures.
+   *
+   * @param {Function} nativeFetch - Original page fetch implementation.
+   * @param {Object} receiver - Original this value.
+   * @param {Array} args - Original fetch arguments.
+   * @param {Object} requestStamp - Earliest request capture.
+   * @param {Object} trace - Shared stock-network correlation.
+   * @param {string} url - Original request URL.
+   * @returns {Promise<Response>} Unmodified native fetch result.
+   */
+  function cscDispatchObservedFetch(nativeFetch, receiver, args, requestStamp, trace, url) {
+    try {
+      return nativeFetch.apply(receiver, args);
+    } catch (error) {
+      const stamp = cscCaptureNow('fetch', 'error',
+        requestStamp.connection_id, requestStamp);
+      cscPublishValue(stamp, {
+        method: trace.method, request_url: url,
+        error_name: String(error?.name ?? 'Error'),
+        body_available: false, complete: false
+      });
+      throw error;
+    }
+  }
+
+  /**
    * Snapshot an XHR body without reading a stream or altering page-owned bytes.
    *
    * @param {XMLHttpRequest} xhr - Observed XHR.
