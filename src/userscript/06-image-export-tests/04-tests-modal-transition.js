@@ -84,7 +84,8 @@
       ['Jump identifier resolution', testJumpIdentifierResolution],
       ['Conversation API access/schema', testConversationApiAccessAndSchema],
       ['Worker + Zstd/CSP', testWorkerZstdCsp],
-      ['CSC Worker stream + directory', testCscWorkerBoundary]
+      ['CSC Worker stream + directory', testCscWorkerBoundary],
+      ['CSC dual clone + Worker', testCscDualCloneOwnership]
     ];
   }
 
