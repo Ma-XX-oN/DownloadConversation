@@ -22,8 +22,12 @@ test('production factory uses GM storage under origin Web Locks', async () => {
       try { return await fn({ mode: 'exclusive' }); }
       finally { done(); }
     } } },
-    GM_getValue: (key, fallback) => records.get(key) ?? fallback,
-    GM_setValue: (key, value) => records.set(key, structuredClone(value))
+    GM_getValue: () => { throw Error('sync GM get disallowed'); },
+    GM_setValue: () => { throw Error('sync GM set disallowed'); },
+    GM: {
+      async getValue(key, fallback) { return records.get(key) ?? fallback; },
+      async setValue(key, value) { records.set(key, structuredClone(value)); }
+    }
   };
   const factory = vm.runInNewContext(source +
     '\ncommunicationPersistentHmacCurrentTabService;', context);
@@ -40,4 +44,16 @@ test('production factory uses GM storage under origin Web Locks', async () => {
   again.dispose();
   context.location.origin = 'https://other.invalid';
   await assert.rejects(() => factory().admit(), /shared-authority-unavailable/);
+});
+test('factory rejects only synchronous GM APIs without an acknowledged write', async () => {
+  const context = { crypto: webcrypto, Uint8Array, Map, Set,
+    location: { origin: 'https://chatgpt.com' },
+    navigator: { locks: { request: async (_name, _options, fn) =>
+      fn({ mode: 'exclusive' }) } },
+    GM_getValue: (_key, fallback) => fallback,
+    GM_setValue: (_key, _value) => undefined
+  };
+  const factory = vm.runInNewContext(source +
+    '\ncommunicationPersistentHmacCurrentTabService;', context);
+  await assert.rejects(() => factory().admit(), /storage-unavailable/);
 });
