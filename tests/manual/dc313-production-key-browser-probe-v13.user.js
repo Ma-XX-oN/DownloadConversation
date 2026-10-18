@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         DC #313 Exact Producer HMAC Browser Probe
 // @namespace    https://chatgpt.com/dc313-probe/
-// @version      0.6.1
+// @version      0.7.0
 // @description  Synthetic HMAC producer, Web Locks, GM and Worker acceptance; no conversation access.
 // @match        https://chatgpt.com/*
 // @grant        GM_getValue
@@ -9,6 +9,7 @@
 // @grant        GM.getValue
 // @grant        GM.setValue
 // @grant        GM_registerMenuCommand
+// @grant        GM_setClipboard
 // @require      https://raw.githubusercontent.com/Ma-XX-oN/DownloadConversation/51d65b2925af4f443fe2098cc0e756282870d376/src/userscript/02-network-communication/04c-persistent-hmac-service.js
 // @run-at       document-start
 // ==/UserScript==
@@ -27,6 +28,93 @@
     ? new BroadcastChannel(channelName) : null;
   const sessions = new Map();
   let inProgress = false;
+
+
+  let latestResultText = null;
+
+  // Test output is synthetic metadata only. Never include recorder keys or
+  // captured network data. Use a selectable panel, not browser alert().
+  function publishResult(title, result) {
+    latestResultText = JSON.stringify({
+      test: title, timestamp: new Date().toISOString(), result
+    }, null, 2);
+    console.info('DC #313 result', latestResultText);
+    if (typeof document === 'undefined' || !document.body) return;
+
+    document.getElementById('dc313-result-panel')?.remove();
+    const overlay = document.createElement('div');
+    overlay.id = 'dc313-result-panel';
+    overlay.setAttribute('role', 'dialog');
+    overlay.setAttribute('aria-modal', 'true');
+    overlay.setAttribute('aria-label', 'DC #313 test results');
+    overlay.style.cssText = 'position:fixed;inset:0;z-index:2147483647;' +
+      'display:flex;align-items:center;justify-content:center;' +
+      'background:rgba(0,0,0,.78);padding:18px;box-sizing:border-box;';
+    const panel = document.createElement('section');
+    panel.style.cssText = 'display:flex;flex-direction:column;gap:12px;' +
+      'box-sizing:border-box;width:min(900px,100%);max-height:95vh;' +
+      'padding:18px;border:1px solid #777;border-radius:12px;' +
+      'background:#202124;color:white;font:15px system-ui,sans-serif;';
+    const heading = document.createElement('strong');
+    heading.textContent = 'DC #313: ' + title;
+    const info = document.createElement('div');
+    info.textContent = 'Select the text below, or use Copy JSON / Download JSON.';
+    const field = document.createElement('textarea');
+    field.readOnly = true;
+    field.setAttribute('aria-label', 'Selectable DC #313 JSON result');
+    field.value = latestResultText;
+    field.style.cssText = 'box-sizing:border-box;width:100%;height:55vh;' +
+      'min-height:180px;resize:vertical;overflow:auto;color:#111;' +
+      'background:#fff;font:13px monospace;padding:10px;white-space:pre;';
+    const actions = document.createElement('div');
+    actions.style.cssText = 'display:flex;gap:10px;flex-wrap:wrap;';
+    const status = document.createElement('span');
+    status.setAttribute('role', 'status');
+    const button = (label, handler) => {
+      const item = document.createElement('button');
+      item.type = 'button';
+      item.textContent = label;
+      item.style.cssText = 'padding:9px 14px;cursor:pointer;' +
+        'border-radius:7px;background:#dedede;color:#111;';
+      item.onclick = handler;
+      actions.appendChild(item);
+      return item;
+    };
+    button('Copy JSON', async () => {
+      try {
+        if (typeof GM_setClipboard === 'function') {
+          await GM_setClipboard(latestResultText, 'text');
+        } else if (navigator.clipboard?.writeText) {
+          await navigator.clipboard.writeText(latestResultText);
+        } else {
+          throw Error('automatic clipboard unavailable');
+        }
+        status.textContent = 'Copied. Paste into ChatGPT with Ctrl+V.';
+      } catch {
+        field.focus();
+        field.select();
+        status.textContent = 'Selected. Press Ctrl+C, then paste with Ctrl+V.';
+      }
+    });
+    button('Download JSON', () => {
+      const url = URL.createObjectURL(new Blob([latestResultText],
+        { type: 'application/json' }));
+      const link = document.createElement('a');
+      link.href = url;
+      link.download = 'dc313-test-result.json';
+      document.body.appendChild(link);
+      link.click();
+      link.remove();
+      setTimeout(() => URL.revokeObjectURL(url), 1000);
+      status.textContent = 'JSON file saved; attach it to the conversation.';
+    });
+    button('Close', () => overlay.remove());
+    panel.append(heading, info, field, actions, status);
+    overlay.appendChild(panel);
+    document.body.appendChild(overlay);
+    field.focus();
+    field.select();
+  }
 
   function delay(ms) { return new Promise(resolve => setTimeout(resolve, ms)); }
 
@@ -125,9 +213,7 @@
       sessions.delete(run);
       inProgress = false;
     }
-    const text = 'DC #313 browser probe: ' + JSON.stringify(result);
-    console.info(text);
-    alert(text);
+    publishResult('Two-tab counter test', result);
   }
 
 
@@ -185,9 +271,7 @@
       if (worker) worker.terminate();
       if (blobUrl) URL.revokeObjectURL(blobUrl);
     }
-    const message = 'DC #313 Worker probe: ' + JSON.stringify(result);
-    console.info(message);
-    alert(message);
+    publishResult('Worker transfer', result);
   }
 
 
@@ -240,7 +324,7 @@
     try {
       first = makeExactService();
       second = makeExactService();
-      const previous = await GM_getValue('dc313-probe-previous-scope', null);
+      const previous = await GM.getValue('dc313-probe-previous-scope', null);
       const [a, b] = await Promise.all([first.admit(), second.admit()]);
       const original = a.metadata.redaction_scope;
       if (original !== b.metadata.redaction_scope) throw Error('split first use');
@@ -255,7 +339,7 @@
       if (newScope === original || newAdmission.metadata.redaction_key_epoch !==
           a.metadata.redaction_key_epoch + 1) throw Error('rotation failed');
       await second.complete(newAdmission.token);
-      await GM_setValue('dc313-probe-previous-scope', newScope);
+      await GM.setValue('dc313-probe-previous-scope', newScope);
       result = { status: restartPreviousScopeMatched ? 'PASS' : 'FAIL',
         generationStableAfterRestart: restartPreviousScopeMatched,
         priorSavedScopeFound: previous !== null,
@@ -265,9 +349,7 @@
         newScopeDifferent: newScope !== original };
     } catch (error) { result.error = String(error); }
     finally { first?.dispose(); second?.dispose(); }
-    const message = 'DC #313 exact producer probe: ' + JSON.stringify(result);
-    console.info(message);
-    alert(message);
+    publishResult('Exact producer + rotation + Worker', result);
   }
 
 
@@ -378,7 +460,7 @@
   async function diagnoseCrossTabStorage() {
     if (diagActive || inProgress) return;
     diagActive = true;
-    const report = { version: '0.6.1', status: 'FAIL' };
+    const report = { version: '0.7.0', status: 'FAIL' };
     try {
       if (!diagChannel) throw Error('BroadcastChannel unavailable');
       report.synchronousGM = await diagPhase('sync');
@@ -392,11 +474,19 @@
         ? 'ASYNC_PATH_PASS' : 'FAIL';
     } catch (error) { report.error = String(error); }
     finally { diagActive = false; }
-    console.info('DC #313 GM cross-tab diagnostic', report);
-    alert('DC #313 GM diagnostic: ' + JSON.stringify(report));
+    publishResult('GM cross-tab diagnostic', report);
   }
 
   if (typeof GM_registerMenuCommand === 'function') {
+    GM_registerMenuCommand('DC #313: show latest results', () => {
+      if (latestResultText) {
+        // Reopen the same result without rerunning the test.
+        const saved = JSON.parse(latestResultText);
+        publishResult(saved.test, saved.result);
+      } else {
+        publishResult('No test result yet', { status: 'NOT_RUN' });
+      }
+    });
     GM_registerMenuCommand('DC #313: diagnose GM cross-tab storage', () => {
       void diagnoseCrossTabStorage();
     });
@@ -407,12 +497,12 @@
           navigator, location);
         if (!authority) throw Error('native Web Lock unavailable');
         await authority.runExclusive(async () => {
-          await GM_setValue('dc313-probe-exact:' +
+          await GM.setValue('dc313-probe-exact:' +
             'downloadconversation:secret-marker-key-v2', null);
-          await GM_setValue('dc313-probe-previous-scope', null);
+          await GM.setValue('dc313-probe-previous-scope', null);
         });
-        alert('DC #313 synthetic fixture reset; real recorder keys untouched');
-      })().catch(error => alert('DC #313 fixture reset FAIL: ' + error));
+        publishResult('Synthetic fixture reset', { status: 'PASS', recorderKeyUntouched: true });
+      })().catch(error => publishResult('Synthetic fixture reset', { status: 'FAIL', error: String(error) }));
     });
     GM_registerMenuCommand('DC #313: exact producer + rotation + Worker', () => {
       void testExactProducer();
@@ -426,15 +516,15 @@
     GM_registerMenuCommand('DC #313: save restart marker', () => {
       void (async () => {
         const value = crypto.randomUUID();
-        await GM_setValue('dc313-probe-restart-marker-v1', value);
-        alert('DC #313 saved synthetic restart marker: ' + value);
-      })().catch(error => alert('DC #313 save FAIL: ' + error));
+        await GM.setValue('dc313-probe-restart-marker-v1', value);
+        publishResult('Saved restart marker', { status: 'PASS', marker: value });
+      })().catch(error => publishResult('Save restart marker', { status: 'FAIL', error: String(error) }));
     });
     GM_registerMenuCommand('DC #313: read restart marker', () => {
       void (async () => {
-        const value = await GM_getValue('dc313-probe-restart-marker-v1', null);
-        alert('DC #313 saved marker now: ' + String(value));
-      })().catch(error => alert('DC #313 read FAIL: ' + error));
+        const value = await GM.getValue('dc313-probe-restart-marker-v1', null);
+        publishResult('Read restart marker', { marker: value, status: value ? 'PASS' : 'NO_MARKER' });
+      })().catch(error => publishResult('Read restart marker', { status: 'FAIL', error: String(error) }));
     });
   } else {
     console.warn('DC #313 probe: Tampermonkey menu API unavailable');
