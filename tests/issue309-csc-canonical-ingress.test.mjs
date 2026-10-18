@@ -107,9 +107,10 @@ test('COMM stream moves once and stock body remains untouched across delayed del
   state.clock += 1000;
   state.wall += 50000;
   api.cscPublishFetch(event, original, { url: 'https://example.test/raw', status: 206 });
-  assert.equal(state.clones, 1, 'Exactly one COMM clone');
+  assert.equal(state.clones, 2, 'One plugin clone and one COMM clone, never a transfer clone');
   assert.equal(state.events.length, 1);
   assert.equal(state.published.length, 1);
+  assert.notEqual(state.published[0].source, original, 'Plugin must not own stock Response');
   assert.equal(state.events[0].envelope.capture_id, event.capture_id);
   assert.equal(state.published[0].envelope.capture_id, event.capture_id);
   assert.equal(state.events[0].envelope.captured_at_epoch_ms, event.captured_at_epoch_ms);
