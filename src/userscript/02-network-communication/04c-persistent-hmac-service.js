@@ -235,7 +235,8 @@
      * @returns {Promise<void>} Storage-confirmed completion.
      */
     async function complete(token) {
-      if (!internal.has(token)) throw new Error('persistent-key-unknown-admission');
+      const key = internal.get(token);
+      if (!key) throw new Error('persistent-key-unknown-admission');
       await transaction(async (read, write) => {
         const stored = await read();
         if (!stored || !stored.pending.includes(token)) {
@@ -246,7 +247,7 @@
         await write(next.phase === 'draining' && pending.length === 0
           ? finishRotation(next) : next);
       });
-      internal.get(token).fill(0);
+      key.fill(0);
       internal.delete(token);
     }
 
