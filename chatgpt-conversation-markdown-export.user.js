@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         ChatGPT Conversation Markdown Recorder
 // @namespace    https://chatgpt.com/
-// @version      1.11.7-issue.309.3
+// @version      1.11.7-issue.309.4
 // @description  Exports the current ChatGPT conversation directly from the Conversation API as Markdown or JSONL.
 // @match        https://chatgpt.com/*
 // @match        https://chat.openai.com/*
@@ -14411,8 +14411,10 @@ globalThis.__dcCompressor = {
           void communicationLogXhrRequest(info, body, stockTrace)
             .catch(communicationError => communicationLogReportFailure('xhr-request', communicationError));
         }
+        let cscXhrTerminatedWithError = false;
         for (const name of ['abort', 'error', 'timeout']) {
           this.addEventListener(name, () => {
+            cscXhrTerminatedWithError = true;
             const failureStamp = cscCaptureNow('xhr', 'error',
               requestStamp.connection_id, requestStamp);
             cscPublishValue(failureStamp, {
@@ -14422,19 +14424,27 @@ globalThis.__dcCompressor = {
           }, { once: true });
         }
         this.addEventListener('loadend', () => {
-          const responseStamp = cscCaptureNow('xhr', 'response',
+          const responseStamp = cscCaptureNow('xhr',
+            cscXhrTerminatedWithError ? 'event' : 'response',
             requestStamp.connection_id, requestStamp);
           stockNetworkTraceXhrResponse(this, stockTrace);
-          const body = cscXhrBodySnapshot(this);
-          cscPublishValue(responseStamp, {
-            method: info.method, request_url: info.url,
-            response_url: this.responseURL ?? info.url,
-            status: Number.isFinite(this.status) ? this.status : null,
-            response_type: this.responseType || 'text',
-            headers: String(this.getAllResponseHeaders?.() ?? ''),
-            body_type: body.body_type,
-            body_available: body.body_available
-          }, body.value);
+          if (cscXhrTerminatedWithError) {
+            cscPublishValue(responseStamp, {
+              event: 'loadend', request_url: info.url,
+              body_available: false, complete: false
+            });
+          } else {
+            const body = cscXhrBodySnapshot(this);
+            cscPublishValue(responseStamp, {
+              method: info.method, request_url: info.url,
+              response_url: this.responseURL ?? info.url,
+              status: Number.isFinite(this.status) ? this.status : null,
+              response_type: this.responseType || 'text',
+              headers: String(this.getAllResponseHeaders?.() ?? ''),
+              body_type: body.body_type,
+              body_available: body.body_available
+            }, body.value);
+          }
           if (!cscCommWorker) {
             void communicationLogXhrResponse(this, stockTrace)
               .catch(communicationError => communicationLogReportFailure('xhr-response', communicationError));
