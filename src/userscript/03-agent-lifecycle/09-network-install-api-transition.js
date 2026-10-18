@@ -64,8 +64,10 @@
           void communicationLogXhrRequest(info, body, stockTrace)
             .catch(communicationError => communicationLogReportFailure('xhr-request', communicationError));
         }
+        let cscXhrTerminatedWithError = false;
         for (const name of ['abort', 'error', 'timeout']) {
           this.addEventListener(name, () => {
+            cscXhrTerminatedWithError = true;
             const failureStamp = cscCaptureNow('xhr', 'error',
               requestStamp.connection_id, requestStamp);
             cscPublishValue(failureStamp, {
@@ -75,9 +77,17 @@
           }, { once: true });
         }
         this.addEventListener('loadend', () => {
-          const responseStamp = cscCaptureNow('xhr', 'response',
+          const responseStamp = cscCaptureNow('xhr',
+            cscXhrTerminatedWithError ? 'event' : 'response',
             requestStamp.connection_id, requestStamp);
           stockNetworkTraceXhrResponse(this, stockTrace);
+          if (cscXhrTerminatedWithError) {
+            cscPublishValue(responseStamp, {
+              event: 'loadend', request_url: info.url,
+              body_available: false, complete: false
+            });
+            return;
+          }
           const body = cscXhrBodySnapshot(this);
           cscPublishValue(responseStamp, {
             method: info.method, request_url: info.url,
