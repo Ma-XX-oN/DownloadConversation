@@ -338,3 +338,26 @@ test('dispose during admission commit releases an undisclosed pending token', as
   await replacement.complete(newCapture.token);
   replacement.dispose();
 });
+
+test('ambiguous pending-admission commit is reconciled without token leakage', async () => {
+  const f = fixture();
+  const s = f.open();
+  const persist = f.storage.set;
+  let lostAck = false;
+  f.storage.set = async (name, value) => {
+    await persist(name, value);
+    if (!lostAck && value.pending.length === 1) {
+      lostAck = true;
+      throw Error('simulated lost acknowledgement after commit');
+    }
+  };
+  await assert.rejects(() => s.admit(), /storage-write-failed/);
+  assert.equal(lostAck, true);
+  assert.equal(f.raw().pending.length, 0);
+  const fresh = await f.open().admit();
+  assert.equal(fresh.metadata.redaction_key_epoch, 1);
+  const recovered = f.open();
+  const admitted = await recovered.admit();
+  await recovered.complete(admitted.token);
+  assert.ok(fresh.token);
+});
