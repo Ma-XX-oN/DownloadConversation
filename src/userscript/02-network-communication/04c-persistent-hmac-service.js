@@ -5,6 +5,8 @@
    * @returns {Object} Closed persistent key lifecycle API.
    */
   function communicationPersistentHmacService(dependencies) {
+    // The authority contract includes RECORD coherence, not only locking.
+    // A browser's native Web Lock adapter intentionally lacks this capability.
     const { storage, authority, crypto: secureCrypto } = dependencies;
     const recordName = 'downloadconversation:secret-marker-key-v2';
     const scopeStorage = 'tampermonkey-script-installation';
@@ -17,7 +19,7 @@
      */
     function available() {
       if (disposed) throw new Error('persistent-key-disposed');
-      if (!authority || authority.capability !== 'linearizable-chatgpt-web-lock-fenced-v1' ||
+      if (!authority || authority.capability !== 'linearizable-chatgpt-key-record-v2' ||
           typeof authority.runExclusive !== 'function') {
         throw new Error('persistent-key-shared-authority-unavailable');
       }
@@ -88,7 +90,7 @@
      */
     async function transaction(fn, cleanupAfterDispose = false) {
       if (!cleanupAfterDispose) available();
-      else if (authority?.capability !== 'linearizable-chatgpt-web-lock-fenced-v1' ||
+      else if (authority?.capability !== 'linearizable-chatgpt-key-record-v2' ||
           typeof authority?.runExclusive !== 'function' ||
           typeof storage?.get !== 'function' ||
           typeof storage?.set !== 'function') {
@@ -348,7 +350,8 @@
 
   /**
    * Coordinate one HTTPS origin with native exclusive Web Locks.
-   * Keep GM operations and admission/rotation under the same lock.
+   * Browser evidence: GM reads can remain stale despite exclusive locks.
+   * This is a lock-only primitive, NOT a verified key-record authority.
    * Never store keys in page-accessible IndexedDB.
    * @param {Object} browserNavigator - Current tab's navigator.
    * @param {Object} browserLocation - Current tab's location.
@@ -361,7 +364,9 @@
         typeof browserNavigator?.locks?.request !== 'function') return null;
     const name = 'downloadconversation:secret-marker-key-v2:all-tabs';
     return Object.freeze({
-      capability: 'linearizable-chatgpt-web-lock-fenced-v1',
+      // Lock exclusivity does not certify GM cross-tab read consistency.
+      // Do NOT promote this to linearizable key-record authority.
+      capability: 'exclusive-chatgpt-web-lock-only-v1',
       async runExclusive(callback) {
         if (browserLocation.origin !== origin ||
             typeof callback !== 'function') {
@@ -380,7 +385,9 @@
 
   /**
    * Build the production tab's lazy persistent key service.
-   * Nothing is persisted until the first admitted capture.
+   * Fail closed until an independently proven linearizable GM record
+   * authority is implemented and verified in installed Tampermonkey.
+   * Native Web Locks alone cannot certify per-tab GM read consistency.
    * @returns {Object} Lifecycle service with native same-origin coordination.
    */
   function communicationPersistentHmacCurrentTabService() {
