@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         ChatGPT Conversation Markdown Recorder
 // @namespace    https://chatgpt.com/
-// @version      1.11.7-issue.311.1
+// @version      1.11.7-issue.311.2
 // @description  Exports the current ChatGPT conversation directly from the Conversation API as Markdown or JSONL.
 // @match        https://chatgpt.com/*
 // @match        https://chat.openai.com/*
@@ -11404,19 +11404,15 @@ globalThis.__dcCompressor = {
   // END #309 canonical CSC ingress.
 
   /**
-
    * Installs the isolated COMM processor on a dedicated Worker scope.
-
    * @param {Object} scope - Worker message target.
-
    * @param {Object} sink - Worker-local output writer.
-
    * @returns {Object} Output from cscCommWorkerProcessing.
-
    */
 
   function cscCommWorkerProcessing(scope, sink) {
-    const encoder = new TextEncoder(); const maxQueue = 16; const maxChunk = 32768; const maxValue = 1024 * 1024; const allowedModes = ['replay-essentials', 'everything']; const records = []; let working = false; let key = null; let keyGeneration = null; let scopeId = null; let policy = Object.freeze({
+    const encoder = new TextEncoder(); const maxQueue = 16; const maxChunk = 32768; const maxValue = 1024 * 1024; const allowedModes = ['replay-essentials', 'everything']; const records = []; const stagedKeys = new Map();
+    let working = false; let key = null; let keyGeneration = null; let scopeId = null; let policy = Object.freeze({
       mode: 'replay-essentials', binary: false,
       cross_origin: false, auth_headers: false, all: false,
       origin: 'https://chatgpt.com'
@@ -11820,6 +11816,13 @@ globalThis.__dcCompressor = {
       }
       let reader;
       try {
+        if (event.hmac_token != null) {
+          if (typeof event.hmac_token !== 'string' ||
+              !stagedKeys.has(event.hmac_token)) fail('csc-key-token-unavailable');
+          key = stagedKeys.get(event.hmac_token);
+          scopeId = event.redaction_scope;
+          keyGeneration = event.redaction_key_generation;
+        }
         if (!key || !scopeId || event.redaction_scope !== scopeId ||
             event.redaction_key_generation !== keyGeneration ||
             event.redaction_scope !== event.redaction_key_generation ||
@@ -11942,6 +11945,10 @@ globalThis.__dcCompressor = {
         sendStatus(event, 'failed', safeError(error), counts);
       } finally {
         if (reader) reader.releaseLock();
+        if (typeof event.hmac_token === 'string') {
+          stagedKeys.delete(event.hmac_token);
+          key = null; scopeId = null; keyGeneration = null;
+        }
       }
     }
     /**
@@ -11982,19 +11989,33 @@ globalThis.__dcCompressor = {
     async function provision(message) {
       if (!(message.key_bytes instanceof Uint8Array) ||
           message.key_bytes.byteLength !== 32 ||
-          !/^[0-9a-f]{32}$/.test(message.redaction_scope ?? '') ||
-          message.redaction_key_generation !== message.redaction_scope) {
+          (message.type !== 'dc-hmac-key-v2' &&
+            !/^[0-9a-f]{32}$/.test(message.redaction_scope ?? '')) ||
+          (message.type !== 'dc-hmac-key-v2' &&
+            message.redaction_key_generation !== message.redaction_scope)) {
         fail('csc-invalid-key-provision');
+      }
+      const staged = message.type === 'dc-hmac-key-v2';
+      if (staged && (typeof message.token !== 'string' ||
+          !/^[0-9a-zA-Z._:-]{8,160}$/.test(message.token) ||
+          stagedKeys.has(message.token) || stagedKeys.size >= maxQueue)) {
+        fail('csc-invalid-key-token');
       }
       const bytes = message.key_bytes;
       try {
-        key = await crypto.subtle.importKey('raw', bytes,
+        const imported = await crypto.subtle.importKey('raw', bytes,
           { name: 'HMAC', hash: 'SHA-256' }, false, ['sign']);
-        scopeId = message.redaction_scope;
-        keyGeneration = message.redaction_key_generation;
+        if (staged) stagedKeys.set(message.token, imported);
+        else {
+          key = imported;
+          scopeId = message.redaction_scope;
+          keyGeneration = message.redaction_key_generation;
+        }
       } finally { bytes.fill(0); }
-      scope.postMessage({ type: 'csc-comm-key-ready',
-        redaction_scope: scopeId, redaction_key_generation: keyGeneration });
+      scope.postMessage(staged
+        ? { type: 'csc-comm-key-ready', token: message.token }
+        : { type: 'csc-comm-key-ready',
+          redaction_scope: scopeId, redaction_key_generation: keyGeneration });
     }
     scope.addEventListener('message', event => {
       const value = event.data;
@@ -12003,7 +12024,8 @@ globalThis.__dcCompressor = {
       else if (value.type === 'csc-comm-configure') {
         try { options(value.options); scope.postMessage({ type: 'csc-comm-configured' }); }
         catch { scope.postMessage({ type: 'csc-comm-configuration-failed' }); }
-      } else if (value.type === 'csc-comm-provision') {
+      } else if (value.type === 'csc-comm-provision' ||
+                 value.type === 'dc-hmac-key-v2') {
         void provision(value).catch(() => {
           scope.postMessage({ type: 'csc-comm-provision-failed' });
         });
@@ -12013,11 +12035,8 @@ globalThis.__dcCompressor = {
   }
 
   /**
-
    * Returns the source of the isolated Worker processor.
-
    * @returns {string} Output from cscCommProcessingWorkerSource.
-
    */
 
   function cscCommProcessingWorkerSource() {
