@@ -1,4 +1,16 @@
 
+  /**
+
+   * Installs the isolated COMM processor on a dedicated Worker scope.
+
+   * @param {Object} scope - Worker message target.
+
+   * @param {Object} sink - Worker-local output writer.
+
+   * @returns {Object} Output from cscCommWorkerProcessing.
+
+   */
+
   function cscCommWorkerProcessing(scope, sink) {
     const encoder = new TextEncoder(); const maxQueue = 16; const maxChunk = 32768; const maxValue = 1024 * 1024; const allowedModes = ['replay-essentials', 'everything']; const records = []; let working = false; let key = null; let keyGeneration = null; let scopeId = null; let policy = Object.freeze({
       mode: 'replay-essentials', binary: false,
@@ -8,9 +20,19 @@
       'selected', 'unselected', 'unsupported', 'inaccessible',
       'rejected', 'failed', 'completed'
     ]);
+    /**
+     * Rejects an invariant violation without leaking source content.
+     * @param {string} reason - Input reason for fail.
+     * @returns {never} Output from fail.
+     */
     function fail(reason) {
       throw new Error(reason);
     }
+    /**
+     * Validates and freezes Worker capture options.
+     * @param {Object} next - Input next for options.
+     * @returns {void} No value is returned.
+     */
     function options(next) {
       if (!next || !allowedModes.includes(next.mode) ||
           typeof next.origin !== 'string' ||
@@ -26,6 +48,14 @@
         all: next.all
       });
     }
+    /**
+     * Reports only nonsecret processing provenance to the page.
+     * @param {Object} event - Input event for sendStatus.
+     * @param {string} status - Input status for sendStatus.
+     * @param {string} reason - Input reason for sendStatus.
+     * @param {Object} counts - Input counts for sendStatus.
+     * @returns {void} No value is returned.
+     */
     function sendStatus(event, status, reason, counts) {
       if (!statuses.has(status)) fail('csc-invalid-status');
       // Only nonsecret identifiers and counts cross back to the page.
@@ -37,16 +67,37 @@
         durable: false
       });
     }
+    /**
+     * Maps private error values onto public nonsecret failure classes.
+     * @param {unknown} error - Input error for safeError.
+     * @returns {string} Output from safeError.
+     */
     function safeError(error) {
       const name = String(error?.message ?? ''); return /^csc-[a-z0-9-]+$/.test(name) ? name : 'csc-processing-error';
     }
+    /**
+     * Identifies explicitly authentication-bearing header names.
+     * @param {string} name - Input name for isAuth.
+     * @returns {boolean} Output from isAuth.
+     */
     function isAuth(name) {
       return /^(?:authorization|proxy-authorization|cookie|set-cookie|x-api-key|x-auth-token)$/i.test(name);
     }
+    /**
+     * Encodes a fixed digest prefix in lower-case hexadecimal.
+     * @param {Uint8Array} bytes - Input bytes for toHex.
+     * @param {number} count - Input count for toHex.
+     * @returns {string} Output from toHex.
+     */
     function toHex(bytes, count) {
       return Array.from(new Uint8Array(bytes).slice(0, count),
         byte => byte.toString(16).padStart(2, '0')).join('');
     }
+    /**
+     * Checks the canonical unpadded Base64URL alphabet and length.
+     * @param {string} value - Input value for isBase64Url.
+     * @returns {boolean} Output from isBase64Url.
+     */
     function isBase64Url(value) {
       if (!/^[A-Za-z0-9_-]{4,256}$/.test(value) || value.length % 4 === 1) return false; const alphabet = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-_'; const mask = value.length % 4 === 2 ? 15 : value.length % 4 === 3 ? 3 : 0;
       if ((alphabet.indexOf(value.at(-1)) & mask) !== 0) return false;
@@ -54,6 +105,13 @@
         '='.repeat((4 - value.length % 4) % 4)).length > 0; }
       catch { return false; }
     }
+    /**
+     * Identifies known V1 secret shapes within a specific context.
+     * @param {string} value - Input value for candidate.
+     * @param {string} context - Input context for candidate.
+     * @param {boolean} classified - Input classified for candidate.
+     * @returns {Array} Output from candidate.
+     */
     function candidate(value, context, classified) {
       const supported = ['json.string', 'sse.data.json.string',
         'ws.text.json.string', 'http.header.value', 'http.query.value'];
@@ -94,6 +152,13 @@
       }
       return found;
     }
+    /**
+     * Encodes a versioned checked HMAC secret marker.
+     * @param {string} value - Input value for marker.
+     * @param {string} context - Input context for marker.
+     * @param {boolean} classified - Input classified for marker.
+     * @returns {Promise<string|null>} Output from marker.
+     */
     async function marker(value, context, classified = false) {
       if (!key) fail('csc-key-unavailable');
       if (typeof value !== 'string' ||
@@ -113,6 +178,11 @@
         (chosen.params === null ? '' : '/' + chosen.params); const check = toHex(await crypto.subtle.digest('SHA-256',
         encoder.encode('DC-SECRET-MARKER-V1\0' + body)), 16); return '[' + check + '/' + body + ']';
     }
+    /**
+     * Transforms URL query values without persisting credentials.
+     * @param {string} value - Input value for safeUrl.
+     * @returns {Promise<string>} Output from safeUrl.
+     */
     async function safeUrl(value) {
       let url;
       try { url = new URL(value, policy.origin); }
@@ -127,6 +197,11 @@
       }
       url.username = ''; url.password = ''; url.hash = ''; return url.href;
     }
+    /**
+     * Filters headers by explicit risk and option policy.
+     * @param {Array|String} source - Input source for safeHeaders.
+     * @returns {Promise<Object>} Output from safeHeaders.
+     */
     async function safeHeaders(source) {
       const pairs = Array.isArray(source) ? source :
         typeof source === 'string' ? source.split(/\r?\n/).filter(Boolean)
@@ -159,6 +234,11 @@
       }
       return { safe, omitted };
     }
+    /**
+     * Selects a capture outcome and transport codec.
+     * @param {Object} event - Input event for selected.
+     * @returns {Object} Output from selected.
+     */
     function selected(event) {
       if (event.body_state === 'unavailable' ||
           (event.body_available === false && event.value == null)) {
@@ -190,279 +270,8 @@
       }
       return { status: 'unselected', reason: 'csc-outside-replay-scope' };
     }
-    function jsonState(context) {
-      return { context, stack: [], root: 'value', quoted: false, escaped: false,
-        token: '', tokenBytes: 0, role: null, primitive: '' };
-    }
-    function expectsValue(state) {
-      const frame = state.stack.at(-1); return frame ? frame.phase === 'value' || frame.phase === 'valueOrEnd'
-        : state.root === 'value';
-    }
-    function complete(state) {
-      const frame = state.stack.at(-1);
-      if (!frame) {
-        if (state.root !== 'value') fail('csc-invalid-json'); state.root = 'done';
-      } else {
-        if (!['value', 'valueOrEnd'].includes(frame.phase)) fail('csc-invalid-json');
-        frame.phase = 'commaOrEnd';
-      }
-    }
-    function primitive(state, result) {
-      try {
-        const parsed = JSON.parse(state.primitive);
-        if (parsed !== null && typeof parsed !== 'boolean' &&
-            (typeof parsed !== 'number' || !Number.isFinite(parsed))) fail('csc-invalid-json');
-      } catch { fail('csc-invalid-json'); }
-      result.push(state.primitive); state.primitive = ''; complete(state);
-    }
-    async function jsonFeed(state, input, flush = false) {
-      const result = [];
-      for (const ch of input) {
-        if (state.quoted) {
-          state.token += ch; state.tokenBytes += encoder.encode(ch).byteLength;
-          if (state.tokenBytes > maxValue) fail('csc-candidate-too-long');
-          if (state.escaped) state.escaped = false;
-          else if (ch === '\\') state.escaped = true;
-          else if (ch === '"') {
-            let value;
-            try { value = JSON.parse(state.token); } catch { fail('csc-invalid-json'); }
-            if (state.role === 'key') {
-              state.stack.at(-1).key = value; state.stack.at(-1).phase = 'colon'; result.push(state.token);
-            } else {
-              const frame = state.stack.at(-1); const classified = /(?:authorization|cookie|session|jwt|secret|token|api[_-]?key|password|credential)/i
-                .test(String(frame?.key ?? '')); const replacement = await marker(value, state.context, classified); result.push(replacement === null ? state.token : JSON.stringify(replacement));
-              complete(state);
-            }
-            state.quoted = false; state.token = ''; state.tokenBytes = 0; state.role = null;
-          }
-          continue;
-        }
-        if (state.primitive) {
-          if (!/[\s,\]\}]/.test(ch)) {
-            state.primitive += ch;
-            if (state.primitive.length > 128) fail('csc-invalid-json');
-            continue;
-          }
-          primitive(state, result);
-        }
-        if (/\s/.test(ch)) { result.push(ch); continue; }
-        const frame = state.stack.at(-1);
-        if (ch === '"') {
-          const keyRole = frame?.kind === 'object' &&
-            ['keyOrEnd', 'key'].includes(frame.phase);
-          if (!keyRole && !expectsValue(state)) fail('csc-invalid-json'); state.quoted = true; state.role = keyRole ? 'key' : 'value'; state.token = '"'; state.tokenBytes = 1;
-        } else if (ch === '{' || ch === '[') {
-          if (!expectsValue(state)) fail('csc-invalid-json'); state.stack.push(ch === '{'
-            ? { kind: 'object', phase: 'keyOrEnd', key: null }
-            : { kind: 'array', phase: 'valueOrEnd' }); result.push(ch);
-        } else if (ch === '}' || ch === ']') {
-          const kind = ch === '}' ? 'object' : 'array';
-          if (!frame || frame.kind !== kind ||
-              !['keyOrEnd', 'valueOrEnd', 'commaOrEnd'].includes(frame.phase)) fail('csc-invalid-json'); state.stack.pop(); complete(state); result.push(ch);
-        } else if (ch === ':') {
-          if (!frame || frame.kind !== 'object' || frame.phase !== 'colon') fail('csc-invalid-json');
-          frame.phase = 'value'; result.push(ch);
-        } else if (ch === ',') {
-          if (!frame || frame.phase !== 'commaOrEnd') fail('csc-invalid-json');
-          frame.phase = frame.kind === 'object' ? 'key' : 'value';
-          frame.key = null; result.push(ch);
-        } else if (/[-0-9tfn]/.test(ch) && expectsValue(state)) {
-          state.primitive = ch;
-        } else fail('csc-invalid-json');
-      }
-      if (flush) {
-        if (state.primitive) primitive(state, result);
-        if (state.quoted || state.stack.length || state.root !== 'done') fail('csc-incomplete-json');
-      }
-      return result.join('');
-    }
-    async function writeFrame(record, counters) {
-      if (!sink || typeof sink.write !== 'function') fail('csc-writer-unavailable'); const bytes = encoder.encode(JSON.stringify(record) + '\n'); await sink.write(bytes);
-      counters.emitted += bytes.byteLength;
-    }
-    function base64(bytes) {
-      let result = '';
-      for (const b of bytes) result += String.fromCharCode(b); return btoa(result);
-    }
-    async function process(event) {
-      const counts = { source: 0, emitted: 0 }; const choice = selected(event);
-      if (choice.status !== 'selected') {
-        if (event.body?.cancel) await event.body.cancel().catch(() => {});
-        sendStatus(event, choice.status, choice.reason, counts); return;
-      }
-      let reader;
-      try {
-        if (!key || !scopeId || event.redaction_scope !== scopeId ||
-            event.redaction_key_generation !== keyGeneration ||
-            event.redaction_scope !== event.redaction_key_generation ||
-            !Number.isSafeInteger(event.redaction_key_epoch) ||
-            event.redaction_key_epoch < 1 ||
-            event.redaction_key_storage !== 'tampermonkey-script-installation' ||
-            event.redaction_format !== 'dc-secret-marker/2') fail('csc-key-scope-mismatch'); const url = await safeUrl(String(event.url ?? event.request_url ??
-          event.response_url ?? '')); const headers = await safeHeaders(event.headers); await writeFrame({
-          kind: 'csc-comm-start', schema: 1, capture_id: String(event.capture_id),
-          page_instance_id: String(event.page_instance_id ?? ''),
-          connection_id: String(event.connection_id ?? ''),
-          network_sequence: event.network_sequence, capture_order: event.capture_order,
-          captured_at_epoch_ms: event.captured_at_epoch_ms,
-          captured_at_mono_ms: event.captured_at_mono_ms,
-          clock_domain: String(event.clock_domain ?? ''),
-          transport: String(event.transport ?? ''),
-          direction: String(event.direction ?? ''), url,
-          headers: headers.safe, omitted_headers: headers.omitted,
-          redaction_format: event.redaction_format,
-          redaction_scope: scopeId,
-          redaction_key_generation: keyGeneration,
-          redaction_key_epoch: event.redaction_key_epoch,
-          redaction_key_storage: event.redaction_key_storage,
-          binary_encoding: choice.kind === 'binary' ? 'base64' : 'utf8'
-        }, counts); const context = event.transport === 'websocket' ? 'ws.text.json.string' : 'json.string'; const state = jsonState(context); let decoder = choice.kind === 'binary' ? null :
-          new TextDecoder('utf-8', { fatal: true }); let ssePending = '';
-        async function serializeText(value, flush) {
-          if (choice.kind === 'json') {
-            return jsonFeed(state, value, flush);
-          }
-          ssePending += value; let output = '';
-          for (;;) {
-            const delimiter = /\r?\n\r?\n/.exec(ssePending);
-            if (!delimiter) break; const data = ssePending.slice(0, delimiter.index);
-            ssePending = ssePending.slice(delimiter.index + delimiter[0].length); const lines = data.split(/\r?\n/); const selectedLines = lines.filter(line => line.startsWith('data:'));
-            if (selectedLines.length !== 1) fail('csc-unsupported-sse-shape'); const idx = lines.findIndex(line => line.startsWith('data:')); const prefix = /^data: ?/.exec(lines[idx])[0]; const payload = lines[idx].slice(prefix.length);
-            if (payload !== '[DONE]') {
-              const sseState = jsonState('sse.data.json.string');
-              lines[idx] = prefix + await jsonFeed(sseState, payload, true);
-            }
-            output += lines.join(data.includes('\r\n') ? '\r\n' : '\n') + delimiter[0];
-          }
-          if (ssePending.length > maxValue) fail('csc-sse-event-too-long');
-          if (flush && ssePending) fail('csc-incomplete-sse'); return output;
-        }
-        async function chunkRecord(part, encoding) {
-          if (!part) return; await writeFrame({
-            kind: 'csc-comm-body', capture_id: String(event.capture_id),
-            encoding, data: part
-          }, counts);
-        }
-        if (event.body?.getReader) reader = event.body.getReader();
-        if (reader) {
-          for (;;) {
-            const { done, value } = await reader.read();
-            if (done) break;
-            if (!(value instanceof Uint8Array)) fail('csc-invalid-stream-chunk'); counts.source += value.byteLength;
-            for (let i = 0; i < value.byteLength; i += maxChunk) {
-              const part = value.subarray(i, i + maxChunk);
-              if (choice.kind === 'binary') await chunkRecord(base64(part), 'base64');
-              else await chunkRecord(await serializeText(decoder.decode(part, { stream: true }), false), 'utf8');
-            }
-          }
-        } else if (event.value != null) {
-          const value = event.value; const binary = value instanceof ArrayBuffer || ArrayBuffer.isView(value);
-          if (binary) {
-            const bytes = value instanceof ArrayBuffer
-              ? new Uint8Array(value) :
-              new Uint8Array(value.buffer, value.byteOffset, value.byteLength); counts.source = bytes.byteLength;
-            if (choice.kind !== 'binary') fail('csc-binary-type-mismatch');
-            for (let i = 0; i < bytes.byteLength; i += maxChunk) {
-              await chunkRecord(base64(bytes.subarray(i, i + maxChunk)), 'base64');
-            }
-          } else if (typeof value === 'string') {
-            const bytes = encoder.encode(value); counts.source = bytes.byteLength;
-            for (let i = 0; i < bytes.byteLength; i += maxChunk) {
-              await chunkRecord(await serializeText(
-                decoder.decode(bytes.subarray(i, i + maxChunk), { stream: true }), false), 'utf8');
-            }
-          } else fail('csc-unsupported-body-value');
-        } else if (event.body_available === true) fail('csc-missing-body');
-        if (choice.kind !== 'binary') {
-          await chunkRecord(await serializeText(decoder.decode(), true), 'utf8');
-        }
-        if (event.complete === false) fail('csc-source-incomplete'); await writeFrame({
-          kind: 'csc-comm-end', capture_id: String(event.capture_id),
-          status: 'completed', source_bytes: counts.source,
-          emitted_bytes_before_end: counts.emitted,
-          source_complete: true
-        }, counts);
-        sendStatus(event, 'completed', 'csc-processing-complete-not-durable', counts);
-      } catch (error) {
-        if (reader) {
-          try { await reader.cancel(); } catch {}
-        } else if (event.body?.cancel) {
-          try { await event.body.cancel(); } catch {}
-        }
-        // The failure record carries NO original sensitive value or exception text.
-        try {
-          await writeFrame({
-            kind: 'csc-comm-end', capture_id: String(event.capture_id),
-            status: 'failed', reason: safeError(error),
-            source_bytes_observed: counts.source,
-            emitted_bytes_before_end: counts.emitted,
-            source_complete: false
-          }, counts);
-        } catch {}
-        sendStatus(event, 'failed', safeError(error), counts);
-      } finally {
-        if (reader) reader.releaseLock();
-      }
-    }
-    async function drain() {
-      if (working) return;
-      working = true;
-      try {
-        while (records.length) await process(records.shift());
-      } finally { working = false; }
-    }
-    function enqueue(event) {
-      if (!event || typeof event.capture_id !== 'string' ||
-          !/^[A-Za-z0-9:._-]{1,160}$/.test(event.capture_id)) {
-        scope.postMessage({ type: 'csc-comm-invalid-envelope' });
-        return;
-      }
-      if (records.length >= maxQueue) {
-        if (event.body?.cancel) void event.body.cancel().catch(() => {});
-        sendStatus(event, 'rejected', 'csc-worker-queue-full', { source: 0, emitted: 0 }); return;
-      }
-      // No await before insertion: this is the first COMM queue.
-      records.push(event);
-      void drain();
-    }
-    async function provision(message) {
-      if (!(message.key_bytes instanceof Uint8Array) ||
-          message.key_bytes.byteLength !== 32 ||
-          !/^[0-9a-f]{32}$/.test(message.redaction_scope ?? '') ||
-          message.redaction_key_generation !== message.redaction_scope) {
-        fail('csc-invalid-key-provision');
-      }
-      const bytes = message.key_bytes;
-      try {
-        key = await crypto.subtle.importKey('raw', bytes,
-          { name: 'HMAC', hash: 'SHA-256' }, false, ['sign']);
-        scopeId = message.redaction_scope;
-        keyGeneration = message.redaction_key_generation;
-      } finally { bytes.fill(0); }
-      scope.postMessage({ type: 'csc-comm-key-ready',
-        redaction_scope: scopeId, redaction_key_generation: keyGeneration });
-    }
-    scope.addEventListener('message', event => {
-      const value = event.data;
-      if (!value || typeof value.type !== 'string') return;
-      if (value.type === 'csc-comm-capture') enqueue(value.envelope);
-      else if (value.type === 'csc-comm-configure') {
-        try { options(value.options); scope.postMessage({ type: 'csc-comm-configured' }); }
-        catch { scope.postMessage({ type: 'csc-comm-configuration-failed' }); }
-      } else if (value.type === 'csc-comm-provision') {
-        void provision(value).catch(() => {
-          scope.postMessage({ type: 'csc-comm-provision-failed' });
-        });
-      }
-    }); return Object.freeze({ enqueue, drain, options, marker, selected, safeUrl,
-      safeHeaders, get queued() { return records.length; } });
-  }
-
-  function cscCommProcessingWorkerSource() {
-    return '(' + cscCommWorkerProcessing.toString() +
-      ')(self, { write: async bytes => {' +
-      'if (typeof self.cscCommWriteChunk !== "function")' +
-      'throw new Error("csc-writer-unavailable");' +
-      'await self.cscCommWriteChunk(bytes);' +
-      '}});';
-  }
+    /**
+     * Creates a fresh bounded lexical parser state.
+     * @param {string} context - Input context for jsonState.
+     * @returns {Object} Output from jsonState.
+     */
