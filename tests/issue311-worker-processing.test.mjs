@@ -71,7 +71,7 @@ function harness() {
     await waitFor(() => Boolean(status(event.capture_id)));
     return status(event.capture_id);
   }
-  return { api, frames, record, status, provision, messages, dispatch, writes };
+  return { api, frames, record, status, provision, messages, dispatch, writes, waitFor };
 }
 
 test('#311 manifest ownership and Worker source stay isolated from page ingress', () => {
@@ -222,6 +222,30 @@ test('auth header opt-in never writes plaintext, and unknown content fails close
   assert.match(start.headers[0][1], /^\[[0-9a-f]{32}\/O\//);
   assert.deepEqual(start.omitted_headers, ['x-unknown']);
   assert.ok(!Buffer.concat(h.writes).includes(Buffer.from('synthetic-auth-credential')));
+});
+
+
+test('#313 actual token/key message is imported, used once, then released', async () => {
+  const h = harness();
+  const token = 'synthetic-session-311-token-1';
+  const key = new Uint8Array(KEY);
+  h.dispatch({ type: 'dc-hmac-key-v2', token, key_bytes: key });
+  await h.waitFor(() => h.messages.some(x => x.type === 'csc-comm-key-ready' &&
+    x.token === token));
+  assert.deepEqual([...key], Array(32).fill(0), 'Sensitive provision bytes zeroed');
+  const first = await h.record(input({
+    capture_id: 'synthetic:token-one', hmac_token: token,
+    value: '{"token":"Aé界𐐀"}'
+  }));
+  assert.equal(first.status, 'completed');
+  const output = Buffer.concat(h.writes).toString('utf8');
+  assert.ok(!output.includes('Aé界𐐀'));
+  assert.ok(!output.includes(token), 'Private admission token must not be logged');
+  const reuse = await h.record(input({
+    capture_id: 'synthetic:token-replay', hmac_token: token
+  }));
+  assert.equal(reuse.status, 'failed', 'Token must not authorize a second capture');
+  assert.equal(reuse.reason, 'csc-key-token-unavailable');
 });
 
 test('Worker has no fallback to unsanitized page archive when writer rejects', async () => {
