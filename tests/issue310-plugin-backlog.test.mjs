@@ -158,3 +158,36 @@ test('queue source registered once in manifest, #309 ingress and no Worker route
   assert.match(code, /cscBindPluginIngress\(cscPluginQueuePublish\)/);
   assert.doesNotMatch(code, /postMessage\s*\(|new Worker\s*\(|GM_setValue\s*\(/);
 });
+
+test('void-returning #306 provider response is acknowledged, never silently rejected', async () => {
+  const h = harness();
+  h.publish(h.event(1, 'request'));
+  h.publish(h.event(2, 'response', {}, { json: async () => ({ id: 'ok' }) }));
+  let observed = null;
+  h.api.connect({
+    request() { return true; },
+    response(e) { observed = e; },
+    navigation() { return true; }
+  });
+  await settle(h);
+  assert.equal(observed.body.id, 'ok');
+  assert.equal(observed.network_sequence, 1);
+  assert.equal(h.api.snapshot().accepted, 2);
+  assert.equal(h.api.snapshot().rejected, 0);
+});
+
+test('binary response is not misclassified as provider JSON', async () => {
+  const h = harness();
+  h.publish(h.event(1, 'request'));
+  h.publish(h.event(2, 'response', {}, new Blob(['raw binary'])));
+  let delivered = 0;
+  h.api.connect({
+    request() { return true; },
+    response() { delivered++; },
+    navigation() { return true; }
+  });
+  await settle(h);
+  assert.equal(delivered, 0);
+  assert.equal(h.api.snapshot().rejected, 1);
+  assert.equal(h.api.snapshot().accepted, 1);
+});
