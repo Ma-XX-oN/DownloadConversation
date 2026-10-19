@@ -252,9 +252,14 @@
         (Array.isArray(event.headers) ? event.headers.find(h =>
           String(h[0]).toLowerCase() === 'content-type')?.[1] : '') ?? '').toLowerCase(); const isJson = /(?:^|\/)(?:json|[^/;]+\+json)(?:;|$)/.test(type) ||
         (event.transport === 'websocket' && typeof event.value === 'string' &&
-          /^[\s]*[\[{]/.test(event.value)); const isSse = type.startsWith('text/event-stream'); const binary = type.includes('octet-stream') || type.includes('image/') ||
-        type.includes('audio/') || type.includes('video/') ||
-        event.body_type === 'binary' || event.response_type === 'arraybuffer';
+          /^[\s]*[\[{]/.test(event.value)); const isSse = type.startsWith('text/event-stream'); const raw = event.value;
+      const binaryValue = Object.prototype.toString.call(raw) === '[object ArrayBuffer]' ||
+        Object.prototype.toString.call(raw) === '[object Blob]' ||
+        ArrayBuffer.isView(raw);
+      const binary = binaryValue || type.includes('octet-stream') ||
+        type.includes('image/') || type.includes('audio/') ||
+        type.includes('video/') || event.body_type === 'binary' ||
+        event.response_type === 'arraybuffer';
       if (binary && !policy.binary) {
         return { status: 'unselected', reason: 'csc-binary-not-selected' };
       }
