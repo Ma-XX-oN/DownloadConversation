@@ -371,3 +371,51 @@ test('one transient provider exception retries automatically with bounded timer'
   assert.equal(h.api.snapshot().queued, 0);
   assert.equal(h.pendingRetries().length, 0);
 });
+
+test('disconnect cancels old retry timer and reconnect drains under new host only', async () => {
+  const h = harness();
+  h.publish(h.event(1, 'request'));
+  const old = {
+    request() { throw Error('old host unavailable'); },
+    response() { return true; }, navigation() { return true; }
+  };
+  h.api.connect(old);
+  await settle(h);
+  assert.equal(h.pendingRetries().length, 1);
+  h.api.disconnect(old);
+  assert.equal(h.pendingRetries().length, 0);
+  const seen = [];
+  h.api.connect({
+    request(e) { seen.push(e.network_sequence); return true; },
+    response() { return true; }, navigation() { return true; }
+  });
+  await settle(h);
+  assert.deepEqual(seen, [1]);
+  assert.equal(h.api.snapshot().queued, 0);
+});
+
+test('repeated handler failures use finite exponential delays capped at 30 seconds', async () => {
+  const h = harness();
+  h.publish(h.event(1, 'request'));
+  const host = {
+    request() { throw Error('still unavailable'); },
+    response() { return true; }, navigation() { return true; }
+  };
+  h.api.connect(host);
+  await settle(h);
+  const delays = [];
+  for (let i = 0; i < 11; i++) {
+    const scheduled = h.pendingRetries();
+    assert.equal(scheduled.length, 1);
+    delays.push(scheduled[0].delay);
+    h.advanceRetry();
+    await settle(h);
+  }
+  assert.deepEqual(delays, [
+    100, 200, 400, 800, 1600, 3200, 6400, 12800,
+    25600, 30000, 30000
+  ]);
+  assert.equal(h.api.snapshot().queued, 1);
+  h.api.disconnect(host);
+  assert.equal(h.pendingRetries().length, 0);
+});
