@@ -15,6 +15,10 @@
   let cscPluginRejected = 0;
   /** Retriable delivery exceptions. */
   let cscPluginFailures = 0;
+  /** Highest acknowledged or queued canonical capture order in this page. */
+  let cscPluginLastEnqueuedOrder = 0;
+  /** Duplicate or stale ingress notifications discarded without redelivery. */
+  let cscPluginIgnoredStale = 0;
 
   /**
    * Retain the #309 plugin-owned native clone and earliest capture envelope.
@@ -26,9 +30,23 @@
       'CSC plugin event needs canonical network_sequence.');
     assert(typeof event?.envelope?.capture_id === 'string',
       'CSC plugin event needs original capture identity.');
-    const last = cscPluginBacklog[cscPluginBacklog.length - 1];
-    assert(!last || last.event.envelope.capture_order < event.envelope.capture_order,
-      'CSC plugin ingress must publish in strictly increasing capture order.');
+    const order = event.envelope.capture_order;
+    assert(Number.isSafeInteger(order) && order > 0,
+      'CSC plugin event needs positive capture_order.');
+    if (order <= cscPluginLastEnqueuedOrder) {
+      cscPluginIgnoredStale++;
+      logDiagnostic('warnings', 'csc-plugin-duplicate-or-stale', {
+        capture_id: event.envelope.capture_id,
+        capture_order: order
+      });
+      // Do not cancel an alias still owned by an outstanding queue item.
+      if (event.source && !cscPluginBacklog.some(item =>
+        item.event.source === event.source)) {
+        cscPluginQueueReleaseItem({ event, body: null });
+      }
+      return;
+    }
+    cscPluginLastEnqueuedOrder = order;
     cscPluginBacklog.push({ event, parsed: false, body: null });
     if (cscPluginHost) void cscPluginQueueDrain();
   }
@@ -105,6 +123,7 @@
           method: e.method ?? 'GET',
           request_url: e.request_url ?? e.url,
           connection_id: e.connection_id,
+          envelope: e,
           generation
         });
       }
@@ -204,15 +223,9 @@
       const req = pending[i];
       cscPluginBacklog.unshift({
         event: {
-          envelope: {
-            page_instance_id: cscPageInstanceId,
-            capture_id: cscPageInstanceId + ':' + req.network_sequence,
-            capture_order: req.network_sequence,
-            network_sequence: req.network_sequence,
-            connection_id: req.connection_id,
-            transport: 'fetch', direction: 'request',
-            method: req.method, request_url: req.request_url
-          },
+          // Reuse the original immutable capture stamp, including transport,
+          // clock domain, wall/monotonic time and canonical capture ID.
+          envelope: req.envelope,
           source: null, source_available: false, source_incomplete: false
         },
         parsed: false, body: null
@@ -252,6 +265,7 @@
       accepted: cscPluginAccepted,
       rejected: cscPluginRejected,
       failures: cscPluginFailures,
+      duplicates: cscPluginIgnoredStale,
       oldest_capture_at_epoch_ms:
         cscPluginBacklog[0]?.event?.envelope?.captured_at_epoch_ms ?? null
     });
