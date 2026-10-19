@@ -172,7 +172,7 @@
   function cscPluginQueueScheduleRetry() {
     if (cscPluginRetryTimer !== null || !cscPluginHost) return;
     const delay = Math.min(30000,
-      100 * 2 ** Math.min(8, Math.max(0, cscPluginRetryFailuresInRow - 1)));
+      100 * 2 ** Math.min(10, Math.max(0, cscPluginRetryFailuresInRow - 1)));
     cscPluginRetryTimer = setTimeout(() => {
       cscPluginRetryTimer = null;
       if (cscPluginHost) void cscPluginQueueDrain();
