@@ -20,7 +20,7 @@ function fixture() {
   let random = 0;
   const events = [];
   const authority = {
-    capability: 'linearizable-chatgpt-web-lock-fenced-v1',
+    capability: 'linearizable-chatgpt-key-record-v2',
     async runExclusive(fn) {
       const prev = gate;
       let unlock;
@@ -264,6 +264,8 @@ test('native Web Locks adapter enforces chatgpt.com origin and exclusive lifetim
   const origin = { origin: 'https://chatgpt.com' };
   const authorities = Array.from({ length: 100 }, () =>
     makeAuthority(browserNavigator, origin));
+  assert.ok(authorities.every(a =>
+    a.capability === 'exclusive-chatgpt-web-lock-only-v1'));
   await Promise.all(authorities.map((a, i) => a.runExclusive(async () => {
     active++;
     peak = Math.max(peak, active);
