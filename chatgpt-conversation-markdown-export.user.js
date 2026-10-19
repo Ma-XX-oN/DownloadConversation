@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         ChatGPT Conversation Markdown Recorder
 // @namespace    https://chatgpt.com/
-// @version      1.11.7-issue.310.2
+// @version      1.11.7-issue.310.3
 // @description  Exports the current ChatGPT conversation directly from the Conversation API as Markdown or JSONL.
 // @match        https://chatgpt.com/*
 // @match        https://chat.openai.com/*
@@ -11473,8 +11473,8 @@ globalThis.__dcCompressor = {
     let body = null;
     if (source && typeof source.json === 'function') {
       try { body = await source.json(); } catch { body = null; }
-    } else if (source && typeof source === 'object' && !ArrayBuffer.isView(source)
-        && !(source instanceof ArrayBuffer) && !(source instanceof Blob)) {
+    } else if (source && typeof source === 'object'
+        && Object.prototype.toString.call(source) === '[object Object]') {
       body = source;
     } else if (typeof source === 'string') {
       try { body = JSON.parse(source); } catch { body = null; }
@@ -11530,11 +11530,13 @@ globalThis.__dcCompressor = {
         cscPluginRequests.delete(e.connection_id);
         return 'rejected';
       }
+      // #306 host.response is void on successful delivery. An exception is a
+      // retryable failure; explicit false is rejection, undefined is an ACK.
       const result = host.response({
         network_sequence: request.network_sequence, status: e.status, body
       });
       cscPluginRequests.delete(e.connection_id);
-      return result ? 'accepted' : 'rejected';
+      return result === false ? 'rejected' : 'accepted';
     }
     if (e.direction === 'error' || e.event === 'abort' || e.event === 'close') {
       cscPluginRequests.delete(e.connection_id);
