@@ -1,12 +1,10 @@
   /**
-   * Manage persistent V2 HMAC keys under same-origin exclusive Web Locks.
+   * Manage persistent V2 HMAC keys under verified shared authority.
    *
    * @param {Object} dependencies - GM storage, verified authority and WebCrypto.
    * @returns {Object} Closed persistent key lifecycle API.
    */
   function communicationPersistentHmacService(dependencies) {
-    // The authority contract includes RECORD coherence, not only locking.
-    // A browser's native Web Lock adapter intentionally lacks this capability.
     const { storage, authority, crypto: secureCrypto } = dependencies;
     const recordName = 'downloadconversation:secret-marker-key-v2';
     const scopeStorage = 'tampermonkey-script-installation';
@@ -350,8 +348,6 @@
 
   /**
    * Coordinate one HTTPS origin with native exclusive Web Locks.
-   * Browser evidence: GM reads can remain stale despite exclusive locks.
-   * This is a lock-only primitive, NOT a verified key-record authority.
    * Never store keys in page-accessible IndexedDB.
    * @param {Object} browserNavigator - Current tab's navigator.
    * @param {Object} browserLocation - Current tab's location.
@@ -364,8 +360,6 @@
         typeof browserNavigator?.locks?.request !== 'function') return null;
     const name = 'downloadconversation:secret-marker-key-v2:all-tabs';
     return Object.freeze({
-      // Lock exclusivity does not certify GM cross-tab read consistency.
-      // Do NOT promote this to linearizable key-record authority.
       capability: 'exclusive-chatgpt-web-lock-only-v1',
       async runExclusive(callback) {
         if (browserLocation.origin !== origin ||
@@ -385,9 +379,7 @@
 
   /**
    * Build the production tab's lazy persistent key service.
-   * Fail closed until an independently proven linearizable GM record
-   * authority is implemented and verified in installed Tampermonkey.
-   * Native Web Locks alone cannot certify per-tab GM read consistency.
+   * Web Locks alone cannot prove GM storage coherence: fail closed.
    * @returns {Object} Lifecycle service with native same-origin coordination.
    */
   function communicationPersistentHmacCurrentTabService() {
