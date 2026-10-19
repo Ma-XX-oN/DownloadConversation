@@ -396,6 +396,9 @@ test('browser probe is one opt-in exact-source Worker row with synthetic payload
   assert.match(source, /\[keyBytes\.buffer\]/);
   assert.match(source, /}, \[body\]\);/);
   assert.match(source, /cscCommProcessingWorkerSource\(\)/);
+  const readiness = readFileSync(path.join(root,
+    'src/userscript/06-image-export-tests/06-agent-plugin-readiness.js'), 'utf8');
+  assert.match(readiness, /name !== 'CSC COMM Worker processor'/);
   assert.match(source, /response|original\.arrayBuffer\(\)/);
   assert.doesNotThrow(() => new Function(source));
 });
