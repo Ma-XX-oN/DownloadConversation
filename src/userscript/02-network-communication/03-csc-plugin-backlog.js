@@ -19,6 +19,10 @@
   let cscPluginLastEnqueuedOrder = 0;
   /** Duplicate or stale ingress notifications discarded without redelivery. */
   let cscPluginIgnoredStale = 0;
+  /** Consecutive delivery failures used only for bounded retry pacing. */
+  let cscPluginRetryFailuresInRow = 0;
+  /** Exactly one outstanding retry timer per queue generation. */
+  let cscPluginRetryTimer = null;
 
   /**
    * Retain the #309 plugin-owned native clone and earliest capture envelope.
@@ -161,6 +165,21 @@
   }
 
   /**
+   * Schedule one finite-delay retry; repeated faults back off without
+   * consuming the queue, sending network requests or blocking the page.
+   * @returns {void} No value is returned.
+   */
+  function cscPluginQueueScheduleRetry() {
+    if (cscPluginRetryTimer !== null || !cscPluginHost) return;
+    const delay = Math.min(30000,
+      100 * 2 ** Math.min(8, Math.max(0, cscPluginRetryFailuresInRow - 1)));
+    cscPluginRetryTimer = setTimeout(() => {
+      cscPluginRetryTimer = null;
+      if (cscPluginHost) void cscPluginQueueDrain();
+    }, delay);
+  }
+
+  /**
    * Acknowledge only successful host calls; keep the entire tail on exception.
    * @returns {Promise<void>} Resolves after this ordered processing pass.
    */
@@ -178,17 +197,22 @@
           result = await cscPluginQueueDispatch(item, host, generation);
         } catch (error) {
           cscPluginFailures++;
+          cscPluginRetryFailuresInRow++;
           logDiagnostic('warnings', 'csc-plugin-delivery-failed', {
             capture_id: item.event.envelope.capture_id,
             network_sequence: item.event.envelope.network_sequence,
             error: boundedDiagnosticText(errorMessage(error), 200)
           });
+          if (generation === cscPluginGeneration && host === cscPluginHost) {
+            cscPluginQueueScheduleRetry();
+          }
           break;
         }
         if (generation !== cscPluginGeneration || host !== cscPluginHost
             || result === 'awaiting') break;
         if (result === 'accepted') cscPluginAccepted++;
         else cscPluginRejected++;
+        cscPluginRetryFailuresInRow = 0;
         cscPluginBacklog.shift();
         cscPluginQueueReleaseItem(item);
       }
@@ -243,6 +267,9 @@
     if (cscPluginHost !== host) return;
     cscPluginHost = null;
     cscPluginGeneration++;
+    cscPluginRetryFailuresInRow = 0;
+    if (cscPluginRetryTimer !== null) clearTimeout(cscPluginRetryTimer);
+    cscPluginRetryTimer = null;
   }
 
   /**
@@ -250,6 +277,8 @@
    * @returns {void} No value is returned.
    */
   function cscPluginQueueRetry() {
+    if (cscPluginRetryTimer !== null) clearTimeout(cscPluginRetryTimer);
+    cscPluginRetryTimer = null;
     if (cscPluginHost) void cscPluginQueueDrain();
   }
 
