@@ -201,7 +201,7 @@
           logDiagnostic('warnings', 'csc-plugin-delivery-failed', {
             capture_id: item.event.envelope.capture_id,
             network_sequence: item.event.envelope.network_sequence,
-            error: boundedDiagnosticText(errorMessage(error), 200)
+            failure_kind: 'provider-handler-exception'
           });
           if (generation === cscPluginGeneration && host === cscPluginHost) {
             cscPluginQueueScheduleRetry();
