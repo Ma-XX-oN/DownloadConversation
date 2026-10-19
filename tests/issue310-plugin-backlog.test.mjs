@@ -191,3 +191,85 @@ test('binary response is not misclassified as provider JSON', async () => {
   assert.equal(h.api.snapshot().rejected, 1);
   assert.equal(h.api.snapshot().accepted, 1);
 });
+
+test('traffic arriving during asynchronous drain remains ordered with correlated responses', async () => {
+  const h = harness();
+  let completeFirst;
+  const calls = [];
+  h.publish(h.event(1, 'request', { connection_id: 'first' }));
+  h.publish(h.event(2, 'response', { connection_id: 'first' }, {
+    json: () => new Promise(resolve => { completeFirst = resolve; })
+  }));
+  h.api.connect({
+    request(e) { calls.push('q' + e.network_sequence); return true; },
+    response(e) { calls.push('s' + e.network_sequence + ':' + e.body.id); return true; },
+    navigation() { return true; }
+  });
+  await new Promise(resolve => setImmediate(resolve));
+  assert.equal(typeof completeFirst, 'function');
+  h.publish(h.event(3, 'request', { connection_id: 'second' }));
+  h.publish(h.event(4, 'response', { connection_id: 'second' }, {
+    json: async () => ({ id: 'two' })
+  }));
+  completeFirst({ id: 'one' });
+  await settle(h);
+  assert.deepEqual(calls, ['q1', 's1:one', 'q3', 's3:two']);
+  assert.equal(h.api.snapshot().accepted, 4);
+});
+
+test('out-of-order network completion preserves capture order and request correlation', async () => {
+  const h = harness();
+  const seen = [];
+  h.publish(h.event(1, 'request', { connection_id: 'first' }));
+  h.publish(h.event(2, 'request', { connection_id: 'second' }));
+  h.publish(h.event(3, 'response', { connection_id: 'second' }, {
+    json: async () => ({ id: 'response-second-first' })
+  }));
+  h.publish(h.event(4, 'response', { connection_id: 'first' }, {
+    json: async () => ({ id: 'response-first-later' })
+  }));
+  h.api.connect({
+    request(e) { seen.push('q' + e.network_sequence); return true; },
+    response(e) { seen.push('s' + e.network_sequence + ':' + e.body.id); return true; },
+    navigation() { return true; }
+  });
+  await settle(h);
+  assert.deepEqual(seen, [
+    'q1', 'q2', 's2:response-second-first', 's1:response-first-later'
+  ]);
+});
+
+test('failed creation leaves backlog unchanged until a valid host reconnects', async () => {
+  const h = harness();
+  h.publish(h.event(1, 'request'));
+  assert.throws(() => h.api.connect({ request() {} }), /provider navigation/);
+  assert.equal(h.api.snapshot().queued, 1);
+  const seen = [];
+  h.api.connect({
+    request(e) { seen.push(e.network_sequence); return true; },
+    response() { return true; }, navigation() { return true; }
+  });
+  await settle(h);
+  assert.deepEqual(seen, [1]);
+  assert.equal(h.api.snapshot().queued, 0);
+});
+
+test('incomplete response is rejected without leaking plugin payload or blocking tail', async () => {
+  const h = harness();
+  h.publish(h.event(1, 'request', { connection_id: 'bad' }));
+  const bad = h.event(2, 'response', { connection_id: 'bad' });
+  bad.source_incomplete = true;
+  h.publish(bad);
+  h.publish(h.event(3, 'request', { connection_id: 'good' }));
+  let seen = [];
+  h.api.connect({
+    request(e) { seen.push(e.network_sequence); return true; },
+    response() { throw Error('incomplete source must not reach host'); },
+    navigation() { return true; }
+  });
+  await settle(h);
+  assert.deepEqual(seen, [1, 3]);
+  assert.equal(h.api.snapshot().accepted, 2);
+  assert.equal(h.api.snapshot().rejected, 1);
+  assert.equal(h.api.snapshot().queued, 0);
+});
