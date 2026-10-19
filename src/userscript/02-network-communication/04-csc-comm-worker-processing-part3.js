@@ -4,7 +4,8 @@
      * @returns {Promise<void>} Output from process.
      */
     async function process(event) {
-      const counts = { source: 0, emitted: 0 }; const choice = selected(event);
+      const counts = { source: 0, emitted: 0, derived: 0, source_known: true };
+      const choice = selected(event);
       if (choice.status !== 'selected') {
         if (event.body?.cancel) await event.body.cancel().catch(() => {});
         sendStatus(event, choice.status, choice.reason, counts); return;
@@ -41,7 +42,11 @@
           redaction_key_generation: keyGeneration,
           redaction_key_epoch: event.redaction_key_epoch,
           redaction_key_storage: event.redaction_key_storage,
-          binary_encoding: choice.kind === 'binary' ? 'base64' : 'utf8'
+          binary_encoding: choice.kind === 'binary' ? 'base64' : 'utf8',
+          source_byte_provenance: event.value != null &&
+            typeof event.value === 'object' &&
+            choice.kind === 'json' ? 'unavailable-parsed-xhr-json' :
+            'browser-observed-bytes'
         }, counts); const context = event.transport === 'websocket' ? 'ws.text.json.string' : 'json.string'; const state = jsonState(context); let decoder = choice.kind === 'binary' ? null :
           new TextDecoder('utf-8', { fatal: true }); let ssePending = '';
         /**
@@ -81,7 +86,69 @@
             encoding, data: part
           }, counts);
         }
+
+        /**
+         * Uses the SAME JSON streaming sanitizer on parsed XHR JSON tokens.
+         * No complete unsanitized object serialization is ever constructed.
+         * @param {unknown} value - Structured-cloneable parsed JSON value.
+         * @param {Set} ancestors - Parent objects for cycle rejection.
+         * @param {number} depth - Bounded nesting depth.
+         * @returns {Promise<void>} Emits sanitized body frames.
+         */
+        async function serializeParsedJson(value, ancestors, depth) {
+          if (depth > 64) fail('csc-json-depth-exceeded');
+          /**
+           * Feeds a bounded token to the primary one-pass JSON serializer.
+           * @param {string} token - Raw lexical token from the parsed value.
+           * @returns {Promise<void>} Emits sanitized framing.
+           */
+          async function emit(token) {
+            if (encoder.encode(token).byteLength > maxValue) {
+              fail('csc-candidate-too-long');
+            }
+            counts.derived += encoder.encode(token).byteLength;
+            await chunkRecord(await serializeText(token, false), 'utf8');
+          }
+          if (value === null || typeof value === 'boolean' ||
+              (typeof value === 'number' && Number.isFinite(value))) {
+            await emit(JSON.stringify(value));
+            return;
+          }
+          if (typeof value === 'string') {
+            await emit(JSON.stringify(value));
+            return;
+          }
+          if (typeof value !== 'object' ||
+              ancestors.has(value)) fail('csc-invalid-parsed-json');
+          const array = Array.isArray(value);
+          if (!array && Object.prototype.toString.call(value) !== '[object Object]') {
+            fail('csc-unsupported-parsed-json');
+          }
+          ancestors.add(value);
+          try {
+            await emit(array ? '[' : '{');
+            const keys = array ? Array.from({ length: value.length },
+              (_, index) => String(index)) : Object.keys(value);
+            for (let index = 0; index < keys.length; index += 1) {
+              if (index) await emit(',');
+              if (!array) {
+                await emit(JSON.stringify(keys[index]));
+                await emit(':');
+              }
+              const item = value[keys[index]];
+              await serializeParsedJson(item === undefined && array ? null : item,
+                ancestors, depth + 1);
+            }
+            await emit(array ? ']' : '}');
+          } finally {
+            ancestors.delete(value);
+          }
+        }
+
         if (event.body?.getReader) reader = event.body.getReader();
+        else if (Object.prototype.toString.call(event.value) === '[object Blob]') {
+          reader = event.value.stream().getReader();
+        }
         if (reader) {
           for (;;) {
             const { done, value } = await reader.read();
@@ -94,9 +161,11 @@
             }
           }
         } else if (event.value != null) {
-          const value = event.value; const binary = value instanceof ArrayBuffer || ArrayBuffer.isView(value);
+          const value = event.value;
+          const arrayBufferValue = Object.prototype.toString.call(value) === '[object ArrayBuffer]';
+          const binary = arrayBufferValue || ArrayBuffer.isView(value);
           if (binary) {
-            const bytes = value instanceof ArrayBuffer
+            const bytes = arrayBufferValue
               ? new Uint8Array(value) :
               new Uint8Array(value.buffer, value.byteOffset, value.byteLength); counts.source = bytes.byteLength;
             if (choice.kind !== 'binary') fail('csc-binary-type-mismatch');
@@ -109,6 +178,10 @@
               await chunkRecord(await serializeText(
                 decoder.decode(bytes.subarray(i, i + maxChunk), { stream: true }), false), 'utf8');
             }
+          } else if (choice.kind === 'json' &&
+                     value !== null && typeof value === 'object') {
+            counts.source_known = false;
+            await serializeParsedJson(value, new Set(), 0);
           } else fail('csc-unsupported-body-value');
         } else if (event.body_available === true) fail('csc-missing-body');
         if (choice.kind !== 'binary') {
@@ -116,7 +189,8 @@
         }
         if (event.complete === false) fail('csc-source-incomplete'); await writeFrame({
           kind: 'csc-comm-end', capture_id: String(event.capture_id),
-          status: 'completed', source_bytes: counts.source,
+          status: 'completed', source_bytes: counts.source_known ? counts.source : null,
+          derived_json_utf8_bytes: counts.source_known ? null : counts.derived,
           emitted_bytes_before_end: counts.emitted,
           source_complete: true
         }, counts);
@@ -132,7 +206,8 @@
           await writeFrame({
             kind: 'csc-comm-end', capture_id: String(event.capture_id),
             status: 'failed', reason: safeError(error),
-            source_bytes_observed: counts.source,
+            source_bytes_observed: counts.source_known ? counts.source : null,
+            derived_json_utf8_bytes: counts.source_known ? null : counts.derived,
             emitted_bytes_before_end: counts.emitted,
             source_complete: false
           }, counts);
