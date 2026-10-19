@@ -167,12 +167,16 @@
       const url = String(event.url ?? event.request_url ?? event.response_url ?? ''); let parsed;
       try { parsed = new URL(url, policy.origin); }
       catch { return { status: 'rejected', reason: 'csc-invalid-url' }; }
-      if (parsed.origin !== policy.origin && !policy.cross_origin) {
+      const comparableOrigin = parsed.protocol === 'wss:' ? 'https://' + parsed.host :
+        parsed.protocol === 'ws:' ? 'http://' + parsed.host : parsed.origin;
+      if (comparableOrigin !== policy.origin && !policy.cross_origin) {
         return { status: 'unselected', reason: 'csc-cross-origin-not-selected' };
       }
       const type = String(event.body_type ?? event.response_type ??
         (Array.isArray(event.headers) ? event.headers.find(h =>
-          String(h[0]).toLowerCase() === 'content-type')?.[1] : '') ?? '').toLowerCase(); const isJson = /(?:^|\/)(?:json|[^/;]+\+json)(?:;|$)/.test(type); const isSse = type.startsWith('text/event-stream'); const binary = type.includes('octet-stream') || type.includes('image/') ||
+          String(h[0]).toLowerCase() === 'content-type')?.[1] : '') ?? '').toLowerCase(); const isJson = /(?:^|\/)(?:json|[^/;]+\+json)(?:;|$)/.test(type) ||
+        (event.transport === 'websocket' && typeof event.value === 'string' &&
+          /^[\s]*[\[{]/.test(event.value)); const isSse = type.startsWith('text/event-stream'); const binary = type.includes('octet-stream') || type.includes('image/') ||
         type.includes('audio/') || type.includes('video/') ||
         event.body_type === 'binary' || event.response_type === 'arraybuffer';
       if (binary && !policy.binary) {
@@ -408,6 +412,11 @@
       } finally { working = false; }
     }
     function enqueue(event) {
+      if (!event || typeof event.capture_id !== 'string' ||
+          !/^[A-Za-z0-9:._-]{1,160}$/.test(event.capture_id)) {
+        scope.postMessage({ type: 'csc-comm-invalid-envelope' });
+        return;
+      }
       if (records.length >= maxQueue) {
         if (event.body?.cancel) void event.body.cancel().catch(() => {});
         sendStatus(event, 'rejected', 'csc-worker-queue-full', { source: 0, emitted: 0 }); return;
