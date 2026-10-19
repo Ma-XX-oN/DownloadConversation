@@ -7,8 +7,24 @@
       const counts = { source: 0, emitted: 0, derived: 0, source_known: true };
       const choice = selected(event);
       if (choice.status !== 'selected') {
-        if (event.body?.cancel) await event.body.cancel().catch(() => {});
-        sendStatus(event, choice.status, choice.reason, counts); return;
+        try {
+          if (event.body?.cancel) await event.body.cancel();
+          await writeFrame({
+            kind: 'csc-comm-selection', schema: 1,
+            capture_id: event.capture_id,
+            network_sequence: event.network_sequence,
+            capture_order: event.capture_order,
+            captured_at_epoch_ms: event.captured_at_epoch_ms,
+            captured_at_mono_ms: event.captured_at_mono_ms,
+            transport: event.transport, direction: event.direction,
+            status: choice.status, reason: choice.reason,
+            body_captured: false, source_bytes: null
+          }, counts);
+          sendStatus(event, choice.status, choice.reason, counts);
+        } catch (error) {
+          sendStatus(event, 'failed', safeError(error), counts);
+        }
+        return;
       }
       let reader;
       try {
