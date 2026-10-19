@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         ChatGPT Conversation Markdown Recorder
 // @namespace    https://chatgpt.com/
-// @version      1.11.7-issue.310.12
+// @version      1.11.7-issue.310.13
 // @description  Exports the current ChatGPT conversation directly from the Conversation API as Markdown or JSONL.
 // @match        https://chatgpt.com/*
 // @match        https://chat.openai.com/*
@@ -11588,7 +11588,7 @@ globalThis.__dcCompressor = {
    * @returns {Promise<void>} Resolves after this ordered processing pass.
    */
   async function cscPluginQueueDrain() {
-    if (cscPluginDraining || !cscPluginHost) return;
+    if (cscPluginDraining || !cscPluginHost || cscPluginRetryTimer !== null) return;
     cscPluginDraining = true;
     const host = cscPluginHost;
     const generation = cscPluginGeneration;
