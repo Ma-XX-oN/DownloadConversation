@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         ChatGPT Conversation Markdown Recorder
 // @namespace    https://chatgpt.com/
-// @version      1.11.7-issue.313.23
+// @version      1.11.7-issue.313.24
 // @description  Exports the current ChatGPT conversation directly from the Conversation API as Markdown or JSONL.
 // @match        https://chatgpt.com/*
 // @connect      github.com
@@ -11118,7 +11118,7 @@ globalThis.__dcCompressor = {
     });
   }
   /**
-   * Manage persistent V2 HMAC keys under same-origin exclusive Web Locks.
+   * Manage persistent V2 HMAC keys under verified shared authority.
    *
    * @param {Object} dependencies - GM storage, verified authority and WebCrypto.
    * @returns {Object} Closed persistent key lifecycle API.
@@ -11136,7 +11136,7 @@ globalThis.__dcCompressor = {
      */
     function available() {
       if (disposed) throw new Error('persistent-key-disposed');
-      if (!authority || authority.capability !== 'linearizable-chatgpt-web-lock-fenced-v1' ||
+      if (!authority || authority.capability !== 'linearizable-chatgpt-key-record-v2' ||
           typeof authority.runExclusive !== 'function') {
         throw new Error('persistent-key-shared-authority-unavailable');
       }
@@ -11207,7 +11207,7 @@ globalThis.__dcCompressor = {
      */
     async function transaction(fn, cleanupAfterDispose = false) {
       if (!cleanupAfterDispose) available();
-      else if (authority?.capability !== 'linearizable-chatgpt-web-lock-fenced-v1' ||
+      else if (authority?.capability !== 'linearizable-chatgpt-key-record-v2' ||
           typeof authority?.runExclusive !== 'function' ||
           typeof storage?.get !== 'function' ||
           typeof storage?.set !== 'function') {
@@ -11467,7 +11467,6 @@ globalThis.__dcCompressor = {
 
   /**
    * Coordinate one HTTPS origin with native exclusive Web Locks.
-   * Keep GM operations and admission/rotation under the same lock.
    * Never store keys in page-accessible IndexedDB.
    * @param {Object} browserNavigator - Current tab's navigator.
    * @param {Object} browserLocation - Current tab's location.
@@ -11480,7 +11479,7 @@ globalThis.__dcCompressor = {
         typeof browserNavigator?.locks?.request !== 'function') return null;
     const name = 'downloadconversation:secret-marker-key-v2:all-tabs';
     return Object.freeze({
-      capability: 'linearizable-chatgpt-web-lock-fenced-v1',
+      capability: 'exclusive-chatgpt-web-lock-only-v1',
       async runExclusive(callback) {
         if (browserLocation.origin !== origin ||
             typeof callback !== 'function') {
@@ -11499,7 +11498,7 @@ globalThis.__dcCompressor = {
 
   /**
    * Build the production tab's lazy persistent key service.
-   * Nothing is persisted until the first admitted capture.
+   * Web Locks alone cannot prove GM storage coherence: fail closed.
    * @returns {Object} Lifecycle service with native same-origin coordination.
    */
   function communicationPersistentHmacCurrentTabService() {
