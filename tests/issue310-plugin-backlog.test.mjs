@@ -419,3 +419,26 @@ test('repeated handler failures use finite exponential delays capped at 30 secon
   h.api.disconnect(host);
   assert.equal(h.pendingRetries().length, 0);
 });
+
+test('new page traffic cannot bypass bounded retry timer for a failing host', async () => {
+  const h = harness();
+  h.publish(h.event(1, 'request'));
+  let attempts = 0;
+  h.api.connect({
+    request() { attempts++; throw Error('temporarily unavailable'); },
+    response() { return true; },
+    navigation() { return true; }
+  });
+  await settle(h);
+  assert.equal(attempts, 1);
+  assert.equal(h.pendingRetries().length, 1);
+  h.publish(h.event(2, 'request', { connection_id: 'second' }));
+  await settle(h);
+  assert.equal(attempts, 1, 'new traffic must not spin a failed head during backoff');
+  assert.equal(h.pendingRetries().length, 1);
+  assert.equal(h.api.snapshot().queued, 2);
+  h.advanceRetry();
+  await settle(h);
+  assert.equal(attempts, 2, 'only the scheduled retry can attempt the failed head again');
+  assert.equal(h.pendingRetries().length, 1);
+});
