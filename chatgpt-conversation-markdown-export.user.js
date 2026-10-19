@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         ChatGPT Conversation Markdown Recorder
 // @namespace    https://chatgpt.com/
-// @version      1.11.7-issue.311.4
+// @version      1.11.7-issue.311.5
 // @description  Exports the current ChatGPT conversation directly from the Conversation API as Markdown or JSONL.
 // @match        https://chatgpt.com/*
 // @match        https://chat.openai.com/*
@@ -11818,8 +11818,24 @@ globalThis.__dcCompressor = {
       const counts = { source: 0, emitted: 0, derived: 0, source_known: true };
       const choice = selected(event);
       if (choice.status !== 'selected') {
-        if (event.body?.cancel) await event.body.cancel().catch(() => {});
-        sendStatus(event, choice.status, choice.reason, counts); return;
+        try {
+          if (event.body?.cancel) await event.body.cancel();
+          await writeFrame({
+            kind: 'csc-comm-selection', schema: 1,
+            capture_id: event.capture_id,
+            network_sequence: event.network_sequence,
+            capture_order: event.capture_order,
+            captured_at_epoch_ms: event.captured_at_epoch_ms,
+            captured_at_mono_ms: event.captured_at_mono_ms,
+            transport: event.transport, direction: event.direction,
+            status: choice.status, reason: choice.reason,
+            body_captured: false, source_bytes: null
+          }, counts);
+          sendStatus(event, choice.status, choice.reason, counts);
+        } catch (error) {
+          sendStatus(event, 'failed', safeError(error), counts);
+        }
+        return;
       }
       let reader;
       try {
@@ -11854,9 +11870,10 @@ globalThis.__dcCompressor = {
           redaction_key_epoch: event.redaction_key_epoch,
           redaction_key_storage: event.redaction_key_storage,
           binary_encoding: choice.kind === 'binary' ? 'base64' : 'utf8',
-          source_byte_provenance: event.value != null &&
-            typeof event.value === 'object' &&
-            choice.kind === 'json' ? 'unavailable-parsed-xhr-json' :
+          source_byte_provenance: choice.kind === 'json' &&
+            event.value != null && typeof event.value === 'object' ?
+            'unavailable-parsed-xhr-json' :
+            typeof event.value === 'string' ? 'utf8-derived-text' :
             'browser-observed-bytes'
         }, counts); const context = event.transport === 'websocket' ? 'ws.text.json.string' : 'json.string'; const state = jsonState(context); let decoder = choice.kind === 'binary' ? null :
           new TextDecoder('utf-8', { fatal: true }); let ssePending = '';
@@ -11938,15 +11955,16 @@ globalThis.__dcCompressor = {
           ancestors.add(value);
           try {
             await emit(array ? '[' : '{');
-            const keys = array ? Array.from({ length: value.length },
-              (_, index) => String(index)) : Object.keys(value);
-            for (let index = 0; index < keys.length; index += 1) {
+            const keys = array ? null : Object.keys(value);
+            const length = array ? value.length : keys.length;
+            if (!Number.isSafeInteger(length)) fail('csc-invalid-parsed-json');
+            for (let index = 0; index < length; index += 1) {
               if (index) await emit(',');
               if (!array) {
                 await emit(JSON.stringify(keys[index]));
                 await emit(':');
               }
-              const item = value[keys[index]];
+              const item = value[array ? index : keys[index]];
               await serializeParsedJson(item === undefined && array ? null : item,
                 ancestors, depth + 1);
             }
@@ -11984,7 +12002,9 @@ globalThis.__dcCompressor = {
               await chunkRecord(base64(bytes.subarray(i, i + maxChunk)), 'base64');
             }
           } else if (typeof value === 'string') {
-            const bytes = encoder.encode(value); counts.source = bytes.byteLength;
+            const bytes = encoder.encode(value);
+            counts.source_known = false;
+            counts.derived = bytes.byteLength;
             for (let i = 0; i < bytes.byteLength; i += maxChunk) {
               await chunkRecord(await serializeText(
                 decoder.decode(bytes.subarray(i, i + maxChunk), { stream: true }), false), 'utf8');
@@ -20316,7 +20336,8 @@ Image elapsed: ${formatDuration(imageElapsed)} — Completed: ${imageCompleted}/
       ['Conversation API access/schema', testConversationApiAccessAndSchema],
       ['Worker + Zstd/CSP', testWorkerZstdCsp],
       ['CSC Worker stream + directory', testCscWorkerBoundary],
-      ['CSC dual clone + Worker', testCscDualCloneOwnership]
+      ['CSC dual clone + Worker', testCscDualCloneOwnership],
+      ['CSC COMM Worker processor', testCscCommWorkerProcessing]
     ];
   }
 
@@ -21518,6 +21539,174 @@ Image elapsed: ${formatDuration(imageElapsed)} — Completed: ${imageCompleted}/
       }
     }
     throw new Error('CSC dual-clone witness FAIL: ' + failures.join(' | '));
+  }
+
+  /**
+   * Checks deterministic synthetic bytes inside an isolated Worker sink.
+   * Never sees ChatGPT's real network data or writes a file.
+   * @returns {void} Installs in-Worker synthetic verification callbacks.
+   */
+  function cscCommProcessingProbeWorkerSink() {
+    let verified = 0;
+    let started = 0;
+    let finished = 0;
+    let damaged = false;
+    self.cscCommWriteChunk = async bytes => {
+      const jsonl = new TextDecoder('utf-8', { fatal: true }).decode(bytes);
+      for (const line of jsonl.split('\n').filter(Boolean)) {
+        const frame = JSON.parse(line);
+        if (frame.kind === 'csc-comm-start') {
+          if (frame.binary_encoding !== 'base64') damaged = true;
+          started += 1;
+        } else if (frame.kind === 'csc-comm-body') {
+          if (frame.encoding !== 'base64') damaged = true;
+          const binary = atob(frame.data);
+          for (let i = 0; i < binary.length; i += 1) {
+            if (binary.charCodeAt(i) !==
+                ((Math.imul(verified + i, 29) + 7) & 255)) damaged = true;
+          }
+          verified += binary.length;
+        } else if (frame.kind === 'csc-comm-end') {
+          if (frame.status !== 'completed' ||
+              frame.source_bytes !== verified) damaged = true;
+          finished += 1;
+        }
+      }
+    };
+    self.addEventListener('message', event => {
+      if (event.data?.type === 'csc-comm-probe-report') {
+        self.postMessage({
+          type: 'csc-comm-probe-report', bytes: verified,
+          starts: started, ends: finished, damaged
+        });
+      }
+    });
+  }
+
+  /**
+   * Generates source for the isolated synthetic COMM Worker capability probe.
+   * @returns {string} Synthetic sink plus production Worker processor source.
+   */
+  function cscCommProcessingProbeSource() {
+    return '(' + cscCommProcessingProbeWorkerSink.toString() + ')();\n' +
+      cscCommProcessingWorkerSource();
+  }
+
+  /**
+   * Runs native page Worker capture with only deterministic synthetic bytes.
+   * Keeps the stock synthetic Response intact; transfers only its COMM clone.
+   * @returns {Promise<string>} Exact browser capability test result.
+   */
+  async function testCscCommWorkerProcessing() {
+    const page = typeof unsafeWindow !== 'undefined' ? unsafeWindow : window;
+    const failures = [];
+    for (const [name, realm] of [['page', page], ['userscript', window]]) {
+      if (name === 'userscript' && realm === page) continue;
+      if (typeof realm.Worker !== 'function') {
+        failures.push(name + ': Worker unavailable');
+        continue;
+      }
+      let worker = null;
+      let url = null;
+      try {
+        url = realm.URL.createObjectURL(new realm.Blob(
+          [cscCommProcessingProbeSource()], { type: 'text/javascript' }
+        ));
+        worker = new realm.Worker(url);
+        const messages = [];
+        let crash = null;
+        worker.addEventListener('message', event => messages.push(event.data));
+        worker.addEventListener('error', event => {
+          crash = event.message || 'Worker error';
+        });
+        /**
+         * Waits for one synthetic Worker message or explicitly fails.
+         * @param {Function} condition - Expected nonsecret response predicate.
+         * @returns {Promise<Object>} Matching synthetic Worker message.
+         */
+        async function waitFor(condition) {
+          for (let tries = 0; tries < 400; tries += 1) {
+            if (crash) throw new Error('CSC Worker probe: ' + crash);
+            const found = messages.find(condition);
+            if (found) return found;
+            await new Promise(resolve => setTimeout(resolve, 25));
+          }
+          throw new Error('CSC Worker probe timeout');
+        }
+        worker.postMessage({
+          type: 'csc-comm-configure',
+          options: {
+            mode: 'replay-essentials', origin: 'https://chatgpt.com',
+            binary: true, cross_origin: false, auth_headers: false,
+            all: false
+          }
+        });
+        await waitFor(message => message.type === 'csc-comm-configured');
+        const token = 'synthetic-csc-comm-token-311';
+        const keyBytes = Uint8Array.from({ length: 32 }, (_, i) => i);
+        worker.postMessage({
+          type: 'dc-hmac-key-v2', token, key_bytes: keyBytes
+        }, [keyBytes.buffer]);
+        await waitFor(message => message.type === 'csc-comm-key-ready' &&
+          message.token === token);
+        const count = 512 * 1024 + 11;
+        const bytes = Uint8Array.from({ length: count },
+          (_, i) => (Math.imul(i, 29) + 7) & 255);
+        const original = new Response(bytes, {
+          headers: { 'content-type': 'application/octet-stream' }
+        });
+        const comm = cloneSafely(original);
+        assert(comm && comm.body, 'Synthetic COMM clone missing');
+        const body = comm.body;
+        worker.postMessage({
+          type: 'csc-comm-capture',
+          envelope: {
+            capture_id: 'synthetic-csc311-test', network_sequence: 1,
+            capture_order: 1, captured_at_epoch_ms: 10000,
+            captured_at_mono_ms: 42, page_instance_id: 'synthetic-page',
+            clock_domain: 'synthetic-page',
+            connection_id: 'synthetic-request',
+            transport: 'fetch', direction: 'response',
+            url: 'https://chatgpt.com/backend-api/synthetic-test',
+            headers: [['content-type', 'application/octet-stream']],
+            body_type: 'application/octet-stream', body_available: true,
+            body_state: 'stream-transferred', body, complete: true,
+            hmac_token: token, redaction_format: 'dc-secret-marker/2',
+            redaction_scope: '00112233445566778899aabbccddeeff',
+            redaction_key_generation: '00112233445566778899aabbccddeeff',
+            redaction_key_epoch: 1,
+            redaction_key_storage: 'tampermonkey-script-installation'
+          }
+        }, [body]);
+        const outcome = await waitFor(message =>
+          message.type === 'csc-comm-status' &&
+          message.capture_id === 'synthetic-csc311-test');
+        assert(outcome.status === 'completed' && outcome.source_bytes === count &&
+          outcome.durable === false, 'Worker COMM completion mismatch');
+        assert(body.locked, 'Transferred COMM stream did not become locked');
+        worker.postMessage({ type: 'csc-comm-probe-report' });
+        const report = await waitFor(message =>
+          message.type === 'csc-comm-probe-report');
+        assert(!report.damaged && report.bytes === count &&
+          report.starts === 1 && report.ends === 1,
+          'Sanitizing serializer changed synthetic binary data');
+        const untouched = new Uint8Array(await original.arrayBuffer());
+        assert(untouched.length === count,
+          'Original stock Response length changed');
+        for (let i = 0; i < count; i += 1) {
+          assert(untouched[i] === ((Math.imul(i, 29) + 7) & 255),
+            'Original stock body changed at byte ' + i);
+        }
+        return name + ' Worker; binary ' + count + ' bytes exact; ' +
+          'start/body/end verified; V2 key token; stock intact';
+      } catch (error) {
+        failures.push(name + ': ' + errorMessage(error));
+      } finally {
+        worker?.terminate();
+        if (url) realm.URL.revokeObjectURL(url);
+      }
+    }
+    throw new Error('CSC COMM Worker test failed: ' + failures.join(' | '));
   }
   // BEGIN Issue #163 WorkStack continuation state
   /** DOM id of the floating WorkStack continuation control. */
