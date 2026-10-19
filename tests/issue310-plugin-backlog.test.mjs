@@ -442,3 +442,21 @@ test('new page traffic cannot bypass bounded retry timer for a failing host', as
   assert.equal(attempts, 2, 'only the scheduled retry can attempt the failed head again');
   assert.equal(h.pendingRetries().length, 1);
 });
+
+test('provider handler exception details never copy private values to GEN diagnostics', async () => {
+  const h = harness();
+  h.publish(h.event(1, 'request'));
+  const privateValue = 'PRIVATE_PROVIDER_BODY_TOKEN_88421';
+  const host = {
+    request() { throw Error('Host failure included ' + privateValue); },
+    response() { return true; }, navigation() { return true; }
+  };
+  h.api.connect(host);
+  await settle(h);
+  assert.equal(h.api.snapshot().failures, 1);
+  assert.equal(h.api.snapshot().queued, 1);
+  assert.equal(h.warnings.some(x => x.name === 'csc-plugin-delivery-failed'), true);
+  assert.doesNotMatch(JSON.stringify(h.warnings), /PRIVATE_PROVIDER_BODY_TOKEN_88421/,
+    'No untrusted provider error text may escape into persistent GEN logs');
+  h.api.disconnect(host);
+});
