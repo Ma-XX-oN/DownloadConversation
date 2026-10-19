@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         ChatGPT Conversation Markdown Recorder
 // @namespace    https://chatgpt.com/
-// @version      1.11.7
+// @version      1.11.7-issue.311.7
 // @description  Exports the current ChatGPT conversation directly from the Conversation API as Markdown or JSONL.
 // @match        https://chatgpt.com/*
 // @match        https://chat.openai.com/*
@@ -7537,11 +7537,12 @@ globalThis.__dcCompressor = {
    *
    * @param {Request|null} request - Page Request when construction succeeded.
    * @param {string} requestUrl - Effective request URL.
+   * @param {Object|null} captured - Earliest canonical network event.
    * @returns {Object} Correlation state for the response.
    */
-  function stockNetworkTraceFetchStart(request, requestUrl) {
-    const sequence = ++stockNetworkSequence;
-    const startedAt = performance.now();
+  function stockNetworkTraceFetchStart(request, requestUrl, captured = null) {
+    const sequence = captured?.network_sequence ?? ++stockNetworkSequence;
+    const startedAt = captured?.captured_at_mono_ms ?? performance.now();
     let sameOrigin = false;
     try { sameOrigin = new URL(requestUrl, location.href).origin === location.origin; } catch {}
     const trace = {
@@ -7661,7 +7662,7 @@ globalThis.__dcCompressor = {
       /(?:json|text|event-stream|x-component|javascript)/i.test(contentType) ||
       /\/backend-api\/(?:conversation|conversations|f\/conversation)(?:\/|\?|$)/.test(trace.url)
     );
-    if (!inspectable) return;
+    if (!inspectable || cscCommWorker) return;
     const cloned = cloneSafely(response);
     if (cloned) void stockNetworkInspectFetchBody(cloned, trace);
   }
@@ -7671,13 +7672,14 @@ globalThis.__dcCompressor = {
    *
    * @param {XMLHttpRequest} xhr - Page XHR instance.
    * @param {Object} info - Captured XHR method/URL/header metadata.
+   * @param {Object|null} captured - Earliest canonical network event.
    * @returns {Object} Correlation state for loadend.
    */
-  function stockNetworkTraceXhrStart(xhr, info) {
-    const sequence = ++stockNetworkSequence;
+  function stockNetworkTraceXhrStart(xhr, info, captured = null) {
+    const sequence = captured?.network_sequence ?? ++stockNetworkSequence;
     const trace = {
       sequence,
-      started_at: performance.now(),
+      started_at: captured?.captured_at_mono_ms ?? performance.now(),
       method: String(info?.method ?? 'GET').toUpperCase(),
       url: stockNetworkSafeUrl(info?.url ?? '')
     };
@@ -11116,6 +11118,1036 @@ globalThis.__dcCompressor = {
       ...item
     });
   }
+// BEGIN #309 canonical CSC ingress. The COMM Worker is registered by #311.
+  /** Identity of the current page/clock domain, never reused after reload. */
+  const cscPageInstanceId = crypto.randomUUID();
+  /** Order of network interceptions, independent of delivery completion. */
+  let cscCaptureOrder = 0;
+  /** COMM Worker receiver, or null until the downstream Worker is ready. */
+  let cscCommWorker = null;
+  /** Main-thread plugin-queue ingress supplied by #310, not a COMM queue. */
+  let cscPluginIngress = null;
+
+  /**
+   * Attaches the dedicated COMM Worker without changing the main-thread plugin.
+   *
+   * @param {Worker|null} worker - Worker owning the receiving COMM queue.
+   * @returns {void} No value is returned.
+   */
+  function cscBindCommWorker(worker) {
+    assert(worker === null || typeof worker?.postMessage === 'function',
+      'CSC COMM receiver must implement Worker.postMessage.');
+    cscCommWorker = worker;
+  }
+
+  /**
+   * Registers synchronous delivery to the independently owned plugin queue.
+   *
+   * @param {Function|null} publish - Plugin ingress or null on disposal.
+   * @returns {void} No value is returned.
+   */
+  function cscBindPluginIngress(publish) {
+    assert(publish === null || typeof publish === 'function',
+      'CSC plugin ingress must be a function.');
+    cscPluginIngress = publish;
+  }
+
+  /**
+   * Capture clocks before any asynchronous work, body clone or queueing.
+   * network_sequence is shared with existing provider-host network correlation.
+   *
+   * @param {string} transport - fetch, xhr or websocket.
+   * @param {string} direction - request, response, incoming, outgoing or event.
+   * @param {string|null} connectionId - Stable connection/request identifier.
+   * @param {Object|null} parent - Earlier event for the same exchange.
+   * @returns {Object} Frozen original-time event identity.
+   */
+  function cscCaptureNow(transport, direction, connectionId = null, parent = null) {
+    const captured_at_epoch_ms = Date.now();
+    const captured_at_mono_ms = performance.now();
+    const network_sequence = ++stockNetworkSequence;
+    const capture_order = ++cscCaptureOrder;
+    return Object.freeze({
+      page_instance_id: cscPageInstanceId,
+      clock_domain: cscPageInstanceId,
+      connection_id: connectionId ?? crypto.randomUUID(),
+      capture_id: cscPageInstanceId + ':' + network_sequence,
+      parent_capture_id: parent?.capture_id ?? null,
+      request_capture_id: parent?.request_capture_id ?? parent?.capture_id ?? null,
+      network_sequence,
+      capture_order,
+      captured_at_epoch_ms,
+      captured_at_mono_ms,
+      transport,
+      direction
+    });
+  }
+
+  /**
+   * Convert headers to an unsanitized, structured-cloneable snapshot.
+   * Redaction belongs exclusively to the Worker, never to the plugin branch.
+   *
+   * @param {Object|null} headers - Native Headers or XHR header map.
+   * @returns {Array} Raw name/value pairs without a native Headers instance.
+   */
+  function cscRawHeaderEntries(headers) {
+    if (!headers) return [];
+    if (typeof headers.entries === 'function') {
+      try { return Array.from(headers.entries(), ([key, value]) => [key, value]); }
+      catch { return []; }
+    }
+    return Object.entries(headers).map(([key, value]) => [key, String(value)]);
+  }
+
+  /**
+   * Report a transport failure without logging body, credential or raw headers.
+   *
+   * @param {Object} stamp - Original event identity.
+   * @param {string} stage - Failed stage.
+   * @param {unknown} error - Failure cause.
+   * @returns {void} No value is returned.
+   */
+  function cscIngressFailure(stamp, stage, error) {
+    logDiagnostic('warnings', 'csc-ingress-incomplete', {
+      capture_id: stamp.capture_id,
+      network_sequence: stamp.network_sequence,
+      stage,
+      error: boundedDiagnosticText(errorMessage(error), 500)
+    });
+  }
+
+  /**
+   * Publish one captured event to two independently owned body branches.
+   * The plugin owns one native clone; the COMM Worker owns another native
+   * clone whose stream is transferred, not cloned again at postMessage().
+   * Neither consumer can read or mutate the stock page-owned Request/Response.
+   *
+   * @param {Object} stamp - Captured event identity.
+   * @param {Object} meta - Cloneable transport metadata.
+   * @param {Object|null} nativeBodyOwner - Stock Request/Response, never shared.
+   * @param {unknown} availableValue - Already available XHR/WS body, if any.
+   * @returns {void} No value is returned.
+   */
+  function cscFanOut(stamp, meta, nativeBodyOwner = null, availableValue = null) {
+    const envelope = Object.freeze({ ...stamp, ...meta });
+    if (cscCommWorker) {
+      let cloned = null;
+      try {
+        if (nativeBodyOwner) {
+          cloned = cloneSafely(nativeBodyOwner);
+          if (!cloned) throw new Error('Native Request/Response clone unavailable.');
+        }
+        const body = cloned?.body ?? null;
+        const body_state = nativeBodyOwner
+          ? (body ? 'stream-transferred' : 'unavailable')
+          : (availableValue === null ? 'none-or-unavailable' : 'cloneable-value');
+        // Never transfer a page-owned ArrayBuffer. postMessage clones XHR/WS data.
+        cscCommWorker.postMessage({
+          type: 'csc-comm-capture',
+          envelope: { ...envelope, body_state, body, value: availableValue }
+        }, body ? [body] : []);
+      } catch (error) {
+        cscIngressFailure(stamp, 'worker-transfer', error);
+        if (cloned?.body && !cloned.body.locked) {
+          void cancelReadableBodyQuietly(cloned.body);
+        }
+      }
+    }
+    if (cscPluginIngress) {
+      let source = null;
+      let sourceAvailable = false;
+      let sourceIncomplete = false;
+      try {
+        if (nativeBodyOwner) {
+          // This is the plugin-owned native clone, independent of COMM.
+          // Never expose the original one-shot page-owned body to #310.
+          source = cloneSafely(nativeBodyOwner);
+          if (!source) throw new Error('Plugin Request/Response clone unavailable.');
+        } else if (availableValue && typeof availableValue === 'object') {
+          // XHR/WS page-owned mutable bytes must never alias the plugin.
+          source = structuredClone(availableValue);
+        } else {
+          source = availableValue;
+        }
+        sourceAvailable = source !== null;
+      } catch (error) {
+        sourceIncomplete = true;
+        cscIngressFailure(stamp, 'plugin-payload-clone', error);
+      }
+      try {
+        cscPluginIngress(Object.freeze({
+          envelope, source, source_available: sourceAvailable,
+          source_incomplete: sourceIncomplete
+        }));
+      } catch (error) {
+        cscIngressFailure(stamp, 'plugin-delivery', error);
+      }
+    }
+  }
+
+  /**
+   * Call stock fetch unchanged while recording synchronous dispatch failures.
+   *
+   * @param {Function} nativeFetch - Original page fetch implementation.
+   * @param {Object} receiver - Original this value.
+   * @param {Array} args - Original fetch arguments.
+   * @param {Object} requestStamp - Earliest request capture.
+   * @param {Object} trace - Shared stock-network correlation.
+   * @param {string} url - Original request URL.
+   * @returns {Promise<Response>} Unmodified native fetch result.
+   */
+  function cscDispatchObservedFetch(nativeFetch, receiver, args, requestStamp, trace, url) {
+    try {
+      return nativeFetch.apply(receiver, args);
+    } catch (error) {
+      const stamp = cscCaptureNow('fetch', 'error',
+        requestStamp.connection_id, requestStamp);
+      cscPublishValue(stamp, {
+        method: trace.method, request_url: url,
+        error_name: String(error?.name ?? 'Error'),
+        body_available: false, complete: false
+      });
+      throw error;
+    }
+  }
+
+  /**
+   * Preserve native WebSocket send/throw semantics and report rejected attempts.
+   *
+   * @param {Function} nativeSend - Original WebSocket send.
+   * @param {WebSocket} socket - Stock page socket.
+   * @param {unknown} data - Original frame bytes or text.
+   * @param {Object} connection - WebSocket connection capture.
+   * @param {Object} attempt - Original send-attempt capture.
+   * @param {string} url - WebSocket endpoint.
+   * @returns {unknown} Original native send return value.
+   */
+  function cscDispatchSocketSend(nativeSend, socket, data, connection, attempt, url) {
+    let result;
+    try {
+      result = nativeSend.call(socket, data);
+    } catch (error) {
+      const failure = cscCaptureNow('websocket', 'error',
+        connection.connection_id, attempt);
+      cscPublishValue(failure, {
+        url, event: 'send-rejected',
+        error_name: String(error?.name ?? 'Error'),
+        body_available: false, complete: false
+      });
+      throw error;
+    }
+    if (!cscCommWorker) {
+      void communicationLogWebSocketSend(url, data)
+        .catch(error => communicationLogReportFailure('websocket-send', error));
+    }
+    return result;
+  }
+
+  /**
+   * Snapshot an XHR body without reading a stream or altering page-owned bytes.
+   *
+   * @param {XMLHttpRequest} xhr - Observed XHR.
+   * @returns {Object} Available value and explicit body availability.
+   */
+  function cscXhrBodySnapshot(xhr) {
+    try {
+      const type = xhr.responseType || 'text';
+      if (type === 'text') {
+        return { value: xhr.responseText, body_type: 'text', body_available: true };
+      }
+      if (type === 'json') {
+        return { value: xhr.response, body_type: 'json', body_available: true };
+      }
+      if (type === 'arraybuffer' && xhr.response &&
+          Object.prototype.toString.call(xhr.response) === '[object ArrayBuffer]') {
+        return { value: xhr.response, body_type: 'binary', body_available: true };
+      }
+      if (type === 'blob' && xhr.response &&
+          Object.prototype.toString.call(xhr.response) === '[object Blob]') {
+        return { value: xhr.response, body_type: 'blob', body_available: true };
+      }
+      return { value: null, body_type: type, body_available: false };
+    } catch {
+      return { value: null, body_type: 'unavailable', body_available: false };
+    }
+  }
+
+  /**
+   * Publish a fetch request/response through the canonical ingress.
+   *
+   * @param {Object} stamp - Event identity from the earliest observation.
+   * @param {Request|Response|null} value - Unmodified stock network object.
+   * @param {Object} metadata - Method, URL, status and other raw metadata.
+   * @returns {void} No value is returned.
+   */
+  function cscPublishFetch(stamp, value, metadata) {
+    cscFanOut(stamp, {
+      ...metadata,
+      headers: cscRawHeaderEntries(value?.headers),
+      body_type: value?.headers?.get?.('content-type') ?? null,
+      body_available: Boolean(value?.body),
+      response_type: value?.type ?? null
+    }, value);
+  }
+
+  /**
+   * Publish already available XHR/WS data by structured clone, never transfer.
+   *
+   * @param {Object} stamp - Earliest synchronous observation.
+   * @param {Object} metadata - Transport event metadata.
+   * @param {unknown} data - Page-owned data or explicitly unavailable null.
+   * @returns {void} No value is returned.
+   */
+  function cscPublishValue(stamp, metadata, data = null) {
+    cscFanOut(stamp, metadata, null, data);
+  }
+  // END #309 canonical CSC ingress.
+
+  /**
+   * Installs the isolated COMM processor on a dedicated Worker scope.
+   * @param {Object} scope - Worker message target.
+   * @param {Object} sink - Worker-local output writer.
+   * @returns {Object} Output from cscCommWorkerProcessing.
+   */
+
+  function cscCommWorkerProcessing(scope, sink) {
+    const encoder = new TextEncoder(); const maxQueue = 16; const maxChunk = 32768; const maxValue = 1024 * 1024; const allowedModes = ['replay-essentials', 'everything']; const records = []; const stagedKeys = new Map();
+    let working = false; let key = null; let keyGeneration = null; let scopeId = null; let policy = Object.freeze({
+      mode: 'replay-essentials', binary: false,
+      cross_origin: false, auth_headers: false, all: false,
+      origin: 'https://chatgpt.com'
+    }); const statuses = new Set([
+      'selected', 'unselected', 'unsupported', 'inaccessible',
+      'rejected', 'failed', 'completed'
+    ]);
+    /**
+     * Rejects an invariant violation without leaking source content.
+     * @param {string} reason - Input reason for fail.
+     * @returns {never} Output from fail.
+     */
+    function fail(reason) {
+      throw new Error(reason);
+    }
+    /**
+     * Validates and freezes Worker capture options.
+     * @param {Object} next - Input next for options.
+     * @returns {void} No value is returned.
+     */
+    function options(next) {
+      if (!next || !allowedModes.includes(next.mode) ||
+          typeof next.origin !== 'string' ||
+          !/^https?:\/\/[^/]+$/.test(next.origin)) fail('csc-invalid-policy');
+      for (const flag of ['binary', 'cross_origin', 'auth_headers', 'all']) {
+        if (typeof next[flag] !== 'boolean') fail('csc-invalid-policy');
+      }
+      policy = Object.freeze({
+        mode: next.mode, origin: next.origin,
+        binary: next.binary || next.all,
+        cross_origin: next.cross_origin || next.all,
+        auth_headers: next.auth_headers || next.all,
+        all: next.all
+      });
+    }
+    /**
+     * Reports only nonsecret processing provenance to the page.
+     * @param {Object} event - Input event for sendStatus.
+     * @param {string} status - Input status for sendStatus.
+     * @param {string} reason - Input reason for sendStatus.
+     * @param {Object} counts - Input counts for sendStatus.
+     * @returns {void} No value is returned.
+     */
+    function sendStatus(event, status, reason, counts) {
+      if (!statuses.has(status)) fail('csc-invalid-status');
+      // Only nonsecret identifiers and counts cross back to the page.
+      scope.postMessage({
+        type: 'csc-comm-status', capture_id: String(event.capture_id ?? ''),
+        network_sequence: Number(event.network_sequence ?? 0),
+        status, reason, source_bytes: counts?.source_known === false ? null : counts?.source ?? 0,
+        derived_json_utf8_bytes: counts?.source_known === false ? counts.derived : null,
+        emitted_bytes: counts?.emitted ?? 0,
+        durable: false
+      });
+    }
+    /**
+     * Maps private error values onto public nonsecret failure classes.
+     * @param {unknown} error - Input error for safeError.
+     * @returns {string} Output from safeError.
+     */
+    function safeError(error) {
+      const name = String(error?.message ?? ''); return /^csc-[a-z0-9-]+$/.test(name) ? name : 'csc-processing-error';
+    }
+    /**
+     * Identifies explicitly authentication-bearing header names.
+     * @param {string} name - Input name for isAuth.
+     * @returns {boolean} Output from isAuth.
+     */
+    function isAuth(name) {
+      return /^(?:authorization|proxy-authorization|cookie|set-cookie|x-api-key|x-auth-token)$/i.test(name);
+    }
+    /**
+     * Encodes a fixed digest prefix in lower-case hexadecimal.
+     * @param {Uint8Array} bytes - Input bytes for toHex.
+     * @param {number} count - Input count for toHex.
+     * @returns {string} Output from toHex.
+     */
+    function toHex(bytes, count) {
+      return Array.from(new Uint8Array(bytes).slice(0, count),
+        byte => byte.toString(16).padStart(2, '0')).join('');
+    }
+    /**
+     * Checks the canonical unpadded Base64URL alphabet and length.
+     * @param {string} value - Input value for isBase64Url.
+     * @returns {boolean} Output from isBase64Url.
+     */
+    function isBase64Url(value) {
+      if (!/^[A-Za-z0-9_-]{4,256}$/.test(value) || value.length % 4 === 1) return false; const alphabet = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-_'; const mask = value.length % 4 === 2 ? 15 : value.length % 4 === 3 ? 3 : 0;
+      if ((alphabet.indexOf(value.at(-1)) & mask) !== 0) return false;
+      try { return atob(value.replace(/-/g, '+').replace(/_/g, '/') +
+        '='.repeat((4 - value.length % 4) % 4)).length > 0; }
+      catch { return false; }
+    }
+    /**
+     * Identifies known V1 secret shapes within a specific context.
+     * @param {string} value - Input value for candidate.
+     * @param {string} context - Input context for candidate.
+     * @param {boolean} classified - Input classified for candidate.
+     * @returns {Array} Output from candidate.
+     */
+    function candidate(value, context, classified) {
+      const supported = ['json.string', 'sse.data.json.string',
+        'ws.text.json.string', 'http.header.value', 'http.query.value'];
+      if (!supported.includes(context)) fail('csc-unsupported-context'); const found = [];
+      if (/^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/.test(value)) {
+        found.push({ type: 'U', params: null });
+      } else if (/^g-p-[0-9a-f]{32}$/.test(value)) {
+        found.push({ type: 'P', params: null });
+      } else {
+        if (/^[0-9a-f]{2,256}$/.test(value) && value.length % 2 === 0) {
+          found.push({ type: 'H', params: String(value.length) });
+        }
+        if (isBase64Url(value)) found.push({ type: 'B', params: String(value.length) }); const parts = value.split('.');
+        if (parts.length === 3 && parts.every(part => part.length >= 4 &&
+            part.length <= 512 && isBase64Url(part)) &&
+            parts.join('').length <= 1024) {
+          try {
+            const parsed = parts.slice(0, 2).map(part =>
+              JSON.parse(new TextDecoder('utf-8', { fatal: true }).decode(
+                Uint8Array.from(atob(part.replace(/-/g, '+').replace(/_/g, '/') +
+                  '='.repeat((4 - part.length % 4) % 4)), ch => ch.charCodeAt(0))
+              )));
+            if (parsed.every(p => p !== null && typeof p === 'object' && !Array.isArray(p))) {
+              found.push({ type: 'J', params: parts.map(p => p.length).join(',') });
+            }
+          } catch {}
+        }
+      }
+      if (classified && found.length === 0 && value.length > 0) {
+        const points = Array.from(value);
+        if (points.length <= 128 && points.every(ch =>
+          !/[\u0000-\u001f\u007f]/u.test(ch) &&
+          !/[\ud800-\udfff]/u.test(ch))) {
+          found.push({
+            type: 'O', params: points.map(ch => encoder.encode(ch).length).join('')
+          });
+        }
+      }
+      return found;
+    }
+    /**
+     * Encodes a versioned checked HMAC secret marker.
+     * @param {string} value - Input value for marker.
+     * @param {string} context - Input context for marker.
+     * @param {boolean} classified - Input classified for marker.
+     * @returns {Promise<string|null>} Output from marker.
+     */
+    async function marker(value, context, classified = false) {
+      if (!key) fail('csc-key-unavailable');
+      if (typeof value !== 'string' ||
+          /[\ud800-\udfff]/u.test(value.replace(/[\ud800-\udbff][\udc00-\udfff]/gu, ''))) {
+        fail('csc-invalid-unicode');
+      }
+      if (/\[[0-9a-f]{32}\/[UHBPJO]\/[0-9a-f]{48}/.test(value)) fail('csc-marker-collision'); const bytes = encoder.encode(value);
+      if (bytes.length > maxValue) fail('csc-candidate-too-long'); const found = candidate(value, context, classified);
+      if (found.length > 1) fail('csc-ambiguous-secret-type');
+      if (!found.length) {
+        if (classified) fail('csc-unsupported-sensitive-value'); return null;
+      }
+      const length = new Uint8Array(4);
+      new DataView(length.buffer).setUint32(0, bytes.length, false); const prefix = encoder.encode('DC-SECRET-ID-V1\0'); const message = new Uint8Array(prefix.length + 4 + bytes.length);
+      message.set(prefix); message.set(length, prefix.length);
+      message.set(bytes, prefix.length + 4); const id = toHex(await crypto.subtle.sign('HMAC', key, message), 24); const chosen = found[0]; const body = chosen.type + '/' + id +
+        (chosen.params === null ? '' : '/' + chosen.params); const check = toHex(await crypto.subtle.digest('SHA-256',
+        encoder.encode('DC-SECRET-MARKER-V1\0' + body)), 16); return '[' + check + '/' + body + ']';
+    }
+    /**
+     * Transforms URL query values without persisting credentials.
+     * @param {string} value - Input value for safeUrl.
+     * @returns {Promise<string>} Output from safeUrl.
+     */
+    async function safeUrl(value) {
+      let url;
+      try { url = new URL(value, policy.origin); }
+      catch { fail('csc-invalid-url'); }
+      if (!['http:', 'https:', 'ws:', 'wss:'].includes(url.protocol)) {
+        fail('csc-unsupported-url-scheme');
+      }
+      // URLSearchParams canonicalises escaping; source counts remain distinct.
+      for (const [name, val] of url.searchParams) {
+        const classified = /(?:auth|cookie|session|token|secret|password|key|signature)/i.test(name); const replacement = await marker(val, 'http.query.value', classified);
+        if (replacement !== null) url.searchParams.set(name, replacement);
+      }
+      url.username = ''; url.password = ''; url.hash = ''; return url.href;
+    }
+    /**
+     * Filters headers by explicit risk and option policy.
+     * @param {Array|String} source - Input source for safeHeaders.
+     * @returns {Promise<Object>} Output from safeHeaders.
+     */
+    async function safeHeaders(source) {
+      const pairs = Array.isArray(source) ? source :
+        typeof source === 'string' ? source.split(/\r?\n/).filter(Boolean)
+          .map(line => [line.slice(0, line.indexOf(':')), line.slice(line.indexOf(':') + 1).trim()])
+          : []; const safe = []; const omitted = [];
+      for (const pair of pairs) {
+        if (!Array.isArray(pair) || pair.length !== 2 ||
+            typeof pair[0] !== 'string' || typeof pair[1] !== 'string' ||
+            !/^[!#$%&'*+.^_\x60|~0-9A-Za-z-]+$/.test(pair[0])) {
+          fail('csc-malformed-header');
+        }
+        const name = pair[0].toLowerCase();
+        if (isAuth(name)) {
+          if (!policy.auth_headers) {
+            omitted.push(name);
+          } else {
+            safe.push([name, await marker(pair[1], 'http.header.value', true)]);
+          }
+          continue;
+        }
+        // Only known structural headers are safe without inspecting a secret.
+        if (!['content-type', 'content-length', 'content-encoding',
+          'accept', 'accept-encoding', 'cache-control',
+          'transfer-encoding'].includes(name)) {
+          omitted.push(name);
+          continue;
+        }
+        if (/[\r\n]/.test(pair[1])) fail('csc-malformed-header');
+        safe.push([name, pair[1]]);
+      }
+      return { safe, omitted };
+    }
+    /**
+     * Selects a capture outcome and transport codec.
+     * @param {Object} event - Input event for selected.
+     * @returns {Object} Output from selected.
+     */
+    function selected(event) {
+      if (event.body_state === 'unavailable' ||
+          (event.body_available === false && event.value == null)) {
+        return { status: 'inaccessible', reason: 'csc-body-inaccessible' };
+      }
+      const url = String(event.url ?? event.request_url ?? event.response_url ?? ''); let parsed;
+      try { parsed = new URL(url, policy.origin); }
+      catch { return { status: 'rejected', reason: 'csc-invalid-url' }; }
+      const comparableOrigin = parsed.protocol === 'wss:' ? 'https://' + parsed.host :
+        parsed.protocol === 'ws:' ? 'http://' + parsed.host : parsed.origin;
+      if (comparableOrigin !== policy.origin && !policy.cross_origin) {
+        return { status: 'unselected', reason: 'csc-cross-origin-not-selected' };
+      }
+      const type = String(event.body_type ?? event.response_type ??
+        (Array.isArray(event.headers) ? event.headers.find(h =>
+          String(h[0]).toLowerCase() === 'content-type')?.[1] : '') ?? '').toLowerCase(); const isJson = /(?:^|\/)(?:json|[^/;]+\+json)(?:;|$)/.test(type) ||
+        (event.transport === 'websocket' && typeof event.value === 'string' &&
+          /^[\s]*[\[{]/.test(event.value)); const isSse = type.startsWith('text/event-stream'); const raw = event.value;
+      const binaryValue = Object.prototype.toString.call(raw) === '[object ArrayBuffer]' ||
+        Object.prototype.toString.call(raw) === '[object Blob]' ||
+        ArrayBuffer.isView(raw);
+      const binary = binaryValue || type.includes('octet-stream') ||
+        type.includes('image/') || type.includes('audio/') ||
+        type.includes('video/') || event.body_type === 'binary' ||
+        event.response_type === 'arraybuffer';
+      if (binary && !policy.binary) {
+        return { status: 'unselected', reason: 'csc-binary-not-selected' };
+      }
+      if (binary) return { status: 'selected', kind: 'binary' };
+      if (isSse) return { status: 'selected', kind: 'sse' };
+      if (isJson) return { status: 'selected', kind: 'json' };
+      if (policy.mode === 'everything') {
+        return { status: 'unsupported', reason: 'csc-unsupported-text-format' };
+      }
+      return { status: 'unselected', reason: 'csc-outside-replay-scope' };
+    }
+    /**
+     * Creates a fresh bounded lexical parser state.
+     * @param {string} context - Input context for jsonState.
+     * @returns {Object} Output from jsonState.
+     */
+    function jsonState(context) {
+      return { context, stack: [], root: 'value', quoted: false, escaped: false,
+        token: '', tokenBytes: 0, role: null, primitive: '' };
+    }
+    /**
+     * Determines whether a JSON value is currently legal.
+     * @param {Object} state - Input state for expectsValue.
+     * @returns {boolean} Output from expectsValue.
+     */
+    function expectsValue(state) {
+      const frame = state.stack.at(-1); return frame ? frame.phase === 'value' || frame.phase === 'valueOrEnd'
+        : state.root === 'value';
+    }
+    /**
+     * Finalises one JSON value within its containing frame.
+     * @param {Object} state - Input state for complete.
+     * @returns {void} No value is returned.
+     */
+    function complete(state) {
+      const frame = state.stack.at(-1);
+      if (!frame) {
+        if (state.root !== 'value') fail('csc-invalid-json'); state.root = 'done';
+      } else {
+        if (!['value', 'valueOrEnd'].includes(frame.phase)) fail('csc-invalid-json');
+        frame.phase = 'commaOrEnd';
+      }
+    }
+    /**
+     * Validates a completed JSON primitive token.
+     * @param {Object} state - Input state for primitive.
+     * @param {Array} result - Input result for primitive.
+     * @returns {void} No value is returned.
+     */
+    function primitive(state, result) {
+      try {
+        const parsed = JSON.parse(state.primitive);
+        if (parsed !== null && typeof parsed !== 'boolean' &&
+            (typeof parsed !== 'number' || !Number.isFinite(parsed))) fail('csc-invalid-json');
+      } catch { fail('csc-invalid-json'); }
+      result.push(state.primitive); state.primitive = ''; complete(state);
+    }
+    /**
+     * Sanitizes one incrementally decoded JSON fragment.
+     * @param {Object} state - Input state for jsonFeed.
+     * @param {string} input - Input input for jsonFeed.
+     * @param {boolean} flush - Input flush for jsonFeed.
+     * @returns {Promise<string>} Output from jsonFeed.
+     */
+    async function jsonFeed(state, input, flush = false) {
+      const result = [];
+      for (const ch of input) {
+        if (state.quoted) {
+          state.token += ch; state.tokenBytes += encoder.encode(ch).byteLength;
+          if (state.tokenBytes > maxValue) fail('csc-candidate-too-long');
+          if (state.escaped) state.escaped = false;
+          else if (ch === '\\') state.escaped = true;
+          else if (ch === '"') {
+            let value;
+            try { value = JSON.parse(state.token); } catch { fail('csc-invalid-json'); }
+            if (state.role === 'key') {
+              state.stack.at(-1).key = value; state.stack.at(-1).phase = 'colon'; result.push(state.token);
+            } else {
+              const frame = state.stack.at(-1); const classified = /(?:authorization|cookie|session|jwt|secret|token|api[_-]?key|password|credential)/i
+                .test(String(frame?.key ?? '')); const replacement = await marker(value, state.context, classified); result.push(replacement === null ? state.token : JSON.stringify(replacement));
+              complete(state);
+            }
+            state.quoted = false; state.token = ''; state.tokenBytes = 0; state.role = null;
+          }
+          continue;
+        }
+        if (state.primitive) {
+          if (!/[\s,\]\}]/.test(ch)) {
+            state.primitive += ch;
+            if (state.primitive.length > 128) fail('csc-invalid-json');
+            continue;
+          }
+          primitive(state, result);
+        }
+        if (/\s/.test(ch)) { result.push(ch); continue; }
+        const frame = state.stack.at(-1);
+        if (ch === '"') {
+          const keyRole = frame?.kind === 'object' &&
+            ['keyOrEnd', 'key'].includes(frame.phase);
+          if (!keyRole && !expectsValue(state)) fail('csc-invalid-json'); state.quoted = true; state.role = keyRole ? 'key' : 'value'; state.token = '"'; state.tokenBytes = 1;
+        } else if (ch === '{' || ch === '[') {
+          if (!expectsValue(state)) fail('csc-invalid-json'); state.stack.push(ch === '{'
+            ? { kind: 'object', phase: 'keyOrEnd', key: null }
+            : { kind: 'array', phase: 'valueOrEnd' }); result.push(ch);
+        } else if (ch === '}' || ch === ']') {
+          const kind = ch === '}' ? 'object' : 'array';
+          if (!frame || frame.kind !== kind ||
+              !['keyOrEnd', 'valueOrEnd', 'commaOrEnd'].includes(frame.phase)) fail('csc-invalid-json'); state.stack.pop(); complete(state); result.push(ch);
+        } else if (ch === ':') {
+          if (!frame || frame.kind !== 'object' || frame.phase !== 'colon') fail('csc-invalid-json');
+          frame.phase = 'value'; result.push(ch);
+        } else if (ch === ',') {
+          if (!frame || frame.phase !== 'commaOrEnd') fail('csc-invalid-json');
+          frame.phase = frame.kind === 'object' ? 'key' : 'value';
+          frame.key = null; result.push(ch);
+        } else if (/[-0-9tfn]/.test(ch) && expectsValue(state)) {
+          state.primitive = ch;
+        } else fail('csc-invalid-json');
+      }
+      if (flush) {
+        if (state.primitive) primitive(state, result);
+        if (state.quoted || state.stack.length || state.root !== 'done') fail('csc-incomplete-json');
+      }
+      return result.join('');
+    }
+    /**
+     * Writes one safe, framed JSONL record to the Worker sink.
+     * @param {Object} record - Input record for writeFrame.
+     * @param {Object} counters - Input counters for writeFrame.
+     * @returns {Promise<void>} Output from writeFrame.
+     */
+    async function writeFrame(record, counters) {
+      if (!sink || typeof sink.write !== 'function') fail('csc-writer-unavailable'); const bytes = encoder.encode(JSON.stringify(record) + '\n'); await sink.write(bytes);
+      counters.emitted += bytes.byteLength;
+    }
+    /**
+     * Converts a bounded binary chunk into transport-safe Base64.
+     * @param {Uint8Array} bytes - Input bytes for base64.
+     * @returns {string} Output from base64.
+     */
+    function base64(bytes) {
+      let result = '';
+      for (const b of bytes) result += String.fromCharCode(b); return btoa(result);
+    }
+    /**
+     * Serializes COMM records in one pass.
+     * @param {Object} event - Input event for process.
+     * @returns {Promise<void>} Output from process.
+     */
+    async function process(event) {
+      const counts = { source: 0, emitted: 0, derived: 0, source_known: true };
+      const choice = selected(event);
+      if (choice.status !== 'selected') {
+        try {
+          if (event.body?.cancel) await event.body.cancel();
+          await writeFrame({
+            kind: 'csc-comm-selection', schema: 1,
+            capture_id: event.capture_id,
+            network_sequence: event.network_sequence,
+            capture_order: event.capture_order,
+            captured_at_epoch_ms: event.captured_at_epoch_ms,
+            captured_at_mono_ms: event.captured_at_mono_ms,
+            transport: event.transport, direction: event.direction,
+            status: choice.status, reason: choice.reason,
+            body_captured: false, source_bytes: null
+          }, counts);
+          sendStatus(event, choice.status, choice.reason, counts);
+        } catch (error) {
+          sendStatus(event, 'failed', safeError(error), counts);
+        }
+        return;
+      }
+      let reader;
+      try {
+        if (event.hmac_token != null) {
+          if (typeof event.hmac_token !== 'string' ||
+              !stagedKeys.has(event.hmac_token)) fail('csc-key-token-unavailable');
+          key = stagedKeys.get(event.hmac_token);
+          scopeId = event.redaction_scope;
+          keyGeneration = event.redaction_key_generation;
+        }
+        if (!key || !scopeId || event.redaction_scope !== scopeId ||
+            event.redaction_key_generation !== keyGeneration ||
+            event.redaction_scope !== event.redaction_key_generation ||
+            !Number.isSafeInteger(event.redaction_key_epoch) ||
+            event.redaction_key_epoch < 1 ||
+            event.redaction_key_storage !== 'tampermonkey-script-installation' ||
+            event.redaction_format !== 'dc-secret-marker/2') fail('csc-key-scope-mismatch'); const url = await safeUrl(String(event.url ?? event.request_url ??
+          event.response_url ?? '')); const headers = await safeHeaders(event.headers); await writeFrame({
+          kind: 'csc-comm-start', schema: 1, capture_id: String(event.capture_id),
+          page_instance_id: String(event.page_instance_id ?? ''),
+          connection_id: String(event.connection_id ?? ''),
+          network_sequence: event.network_sequence, capture_order: event.capture_order,
+          captured_at_epoch_ms: event.captured_at_epoch_ms,
+          captured_at_mono_ms: event.captured_at_mono_ms,
+          clock_domain: String(event.clock_domain ?? ''),
+          transport: String(event.transport ?? ''),
+          direction: String(event.direction ?? ''), url,
+          headers: headers.safe, omitted_headers: headers.omitted,
+          redaction_format: event.redaction_format,
+          redaction_scope: scopeId,
+          redaction_key_generation: keyGeneration,
+          redaction_key_epoch: event.redaction_key_epoch,
+          redaction_key_storage: event.redaction_key_storage,
+          binary_encoding: choice.kind === 'binary' ? 'base64' : 'utf8',
+          source_byte_provenance: choice.kind === 'json' &&
+            event.value != null && typeof event.value === 'object' ?
+            'unavailable-parsed-xhr-json' :
+            typeof event.value === 'string' ? 'utf8-derived-text' :
+            'browser-observed-bytes'
+        }, counts); const context = event.transport === 'websocket' ? 'ws.text.json.string' : 'json.string'; const state = jsonState(context); let decoder = choice.kind === 'binary' ? null :
+          new TextDecoder('utf-8', { fatal: true }); let ssePending = '';
+        /**
+         * Serializes one text fragment with the selected transport codec.
+         * @param {string} value - Input value for serializeText.
+         * @param {boolean} flush - Input flush for serializeText.
+         * @returns {Promise<string>} Output from serializeText.
+         */
+        async function serializeText(value, flush) {
+          if (choice.kind === 'json') {
+            return jsonFeed(state, value, flush);
+          }
+          ssePending += value; let output = '';
+          for (;;) {
+            const delimiter = /\r?\n\r?\n/.exec(ssePending);
+            if (!delimiter) break; const data = ssePending.slice(0, delimiter.index);
+            ssePending = ssePending.slice(delimiter.index + delimiter[0].length); const lines = data.split(/\r?\n/); const selectedLines = lines.filter(line => line.startsWith('data:'));
+            if (selectedLines.length !== 1) fail('csc-unsupported-sse-shape'); const idx = lines.findIndex(line => line.startsWith('data:')); const prefix = /^data: ?/.exec(lines[idx])[0]; const payload = lines[idx].slice(prefix.length);
+            if (payload !== '[DONE]') {
+              const sseState = jsonState('sse.data.json.string');
+              lines[idx] = prefix + await jsonFeed(sseState, payload, true);
+            }
+            output += lines.join(data.includes('\r\n') ? '\r\n' : '\n') + delimiter[0];
+          }
+          if (ssePending.length > maxValue) fail('csc-sse-event-too-long');
+          if (flush && ssePending) fail('csc-incomplete-sse'); return output;
+        }
+        /**
+         * Emits one sanitized or binary-safe body fragment.
+         * @param {string} part - Input part for chunkRecord.
+         * @param {string} encoding - Input encoding for chunkRecord.
+         * @returns {Promise<void>} Output from chunkRecord.
+         */
+        async function chunkRecord(part, encoding) {
+          if (!part) return; await writeFrame({
+            kind: 'csc-comm-body', capture_id: String(event.capture_id),
+            encoding, data: part
+          }, counts);
+        }
+
+        /**
+         * Streams parsed XHR JSON through the same sanitizer.
+         * Never serializes the whole raw object.
+         * @param {unknown} value - Structured-cloneable parsed JSON value.
+         * @param {Set} ancestors - Parent objects for cycle rejection.
+         * @param {number} depth - Bounded nesting depth.
+         * @returns {Promise<void>} Emits sanitized body frames.
+         */
+        async function serializeParsedJson(value, ancestors, depth) {
+          if (depth > 64) fail('csc-json-depth-exceeded');
+          /**
+           * Feeds a bounded token to the serializer.
+           * @param {string} token - Raw lexical token from the parsed value.
+           * @returns {Promise<void>} Emits sanitized framing.
+           */
+          async function emit(token) {
+            if (encoder.encode(token).byteLength > maxValue) {
+              fail('csc-candidate-too-long');
+            }
+            counts.derived += encoder.encode(token).byteLength;
+            await chunkRecord(await serializeText(token, false), 'utf8');
+          }
+          if (value === null || typeof value === 'boolean' ||
+              (typeof value === 'number' && Number.isFinite(value))) {
+            await emit(JSON.stringify(value));
+            return;
+          }
+          if (typeof value === 'string') {
+            await emit(JSON.stringify(value));
+            return;
+          }
+          if (typeof value !== 'object' ||
+              ancestors.has(value)) fail('csc-invalid-parsed-json');
+          const array = Array.isArray(value);
+          if (!array && Object.prototype.toString.call(value) !== '[object Object]') {
+            fail('csc-unsupported-parsed-json');
+          }
+          ancestors.add(value);
+          try {
+            await emit(array ? '[' : '{');
+            const keys = array ? null : Object.keys(value);
+            const length = array ? value.length : keys.length;
+            if (!Number.isSafeInteger(length)) fail('csc-invalid-parsed-json');
+            for (let index = 0; index < length; index += 1) {
+              if (index) await emit(',');
+              if (!array) {
+                await emit(JSON.stringify(keys[index]));
+                await emit(':');
+              }
+              const item = value[array ? index : keys[index]];
+              await serializeParsedJson(item === undefined && array ? null : item,
+                ancestors, depth + 1);
+            }
+            await emit(array ? ']' : '}');
+          } finally {
+            ancestors.delete(value);
+          }
+        }
+
+        if (event.body?.getReader) reader = event.body.getReader();
+        else if (Object.prototype.toString.call(event.value) === '[object Blob]') {
+          reader = event.value.stream().getReader();
+        }
+        if (reader) {
+          for (;;) {
+            const { done, value } = await reader.read();
+            if (done) break;
+            if (!(value instanceof Uint8Array)) fail('csc-invalid-stream-chunk'); counts.source += value.byteLength;
+            for (let i = 0; i < value.byteLength; i += maxChunk) {
+              const part = value.subarray(i, i + maxChunk);
+              if (choice.kind === 'binary') await chunkRecord(base64(part), 'base64');
+              else await chunkRecord(await serializeText(decoder.decode(part, { stream: true }), false), 'utf8');
+            }
+          }
+        } else if (event.value != null) {
+          const value = event.value;
+          const arrayBufferValue = Object.prototype.toString.call(value) === '[object ArrayBuffer]';
+          const binary = arrayBufferValue || ArrayBuffer.isView(value);
+          if (binary) {
+            const bytes = arrayBufferValue
+              ? new Uint8Array(value) :
+              new Uint8Array(value.buffer, value.byteOffset, value.byteLength); counts.source = bytes.byteLength;
+            if (choice.kind !== 'binary') fail('csc-binary-type-mismatch');
+            for (let i = 0; i < bytes.byteLength; i += maxChunk) {
+              await chunkRecord(base64(bytes.subarray(i, i + maxChunk)), 'base64');
+            }
+          } else if (typeof value === 'string') {
+            const bytes = encoder.encode(value);
+            counts.source_known = false;
+            counts.derived = bytes.byteLength;
+            for (let i = 0; i < bytes.byteLength; i += maxChunk) {
+              await chunkRecord(await serializeText(
+                decoder.decode(bytes.subarray(i, i + maxChunk), { stream: true }), false), 'utf8');
+            }
+          } else if (choice.kind === 'json' &&
+                     value !== null && typeof value === 'object') {
+            counts.source_known = false;
+            await serializeParsedJson(value, new Set(), 0);
+          } else fail('csc-unsupported-body-value');
+        } else if (event.body_available === true) fail('csc-missing-body');
+        if (choice.kind !== 'binary') {
+          await chunkRecord(await serializeText(decoder.decode(), true), 'utf8');
+        }
+        if (event.complete === false) fail('csc-source-incomplete'); await writeFrame({
+          kind: 'csc-comm-end', capture_id: String(event.capture_id),
+          status: 'completed', source_bytes: counts.source_known ? counts.source : null,
+          derived_json_utf8_bytes: counts.source_known ? null : counts.derived,
+          emitted_bytes_before_end: counts.emitted,
+          source_complete: true
+        }, counts);
+        sendStatus(event, 'completed', 'csc-processing-complete-not-durable', counts);
+      } catch (error) {
+        if (reader) {
+          try { await reader.cancel(); } catch {}
+        } else if (event.body?.cancel) {
+          try { await event.body.cancel(); } catch {}
+        }
+        // Failure records never contain private error details.
+        try {
+          await writeFrame({
+            kind: 'csc-comm-end', capture_id: String(event.capture_id),
+            status: 'failed', reason: safeError(error),
+            source_bytes_observed: counts.source_known ? counts.source : null,
+            derived_json_utf8_bytes: counts.source_known ? null : counts.derived,
+            emitted_bytes_before_end: counts.emitted,
+            source_complete: false
+          }, counts);
+        } catch {}
+        sendStatus(event, 'failed', safeError(error), counts);
+      } finally {
+        if (reader) reader.releaseLock();
+        if (typeof event.hmac_token === 'string') {
+          stagedKeys.delete(event.hmac_token);
+          key = null; scopeId = null; keyGeneration = null;
+        }
+      }
+    }
+    /**
+     * Drains the Worker queue in preserved insertion order.
+     * @returns {Promise<void>} Output from drain.
+     */
+    async function drain() {
+      if (working) return;
+      working = true;
+      try {
+        while (records.length) await process(records.shift());
+      } finally { working = false; }
+    }
+    /**
+     * Adds a validated message to the bounded Worker-owned queue.
+     * @param {Object} event - Input event for enqueue.
+     * @returns {void} No value is returned.
+     */
+    function enqueue(event) {
+      if (!event || typeof event.capture_id !== 'string' ||
+          !/^[A-Za-z0-9:._-]{1,160}$/.test(event.capture_id)) {
+        scope.postMessage({ type: 'csc-comm-invalid-envelope' });
+        return;
+      }
+      if (records.length >= maxQueue) {
+        if (event.body?.cancel) void event.body.cancel().catch(() => {});
+        sendStatus(event, 'rejected', 'csc-worker-queue-full', { source: 0, emitted: 0 }); return;
+      }
+      // No await before insertion: this is the first COMM queue.
+      records.push(event);
+      void drain();
+    }
+    /**
+     * Imports private HMAC material and zeroes its transferable buffer.
+     * @param {Object} message - Input message for provision.
+     * @returns {Promise<void>} Output from provision.
+     */
+    async function provision(message) {
+      if (!(message.key_bytes instanceof Uint8Array) ||
+          message.key_bytes.byteLength !== 32 ||
+          (message.type !== 'dc-hmac-key-v2' &&
+            !/^[0-9a-f]{32}$/.test(message.redaction_scope ?? '')) ||
+          (message.type !== 'dc-hmac-key-v2' &&
+            message.redaction_key_generation !== message.redaction_scope)) {
+        fail('csc-invalid-key-provision');
+      }
+      const staged = message.type === 'dc-hmac-key-v2';
+      if (staged && (typeof message.token !== 'string' ||
+          !/^[0-9a-zA-Z._:-]{8,160}$/.test(message.token) ||
+          stagedKeys.has(message.token) || stagedKeys.size >= maxQueue)) {
+        fail('csc-invalid-key-token');
+      }
+      const bytes = message.key_bytes;
+      try {
+        const imported = await crypto.subtle.importKey('raw', bytes,
+          { name: 'HMAC', hash: 'SHA-256' }, false, ['sign']);
+        if (staged) stagedKeys.set(message.token, imported);
+        else {
+          key = imported;
+          scopeId = message.redaction_scope;
+          keyGeneration = message.redaction_key_generation;
+        }
+      } finally { bytes.fill(0); }
+      scope.postMessage(staged
+        ? { type: 'csc-comm-key-ready', token: message.token }
+        : { type: 'csc-comm-key-ready',
+          redaction_scope: scopeId, redaction_key_generation: keyGeneration });
+    }
+    scope.addEventListener('message', event => {
+      const value = event.data;
+      if (!value || typeof value.type !== 'string') return;
+      if (value.type === 'csc-comm-capture') enqueue(value.envelope);
+      else if (value.type === 'csc-comm-configure') {
+        try { options(value.options); scope.postMessage({ type: 'csc-comm-configured' }); }
+        catch { scope.postMessage({ type: 'csc-comm-configuration-failed' }); }
+      } else if (value.type === 'csc-comm-provision' ||
+                 value.type === 'dc-hmac-key-v2') {
+        void provision(value).catch(() => {
+          scope.postMessage({ type: 'csc-comm-provision-failed' });
+        });
+      }
+    }); return Object.freeze({ enqueue, drain, options, marker, selected, safeUrl,
+      safeHeaders, get queued() { return records.length; } });
+  }
+
+  /**
+   * Returns the source of the isolated Worker processor.
+   * @returns {string} Output from cscCommProcessingWorkerSource.
+   */
+
+  function cscCommProcessingWorkerSource() {
+    return '(' + cscCommWorkerProcessing.toString() +
+      ')(self, { write: async bytes => {' +
+      'if (typeof self.cscCommWriteChunk !== "function")' +
+      'throw new Error("csc-writer-unavailable");' +
+      'await self.cscCommWriteChunk(bytes);' +
+      '}});';
+  }
 
   /** Current authoritative Agent lifecycle state, distinct from timing state. */
   let agentLifecycleState = 'unknown';
@@ -14051,13 +15083,14 @@ globalThis.__dcCompressor = {
    */
   function installNetworkCapture() {
     if (captureInstalled) return;
-    // Use the page realm rather than the userscript sandbox when intercepting page networking.
+    // Intercept in the page realm.
     const pageWindow = typeof unsafeWindow !== 'undefined' ? unsafeWindow : window;
 
     if (typeof pageWindow.fetch === 'function') {
       const originalFetch = pageWindow.fetch;
       originalPageFetch = originalFetch;
       pageWindow.fetch = function(...args) {
+        const requestStamp = cscCaptureNow('fetch', 'request');
         const input = args[0];
         const init = args[1] || {};
         let request = null;
@@ -14066,9 +15099,15 @@ globalThis.__dcCompressor = {
           request = input instanceof PageRequest ? input : new PageRequest(input, init);
         } catch {}
         const requestUrl = request?.url ?? String(input);
-        const stockTrace = stockNetworkTraceFetchStart(request, requestUrl);
-        void communicationLogFetchRequest(request, stockTrace)
-          .catch(communicationError => communicationLogReportFailure('fetch-request', communicationError));
+        const stockTrace = stockNetworkTraceFetchStart(request, requestUrl, requestStamp);
+        cscPublishFetch(requestStamp, request, {
+          method: String(request?.method ?? init.method ?? 'GET').toUpperCase(),
+          request_url: requestUrl
+        });
+        if (!cscCommWorker) {
+          void communicationLogFetchRequest(request, stockTrace)
+            .catch(communicationError => communicationLogReportFailure('fetch-request', communicationError));
+        }
         rememberApiRequestContext(requestUrl, request?.headers, init.headers);
         recordClickDiagnosticNetworkRequest(requestUrl, 'fetch');
         const requestMethod = String(request?.method ?? init.method ?? 'GET').toUpperCase();
@@ -14085,16 +15124,29 @@ globalThis.__dcCompressor = {
           ? captureGenerationStreamRequest(request, generationSubmittedAtMs)
           : null;
         const resumeRequestClone = resumeRequest && request ? cloneSafely(request) : null;
-        const responsePromise = originalFetch.apply(this, args);
+        const responsePromise = cscDispatchObservedFetch(
+          originalFetch, this, args, requestStamp, stockTrace, requestUrl);
         return responsePromise.then(response => {
+          const responseStamp = cscCaptureNow('fetch', 'response',
+            requestStamp.connection_id, requestStamp);
           const generationResponse = capturePromise ? cloneSafely(response) : null;
           const resumeResponse = resumeRequest ? cloneSafely(response) : null;
           const stopwatchConversationResponse = stopwatchConversationRequest
             ? cloneSafely(response)
             : null;
           stockNetworkTraceFetchResponse(response, stockTrace);
-          void communicationLogFetchResponse(response, stockTrace)
-            .catch(communicationError => communicationLogReportFailure('fetch-response', communicationError));
+          cscPublishFetch(responseStamp, response, {
+            method: stockTrace.method,
+            request_url: requestUrl,
+            response_url: response.url,
+            status: response.status,
+            redirected: response.redirected,
+            ok: response.ok
+          });
+          if (!cscCommWorker) {
+            void communicationLogFetchResponse(response, stockTrace)
+              .catch(communicationError => communicationLogReportFailure('fetch-response', communicationError));
+          }
           if (stopwatchConversationRequest && !stopwatchConversationResponse) {
             logDiagnostic('warnings', 'agent-stopwatch-recovery-response-clone-failure', {
               url: boundedDiagnosticText(response?.url ?? requestUrl, 320)
@@ -14137,6 +15189,13 @@ globalThis.__dcCompressor = {
           }
           return response;
         }, error => {
+          const failureStamp = cscCaptureNow('fetch', 'error',
+            requestStamp.connection_id, requestStamp);
+          cscPublishValue(failureStamp, {
+            method: stockTrace.method, request_url: requestUrl,
+            error_name: String(error?.name ?? 'Error'),
+            body_available: false, complete: false
+          });
           logDiagnostic('debug', 'stock-network-fetch-failed', {
             network_sequence: stockTrace.sequence,
             method: stockTrace.method,
@@ -14168,14 +15227,57 @@ globalThis.__dcCompressor = {
         return originalSetRequestHeader.call(this, name, value);
       };
       XHR.prototype.send = function(body) {
+        const requestStamp = cscCaptureNow('xhr', 'request');
         const info = this.__tmApiRequest || { method: 'GET', url: '', headers: {} };
-        const stockTrace = stockNetworkTraceXhrStart(this, info);
-        void communicationLogXhrRequest(info, body, stockTrace)
-          .catch(communicationError => communicationLogReportFailure('xhr-request', communicationError));
+        const stockTrace = stockNetworkTraceXhrStart(this, info, requestStamp);
+        cscPublishValue(requestStamp, {
+          method: info.method, url: info.url,
+          headers: cscRawHeaderEntries(info.headers),
+          body_type: typeof body,
+          body_available: body !== null && body !== undefined
+        }, body ?? null);
+        if (!cscCommWorker) {
+          void communicationLogXhrRequest(info, body, stockTrace)
+            .catch(communicationError => communicationLogReportFailure('xhr-request', communicationError));
+        }
+        let cscXhrTerminatedWithError = false;
+        for (const name of ['abort', 'error', 'timeout']) {
+          this.addEventListener(name, () => {
+            cscXhrTerminatedWithError = true;
+            const failureStamp = cscCaptureNow('xhr', 'error',
+              requestStamp.connection_id, requestStamp);
+            cscPublishValue(failureStamp, {
+              method: info.method, request_url: info.url,
+              event: name, body_available: false, complete: false
+            });
+          }, { once: true });
+        }
         this.addEventListener('loadend', () => {
+          const responseStamp = cscCaptureNow('xhr',
+            cscXhrTerminatedWithError ? 'event' : 'response',
+            requestStamp.connection_id, requestStamp);
           stockNetworkTraceXhrResponse(this, stockTrace);
-          void communicationLogXhrResponse(this, stockTrace)
-            .catch(communicationError => communicationLogReportFailure('xhr-response', communicationError));
+          if (cscXhrTerminatedWithError) {
+            cscPublishValue(responseStamp, {
+              event: 'loadend', request_url: info.url,
+              body_available: false, complete: false
+            });
+          } else {
+            const body = cscXhrBodySnapshot(this);
+            cscPublishValue(responseStamp, {
+              method: info.method, request_url: info.url,
+              response_url: this.responseURL ?? info.url,
+              status: Number.isFinite(this.status) ? this.status : null,
+              response_type: this.responseType || 'text',
+              headers: String(this.getAllResponseHeaders?.() ?? ''),
+              body_type: body.body_type,
+              body_available: body.body_available
+            }, body.value);
+          }
+          if (!cscCommWorker) {
+            void communicationLogXhrResponse(this, stockTrace)
+              .catch(communicationError => communicationLogReportFailure('xhr-response', communicationError));
+          }
         }, { once: true });
         rememberApiRequestContext(info.url, info.headers);
         recordClickDiagnosticNetworkRequest(info.url, 'xmlhttprequest');
@@ -14187,31 +15289,72 @@ globalThis.__dcCompressor = {
       const NativeWebSocket = pageWindow.WebSocket;
       pageWindow.WebSocket = new Proxy(NativeWebSocket, {
         construct(target, args) {
-          const socket = Reflect.construct(target, args, target);
+          const connectionStamp = cscCaptureNow('websocket', 'event');
+          let socket;
+          try {
+            socket = Reflect.construct(target, args, target);
+          } catch (error) {
+            cscPublishValue(connectionStamp, {
+              url: String(args[0] ?? ''), event: 'construct-failed',
+              error_name: String(error?.name ?? 'Error'),
+              body_available: false, complete: false
+            });
+            throw error;
+          }
           const socketUrl = String(args[0] ?? '');
           const nativeSend = socket.send;
           socket.send = function(data) {
-            void communicationLogWebSocketSend(socketUrl, data)
-              .catch(communicationError => communicationLogReportFailure('websocket-send', communicationError));
-            return nativeSend.call(this, data);
+            const stamp = cscCaptureNow('websocket', 'outgoing',
+              connectionStamp.connection_id, connectionStamp);
+            cscPublishValue(stamp, {
+              url: socketUrl, body_type: typeof data,
+              body_available: data !== null && data !== undefined
+            }, data);
+            return cscDispatchSocketSend(nativeSend, this, data, connectionStamp, stamp, socketUrl);
           };
           socket.addEventListener('open', () => {
-            void communicationLogRecord('communication_websocket_open', { url: stockNetworkSafeUrl(socketUrl) });
+            const stamp = cscCaptureNow('websocket', 'event',
+              connectionStamp.connection_id, connectionStamp);
+            cscPublishValue(stamp, { url: socketUrl, event: 'open' });
+            if (!cscCommWorker) {
+              void communicationLogRecord('communication_websocket_open', { url: stockNetworkSafeUrl(socketUrl) });
+            }
           });
           socket.addEventListener('message', event => {
+            const stamp = cscCaptureNow('websocket', 'incoming',
+              connectionStamp.connection_id, connectionStamp);
+            cscPublishValue(stamp, {
+              url: socketUrl, body_type: typeof event.data,
+              body_available: event.data !== null && event.data !== undefined
+            }, event.data);
             captureGenerationWebSocketFrame(event.data);
-            void communicationLogWebSocketMessage(socketUrl, event.data)
-              .catch(communicationError => communicationLogReportFailure('websocket-message', communicationError));
+            if (!cscCommWorker) {
+              void communicationLogWebSocketMessage(socketUrl, event.data)
+                .catch(communicationError => communicationLogReportFailure('websocket-message', communicationError));
+            }
           });
           socket.addEventListener('close', event => {
-            void communicationLogRecord('communication_websocket_close', {
-              url: stockNetworkSafeUrl(socketUrl),
-              code: event.code,
+            const stamp = cscCaptureNow('websocket', 'event',
+              connectionStamp.connection_id, connectionStamp);
+            cscPublishValue(stamp, {
+              url: socketUrl, event: 'close', code: event.code,
               was_clean: event.wasClean === true
             });
+            if (!cscCommWorker) {
+              void communicationLogRecord('communication_websocket_close', {
+                url: stockNetworkSafeUrl(socketUrl),
+                code: event.code,
+                was_clean: event.wasClean === true
+              });
+            }
           });
           socket.addEventListener('error', () => {
-            void communicationLogRecord('communication_websocket_error', { url: stockNetworkSafeUrl(socketUrl) });
+            const stamp = cscCaptureNow('websocket', 'event',
+              connectionStamp.connection_id, connectionStamp);
+            cscPublishValue(stamp, { url: socketUrl, event: 'error' });
+            if (!cscCommWorker) {
+              void communicationLogRecord('communication_websocket_error', { url: stockNetworkSafeUrl(socketUrl) });
+            }
           });
           return socket;
         }
@@ -19190,7 +20333,11 @@ Image elapsed: ${formatDuration(imageElapsed)} — Completed: ${imageCompleted}/
       ['AI-transcript renderer parity', testRendererParityFeatures],
       ['Generated sandbox download link', testGeneratedSandboxDownloadLink],
       ['Jump identifier resolution', testJumpIdentifierResolution],
-      ['Conversation API access/schema', testConversationApiAccessAndSchema]
+      ['Conversation API access/schema', testConversationApiAccessAndSchema],
+      ['Worker + Zstd/CSP', testWorkerZstdCsp],
+      ['CSC Worker stream + directory', testCscWorkerBoundary],
+      ['CSC dual clone + Worker', testCscDualCloneOwnership],
+      ['CSC COMM Worker processor', testCscCommWorkerProcessing]
     ];
   }
 
@@ -19229,7 +20376,7 @@ Image elapsed: ${formatDuration(imageElapsed)} — Completed: ${imageCompleted}/
    * @returns {string} The string produced by `testMatrixResultText`.
    */
   function testMatrixResultText(result) {
-    return result?.status || '—';
+    return result ? result.status + (result.detail ? ': ' + result.detail : '') : '—';
   }
 
   /**
@@ -19262,8 +20409,10 @@ Image elapsed: ${formatDuration(imageElapsed)} — Completed: ${imageCompleted}/
    */
   async function executeBuiltInTest(name, fn) {
     try {
-      await fn();
-      testMatrixCurrentResults.set(name, { status: 'PASS', detail: '' });
+      const detail = await fn();
+      testMatrixCurrentResults.set(name, {
+        status: 'PASS', detail: typeof detail === 'string' ? detail : ''
+      });
       return `✅ ${name}`;
     } catch (error) {
       const detail = errorMessage(error);
@@ -19285,7 +20434,9 @@ Image elapsed: ${formatDuration(imageElapsed)} — Completed: ${imageCompleted}/
       .filter(([name]) => testMatrixCurrentResults.has(name))
       .map(([name]) => {
         const result = testMatrixCurrentResults.get(name);
-        return result.status === 'PASS' ? `✅ ${name}` : `❌ ${name}: ${result.detail}`;
+        return result.status === 'PASS'
+          ? `✅ ${name}${result.detail ? ': ' + result.detail : ''}`
+          : `❌ ${name}: ${result.detail}`;
       });
   }
 
@@ -19322,6 +20473,8 @@ Image elapsed: ${formatDuration(imageElapsed)} — Completed: ${imageCompleted}/
     refreshTestMatrix();
     try {
       for (const [name, fn] of builtInTests()) {
+        // Directory selection requires an explicit, individual Run gesture.
+        if (name === 'CSC Worker stream + directory') continue;
         await executeBuiltInTest(name, fn);
       }
     } finally {
@@ -19679,7 +20832,12 @@ Image elapsed: ${formatDuration(imageElapsed)} — Completed: ${imageCompleted}/
    * @returns {Promise<void>} Resolves after the original runner completes.
    */
   runOneTest = async function runOneTestAfterChatGPTPluginReady(name, fn) {
-    await ensureChatGPTCanonicalAgent();
+    if (name !== 'Worker + Zstd/CSP'
+      && name !== 'CSC Worker stream + directory'
+      && name !== 'CSC dual clone + Worker'
+      && name !== 'CSC COMM Worker processor') {
+      await ensureChatGPTCanonicalAgent();
+    }
     return runOneTestWithCanonicalAgent(name, fn);
   };
 
@@ -19692,6 +20850,865 @@ Image elapsed: ${formatDuration(imageElapsed)} — Completed: ${imageCompleted}/
     await ensureChatGPTCanonicalAgent();
     return runTestsWithCanonicalAgent();
   };
+
+  /**
+   * Worker-side synthetic verification using the same vendored compressor bridge.
+   * Only the generated test bytes enter the Worker; no page network data is read.
+   *
+   * @returns {void} Installs the one-shot Worker message handler.
+   */
+  function workerCompressorProbeEntrypoint() {
+    self.onmessage = async event => {
+      const started = performance.now();
+      try {
+        const b64 = event.data.wasm_gzip_base64;
+        const compressed = Uint8Array.from(atob(b64), ch => ch.charCodeAt(0));
+        const stream = new Blob([compressed]).stream()
+          .pipeThrough(new DecompressionStream('gzip'));
+        const wasm = new Uint8Array(await new Response(stream).arrayBuffer());
+        const engine = self['__dcWorkerCompressorBridge'];
+        await engine.init(wasm);
+
+        const bytes = new Uint8Array(10 * 1024 * 1024);
+        for (let i = 0; i < bytes.length; i += 1) {
+          bytes[i] = (Math.imul(i, 37) ^ (i >>> 9)) & 255;
+        }
+        const chunks = [];
+        let length = 0;
+        const writer = new engine.Encoder(event.data.level);
+        try {
+          for (let pos = 0; pos < bytes.length; pos += 512 * 1024) {
+            const part = writer.write(bytes.subarray(pos, pos + 512 * 1024));
+            if (part.length) { chunks.push(part); length += part.length; }
+          }
+          const tail = writer.finish();
+          if (tail.length) { chunks.push(tail); length += tail.length; }
+        } finally {
+          writer.free();
+        }
+        const archive = new Uint8Array(length);
+        let written = 0;
+        for (const part of chunks) {
+          archive.set(part, written);
+          written += part.length;
+        }
+        const restored = engine.decompress(archive);
+        if (restored.length !== bytes.length) {
+          throw new Error('Zstd round-trip length mismatch.');
+        }
+        for (let i = 0; i < bytes.length; i += 1) {
+          if (restored[i] !== bytes[i]) {
+            throw new Error('Zstd round-trip byte mismatch at ' + i + '.');
+          }
+        }
+        // Force measurable Worker CPU work while the page's timers continue.
+        const until = performance.now() + 250;
+        let iterations = 0;
+        while (performance.now() < until) iterations += 1;
+        self.postMessage({
+          ok: true,
+          bytes: bytes.length,
+          archive_bytes: archive.length,
+          elapsed_ms: Math.round(performance.now() - started),
+          worker_cross_origin_isolated: self.crossOriginIsolated === true,
+          iterations
+        });
+      } catch (error) {
+        self.postMessage({
+          ok: false,
+          message: String(error?.message ?? error).slice(0, 350)
+        });
+      }
+    };
+  }
+
+  /**
+   * Probes one Worker realm with timeout and unconditional cleanup.
+   *
+   * @param {Window} realm - Page window or userscript window.
+   * @param {string} script - Worker script from the pinned built compressor.
+   * @param {Object} descriptor - Vendored bridge descriptor.
+   * @returns {Promise<Object>} Synthetic Worker test result and page tick count.
+   */
+  async function workerCompressorProbeRealm(realm, script, descriptor) {
+    assert(typeof realm.Worker === 'function', 'Worker constructor unavailable.');
+    const url = realm.URL.createObjectURL(new realm.Blob(
+      [script], { type: 'text/javascript' }
+    ));
+    let worker = null;
+    let heartbeat = null;
+    let timeout = null;
+    let ticks = 0;
+    try {
+      worker = new realm.Worker(url);
+      const result = await new Promise((resolve, reject) => {
+        /**
+         * Completes one Worker reply.
+         *
+         * @param {Object} value - Worker completion or failure.
+         * @returns {void} No value is returned.
+         */
+        const finish = value => {
+          if (value?.ok) resolve(value);
+          else reject(new Error(value?.message || 'Worker returned no result.'));
+        };
+        worker.addEventListener('message', event => finish(event.data), { once: true });
+        worker.addEventListener('error', event => {
+          reject(new Error(event.message || 'Worker startup or script error.'));
+        }, { once: true });
+        timeout = setTimeout(() => reject(new Error('Worker timed out (30s).')), 30000);
+        heartbeat = setInterval(() => { ticks += 1; }, 20);
+        worker.postMessage({
+          wasm_gzip_base64: descriptor.wasmGzipBase64,
+          level: descriptor._compression_level
+        });
+      });
+      return { ...result, page_ticks: ticks };
+    } finally {
+      if (timeout !== null) clearTimeout(timeout);
+      if (heartbeat !== null) clearInterval(heartbeat);
+      worker?.terminate();
+      realm.URL.revokeObjectURL(url);
+    }
+  }
+
+  /**
+   * Runs the real DC Zstd/WASM bridge in a classic dedicated Worker.
+   *
+   * @returns {Promise<string>} Short, visible browser capability evidence.
+   */
+  async function testWorkerZstdCsp() {
+    const bridge = globalThis['__dcCompressor'];
+    assert(typeof bridge?.init === 'function'
+      && typeof bridge?.Encoder === 'function'
+      && typeof bridge?.decompress === 'function'
+      && typeof bridge?.wasmGzipBase64 === 'string',
+    'Exact bundled Zstd compressor bridge is unavailable.');
+    const source = [
+      "'use strict';",
+      'let __dcCompressorModule = null;',
+      'function __dcCompressorViews(module) {',
+      '  return { bytes: new Uint8Array(module.memory.buffer),',
+      '    words: new Uint32Array(module.memory.buffer) };',
+      '}',
+      bridge.init.toString(),
+      bridge.Encoder.toString(),
+      bridge.decompress.toString(),
+      "self['__dcWorkerCompressorBridge'] = {",
+      '  init: __dcCompressorInit, Encoder: CompressorEncoder,',
+      '  decompress: __dcCompressorDecompress',
+      '};',
+      '(' + workerCompressorProbeEntrypoint.toString() + ')();'
+    ].join('\n');
+    const page = typeof unsafeWindow !== 'undefined' ? unsafeWindow : window;
+    const contexts = [
+      ['page', page],
+      ['userscript', window]
+    ];
+    const failures = [];
+    for (const [label, realm] of contexts) {
+      if (label === 'userscript' && realm === page) continue;
+      try {
+        const result = await workerCompressorProbeRealm(realm, source, bridge);
+        assert(result.bytes === 10 * 1024 * 1024, 'Incorrect test payload size.');
+        const detail = [
+          label + ' Worker',
+          '10 MiB Zstd exact-byte PASS',
+          result.elapsed_ms + 'ms',
+          result.page_ticks + ' page ticks',
+          'isolated=' + (page.crossOriginIsolated === true)
+        ].join('; ');
+        logDiagnostic('lifecycle', 'worker-zstd-csp-test-pass', {
+          realm: label,
+          bytes: result.bytes,
+          archive_bytes: result.archive_bytes,
+          worker_ms: result.elapsed_ms,
+          page_ticks: result.page_ticks,
+          cross_origin_isolated: page.crossOriginIsolated === true
+        });
+        return detail;
+      } catch (error) {
+        failures.push(label + ': ' + errorMessage(error));
+      }
+    }
+    const reason = failures.join(' | ');
+    logDiagnostic('warnings', 'worker-zstd-csp-test-fail', {
+      cross_origin_isolated: page.crossOriginIsolated === true,
+      errors: reason.slice(0, 700)
+    });
+    throw new Error(reason);
+  }
+
+  /**
+   * Synthetic-only classic Worker for CSC stream and directory capability tests.
+   * No intercepted traffic, credentials, or production archives enter this Worker.
+   *
+   * @returns {void} Installs the independent test task receiver.
+   */
+  function cscProbeWorkerEntrypoint() {
+    /**
+     * Synthetic fixture octet at one absolute offset.
+     *
+     * @param {number} offset - Byte position.
+     * @returns {number} The deterministic byte value.
+     */
+    const expectedByte = offset => (Math.imul(offset, 29) + 7) & 255;
+
+    /**
+     * Verify a transferred stream or exercise explicit cancellation.
+     *
+     * @param {Object} task - Stream fixture options and ownership-transferred body.
+     * @returns {Promise<Object>} Exact count and stream lifecycle evidence.
+     */
+    async function readTransferred(task) {
+      const reader = task.body.getReader();
+      let position = 0;
+      let chunks = 0;
+      try {
+        if (task.delay_ms) {
+          self.postMessage({ progress: 'delaying' });
+          await new Promise(resolve => setTimeout(resolve, task.delay_ms));
+        }
+        for (;;) {
+          const { done, value } = await reader.read();
+          if (done) break;
+          chunks += 1;
+          if (!(value instanceof Uint8Array)) {
+            throw new Error('Transferred body yielded a non-byte chunk.');
+          }
+          for (let i = 0; i < value.byteLength; i += 1) {
+            if (value[i] !== expectedByte(position + i)) {
+              throw new Error('Stream byte mismatch at ' + (position + i));
+            }
+          }
+          position += value.byteLength;
+          if (task.cancel_after_first) {
+            await reader.cancel('CSC synthetic abort probe');
+            return { bytes: position, chunks, cancelled: true };
+          }
+        }
+        if (position !== task.expected_bytes) {
+          throw new Error('Stream length mismatch: ' + position
+            + ' != ' + task.expected_bytes);
+        }
+        return { bytes: position, chunks, cancelled: false };
+      } finally {
+        reader.releaseLock();
+      }
+    }
+
+    /**
+     * Prove a transferred directory handle supports Worker-side durable writes.
+     *
+     * @param {Object} task - User-authorized directory and unique temporary name.
+     * @returns {Promise<Object>} Verified file byte count and cleanup state.
+     */
+    async function verifyDirectory(task) {
+      const directory = task.directory;
+      if (!directory || typeof directory.getFileHandle !== 'function'
+        || typeof directory.removeEntry !== 'function') {
+        throw new Error('FileSystemDirectoryHandle unavailable in Worker.');
+      }
+      if (typeof directory.queryPermission === 'function') {
+        const permission = await directory.queryPermission({ mode: 'readwrite' });
+        if (permission !== 'granted') {
+          throw new Error('Worker directory readwrite permission: ' + permission);
+        }
+      }
+      let existing = false;
+      try {
+        await directory.getFileHandle(task.name);
+        existing = true;
+      } catch (error) {
+        if (error?.name !== 'NotFoundError') throw error;
+      }
+      if (existing) throw new Error('Temporary probe filename already exists.');
+      let created = false;
+      let writable = null;
+      let failure = null;
+      let complete = false;
+      const length = 257 * 1024 + 17;
+      try {
+        const fileHandle = await directory.getFileHandle(task.name, { create: true });
+        created = true;
+        writable = await fileHandle.createWritable();
+        for (let offset = 0; offset < length; offset += 16384) {
+          const n = Math.min(16384, length - offset);
+          const chunk = new Uint8Array(n);
+          for (let i = 0; i < n; i += 1) chunk[i] = expectedByte(offset + i);
+          await writable.write(chunk);
+        }
+        await writable.close();
+        writable = null;
+        const readBack = new Uint8Array(await (await fileHandle.getFile()).arrayBuffer());
+        if (readBack.byteLength !== length) throw new Error('File length mismatch.');
+        for (let i = 0; i < length; i += 1) {
+          if (readBack[i] !== expectedByte(i)) {
+            throw new Error('File byte mismatch at ' + i);
+          }
+        }
+        complete = true;
+      } catch (error) {
+        failure = error;
+      } finally {
+        if (writable) {
+          try { await writable.abort(); }
+          catch (error) { failure ??= error; }
+        }
+        if (created) {
+          try { await directory.removeEntry(task.name); }
+          catch (error) { failure ??= error; }
+        }
+      }
+      if (failure) throw failure;
+      if (!complete || !created) throw new Error('Worker write did not finish.');
+      try {
+        await directory.getFileHandle(task.name);
+        throw new Error('Temporary test file still exists after deletion.');
+      } catch (error) {
+        if (error?.name !== 'NotFoundError') throw error;
+      }
+      return { bytes: length, written: true, read_back_verified: true, deleted: true };
+    }
+
+    /** Worker-local event envelopes; the page never queues COMM probe work. */
+    const eventQueue = [];
+    /** True while the Worker drains its own queue in arrival order. */
+    let draining = false;
+
+    /**
+     * Serially execute queued synthetic stream/file event envelopes.
+     *
+     * @returns {Promise<void>} Resolves when this Worker queue is idle.
+     */
+    async function drainEventQueue() {
+      if (draining) return;
+      draining = true;
+      try {
+        while (eventQueue.length) {
+          const envelope = eventQueue.shift();
+          const task = envelope.task;
+          try {
+            const result = envelope.kind === 'stream'
+              ? await readTransferred(task)
+              : envelope.kind === 'directory' ? await verifyDirectory(task)
+                : (() => { throw new Error('Unknown CSC probe task.'); })();
+            self.postMessage({ ok: true, ...result });
+          } catch (error) {
+            self.postMessage({
+              ok: false,
+              name: String(error?.name || 'Error'),
+              message: String(error?.message ?? error).slice(0, 500)
+            });
+          }
+        }
+      } finally {
+        draining = false;
+      }
+    }
+
+    self.onmessage = event => {
+      const task = event.data;
+      eventQueue.push({
+        kind: task.kind,
+        metadata: task.metadata ?? null,
+        task
+      });
+      void drainEventQueue();
+    };
+  }
+
+  /**
+   * Create a fixed-pattern byte stream without materialising its entire body.
+   *
+   * @param {number} length - Total synthetic bytes.
+   * @returns {ReadableStream} New finite synthetic stream.
+   */
+  function cscProbeByteStream(length) {
+    let offset = 0;
+    return new ReadableStream({
+      pull(controller) {
+        if (offset === length) { controller.close(); return; }
+        const size = Math.min(16384, length - offset);
+        const chunk = new Uint8Array(size);
+        for (let i = 0; i < size; i += 1) {
+          chunk[i] = (Math.imul(offset + i, 29) + 7) & 255;
+        }
+        offset += size;
+        controller.enqueue(chunk);
+      }
+    }, { highWaterMark: 1 });
+  }
+
+  /**
+   * Execute one synthetic Worker task with ownership transfer and final cleanup.
+   *
+   * @param {Window} realm - Candidate Worker realm.
+   * @param {Object} task - Cloneable task envelope.
+   * @param {Array} transfer - Stream transfer list (never stock buffers).
+   * @returns {Promise<Object>} Worker-acknowledged result.
+   */
+  async function cscProbeWorkerTask(realm, task, transfer = []) {
+    assert(typeof realm?.Worker === 'function', 'Worker constructor unavailable.');
+    const url = realm.URL.createObjectURL(new realm.Blob(
+      [["'use strict';", '(' + cscProbeWorkerEntrypoint.toString() + ')();'].join('\n')],
+      { type: 'text/javascript' }
+    ));
+    let worker = null;
+    let timeout = null;
+    try {
+      worker = new realm.Worker(url);
+      return await new Promise((resolve, reject) => {
+        let finished = false;
+        /**
+         * Settle a Worker task exactly once.
+         *
+         * @param {Error|null} error - Terminal failure, if any.
+         * @param {Object} result - Worker result, if successful.
+         * @returns {void} Settles the task Promise.
+         */
+        const finish = (error, result) => {
+          if (finished) return;
+          finished = true;
+          if (error) reject(error);
+          else resolve(result);
+        };
+        worker.addEventListener('message', event => {
+          if (event.data?.progress) return;
+          if (event.data?.ok) finish(null, event.data);
+          else finish(new Error((event.data?.name || 'WorkerError') + ': '
+            + (event.data?.message || 'No Worker result.')));
+        });
+        worker.addEventListener('error', event => {
+          finish(new Error('Worker/CSP error: ' + (event.message || 'startup failure')));
+        });
+        worker.addEventListener('messageerror', () => {
+          finish(new Error('Worker message deserialization failed.'));
+        });
+        timeout = setTimeout(() => finish(new Error('Worker probe timeout (30s).')), 30000);
+        try { worker.postMessage(task, transfer); }
+        catch (error) { finish(new Error('postMessage transfer failed: ' + error)); }
+      });
+    } finally {
+      if (timeout !== null) clearTimeout(timeout);
+      worker?.terminate();
+      realm.URL.revokeObjectURL(url);
+    }
+  }
+
+  /**
+   * Verify synthetic Request/Response clone streams in the Worker and original.
+   *
+   * @param {Window} realm - Worker realm under test.
+   * @param {string} kind - request or response.
+   * @returns {Promise<string>} Verified transfer and stock-integrity evidence.
+   */
+  async function cscProbeClonedStream(realm, kind) {
+    const length = 512 * 1024 + 11;
+    const stream = cscProbeByteStream(length);
+    const original = kind === 'request'
+      ? new Request('https://example.invalid/csc-synthetic', {
+        method: 'POST', body: stream, duplex: 'half'
+      })
+      : new Response(stream, { status: 200 });
+    const clone = cloneSafely(original);
+    assert(clone?.body instanceof ReadableStream,
+      'One existing native clone did not yield a transferable body.');
+    const body = clone.body;
+    const transferred = cscProbeWorkerTask(realm, {
+      kind: 'stream', transport: kind,
+      metadata: { url: 'https://example.invalid/csc-synthetic', status: 200 },
+      body, expected_bytes: length, delay_ms: 120
+    }, [body]);
+    const lockedAfterTransfer = body.locked;
+    // Observe both promises at once: immediate Worker errors cannot leak.
+    const [workerOutcome, stockOutcome] = await Promise.allSettled([
+      transferred, original.arrayBuffer()
+    ]);
+    if (workerOutcome.status === 'rejected') throw workerOutcome.reason;
+    if (stockOutcome.status === 'rejected') throw stockOutcome.reason;
+    assert(lockedAfterTransfer, 'Stream was not locked on transfer.');
+    const originalBytes = new Uint8Array(stockOutcome.value);
+    assert(originalBytes.byteLength === length, 'Original ' + kind + ' lost bytes.');
+    for (let i = 0; i < originalBytes.length; i += 1) {
+      assert(originalBytes[i] === ((Math.imul(i, 29) + 7) & 255),
+        'Original ' + kind + ' changed at byte ' + i);
+    }
+    const result = workerOutcome.value;
+    assert(result.bytes === length && !result.cancelled,
+      'Worker did not confirm exact transferred stream.');
+    return result.bytes + ' bytes exact/stock intact';
+  }
+
+  /**
+   * One opt-in built-in Test row. Picker opens synchronously on the Run gesture.
+   * Each capability reports independently; no real ChatGPT request is issued.
+   *
+   * @returns {Promise<string>} All stream/filesystem results or explicit failures.
+   */
+  function testCscWorkerBoundary() {
+    const page = typeof unsafeWindow !== 'undefined' ? unsafeWindow : window;
+    const pickerRealm = typeof page.showDirectoryPicker === 'function'
+      ? page : window;
+    let directoryPromise;
+    try {
+      if (typeof pickerRealm.showDirectoryPicker !== 'function') {
+        throw new Error('showDirectoryPicker unavailable in this browser/realm.');
+      }
+      directoryPromise = Promise.resolve(
+        pickerRealm.showDirectoryPicker({ mode: 'readwrite' })
+      ).then(handle => ({ handle }), error => ({ error }));
+    } catch (error) {
+      directoryPromise = Promise.resolve({ error });
+    }
+    return (async () => {
+      const outcomes = [];
+      const failures = [];
+      const realms = [['page', page], ['userscript', window]];
+      let streamRealm = null;
+      for (const [label, realm] of realms) {
+        if (label === 'userscript' && realm === page) continue;
+        if (typeof realm.Worker !== 'function') {
+          failures.push(label + ' Worker constructor unavailable');
+          continue;
+        }
+        try {
+          outcomes.push('Response: ' + await cscProbeClonedStream(realm, 'response'));
+          outcomes.push('Request: ' + await cscProbeClonedStream(realm, 'request'));
+          streamRealm = realm;
+          outcomes.push('Stream realm: ' + label);
+          break;
+        } catch (error) {
+          failures.push(label + ': ' + errorMessage(error));
+          // A transferred body is spent; synthetic retry creates a new one.
+        }
+      }
+      if (!streamRealm) failures.push('stream transfer: FAIL');
+      else {
+        try {
+          const aborted = cscProbeByteStream(32768);
+          const cancelled = await cscProbeWorkerTask(streamRealm, {
+            kind: 'stream', body: aborted, expected_bytes: 32768,
+            cancel_after_first: true
+          }, [aborted]);
+          assert(cancelled.cancelled === true && cancelled.chunks === 1,
+            'Worker cancellation was not acknowledged.');
+          outcomes.push('Stream abort: PASS');
+        } catch (error) {
+          failures.push('Stream abort: ' + errorMessage(error));
+        }
+      }
+      const permission = await directoryPromise;
+      const directory = permission.handle;
+      if (permission.error) {
+        const error = permission.error;
+        failures.push('Directory picker/permission: '
+          + String(error?.name || 'Error') + ': ' + errorMessage(error));
+      }
+      if (directory) {
+        const name = '.dc-csc-probe-' + crypto.randomUUID() + '.tmp';
+        const workerRealm = streamRealm || page;
+        try {
+          const result = await cscProbeWorkerTask(workerRealm, {
+            kind: 'directory', directory, name
+          });
+          assert(result.deleted && result.written && result.read_back_verified,
+            'Worker directory write/read/delete was not confirmed.');
+          outcomes.push('Directory: ' + result.bytes + ' bytes write/read/delete PASS');
+        } catch (error) {
+          failures.push('Directory Worker: ' + errorMessage(error));
+          // Emergency cleanup is a failure path, not a Worker-side PASS.
+          try { await directory.removeEntry(name); }
+          catch (cleanupError) {
+            if (cleanupError?.name !== 'NotFoundError') {
+              failures.push('Cleanup: ' + errorMessage(cleanupError));
+            }
+          }
+        }
+      }
+      if (failures.length) {
+        throw new Error('PASS [' + outcomes.join('; ') + ']; FAIL ['
+          + failures.join(' | ') + ']');
+      }
+      return outcomes.join('; ');
+    })();
+  }
+
+  /**
+   * Verify the deterministic original/independent-clone payload byte pattern.
+   * This test never uses a real ChatGPT request or response.
+   *
+   * @param {Request|Response} owner - Synthetic page/plugin body owner.
+   * @param {number} length - Expected synthetic byte count.
+   * @returns {Promise<number>} Independently verified byte count.
+   */
+  async function cscProbeDualVerifyBody(owner, length) {
+    const bytes = new Uint8Array(await owner.arrayBuffer());
+    assert(bytes.byteLength === length,
+      'Synthetic body length mismatch: ' + bytes.byteLength + ' != ' + length);
+    for (let i = 0; i < length; i += 1) {
+      assert(bytes[i] === ((Math.imul(i, 29) + 7) & 255),
+        'Synthetic body byte mismatch at offset ' + i);
+    }
+    return bytes.byteLength;
+  }
+
+  /**
+   * Exercise two independent native body clones and a Worker stream transfer.
+   * The page original and plugin clone remain independently readable.
+   *
+   * @param {Window} realm - Worker creation realm.
+   * @param {string} kind - 'request' or 'response'.
+   * @param {string} readFirst - 'plugin' or 'stock'.
+   * @returns {Promise<string>} Exact synthetic outcome.
+   */
+  async function cscProbeDualBodyCase(realm, kind, readFirst) {
+    const length = 512 * 1024 + 11;
+    const originalStream = cscProbeByteStream(length);
+    const original = kind === 'request'
+      ? new Request('https://example.invalid/csc-dual-fixture', {
+        method: 'POST', body: originalStream, duplex: 'half'
+      })
+      : new Response(originalStream);
+    const plugin = cloneSafely(original);
+    const comm = cloneSafely(original);
+    assert(plugin && comm && plugin !== original && comm !== original
+      && plugin !== comm, 'Independent native Request/Response clones unavailable.');
+    assert(comm.body instanceof ReadableStream,
+      'Native COMM clone did not expose a transferable ReadableStream.');
+
+    // This transfers the second clone's body, not the stock or plugin body.
+    const transferred = comm.body;
+    const pendingWorker = cscProbeWorkerTask(realm, {
+      kind: 'stream', body: transferred,
+      expected_bytes: length, delay_ms: 120,
+      metadata: { route: 'synthetic', capture_order: 1 }
+    }, [transferred]);
+    const locked = transferred.locked;
+    const firstOwner = readFirst === 'plugin' ? plugin : original;
+    const secondOwner = readFirst === 'plugin' ? original : plugin;
+    // Observe every started promise to avoid an unhandled Worker rejection.
+    const outcomes = await Promise.allSettled([
+      pendingWorker,
+      (async () => {
+        const first = await cscProbeDualVerifyBody(firstOwner, length);
+        const second = await cscProbeDualVerifyBody(secondOwner, length);
+        return [first, second];
+      })()
+    ]);
+    for (const outcome of outcomes) {
+      if (outcome.status === 'rejected') throw outcome.reason;
+    }
+    const worker = outcomes[0].value;
+    const [first, second] = outcomes[1].value;
+    assert(locked, 'COMM clone stream was not locked after transfer.');
+    assert(worker.bytes === length && worker.cancelled === false,
+      'Worker did not verify every byte of transferred COMM clone.');
+    assert(first === length && second === length,
+      'Stock and plugin failed independent byte verification.');
+    return kind + '/' + readFirst + ': stock/plugin/Worker '
+      + length + ' bytes exact';
+  }
+
+  /**
+   * Opt-in real browser capability test, using only artificial body streams.
+   * Tests native Request/Response clone ownership without altering either
+   * active recorder queue, installing hooks or requesting a directory.
+   *
+   * @returns {Promise<string>} Independent browser Worker witness or error.
+   */
+  async function testCscDualCloneOwnership() {
+    const page = typeof unsafeWindow !== 'undefined' ? unsafeWindow : window;
+    const realms = [['page', page], ['userscript', window]];
+    const failures = [];
+    for (const [label, realm] of realms) {
+      if (label === 'userscript' && page === realm) continue;
+      if (typeof realm.Worker !== 'function') {
+        failures.push(label + ': Worker constructor unavailable');
+        continue;
+      }
+      try {
+        const results = [];
+        for (const kind of ['request', 'response']) {
+          for (const order of ['plugin', 'stock']) {
+            results.push(await cscProbeDualBodyCase(realm, kind, order));
+          }
+        }
+        return label + ' Worker; ' + results.join('; ');
+      } catch (error) {
+        failures.push(label + ': ' + errorMessage(error));
+      }
+    }
+    throw new Error('CSC dual-clone witness FAIL: ' + failures.join(' | '));
+  }
+
+  /**
+   * Checks deterministic synthetic bytes inside an isolated Worker sink.
+   * Never sees ChatGPT's real network data or writes a file.
+   * @returns {void} Installs in-Worker synthetic verification callbacks.
+   */
+  function cscCommProcessingProbeWorkerSink() {
+    let verified = 0;
+    let started = 0;
+    let finished = 0;
+    let damaged = false;
+    self.cscCommWriteChunk = async bytes => {
+      const jsonl = new TextDecoder('utf-8', { fatal: true }).decode(bytes);
+      for (const line of jsonl.split('\n').filter(Boolean)) {
+        const frame = JSON.parse(line);
+        if (frame.kind === 'csc-comm-start') {
+          if (frame.binary_encoding !== 'base64') damaged = true;
+          started += 1;
+        } else if (frame.kind === 'csc-comm-body') {
+          if (frame.encoding !== 'base64') damaged = true;
+          const binary = atob(frame.data);
+          for (let i = 0; i < binary.length; i += 1) {
+            if (binary.charCodeAt(i) !==
+                ((Math.imul(verified + i, 29) + 7) & 255)) damaged = true;
+          }
+          verified += binary.length;
+        } else if (frame.kind === 'csc-comm-end') {
+          if (frame.status !== 'completed' ||
+              frame.source_bytes !== verified) damaged = true;
+          finished += 1;
+        }
+      }
+    };
+    self.addEventListener('message', event => {
+      if (event.data?.type === 'csc-comm-probe-report') {
+        self.postMessage({
+          type: 'csc-comm-probe-report', bytes: verified,
+          starts: started, ends: finished, damaged
+        });
+      }
+    });
+  }
+
+  /**
+   * Generates source for the isolated synthetic COMM Worker capability probe.
+   * @returns {string} Synthetic sink plus production Worker processor source.
+   */
+  function cscCommProcessingProbeSource() {
+    return '(' + cscCommProcessingProbeWorkerSink.toString() + ')();\n' +
+      cscCommProcessingWorkerSource();
+  }
+
+  /**
+   * Runs native page Worker capture with only deterministic synthetic bytes.
+   * Keeps the stock synthetic Response intact; transfers only its COMM clone.
+   * @returns {Promise<string>} Exact browser capability test result.
+   */
+  async function testCscCommWorkerProcessing() {
+    const page = typeof unsafeWindow !== 'undefined' ? unsafeWindow : window;
+    const failures = [];
+    for (const [name, realm] of [['page', page], ['userscript', window]]) {
+      if (name === 'userscript' && realm === page) continue;
+      if (typeof realm.Worker !== 'function') {
+        failures.push(name + ': Worker unavailable');
+        continue;
+      }
+      let worker = null;
+      let url = null;
+      try {
+        url = realm.URL.createObjectURL(new realm.Blob(
+          [cscCommProcessingProbeSource()], { type: 'text/javascript' }
+        ));
+        worker = new realm.Worker(url);
+        const messages = [];
+        let crash = null;
+        worker.addEventListener('message', event => messages.push(event.data));
+        worker.addEventListener('error', event => {
+          crash = event.message || 'Worker error';
+        });
+        /**
+         * Waits for one synthetic Worker message or explicitly fails.
+         * @param {Function} condition - Expected nonsecret response predicate.
+         * @returns {Promise<Object>} Matching synthetic Worker message.
+         */
+        async function waitFor(condition) {
+          for (let tries = 0; tries < 400; tries += 1) {
+            if (crash) throw new Error('CSC Worker probe: ' + crash);
+            const found = messages.find(condition);
+            if (found) return found;
+            await new Promise(resolve => setTimeout(resolve, 25));
+          }
+          throw new Error('CSC Worker probe timeout');
+        }
+        worker.postMessage({
+          type: 'csc-comm-configure',
+          options: {
+            mode: 'replay-essentials', origin: 'https://chatgpt.com',
+            binary: true, cross_origin: false, auth_headers: false,
+            all: false
+          }
+        });
+        await waitFor(message => message.type === 'csc-comm-configured');
+        const token = 'synthetic-csc-comm-token-311';
+        const keyBytes = Uint8Array.from({ length: 32 }, (_, i) => i);
+        worker.postMessage({
+          type: 'dc-hmac-key-v2', token, key_bytes: keyBytes
+        }, [keyBytes.buffer]);
+        await waitFor(message => message.type === 'csc-comm-key-ready' &&
+          message.token === token);
+        const count = 512 * 1024 + 11;
+        const bytes = Uint8Array.from({ length: count },
+          (_, i) => (Math.imul(i, 29) + 7) & 255);
+        const original = new Response(bytes, {
+          headers: { 'content-type': 'application/octet-stream' }
+        });
+        const comm = cloneSafely(original);
+        assert(comm && comm.body, 'Synthetic COMM clone missing');
+        const body = comm.body;
+        worker.postMessage({
+          type: 'csc-comm-capture',
+          envelope: {
+            capture_id: 'synthetic-csc311-test', network_sequence: 1,
+            capture_order: 1, captured_at_epoch_ms: 10000,
+            captured_at_mono_ms: 42, page_instance_id: 'synthetic-page',
+            clock_domain: 'synthetic-page',
+            connection_id: 'synthetic-request',
+            transport: 'fetch', direction: 'response',
+            url: 'https://chatgpt.com/backend-api/synthetic-test',
+            headers: [['content-type', 'application/octet-stream']],
+            body_type: 'application/octet-stream', body_available: true,
+            body_state: 'stream-transferred', body, complete: true,
+            hmac_token: token, redaction_format: 'dc-secret-marker/2',
+            redaction_scope: '00112233445566778899aabbccddeeff',
+            redaction_key_generation: '00112233445566778899aabbccddeeff',
+            redaction_key_epoch: 1,
+            redaction_key_storage: 'tampermonkey-script-installation'
+          }
+        }, [body]);
+        const outcome = await waitFor(message =>
+          message.type === 'csc-comm-status' &&
+          message.capture_id === 'synthetic-csc311-test');
+        assert(outcome.status === 'completed' && outcome.source_bytes === count &&
+          outcome.durable === false, 'Worker COMM completion mismatch');
+        assert(body.locked, 'Transferred COMM stream did not become locked');
+        worker.postMessage({ type: 'csc-comm-probe-report' });
+        const report = await waitFor(message =>
+          message.type === 'csc-comm-probe-report');
+        assert(!report.damaged && report.bytes === count &&
+          report.starts === 1 && report.ends === 1,
+          'Sanitizing serializer changed synthetic binary data');
+        const untouched = new Uint8Array(await original.arrayBuffer());
+        assert(untouched.length === count,
+          'Original stock Response length changed');
+        for (let i = 0; i < count; i += 1) {
+          assert(untouched[i] === ((Math.imul(i, 29) + 7) & 255),
+            'Original stock body changed at byte ' + i);
+        }
+        return name + ' Worker; binary ' + count + ' bytes exact; ' +
+          'start/body/end verified; V2 key token; stock intact';
+      } catch (error) {
+        failures.push(name + ': ' + errorMessage(error));
+      } finally {
+        worker?.terminate();
+        if (url) realm.URL.revokeObjectURL(url);
+      }
+    }
+    throw new Error('CSC COMM Worker test failed: ' + failures.join(' | '));
+  }
   // BEGIN Issue #163 WorkStack continuation state
   /** DOM id of the floating WorkStack continuation control. */
   const WORKSTACK_CONTROL_ID = 'tm-workstack-continuation';
