@@ -215,3 +215,31 @@ A synthetic IndexedDB/Web Locks comparison may be used later as
 an **independent, nonsecret control** if existing evidence cannot
 discriminate GM propagation from lock semantics. Never store K
 in page-visible IndexedDB as a workaround.
+ 
+## Adversarial negative control: stale GM reads under real lock semantics
+
+A new independent test in `tests/persistent-hmac-key-service.test.mjs`
+models two tabs with genuine serial exclusion, but delayed propagation
+of Tampermonkey's own per-script-installation GM record. The model
+deliberately withholds the remote value while allowing each tab to
+read back its own completed `GM.setValue`.
+
+**Predicted result if the service trusts local GM readback too early:**
+both tabs successfully admit and provision distinct generation IDs/keys
+for epoch 1, in violation of required equality, even though the Web
+Lock never overlaps. This is a NEGATIVE CONTROL / demonstrated safety
+risk, NOT positive proof of producer acceptance or evidence of an
+actual disclosed private key. It is consistent with, but does NOT prove
+the mechanism behind, the operator's 24/48 observation.
+
+**Safe requirement:** no actual HMAC admission on a stale record. A
+shared linearizable authority must reject or reconcile a tab whose GM
+view is behind the committed version. Local `GM.getValue` readback or
+Web Lock exclusivity alone is insufficient. Any proposed recovery
+mechanism must preserve secrecy (no K in page-accessible storage),
+survive reloads, and be verified in authenticated Chrome/Tampermonkey
+against first-use, stale reader, rotation and crash interleavings.
+
+This fixture must remain explicitly labelled a reproduction of
+unsatisfied safety acceptance until a changed producer candidate
+correctly fails closed or safely converges under the same test.
