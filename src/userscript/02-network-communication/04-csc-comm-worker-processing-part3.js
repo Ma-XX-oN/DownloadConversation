@@ -1,5 +1,5 @@
     /**
-     * Serializes one selected COMM envelope without an unsanitized intermediate.
+     * Serializes COMM records in one pass.
      * @param {Object} event - Input event for process.
      * @returns {Promise<void>} Output from process.
      */
@@ -105,8 +105,8 @@
         }
 
         /**
-         * Uses the SAME JSON streaming sanitizer on parsed XHR JSON tokens.
-         * No complete unsanitized object serialization is ever constructed.
+         * Streams parsed XHR JSON through the same sanitizer.
+         * Never serializes the whole raw object.
          * @param {unknown} value - Structured-cloneable parsed JSON value.
          * @param {Set} ancestors - Parent objects for cycle rejection.
          * @param {number} depth - Bounded nesting depth.
@@ -115,7 +115,7 @@
         async function serializeParsedJson(value, ancestors, depth) {
           if (depth > 64) fail('csc-json-depth-exceeded');
           /**
-           * Feeds a bounded token to the primary one-pass JSON serializer.
+           * Feeds a bounded token to the serializer.
            * @param {string} token - Raw lexical token from the parsed value.
            * @returns {Promise<void>} Emits sanitized framing.
            */
@@ -221,7 +221,7 @@
         } else if (event.body?.cancel) {
           try { await event.body.cancel(); } catch {}
         }
-        // The failure record carries NO original sensitive value or exception text.
+        // Failure records never contain private error details.
         try {
           await writeFrame({
             kind: 'csc-comm-end', capture_id: String(event.capture_id),
