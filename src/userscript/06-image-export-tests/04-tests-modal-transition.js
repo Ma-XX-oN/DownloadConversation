@@ -85,7 +85,8 @@
       ['Conversation API access/schema', testConversationApiAccessAndSchema],
       ['Worker + Zstd/CSP', testWorkerZstdCsp],
       ['CSC Worker stream + directory', testCscWorkerBoundary],
-      ['CSC dual clone + Worker', testCscDualCloneOwnership]
+      ['CSC dual clone + Worker', testCscDualCloneOwnership],
+      ['CSC COMM Worker processor', testCscCommWorkerProcessing]
     ];
   }
 
