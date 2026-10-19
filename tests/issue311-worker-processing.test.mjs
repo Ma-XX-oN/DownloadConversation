@@ -395,3 +395,50 @@ test('browser probe is one opt-in exact-source Worker row with synthetic payload
   assert.match(source, /response|original\.arrayBuffer\(\)/);
   assert.doesNotThrow(() => new Function(source));
 });
+
+test('fetch request and XHR outgoing textual JSON preserve direction and sequence', async () => {
+  const h = harness();
+  await h.provision();
+  for (const [transport, direction] of [['fetch', 'request'], ['xhr', 'request']]) {
+    const value = await h.record(input({
+      capture_id: 'synthetic:' + transport + '-request',
+      transport, direction, value: '{"message":"hello"}'
+    }));
+    assert.equal(value.status, 'completed');
+  }
+  const starts = h.frames().filter(x => x.kind === 'csc-comm-start');
+  assert.deepEqual(starts.map(x => x.transport), ['fetch', 'xhr']);
+  assert.deepEqual(starts.map(x => x.direction), ['request', 'request']);
+  assert.deepEqual(starts.map(x => x.network_sequence), [1, 1]);
+});
+
+test('cross-origin opt-in selects accessible bytes while inaccessible remains omitted', async () => {
+  const h = harness();
+  await h.provision();
+  h.dispatch({ type: 'csc-comm-configure',
+    options: policy({ cross_origin: true }) });
+  const found = await h.record(input({
+    capture_id: 'synthetic:cross-selected', url: 'https://other.example.test/data',
+    value: '{"message":"hello"}'
+  }));
+  assert.equal(found.status, 'completed');
+  assert.match(h.frames()[0].url, /^https:\/\/other\.example\.test\/data$/);
+  const opaque = await h.record(input({
+    capture_id: 'synthetic:opaque-remains',
+    url: 'https://other.example.test/opaque', body_state: 'unavailable',
+    body_available: false, value: null
+  }));
+  assert.equal(opaque.status, 'inaccessible');
+});
+
+test('legacy page-side HMAC key cannot be written as a secret in a COMM body', async () => {
+  const h = harness();
+  await h.provision();
+  const value = await h.record(input({
+    capture_id: 'synthetic:unsupported-long-secret',
+    value: '{"Authorization":"' + 'private-value-'.repeat(200) + '"}'
+  }));
+  assert.equal(value.status, 'failed');
+  assert.equal(value.reason, 'csc-unsupported-sensitive-value');
+  assert.ok(!Buffer.concat(h.writes).includes(Buffer.from('private-value-')));
+});
