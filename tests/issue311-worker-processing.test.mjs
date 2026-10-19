@@ -10,7 +10,9 @@ const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const code = readFileSync(path.join(root,
   'src/userscript/02-network-communication/04-csc-comm-worker-processing.js'), 'utf8') +
   readFileSync(path.join(root,
-    'src/userscript/02-network-communication/04-csc-comm-worker-processing-part2.js'), 'utf8');
+    'src/userscript/02-network-communication/04-csc-comm-worker-processing-part2.js'), 'utf8') +
+  readFileSync(path.join(root,
+    'src/userscript/02-network-communication/04-csc-comm-worker-processing-part3.js'), 'utf8');
 const KEY = Uint8Array.from({ length: 32 }, (_, i) => i);
 const SCOPE = '00112233445566778899aabbccddeeff';
 const policy = (extra = {}) => ({
@@ -83,7 +85,9 @@ test('#311 manifest ownership and Worker source stay isolated from page ingress'
     'src/userscript/02-network-communication/04-csc-comm-worker-processing.js'), 'utf8');
   const part2 = readFileSync(path.join(root,
     'src/userscript/02-network-communication/04-csc-comm-worker-processing-part2.js'), 'utf8');
-  assert.ok(part1.split('\n').length < 500 && part2.split('\n').length < 500);
+  const part3 = readFileSync(path.join(root,
+    'src/userscript/02-network-communication/04-csc-comm-worker-processing-part3.js'), 'utf8');
+  assert.ok([part1, part2, part3].every(x => x.split('\n').length < 500));
   assert.doesNotMatch(code, /\bdocument\.\w+|\bwindow\.\w+|\bfetch\s*\(/);
   assert.match(code, /cscCommWriteChunk/);
 });
@@ -161,7 +165,7 @@ test('mode and origin selection exposes unsupported, inaccessible and rejected s
     capture_id: 'synthetic:text', body_type: 'text/plain', value: 'unknown plaintext'
   }))).status, 'unsupported');
   assert.equal((await h.record(input({
-    capture_id: 'synthetic:invalid', url: '%'
+    capture_id: 'synthetic:invalid', url: 'http://['
   }))).status, 'rejected');
 });
 
