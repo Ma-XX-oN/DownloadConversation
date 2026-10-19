@@ -32,7 +32,9 @@ function harness() {
   vm.runInContext(code + `\nthis.api = {
     connect: cscPluginQueueConnect, disconnect: cscPluginQueueDisconnect,
     publishNavigation: cscPluginQueueNavigation, snapshot: cscPluginQueueSnapshot,
-    retry: cscPluginQueueRetry, drain: cscPluginQueueDrain
+    retry: cscPluginQueueRetry, drain: cscPluginQueueDrain,
+    debugBacklog: () => cscPluginBacklog.map(item => item.event?.envelope),
+    debugRequests: () => [...cscPluginRequests.values()]
   }`, c);
   function event(n, direction, extra = {}, source = null) {
     return { envelope: {
@@ -271,5 +273,60 @@ test('incomplete response is rejected without leaking plugin payload or blocking
   assert.deepEqual(seen, [1, 3]);
   assert.equal(h.api.snapshot().accepted, 2);
   assert.equal(h.api.snapshot().rejected, 1);
+  assert.equal(h.api.snapshot().queued, 0);
+});
+
+test('duplicate capture is not replayed after the first acknowledgment', async () => {
+  const h = harness();
+  const original = h.event(1, 'request');
+  let deliveries = 0;
+  h.publish(original);
+  h.api.connect({
+    request() { deliveries++; return true; },
+    response() { return true; }, navigation() { return true; }
+  });
+  await settle(h);
+  assert.equal(deliveries, 1);
+  h.publish(original);
+  await settle(h);
+  assert.equal(deliveries, 1, 'acknowledged captures must be delivered only once');
+  assert.equal(h.api.snapshot().queued, 0);
+  assert.equal(h.api.snapshot().duplicates, 1);
+});
+
+test('reconnect replay preserves original XHR clock and capture identity', async () => {
+  const h = harness();
+  h.publish(h.event(1, 'request', {
+    transport: 'xhr', capture_id: 'fixture:immutable-request',
+    captured_at_epoch_ms: 1712345678000,
+    captured_at_mono_ms: 23.125, capture_order: 7
+  }));
+  const first = {
+    request() { return true; }, response() { return true; },
+    navigation() { return true; }
+  };
+  h.api.connect(first);
+  await settle(h);
+  assert.equal(h.api.snapshot().accepted, 1);
+  h.api.disconnect(first);
+  let firstRetry = true;
+  const second = {
+    request() {
+      if (firstRetry) { firstRetry = false; throw Error('inspect pending replay'); }
+      return true;
+    },
+    response() { return true; }, navigation() { return true; }
+  };
+  h.api.connect(second);
+  await settle(h);
+  assert.equal(h.api.snapshot().queued, 1);
+  const [envelope] = h.api.debugBacklog();
+  assert.equal(envelope.capture_id, 'fixture:immutable-request');
+  assert.equal(envelope.captured_at_epoch_ms, 1712345678000);
+  assert.equal(envelope.captured_at_mono_ms, 23.125);
+  assert.equal(envelope.capture_order, 7);
+  assert.equal(envelope.transport, 'xhr');
+  h.api.retry();
+  await settle(h);
   assert.equal(h.api.snapshot().queued, 0);
 });
