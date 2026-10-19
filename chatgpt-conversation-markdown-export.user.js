@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         ChatGPT Conversation Markdown Recorder
 // @namespace    https://chatgpt.com/
-// @version      1.11.7-issue.309.11
+// @version      1.11.7-issue.310.1
 // @description  Exports the current ChatGPT conversation directly from the Conversation API as Markdown or JSONL.
 // @match        https://chatgpt.com/*
 // @match        https://chat.openai.com/*
@@ -11402,6 +11402,266 @@ globalThis.__dcCompressor = {
     cscFanOut(stamp, metadata, null, data);
   }
   // END #309 canonical CSC ingress.
+  // BEGIN #310 independent same-page plugin backlog.
+  /** Original plugin-owned events, never derived from sanitized COMM records. */
+  const cscPluginBacklog = [];
+  /** Accepted request identities while awaiting their correlated response. */
+  const cscPluginRequests = new Map();
+  /** Exclusively attached provider host from #306, or null before readiness. */
+  let cscPluginHost = null;
+  /** Invalidates async completions when their host is disconnected. */
+  let cscPluginGeneration = 0;
+  /** Exactly one asynchronous drain per page execution context. */
+  let cscPluginDraining = false;
+  /** Successful host acknowledgements. */
+  let cscPluginAccepted = 0;
+  /** Unsupported or explicitly rejected events. */
+  let cscPluginRejected = 0;
+  /** Retriable delivery exceptions. */
+  let cscPluginFailures = 0;
+
+  /**
+   * Retain the #309 plugin-owned native clone and earliest capture envelope.
+   * @param {Object} event - Canonical capture identity and plugin-owned source.
+   * @returns {void} No value is returned.
+   */
+  function cscPluginQueuePublish(event) {
+    assert(Number.isSafeInteger(event?.envelope?.network_sequence),
+      'CSC plugin event needs canonical network_sequence.');
+    assert(typeof event?.envelope?.capture_id === 'string',
+      'CSC plugin event needs original capture identity.');
+    const last = cscPluginBacklog[cscPluginBacklog.length - 1];
+    assert(!last || last.event.envelope.capture_order < event.envelope.capture_order,
+      'CSC plugin ingress must publish in strictly increasing capture order.');
+    cscPluginBacklog.push({ event, parsed: false, body: null });
+    if (cscPluginHost) void cscPluginQueueDrain();
+  }
+
+  /**
+   * Accept generic navigation from #306's page observer without route inference.
+   * @param {string} url - Absolute page URL.
+   * @returns {void} No value is returned.
+   */
+  function cscPluginQueueNavigation(url) {
+    const stamp = cscCaptureNow('navigation', 'event');
+    cscPluginQueuePublish({
+      envelope: Object.freeze({ ...stamp, url }),
+      source: null, source_available: false, source_incomplete: false
+    });
+  }
+
+  /**
+   * Release only the plugin branch. Never touch stock or COMM-owned bodies.
+   * @param {Object} item - Terminal queue item.
+   * @returns {void} No value is returned.
+   */
+  function cscPluginQueueReleaseItem(item) {
+    const body = item.event?.source?.body;
+    if (body && !body.locked) void cancelReadableBodyQuietly(body);
+    item.event = null;
+    item.body = null;
+  }
+
+  /**
+   * Parse the independent plugin body once and retain it across host turnover.
+   * @param {Object} item - Correlated response item.
+   * @returns {Promise<Object|null>} JSON body if one is accessible.
+   */
+  async function cscPluginQueueJson(item) {
+    if (item.parsed) return item.body;
+    const source = item.event.source;
+    let body = null;
+    if (source && typeof source.json === 'function') {
+      try { body = await source.json(); } catch { body = null; }
+    } else if (source && typeof source === 'object' && !ArrayBuffer.isView(source)
+        && !(source instanceof ArrayBuffer) && !(source instanceof Blob)) {
+      body = source;
+    } else if (typeof source === 'string') {
+      try { body = JSON.parse(source); } catch { body = null; }
+    }
+    item.parsed = true;
+    item.body = body;
+    return body;
+  }
+
+  /**
+   * Dispatch via the existing provider-owned host, never directly to AICC.
+   * @param {Object} item - Oldest queued event.
+   * @param {Object} host - Active provider host.
+   * @param {number} generation - Lease invalidation generation.
+   * @returns {Promise<string>} accepted, rejected or awaiting.
+   */
+  async function cscPluginQueueDispatch(item, host, generation) {
+    const { envelope: e, source_incomplete: incomplete } = item.event;
+    if (e.transport === 'navigation') {
+      return host.navigation({ url: e.url }) ? 'accepted' : 'rejected';
+    }
+    if ((e.transport === 'fetch' || e.transport === 'xhr')
+        && e.direction === 'request') {
+      const result = host.request({
+        network_sequence: e.network_sequence,
+        method: e.method ?? 'GET',
+        request_url: e.request_url ?? e.url
+      });
+      if (result) {
+        cscPluginRequests.set(e.connection_id, {
+          network_sequence: e.network_sequence,
+          method: e.method ?? 'GET',
+          request_url: e.request_url ?? e.url,
+          connection_id: e.connection_id,
+          generation
+        });
+      }
+      return result ? 'accepted' : 'rejected';
+    }
+    if ((e.transport === 'fetch' || e.transport === 'xhr')
+        && e.direction === 'response') {
+      const request = cscPluginRequests.get(e.connection_id);
+      if (!request || request.generation !== generation) return 'rejected';
+      if (incomplete || !item.event.source_available || e.status !== 200) {
+        cscPluginRequests.delete(e.connection_id);
+        return 'rejected';
+      }
+      const body = await cscPluginQueueJson(item);
+      if (generation !== cscPluginGeneration || host !== cscPluginHost) {
+        return 'awaiting';
+      }
+      if (!body || typeof body !== 'object' || Array.isArray(body)) {
+        cscPluginRequests.delete(e.connection_id);
+        return 'rejected';
+      }
+      const result = host.response({
+        network_sequence: request.network_sequence, status: e.status, body
+      });
+      cscPluginRequests.delete(e.connection_id);
+      return result ? 'accepted' : 'rejected';
+    }
+    if (e.direction === 'error' || e.event === 'abort' || e.event === 'close') {
+      cscPluginRequests.delete(e.connection_id);
+    }
+    // No invented WebSocket host method: unsupported frames are explicit.
+    return 'rejected';
+  }
+
+  /**
+   * Acknowledge only successful host calls; keep the entire tail on exception.
+   * @returns {Promise<void>} Resolves after this ordered processing pass.
+   */
+  async function cscPluginQueueDrain() {
+    if (cscPluginDraining || !cscPluginHost) return;
+    cscPluginDraining = true;
+    const host = cscPluginHost;
+    const generation = cscPluginGeneration;
+    try {
+      while (cscPluginBacklog.length && host === cscPluginHost
+          && generation === cscPluginGeneration) {
+        const item = cscPluginBacklog[0];
+        let result;
+        try {
+          result = await cscPluginQueueDispatch(item, host, generation);
+        } catch (error) {
+          cscPluginFailures++;
+          logDiagnostic('warnings', 'csc-plugin-delivery-failed', {
+            capture_id: item.event.envelope.capture_id,
+            network_sequence: item.event.envelope.network_sequence,
+            error: boundedDiagnosticText(errorMessage(error), 200)
+          });
+          break;
+        }
+        if (generation !== cscPluginGeneration || host !== cscPluginHost
+            || result === 'awaiting') break;
+        if (result === 'accepted') cscPluginAccepted++;
+        else cscPluginRejected++;
+        cscPluginBacklog.shift();
+        cscPluginQueueReleaseItem(item);
+      }
+    } finally {
+      cscPluginDraining = false;
+      if (cscPluginHost && cscPluginHost !== host && cscPluginBacklog.length) {
+        void cscPluginQueueDrain();
+      }
+    }
+  }
+
+  /**
+   * Bind one existing #306 host; queue never owns provider disposal.
+   * @param {Object} host - Provider navigation/request/response host.
+   * @returns {void} No value is returned.
+   */
+  function cscPluginQueueConnect(host) {
+    assert(host && typeof host.request === 'function'
+      && typeof host.response === 'function'
+      && typeof host.navigation === 'function',
+    'CSC plugin requires the existing provider navigation/request/response interface.');
+    assert(!cscPluginHost || cscPluginHost === host,
+      'CSC plugin queue already has an active consumer.');
+    if (cscPluginHost === host) return;
+    cscPluginHost = host;
+    cscPluginGeneration++;
+    // Re-establish in-flight correlation before newer requests on a new host.
+    const pending = [...cscPluginRequests.values()]
+      .sort((a, b) => a.network_sequence - b.network_sequence);
+    cscPluginRequests.clear();
+    for (let i = pending.length - 1; i >= 0; i--) {
+      const req = pending[i];
+      cscPluginBacklog.unshift({
+        event: {
+          envelope: {
+            page_instance_id: cscPageInstanceId,
+            capture_id: cscPageInstanceId + ':' + req.network_sequence,
+            capture_order: req.network_sequence,
+            network_sequence: req.network_sequence,
+            connection_id: req.connection_id,
+            transport: 'fetch', direction: 'request',
+            method: req.method, request_url: req.request_url
+          },
+          source: null, source_available: false, source_incomplete: false
+        },
+        parsed: false, body: null
+      });
+    }
+    void cscPluginQueueDrain();
+  }
+
+  /**
+   * Invalidate a disposed host without touching its provider-owned resources.
+   * @param {Object} host - Host ending its current lease.
+   * @returns {void} No value is returned.
+   */
+  function cscPluginQueueDisconnect(host) {
+    if (cscPluginHost !== host) return;
+    cscPluginHost = null;
+    cscPluginGeneration++;
+  }
+
+  /**
+   * Retry a temporarily failing head; never discard events to make progress.
+   * @returns {void} No value is returned.
+   */
+  function cscPluginQueueRetry() {
+    if (cscPluginHost) void cscPluginQueueDrain();
+  }
+
+  /**
+   * Return only counts and lag timestamps, never raw queued secret content.
+   * @returns {Object} Immutable queue-health snapshot.
+   */
+  function cscPluginQueueSnapshot() {
+    return Object.freeze({
+      generation: cscPluginGeneration,
+      connected: Boolean(cscPluginHost),
+      queued: cscPluginBacklog.length,
+      accepted: cscPluginAccepted,
+      rejected: cscPluginRejected,
+      failures: cscPluginFailures,
+      oldest_capture_at_epoch_ms:
+        cscPluginBacklog[0]?.event?.envelope?.captured_at_epoch_ms ?? null
+    });
+  }
+
+  // Runs before network interception at document-start; no page COMM queue.
+  cscBindPluginIngress(cscPluginQueuePublish);
+  // END #310 independent same-page plugin backlog.
 
   /** Current authoritative Agent lifecycle state, distinct from timing state. */
   let agentLifecycleState = 'unknown';
