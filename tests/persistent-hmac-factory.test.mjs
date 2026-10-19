@@ -24,7 +24,7 @@ test('production factory refuses ordinary Web Locks plus GM writes', async () =>
   assert.equal(writes, 0);
 });
 
-test('factory rejects only synchronous GM APIs without an acknowledged write', async () => {
+test('factory rejects missing GM APIs and unverified key authority', async () => {
   const context = { crypto: webcrypto, Uint8Array, Map, Set,
     location: { origin: 'https://chatgpt.com' },
     navigator: { locks: { request: async (_name, _options, fn) =>
@@ -34,7 +34,7 @@ test('factory rejects only synchronous GM APIs without an acknowledged write', a
   };
   const factory = vm.runInNewContext(source +
     '\ncommunicationPersistentHmacCurrentTabService;', context);
-  await assert.rejects(() => factory().admit(), /storage-unavailable/);
+  await assert.rejects(() => factory().admit(), /shared-authority-unavailable/);
 });
 
 test('factory blocks admission until asynchronous GM write is acknowledged', async () => {
@@ -56,9 +56,16 @@ test('factory blocks admission until asynchronous GM write is acknowledged', asy
       }
     }
   };
-  const factory = vm.runInNewContext(source +
-    '\ncommunicationPersistentHmacCurrentTabService;', context);
-  const service = factory();
+  const create = vm.runInNewContext(source +
+    '\ncommunicationPersistentHmacService;', context);
+  const service = create({
+    storage: { get: context.GM.getValue, set: context.GM.setValue },
+    authority: {
+      capability: 'linearizable-chatgpt-key-record-v2',
+      runExclusive: async callback => callback()
+    },
+    crypto: webcrypto
+  });
   let admitted = false;
   const pending = service.admit().then(value => {
     admitted = true;
