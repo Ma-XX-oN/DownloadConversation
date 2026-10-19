@@ -11,6 +11,7 @@ function harness() {
   let handler = null;
   let seq = 0;
   const warnings = [];
+  const retryTimers = [];
   const c = vm.createContext({
     assert: (ok, message) => assert.ok(ok, message),
     cscBindPluginIngress(fn) { handler = fn; },
@@ -24,6 +25,12 @@ function harness() {
       };
     },
     cancelReadableBodyQuietly: async () => {},
+    setTimeout(callback, delay) {
+      const timer = { callback, delay, cancelled: false };
+      retryTimers.push(timer);
+      return timer;
+    },
+    clearTimeout(timer) { timer.cancelled = true; },
     logDiagnostic(level, name, details) { warnings.push({ level, name, details }); },
     boundedDiagnosticText: String,
     errorMessage: error => String(error?.message ?? error),
@@ -44,7 +51,16 @@ function harness() {
       status: 200, captured_at_epoch_ms: 1700000000000 + n, ...extra
     }, source, source_available: source !== null, source_incomplete: false };
   }
-  return { api: c.api, event, publish: e => handler(e), warnings };
+  return {
+    api: c.api, event, publish: e => handler(e), warnings,
+    pendingRetries: () => retryTimers.filter(x => !x.cancelled),
+    advanceRetry() {
+      const timer = retryTimers.find(x => !x.cancelled);
+      assert.ok(timer, 'a retry must be scheduled');
+      timer.cancelled = true;
+      timer.callback();
+    }
+  };
 }
 
 const settle = async h => { await h.api.drain(); await new Promise(resolve => setImmediate(resolve)); };
@@ -329,4 +345,29 @@ test('reconnect replay preserves original XHR clock and capture identity', async
   h.api.retry();
   await settle(h);
   assert.equal(h.api.snapshot().queued, 0);
+});
+
+test('one transient provider exception retries automatically with bounded timer', async () => {
+  const h = harness();
+  h.publish(h.event(1, 'request'));
+  h.publish(h.event(2, 'request', { connection_id: 'later' }));
+  const delivered = [];
+  let failure = true;
+  h.api.connect({
+    request(e) {
+      if (failure) { failure = false; throw Error('transient before acceptance'); }
+      delivered.push(e.network_sequence);
+      return true;
+    },
+    response() { return true; }, navigation() { return true; }
+  });
+  await settle(h);
+  assert.equal(h.api.snapshot().queued, 2);
+  assert.equal(h.pendingRetries().length, 1, 'handler failure schedules one retry');
+  assert.ok(h.pendingRetries()[0].delay >= 100);
+  h.advanceRetry();
+  await settle(h);
+  assert.deepEqual(delivered, [1, 2]);
+  assert.equal(h.api.snapshot().queued, 0);
+  assert.equal(h.pendingRetries().length, 0);
 });
