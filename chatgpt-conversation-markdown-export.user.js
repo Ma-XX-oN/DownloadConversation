@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         ChatGPT Conversation Markdown Recorder
 // @namespace    https://chatgpt.com/
-// @version      1.11.7-issue.310.14
+// @version      1.11.7-issue.310.15
 // @description  Exports the current ChatGPT conversation directly from the Conversation API as Markdown or JSONL.
 // @match        https://chatgpt.com/*
 // @match        https://chat.openai.com/*
@@ -11605,7 +11605,7 @@ globalThis.__dcCompressor = {
           logDiagnostic('warnings', 'csc-plugin-delivery-failed', {
             capture_id: item.event.envelope.capture_id,
             network_sequence: item.event.envelope.network_sequence,
-            error: boundedDiagnosticText(errorMessage(error), 200)
+            failure_kind: 'provider-handler-exception'
           });
           if (generation === cscPluginGeneration && host === cscPluginHost) {
             cscPluginQueueScheduleRetry();
