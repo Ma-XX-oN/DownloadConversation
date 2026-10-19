@@ -94,3 +94,29 @@ test('factory blocks admission until asynchronous GM write is acknowledged', asy
   await service.complete(result.token);
   service.dispose();
 });
+
+test('production factory refuses an unverified Web-Lock-plus-GM authority', async () => {
+  const records = new Map();
+  let gmWrites = 0;
+  const context = { crypto: webcrypto, Uint8Array, Map, Set,
+    location: { origin: 'https://chatgpt.com' },
+    navigator: { locks: {
+      request: (_name, _opts, fn) => fn({ mode: 'exclusive' })
+    } },
+    GM: {
+      async getValue(key, fallback) { return records.get(key) ?? fallback; },
+      async setValue(key, value) {
+        gmWrites++;
+        records.set(key, structuredClone(value));
+      }
+    }
+  };
+  const factory = vm.runInNewContext(source +
+    '\ncommunicationPersistentHmacCurrentTabService;', context);
+  const producer = factory();
+  await assert.rejects(() => producer.admit(),
+    /shared-authority-unavailable/);
+  assert.equal(gmWrites, 0, 'must not publish a split-brain key');
+  assert.equal(records.size, 0);
+  producer.dispose();
+});
