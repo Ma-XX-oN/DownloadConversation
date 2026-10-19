@@ -1,18 +1,14 @@
 
   /**
-
    * Installs the isolated COMM processor on a dedicated Worker scope.
-
    * @param {Object} scope - Worker message target.
-
    * @param {Object} sink - Worker-local output writer.
-
    * @returns {Object} Output from cscCommWorkerProcessing.
-
    */
 
   function cscCommWorkerProcessing(scope, sink) {
-    const encoder = new TextEncoder(); const maxQueue = 16; const maxChunk = 32768; const maxValue = 1024 * 1024; const allowedModes = ['replay-essentials', 'everything']; const records = []; let working = false; let key = null; let keyGeneration = null; let scopeId = null; let policy = Object.freeze({
+    const encoder = new TextEncoder(); const maxQueue = 16; const maxChunk = 32768; const maxValue = 1024 * 1024; const allowedModes = ['replay-essentials', 'everything']; const records = []; const stagedKeys = new Map();
+    let working = false; let key = null; let keyGeneration = null; let scopeId = null; let policy = Object.freeze({
       mode: 'replay-essentials', binary: false,
       cross_origin: false, auth_headers: false, all: false,
       origin: 'https://chatgpt.com'
