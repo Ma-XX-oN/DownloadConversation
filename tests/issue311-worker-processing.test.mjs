@@ -376,3 +376,22 @@ test('parsed XHR cyclic JSON fails closed without leaking value', async () => {
   assert.equal(result.reason, 'csc-invalid-parsed-json');
   assert.equal(h.frames().at(-1).source_complete, false);
 });
+
+test('browser probe is one opt-in exact-source Worker row with synthetic payload only', () => {
+  const file = 'src/userscript/06-image-export-tests/10-csc-comm-worker-processing-probe.js';
+  const source = readFileSync(path.join(root, file), 'utf8');
+  const manifest = JSON.parse(readFileSync(path.join(root, 'src/userscript-manifest.json')));
+  const registry = readFileSync(path.join(root,
+    'src/userscript/06-image-export-tests/04-tests-modal-transition.js'), 'utf8');
+  const files = manifest.modules.flatMap(module => module.files);
+  assert.equal(files.filter(path => path === file).length, 1);
+  assert.equal(registry.split("['CSC COMM Worker processor', testCscCommWorkerProcessing]")
+    .length - 1, 1);
+  assert.doesNotMatch(source, /\bfetch\s*\(|XMLHttpRequest\s*\(|showDirectoryPicker\s*\(/);
+  assert.match(source, /'dc-hmac-key-v2'/);
+  assert.match(source, /\[keyBytes\.buffer\]/);
+  assert.match(source, /}, \[body\]\);/);
+  assert.match(source, /cscCommProcessingWorkerSource\(\)/);
+  assert.match(source, /response|original\.arrayBuffer\(\)/);
+  assert.doesNotThrow(() => new Function(source));
+});
