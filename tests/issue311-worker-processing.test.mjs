@@ -8,7 +8,9 @@ import test from 'node:test';
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const code = readFileSync(path.join(root,
-  'src/userscript/02-network-communication/04-csc-comm-worker-processing.js'), 'utf8');
+  'src/userscript/02-network-communication/04-csc-comm-worker-processing.js'), 'utf8') +
+  readFileSync(path.join(root,
+    'src/userscript/02-network-communication/04-csc-comm-worker-processing-part2.js'), 'utf8');
 const KEY = Uint8Array.from({ length: 32 }, (_, i) => i);
 const SCOPE = '00112233445566778899aabbccddeeff';
 const policy = (extra = {}) => ({
@@ -77,7 +79,11 @@ test('#311 manifest ownership and Worker source stay isolated from page ingress'
   assert.equal(files.filter(name => name === p).length, 1);
   assert.ok(files.indexOf(p) > files.indexOf(
     'src/userscript/02-network-communication/03-csc-canonical-ingress.js'));
-  assert.ok(code.split('\n').length < 500);
+  const part1 = readFileSync(path.join(root,
+    'src/userscript/02-network-communication/04-csc-comm-worker-processing.js'), 'utf8');
+  const part2 = readFileSync(path.join(root,
+    'src/userscript/02-network-communication/04-csc-comm-worker-processing-part2.js'), 'utf8');
+  assert.ok(part1.split('\n').length < 500 && part2.split('\n').length < 500);
   assert.doesNotMatch(code, /\bdocument\.\w+|\bwindow\.\w+|\bfetch\s*\(/);
   assert.match(code, /cscCommWriteChunk/);
 });
