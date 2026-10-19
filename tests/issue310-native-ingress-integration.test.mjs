@@ -29,7 +29,7 @@ function harness({ workerFailure = false } = {}) {
     Blob, Request, Response, Headers, ReadableStream, Uint8Array,
     ArrayBuffer, Object, Promise, String, Map
   });
-  vm.runInContext(ingress + '\n' + backlog + String.raw'\n' + 'globalThis.api = { ' +
+  vm.runInContext(ingress + '\n' + backlog + '\n' + 'globalThis.api = { ' +
     'stamp: cscCaptureNow, publish: cscPublishFetch, publishValue: cscPublishValue, ' +
     'attachWorker: cscBindCommWorker, connect: cscPluginQueueConnect, ' +
     'disconnect: cscPluginQueueDisconnect, snapshot: cscPluginQueueSnapshot, ' +
