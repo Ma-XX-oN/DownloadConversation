@@ -248,24 +248,131 @@ test('#313 actual token/key message is imported, used once, then released', asyn
   assert.equal(reuse.reason, 'csc-key-token-unavailable');
 });
 
-test('Worker has no fallback to unsanitized page archive when writer rejects', async () => {
+
+test('Worker reaches a rejecting sink after valid V2 key admission', async () => {
   const listeners = [];
   const statuses = [];
+  let writeAttempts = 0;
   const sandbox = vm.createContext({
     crypto: webcrypto, TextEncoder, TextDecoder, URL, Uint8Array, ArrayBuffer,
     DataView, Map, Set, atob, btoa, Object, String, Number, Promise, Error
   });
   vm.runInContext(code + '\nglobalThis.workerFactory = cscCommWorkerProcessing;', sandbox);
-  const api = sandbox.workerFactory({
+  sandbox.workerFactory({
     addEventListener(type, cb) { listeners.push(cb); },
     postMessage(message) { statuses.push(message); }
-  }, { async write() { throw new Error('PRIVATE RAW TOKEN'); } });
-  await api.enqueue(input({ capture_id: 'synthetic:writer-fail' }));
-  for (let i = 0; i < 100 && statuses.length === 0; i++) {
+  }, { async write() {
+    writeAttempts += 1;
+    throw new Error('PRIVATE RAW TOKEN');
+  } });
+  listeners[0]({ data: {
+    type: 'csc-comm-provision', key_bytes: new Uint8Array(KEY),
+    redaction_scope: SCOPE, redaction_key_generation: SCOPE
+  } });
+  for (let i = 0; i < 100 && !statuses.some(x => x.type === 'csc-comm-key-ready'); i++) {
+    await new Promise(resolve => setTimeout(resolve, 2));
+  }
+  assert.ok(statuses.some(x => x.type === 'csc-comm-key-ready'));
+  listeners[0]({ data: { type: 'csc-comm-capture',
+    envelope: input({ capture_id: 'synthetic:writer-fail' }) } });
+  for (let i = 0; i < 100 && !statuses.some(x => x.type === 'csc-comm-status'); i++) {
     await new Promise(resolve => setTimeout(resolve, 2));
   }
   const failure = statuses.find(x => x.type === 'csc-comm-status');
-  assert.ok(failure);
+  assert.ok(writeAttempts >= 2, 'Start write and failed terminal write were attempted');
   assert.equal(failure.status, 'failed');
+  assert.equal(failure.reason, 'csc-processing-error');
   assert.equal(JSON.stringify(statuses).includes('PRIVATE RAW TOKEN'), false);
+});
+
+test('missing key has a separate explicit failure path', async () => {
+  const h = harness();
+  const result = await h.record(input({ capture_id: 'synthetic:key-missing' }));
+  assert.equal(result.status, 'failed');
+  assert.equal(result.reason, 'csc-key-scope-mismatch');
+});
+
+test('WebSocket outbound binary body without MIME is selected only with binary option', async () => {
+  const h = harness();
+  await h.provision();
+  const source = Uint8Array.from({ length: 524299 }, (_, i) => (i * 31 + 3) & 255);
+  const actual = source.buffer;
+  const event = input({ capture_id: 'synthetic:ws-binary-off',
+    transport: 'websocket', direction: 'outgoing',
+    url: 'wss://chatgpt.com/backend-api/ws', body_type: 'object',
+    value: actual, headers: []
+  });
+  const off = await h.record(event);
+  assert.equal(off.status, 'unselected');
+  h.dispatch({ type: 'csc-comm-configure', options: policy({ binary: true }) });
+  const on = await h.record({ ...event, capture_id: 'synthetic:ws-binary-on' });
+  assert.equal(on.status, 'completed');
+  assert.equal(on.source_bytes, source.byteLength);
+  const frames = h.frames().filter(x => x.capture_id === 'synthetic:ws-binary-on');
+  const restored = Buffer.concat(frames.filter(x => x.kind === 'csc-comm-body')
+    .map(x => Buffer.from(x.data, 'base64')));
+  assert.deepEqual(restored, Buffer.from(source));
+  assert.equal(source[0], 3, 'Page-owned buffer was not detached or mutated');
+  h.dispatch({ type: 'csc-comm-configure', options: policy({ all: true }) });
+  assert.equal((await h.record({ ...event, capture_id: 'synthetic:ws-binary-master' }))
+    .status, 'completed');
+});
+
+test('WebSocket incoming Blob streams preserve byte values across chunks', async () => {
+  const h = harness();
+  await h.provision();
+  h.dispatch({ type: 'csc-comm-configure', options: policy({ binary: true }) });
+  const bytes = Uint8Array.from({ length: 131075 }, (_, i) => i & 255);
+  const event = input({ capture_id: 'synthetic:ws-blob', transport: 'websocket',
+    direction: 'incoming', body_type: 'object',
+    url: 'wss://chatgpt.com/backend-api/ws', value: new Blob([bytes]),
+    headers: []
+  });
+  const result = await h.record(event);
+  assert.equal(result.status, 'completed');
+  const restored = Buffer.concat(h.frames().filter(x => x.kind === 'csc-comm-body')
+    .map(x => Buffer.from(x.data, 'base64')));
+  assert.deepEqual(restored, Buffer.from(bytes));
+});
+
+test('already parsed XHR JSON is sanitized without inventing wire byte totals', async () => {
+  const h = harness();
+  await h.provision();
+  const parsed = {
+    metadata: { count: 3, valid: true, list: ['first', 'second', null] },
+    authorization: 'Aé界𐐀'
+  };
+  const result = await h.record(input({
+    capture_id: 'synthetic:xhr-parsed-json', transport: 'xhr',
+    direction: 'response', body_type: 'json', response_type: 'json',
+    value: parsed, headers: 'content-type: application/json\r\n'
+  }));
+  assert.equal(result.status, 'completed');
+  assert.equal(result.source_bytes, null);
+  assert.ok(result.derived_json_utf8_bytes > 0);
+  const frames = h.frames();
+  const start = frames.find(x => x.kind === 'csc-comm-start');
+  assert.equal(start.source_byte_provenance, 'unavailable-parsed-xhr-json');
+  const end = frames.find(x => x.kind === 'csc-comm-end');
+  assert.equal(end.source_bytes, null);
+  assert.ok(end.derived_json_utf8_bytes > 0);
+  const stored = frames.filter(x => x.kind === 'csc-comm-body').map(x => x.data).join('');
+  const restored = JSON.parse(stored);
+  assert.deepEqual(JSON.parse(JSON.stringify(restored.metadata)), parsed.metadata);
+  assert.match(restored.authorization, /^\[[0-9a-f]{32}\/O\//);
+  assert.ok(!Buffer.concat(h.writes).includes(Buffer.from('Aé界𐐀')));
+});
+
+test('parsed XHR cyclic JSON fails closed without leaking value', async () => {
+  const h = harness();
+  await h.provision();
+  const cyclic = { ordinary: 'hello' };
+  cyclic.self = cyclic;
+  const result = await h.record(input({
+    capture_id: 'synthetic:xhr-cyclic', transport: 'xhr',
+    response_type: 'json', body_type: 'json', value: cyclic
+  }));
+  assert.equal(result.status, 'failed');
+  assert.equal(result.reason, 'csc-invalid-parsed-json');
+  assert.equal(h.frames().at(-1).source_complete, false);
 });
