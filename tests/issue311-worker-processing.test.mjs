@@ -137,14 +137,18 @@ test('binary option preserves bytes across multiple bounded frames', async () =>
   const disabled = await h.record(input({ capture_id: 'synthetic:binary-off',
     body_type: 'application/octet-stream', value: bytes.buffer }));
   assert.equal(disabled.status, 'unselected');
-  assert.equal(h.frames().length, 0);
+  assert.equal(h.frames().length, 1);
+  assert.equal(h.frames()[0].kind, 'csc-comm-selection');
+  assert.equal(h.frames()[0].status, 'unselected');
+  assert.equal(h.frames()[0].body_captured, false);
   h.dispatch({ type: 'csc-comm-configure', options: policy({ binary: true }) });
   const enabled = await h.record(input({ capture_id: 'synthetic:binary-on',
     body_type: 'application/octet-stream', value: bytes.buffer }));
   assert.equal(enabled.status, 'completed');
   assert.equal(enabled.source_bytes, bytes.length);
   const frames = h.frames();
-  assert.equal(frames[0].binary_encoding, 'base64');
+  assert.equal(frames.find(x => x.kind === 'csc-comm-start').binary_encoding,
+    'base64');
   const decoded = Buffer.concat(frames.filter(x => x.kind === 'csc-comm-body')
     .map(x => Buffer.from(x.data, 'base64')));
   assert.deepEqual(decoded, Buffer.from(bytes));
