@@ -29,8 +29,11 @@ const storage = {
 };
 const make = () => communicationPersistentHmacService({
   storage,
-  authority: communicationPersistentHmacChatgptAuthority(
+  // Localhost localStorage is coherent in this isolated browser fixture.
+  // This is NOT an assertion about installed Tampermonkey GM storage.
+  authority: { ...communicationPersistentHmacChatgptAuthority(
     navigator, { origin: 'https://chatgpt.com' }),
+    capability: 'linearizable-chatgpt-key-record-v2' },
   crypto
 });
 window.probe = { ready: true, make };
