@@ -184,7 +184,7 @@
    * @returns {Promise<void>} Resolves after this ordered processing pass.
    */
   async function cscPluginQueueDrain() {
-    if (cscPluginDraining || !cscPluginHost) return;
+    if (cscPluginDraining || !cscPluginHost || cscPluginRetryTimer !== null) return;
     cscPluginDraining = true;
     const host = cscPluginHost;
     const generation = cscPluginGeneration;
