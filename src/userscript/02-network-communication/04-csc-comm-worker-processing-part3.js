@@ -43,9 +43,10 @@
           redaction_key_epoch: event.redaction_key_epoch,
           redaction_key_storage: event.redaction_key_storage,
           binary_encoding: choice.kind === 'binary' ? 'base64' : 'utf8',
-          source_byte_provenance: event.value != null &&
-            typeof event.value === 'object' &&
-            choice.kind === 'json' ? 'unavailable-parsed-xhr-json' :
+          source_byte_provenance: choice.kind === 'json' &&
+            event.value != null && typeof event.value === 'object' ?
+            'unavailable-parsed-xhr-json' :
+            typeof event.value === 'string' ? 'utf8-derived-text' :
             'browser-observed-bytes'
         }, counts); const context = event.transport === 'websocket' ? 'ws.text.json.string' : 'json.string'; const state = jsonState(context); let decoder = choice.kind === 'binary' ? null :
           new TextDecoder('utf-8', { fatal: true }); let ssePending = '';
@@ -127,15 +128,16 @@
           ancestors.add(value);
           try {
             await emit(array ? '[' : '{');
-            const keys = array ? Array.from({ length: value.length },
-              (_, index) => String(index)) : Object.keys(value);
-            for (let index = 0; index < keys.length; index += 1) {
+            const keys = array ? null : Object.keys(value);
+            const length = array ? value.length : keys.length;
+            if (!Number.isSafeInteger(length)) fail('csc-invalid-parsed-json');
+            for (let index = 0; index < length; index += 1) {
               if (index) await emit(',');
               if (!array) {
                 await emit(JSON.stringify(keys[index]));
                 await emit(':');
               }
-              const item = value[keys[index]];
+              const item = value[array ? index : keys[index]];
               await serializeParsedJson(item === undefined && array ? null : item,
                 ancestors, depth + 1);
             }
@@ -173,7 +175,9 @@
               await chunkRecord(base64(bytes.subarray(i, i + maxChunk)), 'base64');
             }
           } else if (typeof value === 'string') {
-            const bytes = encoder.encode(value); counts.source = bytes.byteLength;
+            const bytes = encoder.encode(value);
+            counts.source_known = false;
+            counts.derived = bytes.byteLength;
             for (let i = 0; i < bytes.byteLength; i += maxChunk) {
               await chunkRecord(await serializeText(
                 decoder.decode(bytes.subarray(i, i + maxChunk), { stream: true }), false), 'utf8');
