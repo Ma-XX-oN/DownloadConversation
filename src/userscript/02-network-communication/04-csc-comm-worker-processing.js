@@ -58,7 +58,8 @@
       scope.postMessage({
         type: 'csc-comm-status', capture_id: String(event.capture_id ?? ''),
         network_sequence: Number(event.network_sequence ?? 0),
-        status, reason, source_bytes: counts?.source ?? 0,
+        status, reason, source_bytes: counts?.source_known === false ? null : counts?.source ?? 0,
+        derived_json_utf8_bytes: counts?.source_known === false ? counts.derived : null,
         emitted_bytes: counts?.emitted ?? 0,
         durable: false
       });
