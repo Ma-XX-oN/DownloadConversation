@@ -39,7 +39,8 @@
   runOneTest = async function runOneTestAfterChatGPTPluginReady(name, fn) {
     if (name !== 'Worker + Zstd/CSP'
       && name !== 'CSC Worker stream + directory'
-      && name !== 'CSC dual clone + Worker') {
+      && name !== 'CSC dual clone + Worker'
+      && name !== 'CSC COMM Worker processor') {
       await ensureChatGPTCanonicalAgent();
     }
     return runOneTestWithCanonicalAgent(name, fn);
