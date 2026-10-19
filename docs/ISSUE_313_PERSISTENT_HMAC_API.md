@@ -243,3 +243,34 @@ against first-use, stale reader, rotation and crash interleavings.
 This fixture must remain explicitly labelled a reproduction of
 unsatisfied safety acceptance until a changed producer candidate
 correctly fails closed or safely converges under the same test.
+
+## Fail-closed production gate after stale-GM negative control
+
+**Observed failure:** The installed Chrome/Tampermonkey witness showed
+exclusive Web Locks PASS but async GM cross-tab counter 24/48 FAIL and
+one-direction sequential visibility FAIL. An adversarial fixture also
+demonstrated two distinct first-use HMAC keys when GM replicas diverge
+despite a common properly exclusive lock.
+
+**RED prediction:** The unverified `communicationPersistentHmacCurrentTabService`
+previously allowed admission and GM key writes under Web Locks alone.
+The added test requiring rejection was RED against that code.
+
+**GREEN safeguard:** The service now requires an injected authority
+claiming `linearizable-chatgpt-key-record-v2`. The available native
+Web Lock adapter reports only `exclusive-chatgpt-web-lock-only-v1`,
+never the stronger record-consistency capability. The actual
+Tampermonkey factory therefore fails closed *before* writing or
+provisioning K. Synthetic coherent-record fixtures explicitly provide
+the stronger capability to test lifecycle semantics, and do **not**
+certify actual GM coherence. A capability string in an injected mock
+is not itself proof of a linearizable store.
+
+**Unresolved feature:** Persistence/rotation in installed Chrome remains
+INCOMPLETE. Do not re-enable this factory by simply renaming the
+Web Lock capability or by assuming local GM readback is an atomic
+cross-tab commit. A verified synchronization authority must be
+designed and certified first; page-readable IndexedDB must not
+contain any HMAC key, original credential, or recording payload.
+The operator's existing diagnostic probe 0.9.0 remains available
+and has not been run in the installed browser.
