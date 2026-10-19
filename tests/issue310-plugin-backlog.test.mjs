@@ -7,7 +7,7 @@ const read = p => readFileSync(p, 'utf8');
 const code = read('src/userscript/02-network-communication/03-csc-plugin-backlog.js');
 const manifest = JSON.parse(read('src/userscript-manifest.json'));
 
-function harness() {
+function harness({ pageId = 'fixture-page' } = {}) {
   let handler = null;
   let seq = 0;
   const warnings = [];
@@ -15,7 +15,7 @@ function harness() {
   const c = vm.createContext({
     assert: (ok, message) => assert.ok(ok, message),
     cscBindPluginIngress(fn) { handler = fn; },
-    cscPageInstanceId: 'fixture-page',
+    cscPageInstanceId: pageId,
     cscCaptureNow(transport, direction) {
       seq++;
       return {
@@ -459,4 +459,49 @@ test('provider handler exception details never copy private values to GEN diagno
   assert.doesNotMatch(JSON.stringify(h.warnings), /PRIVATE_PROVIDER_BODY_TOKEN_88421/,
     'No untrusted provider error text may escape into persistent GEN logs');
   h.api.disconnect(host);
+});
+
+test('already-ready provider accepts fresh request and response exactly once', async () => {
+  const h = harness();
+  const accepted = [];
+  const host = {
+    request(x) { accepted.push(['request', x.network_sequence]); return true; },
+    response(x) { accepted.push(['response', x.network_sequence, x.body.title]); return true; },
+    navigation() { return true; }
+  };
+  h.api.connect(host);
+  h.publish(h.event(1, 'request'));
+  h.publish(h.event(2, 'response', {}, {
+    json: async () => ({ title: 'live event' })
+  }));
+  await settle(h);
+  assert.deepEqual(accepted, [
+    ['request', 1], ['response', 1, 'live event']
+  ]);
+  assert.equal(h.api.snapshot().queued, 0);
+  assert.equal(h.api.snapshot().accepted, 2);
+  assert.equal(h.api.snapshot().failures, 0);
+});
+
+test('separate page instances have independent queue state and no restored backlog', async () => {
+  const old = harness({ pageId: 'page-before-reload' });
+  old.publish(old.event(1, 'request'));
+  old.publish(old.event(2, 'response', {}, { json: async () => ({ title: 'old' }) }));
+  assert.equal(old.api.snapshot().queued, 2);
+  const fresh = harness({ pageId: 'page-after-reload' });
+  assert.equal(fresh.api.snapshot().queued, 0);
+  assert.equal(fresh.api.snapshot().accepted, 0);
+  let deliveries = 0;
+  fresh.api.connect({
+    request() { deliveries++; return true; },
+    response() { deliveries++; return true; },
+    navigation() { return true; }
+  });
+  await settle(fresh);
+  assert.equal(deliveries, 0, 'previous-page captures must not replay from storage');
+  fresh.publish(fresh.event(1, 'request'));
+  await settle(fresh);
+  assert.equal(deliveries, 1);
+  assert.equal(old.api.snapshot().queued, 2,
+    'a new page realm cannot consume a different page instance queue');
 });
