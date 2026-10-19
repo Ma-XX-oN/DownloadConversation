@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         ChatGPT Conversation Markdown Recorder
 // @namespace    https://chatgpt.com/
-// @version      1.11.7-issue.311.5
+// @version      1.11.7-issue.311.6
 // @description  Exports the current ChatGPT conversation directly from the Conversation API as Markdown or JSONL.
 // @match        https://chatgpt.com/*
 // @match        https://chat.openai.com/*
@@ -20834,7 +20834,8 @@ Image elapsed: ${formatDuration(imageElapsed)} — Completed: ${imageCompleted}/
   runOneTest = async function runOneTestAfterChatGPTPluginReady(name, fn) {
     if (name !== 'Worker + Zstd/CSP'
       && name !== 'CSC Worker stream + directory'
-      && name !== 'CSC dual clone + Worker') {
+      && name !== 'CSC dual clone + Worker'
+      && name !== 'CSC COMM Worker processor') {
       await ensureChatGPTCanonicalAgent();
     }
     return runOneTestWithCanonicalAgent(name, fn);
