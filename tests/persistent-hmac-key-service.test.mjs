@@ -453,3 +453,42 @@ test('complete reconciles committed GM write with lost acknowledgement', async (
   await s.complete(a.token);
   assert.equal(f.raw().pending.length, 0);
 });
+
+test('negative control: serialized locks do not make stale GM replicas coherent', async () => {
+  // This fixture models the actual observed browser failure, not a successful
+  // production acceptance criterion. Each tab reads back its own acknowledged
+  // GM write while remote propagation is delayed indefinitely.
+  const sharedLock = fixture().authority;
+  const replicas = [new Map(), new Map()];
+  const mkStorage = tab => ({
+    async get(key, fallback) {
+      const item = replicas[tab].get(key);
+      return item === undefined ? fallback : structuredClone(item);
+    },
+    async set(key, value) {
+      replicas[tab].set(key, structuredClone(value));
+    }
+  });
+  const first = create({ authority: sharedLock, storage: mkStorage(0),
+    crypto: webcrypto });
+  const second = create({ authority: sharedLock, storage: mkStorage(1),
+    crypto: webcrypto });
+  const a = await first.admit();
+  const b = await second.admit();
+  try {
+    // Both operations acquired the SAME exclusive authority sequentially
+    // and passed their local post-write readback, yet established two keys.
+    assert.notEqual(a.metadata.redaction_scope, b.metadata.redaction_scope);
+    assert.equal(a.metadata.redaction_key_epoch, 1);
+    assert.equal(b.metadata.redaction_key_epoch, 1);
+    const firstKey = provision(first, a.token);
+    const secondKey = provision(second, b.token);
+    assert.notDeepEqual(firstKey, secondKey);
+    assert.notEqual(digest(firstKey, secret), digest(secondKey, secret));
+  } finally {
+    await first.complete(a.token);
+    await second.complete(b.token);
+    first.dispose();
+    second.dispose();
+  }
+});
