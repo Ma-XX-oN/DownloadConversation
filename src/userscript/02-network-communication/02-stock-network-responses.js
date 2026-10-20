@@ -169,7 +169,7 @@
     try {
       await new Promise((resolve, reject) => {
         const transaction = db.transaction(COMMUNICATION_LOG_DB_STORE, 'readwrite');
-        transaction.objectStore(COMMUNICATION_LOG_DB_STORE).put(handle, COMMUNICATION_LOG_HANDLE_KEY);
+        transaction.objectStore(COMMUNICATION_LOG_DB_STORE).put(handle, 'communication-directory');
         transaction.oncomplete = () => resolve();
         transaction.onerror = () => reject(transaction.error ?? new Error('Could not store communication-log directory handle.'));
         transaction.onabort = () => reject(transaction.error ?? new Error('Communication-log directory transaction aborted.'));
