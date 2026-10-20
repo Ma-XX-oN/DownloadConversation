@@ -165,8 +165,7 @@
     const session = await agentFaviconOpenSession(version_key);
     if (!session) return null;
     const matches = [];
-    for (const candidate of agentFaviconCurrentCandidates()) {
-      if (candidate.media && !window.matchMedia(candidate.media).matches) continue;
+    for (const candidate of agentFaviconActiveCandidates(agentFaviconCurrentCandidates())) {
       const href = await agentFaviconFrameUrl(
         session, candidate.original_href, theme, base_type, completion_time, frame
       );
@@ -300,8 +299,9 @@
       else agentFaviconDisplayedHrefs.delete(candidate.link);
     }
     agentFaviconTrimObjectUrls();
+    const eligible = agentFaviconActiveCandidates(candidates).length;
     const applied = state === 'original' || (pairs !== null &&
-      pairs.length === candidates.length);
+      pairs.length === eligible);
     if (!heartbeat && typeof agentLifecycleAction === 'function') {
       agentLifecycleAction('favicon', applied ? 'applied' : 'failed', {
         state, candidate_count: candidates.length, applied_candidate_count: pairs?.length ?? 0
