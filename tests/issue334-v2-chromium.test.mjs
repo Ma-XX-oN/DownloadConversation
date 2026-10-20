@@ -111,6 +111,15 @@ function pageHtml(isChild) {
         verify(warm instanceof Blob && calls.length===bytesBeforeWarm, 'warm frame regenerated');
         verify((await a.read_png(URL1,'light',0,0,15)) instanceof Blob, 'unrequested ready frame absent');
         verify(calls.length===1, 'warm index triggered generation');
+        // A second version has independent rows without deleting the first.
+        const other = await open_favicon_dataset('1.12.0', window.renderer);
+        verify(other && (await other.read_png(URL1,'light',0,0,0)) instanceof Blob,
+          'second compatible dataset unavailable');
+        const otherId=faviconSequenceKey('1.12.0',URL1,'light',0,0);
+        verify((await faviconSequenceRead(db,identity,0)) instanceof Blob &&
+          (await faviconSequenceRead(db,otherId,0)) instanceof Blob,
+          'version coexistence damaged');
+        await other.close();
         window.pauseRender=null;
         const dark = await a.read_png(URL1,'dark',0,0,15);
         verify(dark instanceof Blob && calls.length===2, 'dark theme not separately generated');
@@ -157,6 +166,22 @@ function pageHtml(isChild) {
         verify(takeover instanceof Blob && calls.at(-1).base_type===3,'claim takeover failed');
         canceled();
         verify(!(await faviconSequenceRead(db,crashKey,21)), 'out-of-range pulse used');
+        // Global touch throttle: 599999ms skips; 600000ms updates once.
+        const initial=await faviconSequenceRequest(db.transaction('datasets','readonly')
+          .objectStore('datasets').get(key));
+        const realNow=Date.now;
+        try {
+          Date.now=()=>initial.last_used+599999;
+          await faviconSequenceTouch(db,key);
+          const before=await faviconSequenceRequest(db.transaction('datasets','readonly')
+            .objectStore('datasets').get(key));
+          verify(before.last_used===initial.last_used,'premature last_used write');
+          Date.now=()=>initial.last_used+600000;
+          await faviconSequenceTouch(db,key);
+          const boundary=await faviconSequenceRequest(db.transaction('datasets','readonly')
+            .objectStore('datasets').get(key));
+          verify(boundary.last_used===initial.last_used+600000,'touch boundary missed');
+        } finally { Date.now=realNow; }
         // Expiration cannot evict open shared readers; strict cutoff after close.
         const tx=db.transaction('datasets','readwrite');
         const record=await faviconSequenceRequest(tx.objectStore('datasets').get(key));
@@ -172,7 +197,7 @@ function pageHtml(isChild) {
         document.getElementById('result').textContent=JSON.stringify({
           winner:true, atomic21:true, no_duplicate:true, theme:true,
           no_eager:true, recovery:true, aborted_transaction:true,
-          takeover:true, warm:true, strict_ttl:true });
+          takeover:true, warm:true, strict_ttl:true, throttle:true, versions:true });
       }
       ${isChild ? '' : `runParent().catch(error => {
         document.getElementById('result').textContent=JSON.stringify({error:String(error)});
@@ -221,7 +246,8 @@ test('V2: Chromium two tabs elect one 21-frame producer, commit atomically and r
       const result=JSON.parse(match[1].replaceAll('&quot;','"').replaceAll('&amp;','&'));
       assert.equal(result.error, undefined, JSON.stringify(result));
       for (const name of ['winner','atomic21','no_duplicate','theme','no_eager',
-        'recovery','aborted_transaction','takeover','warm','strict_ttl']) {
+        'recovery','aborted_transaction','takeover','warm','strict_ttl',
+        'throttle','versions']) {
         assert.equal(result[name],true,name);
       }
     } finally {
