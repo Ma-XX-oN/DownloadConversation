@@ -9,8 +9,9 @@ Only these workflow paths are permitted on active repository lines:
 
 - `.github/workflows/ci.yml` — the permanent test-cycle workflow.  Repository
   write permission is limited to deterministic generated-artifact preparation
-  and publication through `scripts/test-cycle-artifact.mjs`, plus the immutable
-  version-tag publication owned by that same mechanism.
+  through the declared `RepoWorkflow materialize-artifacts --commit` pipeline
+  and the existing userscript `scripts/test-cycle-artifact.mjs`, plus immutable
+  version-tag publication owned by the approved finalization mechanism.
 - `.github/workflows/build-userscript-artifact.yml` — the dedicated generated
   userscript materialization workflow introduced by the CI-gating work.  This
   workflow is optional until that work is integrated, but if present it may
@@ -28,14 +29,23 @@ tree, not by a workflow that edits and commits source or documentation.
 artifact publication mechanism.  A write-capable job must:
 
 1. use only the approved checkout/setup actions;
-2. invoke only `scripts/test-cycle-artifact.mjs` as a local script;
-3. use its approved `prepare ... --push` or `publish` operation; and
+2. invoke only the approved deterministic artifact commands: 
+   `RepoWorkflow materialize-artifacts --commit`, or
+   `scripts/test-cycle-artifact.mjs prepare ... --push` / `publish`;
+3. use the existing approved prepare/push and finalize boundary; and
 4. never contain direct `git add`, `git commit`, or `git push`, or direct
    mutating GitHub/cURL API commands.
 
-The generated userscript remains the only generated file that automation may
-materialize into the repository.  The publication script is responsible for
-ensuring unrelated paths are not included in its generated-artifact commit.
+The allowlisted committed outputs in `.ci/repoworkflow.json` are exactly
+`chatgpt-conversation-markdown-export.user.js` (userscript) and
+`assets/favicons/v1/chatgpt-v1.dcfav` (DC #333 favicon pack).  The second
+output is generated deterministically from pinned source files by
+`scripts/generate-favicon-packs.mjs --build` and verified byte-for-byte with
+`--verify` before the validation fan-out.  RepoWorkflow must commit only
+explicitly declared deterministic output paths, never arbitrary source,
+configuration, or documentation edits.  Adding any third output requires a
+separate reviewed policy change and matching allowlist regression coverage.
+No issue-specific workflow or general write mechanism is permitted.
 
 ## Enforcement
 
