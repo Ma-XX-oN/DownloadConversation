@@ -9,10 +9,16 @@ The three original binary resource bodies live under `originals/`; the
 `sources.json` entries list their independently checked SHA-256 digests,
 dimensions, original URLs, and archival Git blob identities.  The archive
 is source provenance, not a replacement for a current Chrome tab's actual
-`link[rel~="icon"]` inventory.  An ICO `rel=icon` and an SVG `rel=icon`
-were independently observed in historical ChatGPT HTML.  The WebP URL
-and bytes are authentic, but a current `rel=icon` association is not
-established.  Never invent metadata for that association.
+`link[rel~="icon"]` inventory.  An archived 2026 ChatGPT HTML snapshot
+includes both ICO and SVG links plus the pinned 48×48 WebP (the HTML labels
+that WebP `type=image/png` despite its actual WebP response body).  On
+2026-10-20, hosted Node CI fetched all three public source resources and
+independently confirmed their exact recorded hashes.  The extra root
+`/favicon.ico` candidate also occurs in the archived HTML, but its direct
+network retrieval returned HTTP 403; the root icon's bytes, identity and
+possible relationship to the pinned ICO are not established.  Its link
+must stay untouched until current-browser source evidence is available.
+Do not claim an exhaustive current authenticated-tab candidate inventory.
 
 ## Generated pack (not committed yet)
 
