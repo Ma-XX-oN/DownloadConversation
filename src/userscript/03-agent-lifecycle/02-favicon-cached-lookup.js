@@ -95,7 +95,7 @@
     if (!agentFaviconSessionPending) {
       const epoch = agentFaviconPageEpoch;
       agentFaviconSessionPending = Promise.resolve()
-        .then(() => open_favicon_dataset(version_key))
+        .then(() => open_favicon_dataset(version_key, faviconV2RenderSequenceAdapter))
         .then(async session => {
           if (epoch !== agentFaviconPageEpoch || agentFaviconPageHidden) {
             if (session && typeof session.close === 'function') await session.close();
