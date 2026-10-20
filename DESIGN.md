@@ -388,13 +388,17 @@ user-authorized directory.  The per-conversation filename is
 `DownloadConversation_<conversation-name>.jsonl`, using the same filename sanitation
 as exported conversation files.
 
-The selected `FileSystemDirectoryHandle` is stored in IndexedDB.  A later reload
-reuses it automatically when read/write permission remains granted.  If no usable
-handle exists, the page presents a user-gesture **Choose Log Folder** control because
-Chromium does not permit the directory picker to be opened autonomously at
-document-start.  The most recently resolved conversation title is also retained by
-conversation ID so an already-authorized reload can begin logging before the visible
-heading rematerializes.
+The selected `FileSystemDirectoryHandle` is stored once in IndexedDB, shared
+across ChatGPT tabs in the same Chrome profile.  A reload uses it automatically
+while read/write permission remains granted.  After a complete Chrome restart, a
+saved handle whose permission is no longer granted is reauthorized through its
+`requestPermission()` method on the next trusted user gesture rather than through
+a new folder selection.  If no usable handle exists, a native directory chooser
+requires user activation.  After permission is granted in one tab, other pending
+tabs recheck their saved handles using a cross-tab storage notification; returning
+to a tab also rechecks, without an additional chooser.  Revocation or denial is
+never bypassed.  The most recently resolved conversation title is also retained
+by conversation ID for logging before the visible heading rematerializes.
 
 Communication JSONL is intentionally disk-backed rather than accumulated as another
 large diagnostic array.  Stock page fetch/XHR and WebSocket traffic receives
@@ -473,20 +477,22 @@ objects and avoiding a sandbox-only File System Access lookup.
 
 ## Issue #123 direct native directory-chooser gesture
 
-The File System Access directory picker cannot be opened autonomously during a page
-reload because Chromium requires transient user activation.  When a persisted
-directory handle still has read/write permission the recorder therefore reuses it
-without showing any authorization UI.  Otherwise the userscript blocks page
-interaction and reserves the next trusted click or key press solely for directory
-authorization.
+The File System Access directory picker and stored-handle `requestPermission()`
+require transient user activation.  If a saved handle is already granted, logging
+starts immediately.  Otherwise the userscript reserves the next trusted click or
+key press for authorisation.  The synchronous trusted handler calls
+`requestPermission({ mode: 'readwrite' })` on a saved handle, or the page-realm
+`showDirectoryPicker()` if the handle is absent, unsupported, or denied.  There is
+no intermediate "Choose Log Folder" button, and the triggering interaction cannot
+also activate ChatGPT controls.
 
-That trusted event handler invokes the page-realm `showDirectoryPicker()` synchronously,
-before any awaited work can consume transient activation.  There is no intermediate
-"Choose Log Folder" button.  The same event is prevented and stopped so it cannot also
-activate an underlying ChatGPT control.  Cancelling the native chooser leaves the
-trusted-gesture capture armed for the next interaction; successful selection persists
-the directory handle, removes the blocker/listeners, and resumes the disk-backed
-communication recorder.
+After an IndexedDB handle-write transaction has completed, DC signals other tabs
+through origin-wide storage.  Tabs that are waiting for permission reload and
+query the shared handle; focusing a tab retries if its notification was missed.
+Only a verified grant removes the blocking UI and activates recording.  A denied
+reauthorisation can be followed by an explicit re-selection; cancelling the native
+chooser leaves the gesture capture available for the next attempt.  Each tab
+retains its own conversation log and group identity.
 
 This changes only the authorization UX for the diagnostic communication recorder.  It
 does not change the single-snapshot export contract, source precedence/recovery rules,
