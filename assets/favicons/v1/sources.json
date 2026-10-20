@@ -1,0 +1,47 @@
+{
+  "schema": "dc-favicon-originals-v1",
+  "sources": [
+    {
+      "path": "assets/favicons/v1/originals/chatgpt-favicon-eex17e9e.ico",
+      "sha256": "def0730c050afcd86acd21bd1edf54f0ee3638c9e642f0e4107f7d666bc292a9",
+      "mime": "image/x-icon",
+      "width": 48,
+      "height": 48,
+      "source_url": "https://cdn.oaistatic.com/assets/favicon-eex17e9e.ico",
+      "mirror_repository": "jagbiryadav/BrutalGPT",
+      "mirror_git_blob": "1634901adeecceabf98a9855b7d610dbb2a5179c",
+      "source_links": [
+        {
+          "href": "/favicon.ico",
+          "sizes": "any"
+        },
+        {
+          "href": "/cdn/assets/favicon-eex17e9e.ico",
+          "sizes": "48x48"
+        }
+      ]
+    },
+    {
+      "path": "assets/favicons/v1/originals/chatgpt-favicon-l4nq08hd.svg",
+      "sha256": "8f2de046d22cfecfe3917cf87ff1ce49a48d79956f6b18be3b37db29148a0aeb",
+      "mime": "image/svg+xml",
+      "width": 180,
+      "height": 180,
+      "source_url": "https://cdn.oaistatic.com/assets/favicon-l4nq08hd.svg",
+      "mirror_repository": "lincwang123-bot/price-radar",
+      "mirror_git_blob": "9ff13061181678e8869a6fa8fce6057c534ee510",
+      "source_links": [
+        {
+          "href": "/cdn/assets/favicon-l4nq08hd.svg",
+          "type": "image/svg+xml",
+          "media": ""
+        },
+        {
+          "href": "/cdn/assets/favicon-l4nq08hd.svg",
+          "type": "image/svg+xml",
+          "media": "(prefers-color-scheme: dark)"
+        }
+      ]
+    }
+  ]
+}
