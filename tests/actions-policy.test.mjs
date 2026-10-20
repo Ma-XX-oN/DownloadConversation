@@ -123,3 +123,64 @@ test('current repository satisfies the Actions policy', () => {
   const result = run(root);
   assert.equal(result.status, 0, result.stderr);
 });
+
+/** Create a registry for independent artifact-allowlist negative tests. */
+function registryFixture(root, additions = []) {
+  const pathToConfig = path.join(root, '.ci', 'repoworkflow.json');
+  fs.mkdirSync(path.dirname(pathToConfig), { recursive: true });
+  const userscript = {
+    id: 'userscript',
+    generatorCommand: ['node', 'scripts/build-userscript.mjs'],
+    verifierCommand: ['node', 'scripts/verify-userscript-artifact.mjs'],
+    outputs: ['chatgpt-conversation-markdown-export.user.js'],
+    committed: true, platform: 'linux', capabilities: ['node-22']
+  };
+  const favicon = {
+    id: 'favicon-pack',
+    generatorCommand: ['node', 'scripts/generate-favicon-packs.mjs', '--build'],
+    verifierCommand: ['node', 'scripts/generate-favicon-packs.mjs', '--verify'],
+    outputs: ['assets/favicons/v1/chatgpt-v1.dcfav'],
+    committed: true, platform: 'linux', capabilities: ['node-22']
+  };
+  fs.writeFileSync(pathToConfig, JSON.stringify({
+    schema: 1, artifacts: [userscript, favicon, ...additions]
+  }));
+  return pathToConfig;
+}
+
+test('permits exact two deterministic artifacts in existing permanent CI', () => {
+  const root = makeRoot({'ci.yml': 'name: CI\\njobs:\\n  test:\\n    steps: []\\n'});
+  registryFixture(root);
+  assert.equal(run(root).status, 0);
+});
+
+test('rejects third unapproved committed artifact despite approved workflow', () => {
+  const root = makeRoot({'ci.yml': 'name: CI\\njobs:\\n  test:\\n    steps: []\\n'});
+  registryFixture(root, [{id:'unreviewed',outputs:['other.bin'],
+    committed:true,platform:'linux',capabilities:['node-22']}]);
+  const result = run(root);
+  assert.notEqual(result.status, 0);
+  assert.match(result.stderr, /unapproved or repeated committed artifact/);
+});
+
+test('rejects favicon generator substitution to arbitrary executable', () => {
+  const root = makeRoot({'ci.yml': 'name: CI\\njobs:\\n  test:\\n    steps: []\\n'});
+  const location = registryFixture(root);
+  const data = JSON.parse(fs.readFileSync(location, 'utf8'));
+  data.artifacts[1].generatorCommand = ['bash','unapproved-script.sh'];
+  fs.writeFileSync(location, JSON.stringify(data));
+  const result = run(root);
+  assert.notEqual(result.status, 0);
+  assert.match(result.stderr, /unapproved generatorCommand/);
+});
+
+test('rejects uncommitted favicon that violates tested-artifact invariant', () => {
+  const root = makeRoot({'ci.yml': 'name: CI\\njobs:\\n  test:\\n    steps: []\\n'});
+  const location = registryFixture(root);
+  const data = JSON.parse(fs.readFileSync(location, 'utf8'));
+  data.artifacts[1].committed = false;
+  fs.writeFileSync(location, JSON.stringify(data));
+  const result = run(root);
+  assert.notEqual(result.status, 0);
+  assert.match(result.stderr, /unapproved publication constraints/);
+});
