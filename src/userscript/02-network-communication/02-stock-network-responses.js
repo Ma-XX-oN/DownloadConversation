@@ -168,15 +168,71 @@
     const db = await communicationLogOpenDb();
     try {
       await new Promise((resolve, reject) => {
-        const request = db.transaction(COMMUNICATION_LOG_DB_STORE, 'readwrite')
-          .objectStore(COMMUNICATION_LOG_DB_STORE)
-          .put(handle, 'communication-directory');
-        request.onsuccess = () => resolve();
-        request.onerror = () => reject(request.error ?? new Error('Could not store communication-log directory handle.'));
+        const transaction = db.transaction(COMMUNICATION_LOG_DB_STORE, 'readwrite');
+        transaction.objectStore(COMMUNICATION_LOG_DB_STORE).put(handle, 'communication-directory');
+        transaction.oncomplete = () => resolve();
+        transaction.onerror = () => reject(transaction.error ?? new Error('Could not store communication-log directory handle.'));
+        transaction.onabort = () => reject(transaction.error ?? new Error('Communication-log directory transaction aborted.'));
       });
+      // Notify only after the shared handle is durably committed in IndexedDB.
+      try {
+        localStorage.setItem(COMMUNICATION_LOG_DIRECTORY_SIGNAL_KEY,
+          `${Date.now()}:${crypto.randomUUID()}`);
+      } catch (error) {
+        logDiagnostic('warnings', 'communication-directory-notification-failed', {
+          message: String(error?.message ?? error)
+        });
+      }
     } finally {
       db.close();
     }
+  }
+
+  /**
+   * Retries the shared directory handle when another tab grants permission or this tab is focused.
+   *
+   * @returns {Promise<boolean>} True if the saved handle has become ready.
+   */
+  async function communicationLogRetryStoredDirectory() {
+    if (communicationLogReady || communicationLogDirectoryPickerOpening ||
+        communicationLogDirectoryReselectRequired) return false;
+    if (communicationLogDirectoryRestorePromise) return communicationLogDirectoryRestorePromise;
+    // Startup already checks the same handle; defer concurrent notifications until it finishes.
+    if (communicationLogInitializationPromise && !communicationLogPromptShown) return false;
+
+    const restore = (async () => {
+      const handle = await communicationLogLoadDirectoryHandle();
+      if (!handle) return false;
+      communicationLogPendingDirectoryHandle = handle;
+      if (await communicationLogPermissionState(handle) !== 'granted') return false;
+      return communicationLogActivateDirectory(handle);
+    })();
+    communicationLogDirectoryRestorePromise = restore;
+    try {
+      return await restore;
+    } catch (error) {
+      communicationLogReportFailure('directory-cross-tab-restore', error);
+      return false;
+    } finally {
+      communicationLogDirectoryRestorePromise = null;
+    }
+  }
+
+  /**
+   * Installs lightweight permission-retry observers for all restored tabs.
+   *
+   * @returns {void} No value is returned.
+   */
+  function communicationLogInstallDirectoryRetryObservers() {
+    if (communicationLogDirectoryRetryInstalled) return;
+    communicationLogDirectoryRetryInstalled = true;
+    window.addEventListener('storage', event => {
+      if (event.key !== COMMUNICATION_LOG_DIRECTORY_SIGNAL_KEY) return;
+      void communicationLogRetryStoredDirectory();
+    });
+    window.addEventListener('focus', () => {
+      if (!communicationLogReady) void communicationLogRetryStoredDirectory();
+    });
   }
 
   /**

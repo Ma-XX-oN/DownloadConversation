@@ -1,3 +1,14 @@
+  /** Cross-tab signal that the shared COMM directory handle or permission changed. */
+  const COMMUNICATION_LOG_DIRECTORY_SIGNAL_KEY = 'tm-downloadconversation-communication-directory-updated';
+  /** Previously saved directory awaiting a trusted reauthorisation gesture. */
+  let communicationLogPendingDirectoryHandle = null;
+  /** Prevents repeated restore work during simultaneous tab notifications. */
+  let communicationLogDirectoryRestorePromise = null;
+  /** Whether this document has installed cross-tab/foreground retry listeners. */
+  let communicationLogDirectoryRetryInstalled = false;
+  /** A denied reauthorisation must fall back to the normal chooser. */
+  let communicationLogDirectoryReselectRequired = false;
+
   /**
    * Restores the GEN diagnostic tail and its historical version baseline.
    * Older plain-array snapshots have no trustworthy prior version.

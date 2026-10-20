@@ -129,23 +129,35 @@
   function communicationLogHandleDirectoryGesture(event) {
     if (!communicationLogDirectoryGestureArmed || communicationLogDirectoryPickerOpening) return;
     if (event.isTrusted !== true) return;
+    // A peer grant can already be activating this tab; never start another authorisation.
+    if (communicationLogReady || communicationLogDirectoryRestorePromise) return;
 
     event.preventDefault();
     event.stopImmediatePropagation();
 
     const pickerWindow = typeof unsafeWindow !== 'undefined' ? unsafeWindow : window;
-    if (typeof pickerWindow.showDirectoryPicker !== 'function') {
-      communicationLogReportFailure(
-        'directory-authorization',
-        new Error('This browser does not expose showDirectoryPicker().')
-      );
-      return;
-    }
-
+    const savedHandle = communicationLogDirectoryReselectRequired
+      ? null : communicationLogPendingDirectoryHandle;
     let pickerPromise;
     try {
       communicationLogDirectoryPickerOpening = true;
-      pickerPromise = pickerWindow.showDirectoryPicker({ mode: 'readwrite' });
+      if (savedHandle && typeof savedHandle.requestPermission === 'function') {
+        // The permission request, like the picker, must run before activation expires.
+        pickerPromise = Promise.resolve(savedHandle.requestPermission({ mode: 'readwrite' }))
+          .then(permission => {
+            if (permission !== 'granted') {
+              communicationLogPendingDirectoryHandle = null;
+              communicationLogDirectoryReselectRequired = true;
+              throw new Error('Saved folder access was not granted. Click again to choose a folder.');
+            }
+            return savedHandle;
+          });
+      } else {
+        if (typeof pickerWindow.showDirectoryPicker !== 'function') {
+          throw new Error('This browser does not expose showDirectoryPicker().');
+        }
+        pickerPromise = pickerWindow.showDirectoryPicker({ mode: 'readwrite' });
+      }
     } catch (error) {
       communicationLogDirectoryPickerOpening = false;
       communicationLogReportFailure('directory-authorization', error);
@@ -159,6 +171,8 @@
           throw new Error('The selected folder did not grant read/write permission.');
         }
         await communicationLogStoreDirectoryHandle(handle);
+        communicationLogDirectoryReselectRequired = false;
+        communicationLogPendingDirectoryHandle = handle;
         await communicationLogActivateDirectory(handle);
       })
       .catch(error => {
@@ -166,10 +180,17 @@
           logDiagnostic('debug', 'communication-directory-picker-cancelled', {});
         } else {
           communicationLogReportFailure('directory-authorization', error);
+          if (communicationLogDirectoryReselectRequired) {
+            document.getElementById('tm-communication-directory-required')?.remove();
+            communicationLogPromptShown = false;
+            communicationLogShowDirectoryPrompt('Saved folder access was denied; choose a new folder.');
+          }
         }
       })
       .finally(() => {
         communicationLogDirectoryPickerOpening = false;
+        // A peer can finish authorisation while this tab's chooser is open.
+        if (!communicationLogReady) void communicationLogRetryStoredDirectory();
       });
   }
 
@@ -195,6 +216,8 @@
      * @returns {void} No value is returned.
      */
     const mount = () => {
+      // Another restored tab can authorise this one before deferred mounting occurs.
+      if (!communicationLogPromptShown || communicationLogReady) return;
       if (!document.body) {
         requestAnimationFrame(mount);
         return;
@@ -206,7 +229,9 @@
       prompt.style.cssText = 'position:fixed;inset:0;z-index:2147483647;display:grid;place-items:center;background:#000a;color:#fff;font:14px/1.5 system-ui,sans-serif;cursor:pointer';
       const card = document.createElement('div');
       card.style.cssText = 'max-width:520px;padding:18px;border:1px solid #888;border-radius:10px;background:#202123;box-shadow:0 6px 24px #000a';
-      card.textContent = `DownloadConversation needs a writable folder for the communication log. Click or press any key to open the native folder chooser. ${reason}`;
+      const action = communicationLogPendingDirectoryHandle && !communicationLogDirectoryReselectRequired
+        ? 'reauthorise the saved folder' : 'open the native folder chooser';
+      card.textContent = `DownloadConversation needs a writable folder for the communication log. Click or press any key to ${action}. ${reason}`;
       prompt.append(card);
       document.body.append(prompt);
       try { prompt.focus({ preventScroll: true }); } catch {}
@@ -221,11 +246,13 @@
    */
   async function initializeCommunicationDiskRecorder() {
     logDiagnostic('debug', 'communication-log-startup-entered', {});
+    communicationLogInstallDirectoryRetryObservers();
     try {
       const handle = await communicationLogLoadDirectoryHandle();
       logDiagnostic('debug', 'communication-log-directory-restore-completed', {
         handle_present: Boolean(handle)
       });
+      communicationLogPendingDirectoryHandle = handle;
       if (!handle) {
         communicationLogShowDirectoryPrompt('No log folder has been authorized for this browser profile.');
         return false;
@@ -235,7 +262,7 @@
         permission
       });
       if (permission !== 'granted') {
-        communicationLogShowDirectoryPrompt('The saved log folder is no longer authorized; choose it again.');
+        communicationLogShowDirectoryPrompt('The saved folder needs authorisation.');
         return false;
       }
       return await communicationLogActivateDirectory(handle);

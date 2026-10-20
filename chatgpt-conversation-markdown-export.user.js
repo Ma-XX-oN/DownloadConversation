@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         ChatGPT Conversation Markdown Recorder
 // @namespace    https://chatgpt.com/
-// @version      1.11.7
+// @version      1.11.8-issue.330.4
 // @description  Exports the current ChatGPT conversation directly from the Conversation API as Markdown or JSONL.
 // @match        https://chatgpt.com/*
 // @match        https://chat.openai.com/*
@@ -7071,6 +7071,17 @@ globalThis.__dcCompressor = {
     if (!condition) throw new Error(message);
   }
 
+  /** Cross-tab signal that the shared COMM directory handle or permission changed. */
+  const COMMUNICATION_LOG_DIRECTORY_SIGNAL_KEY = 'tm-downloadconversation-communication-directory-updated';
+  /** Previously saved directory awaiting a trusted reauthorisation gesture. */
+  let communicationLogPendingDirectoryHandle = null;
+  /** Prevents repeated restore work during simultaneous tab notifications. */
+  let communicationLogDirectoryRestorePromise = null;
+  /** Whether this document has installed cross-tab/foreground retry listeners. */
+  let communicationLogDirectoryRetryInstalled = false;
+  /** A denied reauthorisation must fall back to the normal chooser. */
+  let communicationLogDirectoryReselectRequired = false;
+
   /**
    * Restores the GEN diagnostic tail and its historical version baseline.
    * Older plain-array snapshots have no trustworthy prior version.
@@ -7805,15 +7816,71 @@ globalThis.__dcCompressor = {
     const db = await communicationLogOpenDb();
     try {
       await new Promise((resolve, reject) => {
-        const request = db.transaction(COMMUNICATION_LOG_DB_STORE, 'readwrite')
-          .objectStore(COMMUNICATION_LOG_DB_STORE)
-          .put(handle, 'communication-directory');
-        request.onsuccess = () => resolve();
-        request.onerror = () => reject(request.error ?? new Error('Could not store communication-log directory handle.'));
+        const transaction = db.transaction(COMMUNICATION_LOG_DB_STORE, 'readwrite');
+        transaction.objectStore(COMMUNICATION_LOG_DB_STORE).put(handle, 'communication-directory');
+        transaction.oncomplete = () => resolve();
+        transaction.onerror = () => reject(transaction.error ?? new Error('Could not store communication-log directory handle.'));
+        transaction.onabort = () => reject(transaction.error ?? new Error('Communication-log directory transaction aborted.'));
       });
+      // Notify only after the shared handle is durably committed in IndexedDB.
+      try {
+        localStorage.setItem(COMMUNICATION_LOG_DIRECTORY_SIGNAL_KEY,
+          `${Date.now()}:${crypto.randomUUID()}`);
+      } catch (error) {
+        logDiagnostic('warnings', 'communication-directory-notification-failed', {
+          message: String(error?.message ?? error)
+        });
+      }
     } finally {
       db.close();
     }
+  }
+
+  /**
+   * Retries the shared directory handle when another tab grants permission or this tab is focused.
+   *
+   * @returns {Promise<boolean>} True if the saved handle has become ready.
+   */
+  async function communicationLogRetryStoredDirectory() {
+    if (communicationLogReady || communicationLogDirectoryPickerOpening ||
+        communicationLogDirectoryReselectRequired) return false;
+    if (communicationLogDirectoryRestorePromise) return communicationLogDirectoryRestorePromise;
+    // Startup already checks the same handle; defer concurrent notifications until it finishes.
+    if (communicationLogInitializationPromise && !communicationLogPromptShown) return false;
+
+    const restore = (async () => {
+      const handle = await communicationLogLoadDirectoryHandle();
+      if (!handle) return false;
+      communicationLogPendingDirectoryHandle = handle;
+      if (await communicationLogPermissionState(handle) !== 'granted') return false;
+      return communicationLogActivateDirectory(handle);
+    })();
+    communicationLogDirectoryRestorePromise = restore;
+    try {
+      return await restore;
+    } catch (error) {
+      communicationLogReportFailure('directory-cross-tab-restore', error);
+      return false;
+    } finally {
+      communicationLogDirectoryRestorePromise = null;
+    }
+  }
+
+  /**
+   * Installs lightweight permission-retry observers for all restored tabs.
+   *
+   * @returns {void} No value is returned.
+   */
+  function communicationLogInstallDirectoryRetryObservers() {
+    if (communicationLogDirectoryRetryInstalled) return;
+    communicationLogDirectoryRetryInstalled = true;
+    window.addEventListener('storage', event => {
+      if (event.key !== COMMUNICATION_LOG_DIRECTORY_SIGNAL_KEY) return;
+      void communicationLogRetryStoredDirectory();
+    });
+    window.addEventListener('focus', () => {
+      if (!communicationLogReady) void communicationLogRetryStoredDirectory();
+    });
   }
 
   /**
@@ -8011,23 +8078,35 @@ globalThis.__dcCompressor = {
   function communicationLogHandleDirectoryGesture(event) {
     if (!communicationLogDirectoryGestureArmed || communicationLogDirectoryPickerOpening) return;
     if (event.isTrusted !== true) return;
+    // A peer grant can already be activating this tab; never start another authorisation.
+    if (communicationLogReady || communicationLogDirectoryRestorePromise) return;
 
     event.preventDefault();
     event.stopImmediatePropagation();
 
     const pickerWindow = typeof unsafeWindow !== 'undefined' ? unsafeWindow : window;
-    if (typeof pickerWindow.showDirectoryPicker !== 'function') {
-      communicationLogReportFailure(
-        'directory-authorization',
-        new Error('This browser does not expose showDirectoryPicker().')
-      );
-      return;
-    }
-
+    const savedHandle = communicationLogDirectoryReselectRequired
+      ? null : communicationLogPendingDirectoryHandle;
     let pickerPromise;
     try {
       communicationLogDirectoryPickerOpening = true;
-      pickerPromise = pickerWindow.showDirectoryPicker({ mode: 'readwrite' });
+      if (savedHandle && typeof savedHandle.requestPermission === 'function') {
+        // The permission request, like the picker, must run before activation expires.
+        pickerPromise = Promise.resolve(savedHandle.requestPermission({ mode: 'readwrite' }))
+          .then(permission => {
+            if (permission !== 'granted') {
+              communicationLogPendingDirectoryHandle = null;
+              communicationLogDirectoryReselectRequired = true;
+              throw new Error('Saved folder access was not granted. Click again to choose a folder.');
+            }
+            return savedHandle;
+          });
+      } else {
+        if (typeof pickerWindow.showDirectoryPicker !== 'function') {
+          throw new Error('This browser does not expose showDirectoryPicker().');
+        }
+        pickerPromise = pickerWindow.showDirectoryPicker({ mode: 'readwrite' });
+      }
     } catch (error) {
       communicationLogDirectoryPickerOpening = false;
       communicationLogReportFailure('directory-authorization', error);
@@ -8041,6 +8120,8 @@ globalThis.__dcCompressor = {
           throw new Error('The selected folder did not grant read/write permission.');
         }
         await communicationLogStoreDirectoryHandle(handle);
+        communicationLogDirectoryReselectRequired = false;
+        communicationLogPendingDirectoryHandle = handle;
         await communicationLogActivateDirectory(handle);
       })
       .catch(error => {
@@ -8048,10 +8129,17 @@ globalThis.__dcCompressor = {
           logDiagnostic('debug', 'communication-directory-picker-cancelled', {});
         } else {
           communicationLogReportFailure('directory-authorization', error);
+          if (communicationLogDirectoryReselectRequired) {
+            document.getElementById('tm-communication-directory-required')?.remove();
+            communicationLogPromptShown = false;
+            communicationLogShowDirectoryPrompt('Saved folder access was denied; choose a new folder.');
+          }
         }
       })
       .finally(() => {
         communicationLogDirectoryPickerOpening = false;
+        // A peer can finish authorisation while this tab's chooser is open.
+        if (!communicationLogReady) void communicationLogRetryStoredDirectory();
       });
   }
 
@@ -8077,6 +8165,8 @@ globalThis.__dcCompressor = {
      * @returns {void} No value is returned.
      */
     const mount = () => {
+      // Another restored tab can authorise this one before deferred mounting occurs.
+      if (!communicationLogPromptShown || communicationLogReady) return;
       if (!document.body) {
         requestAnimationFrame(mount);
         return;
@@ -8088,7 +8178,9 @@ globalThis.__dcCompressor = {
       prompt.style.cssText = 'position:fixed;inset:0;z-index:2147483647;display:grid;place-items:center;background:#000a;color:#fff;font:14px/1.5 system-ui,sans-serif;cursor:pointer';
       const card = document.createElement('div');
       card.style.cssText = 'max-width:520px;padding:18px;border:1px solid #888;border-radius:10px;background:#202123;box-shadow:0 6px 24px #000a';
-      card.textContent = `DownloadConversation needs a writable folder for the communication log. Click or press any key to open the native folder chooser. ${reason}`;
+      const action = communicationLogPendingDirectoryHandle && !communicationLogDirectoryReselectRequired
+        ? 'reauthorise the saved folder' : 'open the native folder chooser';
+      card.textContent = `DownloadConversation needs a writable folder for the communication log. Click or press any key to ${action}. ${reason}`;
       prompt.append(card);
       document.body.append(prompt);
       try { prompt.focus({ preventScroll: true }); } catch {}
@@ -8103,11 +8195,13 @@ globalThis.__dcCompressor = {
    */
   async function initializeCommunicationDiskRecorder() {
     logDiagnostic('debug', 'communication-log-startup-entered', {});
+    communicationLogInstallDirectoryRetryObservers();
     try {
       const handle = await communicationLogLoadDirectoryHandle();
       logDiagnostic('debug', 'communication-log-directory-restore-completed', {
         handle_present: Boolean(handle)
       });
+      communicationLogPendingDirectoryHandle = handle;
       if (!handle) {
         communicationLogShowDirectoryPrompt('No log folder has been authorized for this browser profile.');
         return false;
@@ -8117,7 +8211,7 @@ globalThis.__dcCompressor = {
         permission
       });
       if (permission !== 'granted') {
-        communicationLogShowDirectoryPrompt('The saved log folder is no longer authorized; choose it again.');
+        communicationLogShowDirectoryPrompt('The saved folder needs authorisation.');
         return false;
       }
       return await communicationLogActivateDirectory(handle);
