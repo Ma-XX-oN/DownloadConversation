@@ -135,24 +135,52 @@ function browserFixture(svgBytes,webpBytes,moduleSource) {
       });
       aggregate.repeatPixels=JSON.stringify(await decode(replay.frames[0]))===
         JSON.stringify(a);
-      // Later abort: interrupt at the first yield to event loop, return NO
-      // partially successful frames.
-      result.textContent='PHASE:cancellation';
+      // Inject cancellation after the first real PNG encoding.  A virtual
+      // clock timer cannot reliably interrupt Chromium's asynchronous encoder.
+      const nativeToBlob=HTMLCanvasElement.prototype.toBlob;
       const aborter=new AbortController();
-      const pending=provider.renderFaviconPulseSequence({
-        originalUrl:source,theme,base:'processing',progressStep:3,
-        signal:aborter.signal
-      }).then(()=> 'UNEXPECTED_SUCCESS',e=>e.name);
-      setTimeout(()=>aborter.abort(),0);
-      aggregate.aborted=await pending;
+      let cancelledAfterEncode=false;
+      HTMLCanvasElement.prototype.toBlob=function(callback,...args){
+        return nativeToBlob.call(this,blob=>{
+          if(!cancelledAfterEncode){
+            cancelledAfterEncode=true;
+            aborter.abort();
+          }
+          callback(blob);
+        },...args);
+      };
+      try {
+        result.textContent='PHASE:cancellation';
+        aggregate.aborted=await provider.renderFaviconPulseSequence({
+          originalUrl:source,theme,base:'processing',progressStep:3,
+          signal:aborter.signal
+        }).then(()=> 'UNEXPECTED_SUCCESS',e=>e.name);
+      } finally {
+        HTMLCanvasElement.prototype.toBlob=nativeToBlob;
+      }
+      aggregate.cancelledAfterEncode=cancelledAfterEncode;
       const nativeMatchMedia=window.matchMedia;
       const changed=(theme==='light');
-      const interrupted=provider.renderFaviconPulseSequence({
-        originalUrl:source,theme,base:'processing',progressStep:3
-      }).then(()=> 'UNEXPECTED_SUCCESS',e=>e.name);
-      setTimeout(()=>{window.matchMedia=()=>({matches:changed});},0);
-      aggregate.themeFlip=await interrupted;
-      window.matchMedia=nativeMatchMedia;
+      let flippedAfterEncode=false;
+      HTMLCanvasElement.prototype.toBlob=function(callback,...args){
+        return nativeToBlob.call(this,blob=>{
+          if(!flippedAfterEncode){
+            flippedAfterEncode=true;
+            window.matchMedia=()=>({matches:changed});
+          }
+          callback(blob);
+        },...args);
+      };
+      try {
+        result.textContent='PHASE:theme-flip';
+        aggregate.themeFlip=await provider.renderFaviconPulseSequence({
+          originalUrl:source,theme,base:'processing',progressStep:3
+        }).then(()=> 'UNEXPECTED_SUCCESS',e=>e.name);
+      } finally {
+        window.matchMedia=nativeMatchMedia;
+        HTMLCanvasElement.prototype.toBlob=nativeToBlob;
+      }
+      aggregate.flippedAfterEncode=flippedAfterEncode;
       const recovery=await provider.renderFaviconPulseSequence({
         originalUrl:source,theme,base:'processing',progressStep:3
       });
@@ -194,7 +222,7 @@ test('real Chromium renders only one 21-Blob sequence at a time in each theme',(
         '--headless','--no-sandbox','--disable-dev-shm-usage',
         '--disable-gpu','--disable-background-networking',
         '--force-prefers-color-scheme='+scheme,
-        '--virtual-time-budget=30000','--dump-dom','file://'+page
+        '--virtual-time-budget=45000','--dump-dom','file://'+page
       ],{encoding:'utf8',maxBuffer:6*1024*1024,timeout:120000,
         stdio:['ignore','pipe','ignore']});
       const status=/<pre id="result">([^<]*)<\/pre>/.exec(output)?.[1];
@@ -212,7 +240,9 @@ test('real Chromium renders only one 21-Blob sequence at a time in each theme',(
       assert(result.midAlpha>result.lastAlpha);
       assert.equal(result.repeatPixels,true);
       assert.equal(result.aborted,'AbortError');
+      assert.equal(result.cancelledAfterEncode,true);
       assert.equal(result.themeFlip,'AbortError');
+      assert.equal(result.flippedAfterEncode,true);
       assert.equal(result.recovered,true);
       assert(result.ticks>=1,'Generation starved a queued UI task');
       console.log('DC333_V2_BROWSER_'+scheme.toUpperCase()+'='+JSON.stringify({
