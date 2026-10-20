@@ -71,7 +71,8 @@ function validateRequest(request) {
     throw new TypeError('Progress step must be an integer from zero through six');
   }
   if (signal !== undefined && (typeof signal?.aborted !== 'boolean' ||
-    typeof signal?.addEventListener !== 'function')) {
+    typeof signal?.addEventListener !== 'function' ||
+    typeof signal?.removeEventListener !== 'function')) {
     throw new TypeError('Invalid AbortSignal');
   }
   return {originalUrl: url.href, theme, base, progressStep, signal};

@@ -28,6 +28,11 @@ test('invalid tuple and pre-abort fail without loading any image', async () => {
     {originalUrl:'https://chatgpt.com/favicon.ico',theme:'light',base:'purple',progressStep:0},
     {originalUrl:'https://chatgpt.com/favicon.ico',theme:'light',base:'processing',progressStep:7}
   ]) await assert.rejects(renderFaviconPulseSequence(candidate));
+  await assert.rejects(renderFaviconPulseSequence({
+    originalUrl:'https://chatgpt.com/favicon.ico',
+    theme:'light',base:'processing',progressStep:0,
+    signal:{aborted:false,addEventListener(){}}
+  }),error=>error instanceof TypeError && /AbortSignal/.test(error.message));
   const controller = new AbortController();
   controller.abort();
   await assert.rejects(renderFaviconPulseSequence({
