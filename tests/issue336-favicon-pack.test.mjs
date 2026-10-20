@@ -9,7 +9,8 @@ const CONTRACT_SHA = 'e2460ba2bf1c1852579782ecbb05139de32e505e';
 const MAGIC = Buffer.from('DCFC0001', 'ascii');
 const PNG_SIGNATURE = Buffer.from('89504e470d0a1a0a', 'hex');
 const FRAMES_PER_VARIANT = 4 * 7 * 21;
-const MAX_FIXTURE_BYTES = 16 * 1024 * 1024;
+// Safety envelope for genuine packs; not an asserted V1 size requirement.
+const MAX_ASSET_BYTES = 512 * 1024 * 1024;
 
 function sha256(bytes) {
   return createHash('sha256').update(bytes).digest('hex');
@@ -136,10 +137,10 @@ function fixturePack() {
 
 function validatePack(pack, declared) {
   assert.ok(Buffer.isBuffer(pack));
-  assert.ok(pack.length >= 12 && pack.length <= MAX_FIXTURE_BYTES);
+  assert.ok(pack.length >= 12 && pack.length <= MAX_ASSET_BYTES);
   assert.equal(pack.subarray(0, 8).compare(MAGIC), 0);
   const headerLength = pack.readUInt32LE(8);
-  assert.ok(headerLength > 0 && headerLength <= 4 * 1024 * 1024);
+  assert.ok(headerLength > 0 && headerLength <= 64 * 1024 * 1024);
   assert.ok(12 + headerLength <= pack.length);
   const bytes = pack.subarray(12, 12 + headerLength);
   const manifest = JSON.parse(bytes.toString('utf8'));
