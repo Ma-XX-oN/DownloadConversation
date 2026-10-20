@@ -626,7 +626,35 @@ This is a project-wide watcher/consumer design pattern, not an implementation de
 
 The favicon is a presentation-only consumer of the shared lifecycle observer. When a current-page generation request is observed, or reload restoration reports structured `IS_STREAMING`, the userscript recolors only the near-white portion of the original stock ChatGPT favicon to yellow. A successful normalized terminal event changes that favicon to light green only when processing was observed in the current loaded page. A successful terminal arriving without such page-lifetime processing evidence does not infer green. A normalized terminal error changes the favicon to red. If ChatGPT emits a successful final and then a same-exchange terminal error such as `conversation_too_large`, the visible sequence is yellow → light green → red. A subsequent current-page prompt returns green or red to yellow.
 
-A reload whose structured stream status is not active leaves the stock favicon untouched; `NOT_STREAMING` is not completion evidence. The issue #335 consumer now requests `get_favicon(compatible_version_key, base_type, completion_time, time_offset)` for precomposited native PNG Blobs through frozen cache Interface B V1. It determines the 21 symmetric frames of the ten-second 250-ms waveform inside the lookup, while the dataset's `update_every_ms` exclusively schedules periodic lookups. The running version resolves against numeric `major.minor.patch` catalogue boundaries without ordering issue suffixes. Each original `link[rel~="icon"]` remains in place with its `media`, `type` and `sizes`; source-body SHA-256 matches exact provider variants. Unknown resources and unavailable data retain the original href. A per-tab bounded on-demand Blob URL map avoids repeated PNG reads and duplicate href updates, with render generations rejecting out-of-order asynchronous completions. The original href is restored rather than recolouring a previously rendered PNG. No canvas, pixel read/write or PNG encoding occurs at each heartbeat. Navigation restores original stock link hrefs before revoking Blob URLs, increments a page-lifetime epoch, stops pulse scheduling and closes the current cache session; late sessions are closed and late Blob reads cannot create untracked object URLs. Persisted-page restoration permits a new session. This is a **speculative consumer implementation**: real #333 asset packs and #334 shared cache have not yet been integrated or certified, so authoritative runtime convergence remains blocked by those providers.
+A reload whose structured stream status is not active leaves the stock
+favicon untouched; `NOT_STREAMING` is not completion evidence. DC #335
+speculatively implements the proposed (not frozen) locally generated V2
+consumer interface: `get_favicon(version_key, base_type, completion_time,
+time_offset)` requests only the selected frame of the currently needed
+version/original-URL/light-or-dark-theme/colour/progress sequence. The
+provisional #334 provider `read_png(url, theme, base, step, pulse)` is
+responsible for initiating one entire atomic 21-frame generation on a cache
+miss, returning null promptly until the sequence is complete, then reading
+one requested PNG Blob. The consumer does not fetch source bytes, decode
+raster images or build a 588-frame table. It calculates the symmetric pulse
+frame from the 10-second monotonic time offset, while `update_every_ms`
+controls only scheduled lookup cadence. The actual browser colour scheme is
+observed with `matchMedia('(prefers-color-scheme: dark)')`. A change restores
+the untouched original favicon and triggers the currently needed theme
+lookup; its URL may be identical in both themes while its raster differs.
+The existing `link[rel~="icon"]` elements retain their `media`, `type` and
+`sizes`, and missing/in-progress frames leave the corresponding original
+href unchanged. A bounded tab-local PNG Blob URL cache uses the full
+version/original-URL/theme/colour/progress/frame identity, avoiding repeat
+reads and duplicate href writes. Render generations and explicit checks
+of the current theme, stock candidates and stopwatch step reject outdated
+asynchronous completions. Page navigation first restores original link
+hrefs, then revokes local Blob URLs, invalidates pending reads and closes
+the provider session. No canvas recolouring, pixel iteration, PNG encoding
+or extra Agent lifecycle observer runs on warm 250 ms updates. V2 remains
+unfrozen and provider integration unverified: these behaviours are
+speculative consumer implementation using a proposed provider test double,
+not authoritative DC #333/#334 integrated certification.
 
 ## Modular userscript source and deterministic build
 
