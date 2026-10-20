@@ -86,7 +86,9 @@ function browserHtml(config) {
     'agentFaviconApplyOpacity', 'agentFaviconPulseOpacity'
   ].map(productionFunctionSource).join('\n');
   return '<!doctype html><html><body><pre id="result">PENDING</pre><script>' +
-    'const AGENT_FAVICON_PULSE_INTERVAL_MS=10000;\n' + production + '\n(' +
+    'const AGENT_FAVICON_PULSE_INTERVAL_MS=10000;\n' +
+    'function assert(condition,reason){if(!condition)throw new Error(reason)};\n' +
+    production + '\n(' +
     verifyInBrowser.toString() + ')(' +
     JSON.stringify(config).replaceAll('<', '\\u003c') +
     ');</script></body></html>';
