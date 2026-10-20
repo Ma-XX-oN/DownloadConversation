@@ -20,12 +20,7 @@
    */
   function agentFaviconHandleThemeChange() {
     ++agentFaviconRenderGeneration;
-    for (const candidate of agentFaviconCurrentCandidates()) {
-      if (candidate.link.href !== candidate.original_href) {
-        candidate.link.href = candidate.original_href;
-      }
-      agentFaviconDisplayedHrefs.delete(candidate.link);
-    }
+    agentFaviconRestoreStockCandidates();
     agentFaviconTrimObjectUrls();
     if (!agentFaviconPageHidden && agentFaviconVisibleState !== 'original') {
       void agentFaviconRenderState(agentFaviconVisibleState);
@@ -40,5 +35,18 @@
   function agentFaviconActiveCandidates(candidates) {
     return candidates.filter(candidate => !candidate.media ||
       window.matchMedia(candidate.media).matches);
+  }
+
+  /**
+   * Restores untouched stock link hrefs before switching or revoking PNGs.
+   * @returns {void} All currently tracked links retain original provenance.
+   */
+  function agentFaviconRestoreStockCandidates() {
+    for (const candidate of agentFaviconCurrentCandidates()) {
+      if (candidate.link.href !== candidate.original_href) {
+        candidate.link.href = candidate.original_href;
+      }
+      agentFaviconDisplayedHrefs.delete(candidate.link);
+    }
   }
 
