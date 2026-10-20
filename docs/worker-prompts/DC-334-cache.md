@@ -38,7 +38,7 @@ e2460ba2bf1c1852579782ecbb05139de32e505e.
 6. Run Chromium cross-tab integration against **synthetic V1 fixtures**
    first.  Use the existing DC #328 benchmark harness where useful.
    Run RED/GREEN, regression, exact-source hosted CI and record results.
-   Stage a distinct #334 PR, **unmerged**.
+   Stage a distinct #334 PR.  **Do not merge.**
 
 Speculative handoff: state `SPECULATIVE IMPLEMENTATION COMPLETE;
 BLOCKED by DC #333`, with assumed A V1 SHA and which tests used only
