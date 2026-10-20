@@ -83,6 +83,7 @@ function fixture({
     async function open_favicon_dataset() { return provider; }
     ${productionFunctionSource('agentFaviconCurrentTheme')}
     ${productionFunctionSource('agentFaviconHandleThemeChange')}
+    ${productionFunctionSource('agentFaviconActiveCandidates')}
     ${consumer}
     this.api = {
       get: get_favicon, render: agentFaviconRenderState,
