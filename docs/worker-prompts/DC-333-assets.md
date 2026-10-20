@@ -31,8 +31,8 @@ blob SHA e2460ba2bf1c1852579782ecbb05139de32e505e.
    repository CI and asset identity.  Ensure no 500-line source files.
    Document pack generation, immutable URL and actual manifest hashes.
 6. Commit changes in a dedicated #333 PR, record test and CI links,
-   exact SHA and published asset/manifest contract evidence.  **Do not
-   merge.**  Do not declare other tickets complete.
+   exact SHA and published asset/manifest contract evidence.
+   **Do not merge.**  Do not declare other tickets complete.
 
 When the real V1 pack is certified, hand its exact revision/asset bytes
 to DC #334 and the #332 coordinator.  If original favicon provenance
