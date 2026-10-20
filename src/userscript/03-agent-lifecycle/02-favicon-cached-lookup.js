@@ -4,14 +4,14 @@
   let agentFaviconPulseTimer = null;
   /** Current colour/attention projection of the shared Agent lifecycle. */
   let agentFaviconVisibleState = 'original';
-  /** Active B V1 dataset session; the provider owns IndexedDB and locks. */
+  /** Provisional V2 dataset session; #334 owns atomic sequence generation. */
   let agentFaviconDatasetSession = null;
-  /** In-flight B V1 session opening, shared by concurrent presentation calls. */
+  /** In-flight provisional V2 cache session, shared by presentation calls. */
   let agentFaviconSessionPending = null;
   /** Resolved minimum compatible version for this installed DC version. */
   let agentFaviconVersionPending = null;
-  /** Per-original-resource digest requests; original URLs are never recoloured. */
-  const agentFaviconSourceDigests = new Map();
+  /** Observed browser colour-scheme query; the same SVG URL can differ by theme. */
+  let agentFaviconThemeQuery = null;
   /** Only the PNG object URLs requested by this tab, in LRU order. */
   const agentFaviconObjectUrls = new Map();
   /** URL last assigned by DC to each original stock link. */
@@ -63,8 +63,42 @@
   }
 
   /**
+   * Reads the actual browser colour scheme, without guessing from source bytes.
+   * @returns {string|null} Active light/dark theme or null if unobservable.
+   */
+  function agentFaviconCurrentTheme() {
+    if (!agentFaviconThemeQuery) {
+      if (typeof window.matchMedia !== 'function') return null;
+      const query = window.matchMedia('(prefers-color-scheme: dark)');
+      if (!query || typeof query.matches !== 'boolean' ||
+          typeof query.addEventListener !== 'function') return null;
+      query.addEventListener('change', agentFaviconHandleThemeChange);
+      agentFaviconThemeQuery = query;
+    }
+    return agentFaviconThemeQuery.matches ? 'dark' : 'light';
+  }
+
+  /**
+   * On an actual theme flip, discard displayed frames before async lookup.
+   * @returns {void} Does not return a value.
+   */
+  function agentFaviconHandleThemeChange() {
+    ++agentFaviconRenderGeneration;
+    for (const candidate of agentFaviconCurrentCandidates()) {
+      if (candidate.link.href !== candidate.original_href) {
+        candidate.link.href = candidate.original_href;
+      }
+      agentFaviconDisplayedHrefs.delete(candidate.link);
+    }
+    agentFaviconTrimObjectUrls();
+    if (!agentFaviconPageHidden && agentFaviconVisibleState !== 'original') {
+      void agentFaviconRenderState(agentFaviconVisibleState);
+    }
+  }
+
+  /**
    * Resolves and memoizes the provider's minimum compatible numeric version.
-   * @returns {Promise<string|null>} V1 dataset boundary or null on provider failure.
+   * @returns {Promise<string|null>} Selected numeric version boundary or null.
    */
   async function agentFaviconCompatibleVersion() {
     if (typeof get_compatible_version_key !== 'function') return null;
@@ -80,7 +114,7 @@
   }
 
   /**
-   * Opens a single B V1 cache session, never approximating an unavailable provider.
+   * Opens one provisional V2 cache session without guessed provider data.
    * @param {string} version_key - Exact normalized compatible dataset boundary.
    * @returns {Promise<Object|null>} Shared session or null when unavailable.
    */
@@ -102,7 +136,6 @@
           if (!session || session.version !== version_key ||
               !Number.isSafeInteger(session.update_every_ms) ||
               session.update_every_ms <= 0 ||
-              typeof session.find_variant !== 'function' ||
               typeof session.read_png !== 'function' ||
               typeof session.close !== 'function') {
             if (session?.close) void session.close();
@@ -118,46 +151,26 @@
   }
 
   /**
-   * Hashes each original favicon response body at most once on success.
-   * @param {string} href - Captured original stock favicon URL.
-   * @returns {Promise<string|null>} Lowercase SHA-256 hex of original bytes.
-   */
-  async function agentFaviconSourceDigest(href) {
-    if (!agentFaviconSourceDigests.has(href)) {
-      const pending = (async () => {
-        const response = await fetch(href, { credentials: 'same-origin' });
-        if (!response.ok || response.type === 'opaque') return null;
-        const bytes = await response.arrayBuffer();
-        if (!bytes.byteLength || bytes.byteLength > 1048576) return null;
-        const digest = await crypto.subtle.digest('SHA-256', bytes);
-        return [...new Uint8Array(digest)]
-          .map(byte => byte.toString(16).padStart(2, '0')).join('');
-      })().catch(() => null);
-      agentFaviconSourceDigests.set(href, pending);
-    }
-    return agentFaviconSourceDigests.get(href);
-  }
-
-  /**
    * Reads only the requested PNG blob, reusing tab-local object URLs on hits.
-   * @param {Object} session - Open B V1 provider session.
-   * @param {string} variant - Internal source-body variant id.
+   * @param {Object} session - Open provisional V2 provider session.
+   * @param {string} originalUrl - Captured untouched source favicon URL.
+   * @param {string} theme - Current browser light/dark colour scheme.
    * @param {number} base - Base state 0 yellow, 1 green, 2 red, 3 white.
    * @param {number} step - Saturated five-minute progress index 0..6.
    * @param {number} frame - Symmetric ten-second pulse index 0..20.
    * @returns {Promise<string|null>} Stable PNG Blob URL or null.
    */
-  async function agentFaviconFrameUrl(session, variant, base, step, frame) {
+  async function agentFaviconFrameUrl(session, originalUrl, theme, base, step, frame) {
     if (agentFaviconPageHidden) return null;
     const epoch = agentFaviconPageEpoch;
-    const key = JSON.stringify([session.version, variant, base, step, frame]);
+    const key = JSON.stringify([session.version, originalUrl, theme, base, step, frame]);
     if (agentFaviconObjectUrls.has(key)) {
       const url = agentFaviconObjectUrls.get(key);
       agentFaviconObjectUrls.delete(key);
       agentFaviconObjectUrls.set(key, url);
       return url;
     }
-    const blob = await session.read_png(variant, base, step, frame);
+    const blob = await session.read_png(originalUrl, theme, base, step, frame);
     if (epoch !== agentFaviconPageEpoch || agentFaviconPageHidden) return null;
     if (!(blob instanceof Blob) || blob.type !== 'image/png' || !blob.size) return null;
     // Concurrent heartbeats can request one frame while its IDB read is pending.
@@ -168,30 +181,29 @@
   }
 
   /**
-   * Returns resolved native PNG URLs for recognized original stock links.
-   * @param {string} compatible_version_key - Exact B V1 version boundary.
+   * Looks up only requested frames of complete, ready V2 cache sequences.
+   * @param {string} version_key - Normalized numeric version boundary.
    * @param {0|1|2|3} base_type - Yellow/green/red/white index.
    * @param {0|1|2|3|4|5|6} completion_time - Five-minute progress step.
    * @param {number} time_offset - Monotonic milliseconds, not a pulse index.
    * @returns {Promise<Array<Object>|null>} Matched link and PNG URL pairs or null.
    */
-  async function get_favicon(compatible_version_key, base_type, completion_time, time_offset) {
+  async function get_favicon(version_key, base_type, completion_time, time_offset) {
     if (agentFaviconPageHidden) return null;
     const frame = agentFaviconPulseIndex(time_offset);
     if (frame === null || ![0, 1, 2, 3].includes(base_type) ||
         !Number.isInteger(completion_time) || completion_time < 0 ||
-        completion_time > 6 || typeof compatible_version_key !== 'string') return null;
-    const session = await agentFaviconOpenSession(compatible_version_key);
+        completion_time > 6 || typeof version_key !== 'string') return null;
+    const theme = agentFaviconCurrentTheme();
+    if (theme === null) return null;
+    const session = await agentFaviconOpenSession(version_key);
     if (!session) return null;
     const matches = [];
     for (const candidate of agentFaviconCurrentCandidates()) {
-      const digest = await agentFaviconSourceDigest(candidate.original_href);
-      if (!digest) continue;
-      const variant = session.find_variant(digest);
-      if (variant === null || typeof variant !== 'string') continue;
       const href = await agentFaviconFrameUrl(
-        session, variant, base_type, completion_time, frame
+        session, candidate.original_href, theme, base_type, completion_time, frame
       );
+      if (agentFaviconCurrentTheme() !== theme || agentFaviconPageHidden) return null;
       if (href) matches.push({ link: candidate.link, href });
     }
     return matches.length ? matches : null;
@@ -254,14 +266,23 @@
   }
 
   /**
-   * Projects the requested state through the cached PNG V1 lookup.
+   * Projects lifecycle state through pending-safe provisional V2 lookup.
    * @param {string} state - Original, processing, completed, error or acknowledged.
    * @param {boolean} heartbeat - True only for scheduled pulse refresh.
    * @returns {Promise<boolean>} True if all recognized favicon links updated safely.
    */
   async function agentFaviconRenderState(state, heartbeat = false) {
     if (agentFaviconPageHidden) return false;
+    const previousState = agentFaviconVisibleState;
     agentFaviconVisibleState = state;
+    if (previousState !== state) {
+      for (const candidate of agentFaviconCurrentCandidates()) {
+        if (candidate.link.href !== candidate.original_href) {
+          candidate.link.href = candidate.original_href;
+        }
+        agentFaviconDisplayedHrefs.delete(candidate.link);
+      }
+    }
     if (state === 'original') agentFaviconStopPulse();
     else void agentFaviconStartPulse();
     const generation = ++agentFaviconRenderGeneration;
@@ -272,21 +293,33 @@
     }
     const candidates = agentFaviconCurrentCandidates();
     if (!candidates.length) return false;
+    const requestedTheme = state === 'original' ? null : agentFaviconCurrentTheme();
+    let requestedStep = null;
     let pairs = null;
     if (state !== 'original') {
       const base = { processing: 0, completed: 1, error: 2, acknowledged: 3 }[state];
       if (base === undefined) return false;
-      const step = state === 'error' ? 0 : agentFaviconRingStep();
+      requestedStep = state === 'error' ? 0 : agentFaviconRingStep();
       try {
         const key = await agentFaviconCompatibleVersion();
-        if (key) pairs = await get_favicon(key, base, step, performance.now());
+        if (key) pairs = await get_favicon(key, base, requestedStep, performance.now());
       } catch (error) {
         if (!heartbeat) logDiagnostic('warnings', 'agent-favicon-cache-unavailable', {
           state, message: errorMessage(error)
         });
       }
     }
-    if (generation !== agentFaviconRenderGeneration) {
+    const candidatesNow = agentFaviconCurrentCandidates();
+    const sameOriginals = candidates.length === candidatesNow.length &&
+      candidates.every(candidate => candidatesNow.some(current =>
+        current.link === candidate.link &&
+        current.original_href === candidate.original_href));
+    const sameTheme = state === 'original' ||
+      requestedTheme === agentFaviconCurrentTheme();
+    const sameStep = state === 'original' || requestedStep ===
+      (state === 'error' ? 0 : agentFaviconRingStep());
+    if (generation !== agentFaviconRenderGeneration ||
+        !sameOriginals || !sameTheme || !sameStep || agentFaviconPageHidden) {
       if (!heartbeat && typeof agentLifecycleAction === 'function') {
         agentLifecycleAction('favicon', 'superseded', { state }, transitionId);
       }
