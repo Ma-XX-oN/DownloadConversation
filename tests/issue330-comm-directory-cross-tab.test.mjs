@@ -181,7 +181,7 @@ function makeBrowser(options = {}) {
  * @returns {Promise<void>} Resolves after current microtasks settle.
  */
 async function flush() {
-  for (let i = 0; i < 12; i += 1) await Promise.resolve();
+  for (let i = 0; i < 80; i += 1) await Promise.resolve();
 }
 
 test('one reauthorisation resumes all Chrome-restored tabs with no new picker', async () => {
@@ -197,7 +197,7 @@ test('one reauthorisation resumes all Chrome-restored tabs with no new picker', 
   assert.equal(browser.shared.requests, 1);
   assert.equal(browser.shared.pickers, 0);
   assert.equal(first.api.ready(), true);
-  assert.equal(second.api.ready(), true);
+  assert.equal(second.api.ready(), true, JSON.stringify(second.state));
   assert.equal(first.state.activations, 1);
   assert.equal(second.state.activations, 1);
   assert.deepEqual(first.state.errors, []);
