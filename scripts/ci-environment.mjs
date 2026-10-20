@@ -78,6 +78,7 @@ const ordinaryStages = [
   ['Disk communication recorder regression', nodeCommand, ['--test', 'tests/disk-communication-recorder.test.mjs']],
   ['Directory picker gesture regression', nodeCommand, ['--test', 'tests/directory-picker-gesture.test.mjs']],
   ['#330 shared COMM directory authorisation regression', nodeCommand, ['--test', 'tests/issue330-comm-directory-cross-tab.test.mjs']],
+  ['#338 malformed COMM manifest recovery regression', nodeCommand, ['--test', 'tests/issue338-comm-malformed-manifest.test.mjs']],
   ['Console lifecycle and provenance controls', nodeCommand, ['--test', 'tests/console-diagnostics.test.mjs']],
   ['CGP2 provider/Core integration', nodeCommand, ['--test', 'tests/cgp2-core-integration.test.mjs', 'tests/issue156-core-plugin-boundary.test.mjs', 'tests/private-agent-plugin-loading.test.mjs']],
   ['Canonical final-render regressions', nodeCommand, ['--test', 'tests/core-integration.test.mjs', 'tests/phase5-rich-core-integration.test.mjs', 'tests/fallback-adaptive-fence.test.mjs', 'tests/tool-language-diagnostics.test.mjs', 'tests/sediment-resolver.test.mjs']],
