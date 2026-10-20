@@ -622,32 +622,36 @@ Structured terminal state is normalized exactly once before any terminal side ef
 
 This is a project-wide watcher/consumer design pattern, not an implementation detail of issues #135/#136/#148. New Agent-state consumers must reuse this path. Concrete ChatGPT endpoint, stream-shape, reload, terminal-ordering, and browser-integration evidence is maintained in `CHATGPT-WEB-INTEGRATION.md`.
 
-## DC #333 external favicon pack producer (pre-integration)
+## DC #333 local on-demand favicon renderer (pre-integration)
 
-The V1 asset producer is separate from the userscript runtime: its offline
-Chromium Canvas generator resides in `scripts/generate-favicon-packs.mjs`,
-and the canonical `.dcfav` codec and validators reside in
-`scripts/favicon-pack-format.mjs`.  Source bytes must be pinned by their
-actual fetched SHA-256 digests in `assets/favicons/v1/sources.json` before
-binary publication.  The producer uses the existing near-white recolour,
-underlaid five-minute pie, overlaid ring and ten-second cosine pulse, with
-588 distinct indexed PNG byte spans for each original resource digest.
+DC #332 superseded the repository-pack concept on 2026-10-20.  Production
+must not fetch an externally generated `.dcfav` dataset or catalogue.
+The historical frozen Interface V1 remains unchanged at blob
+`e2460ba2bf1c1852579782ecbb05139de32e505e` for provenance only.
 
-The authoritative immutable format is Section A of
-`docs/FAVICON_CACHE_INTERFACES_V1.md`, Git blob
-`e2460ba2bf1c1852579782ecbb05139de32e505e`.  The committed binary asset
-must precede catalogue publication so the catalogue pins an immutable Git
-commit containing precisely those validated asset bytes.  Its deterministic
-producer and byte-exact verifier are declared as a committed artifact in
-`.ci/repoworkflow.json`.  The permanent CI prepare phase materializes and
-commits the 10.6 MB pack through the allowlisted RepoWorkflow artifact
-mechanism before validation; the GitHub API connector does not transport
-this entire binary through one request.  The generated pack is never
-hand-edited and no other files may be included in its generated commit.  This tooling does
-not change the current runtime favicon path; DC #334 provides storage, DC #335
-provides the runtime consumer, and DC #336 owns end-to-end certification.
-Until genuine source images, their hashes and the external binary pack have
-been published and verified, this work remains incomplete.
+The browser renderer `src/favicon/browser-sequence.mjs` accepts exactly
+one already-captured original favicon URL, actual active light/dark theme,
+one of processing/completed/acknowledged/error and one 5-minute progress
+step 0..6.  A cache miss invokes the renderer once for that single tuple;
+it emits exactly 21 complete PNG Blobs spanning one half of the existing
+10-second cosine pulse.  The other 19 quarter-second slots mirror these
+indices, without new image encoding.  No other URL, theme, colour, or step
+is generated speculatively.
+
+Near-white recolouring and the original pie-behind-logo/ring-above-logo
+composition remain unchanged.  The renderer yields to the event loop
+between frames, asynchronously encodes PNGs, and rejects on missing source,
+canvas/encoding errors, cancellation or theme changes without leaking a
+partially successful sequence to its consumer.  Original favicon links
+and all DOM `media/type/sizes` remain under DC #335 runtime ownership.
+DC #334 owns IndexedDB, cross-tab first-writer election, atomic publication,
+last-used throttling and expiry; the renderer contains none of those.
+
+A numbered V2 interface is awaiting DC #332's freeze and explicit worker
+rebinding.  Existing V1 pack generator, pinned sample sources, SVG light/dark
+characterisation and real-browser pixel parity are retained only as
+historical evidence or reusable algorithms, not current acceptance proof.
+No producer implementation alone can certify DC #334–#336 integration.
 
 ## Agent favicon processing/completion/error state
 
