@@ -64,6 +64,7 @@ function fixture(known = true, delayedRead = null, candidates = 1,
     const VERSION = ${JSON.stringify(version)};
     const agentFaviconOriginalSources = new Map();
     let agentFaviconRenderGeneration = 0;
+    let agentFaviconPresentedStep = null;
     let agentStopwatchState = { active: true, started_at_ms: 0, total_ms: null };
     function logDiagnostic(level, name, details) {
       diagnostics.push({ level, name, details });
@@ -78,6 +79,7 @@ function fixture(known = true, delayedRead = null, candidates = 1,
     ${productionFunctionSource('agentFaviconCurrentTheme')}
     ${productionFunctionSource('agentFaviconHandleThemeChange')}
     ${productionFunctionSource('agentFaviconActiveCandidates')}
+    ${productionFunctionSource('agentFaviconRestoreStockCandidates')}
     ${source}
     this.api = { get: get_favicon, pulse: agentFaviconPulseIndex,
       render: agentFaviconRenderState, dispose: agentFaviconDispose };
