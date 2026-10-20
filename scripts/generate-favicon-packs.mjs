@@ -145,6 +145,60 @@ export function renderOriginal(original, descriptor) {
   }
 }
 
+/** Validate a source resource without treating its filename as proof of format.
+ * @param {Buffer} bytes - Exact fetched favicon response bytes.
+ * @param {object} source - Immutable source descriptor (MIME and size).
+ * @returns {void} Rejects unsupported or malformed source formats.
+ */
+export function validateOriginalSource(bytes, source) {
+  assert(bytes.length > 0 && bytes.length <= 2 * 1024 * 1024,
+    'Original favicon binary bound');
+  if (source.mime === 'image/png') {
+    const size = validatePng(bytes);
+    assert(size.width === source.width && size.height === source.height,
+      'Pinned original PNG dimensions differ');
+    return;
+  }
+  if (source.mime === 'image/webp') {
+    assert(bytes.length >= 20 && bytes.toString('ascii', 0, 4) === 'RIFF' &&
+      bytes.toString('ascii', 8, 12) === 'WEBP' &&
+      bytes.readUInt32LE(4) === bytes.length - 8,
+      'Pinned original WebP framing differs');
+    return;
+  }
+  if (source.mime === 'image/x-icon') {
+    assert(bytes.length >= 22 && bytes.readUInt16LE(0) === 0 &&
+      bytes.readUInt16LE(2) === 1, 'Pinned ICO header invalid');
+    const count = bytes.readUInt16LE(4);
+    assert(count > 0 && count <= 64 && 6 + count * 16 <= bytes.length,
+      'Pinned ICO directory count invalid');
+    let foundSize = false;
+    for (let i = 0; i < count; i++) {
+      const pos = 6 + i * 16;
+      const width = bytes[pos] || 256, height = bytes[pos + 1] || 256;
+      const length = bytes.readUInt32LE(pos + 8);
+      const offset = bytes.readUInt32LE(pos + 12);
+      assert(length >= 8 && offset >= 6 + count * 16 &&
+        offset + length <= bytes.length, 'Pinned ICO data offset invalid');
+      if (width === source.width && height === source.height) foundSize = true;
+    }
+    assert(foundSize, 'Pinned ICO has no matching source dimensions');
+    return;
+  }
+  if (source.mime === 'image/svg+xml') {
+    const text = bytes.toString('utf8');
+    assert(!text.includes('\ufffd') &&
+      /^\s*(?:<\?xml\b[^>]*\?>\s*)?<svg[\s>]/i.test(text) &&
+      /<\/svg\s*>\s*$/i.test(text), 'Pinned SVG root invalid');
+    assert(!/<!DOCTYPE|<!ENTITY|<(?:script|foreignObject|iframe|object|image)\b|\bon[a-z]+\s*=|@import\b/i.test(text) &&
+      !/\b(?:href|xlink:href)\s*=\s*['"](?!#)/i.test(text) &&
+      !/\burl\s*\(\s*['"]?\s*(?!#)/i.test(text),
+      'SVG contains executable or external references');
+    return;
+  }
+  throw new Error('Unsupported source favicon MIME type');
+}
+
 /** Verify authentic pinned original resource digests and produce exact asset.
  * @returns {Buffer} Complete immutable V1 pack.
  */
@@ -159,24 +213,16 @@ export function generatePack() {
   const variants = [];
   for (const [index, source] of sources.entries()) {
     assert(typeof source.path === 'string' &&
-      /^assets\/favicons\/v1\/originals\/[a-z0-9-]+\.(png|webp)$/.test(source.path) &&
+      /^assets\/favicons\/v1\/originals\/[a-z0-9-]+\.(png|webp|ico|svg)$/.test(source.path) &&
       SHA256.test(source.sha256) && !seen.has(source.sha256) &&
-      ['image/png', 'image/webp'].includes(source.mime) &&
+      ['image/png', 'image/webp', 'image/x-icon', 'image/svg+xml'].includes(source.mime) &&
       Number.isInteger(source.width) && source.width > 0 && source.width <= 512 &&
       Number.isInteger(source.height) && source.height > 0 && source.height <= 512,
       'Invalid source descriptor');
     seen.add(source.sha256);
     const bytes = readFileSync(join(ROOT, source.path));
     assert(sha256(bytes) === source.sha256, 'Pinned source SHA mismatch');
-    assert(bytes.length <= 2 * 1024 * 1024, 'Original image too large');
-    if (source.mime === 'image/png') {
-      const dims = validatePng(bytes);
-      assert(dims.width === source.width && dims.height === source.height,
-        'Pinned original dimensions wrong');
-    } else {
-      assert(bytes.toString('ascii', 0, 4) === 'RIFF' &&
-        bytes.toString('ascii', 8, 12) === 'WEBP', 'Invalid original WebP framing');
-    }
+    validateOriginalSource(bytes, source);
     variants.push({
       id: String(index), source_sha256: source.sha256,
       width: source.width, height: source.height,
