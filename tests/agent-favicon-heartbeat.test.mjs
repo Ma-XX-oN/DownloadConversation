@@ -33,13 +33,15 @@ test('pulse schedules at provider interval only after session is ready', async (
     let agentFaviconPulseTimer = null;
     let agentFaviconVisibleState = 'completed';
     let agentFaviconPageHidden = false;
+    let agentFaviconPulseUpdatePending = false;
     async function agentFaviconCompatibleVersion() { return '1.11.8'; }
     async function agentFaviconOpenSession() {
       return { version: '1.11.8', update_every_ms: 400 };
     }
-    function agentFaviconRenderState(state, heartbeat) {
+    async function agentFaviconRenderState(state, heartbeat) {
       renders.push([state, heartbeat]);
     }
+    ${productionFunctionSource('agentFaviconPulseHeartbeat')}
     ${productionFunctionSource('agentFaviconStartPulse')}
     ${productionFunctionSource('agentFaviconStopPulse')}
     this.start = agentFaviconStartPulse;
