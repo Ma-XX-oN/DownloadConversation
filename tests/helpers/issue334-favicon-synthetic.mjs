@@ -17,17 +17,18 @@ export function chunk(kind, bytes) {
   tail.writeUInt32BE(crc32(data));
   return Buffer.concat([header, data, tail]);
 }
-export function png() {
+export function png({ badDecode = false } = {}) {
   const ihdr = Buffer.alloc(13);
   ihdr.writeUInt32BE(1, 0);
   ihdr.writeUInt32BE(1, 4);
   ihdr[8] = 8;
   ihdr[9] = 6;
   const data = deflateSync(Buffer.from([0, 255, 128, 64, 255]));
+  if (badDecode) data.fill(0); // CRC remains valid but zlib IDAT cannot decode.
   return Buffer.concat([Buffer.from('89504e470d0a1a0a', 'hex'), chunk('IHDR', ihdr), chunk('IDAT', data), chunk('IEND', Buffer.alloc(0))]);
 }
-export function syntheticPack({ corrupt = false, badDimensions = false, badOffset = false } = {}) {
-  const icon = png();
+export function syntheticPack({ corrupt = false, badDimensions = false, badOffset = false, badDecode = false } = {}) {
+  const icon = png({ badDecode });
   const images = [];
   let offset = 0;
   for (let base = 0; base < 4; base++) {
