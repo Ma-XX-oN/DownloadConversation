@@ -50,6 +50,7 @@
         "src/userscript/03-agent-lifecycle/01-click-sound-transition.js",
         "src/userscript/03-agent-lifecycle/02-terminal-events.js",
         "src/userscript/03-agent-lifecycle/02-terminal-events-part2.js",
+        "src/userscript/03-agent-lifecycle/02-favicon-theme.js",
         "src/userscript/03-agent-lifecycle/02-favicon-cached-lookup.js",
         "src/userscript/03-agent-lifecycle/03-favicon.js",
         "src/userscript/03-agent-lifecycle/04-stopwatch-live.js",
