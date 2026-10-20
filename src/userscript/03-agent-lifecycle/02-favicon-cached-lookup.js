@@ -20,6 +20,10 @@
   const AGENT_FAVICON_URL_LIMIT = 84;
   /** Progress-step state for the existing shared stopwatch observer. */
   let agentFaviconRingRenderedStep = 0;
+  /** Whether pagehide has invalidated active and pending cache reads. */
+  let agentFaviconPageHidden = false;
+  /** Incremented at navigation to reject late reads across bfcache restoration. */
+  let agentFaviconPageEpoch = 0;
 
   /**
    * Selects one of 21 full-composite PNG pulse frames from monotonic time.
@@ -81,14 +85,20 @@
    * @returns {Promise<Object|null>} Shared session or null when unavailable.
    */
   async function agentFaviconOpenSession(version_key) {
+    if (agentFaviconPageHidden) return null;
     if (agentFaviconDatasetSession?.version === version_key) {
       return agentFaviconDatasetSession;
     }
     if (typeof open_favicon_dataset !== 'function') return null;
     if (!agentFaviconSessionPending) {
+      const epoch = agentFaviconPageEpoch;
       agentFaviconSessionPending = Promise.resolve()
         .then(() => open_favicon_dataset(version_key))
-        .then(session => {
+        .then(async session => {
+          if (epoch !== agentFaviconPageEpoch || agentFaviconPageHidden) {
+            if (session && typeof session.close === 'function') await session.close();
+            return null;
+          }
           if (!session || session.version !== version_key ||
               !Number.isSafeInteger(session.update_every_ms) ||
               session.update_every_ms <= 0 ||
@@ -138,6 +148,8 @@
    * @returns {Promise<string|null>} Stable PNG Blob URL or null.
    */
   async function agentFaviconFrameUrl(session, variant, base, step, frame) {
+    if (agentFaviconPageHidden) return null;
+    const epoch = agentFaviconPageEpoch;
     const key = JSON.stringify([session.version, variant, base, step, frame]);
     if (agentFaviconObjectUrls.has(key)) {
       const url = agentFaviconObjectUrls.get(key);
@@ -146,6 +158,7 @@
       return url;
     }
     const blob = await session.read_png(variant, base, step, frame);
+    if (epoch !== agentFaviconPageEpoch || agentFaviconPageHidden) return null;
     if (!(blob instanceof Blob) || blob.type !== 'image/png' || !blob.size) return null;
     // Concurrent heartbeats can request one frame while its IDB read is pending.
     if (agentFaviconObjectUrls.has(key)) return agentFaviconObjectUrls.get(key);
@@ -163,6 +176,7 @@
    * @returns {Promise<Array<Object>|null>} Matched link and PNG URL pairs or null.
    */
   async function get_favicon(compatible_version_key, base_type, completion_time, time_offset) {
+    if (agentFaviconPageHidden) return null;
     const frame = agentFaviconPulseIndex(time_offset);
     if (frame === null || ![0, 1, 2, 3].includes(base_type) ||
         !Number.isInteger(completion_time) || completion_time < 0 ||
@@ -216,7 +230,7 @@
    * @returns {Promise<void>} Resolves after attempting a dataset session.
    */
   async function agentFaviconStartPulse() {
-    if (agentFaviconPulseTimer !== null) return;
+    if (agentFaviconPageHidden || agentFaviconPulseTimer !== null) return;
     const key = await agentFaviconCompatibleVersion();
     if (!key) return;
     const session = await agentFaviconOpenSession(key);
@@ -246,6 +260,7 @@
    * @returns {Promise<boolean>} True if all recognized favicon links updated safely.
    */
   async function agentFaviconRenderState(state, heartbeat = false) {
+    if (agentFaviconPageHidden) return false;
     agentFaviconVisibleState = state;
     if (state === 'original') agentFaviconStopPulse();
     else void agentFaviconStartPulse();
@@ -303,6 +318,8 @@
    * @returns {void} No value is returned.
    */
   function agentFaviconDispose() {
+    agentFaviconPageHidden = true;
+    ++agentFaviconPageEpoch;
     ++agentFaviconRenderGeneration;
     agentFaviconVisibleState = 'original';
     agentFaviconStopPulse();
@@ -323,7 +340,17 @@
     void agentFaviconRenderState('acknowledged');
   }
 
-  /** Browser focus and visibility notifications for the acknowledged state. */
+  /**
+   * Allows page-restored tabs to acquire a fresh provider session.
+   * @param {PageTransitionEvent} event - Page restoration lifecycle event.
+   * @returns {void} No result is returned.
+   */
+  function agentFaviconHandlePageShow(event) {
+    if (event.persisted) agentFaviconPageHidden = false;
+  }
+
+  /** Browser focus, visibility and page-lifetime notifications. */
   document.addEventListener('visibilitychange', agentFaviconAcknowledgeCompletion);
   window.addEventListener('focus', agentFaviconAcknowledgeCompletion);
   window.addEventListener('pagehide', agentFaviconDispose);
+  window.addEventListener('pageshow', agentFaviconHandlePageShow);
