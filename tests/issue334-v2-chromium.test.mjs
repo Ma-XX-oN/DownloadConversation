@@ -122,9 +122,9 @@ function pageHtml(isChild) {
         await other.close();
         window.pauseRender=null;
         const dark = await a.read_png(URL1,'dark',0,0,15);
-        verify(dark instanceof Blob && calls.length===2, 'dark theme not separately generated');
-        verify(calls[1].theme==='dark', 'wrong active theme');
-        verify((await a.read_png(URL1,'dark',0,0,0)) instanceof Blob && calls.length===2,
+        verify(dark instanceof Blob && calls.length===3, 'dark theme not separately generated');
+        verify(calls[2].theme==='dark', 'wrong active theme');
+        verify((await a.read_png(URL1,'dark',0,0,0)) instanceof Blob && calls.length===3,
           'new frame in existing dark sequence rerendered');
         window.failCount=1;
         const failId=faviconSequenceKey(key, URL1, 'light', 1, 3);
