@@ -249,3 +249,38 @@ test('focus retries missed cross-tab notification without duplicate activation',
   assert.equal(second.state.activations, 1);
   assert.equal(browser.shared.pickers, 0);
 });
+
+test('deferred prompt does not remount after peer has activated the recorder', () => {
+  const callbacks = [];
+  const document = {
+    body: null,
+    getElementById: () => null
+  };
+  const ctx = {
+    document,
+    requestAnimationFrame: fn => { callbacks.push(fn); },
+    window: { addEventListener() {} },
+    logDiagnostic() {}
+  };
+  const prelude = `
+    let communicationLogDirectoryGestureArmed = false;
+    let communicationLogPromptShown = false;
+    let communicationLogReady = false;
+    let communicationLogPendingDirectoryHandle = null;
+    let communicationLogDirectoryReselectRequired = false;
+    function communicationLogHandleDirectoryGesture() {}
+    ${productionFunctionSource('communicationLogShowDirectoryPrompt')}
+    this.api = {
+      show: () => communicationLogShowDirectoryPrompt('Initial request'),
+      resolve: () => { communicationLogReady = true; communicationLogPromptShown = false; }
+    };
+  `;
+  vm.runInNewContext(prelude, ctx);
+  ctx.api.show();
+  assert.equal(callbacks.length, 1);
+  let mounted = 0;
+  document.body = { append() { mounted += 1; } };
+  ctx.api.resolve();
+  callbacks[0]();
+  assert.equal(mounted, 0, 'Peer grant must cancel the queued blocker mount.');
+});
