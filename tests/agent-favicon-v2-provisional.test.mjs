@@ -70,6 +70,7 @@ function fixture({
     const VERSION = ${JSON.stringify(version)};
     const agentFaviconOriginalSources = new Map();
     let agentFaviconRenderGeneration = 0;
+    let agentFaviconPresentedStep = null;
     let agentStopwatchState = {
       active: true, started_at_ms: 0, total_ms: null
     };
@@ -84,6 +85,7 @@ function fixture({
     ${productionFunctionSource('agentFaviconCurrentTheme')}
     ${productionFunctionSource('agentFaviconHandleThemeChange')}
     ${productionFunctionSource('agentFaviconActiveCandidates')}
+    ${productionFunctionSource('agentFaviconRestoreStockCandidates')}
     ${consumer}
     this.api = {
       get: get_favicon, render: agentFaviconRenderState,
@@ -192,4 +194,22 @@ test('V2 RED: inactive media candidates do not request another source', async ()
   assert.equal(JSON.parse(h.requested[0])[1],
     'https://chatgpt.com/favicon0.svg');
   assert.equal(h.links[1].href, 'https://chatgpt.com/favicon1.svg');
+});
+
+test('V2 RED: cold next progress step immediately displays stock favicon', async () => {
+  const h = fixture();
+  const original = 'https://chatgpt.com/favicon0.svg';
+  h.publish(original, 'light', 0, 0);
+  assert.equal(await h.api.render('processing'), true);
+  assert.match(h.links[0].href, /^blob:/);
+  h.setTime(300000);
+  const cold = h.api.render('processing');
+  assert.equal(h.links[0].href, original,
+    'do not display the outdated pie while the next sequence is generating');
+  assert.equal(await cold, false);
+  assert.deepEqual(JSON.parse(h.requested[0]),
+    ['1.11.8', original, 'light', 0, 1]);
+  h.publish(original, 'light', 0, 1);
+  assert.equal(await h.api.render('processing', true), true);
+  assert.match(h.links[0].href, /^blob:/);
 });
