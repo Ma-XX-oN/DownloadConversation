@@ -67,6 +67,9 @@ const ordinaryStages = [
   // #334 isolated test registration; source/runtime ownership remains unchanged.
   ['#334 shared favicon cache V1 synthetic contract', nodeCommand, ['--test', 'tests/issue334-favicon-cache.test.mjs']],
   ['#334 shared favicon cache cross-tab Chromium', nodeCommand, ['--test', 'tests/issue334-favicon-cache-chromium.test.mjs']],
+  // New V2 provisional tests, separate from historical V1 synthetic regressions.
+  ['#334 V2 local sequence cache contract', nodeCommand, ['--test', 'tests/issue334-v2-sequence.test.mjs']],
+  ['#334 V2 shared sequence Chromium contention', nodeCommand, ['--test', 'tests/issue334-v2-chromium.test.mjs']],
   ['Agent WebSocket delayed-final regression', nodeCommand, ['--test', 'tests/agent-websocket-delayed-final.test.mjs']],
   ['Agent sound readiness regression', nodeCommand, ['--test', 'tests/agent-sound-initialization-indicator.test.mjs']],
   ['Agent terminal polling-timeout regression', nodeCommand, ['--test', 'tests/agent-terminal-polling-timeout.test.mjs', 'tests/agent-terminal-polling-timeout-observer.test.mjs', 'tests/agent-terminal-polling-timeout-integration.test.mjs']],
