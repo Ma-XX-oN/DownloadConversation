@@ -1,0 +1,328 @@
+  /** A favicon pulse has forty 250-ms slots and 21 unique symmetric frames. */
+  const AGENT_FAVICON_PULSE_PERIOD_MS = 10000;
+  /** Periodic pulse timer, started only after the dataset session is ready. */
+  let agentFaviconPulseTimer = null;
+  /** Current colour/attention projection of the shared Agent lifecycle. */
+  let agentFaviconVisibleState = 'original';
+  /** Active B V1 dataset session; the provider owns IndexedDB and locks. */
+  let agentFaviconDatasetSession = null;
+  /** In-flight B V1 session opening, shared by concurrent presentation calls. */
+  let agentFaviconSessionPending = null;
+  /** Resolved minimum compatible version for this installed DC version. */
+  let agentFaviconVersionPending = null;
+  /** Per-original-resource digest requests; original URLs are never recoloured. */
+  const agentFaviconSourceDigests = new Map();
+  /** Only the PNG object URLs requested by this tab, in LRU order. */
+  const agentFaviconObjectUrls = new Map();
+  /** URL last assigned by DC to each original stock link. */
+  const agentFaviconDisplayedHrefs = new Map();
+  /** Hard bound on retained non-displayed frame URLs. */
+  const AGENT_FAVICON_URL_LIMIT = 84;
+  /** Progress-step state for the existing shared stopwatch observer. */
+  let agentFaviconRingRenderedStep = 0;
+
+  /**
+   * Selects one of 21 full-composite PNG pulse frames from monotonic time.
+   * @param {number} time_offset - Monotonic offset in milliseconds.
+   * @returns {number|null} Symmetric frame index 0..20, or null for invalid input.
+   */
+  function agentFaviconPulseIndex(time_offset) {
+    if (!Number.isFinite(time_offset)) return null;
+    const phase = ((time_offset % AGENT_FAVICON_PULSE_PERIOD_MS) +
+      AGENT_FAVICON_PULSE_PERIOD_MS) % AGENT_FAVICON_PULSE_PERIOD_MS;
+    const slot = Math.floor(phase / 250);
+    return Math.min(slot, 40 - slot);
+  }
+
+  /**
+   * Captures all stock link candidates, without changing media/type/sizes.
+   * @returns {Array<Object>} Links and their original unmodified hrefs.
+   */
+  function agentFaviconCurrentCandidates() {
+    return [...document.querySelectorAll('link[rel~="icon"]')]
+      .filter(link => typeof link?.href === 'string' && link.href)
+      .map(link => {
+        const previous = agentFaviconOriginalSources.get(link);
+        const assigned = agentFaviconDisplayedHrefs.get(link);
+        if (!previous || (link.href !== previous && link.href !== assigned)) {
+          agentFaviconOriginalSources.set(link, link.href);
+          agentFaviconDisplayedHrefs.delete(link);
+        }
+        return {
+          link,
+          original_href: agentFaviconOriginalSources.get(link),
+          media: typeof link.media === 'string' ? link.media : '',
+          type: typeof link.type === 'string' ? link.type : '',
+          sizes: typeof link.sizes?.value === 'string' ? link.sizes.value : ''
+        };
+      });
+  }
+
+  /**
+   * Resolves and memoizes the provider's minimum compatible numeric version.
+   * @returns {Promise<string|null>} V1 dataset boundary or null on provider failure.
+   */
+  async function agentFaviconCompatibleVersion() {
+    if (typeof get_compatible_version_key !== 'function') return null;
+    if (!agentFaviconVersionPending) {
+      agentFaviconVersionPending = Promise.resolve()
+        .then(() => get_compatible_version_key(VERSION))
+        .then(key => typeof key === 'string' ? key : null)
+        .catch(() => null);
+    }
+    const key = await agentFaviconVersionPending;
+    if (key === null) agentFaviconVersionPending = null;
+    return key;
+  }
+
+  /**
+   * Opens a single B V1 cache session, never approximating an unavailable provider.
+   * @param {string} version_key - Exact normalized compatible dataset boundary.
+   * @returns {Promise<Object|null>} Shared session or null when unavailable.
+   */
+  async function agentFaviconOpenSession(version_key) {
+    if (agentFaviconDatasetSession?.version === version_key) {
+      return agentFaviconDatasetSession;
+    }
+    if (typeof open_favicon_dataset !== 'function') return null;
+    if (!agentFaviconSessionPending) {
+      agentFaviconSessionPending = Promise.resolve()
+        .then(() => open_favicon_dataset(version_key))
+        .then(session => {
+          if (!session || session.version !== version_key ||
+              !Number.isSafeInteger(session.update_every_ms) ||
+              session.update_every_ms <= 0 ||
+              typeof session.find_variant !== 'function' ||
+              typeof session.read_png !== 'function' ||
+              typeof session.close !== 'function') {
+            if (session?.close) void session.close();
+            return null;
+          }
+          agentFaviconDatasetSession = session;
+          return session;
+        }).catch(() => null).finally(() => {
+          agentFaviconSessionPending = null;
+        });
+    }
+    return agentFaviconSessionPending;
+  }
+
+  /**
+   * Hashes each original favicon response body at most once on success.
+   * @param {string} href - Captured original stock favicon URL.
+   * @returns {Promise<string|null>} Lowercase SHA-256 hex of original bytes.
+   */
+  async function agentFaviconSourceDigest(href) {
+    if (!agentFaviconSourceDigests.has(href)) {
+      const pending = (async () => {
+        const response = await fetch(href, { credentials: 'same-origin' });
+        if (!response.ok || response.type === 'opaque') return null;
+        const bytes = await response.arrayBuffer();
+        if (!bytes.byteLength || bytes.byteLength > 1048576) return null;
+        const digest = await crypto.subtle.digest('SHA-256', bytes);
+        return [...new Uint8Array(digest)]
+          .map(byte => byte.toString(16).padStart(2, '0')).join('');
+      })().catch(() => null);
+      agentFaviconSourceDigests.set(href, pending);
+    }
+    return agentFaviconSourceDigests.get(href);
+  }
+
+  /**
+   * Reads only the requested PNG blob, reusing tab-local object URLs on hits.
+   * @param {Object} session - Open B V1 provider session.
+   * @param {string} variant - Internal source-body variant id.
+   * @param {number} base - Base state 0 yellow, 1 green, 2 red, 3 white.
+   * @param {number} step - Saturated five-minute progress index 0..6.
+   * @param {number} frame - Symmetric ten-second pulse index 0..20.
+   * @returns {Promise<string|null>} Stable PNG Blob URL or null.
+   */
+  async function agentFaviconFrameUrl(session, variant, base, step, frame) {
+    const key = JSON.stringify([session.version, variant, base, step, frame]);
+    if (agentFaviconObjectUrls.has(key)) {
+      const url = agentFaviconObjectUrls.get(key);
+      agentFaviconObjectUrls.delete(key);
+      agentFaviconObjectUrls.set(key, url);
+      return url;
+    }
+    const blob = await session.read_png(variant, base, step, frame);
+    if (!(blob instanceof Blob) || blob.type !== 'image/png' || !blob.size) return null;
+    // Concurrent heartbeats can request one frame while its IDB read is pending.
+    if (agentFaviconObjectUrls.has(key)) return agentFaviconObjectUrls.get(key);
+    const url = URL.createObjectURL(blob);
+    agentFaviconObjectUrls.set(key, url);
+    return url;
+  }
+
+  /**
+   * Returns resolved native PNG URLs for recognized original stock links.
+   * @param {string} compatible_version_key - Exact B V1 version boundary.
+   * @param {0|1|2|3} base_type - Yellow/green/red/white index.
+   * @param {0|1|2|3|4|5|6} completion_time - Five-minute progress step.
+   * @param {number} time_offset - Monotonic milliseconds, not a pulse index.
+   * @returns {Promise<ReadonlyArray<{link: HTMLLinkElement, href: string}>|null>} Matched URL pairs or null.
+   */
+  async function get_favicon(compatible_version_key, base_type, completion_time, time_offset) {
+    const frame = agentFaviconPulseIndex(time_offset);
+    if (frame === null || ![0, 1, 2, 3].includes(base_type) ||
+        !Number.isInteger(completion_time) || completion_time < 0 ||
+        completion_time > 6 || typeof compatible_version_key !== 'string') return null;
+    const session = await agentFaviconOpenSession(compatible_version_key);
+    if (!session) return null;
+    const matches = [];
+    for (const candidate of agentFaviconCurrentCandidates()) {
+      const digest = await agentFaviconSourceDigest(candidate.original_href);
+      if (!digest) continue;
+      const variant = session.find_variant(digest);
+      if (variant === null || typeof variant !== 'string') continue;
+      const href = await agentFaviconFrameUrl(
+        session, variant, base_type, completion_time, frame
+      );
+      if (href) matches.push({ link: candidate.link, href });
+    }
+    return matches.length ? matches : null;
+  }
+
+  /**
+   * Revokes only object URLs no longer displayed by a stock favicon link.
+   * @param {boolean} all - Dispose every URL during page navigation.
+   * @returns {void} No value is returned.
+   */
+  function agentFaviconTrimObjectUrls(all = false) {
+    const displayed = new Set(agentFaviconDisplayedHrefs.values());
+    for (const [key, url] of agentFaviconObjectUrls) {
+      if (!all && agentFaviconObjectUrls.size <= AGENT_FAVICON_URL_LIMIT) break;
+      if (!all && displayed.has(url)) continue;
+      agentFaviconObjectUrls.delete(key);
+      URL.revokeObjectURL(url);
+    }
+  }
+
+  /**
+   * Derives progress solely from the authoritative stopwatch state.
+   * @param {number} nowMs - Monotonic current time.
+   * @returns {number} Saturated five-minute progress step 0..6.
+   */
+  function agentFaviconRingStep(nowMs = performance.now()) {
+    if (!agentStopwatchState || !Number.isFinite(agentStopwatchState.started_at_ms)) return 0;
+    const elapsed = agentStopwatchState.active
+      ? Math.max(0, nowMs - agentStopwatchState.started_at_ms)
+      : Math.max(0, agentStopwatchState.total_ms ?? 0);
+    return Math.min(6, Math.floor(elapsed / (5 * 60 * 1000)));
+  }
+
+  /**
+   * Starts scheduled reads at the provider-specified update interval.
+   * @returns {Promise<void>} Resolves after attempting a dataset session.
+   */
+  async function agentFaviconStartPulse() {
+    if (agentFaviconPulseTimer !== null) return;
+    const key = await agentFaviconCompatibleVersion();
+    if (!key) return;
+    const session = await agentFaviconOpenSession(key);
+    if (!session || agentFaviconVisibleState === 'original' ||
+        agentFaviconPulseTimer !== null) return;
+    agentFaviconPulseTimer = setInterval(() => {
+      if (agentFaviconVisibleState !== 'original') {
+        void agentFaviconRenderState(agentFaviconVisibleState, true);
+      }
+    }, session.update_every_ms);
+  }
+
+  /**
+   * Stops scheduled favicon work; next lifecycle event may restart it.
+   * @returns {void} No value is returned.
+   */
+  function agentFaviconStopPulse() {
+    if (agentFaviconPulseTimer === null) return;
+    clearInterval(agentFaviconPulseTimer);
+    agentFaviconPulseTimer = null;
+  }
+
+  /**
+   * Projects the requested state through the cached PNG V1 lookup.
+   * @param {string} state - Original, processing, completed, error or acknowledged.
+   * @param {boolean} heartbeat - True only for scheduled pulse refresh.
+   * @returns {Promise<boolean>} True if all recognized favicon links updated safely.
+   */
+  async function agentFaviconRenderState(state, heartbeat = false) {
+    agentFaviconVisibleState = state;
+    if (state === 'original') agentFaviconStopPulse();
+    else void agentFaviconStartPulse();
+    const generation = ++agentFaviconRenderGeneration;
+    const transitionId = typeof agentLifecycleTransitionId === 'undefined'
+      ? null : agentLifecycleTransitionId;
+    if (!heartbeat && typeof agentLifecycleAction === 'function') {
+      agentLifecycleAction('favicon', 'requested', { state }, transitionId);
+    }
+    const candidates = agentFaviconCurrentCandidates();
+    if (!candidates.length) return false;
+    let pairs = null;
+    if (state !== 'original') {
+      const base = { processing: 0, completed: 1, error: 2, acknowledged: 3 }[state];
+      if (base === undefined) return false;
+      const step = state === 'error' ? 0 : agentFaviconRingStep();
+      try {
+        const key = await agentFaviconCompatibleVersion();
+        if (key) pairs = await get_favicon(key, base, step, performance.now());
+      } catch (error) {
+        if (!heartbeat) logDiagnostic('warnings', 'agent-favicon-cache-unavailable', {
+          state, message: errorMessage(error)
+        });
+      }
+    }
+    if (generation !== agentFaviconRenderGeneration) {
+      if (!heartbeat && typeof agentLifecycleAction === 'function') {
+        agentLifecycleAction('favicon', 'superseded', { state }, transitionId);
+      }
+      return false;
+    }
+    const matched = new Map((pairs ?? []).map(pair => [pair.link, pair.href]));
+    for (const candidate of candidates) {
+      const desired = matched.get(candidate.link) ?? candidate.original_href;
+      if (candidate.link.href !== desired) candidate.link.href = desired;
+      if (matched.has(candidate.link)) agentFaviconDisplayedHrefs.set(candidate.link, desired);
+      else agentFaviconDisplayedHrefs.delete(candidate.link);
+    }
+    agentFaviconTrimObjectUrls();
+    const applied = state === 'original' || (pairs !== null &&
+      pairs.length === candidates.length);
+    if (!heartbeat && typeof agentLifecycleAction === 'function') {
+      agentLifecycleAction('favicon', applied ? 'applied' : 'failed', {
+        state, candidate_count: candidates.length, applied_candidate_count: pairs?.length ?? 0
+      }, transitionId);
+    }
+    if (!heartbeat && !applied) logDiagnostic('warnings', 'agent-favicon-cache-unavailable', {
+      state, candidate_count: candidates.length, matched: pairs?.length ?? 0
+    });
+    return applied;
+  }
+
+  /**
+   * Releases tab-local PNG URLs and provider reader lease on navigation.
+   * @returns {void} No value is returned.
+   */
+  function agentFaviconDispose() {
+    ++agentFaviconRenderGeneration;
+    agentFaviconVisibleState = 'original';
+    agentFaviconStopPulse();
+    agentFaviconTrimObjectUrls(true);
+    agentFaviconDisplayedHrefs.clear();
+    const session = agentFaviconDatasetSession;
+    agentFaviconDatasetSession = null;
+    if (session) void session.close().catch(() => {});
+  }
+
+  /**
+   * Acknowledges completion only when its own browser tab is focused.
+   * @returns {void} No result is returned.
+   */
+  function agentFaviconAcknowledgeCompletion() {
+    if (document.visibilityState !== 'visible' || !document.hasFocus()) return;
+    if (agentFaviconVisibleState !== 'completed') return;
+    void agentFaviconRenderState('acknowledged');
+  }
+
+  document.addEventListener('visibilitychange', agentFaviconAcknowledgeCompletion);
+  window.addEventListener('focus', agentFaviconAcknowledgeCompletion);
+  window.addEventListener('pagehide', agentFaviconDispose);

@@ -74,6 +74,8 @@ function runTsc(source, label) {
         'declare const Stream7zModule: any;',
         'declare const STREAMING7Z_WASM_GZIP_BASE64: string;',
         'declare const Streaming7zModule: any;',
+        'declare function get_compatible_version_key(version: string): Promise<string | null>;',
+        'declare function open_favicon_dataset(version_key: string): Promise<any | null>;',
         'declare function create7zArchive(',
         '  bytes: Uint8Array, memberName: string, mtime?: number',
         '): Promise<Uint8Array>;',
