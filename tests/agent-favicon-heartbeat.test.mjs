@@ -32,6 +32,7 @@ test('pulse schedules at provider interval only after session is ready', async (
   vm.runInNewContext(`
     let agentFaviconPulseTimer = null;
     let agentFaviconVisibleState = 'completed';
+    let agentFaviconPageHidden = false;
     async function agentFaviconCompatibleVersion() { return '1.11.8'; }
     async function agentFaviconOpenSession() {
       return { version: '1.11.8', update_every_ms: 400 };
