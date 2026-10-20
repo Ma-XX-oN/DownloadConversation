@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         ChatGPT Conversation Markdown Recorder
 // @namespace    https://chatgpt.com/
-// @version      1.11.8-issue.335.1
+// @version      1.11.8-issue.335.2
 // @description  Exports the current ChatGPT conversation directly from the Conversation API as Markdown or JSONL.
 // @match        https://chatgpt.com/*
 // @match        https://chat.openai.com/*
@@ -12115,6 +12115,8 @@ globalThis.__dcCompressor = {
   const agentFaviconDisplayedHrefs = new Map();
   /** Hard bound on retained non-displayed frame URLs. */
   const AGENT_FAVICON_URL_LIMIT = 84;
+  /** Progress-step state for the existing shared stopwatch observer. */
+  let agentFaviconRingRenderedStep = 0;
 
   /**
    * Selects one of 21 full-composite PNG pulse frames from monotonic time.
@@ -12255,8 +12257,7 @@ globalThis.__dcCompressor = {
    * @param {0|1|2|3} base_type - Yellow/green/red/white index.
    * @param {0|1|2|3|4|5|6} completion_time - Five-minute progress step.
    * @param {number} time_offset - Monotonic milliseconds, not a pulse index.
-   * @returns {Promise<ReadonlyArray<{link: HTMLLinkElement, href: string}>|null>}
-   *   Matched link and PNG URL pairs, or null on unavailable frames.
+   * @returns {Promise<ReadonlyArray<{link: HTMLLinkElement, href: string}>|null>} Matched URL pairs or null.
    */
   async function get_favicon(compatible_version_key, base_type, completion_time, time_offset) {
     const frame = agentFaviconPulseIndex(time_offset);
@@ -12409,6 +12410,18 @@ globalThis.__dcCompressor = {
     if (session) void session.close().catch(() => {});
   }
 
+  /**
+   * Acknowledges completion only when its own browser tab is focused.
+   * @returns {void} No result is returned.
+   */
+  function agentFaviconAcknowledgeCompletion() {
+    if (document.visibilityState !== 'visible' || !document.hasFocus()) return;
+    if (agentFaviconVisibleState !== 'completed') return;
+    void agentFaviconRenderState('acknowledged');
+  }
+
+  document.addEventListener('visibilitychange', agentFaviconAcknowledgeCompletion);
+  window.addEventListener('focus', agentFaviconAcknowledgeCompletion);
   window.addEventListener('pagehide', agentFaviconDispose);
   /**
    * Refresh on stopwatch ticks.
