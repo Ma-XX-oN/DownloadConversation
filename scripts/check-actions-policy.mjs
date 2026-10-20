@@ -168,3 +168,55 @@ if (!fs.existsSync(workflowDir)) {
     }
   }
 }
+
+/** Restrict automatic committed artifacts to reviewed deterministic outputs. */
+function validateArtifactAllowlist() {
+  const configPath = path.join(root, '.ci', 'repoworkflow.json');
+  // Minimal workflow fixtures used by this checker's independent negative tests
+  // may omit the RepoWorkflow repository configuration altogether.
+  if (!fs.existsSync(configPath)) return;
+  let config;
+  try {
+    config = JSON.parse(fs.readFileSync(configPath, 'utf8'));
+  } catch (error) {
+    fail('invalid RepoWorkflow artifact registry: ' + error.message);
+    return;
+  }
+  const allowed = {
+    userscript: {
+      generatorCommand: ['node', 'scripts/build-userscript.mjs'],
+      verifierCommand: ['node', 'scripts/verify-userscript-artifact.mjs'],
+      outputs: ['chatgpt-conversation-markdown-export.user.js']
+    },
+    'favicon-pack': {
+      generatorCommand: ['node', 'scripts/generate-favicon-packs.mjs', '--build'],
+      verifierCommand: ['node', 'scripts/generate-favicon-packs.mjs', '--verify'],
+      outputs: ['assets/favicons/v1/chatgpt-v1.dcfav']
+    }
+  };
+  if (!Array.isArray(config.artifacts)) {
+    fail('RepoWorkflow artifact registry must contain an artifacts list');
+    return;
+  }
+  const seen = new Set();
+  for (const artifact of config.artifacts) {
+    const permitted = allowed[artifact?.id];
+    if (!permitted || seen.has(artifact.id)) {
+      fail('unapproved or repeated committed artifact id ' + artifact?.id);
+      continue;
+    }
+    seen.add(artifact.id);
+    for (const [key, expected] of Object.entries(permitted)) {
+      if (JSON.stringify(artifact[key]) !== JSON.stringify(expected)) {
+        fail('unapproved ' + key + ' for artifact ' + artifact.id);
+      }
+    }
+    if (artifact.committed !== true || artifact.platform !== 'linux' ||
+      !Array.isArray(artifact.capabilities) ||
+      !artifact.capabilities.includes('node-22')) {
+      fail('unapproved publication constraints for artifact ' + artifact.id);
+    }
+  }
+  if (!seen.has('userscript')) fail('missing required userscript artifact');
+}
+validateArtifactAllowlist();
