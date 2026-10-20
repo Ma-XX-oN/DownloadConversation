@@ -145,11 +145,13 @@ function makeBrowser(options = {}) {
           return communicationLogInitializationPromise;
         },
         gesture() {
+          const result = { prevented: false, stopped: false };
           communicationLogHandleDirectoryGesture({
             isTrusted: true,
-            preventDefault() {},
-            stopImmediatePropagation() {}
+            preventDefault() { result.prevented = true; },
+            stopImmediatePropagation() { result.stopped = true; }
           });
+          return result;
         },
         ready: () => communicationLogReady,
         pending: () => Boolean(communicationLogPendingDirectoryHandle),
@@ -248,6 +250,43 @@ test('focus retries missed cross-tab notification without duplicate activation',
   assert.equal(second.api.ready(), true);
   assert.equal(second.state.activations, 1);
   assert.equal(browser.shared.pickers, 0);
+});
+
+test('already-granted folder with a stale tab listener cannot reopen the directory chooser', async () => {
+  const browser = makeBrowser({ broadcast: false });
+  const first = browser.tab();
+  const second = browser.tab();
+  await Promise.all([first.api.init(), second.api.init()]);
+  first.api.gesture();
+  await flush();
+
+  assert.equal(browser.shared.permission, 'granted');
+  assert.equal(second.api.ready(), false, 'Second tab is intentionally left armed');
+  second.api.gesture();
+  await flush();
+  assert.equal(browser.shared.pickers, 0, 'A stale handler must not show a second folder picker');
+  assert.equal(second.api.ready(), true);
+  assert.equal(second.state.activations, 1);
+});
+
+test('gesture during pending peer restoration neither consumes click nor activates twice', async () => {
+  const browser = makeBrowser({ broadcast: false });
+  const first = browser.tab();
+  const second = browser.tab();
+  await Promise.all([first.api.init(), second.api.init()]);
+  first.api.gesture();
+  await flush();
+
+  second.emit('focus', {});
+  const gesture = second.api.gesture();
+  await flush();
+
+  assert.equal(gesture.prevented, false, 'Peer permission retry owns the pending activation');
+  assert.equal(gesture.stopped, false, 'Ordinary ChatGPT interaction must continue');
+  assert.equal(browser.shared.pickers, 0);
+  assert.equal(second.api.ready(), true);
+  assert.equal(second.state.activations, 1);
+  assert.equal(browser.shared.requests, 1, 'Only the first tab needs to request permission');
 });
 
 test('deferred prompt does not remount after peer has activated the recorder', () => {
