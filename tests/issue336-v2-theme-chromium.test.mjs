@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import {spawn} from 'node:child_process';
+import {spawn,spawnSync} from 'node:child_process';
 import {existsSync,mkdtempSync,readFileSync,rmSync} from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
@@ -14,7 +14,11 @@ const originalUrl='data:image/svg+xml,'+encodeURIComponent(svg);
 
 async function launch() {
   const directory=mkdtempSync(path.join(os.tmpdir(),'dc336-theme-'));
-  const chrome=spawn('chromium',['--headless=new','--no-sandbox',
+  const executable=['google-chrome','chromium','chromium-browser']
+    .map(name=>spawnSync('which',[name],{encoding:'utf8'}))
+    .find(result=>result.status===0)?.stdout.trim();
+  assert.ok(executable,'Chromium/Chrome executable unavailable');
+  const chrome=spawn(executable,['--headless=new','--no-sandbox',
     '--disable-dev-shm-usage','--disable-background-networking',
     '--remote-debugging-port=0','--user-data-dir='+directory,'about:blank'],
     {stdio:'ignore'});
