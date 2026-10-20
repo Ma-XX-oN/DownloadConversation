@@ -622,6 +622,27 @@ Structured terminal state is normalized exactly once before any terminal side ef
 
 This is a project-wide watcher/consumer design pattern, not an implementation detail of issues #135/#136/#148. New Agent-state consumers must reuse this path. Concrete ChatGPT endpoint, stream-shape, reload, terminal-ordering, and browser-integration evidence is maintained in `CHATGPT-WEB-INTEGRATION.md`.
 
+## DC #333 external favicon pack producer (pre-integration)
+
+The V1 asset producer is separate from the userscript runtime: its offline
+Chromium Canvas generator resides in `scripts/generate-favicon-packs.mjs`,
+and the canonical `.dcfav` codec and validators reside in
+`scripts/favicon-pack-format.mjs`.  Source bytes must be pinned by their
+actual fetched SHA-256 digests in `assets/favicons/v1/sources.json` before
+binary publication.  The producer uses the existing near-white recolour,
+underlaid five-minute pie, overlaid ring and ten-second cosine pulse, with
+588 distinct indexed PNG byte spans for each original resource digest.
+
+The authoritative immutable format is Section A of
+`docs/FAVICON_CACHE_INTERFACES_V1.md`, Git blob
+`e2460ba2bf1c1852579782ecbb05139de32e505e`.  The committed binary asset
+must precede catalogue publication so the catalogue pins an immutable Git
+commit containing precisely those validated asset bytes.  This tooling does
+not change the current runtime favicon path; DC #334 provides storage, DC #335
+provides the runtime consumer, and DC #336 owns end-to-end certification.
+Until genuine source images, their hashes and the external binary pack have
+been published and verified, this work remains incomplete.
+
 ## Agent favicon processing/completion/error state
 
 The favicon is a presentation-only consumer of the shared lifecycle observer. When a current-page generation request is observed, or reload restoration reports structured `IS_STREAMING`, the userscript recolors only the near-white portion of the original stock ChatGPT favicon to yellow. A successful normalized terminal event changes that favicon to light green only when processing was observed in the current loaded page. A successful terminal arriving without such page-lifetime processing evidence does not infer green. A normalized terminal error changes the favicon to red. If ChatGPT emits a successful final and then a same-exchange terminal error such as `conversation_too_large`, the visible sequence is yellow → light green → red. A subsequent current-page prompt returns green or red to yellow.
