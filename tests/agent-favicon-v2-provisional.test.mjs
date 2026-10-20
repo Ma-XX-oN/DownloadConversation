@@ -212,3 +212,35 @@ test('V2 RED: cold next progress step immediately displays stock favicon', async
   assert.equal(await h.api.render('processing', true), true);
   assert.match(h.links[0].href, /^blob:/);
 });
+
+test('V2 RED: async provider generation coalesces 250ms pulse refreshes', async () => {
+  let enteredRead, releaseGeneration;
+  const entered = new Promise(resolve => { enteredRead = resolve; });
+  const release = new Promise(resolve => { releaseGeneration = resolve; });
+  const h = fixture({ delayedRead: async () => {
+    enteredRead();
+    await release;
+  } });
+  const url = 'https://chatgpt.com/favicon0.svg';
+  h.publish(url, 'light', 0, 0);
+  const initial = h.api.render('processing');
+  await entered;
+  assert.equal(h.intervals.length, 1, 'provider cadence registered');
+  const tick = h.intervals[0].fn;
+  tick();
+  // Allow the first heartbeat to enter its pending async provider read.
+  await new Promise(resolve => setImmediate(resolve));
+  const inFlight = h.reads.length;
+  assert.equal(inFlight, 2, 'initial render and one heartbeat only');
+  for (let n = 0; n < 6; n++) {
+    tick();
+    await Promise.resolve();
+  }
+  assert.equal(h.reads.length, inFlight,
+    'repeated ticks cannot perpetually supersede a slow valid result');
+  releaseGeneration();
+  await initial;
+  await new Promise(resolve => setImmediate(resolve));
+  assert.match(h.links[0].href, /^blob:/,
+    'latest waiting render eventually presents fully ready sequence');
+});
