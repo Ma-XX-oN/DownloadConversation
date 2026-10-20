@@ -1,176 +1,169 @@
-# DC #336 — favicon cache integration certification ledger
+# DC #336 — local on-demand favicon sequence certification
 
-**Status:** PREPARATION ONLY; NOT CERTIFIED (2026-10-20).
+**Status: SPECULATIVE TEST PREPARATION ONLY.  NOT INTEGRATED / NOT DONE.**
 
-**Pinned contract:** FAVICON-CACHE-INTERFACES-V1 at Git blob
-e2460ba2bf1c1852579782ecbb05139de32e505e.
-Pinned commit: a1aef7a3b1222eb4c62abf7c729021c1a481ac42.
-Contract owner: DC #332, draft unmerged PR #337.
+Parent DC #332; prerequisites DC #333, DC #334 and DC #335.
+Owned branch issue-336-favicon-integrated-certification, draft PR #345.
+Do not merge, close or certify on simulated evidence.
 
-## Evidence classifications
+## Current contract and obsolete evidence
 
-- FIXTURE: synthetic contract model and browser fixture; never proof of #333/#334/#335.
-- PROVIDER: real #333 image bytes and #334 cache tested at exact commits.
-- CONSUMER: #335 actual live favicon adapter at exact commit.
-- HOSTED: complete CI at a unique prepared userscript SHA.
-- BROWSER: actual integrated userscript in controlled Chromium.
-- LIVE: exact userscript installed in authenticated ChatGPT Chrome session.
+The revised 2026-10-20 DC #332–#336 issue bodies and latest
+21-frame clarification supersede the frozen V1 GitHub binary
+pack/download/catalogue model. The historical V1 contract remains at
+Git blob e2460ba2bf1c1852579782ecbb05139de32e505e, but is **NOT**
+the authority for current implementation.
 
-Required for DONE: authoritative #333/#334/#335 plus PROVIDER, CONSUMER,
-HOSTED, BROWSER and LIVE results. Never substitute FIXTURE for a real
-integration. No merge without explicit authorization.
+**Numbered V2 is not frozen.** DC #332 owns provider API, version-range
+authority, transaction/notification semantics, and worker rebinding.
+Our independent oracle implements only product-level acceptance
+expectations, not a speculative #333/#334/#335 provider API.
 
-## Acceptance matrix — A, versioned binary assets
+Image sequence identity is the tuple (selected numeric release boundary,
+unmodified original favicon URL, active light/dark theme, base colour,
+completed 5-minute progress step). A miss for ANY pulse index triggers
+**one complete 21-PNG Blob sequence for that tuple**. Zero other tuples
+are generated. Pulse indexes 0..20 are selected from 40 update slots
+at 250ms over the existing 10-second waveform. Dataset scheduling
+interval never enters an image key. No GitHub assets, binary packs,
+embedded raster tables, background prefetch or full 588-state
+generation is permitted.
 
-| ID | Coverage | Required outcome | Status |
-| --- | --- | --- | --- |
-| A01 | real original resources and variants | exact source bytes/digests; media, type and sizes preserved | INCOMPLETE |
-| A02 | all colours 0..3, steps 0..6, frames 0..20 | 588 distinct nonoverlapping PNG payload spans per source variant | FIXTURE only |
-| A03 | original stock image, unknown variant | preserve original href, never substitute mismatched image | INCOMPLETE |
-| A04 | signature, IHDR and actual Chromium decode | dimensions and transparency match original | Synthetic Chromium 1176 PNG decode/pixel checks PASS; genuine source fidelity INCOMPLETE |
-| A05 | pack magic, LE header length, canonical JSON, offsets | exact V1 representation with full contiguous payload | FIXTURE only |
-| A06 | truncated, corrupted, wrong length/hash or invalid manifest | reject entire dataset; safe fallback and retry | FIXTURE negative only |
-| A07 | earlier than first boundary, exact and later versions | greatest compatible minimum numeric triplet | FIXTURE only |
-| A08 | all issue suffix variations | identical major.minor.patch resolves identically | FIXTURE only |
-| A09 | duplicate boundaries / invalid version | reject unsafe catalogue; never guess | FIXTURE only |
-| A10 | update_every_ms changes | scheduling only; not image identity/key | INCOMPLETE |
-| A11 | GitHub catalogue/pack unavailable then recovered | bounded diagnostics, stock href, successful later retry | INCOMPLETE |
+## Acceptance matrix
 
-Executable preparation: tests/issue336-favicon-pack.test.mjs.
-Run: node --test tests/issue336-favicon-pack.test.mjs.
-After #333, download exact pack and catalogue and run:
-node tests/issue336-favicon-pack.test.mjs --real-pack CATALOGUE PACK DC_VERSION.
-This real-pack mode validates byte length, SHA, magic, manifest, offsets
-and PNG signatures/IHDR; **not** actual browser decoding, pixels or live
-lifecycle. Test fixture is deterministic 1x1 PNG data, not a genuine pack.
+Rows explicitly distinguish preparation from integrated proof.
 
-## Acceptance matrix — B, IndexedDB, Web Locks, cross-tab
+| ID | Required acceptance | Preparation status | Real integration |
+|---|---|---|---|
+| G01 | First cold arbitrary frame generates exactly 21 PNGs | ORACLE PASS | INCOMPLETE |
+| G02 | Zero unrelated URL/theme/colour/step/version generation | ORACLE PASS | INCOMPLETE |
+| G03 | 40 slots reuse 21 half-cycle frames, 10s cosine 50–100% | ORACLE PASS | INCOMPLETE |
+| G04 | Each generated PNG decodes, correct dimensions/alpha | CHROMIUM FIXTURE ONLY | INCOMPLETE |
+| G05 | Same SVG URL yields distinct light/dark actual raster | CHROMIUM FIXTURE PASS | INCOMPLETE |
+| G06 | Light-only and dark-only requests generate only needed theme | ORACLE/CHROMIUM PASS | INCOMPLETE |
+| G07 | Source/active theme flip during generation cancels stale result | WAIT FOR V2 | INCOMPLETE |
+| G08 | Four colours yellow/green/red/white, seven steps 0..6 | ORACLE PASS | INCOMPLETE |
+| G09 | Recolour near-white and preserve alpha/nonwhite source pixels | HISTORICAL #333 | INCOMPLETE |
+| G10 | Pie behind logo, ring above, 30min full red saturation | HISTORICAL #174 | INCOMPLETE |
+| G11 | No cold-generation main-thread UI stall | WAIT FOR REAL PROVIDER | INCOMPLETE |
+| G12 | Missing, 404 or tainted original safely retains stock | WAIT FOR REAL PROVIDER | INCOMPLETE |
+| S01 | First tab acquiring exclusive per-sequence claim wins | ORACLE PASS | INCOMPLETE |
+| S02 | Contenders show unmodified original until all 21 ready | ORACLE PASS | INCOMPLETE |
+| S03 | One atomic write commits 21 Blobs and ready marker | ORACLE PASS | INCOMPLETE |
+| S04 | Aborted write leaves no partial ready/images | ORACLE PASS | INCOMPLETE |
+| S05 | Crashed owner releases lock for another generator | ORACLE PASS | INCOMPLETE |
+| S06 | Simultaneous tabs do not duplicate sequence rendering | ORACLE PASS | INCOMPLETE |
+| S07 | Cold frame lookup only on first access, warm zero IDB reads | ORACLE PASS | INCOMPLETE |
+| S08 | No eager preloading of unrequested tuples or frames per tab | ORACLE PASS | INCOMPLETE |
+| S09 | Different versions/original URLs/themes coexist | ORACLE PASS | INCOMPLETE |
+| S10 | last_used throttled to no more often than 600000ms | ORACLE PASS | INCOMPLETE |
+| S11 | Exactly 600000ms retained; >600000ms evictable | ORACLE PASS | INCOMPLETE |
+| S12 | Active shared reader protected during exclusive cleanup | ORACLE PASS | INCOMPLETE |
+| S13 | After eviction next request re-generates precisely 21 | ORACLE PASS | INCOMPLETE |
+| S14 | Lock/IDB unavailable, failure and later retry fail closed | WAIT FOR REAL PROVIDER | INCOMPLETE |
+| S15 | Reload/new tab and teardown URLs remain safe and bounded | WAIT FOR REAL PROVIDER | INCOMPLETE |
+| L01 | Capture original before mutation, preserve media/type/sizes | CHROMIUM FIXTURE/HISTORICAL | INCOMPLETE |
+| L02 | Processing yellow, success green, focus white | HISTORICAL #148/#288 | INCOMPLETE |
+| L03 | Terminal error red even after an earlier successful final | HISTORICAL #148 | INCOMPLETE |
+| L04 | New processing yellow, NOT_STREAMING reload stock | HISTORICAL #148 | INCOMPLETE |
+| L05 | IS_STREAMING reload yellow using shared lifecycle watcher | HISTORICAL #148 | INCOMPLETE |
+| L06 | Progress 0–6 with correct timer/stopwatch | HISTORICAL #174 | INCOMPLETE |
+| L07 | Same-URL SVG active theme change displays matching sequence | CHROMIUM FIXTURE | INCOMPLETE |
+| L08 | Stale async reply cannot override newer theme/colour/step | WAIT FOR REAL #335 | INCOMPLETE |
+| L09 | Pagehide restores stock before revoking Blob URLs | HISTORICAL #335 | INCOMPLETE |
+| L10 | Unknown original candidate remains unchanged | HISTORICAL #335 | INCOMPLETE |
+| L11 | 250ms warm updates: zero canvas/pixel/re-encode work | ORACLE ONLY | INCOMPLETE |
+| L12 | Sound, stopwatch, focus and network watcher unchanged | WAIT FOR INTEGRATION | INCOMPLETE |
+| P01 | Exact certified #333/#334/#335 production integration | BLOCKED | INCOMPLETE |
+| P02 | Real 2+ tab Chromium IDB/Web Locks failure and takeover | BLOCKED | INCOMPLETE |
+| P03 | Authenticated ChatGPT Chrome lifecycle and theme tests | BLOCKED | INCOMPLETE |
+| P04 | Full repository CI on exact committed userscript artifact | BLOCKED | INCOMPLETE |
+| P05 | Real 24-second main-thread CPU/JS/decode/heap comparison | BLOCKED | INCOMPLETE |
+| P06 | IndexedDB reads/writes/metadata/memory/URL counts | BLOCKED | INCOMPLETE |
+| P07 | Direct installable exact-tested userscript link | BLOCKED | INCOMPLETE |
+| P08 | Verified results on #336/#332 and no unmerged-approval breach | BLOCKED | INCOMPLETE |
 
-| ID | Scenario | Required outcome | Status |
-| --- | --- | --- | --- |
-| B01 | two tabs cold-open simultaneously | exactly one download/import; second waits/rechecks | INCOMPLETE |
-| B02 | additional warm same-origin tab | no pack re-download | INCOMPLETE |
-| B03 | previously unseen PNG frame | one selected Blob read, no full-frame preload | INCOMPLETE |
-| B04 | repeated previously selected frame | zero new IndexedDB reads; same URL reused | INCOMPLETE |
-| B05 | interrupted import / aborted transaction | no partial ready marker or collection | INCOMPLETE |
-| B06 | corruption and restart | no bad icon, recover on retry | INCOMPLETE |
-| B07 | now-last_used exactly 600000ms | retained | INCOMPLETE |
-| B08 | now-last_used greater than 600000ms | deleted exclusively after recheck | INCOMPLETE |
-| B09 | repeated activity within 600000ms | no repeated last_used write | INCOMPLETE |
-| B10 | shared live session plus exclusive cleanup | active reader cannot be evicted | INCOMPLETE |
-| B11 | close with in-flight reads | waits, releases lock, displayed URL remains valid | INCOMPLETE |
-| B12 | concurrent different DC version triplets | both datasets coexist without collisions | INCOMPLETE |
-| B13 | Web Locks/storage denied | safe original fallback without unsafe alternate | INCOMPLETE |
-| B14 | tab reload / navigation / close | release lock and URLs at correct lifecycle boundaries | INCOMPLETE |
+## Executable preparation, independent of V2 APIs
 
-Reuse benchmark source from **DC #328, draft PR #329**, not a duplicate.
-Its existing synthetic result checks primitive IDB Blob sharing, warm reads,
-lock waiting, and cutoff only; those checks are NOT B01-B14 production passes.
+- tests/issue336-v2-sequence-contract.test.mjs: 10 Node synthetic
+  model cases for 21-frame generation exclusivity, arbitrary pulse
+  position, lock winner and stock waiter, generator crash/transaction
+  abort/retry, per-theme and per-source identities, 4 colours x 7 steps,
+  version lower boundaries, warm reads, 10-minute expiry and active
+  reader. **Not** the real IndexedDB or Web Locks implementation.
+- tests/issue336-v2-theme-chromium.test.mjs: real Chromium CSS
+  prefers-color-scheme and PNG encode fixture; the exact same SVG data
+  URL renders black in light and white in dark; each demanded theme
+  generates 21 synthetic frames, never other tuples; a warm request
+  generates zero. **Not** DC #333 renderer or DC #335 lifecycle.
+- Prior V1-only tests are preserved in history at blobs
+  eafceb51c7f37698beed58746c5b803c8d4ffc97 (binary pack) and
+  c619cdc743071fea491731d86ade904e9883e0a0 (Chromium pack
+  fixture). They are removed from the active PR testing surface.
 
-## Acceptance matrix — C, state and presentation
+Independent comparable source tests in this execution environment
+(Node v22.16.0, Chromium 144.0.7559.96) passed 11/11: 10 simulation
+cases plus 1 real-browser SVG colour-scheme raster case.
+The independently executed local files and authored GitHub source are
+not byte-identical; exact-head CI must still validate committed bytes.
+Local Chrome restrictions block network navigation (ERR_BLOCKED_BY_ADMINISTRATOR)
+and about:blank has no Web Locks. Real cross-tab IDB/Web Locks acceptance
+remains INCOMPLETE. Do not describe this as 11 production passes.
 
-| ID | Input | Required output | Status |
-| --- | --- | --- | --- |
-| C01 | initial untouched | original favicon | INCOMPLETE |
-| C02 | observed processing | yellow immediately | INCOMPLETE |
-| C03 | successful terminal after observed processing | light green | INCOMPLETE |
-| C04 | focused completion acknowledgement | white | INCOMPLETE |
-| C05 | error terminal | red | INCOMPLETE |
-| C06 | final then later error, same exchange | yellow -> green -> red | INCOMPLETE |
-| C07 | next processing after completion | yellow | INCOMPLETE |
-| C08 | reload IS_STREAMING | yellow; no independent watcher | INCOMPLETE |
-| C09 | reload NOT_STREAMING | original; no inferred green | INCOMPLETE |
-| C10 | favicon media/type/sizes and different original digests | correct matching per-link variant or untouched | Synthetic two-candidate Chromium PASS; production INCOMPLETE |
-| C11 | times 0,5,10,15,20,25,30,31 minutes | steps 0..6, saturated ring/pie, correct layering | INCOMPLETE |
-| C12 | 40 slots, 21 frames, 10s, 250ms, negative offset | correct symmetric index, full-composite cosine alpha | Synthetic 40-slot/21-frame Chromium and Node selection PASS; real alpha INCOMPLETE |
-| C13 | late asynchronous result after newer state | generation token rejects stale result | INCOMPLETE |
-| C14 | identical frame and href | no redundant DOM assignment | INCOMPLETE |
-| C15 | navigation, reload, tab switch | original recovery and safe Blob URL disposal | INCOMPLETE |
-| C16 | heartbeat profile | no canvas/getImageData/putImageData/toDataURL per tick | INCOMPLETE |
-| C17 | existing stopwatch, sound, terminal, focus semantics | unchanged existing watcher consumer behaviour | INCOMPLETE |
+## Baseline and benchmark separation
 
-Repeat existing tests including tests/agent-favicon-state.test.mjs,
-tests/agent-favicon-browser-selection.test.mjs,
-tests/agent-favicon-thirty-minute-ring.test.mjs,
-tests/agent-favicon-heartbeat.test.mjs,
-tests/agent-terminal-dispatch.test.mjs and
-tests/agent-turn-stopwatch-reload.test.mjs. Canvas-specific source-shape
-tests must be updated by #335 to check the new real implementation while
-retaining the accepted behaviour assertions.
+**Original real Chrome 2026-10-20 trace:** 23.98-second recording;
+91 image-load callbacks; 20,090.134ms aggregate callback JavaScript
+work. Original trace environment/decode/heap breakdown not supplied;
+therefore those numbers are unknown.
 
-## Independent fixture execution (2026-10-20)
+Reuse existing independent DC #328 / draft PR #329 Chromium synthetic
+benchmark as historical evidence: 250ms paced legacy JS 76.7ms,
+cached JS 2.3ms; legacy task CPU 172.078ms, cached 44.998ms.
+That benchmark does NOT measure V2 production, and no improvement
+percentage can yet be claimed.
 
-Node.js 22.16.0, Debian Chromium 144.0.7559.96, synthetic pack
-with 2 variants, 4 colours, 7 steps and 21 unique phase images.
-Executed: `node --test tests/issue336-favicon-*.test.mjs`.
-**5/5 tests PASS**, including **1 genuine Chromium browser-runtime fixture**.
-The browser decoded and pixel-verified all **1,176** generated 1x1 PNGs,
-retained an unmatched favicon link and source `media/type/sizes`,
-restored source hrefs, and made zero extra on-demand Blob URL allocations
-when replaying 40 warm frames. Object URLs used: 1,176.
-Synthetic href assignments: 2,320, with **zero** redundant writes when
-the same state/frame was requested twice.
+After exact V2-bound implementations are ready, record CPU
+TaskDuration, ScriptDuration, image onload callback work/count,
+favicon decode/raster tasks, object URL lifetime and mutations,
+IDB get/put/ready/last_used, JS heap, event-loop responsiveness,
+browser/OS/CPU, two-tab cold/warm, same-URL SVG theme flip and
+reload/error/focus transitions, with source SHA and exact userscript
+hash. Use both a 24-second warm session and separately measured cold
+generation; compare matching conditions with baseline and clearly
+state any missing measurement.
 
-Earlier Chromium `--dump-dom` and direct local/data navigations hung or
-were blocked by administrator restrictions. The fixture was repaired to
-use Chromium DevTools Protocol against `about:blank` instead of
-navigating to a local test server. That exercises Chromium PNG
-decoding, canvas pixel sampling, original candidate DOM behaviour
-and Blob URLs; it is **not** a ChatGPT/browser extension session,
-does **not** access IndexedDB or Web Locks, and does **not** exercise
-the real #333 pack or #335 runtime. Fixture source blob:
-`c619cdc743071fea491731d86ade904e9883e0a0`; exact candidate commit:
-`ef6b398fbc7e80d0e5956b5c7294ffc65f5ef827`.
+## User Chrome acceptance handoff (after integration)
 
-The A/B/C production and integrated acceptance statuses above remain
-INCOMPLETE. This evidence closes only the independent synthetic-browser
-**preparation** check.
+1. Obtain direct immutable, full-CI-tested .user.js URL and verify the
+   downloaded SHA/version before installation. Never supply an
+   untested development or moving-main installer.
+2. Install in Chrome/Tampermonkey; reload ChatGPT, capture original
+   favicon link href/media/type/sizes and Chrome/OS version.
+3. Open DevTools Performance; record 24 seconds during actual
+   processing with 250ms updates, export trace. Repeat warm.
+4. Inspect live tab favicon, CPU task/script time, image callbacks,
+   decode work, memory and IDB reads. Record measured values.
+5. Open a second same-origin tab on the same selected tuple; prove
+   first lock winner, contender stock icon, one atomic 21-frame
+   publication and no duplicate rendering. Test tab closure/abort.
+6. Change active browser theme without changing the original SVG
+   URL, verify new demanded theme only and correct original fallback.
+7. Exercise all four states, all seven progress steps, 10s cycle,
+   terminal error after success, focus acknowledgment and reload.
+8. Check last_used exactly 10m, 10m+1ms, active-reader lock and
+   regeneration after safe expiry. Publish exact log, environment,
+   tested SHA, CI run and actual results to DC #336 and DC #332.
 
-## Performance: original vs synthetic vs integrated
+## Convergence gates
 
-Real October 20 baseline: 23.98s session, 91 image.onload callbacks,
-20,090.134ms aggregate callback JavaScript time. The original profile
-file and host configuration are not attached to this issue.
+- [ ] DC #332 freezes numbered V2 and binds all affected workers.
+- [ ] DC #333 actual renderer source/theme/PNG pixel conformance.
+- [ ] DC #334 actual IndexedDB/Web Locks atomic sequence conformance.
+- [ ] DC #335 actual lifecycle consumer conformance.
+- [ ] Exact integrated candidate tests and full repository CI PASS.
+- [ ] Real Chromium plus authenticated ChatGPT Chrome acceptance PASS.
+- [ ] Original vs integrated CPU/JS/decode/DB/memory evidence recorded.
+- [ ] Direct exact-tested artifact handoff; draft PR remains UNMERGED.
 
-Existing PR #329 synthetic Chromium 155 / 256x256 test-icon result:
-paced 250ms JS work legacy 76.7ms vs cached 2.3ms; task CPU legacy
-172.078ms vs cached 44.998ms; warm IndexedDB extra reads 0.
-Prepared PR #329 commit 00801b05384e1069b30327d597599859369a099e;
-hosted historical run 39445952678. NOT production measurements.
-
-For each actual integrated run, capture: tested userscript SHA/version,
-asset/dataset hashes, browser/OS/CPU, 24s duration, number of foreground and
-background tabs, cold/warm state, TaskDuration and ScriptDuration deltas,
-image.onload callback count/time, Image decoding, href mutations,
-IndexedDB get/put counts, memory heap and main-thread flame graph.
-Compare measurements only under documented matching conditions. Do not
-invent absent timings, percentage improvement, or decode overhead.
-
-Manual Chrome sequence after authoritative provider readiness:
-1. Install direct immutable userscript artifact corresponding to hosted
-   verified SHA, record exact URL, SHA and script version.
-2. In ChatGPT Chrome, open DevTools Performance and record at least 24
-   seconds during an ongoing generation with 250ms favicon updates.
-3. Save the trace. Inspect image.onload, main-thread long tasks,
-   scripts, raster/decode work, favicon href changes and memory.
-4. Repeat warm same tab; add second and third same-origin tabs.
-5. In Application/IndexedDB, inspect versioned Blob keys, last_used
-   timestamps, lock-protected cleanup and re-download after expiry.
-6. Exercise C01-C17 with deterministic clock where possible; run real
-   streaming/reload/focus/error tests without asserting synthetic states.
-7. Preserve original and new traces, record all exact environment settings
-   and CPU/event-count comparisons on DC #336 and DC #332.
-
-## Completion gates
-
-- [ ] #333, #334, #335 authoritative ready and exact SHAs pinned.
-- [ ] #333 binary pack actual origin digests and immutable SHA verified.
-- [ ] #334 actual provider and #335 consumer integrated without V1 changes.
-- [ ] All A/B/C runtime checks evidenced, including real ChatGPT session.
-- [ ] Source, tests, documentation and built userscript artifact committed.
-- [ ] Complete RepoWorkflow exact-source CI and required hosted jobs PASS.
-- [ ] Direct immutable tested userscript download and manual test handoff.
-- [ ] Original vs integrated CPU, JS, decode, IDB and memory reported.
-- [ ] Results posted to DC #336 and DC #332; reviewed PR left UNMERGED.
-
-**No acceptance completion or issue closure until every gate passes.**
+**Final certification BLOCKED by DC #333, DC #334, DC #335.**
