@@ -70,7 +70,7 @@ function fixture({
     const VERSION = ${JSON.stringify(version)};
     const agentFaviconOriginalSources = new Map();
     let agentFaviconRenderGeneration = 0;
-    let agentFaviconPulseUpdatePending = false;
+    let agentFaviconPulseUpdatePending = null;
     let agentStopwatchState = {
       active: true, started_at_ms: 0, total_ms: null
     };
