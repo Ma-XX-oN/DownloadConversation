@@ -1,11 +1,19 @@
-  // Provisional DC #334 V2 provider. Not installed in production before #332 freeze.
+  // Frozen DC #332 V2, real #334 browser-local IndexedDB cache.
+  // Collection expiry and metadata touch throttle, milliseconds.
   const FAVICON_SEQUENCE_TTL_MS = 600000;
+  // Same-origin database for sequence metadata and native PNG Blobs.
   const FAVICON_SEQUENCE_DB = 'dc-favicon-sequences-v2';
+  // Browser Web Lock namespace for generation and active reader leases.
   const FAVICON_SEQUENCE_LOCK = 'dc-favicon-v2:';
+  // Maximum accepted byte size of each stored PNG image.
   const FAVICON_SEQUENCE_MAX_PNG = 524288;
+  // Authoritative numeric minimum-compatible version registry.
   const faviconSequenceVersions = new Map();
+  // Cached exact-version resolutions, cleared when registry changes.
   const faviconSequenceResolved = new Map();
+  // Shared pending IndexedDB connection acquisition.
   let faviconSequenceDatabasePromise = null;
+  // Current tab's periodic stale-dataset cleanup timer handle.
   let faviconSequenceSweeper = null;
 
   /**

@@ -74,12 +74,15 @@ function pageHtml(isChild) {
       faviconCacheV2Configure([{version:'1.11.8', update_every_ms:250},
         {version:'1.12.0',update_every_ms:250}]);
       window.calls = [];
+      window.errors = [];
+      function logDiagnostic(level, key, detail) { window.errors.push({level,key,detail}); }
       window.renderer = async (args, signal) => {
         calls.push(args);
         if (window.failCount) { window.failCount = 0; throw Error('injected-renderer-failure'); }
         if (window.pauseRender) await window.pauseRender;
         if (signal.aborted) throw Error('aborted');
-        return faviconV2RenderSequenceAdapter(args, signal);
+        try { return await faviconV2RenderSequenceAdapter(args, signal); }
+        catch (error) { window.errors.push({render_error:error?.stack || String(error)}); throw error; }
       };
       window.api = { open_favicon_dataset, faviconSequenceDatabase,
         faviconSequenceRead, faviconSequenceKey, faviconSequenceRequest,
@@ -111,7 +114,7 @@ function pageHtml(isChild) {
         verify(document.getElementById('stock').href === URL1,
           'stock href changed during pending');
         resume();
-        verify((await first)?.type==='image/png', 'first frame failed');
+        verify((await first)?.type==='image/png', 'first frame failed '+JSON.stringify(window.errors));
         verify((await waiting)?.type==='image/png', 'waiting tab frame failed');
         verify(calls.length+child.calls.length === 1, 'duplicate render after lock');
         const meta = await faviconSequenceRequest(db.transaction('sequences','readonly')

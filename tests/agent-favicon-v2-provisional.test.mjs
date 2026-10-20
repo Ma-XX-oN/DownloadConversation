@@ -81,6 +81,7 @@ function fixture({
     function get_compatible_version_key() {
       return Promise.resolve(${JSON.stringify(version)});
     }
+    function faviconV2RenderSequenceAdapter() { throw Error('Stub fixture renderer should not run'); }
     async function open_favicon_dataset() { return provider; }
     ${productionFunctionSource('agentFaviconCurrentTheme')}
     ${productionFunctionSource('agentFaviconHandleThemeChange')}

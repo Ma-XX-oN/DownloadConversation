@@ -1,12 +1,11 @@
-  /** Stable numerical cache colour index to renderer semantic colour. */
+  // Stable numeric cache colour index to renderer semantic colour.
   const faviconV2NumericBases = Object.freeze([
     'processing', 'completed', 'error', 'acknowledged'
   ]);
 
   /**
    * Adapt the numeric cache tuple to the true browser-local PNG renderer.
-   * @param {{version:string,original_favicon_url:string,theme:string,
-   *   base_type:number,progress_step:number}} request - Cache sequence identity.
+   * @param {Object} request - Complete cache tuple, including version, stock URL, theme, colour and step.
    * @param {AbortSignal} signal - Exclusive generation's abort signal.
    * @returns {Promise<Blob[]>} Exactly 21 complete PNG Blob frames.
    */

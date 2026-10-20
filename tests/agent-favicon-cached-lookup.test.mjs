@@ -73,6 +73,7 @@ function fixture(known = true, delayedRead = null, candidates = 1,
     function get_compatible_version_key() {
       return Promise.resolve(${JSON.stringify(version)});
     }
+    function faviconV2RenderSequenceAdapter() { throw Error('Stub fixture renderer should not run'); }
     function open_favicon_dataset() {
       return typeof delayedOpen === 'function' ? delayedOpen() : delayedOpen || session;
     }

@@ -5,7 +5,7 @@ import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import { execFileSync } from 'node:child_process';
 import { renderFaviconPulseSequence, pulseFrameForSlot } from '../src/favicon/browser-sequence.mjs';
-import { productionFunctionSource } from './helpers/userscript-source.mjs';
+import { functionSourceFrom } from './helpers/userscript-source.mjs';
 
 const PINNED_SVG = new URL(
   '../assets/favicons/v1/originals/chatgpt-favicon-l4nq08hd.svg', import.meta.url);
@@ -206,11 +206,14 @@ function browserFixture(svgBytes,webpBytes,moduleSource) {
   };
   const data={svg:svgBytes.toString('base64'),
     webp:webpBytes.toString('base64'),module:moduleSource};
+  const frozenHistorical = execFileSync('git', [
+    'show', 'e9906a2b607315cf380cf33d8ea25c261bbf270e:src/userscript/03-agent-lifecycle/02-terminal-events-part2.js'
+  ], {encoding:'utf8'});
   const legacyFunctions = [
     'agentFaviconRecolorPixels','agentFaviconDrawPieSlice',
     'agentFaviconDrawRing','agentFaviconRingColor',
     'agentFaviconApplyOpacity','agentFaviconPulseOpacity'
-  ].map(productionFunctionSource).join('\n');
+  ].map(name => functionSourceFrom(frozenHistorical,name)).join('\n');
   return '<!doctype html><html><body><pre id="result">RUNNING</pre>'+
     '<script>const AGENT_FAVICON_PULSE_INTERVAL_MS=10000;'+
     'function assert(condition,reason){if(!condition)throw new Error(reason)};'+
