@@ -147,6 +147,10 @@ test('two-tab diagnostic distinguishes stale sync values from shared async GM', 
   assert.equal(report.asynchronousGM.observed, 48);
   assert.equal(report.asynchronousGM.status, 'PASS');
   assert.deepEqual(report.asynchronousGM.errors, []);
+  assert.equal(report.trace.peersReady, 1);
+  assert.equal(report.trace.peersDone, 1);
+  assert.equal(report.trace.local.step, 'complete');
+  assert.equal(report.trace.peer.step, 'complete');
   assert.equal(report.visibility.status, 'PASS');
   assert.equal(report.visibility.peerSawLeaderWrite, true);
   assert.equal(report.visibility.leaderSawPeerWrite, true);
@@ -269,8 +273,66 @@ test('probe shows RUNNING immediately and reports a stalled lock by timeout', as
   await new Promise(resolve => setTimeout(resolve, 45));
   const last = outputs.at(-1);
   assert.equal(last.status, 'INCOMPLETE_TIMEOUT');
+  assert.equal(last.trace.local.step, 'initial-lock-request');
   assert.match(last.phase, /synchronous GM counter/);
   assert.match(last.note, /Reload both tabs/);
   assert.ok(outputs.some(value =>
     value.status === 'RUNNING' && value.phase === 'synchronous GM counter'));
+});
+
+test('timeout trace isolates stalled GM write after successful lock', async () => {
+  const menu = new Map(), outputs = [];
+  const context = {
+    location: { origin: 'https://chatgpt.com' },
+    crypto: { randomUUID: () => 'synthetic-hung-gm' },
+    BroadcastChannel: class { constructor() { this.onmessage = null; } },
+    navigator: { locks: { request: async (_name, _opts, fn) =>
+      fn({ mode: 'exclusive' }) } },
+    setTimeout: (fn, ms) => setTimeout(fn, ms >= 45000 ? 20 : ms),
+    clearTimeout, Date, Map, Set,
+    GM_registerMenuCommand: (name, action) => menu.set(name, action),
+    GM_setValue: () => new Promise(() => {}),
+    GM_getValue: () => 0,
+    GM: { getValue: async () => 0, setValue: async () => {} },
+    console: { warn() {}, info(name, json) {
+      if (name === 'DC #313 result') outputs.push(JSON.parse(json).result);
+    } }
+  };
+  vm.runInNewContext(source, context);
+  menu.get('DC #313: diagnose GM cross-tab storage')();
+  await new Promise(resolve => setTimeout(resolve, 45));
+  const last = outputs.at(-1);
+  assert.equal(last.status, 'INCOMPLETE_TIMEOUT');
+  assert.equal(last.phase, 'synchronous GM counter');
+  assert.equal(last.trace.local.step, 'initial-GM-write');
+});
+
+test('diagnostic identifies a missing peer without assuming GM failure', async () => {
+  const menu = new Map(), outputs = [];
+  const storage = new Map();
+  const context = {
+    location: { origin: 'https://chatgpt.com' },
+    crypto: { randomUUID: () => 'synthetic-no-peer' },
+    BroadcastChannel: class { constructor() { this.onmessage = null; }
+      postMessage() {} },
+    navigator: { locks: { request: async (_name, _opts, fn) =>
+      fn({ mode: 'exclusive' }) } },
+    setTimeout: (fn, ms) => setTimeout(fn, Math.min(ms, 5)),
+    clearTimeout, Date, Map, Set,
+    GM_registerMenuCommand: (name, action) => menu.set(name, action),
+    GM_setValue: (key, value) => { storage.set(key, value); },
+    GM_getValue: (key, fallback) => storage.get(key) ?? fallback,
+    GM: { getValue: async () => null, setValue: async () => {} },
+    console: { warn() {}, info(name, json) {
+      if (name === 'DC #313 result') outputs.push(JSON.parse(json).result);
+    } }
+  };
+  vm.runInNewContext(source, context);
+  menu.get('DC #313: diagnose GM cross-tab storage')();
+  await new Promise(resolve => setTimeout(resolve, 45));
+  const last = outputs.at(-1);
+  assert.equal(last.status, 'FAIL');
+  assert.match(last.error, /no participating peer/);
+  assert.equal(last.trace.peersReady, 0);
+  assert.equal(last.trace.local.step, 'waiting-for-peer-ready');
 });
