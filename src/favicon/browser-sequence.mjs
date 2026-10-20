@@ -209,28 +209,28 @@ export async function renderFaviconPulseSequence(request) {
       compositeProgress(ctx, width, height, key.progressStep);
     }
     const composite = ctx.getImageData(0, 0, width, height);
-    const alphaValues = composite.data;
-    let maximumAlpha = 0;
-    for (let j = 3; j < alphaValues.length; j += 4) {
-      maximumAlpha = Math.max(maximumAlpha, alphaValues[j]);
-    }
-    if (new Set(Array.from({length:21}, (_, frame) => Math.round(
-      maximumAlpha * (0.75 + 0.25 * Math.cos(2 * Math.PI * frame / 40))
-    ))).size !== 21) {
-      throw new FaviconRenderError(
-        'Original favicon does not support 21 visually distinct pulse frames');
-    }
-
     const frames = [];
+    let priorAlphas = null;
     for (let frame = 0; frame <= 20; frame++) {
       await yieldToBrowser();
       ensureCurrent(key.theme, key.signal);
       const opacity = 0.75 + 0.25 * Math.cos(2 * Math.PI * frame / 40);
       const next = ctx.createImageData(width, height);
       next.data.set(composite.data);
+      const currentAlphas = new Uint8Array(width * height);
+      let differs = frame === 0;
       for (let i = 3; i < next.data.length; i += 4) {
-        next.data[i] = Math.round(next.data[i] * opacity);
+        const alpha = Math.round(next.data[i] * opacity);
+        next.data[i] = alpha;
+        const index = (i - 3) / 4;
+        currentAlphas[index] = alpha;
+        if (priorAlphas && priorAlphas[index] !== alpha) differs = true;
       }
+      if (!differs) {
+        throw new FaviconRenderError(
+          'Source alpha precision cannot represent 21 distinct pulse frames');
+      }
+      priorAlphas = currentAlphas;
       ctx.putImageData(next, 0, 0);
       const blob = await pngBlob(canvas);
       ensureCurrent(key.theme, key.signal);
