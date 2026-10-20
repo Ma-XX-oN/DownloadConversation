@@ -70,6 +70,8 @@ const ordinaryStages = [
     'tests/issue336-v2-sequence-contract.test.mjs']],
   ['DC #332 real Chromium multi-tab renderer/cache', nodeCommand, ['--test',
     'tests/issue332-v2-real-integration.test.mjs']],
+  ['DC #332 24-second real Chromium warm pulse performance', nodeCommand, ['--test',
+    'tests/issue332-v2-warm-performance.test.mjs']],
   ['DC #334 Chromium cross-tab storage acceptance', nodeCommand, ['--test',
     'tests/issue334-v2-chromium.test.mjs']],
   ['DC #333 renderer real-time Chromium responsiveness', nodeCommand, ['--test',

@@ -183,3 +183,19 @@ criteria stay INCOMPLETE until the exact candidate has completed
 RED/GREEN, deterministic packaging, hosted CI, Chromium and required
 authenticated ChatGPT measurement. Do not count historical fixture
 PASS as actual convergence.
+
+## DC #332 24-second real Chromium warm-pulse certification
+
+Commit after the .332.5 certified candidate introduces
+`tests/issue332-v2-warm-performance.test.mjs`: actual #333 renderer, actual
+#334 Web Locks/IndexedDB cache and actual #335 consumer, stock pinned ChatGPT
+SVG, 21-frame prewarm, then 24 seconds of 250-ms real-time pulse scheduling.
+Measure actual HTMLCanvasElement.toBlob encodes, createImageBitmap decode
+calls/durations, IndexedDB read and transaction counts, browser
+favicon-link event callbacks, synchronous heartbeat JS time, long tasks,
+event-loop gap, memory and link attribute preservation. Require no warm
+encoding, bitmap decoding or IDB gets, and >=80 real heartbeats. These
+controlled-origin Chromium results are not authenticated ChatGPT traces.
+The prior 23.98 s, 91 callbacks, 20,090.134 ms aggregate baseline is
+historical production evidence; actual authenticated browser comparison
+is a separate acceptance gate.
