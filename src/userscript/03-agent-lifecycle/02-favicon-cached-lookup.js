@@ -216,11 +216,9 @@
     const session = await agentFaviconOpenSession(key);
     if (!session || agentFaviconVisibleState === 'original' ||
         agentFaviconPulseTimer !== null) return;
-    agentFaviconPulseTimer = setInterval(() => {
-      if (agentFaviconVisibleState !== 'original') {
-        void agentFaviconRenderState(agentFaviconVisibleState, true);
-      }
-    }, session.update_every_ms);
+    agentFaviconPulseTimer = setInterval(
+      agentFaviconPulseHeartbeat, session.update_every_ms
+    );
   }
 
   /**
