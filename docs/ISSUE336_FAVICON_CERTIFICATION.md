@@ -27,7 +27,7 @@ integration. No merge without explicit authorization.
 | A01 | real original resources and variants | exact source bytes/digests; media, type and sizes preserved | INCOMPLETE |
 | A02 | all colours 0..3, steps 0..6, frames 0..20 | 588 distinct nonoverlapping PNG payload spans per source variant | FIXTURE only |
 | A03 | original stock image, unknown variant | preserve original href, never substitute mismatched image | INCOMPLETE |
-| A04 | signature, IHDR and actual Chromium decode | dimensions and transparency match original | Header FIXTURE only |
+| A04 | signature, IHDR and actual Chromium decode | dimensions and transparency match original | Synthetic Chromium 1176 PNG decode/pixel checks PASS; genuine source fidelity INCOMPLETE |
 | A05 | pack magic, LE header length, canonical JSON, offsets | exact V1 representation with full contiguous payload | FIXTURE only |
 | A06 | truncated, corrupted, wrong length/hash or invalid manifest | reject entire dataset; safe fallback and retry | FIXTURE negative only |
 | A07 | earlier than first boundary, exact and later versions | greatest compatible minimum numeric triplet | FIXTURE only |
@@ -80,9 +80,9 @@ lock waiting, and cutoff only; those checks are NOT B01-B14 production passes.
 | C07 | next processing after completion | yellow | INCOMPLETE |
 | C08 | reload IS_STREAMING | yellow; no independent watcher | INCOMPLETE |
 | C09 | reload NOT_STREAMING | original; no inferred green | INCOMPLETE |
-| C10 | favicon media/type/sizes and different original digests | correct matching per-link variant or untouched | INCOMPLETE |
+| C10 | favicon media/type/sizes and different original digests | correct matching per-link variant or untouched | Synthetic two-candidate Chromium PASS; production INCOMPLETE |
 | C11 | times 0,5,10,15,20,25,30,31 minutes | steps 0..6, saturated ring/pie, correct layering | INCOMPLETE |
-| C12 | 40 slots, 21 frames, 10s, 250ms, negative offset | correct symmetric index, full-composite cosine alpha | FIXTURE index only |
+| C12 | 40 slots, 21 frames, 10s, 250ms, negative offset | correct symmetric index, full-composite cosine alpha | Synthetic 40-slot/21-frame Chromium and Node selection PASS; real alpha INCOMPLETE |
 | C13 | late asynchronous result after newer state | generation token rejects stale result | INCOMPLETE |
 | C14 | identical frame and href | no redundant DOM assignment | INCOMPLETE |
 | C15 | navigation, reload, tab switch | original recovery and safe Blob URL disposal | INCOMPLETE |
@@ -97,6 +97,34 @@ tests/agent-terminal-dispatch.test.mjs and
 tests/agent-turn-stopwatch-reload.test.mjs. Canvas-specific source-shape
 tests must be updated by #335 to check the new real implementation while
 retaining the accepted behaviour assertions.
+
+## Independent fixture execution (2026-10-20)
+
+Node.js 22.16.0, Debian Chromium 144.0.7559.96, synthetic pack
+with 2 variants, 4 colours, 7 steps and 21 unique phase images.
+Executed: `node --test tests/issue336-favicon-*.test.mjs`.
+**5/5 tests PASS**, including **1 genuine Chromium browser-runtime fixture**.
+The browser decoded and pixel-verified all **1,176** generated 1x1 PNGs,
+retained an unmatched favicon link and source `media/type/sizes`,
+restored source hrefs, and made zero extra on-demand Blob URL allocations
+when replaying 40 warm frames. Object URLs used: 1,176.
+Synthetic href assignments: 2,320, with **zero** redundant writes when
+the same state/frame was requested twice.
+
+Earlier Chromium `--dump-dom` and direct local/data navigations hung or
+were blocked by administrator restrictions. The fixture was repaired to
+use Chromium DevTools Protocol against `about:blank` instead of
+navigating to a local test server. That exercises Chromium PNG
+decoding, canvas pixel sampling, original candidate DOM behaviour
+and Blob URLs; it is **not** a ChatGPT/browser extension session,
+does **not** access IndexedDB or Web Locks, and does **not** exercise
+the real #333 pack or #335 runtime. Fixture source blob:
+`c619cdc743071fea491731d86ade904e9883e0a0`; exact candidate commit:
+`ef6b398fbc7e80d0e5956b5c7294ffc65f5ef827`.
+
+The A/B/C production and integrated acceptance statuses above remain
+INCOMPLETE. This evidence closes only the independent synthetic-browser
+**preparation** check.
 
 ## Performance: original vs synthetic vs integrated
 
