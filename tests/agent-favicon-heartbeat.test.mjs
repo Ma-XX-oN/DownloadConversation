@@ -6,7 +6,7 @@ import { productionFunctionSource } from './helpers/userscript-source.mjs';
 test('completion becomes white only on visible focused tab', () => {
   let focused = false, visible = 'hidden';
   const h = {
-    document: { get visibilityState() { return visible; }, hasFocus: () => focused },
+    document: { addEventListener() {}, get visibilityState() { return visible; }, hasFocus: () => focused },
     rendered: []
   };
   vm.runInNewContext(`
