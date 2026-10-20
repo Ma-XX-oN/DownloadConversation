@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         ChatGPT Conversation Markdown Recorder
 // @namespace    https://chatgpt.com/
-// @version      1.11.8-issue.335.2
+// @version      1.11.8-issue.335.3
 // @description  Exports the current ChatGPT conversation directly from the Conversation API as Markdown or JSONL.
 // @match        https://chatgpt.com/*
 // @match        https://chat.openai.com/*
@@ -12257,7 +12257,7 @@ globalThis.__dcCompressor = {
    * @param {0|1|2|3} base_type - Yellow/green/red/white index.
    * @param {0|1|2|3|4|5|6} completion_time - Five-minute progress step.
    * @param {number} time_offset - Monotonic milliseconds, not a pulse index.
-   * @returns {Promise<ReadonlyArray<{link: HTMLLinkElement, href: string}>|null>} Matched URL pairs or null.
+   * @returns {Promise<Array<Object>|null>} Matched link and PNG URL pairs or null.
    */
   async function get_favicon(compatible_version_key, base_type, completion_time, time_offset) {
     const frame = agentFaviconPulseIndex(time_offset);
@@ -12420,6 +12420,7 @@ globalThis.__dcCompressor = {
     void agentFaviconRenderState('acknowledged');
   }
 
+  /** Browser focus and visibility notifications for the acknowledged state. */
   document.addEventListener('visibilitychange', agentFaviconAcknowledgeCompletion);
   window.addEventListener('focus', agentFaviconAcknowledgeCompletion);
   window.addEventListener('pagehide', agentFaviconDispose);
