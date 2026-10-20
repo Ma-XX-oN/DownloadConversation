@@ -690,3 +690,16 @@ Copy.
 The Extract operation acquires one authoritative Conversation API snapshot and renders each selected format from that same snapshot.  Output storage mode is a final projection only: raw mode downloads the exact UTF-8 JSONL or Markdown bytes, while compressed mode passes those same bytes through the shared codec-neutral `createArchive()` boundary and downloads the resulting XZ stream with an added `.xz` suffix.  Compression must not refetch, rerender, or otherwise create a second conversation snapshot.
 
 The recorder panel exposes this choice immediately after the JSONL/MD selectors.  The large-circle arrow icon means raw output and is the compatibility-preserving default; the small-circle arrow icon means compressed output.  The control's switch state, accessible label, and tooltip are projected from the same in-memory mode value so the visual and behavioural state cannot diverge.
+
+## DC #332 frozen browser-local favicon sequence design (V2.0)
+
+The favicon consumer uses the source-native original icon and actual
+light/dark scheme to request one 21-frame pulse sequence only when its
+version/source/theme/base/progress combination is first needed. Cross-tab
+IndexedDB/Web Locks permit one renderer and share atomic complete sequences.
+The local version registry selects numeric compatibility boundaries, not a
+GitHub image catalogue. Pending consumers show the untouched original icon;
+active sessions protect the version-scoped ten-minute collection from eviction.
+Frozen provider/cache/consumer details and integration gate definitions are
+in `docs/FAVICON_CACHE_INTERFACES_V2.md`. The frozen V1 external PNG-pack design
+is preserved solely as historical evidence; no V1 asset loader runs in V2.
