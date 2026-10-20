@@ -8,7 +8,7 @@ const EXPECTED_SHA256 = '26512d41c8d181ac53dcedf91d59739b1dfd79c5372f9e96ba6b299
 const EXPECTED_BYTES = 10620388;
 const PACK_PATH = new URL('../assets/favicons/v1/chatgpt-v1.dcfav', import.meta.url);
 
-test('pinned real ICO/SVG/WebP produce all 1764 pixel-distinct pulses', () => {
+test('pinned real ICO/SVG/WebP produce all 1764 indexed PNGs with byte-distinct pulses', () => {
   const pack = generatePack();
   assert.equal(pack.length, EXPECTED_BYTES, 'Unexpected canonical pack size');
   assert.equal(sha256(pack), EXPECTED_SHA256,
