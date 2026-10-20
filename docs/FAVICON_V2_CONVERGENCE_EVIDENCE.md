@@ -127,3 +127,15 @@ no ready markers, and preservation of the stock icon. Independent GREEN
 verification remains blocked until DC #334's source owner fixes the
 per-sequence failure backoff and provider tests prove a later retry.
 The new regression is a RED witness, never a production PASS.
+
+## DC #332 .332.10 CI harness boundedness
+
+The source-owned provider remains unchanged while DC #334 owns failure
+backoff. Version .332.9 introduced the failure-case real Chromium regression;
+its hosted run 39512026636 did not finish within the previous execution
+window, and no structured RED/FAIL artifact was available. Candidate .332.10
+adds a strict 90-second CI-stage timeout for this regression (timeouts FAIL;
+not skipped) and explicitly closes Chrome stdout/stderr on browser timeout to
+prevent child processes retaining pipes indefinitely. Functional assertion
+remains no more than two failed renders over 2450 ms, zero ready sequences,
+and original favicon unchanged. This is an observable gate, not a relaxation.

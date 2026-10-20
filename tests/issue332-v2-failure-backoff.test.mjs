@@ -91,7 +91,12 @@ test('DC #334: permanent renderer failure backs off across 250ms real heartbeats
         const child = spawn(chrome,flags);
         let stdout = '', stderr = '';
         const watchdog=setTimeout(()=>{
-          child.kill('SIGKILL');reject(Error('Chromium test exceeded deadline'));
+          child.kill('SIGKILL');
+          // Renderer subprocesses may retain stdout/stderr after Chrome exits.
+          // Destroy inherited read handles so Node cannot wait indefinitely.
+          child.stdout.destroy();
+          child.stderr.destroy();
+          reject(Error('Chromium test exceeded deadline'));
         },26000);
         child.stdout.on('data',data=>{stdout+=data;});
         child.stderr.on('data',data=>{stderr+=data;});

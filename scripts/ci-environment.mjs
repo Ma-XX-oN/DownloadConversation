@@ -73,7 +73,7 @@ const ordinaryStages = [
   ['DC #332 24-second real Chromium warm pulse performance', nodeCommand, ['--test',
     'tests/issue332-v2-warm-performance.test.mjs']],
   ['DC #334 unsupported favicon backoff regression', nodeCommand, ['--test',
-    'tests/issue332-v2-failure-backoff.test.mjs']],
+    'tests/issue332-v2-failure-backoff.test.mjs'], { timeoutMs: 90000 }],
   ['DC #334 Chromium cross-tab storage acceptance', nodeCommand, ['--test',
     'tests/issue334-v2-chromium.test.mjs']],
   ['DC #333 renderer real-time Chromium responsiveness', nodeCommand, ['--test',
@@ -126,7 +126,8 @@ function runStage(name, command, args, options = {}) {
     cwd: options.cwd ?? root,
     env: options.env ?? process.env,
     stdio: 'inherit',
-    shell: false
+    shell: false,
+    ...(options.timeoutMs ? { timeout: options.timeoutMs } : {})
   });
   if (result.error) {
     console.error(`${name}: ${result.error.message}`);
