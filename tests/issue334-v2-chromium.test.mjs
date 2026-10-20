@@ -166,6 +166,17 @@ function pageHtml(isChild) {
         verify(takeover instanceof Blob && calls.at(-1).base_type===3,'claim takeover failed');
         canceled();
         verify(!(await faviconSequenceRead(db,crashKey,21)), 'out-of-range pulse used');
+        // Real navigation releases a stalled renderer's browser-owned Web Lock.
+        const navSession=await child.api.open_favicon_dataset(key,child.renderer);
+        verify(navSession!==null,'navigation owner cannot reopen session');
+        child.pauseRender=new Promise(()=>{});
+        const beforeNavigation=child.calls.length;
+        void navSession.read_png(URL1,'light',3,6,0);
+        for(let i=0;i<100 && child.calls.length===beforeNavigation;i++)await wait(20);
+        verify(child.calls.length===beforeNavigation+1,'navigation claim not held');
+        child.location.href='/gone';
+        const navigationReplacement=await a.read_png(URL1,'light',3,6,0);
+        verify(navigationReplacement instanceof Blob,'navigation did not release generation lock');
         // Global touch throttle: 599999ms skips; 600000ms updates once.
         const initial=await faviconSequenceRequest(db.transaction('datasets','readonly')
           .objectStore('datasets').get(key));
@@ -197,7 +208,7 @@ function pageHtml(isChild) {
         document.getElementById('result').textContent=JSON.stringify({
           winner:true, atomic21:true, no_duplicate:true, theme:true,
           no_eager:true, recovery:true, aborted_transaction:true,
-          takeover:true, warm:true, strict_ttl:true, throttle:true, versions:true });
+          takeover:true, navigation:true, warm:true, strict_ttl:true, throttle:true, versions:true });
       }
       ${isChild ? '' : `runParent().catch(error => {
         document.getElementById('result').textContent=JSON.stringify({error:String(error)});
@@ -208,6 +219,9 @@ function pageHtml(isChild) {
 test('V2: Chromium two tabs elect one 21-frame producer, commit atomically and recover',
   { timeout: 55000 }, async () => {
     const server = createServer((req, res) => {
+      if (req.url === '/gone') {
+        res.writeHead(200, {'Content-Type':'text/html'}); res.end('<p>navigated</p>'); return;
+      }
       if (req.url === '/hold') {
         setTimeout(() => { if (!res.writableEnded) { res.writeHead(204); res.end(); } }, 18000);
         return;
@@ -247,7 +261,7 @@ test('V2: Chromium two tabs elect one 21-frame producer, commit atomically and r
       assert.equal(result.error, undefined, JSON.stringify(result));
       for (const name of ['winner','atomic21','no_duplicate','theme','no_eager',
         'recovery','aborted_transaction','takeover','warm','strict_ttl',
-        'throttle','versions']) {
+        'throttle','versions','navigation']) {
         assert.equal(result[name],true,name);
       }
     } finally {
