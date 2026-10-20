@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         ChatGPT Conversation Markdown Recorder
 // @namespace    https://chatgpt.com/
-// @version      1.11.8-issue.335.7
+// @version      1.11.8-issue.335.8
 // @description  Exports the current ChatGPT conversation directly from the Conversation API as Markdown or JSONL.
 // @match        https://chatgpt.com/*
 // @match        https://chat.openai.com/*
@@ -12420,8 +12420,14 @@ globalThis.__dcCompressor = {
     ++agentFaviconRenderGeneration;
     agentFaviconVisibleState = 'original';
     agentFaviconStopPulse();
-    agentFaviconTrimObjectUrls(true);
+    // A bfcache page retains its DOM links after pagehide; restore hrefs first.
+    for (const candidate of agentFaviconCurrentCandidates()) {
+      if (candidate.link.href !== candidate.original_href) {
+        candidate.link.href = candidate.original_href;
+      }
+    }
     agentFaviconDisplayedHrefs.clear();
+    agentFaviconTrimObjectUrls(true);
     const session = agentFaviconDatasetSession;
     agentFaviconDatasetSession = null;
     if (session) void session.close().catch(() => {});
