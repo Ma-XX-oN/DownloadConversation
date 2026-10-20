@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         DC #313 Exact Producer HMAC Browser Probe
 // @namespace    https://chatgpt.com/dc313-probe/
-// @version      0.9.1
+// @version      0.9.2
 // @description  Synthetic HMAC producer, Web Locks, GM and Worker acceptance; no conversation access.
 // @match        https://chatgpt.com/*
 // @grant        GM_getValue
@@ -374,22 +374,32 @@
     if (mode === 'async') await GM.setValue(name, count);
     else await GM_setValue(name, count);
   }
-  async function diagIncrements(mode, name) {
+  async function diagIncrements(mode, name, update = () => {}) {
     let first = null, highest = -1;
     for (let i = 0; i < rounds; i++) {
+      update('waiting-for-lock', i);
       await exclusive(async () => {
+        update('lock-acquired', i);
+        update('reading-GM', i);
         const previous = await diagRead(mode, name);
+        update('GM-read-complete', i);
         if (first === null) first = previous;
         highest = Math.max(highest, previous);
         await delay(8);
+        update('writing-GM', i);
         await diagWrite(mode, name, previous + 1);
+        update('GM-write-complete', i);
         if (await diagRead(mode, name) !== previous + 1) {
           throw Error('local '+mode+' write readback mismatch');
         }
       });
+      update('iteration-complete', i + 1);
     }
+    update('final-GM-read', rounds);
+    const finishedRead = await diagRead(mode, name);
+    update('complete', rounds);
     return { firstRead: first, highestPriorRead: highest,
-      finishedRead: await diagRead(mode, name) };
+      finishedRead };
   }
 
   // Tampermonkey advertises remote changes via the fourth callback flag.
@@ -519,7 +529,14 @@
       if (!state || state.leader !== message.from || diagActive) return;
       diagActive = true;
       try {
-        const detail = await diagIncrements(state.mode, state.name);
+        const detail = await diagIncrements(state.mode, state.name,
+          (step, iteration) => {
+            if (iteration === 0 || step === 'complete' ||
+                (step === 'iteration-complete' && iteration % 6 === 0)) {
+              diagChannel.postMessage({ type: 'progress',
+                run: message.run, from: tabId, step, iteration });
+            }
+          });
         diagChannel.postMessage({ type: 'done', run: message.run,
           from: tabId, detail });
       } catch (error) {
@@ -529,37 +546,57 @@
         diagRuns.delete(message.run);
         diagActive = false;
       }
-    } else if (['ready', 'done', 'error'].includes(message.type)) {
+    } else if (['ready', 'done', 'error', 'progress'].includes(message.type)) {
       const state = diagRuns.get(message.run);
       if (!state || state.leader) return;
       if (message.type === 'ready') state.ready.add(message.from);
       if (message.type === 'done') state.done.set(message.from,
         message.detail);
+      if (message.type === 'progress') {
+        state.trace.peer = { step: message.step,
+          iteration: message.iteration };
+      }
       if (message.type === 'error') state.errors.push({
         tab: message.from, error: message.error });
     }
   };
 
-  async function diagPhase(mode) {
+  async function diagPhase(mode, trace = {}) {
     const run = crypto.randomUUID();
     const name = 'dc313-gm-diag:' + mode + ':' + run;
-    const state = { ready: new Set(), done: new Map(), errors: [] };
+    const state = { ready: new Set(), done: new Map(), errors: [], trace };
     diagRuns.set(run, state);
     try {
-      await exclusive(async () => { await diagWrite(mode, name, 0); });
+      trace.local = { step: 'initial-lock-request', iteration: 0 };
+      await exclusive(async () => {
+        trace.local.step = 'initial-GM-write';
+        await diagWrite(mode, name, 0);
+        trace.local.step = 'initial-GM-write-complete';
+      });
+      trace.local.step = 'waiting-for-peer-ready';
       diagChannel.postMessage({ type: 'prepare', run, from: tabId,
         mode, name });
       await delay(1200);
       const peers = [...state.ready];
+      trace.peersReady = peers.length;
       if (peers.length < 1) throw Error('no participating peer');
+      trace.local.step = 'starting-counter';
       diagChannel.postMessage({ type: 'start', run, from: tabId });
-      const local = await diagIncrements(mode, name);
+      const local = await diagIncrements(mode, name, (step, iteration) => {
+        trace.local = { step, iteration };
+      });
+      trace.local.step = 'awaiting-peer-completion';
       const start = Date.now();
       while (state.done.size + state.errors.length < peers.length &&
         Date.now() - start < timeoutMs) await delay(50);
+      trace.peersDone = state.done.size;
+      trace.peerErrors = state.errors.length;
+      trace.local.step = 'final-GM-read';
       const observed = await exclusive(() => diagRead(mode, name));
       await delay(500);
+      trace.local.step = 'settled-GM-read';
       const settled = await exclusive(() => diagRead(mode, name));
+      trace.local.step = 'complete';
       return { mode, status: state.errors.length === 0 &&
         state.done.size === peers.length && observed ===
         rounds * (peers.length + 1) ? 'PASS' : 'FAIL',
@@ -668,12 +705,12 @@
 
   async function diagnoseCrossTabStorage() {
     if (diagActive || inProgress) {
-      publishResult('GM cross-tab diagnostic', { version: '0.9.1',
+      publishResult('GM cross-tab diagnostic', { version: '0.9.2',
         status: 'BUSY', note: 'A diagnostic is already running.' });
       return;
     }
     diagActive = true;
-    const report = { version: '0.9.1', status: 'RUNNING' };
+    const report = { version: '0.9.2', status: 'RUNNING', trace: {} };
     let phase = 'preparing';
     let timedOut = false;
     const stage = async (label, task) => {
@@ -686,14 +723,14 @@
     const perform = async () => {
       if (!diagChannel) throw Error('BroadcastChannel unavailable');
       report.synchronousGM = await stage('synchronous GM counter',
-        () => diagPhase('sync'));
+        () => diagPhase('sync', report.trace));
       if (typeof GM === 'undefined' ||
           typeof GM.getValue !== 'function' ||
           typeof GM.setValue !== 'function') {
         throw Error('GM async API unavailable');
       }
       report.asynchronousGM = await stage('asynchronous GM counter',
-        () => diagPhase('async'));
+        () => diagPhase('async', report.trace));
       report.visibility = await stage('cross-tab GM visibility',
         () => diagnoseVisibility());
       report.exclusiveWebLock = await stage('exclusive Web Lock',
