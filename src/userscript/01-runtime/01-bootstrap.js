@@ -81,6 +81,8 @@
   const COMMUNICATION_LOG_DB_STORE = 'handles';
   /** Stable IndexedDB key for the communication-log directory handle. */
   const COMMUNICATION_LOG_HANDLE_KEY = 'communication-directory';
+  /** Cross-tab signal that the shared COMM directory handle or permission changed. */
+  const COMMUNICATION_LOG_DIRECTORY_SIGNAL_KEY = 'tm-downloadconversation-communication-directory-updated';
   /** Prefix used to retain the last known conversation title for immediate reload logging. */
   const COMMUNICATION_LOG_TITLE_STORAGE_PREFIX = 'tm-downloadconversation-communication-title:';
   /** Initial sealed communication-segment target; tune this one symbol after browser benchmarks. */
@@ -211,6 +213,14 @@
   let stockNetworkSequence = 0;
   /** Persisted user-authorized directory used for the disk communication recorder. */
   let communicationLogDirectoryHandle = null;
+  /** Previously saved directory awaiting a trusted reauthorisation gesture. */
+  let communicationLogPendingDirectoryHandle = null;
+  /** Prevents repeated restore work during simultaneous tab notifications. */
+  let communicationLogDirectoryRestorePromise = null;
+  /** Whether this document has installed cross-tab/foreground retry listeners. */
+  let communicationLogDirectoryRetryInstalled = false;
+  /** A denied reauthorisation must fall back to the normal chooser. */
+  let communicationLogDirectoryReselectRequired = false;
   /** Whether the next trusted page gesture is reserved for native directory chooser launch. */
   let communicationLogDirectoryGestureArmed = false;
   /** Whether a native directory chooser promise is currently outstanding. */
