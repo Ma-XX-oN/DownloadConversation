@@ -17,7 +17,7 @@ const scripts = [
   source('../src/userscript/03-agent-lifecycle/03-favicon-cache-v2.js'),
   source('../src/userscript/03-agent-lifecycle/03-favicon-cache-v2-part2.js'),
   source('../src/userscript/03-agent-lifecycle/02-favicon-v2-adapter.js'),
-  'const VERSION = "1.11.10-issue.332.5";\n'
+  'const VERSION = ' + JSON.stringify(headerVersion) + ';\n'
     + 'const agentFaviconOriginalSources = new Map();\n'
     + 'let agentFaviconRenderGeneration = 0;\n'
     + 'let agentStopwatchState = null;\n'
@@ -28,6 +28,9 @@ const scripts = [
   source('../src/userscript/03-agent-lifecycle/02-favicon-cached-lookup.js')
 ].join('\n');
 const faviconSvg = source('../assets/favicons/v1/originals/chatgpt-favicon-l4nq08hd.svg');
+const headerVersion = /^\/\/\s*@version\s+(\S+)\s*$/m
+  .exec(source('../src/userscript-header.js'))?.[1];
+assert.ok(headerVersion, 'authoritative userscript version required');
 
 async function benchmark() {
   const link = document.getElementById('stock');
@@ -186,6 +189,14 @@ async function launch(address) {
     });
     assert.equal(ready.result.value,true);
     return {
+      send,
+      async evaluate(expression) {
+        const reply = await send('Runtime.evaluate', {
+          expression, awaitPromise: true, returnByValue: true
+        });
+        if (reply.exceptionDetails) throw Error(JSON.stringify(reply.exceptionDetails));
+        return reply.result.value;
+      },
       async run() {
         const done=await send('Runtime.evaluate',{
           expression:'runBenchmark()',awaitPromise:true,returnByValue:true
@@ -233,6 +244,93 @@ test('actual V2 24-second warm pulse avoids encoding, decoding and IndexedDB rea
       assert.equal(result.originalAttributesUnchanged,true);
       assert.equal(result.returnedToOriginal,true);
       console.log('DC332_24S_REAL_CHROMIUM='+JSON.stringify(result));
+    } finally {
+      await client?.close();
+      server.closeAllConnections();
+      await new Promise(resolve=>server.close(resolve));
+    }
+  });
+
+test('actual provider cache consumer: CSS theme flip reuses exact original URL',
+  {timeout:45000}, async () => {
+    const server=createServer((req,res)=>{
+      if(req.url==='/favicon.svg') {
+        res.writeHead(200,{'Content-Type':'image/svg+xml'});
+        res.end(faviconSvg);
+        return;
+      }
+      res.writeHead(200,{'Content-Type':'text/html; charset=utf-8'});
+      res.end(html());
+    });
+    await new Promise(resolve=>server.listen(0,'127.0.0.1',resolve));
+    let client;
+    try {
+      client=await launch('http://127.0.0.1:'+server.address().port+'/');
+      const scheme = value => client.send('Emulation.setEmulatedMedia',
+        {features:[{name:'prefers-color-scheme',value}]});
+      await scheme('light');
+      await client.evaluate('(() => {'
+        + 'window.renderEncodes=0;'
+        + 'const original=HTMLCanvasElement.prototype.toBlob;'
+        + 'HTMLCanvasElement.prototype.toBlob=function(...args){'
+        + 'window.renderEncodes++;return original.apply(this,args)};'
+        + 'return true;})()');
+      assert.equal(await client.evaluate('agentFaviconRenderState("processing")'),true);
+      const light=await client.evaluate('(async()=>{'
+        + 'const db=await faviconSequenceDatabase();'
+        + 'const keys=await faviconSequenceRequest('
+        + 'db.transaction("sequences","readonly").objectStore("sequences").getAllKeys());'
+        + 'return {keys,encodes:window.renderEncodes,'
+        + 'original:agentFaviconOriginalSources.get(document.getElementById("stock"))};'
+        + '})()');
+      assert.equal(light.keys.length,1);
+      assert.equal(JSON.parse(light.keys[0])[2],'light');
+      assert.equal(light.encodes,21);
+      await scheme('dark');
+      const dark=await client.evaluate('(async()=>{'
+        + 'const until=performance.now()+12000;'
+        + 'let keys=[];let href="";'
+        + 'while(performance.now()<until){'
+        + 'const db=await faviconSequenceDatabase();'
+        + 'keys=await faviconSequenceRequest('
+        + 'db.transaction("sequences","readonly").objectStore("sequences").getAllKeys());'
+        + 'href=document.getElementById("stock").href;'
+        + 'if(keys.length===2 && href.startsWith("blob:")) break;'
+        + 'await new Promise(done=>setTimeout(done,50));}'
+        + 'return {keys,href,encodes:window.renderEncodes,theme:agentFaviconCurrentTheme(),'
+        + 'original:agentFaviconOriginalSources.get(document.getElementById("stock"))};'
+        + '})()');
+      assert.equal(dark.theme,'dark');
+      assert.equal(dark.keys.length,2,JSON.stringify(dark));
+      assert.deepEqual(dark.keys.map(key=>JSON.parse(key)[2]).sort(),['dark','light']);
+      assert.equal(dark.original,light.original);
+      assert.equal(dark.encodes,42);
+      const pixels=await client.evaluate('(async()=>{'
+        + 'const db=await faviconSequenceDatabase();'
+        + 'const keys=await faviconSequenceRequest('
+        + 'db.transaction("sequences","readonly").objectStore("sequences").getAllKeys());'
+        + 'const out=[];'
+        + 'for(const key of keys){const row=await faviconSequenceRequest('
+        + 'db.transaction("pngs","readonly").objectStore("pngs").get([key,0]));'
+        + 'const bytes=await row.blob.arrayBuffer();'
+        + 'const hash=await crypto.subtle.digest("SHA-256",bytes);'
+        + 'out.push({theme:JSON.parse(key)[2],'
+        + 'hash:Array.from(new Uint8Array(hash)).map(v=>v.toString(16).padStart(2,"0")).join("")});}'
+        + 'return out;})()');
+      assert.notEqual(pixels[0].hash,pixels[1].hash,
+        'light/dark must produce distinct original SVG raster pixels');
+      await scheme('light');
+      const back=await client.evaluate('(async()=>{'
+        + 'const until=performance.now()+5000;'
+        + 'while(performance.now()<until){'
+        + 'if(agentFaviconCurrentTheme()==="light" &&'
+        + 'document.getElementById("stock").href.startsWith("blob:")) break;'
+        + 'await new Promise(done=>setTimeout(done,40));}'
+        + 'return {theme:agentFaviconCurrentTheme(),encodes:window.renderEncodes};})()');
+      assert.equal(back.theme,'light');
+      assert.equal(back.encodes,42,'cached light sequence must not regenerate');
+      console.log('DC332_REAL_THEME_FLIP='+JSON.stringify({
+        light, dark, hashes:pixels, back, distinctGenerationKeys:2}));
     } finally {
       await client?.close();
       server.closeAllConnections();
