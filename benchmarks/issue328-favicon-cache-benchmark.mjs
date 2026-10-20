@@ -153,17 +153,36 @@ async function runBrowserCase() {
       return client;
     }
     const first = await openPage();
+    await first.send('Performance.enable');
     const result = await first.evaluate(`(${browserCase.toString()})()`);
     assert.equal(result.storedFrames, 21);
     assert.equal(result.coldLoadedFrames, 21);
     assert.equal(result.warmDbReads, 0);
     assert.ok(result.legacyMs > result.warmMs,
       `Cached warm switching not faster: legacy=${result.legacyMs}, warm=${result.warmMs}`);
+    const getCpu = async () => Object.fromEntries(
+      (await first.send('Performance.getMetrics')).metrics.map(metric => [metric.name, metric.value])
+    );
+    const m0 = await getCpu();
+    const pacedLegacy = await first.evaluate(`(${pacedFaviconTest.toString()})('legacy')`);
+    const m1 = await getCpu();
+    const pacedWarm = await first.evaluate(`(${pacedFaviconTest.toString()})('cached')`);
+    const m2 = await getCpu();
+    const paced = {
+      legacy: pacedLegacy,
+      cached: pacedWarm,
+      legacyTaskCpuMs: (m1.TaskDuration - m0.TaskDuration) * 1000,
+      cachedTaskCpuMs: (m2.TaskDuration - m1.TaskDuration) * 1000,
+      legacyScriptCpuMs: (m1.ScriptDuration - m0.ScriptDuration) * 1000,
+      cachedScriptCpuMs: (m2.ScriptDuration - m1.ScriptDuration) * 1000
+    };
+    assert.ok(pacedLegacy.jsWorkMs > pacedWarm.jsWorkMs);
     const second = await openPage();
     const sharedCount = await second.evaluate(`(${countSharedImages.toString()})()`);
     assert.equal(sharedCount, 21, 'Tabs must share the same origin IndexedDB entries');
     console.log(JSON.stringify({test:'Chromium IndexedDB binary PNG/favicon switching',
-      resolution:'256x256', frames:40, ...result, secondTabStoredFrames:sharedCount}, null, 2));
+      resolution:'256x256', frames:40, ...result, paced250ms:paced,
+      secondTabStoredFrames:sharedCount}, null, 2));
   } finally {
     for (const page of pages) page.close();
     chrome.kill('SIGTERM');
@@ -263,9 +282,27 @@ async function browserCase() {
   });
   const storedPngBytes = frames.reduce((sum, frame) => sum + frame.size, 0);
   db.close();
-  urls.forEach(url => URL.revokeObjectURL(url));
+  globalThis.__faviconBenchmark = {draw, urls, icon};
   return {legacyMs, coldMs, warmMs, coldLoadedFrames:reads,
     warmDbReads, storedPngBytes, storedFrames};
+}
+
+async function pacedFaviconTest(mode) {
+  const state = globalThis.__faviconBenchmark;
+  if (!state) throw new Error('Favicon benchmark setup missing');
+  const start = performance.now();
+  let jsWorkMs = 0;
+  for (let slot = 0; slot < 40; slot++) {
+    const t0 = performance.now();
+    if (mode === 'legacy') {
+      state.icon.href = state.draw(slot).toDataURL('image/png');
+    } else {
+      state.icon.href = state.urls.get(Math.min(slot, 40 - slot));
+    }
+    jsWorkMs += performance.now() - t0;
+    if (slot < 39) await new Promise(resolve => setTimeout(resolve, 250));
+  }
+  return {mode, frames:40, intervalMs:250, jsWorkMs, wallMs:performance.now() - start};
 }
 
 async function countSharedImages() {
