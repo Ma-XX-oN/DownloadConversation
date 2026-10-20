@@ -20,6 +20,8 @@
   const AGENT_FAVICON_URL_LIMIT = 84;
   /** Progress-step state for the existing shared stopwatch observer. */
   let agentFaviconRingRenderedStep = 0;
+  /** Last successfully displayed 5-minute progress step. */
+  let agentFaviconPresentedStep = null;
   /** Whether pagehide has invalidated active and pending cache reads. */
   let agentFaviconPageHidden = false;
   /** Incremented at navigation to reject late reads across bfcache restoration. */
@@ -240,14 +242,11 @@
   async function agentFaviconRenderState(state, heartbeat = false) {
     if (agentFaviconPageHidden) return false;
     const previousState = agentFaviconVisibleState;
+    const nextStep = state === 'original' ? null
+      : state === 'error' ? 0 : agentFaviconRingStep();
     agentFaviconVisibleState = state;
-    if (previousState !== state) {
-      for (const candidate of agentFaviconCurrentCandidates()) {
-        if (candidate.link.href !== candidate.original_href) {
-          candidate.link.href = candidate.original_href;
-        }
-        agentFaviconDisplayedHrefs.delete(candidate.link);
-      }
+    if (previousState !== state || nextStep !== agentFaviconPresentedStep) {
+      agentFaviconRestoreStockCandidates();
     }
     if (state === 'original') agentFaviconStopPulse();
     else void agentFaviconStartPulse();
@@ -265,7 +264,7 @@
     if (state !== 'original') {
       const base = { processing: 0, completed: 1, error: 2, acknowledged: 3 }[state];
       if (base === undefined) return false;
-      requestedStep = state === 'error' ? 0 : agentFaviconRingStep();
+      requestedStep = nextStep;
       try {
         const key = await agentFaviconCompatibleVersion();
         if (key) pairs = await get_favicon(key, base, requestedStep, performance.now());
@@ -299,6 +298,8 @@
       else agentFaviconDisplayedHrefs.delete(candidate.link);
     }
     agentFaviconTrimObjectUrls();
+    agentFaviconPresentedStep = state === 'original' || pairs === null
+      ? null : requestedStep;
     const eligible = agentFaviconActiveCandidates(candidates).length;
     const applied = state === 'original' || (pairs !== null &&
       pairs.length === eligible);
@@ -323,12 +324,9 @@
     ++agentFaviconRenderGeneration;
     agentFaviconVisibleState = 'original';
     agentFaviconStopPulse();
-    // A bfcache page retains its DOM links after pagehide; restore hrefs first.
-    for (const candidate of agentFaviconCurrentCandidates()) {
-      if (candidate.link.href !== candidate.original_href) {
-        candidate.link.href = candidate.original_href;
-      }
-    }
+    // A bfcache page retains its DOM links after pagehide.
+    agentFaviconRestoreStockCandidates();
+    agentFaviconPresentedStep = null;
     agentFaviconDisplayedHrefs.clear();
     agentFaviconTrimObjectUrls(true);
     const session = agentFaviconDatasetSession;
