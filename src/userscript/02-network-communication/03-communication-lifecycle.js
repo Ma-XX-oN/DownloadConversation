@@ -129,6 +129,8 @@
   function communicationLogHandleDirectoryGesture(event) {
     if (!communicationLogDirectoryGestureArmed || communicationLogDirectoryPickerOpening) return;
     if (event.isTrusted !== true) return;
+    // A peer grant can already be activating this tab; never start another authorisation.
+    if (communicationLogReady || communicationLogDirectoryRestorePromise) return;
 
     event.preventDefault();
     event.stopImmediatePropagation();
