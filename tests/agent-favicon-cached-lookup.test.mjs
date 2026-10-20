@@ -72,7 +72,9 @@ function fixture(known = true, delayedRead = null, candidates = 1,
     function get_compatible_version_key() {
       return Promise.resolve(${JSON.stringify(version)});
     }
-    function open_favicon_dataset() { return delayedOpen || session; }
+    function open_favicon_dataset() {
+      return typeof delayedOpen === 'function' ? delayedOpen() : delayedOpen || session;
+    }
     ${source}
     this.api = { get: get_favicon, pulse: agentFaviconPulseIndex,
       render: agentFaviconRenderState, dispose: agentFaviconDispose };
@@ -223,9 +225,15 @@ test('navigation during an outstanding PNG read releases the lease without leaki
 
 test('navigation during session acquisition closes the late shared lease', async () => {
   let finishOpen;
+  let entered;
   const opening = new Promise(resolve => { finishOpen = resolve; });
-  const h = fixture(true, null, 1, '1.11.8', opening);
+  const started = new Promise(resolve => { entered = resolve; });
+  const h = fixture(true, null, 1, '1.11.8', () => {
+    entered();
+    return opening;
+  });
   const pending = h.api.render('processing');
+  await started;
   h.api.dispose();
   finishOpen(h.session);
   assert.equal(await pending, false);
