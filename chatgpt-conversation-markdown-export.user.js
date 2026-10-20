@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         ChatGPT Conversation Markdown Recorder
 // @namespace    https://chatgpt.com/
-// @version      1.11.8-issue.335.12
+// @version      1.11.8-issue.335.13
 // @description  Exports the current ChatGPT conversation directly from the Conversation API as Markdown or JSONL.
 // @match        https://chatgpt.com/*
 // @match        https://chat.openai.com/*
@@ -12147,6 +12147,21 @@ globalThis.__dcCompressor = {
     }
   }
 
+  /** True while one periodic favicon read is awaiting the cache provider. */
+  let agentFaviconPulseUpdatePending = false;
+
+  /**
+   * Coalesces timer ticks while a slow cache read is pending.
+   * @returns {void} The periodic tick does not return a value.
+   */
+  function agentFaviconPulseHeartbeat() {
+    if (agentFaviconPulseUpdatePending ||
+        agentFaviconVisibleState === 'original') return;
+    agentFaviconPulseUpdatePending = true;
+    void agentFaviconRenderState(agentFaviconVisibleState, true)
+      .finally(() => { agentFaviconPulseUpdatePending = false; });
+  }
+
   /** A favicon pulse has forty 250-ms slots and 21 unique symmetric frames. */
   const AGENT_FAVICON_PULSE_PERIOD_MS = 10000;
   /** Periodic pulse timer, started only after the dataset session is ready. */
@@ -12365,11 +12380,9 @@ globalThis.__dcCompressor = {
     const session = await agentFaviconOpenSession(key);
     if (!session || agentFaviconVisibleState === 'original' ||
         agentFaviconPulseTimer !== null) return;
-    agentFaviconPulseTimer = setInterval(() => {
-      if (agentFaviconVisibleState !== 'original') {
-        void agentFaviconRenderState(agentFaviconVisibleState, true);
-      }
-    }, session.update_every_ms);
+    agentFaviconPulseTimer = setInterval(
+      agentFaviconPulseHeartbeat, session.update_every_ms
+    );
   }
 
   /**
