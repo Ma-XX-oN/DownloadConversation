@@ -11,7 +11,8 @@ const source = markedBlock(
   "window.addEventListener('pagehide', agentFaviconDispose);"
 );
 
-function fixture(known = true, delayedRead = null, candidates = 1) {
+function fixture(known = true, delayedRead = null, candidates = 1,
+  version = '1.11.8', delayedOpen = null) {
   const links = Array.from({ length: candidates }, (_, i) => {
     let href = `https://chatgpt.com/favicon${i}.png`;
     return {
@@ -24,8 +25,10 @@ function fixture(known = true, delayedRead = null, candidates = 1) {
   const reads = [], fetched = [], revoked = [], created = [], intervals = [];
   let clock = 0, closed = 0;
   const session = {
-    version: '1.11.8', update_every_ms: 250,
-    find_variant() { return known ? 'v' : null; },
+    version, update_every_ms: 250,
+    find_variant(digest) {
+      return typeof known === 'function' ? known(digest) : known ? 'v' : null;
+    },
     async read_png(...args) {
       reads.push(args);
       if (delayedRead) await delayedRead(...args);
@@ -58,7 +61,7 @@ function fixture(known = true, delayedRead = null, candidates = 1) {
     clearInterval() {}, session, diagnostics: []
   });
   vm.runInContext(`
-    const VERSION = '1.11.8';
+    const VERSION = ${JSON.stringify(version)};
     const agentFaviconOriginalSources = new Map();
     let agentFaviconRenderGeneration = 0;
     let agentStopwatchState = { active: true, started_at_ms: 0, total_ms: null };
@@ -66,13 +69,15 @@ function fixture(known = true, delayedRead = null, candidates = 1) {
       diagnostics.push({ level, name, details });
     }
     function errorMessage(e) { return String(e); }
-    function get_compatible_version_key() { return Promise.resolve('1.11.8'); }
-    function open_favicon_dataset() { return session; }
+    function get_compatible_version_key() {
+      return Promise.resolve(${JSON.stringify(version)});
+    }
+    function open_favicon_dataset() { return delayedOpen || session; }
     ${source}
     this.api = { get: get_favicon, pulse: agentFaviconPulseIndex,
       render: agentFaviconRenderState, dispose: agentFaviconDispose };
-  `, h);
-  return { api: h.api, links, reads, fetched, revoked, created, intervals,
+  `, Object.assign(h, { delayedOpen }));
+  return { api: h.api, links, reads, fetched, revoked, created, intervals, session,
     setClock(n) { clock = n; }, closed: () => closed };
 }
 
@@ -163,4 +168,81 @@ test('renderer no longer performs per-heartbeat canvas or PNG encoding', () => {
     /get_favicon\(compatible_version_key, base_type, completion_time, time_offset\)/);
   assert.doesNotMatch(downloadConversationSource,
     /canvas\.toDataURL\(['"]image\/png['"]\)|context\.(?:get|put)ImageData\(/);
+});
+
+test('two independent tabs use their exact version-scoped provider sessions', async () => {
+  const oldTab = fixture(true, null, 1, '1.11.7');
+  const newTab = fixture(true, null, 1, '1.12.0');
+  const [oldResult, newResult] = await Promise.all([
+    oldTab.api.get('1.11.7', 0, 0, 0),
+    newTab.api.get('1.12.0', 3, 6, 5000)
+  ]);
+  assert.equal(oldResult.length, 1);
+  assert.equal(newResult.length, 1);
+  assert.equal(oldTab.reads[0][1], 0);
+  assert.equal(newTab.reads[0][1], 3);
+  assert.equal(newTab.reads[0][2], 6);
+  assert.equal(newTab.reads[0][3], 20);
+  assert.equal(oldTab.created.length, 1);
+  assert.equal(newTab.created.length, 1);
+  assert.equal(oldTab.revoked.length, 0);
+  assert.equal(newTab.revoked.length, 0);
+});
+
+test('an unmatched source candidate remains original beside a recognized variant', async () => {
+  const firstUrl = 'https://chatgpt.com/favicon0.png';
+  const digest = await webcrypto.subtle.digest('SHA-256',
+    new TextEncoder().encode(firstUrl));
+  const recognized = Buffer.from(digest).toString('hex');
+  const h = fixture(sourceDigest => sourceDigest === recognized ? 'light' : null,
+    null, 2);
+  assert.equal(await h.api.render('processing'), false);
+  assert.equal(h.reads.length, 1);
+  assert.equal(h.reads[0][0], 'light');
+  assert.ok(h.links[0].href.startsWith('blob:test/'));
+  assert.equal(h.links[1].href, 'https://chatgpt.com/favicon1.png');
+});
+
+test('navigation during an outstanding PNG read releases the lease without leaking URLs', async () => {
+  let entered;
+  let finishRead;
+  const began = new Promise(resolve => { entered = resolve; });
+  const release = new Promise(resolve => { finishRead = resolve; });
+  const h = fixture(true, async () => {
+    entered();
+    await release;
+  });
+  const pending = h.api.render('processing');
+  await began;
+  h.api.dispose();
+  finishRead();
+  assert.equal(await pending, false);
+  assert.equal(h.closed(), 1);
+  assert.equal(h.created.length, 0, 'no object URL after navigation');
+});
+
+test('navigation during session acquisition closes the late shared lease', async () => {
+  let finishOpen;
+  const opening = new Promise(resolve => { finishOpen = resolve; });
+  const h = fixture(true, null, 1, '1.11.8', opening);
+  const pending = h.api.render('processing');
+  h.api.dispose();
+  finishOpen(h.session);
+  assert.equal(await pending, false);
+  await Promise.resolve();
+  assert.equal(h.closed(), 1);
+  assert.equal(h.created.length, 0);
+});
+
+test('bounded URL cache evicts old frames but never revokes the displayed one', async () => {
+  const h = fixture();
+  for (let step = 0; step <= 5; step++) {
+    for (let slot = 0; slot <= 20; slot++) {
+      h.setClock(step * 300000 + slot * 250);
+      assert.equal(await h.api.render('processing', true), true);
+      assert.ok(!h.revoked.includes(h.links[0].href));
+    }
+  }
+  assert.ok(h.revoked.length > 0, 'historical frames must be evicted');
+  assert.ok(h.created.length - h.revoked.length <= 84);
 });
