@@ -323,8 +323,14 @@
     ++agentFaviconRenderGeneration;
     agentFaviconVisibleState = 'original';
     agentFaviconStopPulse();
-    agentFaviconTrimObjectUrls(true);
+    // A bfcache page retains its DOM links after pagehide; restore hrefs first.
+    for (const candidate of agentFaviconCurrentCandidates()) {
+      if (candidate.link.href !== candidate.original_href) {
+        candidate.link.href = candidate.original_href;
+      }
+    }
     agentFaviconDisplayedHrefs.clear();
+    agentFaviconTrimObjectUrls(true);
     const session = agentFaviconDatasetSession;
     agentFaviconDatasetSession = null;
     if (session) void session.close().catch(() => {});
