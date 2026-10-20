@@ -36,16 +36,14 @@ artifact publication mechanism.  A write-capable job must:
 4. never contain direct `git add`, `git commit`, or `git push`, or direct
    mutating GitHub/cURL API commands.
 
-The allowlisted committed outputs in `.ci/repoworkflow.json` are exactly
-`chatgpt-conversation-markdown-export.user.js` (userscript) and
-`assets/favicons/v1/chatgpt-v1.dcfav` (DC #333 favicon pack).  The second
-output is generated deterministically from pinned source files by
-`scripts/generate-favicon-packs.mjs --build` and verified byte-for-byte with
-`--verify` before the validation fan-out.  RepoWorkflow must commit only
-explicitly declared deterministic output paths, never arbitrary source,
-configuration, or documentation edits.  Adding any third output requires a
-separate reviewed policy change and matching allowlist regression coverage.
-No issue-specific workflow or general write mechanism is permitted.
+The only allowlisted committed generated output in `.ci/repoworkflow.json`
+is `chatgpt-conversation-markdown-export.user.js`.  DC #333's historical
+V1 `.dcfav` pack is **not** a production output: current V2 requirements
+generate requested 21-frame sequences locally in the browser, never in CI.
+RepoWorkflow must commit only reviewed deterministic outputs, never arbitrary
+source, configuration, or documentation.  Adding an output requires a reviewed
+policy change and negative regression tests.  No issue-specific write workflow
+or general mutation mechanism is permitted.
 
 ## Enforcement
 
