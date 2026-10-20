@@ -50,3 +50,18 @@
     }
   }
 
+  /** True while one periodic favicon read is awaiting the cache provider. */
+  let agentFaviconPulseUpdatePending = false;
+
+  /**
+   * Coalesces timer ticks while a slow cache read is pending.
+   * @returns {void} The periodic tick does not return a value.
+   */
+  function agentFaviconPulseHeartbeat() {
+    if (agentFaviconPulseUpdatePending ||
+        agentFaviconVisibleState === 'original') return;
+    agentFaviconPulseUpdatePending = true;
+    void agentFaviconRenderState(agentFaviconVisibleState, true)
+      .finally(() => { agentFaviconPulseUpdatePending = false; });
+  }
+
