@@ -5,7 +5,7 @@ import { execFileSync } from 'node:child_process';
 import { existsSync } from 'node:fs';
 import { encodePack, validatePack, validatePng, canonicalJson, crc32,
   sha256, versionTriplet, selectDataset } from '../scripts/favicon-pack-format.mjs';
-import { rendererHtml, renderOriginal } from '../scripts/generate-favicon-packs.mjs';
+import { rendererHtml, renderOriginal, validateOriginalSource } from '../scripts/generate-favicon-packs.mjs';
 
 /** Construct a signed PNG chunk for controlled byte-corruption fixtures.
  * @param {string} type - Four-character PNG chunk type.
@@ -148,6 +148,47 @@ test('pack validator rejects missing bytes, bad magic, bad CRC and unindexed tai
   assert.throws(() => validatePack(oversized), /bounds/);
 });
 
+test('pinned PNG, ICO and SVG candidate formats accept actual resource framing', () => {
+  const png = fixturePng(16, 16);
+  assert.doesNotThrow(() => validateOriginalSource(png, {
+    mime: 'image/png', width: 16, height: 16
+  }));
+  const ico = Buffer.alloc(22 + png.length);
+  ico.writeUInt16LE(1, 2);
+  ico.writeUInt16LE(1, 4);
+  ico[6] = 16;
+  ico[7] = 16;
+  ico.writeUInt32LE(png.length, 14);
+  ico.writeUInt32LE(22, 18);
+  png.copy(ico, 22);
+  assert.doesNotThrow(() => validateOriginalSource(ico, {
+    mime: 'image/x-icon', width: 16, height: 16
+  }));
+  assert.throws(() => validateOriginalSource(ico, {
+    mime: 'image/x-icon', width: 32, height: 32
+  }), /no matching source dimensions/);
+  const corrupt = Buffer.from(ico);
+  corrupt.writeUInt32LE(0xffffffff, 18);
+  assert.throws(() => validateOriginalSource(corrupt, {
+    mime: 'image/x-icon', width: 16, height: 16
+  }), /offset invalid/);
+  const svg = Buffer.from('<svg xmlns="http://www.w3.org/2000/svg" ' +
+    'viewBox="0 0 16 16"><path fill="#fff" d="M0 0H16V16H0Z"/></svg>');
+  assert.doesNotThrow(() => validateOriginalSource(svg, {
+    mime: 'image/svg+xml', width: 16, height: 16
+  }));
+  for (const unsafe of [
+    '<svg><script>alert(1)</script></svg>',
+    '<svg><image href="https://example.com/a.png"/></svg>',
+    '<svg onload="alert(1)"></svg>',
+    '<!DOCTYPE svg><svg></svg>'
+  ]) {
+    assert.throws(() => validateOriginalSource(Buffer.from(unsafe), {
+      mime: 'image/svg+xml', width: 16, height: 16
+    }));
+  }
+});
+
 test('generator source is an offline Canvas pipeline, not runtime userscript bytes', () => {
   const html = rendererHtml({
     data_url: 'data:image/png;base64,AAAA', width: 8, height: 8
@@ -161,9 +202,10 @@ test('generator source is an offline Canvas pipeline, not runtime userscript byt
   assert.doesNotMatch(html,/<script src=/);
 });
 
-test('headless browser creates 588 full-composite frames with repeatable PNG bytes', {
-  skip: !(existsSync('/usr/bin/chromium') || existsSync('/usr/bin/google-chrome'))
-}, () => {
+test('headless browser creates 588 full-composite frames with repeatable PNG bytes', () => {
+  assert(process.env.DC_FAVICON_CHROME ||
+    existsSync('/usr/bin/chromium') || existsSync('/usr/bin/google-chrome'),
+    'A real Chrome/Chromium executable is required for rendering acceptance');
   if (existsSync('/usr/bin/google-chrome') && !existsSync('/usr/bin/chromium')) {
     process.env.DC_FAVICON_CHROME = '/usr/bin/google-chrome';
   }
