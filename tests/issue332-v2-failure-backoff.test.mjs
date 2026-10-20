@@ -14,13 +14,16 @@ const provider = read('../src/userscript/03-agent-lifecycle/03-favicon-cache-v2.
 const adapter = read('../src/userscript/03-agent-lifecycle/02-favicon-v2-adapter.js');
 const theme = read('../src/userscript/03-agent-lifecycle/02-favicon-theme.js');
 const consumer = read('../src/userscript/03-agent-lifecycle/02-favicon-cached-lookup.js');
+const headerVersion = /^\/\/\s*@version\s+(\S+)\s*$/m
+  .exec(read('../src/userscript-header.js'))?.[1];
+assert.ok(headerVersion, 'source header version is mandatory');
 const opaque = '<svg xmlns="http://www.w3.org/2000/svg" width="48" height="48">'
   + '<rect width="48" height="48" fill="#ffffff"/></svg>';
 const script = [
   'const faviconV2RenderSource = (() => {',
   renderer, 'return {renderFaviconPulseSequence}; })();',
   provider,adapter,
-  "const VERSION = '1.11.10-issue.332.9';",
+  'const VERSION = ' + JSON.stringify(headerVersion) + ';',
   'const agentFaviconOriginalSources = new Map();',
   'let agentFaviconRenderGeneration = 0;',
   'let agentStopwatchState = null;',
@@ -75,7 +78,7 @@ test('DC #334: permanent renderer failure backs off across 250ms real heartbeats
         res.writeHead(200, {'Content-Type':'text/html;charset=utf-8'}); res.end(page());
       }
     });
-    await new Promise(resolve => server.listen(0,'127.0.0.1'));
+    await new Promise(resolve => server.listen(0,'127.0.0.1',resolve));
     const dir = mkdtempSync(path.join(os.tmpdir(),'dc334-retry-backoff-'));
     try {
       const chrome = ['google-chrome','chromium','chromium-browser']

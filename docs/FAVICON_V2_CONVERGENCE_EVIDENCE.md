@@ -139,3 +139,14 @@ not skipped) and explicitly closes Chrome stdout/stderr on browser timeout to
 prevent child processes retaining pipes indefinitely. Functional assertion
 remains no more than two failed renders over 2450 ms, zero ready sequences,
 and original favicon unchanged. This is an observable gate, not a relaxation.
+
+## DC #332 .332.11 fixture correction
+
+Root cause of .332.9/.332.10 pending CI validation independently confirmed
+by inspection: the RED fixture called
+`new Promise(resolve => server.listen(0,'127.0.0.1'))`, which
+never invoked `resolve` and therefore never reached Chromium. Correct
+`server.listen(0,'127.0.0.1',resolve)` is used in .332.11, and test
+VERSION is read from the current source header before constructing page
+source. .332.9/.332.10 hanging runs **are not functional RED evidence**.
+The 2450ms failure-backoff and stock/atomic assertions remain unchanged.
