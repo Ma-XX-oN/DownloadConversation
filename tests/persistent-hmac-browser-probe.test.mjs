@@ -82,7 +82,9 @@ async function runTwoTabDiagnostic(isolatedLocks, staleVisibility = false) {
       crypto: { randomUUID: () => 'synthetic-' + scope + '-' + ++counter },
       navigator: { locks: isolatedLocks ? isolated[scope] : locks },
       BroadcastChannel: Broadcast,
-      setTimeout: (callback, ms) => setTimeout(callback, Math.min(8, ms)),
+      setTimeout: (callback, ms) => setTimeout(callback,
+        ms >= 45000 ? ms : Math.min(8, ms)),
+      clearTimeout,
       Date, Map, Set, Uint8Array,
       GM_getValue: (key, fallback) =>
         sync[scope].has(key) ? sync[scope].get(key) : fallback,
@@ -119,7 +121,8 @@ async function runTwoTabDiagnostic(isolatedLocks, staleVisibility = false) {
       console: { warn() {}, info(label, output) {
         if (scope === 0 && label === 'DC #313 result') {
           const parsed = JSON.parse(output);
-          if (parsed.test === 'GM cross-tab diagnostic') done(parsed.result);
+          if (parsed.test === 'GM cross-tab diagnostic' &&
+              parsed.result.status !== 'RUNNING') done(parsed.result);
         }
       } }
     };
@@ -237,4 +240,37 @@ test('all probe outputs are selectable and Copy JSON works without screenshots',
   assert.deepEqual(JSON.parse(clipboard), JSON.parse(field.value));
   assert.match(elements.find(el =>
     el.attributes.role === 'status').textContent, /Copied/);
+});
+
+test('probe shows RUNNING immediately and reports a stalled lock by timeout', async () => {
+  const menu = new Map(), outputs = [];
+  const context = {
+    location: { origin: 'https://chatgpt.com' },
+    crypto: { randomUUID: () => 'synthetic-hung-lock' },
+    BroadcastChannel: class { constructor() { this.onmessage = null; } },
+    navigator: { locks: { request: () => new Promise(() => {}) } },
+    setTimeout: (fn, ms) => setTimeout(fn, ms >= 45000 ? 20 : ms),
+    clearTimeout, Date, Map, Set,
+    GM_registerMenuCommand: (name, action) => menu.set(name, action),
+    GM_setValue: async () => {},
+    GM_getValue: () => 0,
+    GM: { getValue: async () => 0, setValue: async () => {} },
+    console: { warn() {}, info(name, json) {
+      if (name === 'DC #313 result') {
+        outputs.push(JSON.parse(json).result);
+      }
+    } }
+  };
+  vm.runInNewContext(source, context);
+  const fn = menu.get('DC #313: diagnose GM cross-tab storage');
+  assert.equal(typeof fn, 'function');
+  fn();
+  assert.equal(outputs[0].status, 'RUNNING');
+  await new Promise(resolve => setTimeout(resolve, 45));
+  const last = outputs.at(-1);
+  assert.equal(last.status, 'INCOMPLETE_TIMEOUT');
+  assert.match(last.phase, /synchronous GM counter/);
+  assert.match(last.note, /Reload both tabs/);
+  assert.ok(outputs.some(value =>
+    value.status === 'RUNNING' && value.phase === 'synchronous GM counter'));
 });
