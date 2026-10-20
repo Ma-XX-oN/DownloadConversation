@@ -83,6 +83,14 @@ test('consumer configuration preserves the DownloadConversation validation envir
       committed: true,
       platform: 'linux',
       capabilities: ['node-22']
+    }, {
+      id: 'favicon-pack',
+      generatorCommand: ['node', 'scripts/generate-favicon-packs.mjs', '--build'],
+      verifierCommand: ['node', 'scripts/generate-favicon-packs.mjs', '--verify'],
+      outputs: ['assets/favicons/v1/chatgpt-v1.dcfav'],
+      committed: true,
+      platform: 'linux',
+      capabilities: ['node-22']
     }]
   });
 });
