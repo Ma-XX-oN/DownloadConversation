@@ -303,7 +303,13 @@
         || !Number.isInteger(completion_time) || completion_time < 0 || completion_time > 6
         || !Number.isInteger(pulse_index) || pulse_index < 0 || pulse_index > 20) return null;
       const key = `${variant_id}:${base_type}:${completion_time}:${pulse_index}`;
-      if (this.cache.has(key)) return this.cache.get(key);
+      if (this.cache.has(key)) {
+        const cached = this.cache.get(key);
+        this.cache.delete(key);
+        this.cache.set(key, cached);
+        return cached;
+      }
+      if (this.cache.size >= 128) this.cache.delete(this.cache.keys().next().value);
       const task = (async () => {
         const tx = this.db.transaction('pngs', 'readonly');
         const record = await faviconCacheRequest(tx.objectStore('pngs').get([
