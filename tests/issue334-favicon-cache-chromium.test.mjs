@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { readFileSync, mkdtempSync, rmSync } from 'node:fs';
+import { readFileSync, mkdtempSync, rmSync, existsSync } from 'node:fs';
 import { createServer } from 'node:http';
 import { spawn, spawnSync } from 'node:child_process';
 import os from 'node:os';
@@ -128,10 +128,20 @@ test('Chromium: two tabs share one import, lock eviction, recover corruption', {
       '--disable-renderer-backgrounding', '--no-first-run', '--dump-dom',
       '--user-data-dir=' + dataDir, `http://127.0.0.1:${port}/`
     ];
-    const found = spawnSync('which', ['chromium'], { encoding: 'utf8' });
-    assert.equal(found.status, 0);
+    let executable = process.platform === 'win32' ? 'chrome.exe' : '';
+    if (process.platform !== 'win32') {
+      const candidates = process.platform === 'darwin'
+        ? ['/Applications/Google Chrome.app/Contents/MacOS/Google Chrome', 'google-chrome', 'chromium']
+        : ['google-chrome', 'chromium', 'chromium-browser'];
+      for (const name of candidates) {
+        if (name.startsWith('/') && existsSync(name)) { executable = name; break; }
+        const found = spawnSync('which', [name], { encoding: 'utf8' });
+        if (found.status === 0) { executable = found.stdout.trim(); break; }
+      }
+    }
+    assert.ok(executable, 'No Chromium browser executable was found');
     const result = await new Promise((resolve, reject) => {
-      const chrome = spawn(found.stdout.trim(), argv);
+      const chrome = spawn(executable, argv);
       let stdout = '';
       let stderr = '';
       const watchdog = setTimeout(() => { chrome.kill('SIGKILL'); reject(Error('browser-timeout')); }, 65000);
