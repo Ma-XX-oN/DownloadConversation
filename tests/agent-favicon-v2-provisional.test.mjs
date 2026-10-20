@@ -81,6 +81,8 @@ function fixture({
       return Promise.resolve(${JSON.stringify(version)});
     }
     async function open_favicon_dataset() { return provider; }
+    ${productionFunctionSource('agentFaviconCurrentTheme')}
+    ${productionFunctionSource('agentFaviconHandleThemeChange')}
     ${consumer}
     this.api = {
       get: get_favicon, render: agentFaviconRenderState,
