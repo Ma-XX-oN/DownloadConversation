@@ -52,6 +52,7 @@
         "src/userscript/03-agent-lifecycle/02-terminal-events-part2.js",
         "src/userscript/03-agent-lifecycle/02-favicon-theme.js",
         "src/userscript/03-agent-lifecycle/03-favicon-cache-v2.js",
+        "src/userscript/03-agent-lifecycle/03-favicon-cache-v2-part2.js",
         "src/userscript/03-agent-lifecycle/02-favicon-v2-adapter.js",
         "src/userscript/03-agent-lifecycle/02-favicon-cached-lookup.js",
         "src/userscript/03-agent-lifecycle/03-favicon.js",

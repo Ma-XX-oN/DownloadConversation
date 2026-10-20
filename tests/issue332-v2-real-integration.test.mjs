@@ -10,7 +10,9 @@ import { deflateSync } from 'node:zlib';
 
 const source = readFileSync(
   new URL('../src/userscript/03-agent-lifecycle/03-favicon-cache-v2.js', import.meta.url), 'utf8'
-);
+) + readFileSync(new URL(
+  '../src/userscript/03-agent-lifecycle/03-favicon-cache-v2-part2.js',
+  import.meta.url), 'utf8');
 const adapterSource = readFileSync(new URL(
   '../src/userscript/03-agent-lifecycle/02-favicon-v2-adapter.js', import.meta.url
 ), 'utf8');
@@ -19,9 +21,9 @@ const rendererSource = readFileSync(new URL(
 ), 'utf8').replace(/^export /gm, '');
 const rendererPrelude = 'const faviconV2RenderSource = (() => {\n'
   + rendererSource + '\nreturn {renderFaviconPulseSequence};\n})();\n';
-const originalSvg = '<svg xmlns="http://www.w3.org/2000/svg" width="48" height="48">'
-  + '<style>rect{fill:#fff}@media(prefers-color-scheme:dark)'
-  + '{rect{fill:#f0f0f0}}</style><rect width="48" height="48"/></svg>';
+const originalSvg = readFileSync(new URL(
+  '../assets/favicons/v1/originals/chatgpt-favicon-l4nq08hd.svg',
+  import.meta.url), 'utf8');
 
 function crc(bytes) {
   let value = 0xffffffff;

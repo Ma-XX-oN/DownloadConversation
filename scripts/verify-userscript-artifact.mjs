@@ -163,7 +163,7 @@ async function main() {
   }
 
   // Compare the exact source-owned renderer bytes after the same strict
-  // module-to-classic transformation as scripts/build-userscript.mjs.
+  // module-to-classic transformation as the authoritative source builder.
   const rendererSource = await readFile(
     path.join(root, 'src/favicon/browser-sequence.mjs'), 'utf8');
   const exportedNames = ['FaviconRenderError', 'activeFaviconTheme',
