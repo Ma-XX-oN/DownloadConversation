@@ -188,11 +188,7 @@ function validateArtifactAllowlist() {
       verifierCommand: ['node', 'scripts/verify-userscript-artifact.mjs'],
       outputs: ['chatgpt-conversation-markdown-export.user.js']
     },
-    'favicon-pack': {
-      generatorCommand: ['node', 'scripts/generate-favicon-packs.mjs', '--build'],
-      verifierCommand: ['node', 'scripts/generate-favicon-packs.mjs', '--verify'],
-      outputs: ['assets/favicons/v1/chatgpt-v1.dcfav']
-    }
+
   };
   if (!Array.isArray(config.artifacts)) {
     fail('RepoWorkflow artifact registry must contain an artifacts list');
