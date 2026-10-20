@@ -1,4 +1,6 @@
   // BEGIN Issue #163 WorkStack continuation UI/transaction
+  /** Persisted WorkStack feature preference; absent means disabled. */
+  const WORKSTACK_ENABLED_KEY = 'tm-recorder-workstack-enabled';
   /** Root observer that refreshes WorkStack UI across ChatGPT SPA changes. */
   let workStackRootObserver = null;
   /** Resize observer that keeps WorkStack below the independent stopwatch. */
@@ -334,6 +336,7 @@
    * @returns {void} No value is returned.
    */
   function installWorkStackContinuation() {
+    if (localStorage.getItem(WORKSTACK_ENABLED_KEY) !== 'true') return;
     if (workStackRootObserver) return;
     workStackObserveConversation(currentConversationId());
     workStackRender();
@@ -353,5 +356,28 @@
       document.documentElement,
       { childList: true, subtree: true }
     );
+  }
+  /**
+   * Enables or stops WorkStack without disturbing the independent stopwatch.
+   *
+   * @param {boolean} enabled - Whether WorkStack should operate.
+   * @returns {void} No value is returned.
+   */
+  function setWorkStackEnabled(enabled) {
+    localStorage.setItem(WORKSTACK_ENABLED_KEY, String(enabled));
+    if (enabled) {
+      installWorkStackContinuation();
+      return;
+    }
+    workStackRootObserver?.disconnect();
+    workStackRootObserver = null;
+    workStackStopwatchResizeObserver?.disconnect();
+    workStackStopwatchResizeObserver = null;
+    workStackObservedStopwatch = null;
+    if (workStackRecoveryTimer !== null) {
+      clearTimeout(workStackRecoveryTimer);
+      workStackRecoveryTimer = null;
+    }
+    document.getElementById(WORKSTACK_CONTROL_ID)?.remove();
   }
   // END Issue #163 WorkStack continuation UI/control
