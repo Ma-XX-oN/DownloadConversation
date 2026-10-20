@@ -227,6 +227,7 @@
    * @returns {void} No value is returned.
    */
   function workStackScheduleRecovery(delayMs = WORKSTACK_RECOVERY_RETRY_MS) {
+    if (localStorage.getItem(WORKSTACK_ENABLED_KEY) !== 'true') return;
     if (workStackRecoveryTimer !== null) return;
     workStackRecoveryTimer = setTimeout(() => {
       workStackRecoveryTimer = null;
@@ -261,6 +262,7 @@
    * @returns {Promise<void>} Resolves after the current recovery attempt completes or is deferred.
    */
   async function recoverWorkStackLane() {
+    if (localStorage.getItem(WORKSTACK_ENABLED_KEY) !== 'true') return;
     const conversationId = currentConversationId();
     workStackObserveConversation(conversationId);
     if (!conversationId) return;
@@ -273,19 +275,21 @@
     workStackState.recovery_promise = (async () => {
       try {
         const fetched = await fetchConversationPages(conversationId);
-        if (currentConversationId() !== conversationId) return;
+        if (currentConversationId() !== conversationId ||
+            localStorage.getItem(WORKSTACK_ENABLED_KEY) !== 'true') return;
         const resolved = workStackResolveLaneFromSpine(conversationSpineFromPages(fetched.pages));
         workStackState.status = resolved.status;
         workStackState.lane = resolved.lane;
         workStackState.detail = '';
         if (resolved.status === 'fetching') workStackScheduleRecovery();
       } catch (error) {
+        if (localStorage.getItem(WORKSTACK_ENABLED_KEY) !== 'true') return;
         workStackState.status = 'fetching';
         workStackState.detail = `Lane recovery waiting: ${errorMessage(error)}`;
         workStackScheduleRecovery(1500);
       } finally {
         workStackState.recovery_promise = null;
-        workStackRender();
+        if (localStorage.getItem(WORKSTACK_ENABLED_KEY) === 'true') workStackRender();
       }
     })();
     return workStackState.recovery_promise;

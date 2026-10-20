@@ -19,6 +19,11 @@
       localStorage.setItem(CONSOLE_DIAGNOSTICS_STORAGE_KEY, String(consoleDiagnostics));
       logDiagnostic('debug', 'console-diagnostics-changed', { enabled: consoleDiagnostics });
     });
+    const workStackToggle = panel.querySelector('[data-role="workstack-enabled"]');
+    workStackToggle.checked = localStorage.getItem(WORKSTACK_ENABLED_KEY) === 'true';
+    workStackToggle.addEventListener('change', () => {
+      setWorkStackEnabled(workStackToggle.checked);
+    });
     const oneGroup = panel.querySelector('[data-role="record-one-group"]');
     oneGroup.checked = recordingGroupState().enabled;
     oneGroup.addEventListener('change', () => {
