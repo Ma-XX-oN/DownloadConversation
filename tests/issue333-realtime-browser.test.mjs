@@ -59,47 +59,91 @@ async function runSequence(payload){
   }
 }
 
+/** Terminate an attempted browser before retrying with a fresh profile. */
+async function stopChrome(child) {
+  if(!child)return;
+  const exited=(child.exitCode!==null || child.signalCode!==null) ?
+    Promise.resolve() : new Promise(resolve=>child.once('exit',resolve));
+  child.kill('SIGTERM');
+  await Promise.race([exited,sleep(1500)]);
+  if(child.exitCode===null && child.signalCode===null)child.kill('SIGKILL');
+  await Promise.race([exited,sleep(1500)]);
+}
+
+/** A failed CDP startup is retried; renderer failures never are. */
+async function launchChrome(chrome,temp) {
+  const diagnostics=[];
+  for(let attempt=1;attempt<=3;attempt++){
+    const profile=join(temp,'chrome-profile-'+attempt);
+    const child=spawn(chrome,[
+      '--headless=new','--no-sandbox','--disable-dev-shm-usage',
+      '--disable-gpu','--disable-background-networking','--no-first-run',
+      '--force-prefers-color-scheme=light',
+      '--remote-allow-origins=*','--remote-debugging-port=0',
+      '--user-data-dir='+profile,'about:blank'
+    ],{stdio:['ignore','ignore','pipe']});
+    let stderr='',spawnError=null,socket;
+    child.on('error',error=>{spawnError=error;});
+    child.stderr?.on('data',chunk=>{
+      stderr=(stderr+chunk.toString('utf8')).slice(-4096);
+    });
+    try {
+      let pages=null;
+      for(let probe=0;probe<120;probe++){
+        const portPath=join(profile,'DevToolsActivePort');
+        if(spawnError || child.exitCode!==null || child.signalCode!==null)break;
+        if(existsSync(portPath)){
+          const port=readFileSync(portPath,'utf8').split('\n')[0].trim();
+          if(/^\d+$/.test(port)){
+            try {
+              const response=await fetch('http://127.0.0.1:'+port+'/json/list',
+                {signal:AbortSignal.timeout(1000)});
+              if(response.ok)pages=await response.json();
+            } catch { /* Chrome may not be listening yet. */ }
+            if(pages?.some(page=>page.type==='page' &&
+              page.webSocketDebuggerUrl))break;
+          }
+        }
+        await sleep(100);
+      }
+      const page=pages?.find(entry=>entry.type==='page' &&
+        entry.webSocketDebuggerUrl);
+      if(!page)throw new Error('DevToolsActivePort or CDP page not ready');
+      socket=new WebSocket(page.webSocketDebuggerUrl);
+      await Promise.race([
+        new Promise((resolve,reject)=>{
+          socket.addEventListener('open',resolve,{once:true});
+          socket.addEventListener('error',reject,{once:true});
+        }),
+        deadline(5000,'DevTools WebSocket handshake timed out')
+      ]);
+      if(attempt>1){
+        console.log('DC333_CHROMIUM_STARTUP_RECOVERED='+attempt);
+      }
+      return {child,socket};
+    } catch(error){
+      socket?.close();
+      diagnostics.push('attempt='+attempt+', error='+error.message+
+        ', exit='+child.exitCode+', signal='+child.signalCode+
+        ', spawnError='+(spawnError?.message||'none')+
+        ', stderr='+stderr.slice(-2000));
+      await stopChrome(child);
+      await sleep(200);
+    }
+  }
+  throw new Error('Chromium debugging endpoint unavailable after 3 '+
+    'bounded fresh-profile attempts: '+diagnostics.join(' | '));
+}
+
 test('real-time Chromium services event loop while producing 21 PNGs',
-  {timeout:45000},async()=>{
+  {timeout:90000},async()=>{
   const chrome=process.env.DC_FAVICON_CHROME ||
     (existsSync('/usr/bin/chromium')?'/usr/bin/chromium':'/usr/bin/google-chrome');
   assert(existsSync(chrome),'Chromium required for real-time responsiveness');
   const temp=mkdtempSync(join(tmpdir(),'dc333-realtime-'));
-  const profile=join(temp,'chrome-profile');
-  const child=spawn(chrome,[
-    '--headless=new','--no-sandbox','--disable-dev-shm-usage',
-    '--disable-gpu','--disable-background-networking','--no-first-run',
-    '--force-prefers-color-scheme=light',
-    '--remote-allow-origins=*','--remote-debugging-port=0',
-    '--user-data-dir='+profile,'about:blank'
-  ],{stdio:'ignore'});
-  let socket;
+  let child=null,socket;
   try {
-    let port=null;
-    for(let attempt=0;attempt<120;attempt++){
-      const path=join(profile,'DevToolsActivePort');
-      if(existsSync(path)){
-        port=readFileSync(path,'utf8').split('\n')[0].trim();
-        break;
-      }
-      if(child.exitCode!==null)break;
-      await sleep(100);
-    }
-    assert(port,'Chromium debugging endpoint unavailable');
-    const discovery=await fetch('http://127.0.0.1:'+port+'/json/list');
-    assert.equal(discovery.status,200);
-    const pages=await discovery.json();
-    const page=pages.find(entry=>entry.type==='page' &&
-      entry.webSocketDebuggerUrl);
-    assert(page,'No Chromium page debugging endpoint');
-    socket=new WebSocket(page.webSocketDebuggerUrl);
-    await Promise.race([
-      new Promise((resolve,reject)=>{
-        socket.addEventListener('open',resolve,{once:true});
-        socket.addEventListener('error',reject,{once:true});
-      }),
-      deadline(5000,'DevTools socket timeout')
-    ]);
+    ({child,socket}=await launchChrome(chrome,temp));
     let nextId=0;
     const pending=new Map();
     socket.addEventListener('message',event=>{
@@ -148,12 +192,7 @@ test('real-time Chromium services event loop while producing 21 PNGs',
     console.log('DC333_REALTIME_BROWSER='+JSON.stringify(result));
   } finally {
     socket?.close();
-    const exited=(child.exitCode!==null || child.signalCode!==null) ?
-      Promise.resolve() : new Promise(resolve=>child.once('exit',resolve));
-    child.kill('SIGTERM');
-    await Promise.race([exited,sleep(1500)]);
-    if(child.exitCode===null && child.signalCode===null)child.kill('SIGKILL');
-    await Promise.race([exited,sleep(1500)]);
+    await stopChrome(child);
     // Chromium child processes can briefly write into a profile after exit.
     // Retry only transient profile cleanup races; do not mask other errors.
     let cleaned=false;
