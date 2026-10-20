@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         ChatGPT Conversation Markdown Recorder
 // @namespace    https://chatgpt.com/
-// @version      1.11.10-issue.332.3
+// @version      1.11.10-issue.332.4
 // @description  Exports the current ChatGPT conversation directly from the Conversation API as Markdown or JSONL.
 // @match        https://chatgpt.com/*
 // @match        https://chat.openai.com/*
@@ -12764,7 +12764,6 @@ return Object.freeze({renderFaviconPulseSequence});
       await done;
     } catch (error) { try { tx.abort(); } catch {} await done.catch(() => {}); throw error; }
   }
-
   /**
    * Waits for a missing sequence's exclusive lock and renders only if still absent.
    * @param {FaviconDatasetSession} session - Locked dataset reader.
@@ -12960,7 +12959,8 @@ return Object.freeze({renderFaviconPulseSequence});
       faviconSequenceStartSweep(db);
       return await faviconSequenceShared(db, faviconSequenceVersions.get(version_key), render_sequence);
     } catch (error) { faviconSequenceWarn('open', error); return null; }
-  }  // Stable numeric cache colour index to renderer semantic colour.
+  }
+  // Stable numeric cache colour index to renderer semantic colour.
   const faviconV2NumericBases = Object.freeze([
     'processing', 'completed', 'error', 'acknowledged'
   ]);
