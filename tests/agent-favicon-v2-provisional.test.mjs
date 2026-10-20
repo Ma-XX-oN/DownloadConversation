@@ -114,12 +114,16 @@ test('V2 RED: one cold miss requests only one complete 21-frame sequence', async
   assert.deepEqual(JSON.parse(h.requested[0]), ['1.11.8', url, 'light', 0, 0]);
   h.publish(url, 'light', 0, 0);
   assert.equal(await h.api.render('processing', true), true);
+  const displayed = [];
   for (let slot = 0; slot < 40; slot++) {
     h.setTime(slot * 250);
     const result = await h.api.get('1.11.8', 0, 0, slot * 250);
     assert.equal(result.length, 1);
-    assert.equal(h.reads.at(-1)?.[4] ?? Math.min(slot, 40 - slot),
-      Math.min(slot, 40 - slot));
+    displayed.push(result[0].href);
+  }
+  assert.equal(new Set(displayed).size, 21);
+  for (let slot = 21; slot < 40; slot++) {
+    assert.equal(displayed[slot], displayed[40 - slot]);
   }
   assert.equal(h.requested.length, 1, 'no unrelated version/theme/colour/step');
 });
@@ -177,5 +181,14 @@ test('V2 RED: late reply for old theme/colour cannot overwrite red', async () =>
 test('V2 RED: warm reads never fetch or decode source in consumer', async () => {
   const s = productionFunctionSource('get_favicon');
   assert.doesNotMatch(s, /SourceDigest|find_variant|fetch\(|createElement\(['"]canvas/);
-  assert.match(s, /read_png\(/);
+  assert.match(productionFunctionSource('agentFaviconFrameUrl'), /read_png\(/);
+});
+
+test('V2 RED: inactive media candidates do not request another source', async () => {
+  const h = fixture({ candidates: 2 });
+  assert.equal(await h.api.render('processing'), false);
+  assert.equal(h.requested.length, 1);
+  assert.equal(JSON.parse(h.requested[0])[1],
+    'https://chatgpt.com/favicon0.svg');
+  assert.equal(h.links[1].href, 'https://chatgpt.com/favicon1.svg');
 });
