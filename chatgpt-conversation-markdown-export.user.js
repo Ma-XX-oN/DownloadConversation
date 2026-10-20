@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         ChatGPT Conversation Markdown Recorder
 // @namespace    https://chatgpt.com/
-// @version      1.11.8-issue.330.1
+// @version      1.11.8-issue.330.2
 // @description  Exports the current ChatGPT conversation directly from the Conversation API as Markdown or JSONL.
 // @match        https://chatgpt.com/*
 // @match        https://chat.openai.com/*
@@ -6904,8 +6904,6 @@ globalThis.__dcCompressor = {
   const COMMUNICATION_LOG_DB_STORE = 'handles';
   /** Stable IndexedDB key for the communication-log directory handle. */
   const COMMUNICATION_LOG_HANDLE_KEY = 'communication-directory';
-  /** Cross-tab signal that the shared COMM directory handle or permission changed. */
-  const COMMUNICATION_LOG_DIRECTORY_SIGNAL_KEY = 'tm-downloadconversation-communication-directory-updated';
   /** Prefix used to retain the last known conversation title for immediate reload logging. */
   const COMMUNICATION_LOG_TITLE_STORAGE_PREFIX = 'tm-downloadconversation-communication-title:';
   /** Initial sealed communication-segment target; tune this one symbol after browser benchmarks. */
@@ -7036,14 +7034,6 @@ globalThis.__dcCompressor = {
   let stockNetworkSequence = 0;
   /** Persisted user-authorized directory used for the disk communication recorder. */
   let communicationLogDirectoryHandle = null;
-  /** Previously saved directory awaiting a trusted reauthorisation gesture. */
-  let communicationLogPendingDirectoryHandle = null;
-  /** Prevents repeated restore work during simultaneous tab notifications. */
-  let communicationLogDirectoryRestorePromise = null;
-  /** Whether this document has installed cross-tab/foreground retry listeners. */
-  let communicationLogDirectoryRetryInstalled = false;
-  /** A denied reauthorisation must fall back to the normal chooser. */
-  let communicationLogDirectoryReselectRequired = false;
   /** Whether the next trusted page gesture is reserved for native directory chooser launch. */
   let communicationLogDirectoryGestureArmed = false;
   /** Whether a native directory chooser promise is currently outstanding. */
@@ -7080,6 +7070,17 @@ globalThis.__dcCompressor = {
   function assert(condition, message) {
     if (!condition) throw new Error(message);
   }
+
+  /** Cross-tab signal that the shared COMM directory handle or permission changed. */
+  const COMMUNICATION_LOG_DIRECTORY_SIGNAL_KEY = 'tm-downloadconversation-communication-directory-updated';
+  /** Previously saved directory awaiting a trusted reauthorisation gesture. */
+  let communicationLogPendingDirectoryHandle = null;
+  /** Prevents repeated restore work during simultaneous tab notifications. */
+  let communicationLogDirectoryRestorePromise = null;
+  /** Whether this document has installed cross-tab/foreground retry listeners. */
+  let communicationLogDirectoryRetryInstalled = false;
+  /** A denied reauthorisation must fall back to the normal chooser. */
+  let communicationLogDirectoryReselectRequired = false;
 
   /**
    * Restores the GEN diagnostic tail and its historical version baseline.
@@ -8088,6 +8089,8 @@ globalThis.__dcCompressor = {
       })
       .finally(() => {
         communicationLogDirectoryPickerOpening = false;
+        // A peer can finish authorisation while this tab's chooser is open.
+        if (!communicationLogReady) void communicationLogRetryStoredDirectory();
       });
   }
 
@@ -8113,6 +8116,8 @@ globalThis.__dcCompressor = {
      * @returns {void} No value is returned.
      */
     const mount = () => {
+      // Another restored tab can authorise this one before deferred mounting occurs.
+      if (!communicationLogPromptShown || communicationLogReady) return;
       if (!document.body) {
         requestAnimationFrame(mount);
         return;
