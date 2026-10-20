@@ -68,6 +68,7 @@ const ordinaryStages = [
   ['DC #333 original WebP acquisition', nodeCommand, ['--test', 'tests/favicon-source-recovery.test.mjs']],
   ['DC #333 full original-source asset build', nodeCommand, ['--test', 'tests/favicon-pack-real-assets.test.mjs']],
   ['DC #333 source SVG theme divergence evidence', nodeCommand, ['--test', 'tests/favicon-svg-theme-divergence.test.mjs']],
+  ['DC #333 current-source candidate provenance probe', nodeCommand, ['--test', 'tests/favicon-candidate-urls.test.mjs']],
   ['Agent WebSocket delayed-final regression', nodeCommand, ['--test', 'tests/agent-websocket-delayed-final.test.mjs']],
   ['Agent sound readiness regression', nodeCommand, ['--test', 'tests/agent-sound-initialization-indicator.test.mjs']],
   ['Agent terminal polling-timeout regression', nodeCommand, ['--test', 'tests/agent-terminal-polling-timeout.test.mjs', 'tests/agent-terminal-polling-timeout-observer.test.mjs', 'tests/agent-terminal-polling-timeout-integration.test.mjs']],
