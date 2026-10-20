@@ -70,6 +70,7 @@ function fixture({
     const VERSION = ${JSON.stringify(version)};
     const agentFaviconOriginalSources = new Map();
     let agentFaviconRenderGeneration = 0;
+    let agentFaviconPulseUpdatePending = false;
     let agentStopwatchState = {
       active: true, started_at_ms: 0, total_ms: null
     };
@@ -84,6 +85,7 @@ function fixture({
     ${productionFunctionSource('agentFaviconCurrentTheme')}
     ${productionFunctionSource('agentFaviconHandleThemeChange')}
     ${productionFunctionSource('agentFaviconActiveCandidates')}
+    ${productionFunctionSource('agentFaviconPulseHeartbeat')}
     ${productionFunctionSource('agentFaviconRestoreStockCandidates')}
     ${consumer}
     this.api = {
