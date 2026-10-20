@@ -32,3 +32,13 @@
     }
   }
 
+  /**
+   * Keeps only favicon links eligible for the current browser media context.
+   * @param {Array<Object>} candidates - Original stock link descriptors.
+   * @returns {Array<Object>} Descriptors allowed by active media queries.
+   */
+  function agentFaviconActiveCandidates(candidates) {
+    return candidates.filter(candidate => !candidate.media ||
+      window.matchMedia(candidate.media).matches);
+  }
+
