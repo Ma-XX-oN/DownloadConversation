@@ -5,6 +5,7 @@ import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import { execFileSync } from 'node:child_process';
 import { renderFaviconPulseSequence, pulseFrameForSlot } from '../src/favicon/browser-sequence.mjs';
+import { productionFunctionSource } from './helpers/userscript-source.mjs';
 
 const PINNED_SVG = new URL(
   '../assets/favicons/v1/originals/chatgpt-favicon-l4nq08hd.svg', import.meta.url);
@@ -71,6 +72,39 @@ function browserFixture(svgBytes,webpBytes,moduleSource) {
           return [...ctx.getImageData(0,0,c.width,c.height).data];
         } finally {URL.revokeObjectURL(url);}
       };
+      // Independent pixel proof: project exactly the existing production
+      // recolour, pie, ring, and cosine helpers against the same original.
+      const originalImage=new Image();
+      await new Promise((resolve,reject)=>{
+        originalImage.onload=resolve;
+        originalImage.onerror=reject;
+        originalImage.src=source;
+      });
+      for(const frame of [0,10,20]){
+        const target=document.createElement('canvas');
+        target.width=180;target.height=180;
+        const tctx=target.getContext('2d',{willReadFrequently:true});
+        tctx.drawImage(originalImage,0,0);
+        const pixels=tctx.getImageData(0,0,180,180);
+        agentFaviconRecolorPixels(pixels.data,[255,255,0]);
+        tctx.putImageData(pixels,0,0);
+        tctx.globalCompositeOperation='destination-over';
+        try {agentFaviconDrawPieSlice(tctx,180,180,3);}
+        finally {tctx.globalCompositeOperation='source-over';}
+        agentFaviconDrawRing(tctx,180,180,3);
+        const expectedPixels=tctx.getImageData(0,0,180,180);
+        agentFaviconApplyOpacity(expectedPixels.data,
+          agentFaviconPulseOpacity(frame*250));
+        tctx.putImageData(expectedPixels,0,0);
+        const actual=await decode(sequence.frames[frame]);
+        const expected=tctx.getImageData(0,0,180,180).data;
+        if(actual.length!==expected.length)throw new Error('Frame dimensions differ');
+        for(let i=0;i<actual.length;i++){
+          if(actual[i]!==expected[i])throw new Error(
+            'Legacy pixel mismatch, scheme='+theme+', frame='+frame+
+            ', channel='+i+', expected='+expected[i]+', actual='+actual[i]);
+        }
+      }
       const a=await decode(sequence.frames[0]);
       const mid=await decode(sequence.frames[10]);
       const b=await decode(sequence.frames[20]);
@@ -105,6 +139,18 @@ function browserFixture(svgBytes,webpBytes,moduleSource) {
       }).then(()=> 'UNEXPECTED_SUCCESS',e=>e.name);
       setTimeout(()=>aborter.abort(),0);
       aggregate.aborted=await pending;
+      const nativeMatchMedia=window.matchMedia;
+      const changed=(theme==='light');
+      const interrupted=provider.renderFaviconPulseSequence({
+        originalUrl:source,theme,base:'processing',progressStep:3
+      }).then(()=> 'UNEXPECTED_SUCCESS',e=>e.name);
+      setTimeout(()=>{window.matchMedia=()=>({matches:changed});},0);
+      aggregate.themeFlip=await interrupted;
+      window.matchMedia=nativeMatchMedia;
+      const recovery=await provider.renderFaviconPulseSequence({
+        originalUrl:source,theme,base:'processing',progressStep:3
+      });
+      aggregate.recovered=recovery.frames.length===21;
       aggregate.returnedFields=Object.keys(sequence).sort();
       result.textContent='PASS:'+JSON.stringify(aggregate);
     } catch (error) {
@@ -113,7 +159,15 @@ function browserFixture(svgBytes,webpBytes,moduleSource) {
   };
   const data={svg:svgBytes.toString('base64'),
     webp:webpBytes.toString('base64'),module:moduleSource};
+  const legacyFunctions = [
+    'agentFaviconRecolorPixels','agentFaviconDrawPieSlice',
+    'agentFaviconDrawRing','agentFaviconRingColor',
+    'agentFaviconApplyOpacity','agentFaviconPulseOpacity'
+  ].map(productionFunctionSource).join('\\n');
   return '<!doctype html><html><body><pre id="result">RUNNING</pre>'+
+    '<script>const AGENT_FAVICON_PULSE_INTERVAL_MS=10000;'+
+    'function assert(condition,reason){if(!condition)throw new Error(reason)};'+
+    legacyFunctions+'</script>'+
     '<script>(' + script.toString() + ')('+
     JSON.stringify(data).replaceAll('<','\\u003c') +
     ');</script></body></html>';
@@ -152,6 +206,8 @@ test('real Chromium renders only one 21-Blob sequence at a time in each theme',(
       assert(result.midAlpha>result.lastAlpha);
       assert.equal(result.repeatPixels,true);
       assert.equal(result.aborted,'AbortError');
+      assert.equal(result.themeFlip,'AbortError');
+      assert.equal(result.recovered,true);
       assert(result.ticks>=2,'Generation starved the timer loop');
       console.log('DC333_V2_BROWSER_'+scheme.toUpperCase()+'='+JSON.stringify({
         frames:result.frames,elapsed_ms:result.elapsedMs,timer_ticks:result.ticks,
