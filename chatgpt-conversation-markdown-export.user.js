@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         ChatGPT Conversation Markdown Recorder
 // @namespace    https://chatgpt.com/
-// @version      1.11.8-issue.335.13
+// @version      1.11.8-issue.335.14
 // @description  Exports the current ChatGPT conversation directly from the Conversation API as Markdown or JSONL.
 // @match        https://chatgpt.com/*
 // @match        https://chat.openai.com/*
@@ -12147,19 +12147,29 @@ globalThis.__dcCompressor = {
     }
   }
 
-  /** True while one periodic favicon read is awaiting the cache provider. */
-  let agentFaviconPulseUpdatePending = false;
+  /** Active timer request and its exact lifecycle/theme/source context. */
+  let agentFaviconPulseUpdatePending = null;
 
   /**
-   * Coalesces timer ticks while a slow cache read is pending.
-   * @returns {void} The periodic tick does not return a value.
+   * Coalesces only equivalent slow reads, never suppressing a new context.
+   * @returns {void} Does not return a value.
    */
   function agentFaviconPulseHeartbeat() {
-    if (agentFaviconPulseUpdatePending ||
-        agentFaviconVisibleState === 'original') return;
-    agentFaviconPulseUpdatePending = true;
+    if (agentFaviconVisibleState === 'original') return;
+    const candidates = agentFaviconActiveCandidates(agentFaviconCurrentCandidates());
+    const key = JSON.stringify([agentFaviconVisibleState,
+      agentFaviconRingStep(), agentFaviconCurrentTheme(),
+      candidates.map(candidate => [candidate.original_href, candidate.media])]);
+    if (agentFaviconPulseUpdatePending?.key === key) return;
+    const pending = { key };
+    agentFaviconPulseUpdatePending = pending;
+    const complete = () => {
+      if (agentFaviconPulseUpdatePending === pending) {
+        agentFaviconPulseUpdatePending = null;
+      }
+    };
     void agentFaviconRenderState(agentFaviconVisibleState, true)
-      .finally(() => { agentFaviconPulseUpdatePending = false; });
+      .then(complete, complete);
   }
 
   /** A favicon pulse has forty 250-ms slots and 21 unique symmetric frames. */
