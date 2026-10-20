@@ -59,7 +59,7 @@ function validateRequest(request) {
     throw new TypeError('Original favicon URL must be a bounded nonempty string');
   }
   let url;
-  try { url = new URL(originalUrl, document.baseURI); }
+  try { url = new URL(originalUrl, typeof document === 'undefined' ? undefined : document.baseURI); }
   catch { throw new TypeError('Invalid original favicon URL'); }
   if (!['http:', 'https:'].includes(url.protocol) &&
     !(url.protocol === 'data:' && /^data:image\/(?:png|webp|svg\+xml|x-icon|vnd\.microsoft\.icon);base64,/i.test(originalUrl))) {
