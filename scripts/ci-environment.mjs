@@ -64,7 +64,7 @@ const ordinaryStages = [
   ['Agent turn stopwatch live total', nodeCommand, ['--test', 'tests/agent-turn-stopwatch-live-total.test.mjs']],
   ['Agent turn stopwatch reload restoration', nodeCommand, ['--test', 'tests/agent-turn-stopwatch-reload.test.mjs']],
   ['Agent favicon state regression', nodeCommand, ['--test', 'tests/agent-favicon-state.test.mjs', 'tests/agent-favicon-browser-selection.test.mjs', 'tests/agent-favicon-thirty-minute-ring.test.mjs', 'tests/agent-favicon-heartbeat.test.mjs']],
-  ['DC #333 favicon pack format and pixel parity', nodeCommand, ['--test', 'tests/favicon-pack-v1.test.mjs', 'tests/favicon-pack-pixel-equivalence.test.mjs']],
+  ['DC #333 favicon pack format and real-source pixel parity', nodeCommand, ['--test', 'tests/favicon-pack-v1.test.mjs', 'tests/favicon-pack-pixel-equivalence.test.mjs', 'tests/favicon-pack-real-source-pixel.test.mjs']],
   ['DC #333 original WebP acquisition', nodeCommand, ['--test', 'tests/favicon-source-recovery.test.mjs']],
   ['DC #333 full original-source asset build', nodeCommand, ['--test', 'tests/favicon-pack-real-assets.test.mjs']],
   ['Agent WebSocket delayed-final regression', nodeCommand, ['--test', 'tests/agent-websocket-delayed-final.test.mjs']],
