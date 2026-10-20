@@ -19,6 +19,12 @@ const adapterSource = readFileSync(new URL(
 const rendererSource = readFileSync(new URL(
   '../src/favicon/browser-sequence.mjs', import.meta.url
 ), 'utf8').replace(/^export /gm, '');
+const themeSource = readFileSync(new URL(
+  '../src/userscript/03-agent-lifecycle/02-favicon-theme.js', import.meta.url
+), 'utf8');
+const consumerSource = readFileSync(new URL(
+  '../src/userscript/03-agent-lifecycle/02-favicon-cached-lookup.js', import.meta.url
+), 'utf8');
 const rendererPrelude = 'const faviconV2RenderSource = (() => {\n'
   + rendererSource + '\nreturn {renderFaviconPulseSequence};\n})();\n';
 const originalSvg = readFileSync(new URL(
@@ -65,6 +71,13 @@ function pageHtml(isChild) {
       ${source}
       ${rendererPrelude}
       ${adapterSource}
+      const VERSION = '1.11.10-issue.332.4';
+      const agentFaviconOriginalSources = new Map();
+      let agentFaviconRenderGeneration = 0;
+      let agentStopwatchState = null;
+      function errorMessage(error) { return String(error?.message || error); }
+      ${themeSource}
+      ${consumerSource}
       const frameBytes = ${JSON.stringify(frames)};
       const frameBlobs = frameBytes.map(value => new Blob([
         Uint8Array.from(atob(value), c => c.charCodeAt(0))
@@ -75,6 +88,12 @@ function pageHtml(isChild) {
       const URL1 = location.origin + '/favicon.svg';
       faviconCacheV2Configure([{version:'1.11.8', update_every_ms:250},
         {version:'1.12.0',update_every_ms:250}]);
+      window.pngEncodes = 0;
+      const originalToBlob = HTMLCanvasElement.prototype.toBlob;
+      HTMLCanvasElement.prototype.toBlob = function (...args) {
+        window.pngEncodes++;
+        return originalToBlob.apply(this, args);
+      };
       window.calls = [];
       window.errors = [];
       function logDiagnostic(level, key, detail) { window.errors.push({level,key,detail}); }
@@ -103,6 +122,7 @@ function pageHtml(isChild) {
         verify(a && b, 'both dataset sessions open');
         let resume;
         window.pauseRender = new Promise(resolve => { resume = resolve; });
+        const coldStart = performance.now();
         const first = a.read_png(URL1, 'light', 0, 0, 0);
         for(let i=0;i<100 && calls.length===0;i++) await wait(20);
         verify(calls.length===1, 'first owner not selected');
@@ -118,6 +138,28 @@ function pageHtml(isChild) {
         resume();
         verify((await first)?.type==='image/png', 'first frame failed '+JSON.stringify(window.errors));
         verify((await waiting)?.type==='image/png', 'waiting tab frame failed');
+        const coldMs = performance.now() - coldStart;
+        verify(window.pngEncodes === 21,
+          'first cold sequence generated '+window.pngEncodes+' frames, expected 21');
+        const warmStart = performance.now();
+        const beforeConsumer = window.pngEncodes;
+        verify(await agentFaviconRenderState('processing') === true,
+          'real #335 consumer failed to use actual #334 cache');
+        verify(document.getElementById('stock').href.startsWith('blob:'),
+          'real consumer did not display a ready Blob URL');
+        verify(await agentFaviconRenderState('original') === true,
+          'real consumer did not restore original state');
+        verify(document.getElementById('stock').href === URL1,
+          'real consumer failed original href restoration');
+        const warmMs = performance.now() - warmStart;
+        verify(window.pngEncodes === beforeConsumer,
+          'consumer pulse reencoded a cached frame');
+        const measured = { coldMs, warmMs,
+          coldEncodes: beforeConsumer, warmNewEncodes: window.pngEncodes-beforeConsumer,
+          heapBytes: performance.memory?.usedJSHeapSize ?? null };
+        const consumerSession = agentFaviconDatasetSession;
+        agentFaviconDispose();
+        if (consumerSession) await consumerSession.close();
         verify(calls.length+child.calls.length === 1, 'duplicate render after lock');
         const meta = await faviconSequenceRequest(db.transaction('sequences','readonly')
           .objectStore('sequences').get(identity));
@@ -222,7 +264,8 @@ function pageHtml(isChild) {
         document.getElementById('result').textContent=JSON.stringify({
           winner:true, atomic21:true, no_duplicate:true, real_renderer:true,
           no_eager:true, recovery:true, aborted_transaction:true,
-          takeover:true, navigation:true, warm:true, strict_ttl:true, throttle:true, versions:true });
+          takeover:true, navigation:true, warm:true, strict_ttl:true, throttle:true,
+          versions:true, real_consumer:true, measured });
       }
       ${isChild ? '' : `runParent().catch(error => {
         document.getElementById('result').textContent=JSON.stringify({error:String(error)});
@@ -277,10 +320,13 @@ test('V2 real #333 renderer under #334 two-tab IDB/Web Locks, atomic 21, and rec
       const result=JSON.parse(match[1].replaceAll('&quot;','"').replaceAll('&amp;','&'));
       assert.equal(result.error, undefined, JSON.stringify(result));
       for (const name of ['winner','atomic21','no_duplicate','real_renderer','no_eager',
-        'recovery','aborted_transaction','takeover','warm','strict_ttl',
+        'recovery','aborted_transaction','takeover','warm','real_consumer','strict_ttl',
         'throttle','versions','navigation']) {
         assert.equal(result[name],true,name);
       }
+      console.log('DC332_V2_REAL_PROVIDER_CONSUMER='+JSON.stringify(result.measured));
+      assert.equal(result.measured.coldEncodes, 21);
+      assert.equal(result.measured.warmNewEncodes, 0);
     } finally {
       server.closeAllConnections();
       await new Promise(resolve => server.close(resolve));
