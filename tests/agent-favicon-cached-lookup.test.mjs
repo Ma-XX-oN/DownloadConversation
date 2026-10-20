@@ -77,6 +77,7 @@ function fixture(known = true, delayedRead = null, candidates = 1,
     }
     ${productionFunctionSource('agentFaviconCurrentTheme')}
     ${productionFunctionSource('agentFaviconHandleThemeChange')}
+    ${productionFunctionSource('agentFaviconActiveCandidates')}
     ${source}
     this.api = { get: get_favicon, pulse: agentFaviconPulseIndex,
       render: agentFaviconRenderState, dispose: agentFaviconDispose };
@@ -202,8 +203,8 @@ test('two independent tabs use their exact version-scoped provider sessions', as
 test('an unavailable source sequence leaves only that candidate untouched', async () => {
   const firstUrl = 'https://chatgpt.com/favicon0.png';
   const h = fixture(url => url === firstUrl, null, 2);
-  assert.equal(await h.api.render('processing'), false);
-  assert.equal(h.reads.length, 2);
+  assert.equal(await h.api.render('processing'), true);
+  assert.equal(h.reads.length, 1);
   assert.equal(h.reads[0][0], firstUrl);
   assert.ok(h.links[0].href.startsWith('blob:test/'));
   assert.equal(h.links[1].href, 'https://chatgpt.com/favicon1.png');
