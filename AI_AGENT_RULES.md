@@ -111,8 +111,9 @@ allowed on active repository lines.  Repository-write permission is limited to
 approved deterministic generated-artifact/test-cycle publication, including
 `RepoWorkflow materialize-artifacts --commit` for narrowly allowlisted outputs
 and `scripts/test-cycle-artifact.mjs` for the userscript.  The artifact
-allowlist comprises the userscript and DC #333's reproducibly generated
-`assets/favicons/v1/chatgpt-v1.dcfav`.  Direct unauthorised `git add`,
+allowlist comprises only the generated userscript.  DC #333's V1 favicon
+binary pack is historical evidence; superseding V2 permits only lazy,
+browser-local PNG sequence generation.  Direct unauthorised `git add`,
 `git commit`, `git push`, general mutating API calls, issue-specific patch
 scripts, and one-shot editing workflows are prohibited.
 
