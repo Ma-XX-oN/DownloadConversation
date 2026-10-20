@@ -317,7 +317,7 @@ test('diagnostic identifies a missing peer without assuming GM failure', async (
       postMessage() {} },
     navigator: { locks: { request: async (_name, _opts, fn) =>
       fn({ mode: 'exclusive' }) } },
-    setTimeout: (fn, ms) => setTimeout(fn, Math.min(ms, 5)),
+    setTimeout: (fn, ms) => setTimeout(fn, ms >= 45000 ? 100 : Math.min(ms, 5)),
     clearTimeout, Date, Map, Set,
     GM_registerMenuCommand: (name, action) => menu.set(name, action),
     GM_setValue: (key, value) => { storage.set(key, value); },
