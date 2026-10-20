@@ -167,3 +167,19 @@ state any missing measurement.
 - [ ] Direct exact-tested artifact handoff; draft PR remains UNMERGED.
 
 **Final certification BLOCKED by DC #333, DC #334, DC #335.**
+
+
+## 2026-10-20 real integration follow-up (DC #332)
+
+Frozen V2.0 contract blob:
+`1361fdd928d1a456485cf4ec4559dd1492945598`
+(commit `bc2035c40cd63f0d5f245e4a07f56184849ffd04`).
+The earlier description of V2 as unfrozen is historical; this
+appendix supersedes that status only. DC #332 assembled the exact
+worker renderer, cache, consumer and prepared tests into draft PR #346
+against current main. Its genuine two-tab renderer/cache test is
+`tests/issue332-v2-real-integration.test.mjs`. All real integrated
+criteria stay INCOMPLETE until the exact candidate has completed
+RED/GREEN, deterministic packaging, hosted CI, Chromium and required
+authenticated ChatGPT measurement. Do not count historical fixture
+PASS as actual convergence.
