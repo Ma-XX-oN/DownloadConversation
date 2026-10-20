@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         ChatGPT Conversation Markdown Recorder
 // @namespace    https://chatgpt.com/
-// @version      1.11.8-issue.335.14
+// @version      1.11.8-issue.335.15
 // @description  Exports the current ChatGPT conversation directly from the Conversation API as Markdown or JSONL.
 // @match        https://chatgpt.com/*
 // @match        https://chat.openai.com/*
@@ -12163,6 +12163,10 @@ globalThis.__dcCompressor = {
     if (agentFaviconPulseUpdatePending?.key === key) return;
     const pending = { key };
     agentFaviconPulseUpdatePending = pending;
+    /**
+     * Releases only the matching periodic request after async completion.
+     * @returns {void} No result is returned.
+     */
     const complete = () => {
       if (agentFaviconPulseUpdatePending === pending) {
         agentFaviconPulseUpdatePending = null;
