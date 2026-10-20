@@ -20,7 +20,7 @@ test('capture all original stock favicon candidates without modifying browser se
   `, h);
   let candidates = h.candidates();
   assert.equal(candidates.length, 2);
-  assert.deepEqual(candidates.map(c => c.original_href), links.map(l => l.href));
+  assert.deepEqual(Array.from(candidates, c => c.original_href), links.map(l => l.href));
   assert.equal(candidates[1].media, '(prefers-color-scheme: dark)');
   assert.equal(candidates[1].sizes, '48x48');
   h.displayed.set(links[0], 'blob:test');
