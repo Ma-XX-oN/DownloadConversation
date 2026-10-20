@@ -189,7 +189,8 @@
             if (!faviconCacheCheckPng(png, variant.width, variant.height)) throw Error('pack-png');
             spans.push({ version: descriptor.version, variant_id: variant.id,
               base_type: base, completion_time: pie, pulse_index: pulse,
-              offset: payloadStart + span.offset, bytes: span.bytes });
+              offset: payloadStart + span.offset, bytes: span.bytes,
+              width: variant.width, height: variant.height });
           }
         }
       }
@@ -201,5 +202,23 @@
       end += span.bytes;
     }
     if (end !== data.length) throw Error('pack-tail');
+    // CRC and IHDR checks cannot prove IDAT data is actually decodable.
+    // Decode every frame before publishing any image as a ready collection.
+    if (typeof createImageBitmap !== 'function') throw Error('png-decoder-unavailable');
+    for (const span of spans) {
+      let bitmap;
+      try {
+        bitmap = await createImageBitmap(new Blob([
+          data.subarray(span.offset, span.offset + span.bytes)
+        ], { type: 'image/png' }));
+        if (bitmap.width !== span.width || bitmap.height !== span.height) {
+          throw Error('decoded-png-dimensions');
+        }
+      } catch (error) {
+        throw Error('pack-png-decode', { cause: error });
+      } finally {
+        bitmap?.close();
+      }
+    }
     return { data, spans, variants };
   }
