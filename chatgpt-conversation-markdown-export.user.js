@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         ChatGPT Conversation Markdown Recorder
 // @namespace    https://chatgpt.com/
-// @version      1.11.8-issue.330.2
+// @version      1.11.8-issue.330.3
 // @description  Exports the current ChatGPT conversation directly from the Conversation API as Markdown or JSONL.
 // @match        https://chatgpt.com/*
 // @match        https://chat.openai.com/*
@@ -7837,6 +7837,53 @@ globalThis.__dcCompressor = {
   }
 
   /**
+   * Retries the shared directory handle when another tab grants permission or this tab is focused.
+   *
+   * @returns {Promise<boolean>} True if the saved handle has become ready.
+   */
+  async function communicationLogRetryStoredDirectory() {
+    if (communicationLogReady || communicationLogDirectoryPickerOpening ||
+        communicationLogDirectoryReselectRequired) return false;
+    if (communicationLogDirectoryRestorePromise) return communicationLogDirectoryRestorePromise;
+    // Startup already checks the same handle; defer concurrent notifications until it finishes.
+    if (communicationLogInitializationPromise && !communicationLogPromptShown) return false;
+
+    const restore = (async () => {
+      const handle = await communicationLogLoadDirectoryHandle();
+      if (!handle) return false;
+      communicationLogPendingDirectoryHandle = handle;
+      if (await communicationLogPermissionState(handle) !== 'granted') return false;
+      return communicationLogActivateDirectory(handle);
+    })();
+    communicationLogDirectoryRestorePromise = restore;
+    try {
+      return await restore;
+    } catch (error) {
+      communicationLogReportFailure('directory-cross-tab-restore', error);
+      return false;
+    } finally {
+      communicationLogDirectoryRestorePromise = null;
+    }
+  }
+
+  /**
+   * Installs lightweight permission-retry observers for all restored tabs.
+   *
+   * @returns {void} No value is returned.
+   */
+  function communicationLogInstallDirectoryRetryObservers() {
+    if (communicationLogDirectoryRetryInstalled) return;
+    communicationLogDirectoryRetryInstalled = true;
+    window.addEventListener('storage', event => {
+      if (event.key !== COMMUNICATION_LOG_DIRECTORY_SIGNAL_KEY) return;
+      void communicationLogRetryStoredDirectory();
+    });
+    window.addEventListener('focus', () => {
+      if (!communicationLogReady) void communicationLogRetryStoredDirectory();
+    });
+  }
+
+  /**
    * Reads current read/write permission for one File System Access directory handle.
    *
    * @param {Object|null} handle - Candidate FileSystemDirectoryHandle.
@@ -8137,53 +8184,6 @@ globalThis.__dcCompressor = {
       try { prompt.focus({ preventScroll: true }); } catch {}
     };
     mount();
-  }
-
-  /**
-   * Retries the shared directory handle when another tab grants permission or this tab is focused.
-   *
-   * @returns {Promise<boolean>} True if the saved handle has become ready.
-   */
-  async function communicationLogRetryStoredDirectory() {
-    if (communicationLogReady || communicationLogDirectoryPickerOpening ||
-        communicationLogDirectoryReselectRequired) return false;
-    if (communicationLogDirectoryRestorePromise) return communicationLogDirectoryRestorePromise;
-    // Startup already checks the same handle; defer concurrent notifications until it finishes.
-    if (communicationLogInitializationPromise && !communicationLogPromptShown) return false;
-
-    const restore = (async () => {
-      const handle = await communicationLogLoadDirectoryHandle();
-      if (!handle) return false;
-      communicationLogPendingDirectoryHandle = handle;
-      if (await communicationLogPermissionState(handle) !== 'granted') return false;
-      return communicationLogActivateDirectory(handle);
-    })();
-    communicationLogDirectoryRestorePromise = restore;
-    try {
-      return await restore;
-    } catch (error) {
-      communicationLogReportFailure('directory-cross-tab-restore', error);
-      return false;
-    } finally {
-      communicationLogDirectoryRestorePromise = null;
-    }
-  }
-
-  /**
-   * Installs lightweight permission-retry observers for all restored tabs.
-   *
-   * @returns {void} No value is returned.
-   */
-  function communicationLogInstallDirectoryRetryObservers() {
-    if (communicationLogDirectoryRetryInstalled) return;
-    communicationLogDirectoryRetryInstalled = true;
-    window.addEventListener('storage', event => {
-      if (event.key !== COMMUNICATION_LOG_DIRECTORY_SIGNAL_KEY) return;
-      void communicationLogRetryStoredDirectory();
-    });
-    window.addEventListener('focus', () => {
-      if (!communicationLogReady) void communicationLogRetryStoredDirectory();
-    });
   }
 
   /**
