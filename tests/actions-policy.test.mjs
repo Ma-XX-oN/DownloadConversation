@@ -135,26 +135,19 @@ function registryFixture(root, additions = []) {
     outputs: ['chatgpt-conversation-markdown-export.user.js'],
     committed: true, platform: 'linux', capabilities: ['node-22']
   };
-  const favicon = {
-    id: 'favicon-pack',
-    generatorCommand: ['node', 'scripts/generate-favicon-packs.mjs', '--build'],
-    verifierCommand: ['node', 'scripts/generate-favicon-packs.mjs', '--verify'],
-    outputs: ['assets/favicons/v1/chatgpt-v1.dcfav'],
-    committed: true, platform: 'linux', capabilities: ['node-22']
-  };
   fs.writeFileSync(pathToConfig, JSON.stringify({
-    schema: 1, artifacts: [userscript, favicon, ...additions]
+    schema: 1, artifacts: [userscript, ...additions]
   }));
   return pathToConfig;
 }
 
-test('permits exact two deterministic artifacts in existing permanent CI', () => {
+test('permits single authorized deterministic artifact in existing permanent CI', () => {
   const root = makeRoot({'ci.yml': 'name: CI\\njobs:\\n  test:\\n    steps: []\\n'});
   registryFixture(root);
   assert.equal(run(root).status, 0);
 });
 
-test('rejects third unapproved committed artifact despite approved workflow', () => {
+test('rejects second unapproved committed artifact despite approved workflow', () => {
   const root = makeRoot({'ci.yml': 'name: CI\\njobs:\\n  test:\\n    steps: []\\n'});
   registryFixture(root, [{id:'unreviewed',outputs:['other.bin'],
     committed:true,platform:'linux',capabilities:['node-22']}]);
@@ -163,22 +156,22 @@ test('rejects third unapproved committed artifact despite approved workflow', ()
   assert.match(result.stderr, /unapproved or repeated committed artifact/);
 });
 
-test('rejects favicon generator substitution to arbitrary executable', () => {
+test('rejects userscript generator substitution to arbitrary executable', () => {
   const root = makeRoot({'ci.yml': 'name: CI\\njobs:\\n  test:\\n    steps: []\\n'});
   const location = registryFixture(root);
   const data = JSON.parse(fs.readFileSync(location, 'utf8'));
-  data.artifacts[1].generatorCommand = ['bash','unapproved-script.sh'];
+  data.artifacts[0].generatorCommand = ['bash','unapproved-script.sh'];
   fs.writeFileSync(location, JSON.stringify(data));
   const result = run(root);
   assert.notEqual(result.status, 0);
   assert.match(result.stderr, /unapproved generatorCommand/);
 });
 
-test('rejects uncommitted favicon that violates tested-artifact invariant', () => {
+test('rejects uncommitted userscript that violates tested-artifact invariant', () => {
   const root = makeRoot({'ci.yml': 'name: CI\\njobs:\\n  test:\\n    steps: []\\n'});
   const location = registryFixture(root);
   const data = JSON.parse(fs.readFileSync(location, 'utf8'));
-  data.artifacts[1].committed = false;
+  data.artifacts[0].committed = false;
   fs.writeFileSync(location, JSON.stringify(data));
   const result = run(root);
   assert.notEqual(result.status, 0);
