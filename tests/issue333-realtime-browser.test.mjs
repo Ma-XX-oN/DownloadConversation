@@ -6,6 +6,10 @@ import {tmpdir} from 'node:os';
 import {join} from 'node:path';
 
 const sleep=ms=>new Promise(resolve=>setTimeout(resolve,ms));
+const deadline=(ms,message)=>new Promise((_,reject)=>{
+  const timeout=setTimeout(()=>reject(new Error(message)),ms);
+  timeout.unref();
+});
 
 async function runSequence(payload){
   const url=URL.createObjectURL(new Blob([payload.module],
@@ -33,7 +37,20 @@ async function runSequence(payload){
     const sequence=await provider.renderFaviconPulseSequence({
       originalUrl:source,theme,base:'processing',progressStep:3
     });
+    const invalidSource=await provider.renderFaviconPulseSequence({
+      originalUrl:'data:image/webp;base64,YWJj',theme,
+      base:'processing',progressStep:3
+    }).then(()=> 'UNEXPECTED_SUCCESS',error=>error.name);
+    const oversized='data:image/svg+xml;base64,'+
+      btoa('<svg xmlns="http://www.w3.org/2000/svg" width="513" height="1"></svg>');
+    const oversizedSource=await provider.renderFaviconPulseSequence({
+      originalUrl:oversized,theme,base:'processing',progressStep:3
+    }).then(()=> 'UNEXPECTED_SUCCESS',error=>error.name);
+    const wrongTheme=await provider.renderFaviconPulseSequence({
+      originalUrl:source,theme:'dark',base:'processing',progressStep:3
+    }).then(()=> 'UNEXPECTED_SUCCESS',error=>error.name);
     return {theme,frames:sequence.frames.length,encodes,
+      invalidSource,oversizedSource,wrongTheme,
       width:sequence.width,height:sequence.height,
       elapsedMs:performance.now()-started,ticks:ticks.length,maxGapMs};
   } finally {
@@ -81,7 +98,7 @@ test('real-time Chromium services event loop while producing 21 PNGs',
         socket.addEventListener('open',resolve,{once:true});
         socket.addEventListener('error',reject,{once:true});
       }),
-      sleep(5000).then(()=>{throw new Error('DevTools socket timeout');})
+      deadline(5000,'DevTools socket timeout')
     ]);
     let nextId=0;
     const pending=new Map();
@@ -112,7 +129,7 @@ test('real-time Chromium services event loop while producing 21 PNGs',
       send('Runtime.evaluate',{
         expression,awaitPromise:true,returnByValue:true
       }),
-      sleep(30000).then(()=>{throw new Error('Real browser run timed out');})
+      deadline(30000,'Real browser run timed out')
     ]);
     assert(!response.exceptionDetails,
       'Browser exception: '+JSON.stringify(response.exceptionDetails));
@@ -123,6 +140,9 @@ test('real-time Chromium services event loop while producing 21 PNGs',
     assert.equal(result.encodes,21);
     assert.equal(result.width,48);
     assert.equal(result.height,48);
+    assert.equal(result.invalidSource,'FaviconRenderError');
+    assert.equal(result.oversizedSource,'FaviconRenderError');
+    assert.equal(result.wrongTheme,'AbortError');
     assert(result.elapsedMs>0,'Real-time clock did not advance');
     assert(result.ticks>=5,'Browser UI timer starved during generation');
     console.log('DC333_REALTIME_BROWSER='+JSON.stringify(result));
