@@ -108,10 +108,13 @@ repository API/connector or a normal checked-out working tree.
 
 Only the permanent workflows documented in `docs/GITHUB-ACTIONS-POLICY.md` are
 allowed on active repository lines.  Repository-write permission is limited to
-the deterministic generated-artifact/test-cycle publication mechanism owned by
-`scripts/test-cycle-artifact.mjs`; direct `git add`, `git commit`, `git push`,
-general mutating API calls, issue-specific patch scripts, and one-shot editing
-workflows are prohibited.
+approved deterministic generated-artifact/test-cycle publication, including
+`RepoWorkflow materialize-artifacts --commit` for narrowly allowlisted outputs
+and `scripts/test-cycle-artifact.mjs` for the userscript.  The artifact
+allowlist comprises the userscript and DC #333's reproducibly generated
+`assets/favicons/v1/chatgpt-v1.dcfav`.  Direct unauthorised `git add`,
+`git commit`, `git push`, general mutating API calls, issue-specific patch
+scripts, and one-shot editing workflows are prohibited.
 
 `scripts/check-actions-policy.mjs` and `tests/actions-policy.test.mjs` enforce
 this policy.  Any legitimate change to the permanent workflow set or write path
