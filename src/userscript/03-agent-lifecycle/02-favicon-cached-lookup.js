@@ -2,7 +2,7 @@
   const AGENT_FAVICON_PULSE_PERIOD_MS = 10000;
   /** Periodic pulse timer, started only after the dataset session is ready. */
   let agentFaviconPulseTimer = null;
-  /** Current colour/attention projection of the shared Agent lifecycle. */
+  /** Existing lifecycle's presented favicon colour. */
   let agentFaviconVisibleState = 'original';
   /** Provisional V2 dataset session; #334 owns atomic sequence generation. */
   let agentFaviconDatasetSession = null;
@@ -12,11 +12,11 @@
   let agentFaviconVersionPending = null;
   /** Observed browser colour-scheme query; the same SVG URL can differ by theme. */
   let agentFaviconThemeQuery = null;
-  /** Only the PNG object URLs requested by this tab, in LRU order. */
+  /** Requested tab-local PNG URLs in LRU order. */
   const agentFaviconObjectUrls = new Map();
-  /** URL last assigned by DC to each original stock link. */
+  /** URLs currently assigned to original stock links. */
   const agentFaviconDisplayedHrefs = new Map();
-  /** Hard bound on retained non-displayed frame URLs. */
+  /** Maximum tab-local frame URLs. */
   const AGENT_FAVICON_URL_LIMIT = 84;
   /** Progress-step state for the existing shared stopwatch observer. */
   let agentFaviconRingRenderedStep = 0;
@@ -166,6 +166,7 @@
     if (!session) return null;
     const matches = [];
     for (const candidate of agentFaviconCurrentCandidates()) {
+      if (candidate.media && !window.matchMedia(candidate.media).matches) continue;
       const href = await agentFaviconFrameUrl(
         session, candidate.original_href, theme, base_type, completion_time, frame
       );
