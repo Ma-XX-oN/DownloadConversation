@@ -17,6 +17,7 @@ const npmArguments = process.platform === 'win32'
 const pythonCommand = process.env.PYTHON ?? 'python';
 
 const ordinaryStages = [
+  ['#328 Chromium shared-PNG favicon benchmark', nodeCommand, ['benchmarks/issue328-favicon-cache-benchmark.mjs']],
   ['Modular userscript build regression', nodeCommand, ['--test', 'tests/modular-userscript-build.test.mjs', 'tests/development-version-source.test.mjs']],
   ['Agent plugin authenticated background fetch regression', nodeCommand, ['--test', 'tests/agent-plugin-background-fetch.test.mjs']],
   ['#243 provenance and #274 lifecycle regressions', nodeCommand, ['--test',
