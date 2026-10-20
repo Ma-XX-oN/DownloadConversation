@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         ChatGPT Conversation Markdown Recorder
 // @namespace    https://chatgpt.com/
-// @version      1.11.8-issue.335.9
+// @version      1.11.8-issue.335.10
 // @description  Exports the current ChatGPT conversation directly from the Conversation API as Markdown or JSONL.
 // @match        https://chatgpt.com/*
 // @match        https://chat.openai.com/*
@@ -12129,11 +12129,21 @@ globalThis.__dcCompressor = {
     }
   }
 
+  /**
+   * Keeps only favicon links eligible for the current browser media context.
+   * @param {Array<Object>} candidates - Original stock link descriptors.
+   * @returns {Array<Object>} Descriptors allowed by active media queries.
+   */
+  function agentFaviconActiveCandidates(candidates) {
+    return candidates.filter(candidate => !candidate.media ||
+      window.matchMedia(candidate.media).matches);
+  }
+
   /** A favicon pulse has forty 250-ms slots and 21 unique symmetric frames. */
   const AGENT_FAVICON_PULSE_PERIOD_MS = 10000;
   /** Periodic pulse timer, started only after the dataset session is ready. */
   let agentFaviconPulseTimer = null;
-  /** Current colour/attention projection of the shared Agent lifecycle. */
+  /** Existing lifecycle's presented favicon colour. */
   let agentFaviconVisibleState = 'original';
   /** Provisional V2 dataset session; #334 owns atomic sequence generation. */
   let agentFaviconDatasetSession = null;
@@ -12143,11 +12153,11 @@ globalThis.__dcCompressor = {
   let agentFaviconVersionPending = null;
   /** Observed browser colour-scheme query; the same SVG URL can differ by theme. */
   let agentFaviconThemeQuery = null;
-  /** Only the PNG object URLs requested by this tab, in LRU order. */
+  /** Requested tab-local PNG URLs in LRU order. */
   const agentFaviconObjectUrls = new Map();
-  /** URL last assigned by DC to each original stock link. */
+  /** URLs currently assigned to original stock links. */
   const agentFaviconDisplayedHrefs = new Map();
-  /** Hard bound on retained non-displayed frame URLs. */
+  /** Maximum tab-local frame URLs. */
   const AGENT_FAVICON_URL_LIMIT = 84;
   /** Progress-step state for the existing shared stopwatch observer. */
   let agentFaviconRingRenderedStep = 0;
@@ -12296,7 +12306,7 @@ globalThis.__dcCompressor = {
     const session = await agentFaviconOpenSession(version_key);
     if (!session) return null;
     const matches = [];
-    for (const candidate of agentFaviconCurrentCandidates()) {
+    for (const candidate of agentFaviconActiveCandidates(agentFaviconCurrentCandidates())) {
       const href = await agentFaviconFrameUrl(
         session, candidate.original_href, theme, base_type, completion_time, frame
       );
@@ -12430,8 +12440,9 @@ globalThis.__dcCompressor = {
       else agentFaviconDisplayedHrefs.delete(candidate.link);
     }
     agentFaviconTrimObjectUrls();
+    const eligible = agentFaviconActiveCandidates(candidates).length;
     const applied = state === 'original' || (pairs !== null &&
-      pairs.length === candidates.length);
+      pairs.length === eligible);
     if (!heartbeat && typeof agentLifecycleAction === 'function') {
       agentLifecycleAction('favicon', applied ? 'applied' : 'failed', {
         state, candidate_count: candidates.length, applied_candidate_count: pairs?.length ?? 0
