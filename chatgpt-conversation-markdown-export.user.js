@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         ChatGPT Conversation Markdown Recorder
 // @namespace    https://chatgpt.com/
-// @version      1.11.8-issue.338.1
+// @version      1.11.8-issue.338.2
 // @description  Exports the current ChatGPT conversation directly from the Conversation API as Markdown or JSONL.
 // @match        https://chatgpt.com/*
 // @match        https://chat.openai.com/*
@@ -8058,11 +8058,6 @@ globalThis.__dcCompressor = {
    * @returns {void} No value is returned.
    */
   /**
-   * Removes the trusted-gesture listeners once directory authorization succeeds.
-   *
-   * @returns {void} No value is returned.
-   */
-  /**
    * Keeps a COMM file/storage failure from masquerading as lost folder permission.
    * The diagnostic remains available in GEN; ChatGPT page interaction is restored.
    *
@@ -8081,6 +8076,11 @@ globalThis.__dcCompressor = {
     });
   }
 
+  /**
+   * Removes the trusted-gesture listeners once directory authorization succeeds.
+   *
+   * @returns {void} No value is returned.
+   */
   function communicationLogDisarmDirectoryGesture() {
     if (!communicationLogDirectoryGestureArmed) return;
     communicationLogDirectoryGestureArmed = false;
