@@ -33,7 +33,7 @@ test('pulse schedules at provider interval only after session is ready', async (
     let agentFaviconPulseTimer = null;
     let agentFaviconVisibleState = 'completed';
     let agentFaviconPageHidden = false;
-    let agentFaviconPulseUpdatePending = false;
+    let agentFaviconPulseUpdatePending = null;
     async function agentFaviconCompatibleVersion() { return '1.11.8'; }
     async function agentFaviconOpenSession() {
       return { version: '1.11.8', update_every_ms: 400 };
@@ -41,6 +41,12 @@ test('pulse schedules at provider interval only after session is ready', async (
     async function agentFaviconRenderState(state, heartbeat) {
       renders.push([state, heartbeat]);
     }
+    function agentFaviconCurrentCandidates() {
+      return [{ original_href: 'https://chatgpt.com/favicon.svg', media: '' }];
+    }
+    function agentFaviconActiveCandidates(candidates) { return candidates; }
+    function agentFaviconCurrentTheme() { return 'light'; }
+    function agentFaviconRingStep() { return 0; }
     ${productionFunctionSource('agentFaviconPulseHeartbeat')}
     ${productionFunctionSource('agentFaviconStartPulse')}
     ${productionFunctionSource('agentFaviconStopPulse')}
