@@ -7,13 +7,13 @@
       "mime": "image/x-icon",
       "width": 48,
       "height": 48,
-      "source_url": "https://cdn.oaistatic.com/assets/favicon-eex17e9e.ico",
+      "source_url": "https://chatgpt.com/cdn/assets/favicon-eex17e9e.ico",
       "mirror_repository": "jagbiryadav/BrutalGPT",
       "mirror_git_blob": "1634901adeecceabf98a9855b7d610dbb2a5179c",
       "source_links": [
         {
-          "href": "https://cdn.oaistatic.com/assets/favicon-eex17e9e.ico",
-          "sizes": "32x32"
+          "href": "/cdn/assets/favicon-eex17e9e.ico",
+          "sizes": "48x48"
         }
       ]
     },
@@ -23,16 +23,16 @@
       "mime": "image/svg+xml",
       "width": 180,
       "height": 180,
-      "source_url": "https://cdn.oaistatic.com/assets/favicon-l4nq08hd.svg",
+      "source_url": "https://chatgpt.com/cdn/assets/favicon-l4nq08hd.svg",
       "mirror_repository": "lincwang123-bot/price-radar",
       "mirror_git_blob": "9ff13061181678e8869a6fa8fce6057c534ee510",
       "source_links": [
         {
-          "href": "https://cdn.oaistatic.com/assets/favicon-l4nq08hd.svg",
+          "href": "/cdn/assets/favicon-l4nq08hd.svg",
           "type": "image/svg+xml"
         },
         {
-          "href": "https://cdn.oaistatic.com/assets/favicon-l4nq08hd.svg",
+          "href": "/cdn/assets/favicon-l4nq08hd.svg",
           "type": "image/svg+xml",
           "media": "(prefers-color-scheme: dark)"
         }
@@ -47,8 +47,23 @@
       "source_url": "https://chatgpt.com/cdn/assets/favicon-48x48-glnpepm0.webp",
       "mirror_repository": "lingcang728/ZeppBridge",
       "mirror_git_blob": "adaf8b9285d3a206d7c270a913b7e0aac8fab0ad",
-      "source_links": []
+      "source_links": [
+        {
+          "href": "/cdn/assets/favicon-48x48-glnpepm0.webp",
+          "type": "image/png",
+          "sizes": "48x48"
+        }
+      ]
     }
   ],
-  "link_observation": "Historical observed ChatGPT HTML rel=icon for ICO and SVG (2025). The WebP is a verified genuine source asset, but rel=icon status not established. Source links must be rechecked in a live logged-in current tab."
+  "link_observation": "Observed rel=icon markup in an archived ChatGPT production HTML snapshot (oaistatic/react-prod-0501e92072076c1fc18a4b57ff5e37c15d00546f/gpts.html), not asserted to be the current authenticated tab. Its WebP link declares type=image/png although live resource bytes are image/webp. Independently live-fetched resource bodies and verified hashes on 2026-10-20 via hosted CI run 39475426122.",
+  "unresolved_candidates": [
+    {
+      "href": "/favicon.ico",
+      "sizes": "any",
+      "observed_in": "archived 2026 ChatGPT HTML",
+      "retrieval": "HTTP 403 in hosted Node CI, 2026-10-20",
+      "sha256": null
+    }
+  ]
 }
