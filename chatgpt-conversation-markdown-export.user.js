@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         ChatGPT Conversation Markdown Recorder
 // @namespace    https://chatgpt.com/
-// @version      1.11.8-issue.335.10
+// @version      1.11.8-issue.335.11
 // @description  Exports the current ChatGPT conversation directly from the Conversation API as Markdown or JSONL.
 // @match        https://chatgpt.com/*
 // @match        https://chat.openai.com/*
@@ -12117,12 +12117,7 @@ globalThis.__dcCompressor = {
    */
   function agentFaviconHandleThemeChange() {
     ++agentFaviconRenderGeneration;
-    for (const candidate of agentFaviconCurrentCandidates()) {
-      if (candidate.link.href !== candidate.original_href) {
-        candidate.link.href = candidate.original_href;
-      }
-      agentFaviconDisplayedHrefs.delete(candidate.link);
-    }
+    agentFaviconRestoreStockCandidates();
     agentFaviconTrimObjectUrls();
     if (!agentFaviconPageHidden && agentFaviconVisibleState !== 'original') {
       void agentFaviconRenderState(agentFaviconVisibleState);
@@ -12137,6 +12132,19 @@ globalThis.__dcCompressor = {
   function agentFaviconActiveCandidates(candidates) {
     return candidates.filter(candidate => !candidate.media ||
       window.matchMedia(candidate.media).matches);
+  }
+
+  /**
+   * Restores untouched stock link hrefs before switching or revoking PNGs.
+   * @returns {void} All currently tracked links retain original provenance.
+   */
+  function agentFaviconRestoreStockCandidates() {
+    for (const candidate of agentFaviconCurrentCandidates()) {
+      if (candidate.link.href !== candidate.original_href) {
+        candidate.link.href = candidate.original_href;
+      }
+      agentFaviconDisplayedHrefs.delete(candidate.link);
+    }
   }
 
   /** A favicon pulse has forty 250-ms slots and 21 unique symmetric frames. */
@@ -12161,6 +12169,8 @@ globalThis.__dcCompressor = {
   const AGENT_FAVICON_URL_LIMIT = 84;
   /** Progress-step state for the existing shared stopwatch observer. */
   let agentFaviconRingRenderedStep = 0;
+  /** Last successfully displayed 5-minute progress step. */
+  let agentFaviconPresentedStep = null;
   /** Whether pagehide has invalidated active and pending cache reads. */
   let agentFaviconPageHidden = false;
   /** Incremented at navigation to reject late reads across bfcache restoration. */
@@ -12381,14 +12391,11 @@ globalThis.__dcCompressor = {
   async function agentFaviconRenderState(state, heartbeat = false) {
     if (agentFaviconPageHidden) return false;
     const previousState = agentFaviconVisibleState;
+    const nextStep = state === 'original' ? null
+      : state === 'error' ? 0 : agentFaviconRingStep();
     agentFaviconVisibleState = state;
-    if (previousState !== state) {
-      for (const candidate of agentFaviconCurrentCandidates()) {
-        if (candidate.link.href !== candidate.original_href) {
-          candidate.link.href = candidate.original_href;
-        }
-        agentFaviconDisplayedHrefs.delete(candidate.link);
-      }
+    if (previousState !== state || nextStep !== agentFaviconPresentedStep) {
+      agentFaviconRestoreStockCandidates();
     }
     if (state === 'original') agentFaviconStopPulse();
     else void agentFaviconStartPulse();
@@ -12406,7 +12413,7 @@ globalThis.__dcCompressor = {
     if (state !== 'original') {
       const base = { processing: 0, completed: 1, error: 2, acknowledged: 3 }[state];
       if (base === undefined) return false;
-      requestedStep = state === 'error' ? 0 : agentFaviconRingStep();
+      requestedStep = nextStep;
       try {
         const key = await agentFaviconCompatibleVersion();
         if (key) pairs = await get_favicon(key, base, requestedStep, performance.now());
@@ -12440,6 +12447,8 @@ globalThis.__dcCompressor = {
       else agentFaviconDisplayedHrefs.delete(candidate.link);
     }
     agentFaviconTrimObjectUrls();
+    agentFaviconPresentedStep = state === 'original' || pairs === null
+      ? null : requestedStep;
     const eligible = agentFaviconActiveCandidates(candidates).length;
     const applied = state === 'original' || (pairs !== null &&
       pairs.length === eligible);
@@ -12464,12 +12473,9 @@ globalThis.__dcCompressor = {
     ++agentFaviconRenderGeneration;
     agentFaviconVisibleState = 'original';
     agentFaviconStopPulse();
-    // A bfcache page retains its DOM links after pagehide; restore hrefs first.
-    for (const candidate of agentFaviconCurrentCandidates()) {
-      if (candidate.link.href !== candidate.original_href) {
-        candidate.link.href = candidate.original_href;
-      }
-    }
+    // A bfcache page retains its DOM links after pagehide.
+    agentFaviconRestoreStockCandidates();
+    agentFaviconPresentedStep = null;
     agentFaviconDisplayedHrefs.clear();
     agentFaviconTrimObjectUrls(true);
     const session = agentFaviconDatasetSession;
