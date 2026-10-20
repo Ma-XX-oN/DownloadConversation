@@ -10,6 +10,9 @@ import path from 'node:path';
 // Unlike authenticated chatgpt.com, this is a controlled same-origin fixture.
 const source = path => readFileSync(new URL(path, import.meta.url), 'utf8');
 const moduleSource = source('../src/favicon/browser-sequence.mjs');
+const headerVersion = /^\/\/\s*@version\s+(\S+)\s*$/m
+  .exec(source('../src/userscript-header.js'))?.[1];
+assert.ok(headerVersion, 'authoritative userscript version required');
 const scripts = [
   'const faviconV2RenderSource = (() => {\n'
     + moduleSource.replace(/^export /gm, '')
@@ -28,9 +31,6 @@ const scripts = [
   source('../src/userscript/03-agent-lifecycle/02-favicon-cached-lookup.js')
 ].join('\n');
 const faviconSvg = source('../assets/favicons/v1/originals/chatgpt-favicon-l4nq08hd.svg');
-const headerVersion = /^\/\/\s*@version\s+(\S+)\s*$/m
-  .exec(source('../src/userscript-header.js'))?.[1];
-assert.ok(headerVersion, 'authoritative userscript version required');
 
 async function benchmark() {
   const link = document.getElementById('stock');
