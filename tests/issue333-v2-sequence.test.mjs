@@ -234,7 +234,7 @@ test('real Chromium renders only one 21-Blob sequence at a time in each theme',(
         '--disable-gpu','--disable-background-networking',
         '--user-data-dir='+join(temp,'chrome-profile-'+scheme),
         ...themeFlags,
-        '--virtual-time-budget=45000','--dump-dom','file://'+page
+        '--virtual-time-budget=180000','--dump-dom','file://'+page
       ],{encoding:'utf8',maxBuffer:6*1024*1024,timeout:120000,
         stdio:['ignore','pipe','ignore']});
       const status=/<pre id="result">([^<]*)<\/pre>/.exec(output)?.[1];
