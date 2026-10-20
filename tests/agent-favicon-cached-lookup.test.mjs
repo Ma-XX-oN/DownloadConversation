@@ -43,7 +43,7 @@ function fixture(known = true, delayedRead = null, candidates = 1,
       addEventListener() {}
     },
     performance: { now: () => clock },
-    Blob, crypto: webcrypto, Uint8Array,
+    Blob, Uint8Array,
     fetch: async url => {
       fetched.push(url);
       return { ok: true, type: 'basic',
@@ -119,7 +119,8 @@ test('all 588 state, step, and pulse combinations select a ready V2 frame', asyn
 test('all stock candidates keep link attributes, use URLs and skip redundant hrefs', async () => {
   const h = fixture(true, null, 2);
   assert.equal(await h.api.render('processing'), true);
-  assert.ok(h.links.every(link => link.href.startsWith('blob:test/')));
+  assert.ok(h.links[0].href.startsWith('blob:test/'));
+  assert.equal(h.links[1].href, 'https://chatgpt.com/favicon1.png');
   const writes = h.links.map(link => link.writes);
   assert.equal(await h.api.render('processing'), true);
   assert.deepEqual(h.links.map(link => link.writes), writes);
