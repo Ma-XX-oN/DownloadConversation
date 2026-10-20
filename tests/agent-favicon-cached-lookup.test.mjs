@@ -1,7 +1,6 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import vm from 'node:vm';
-import { webcrypto } from 'node:crypto';
 import {
   markedBlock, productionFunctionSource, downloadConversationSource
 } from './helpers/userscript-source.mjs';
@@ -26,13 +25,11 @@ function fixture(known = true, delayedRead = null, candidates = 1,
   let clock = 0, closed = 0;
   const session = {
     version, update_every_ms: 250,
-    find_variant(digest) {
-      return typeof known === 'function' ? known(digest) : known ? 'v' : null;
-    },
     async read_png(...args) {
       reads.push(args);
       if (delayedRead) await delayedRead(...args);
-      return new Blob(['png'], { type: 'image/png' });
+      const matched = typeof known === 'function' ? known(args[0]) : known;
+      return matched ? new Blob(['png'], { type: 'image/png' }) : null;
     },
     async close() { closed++; }
   };
@@ -41,7 +38,10 @@ function fixture(known = true, delayedRead = null, candidates = 1,
       assert.equal(s, 'link[rel~="icon"]');
       return links;
     } },
-    window: { addEventListener() {} },
+    window: {
+      matchMedia() { return { matches: false, addEventListener() {} }; },
+      addEventListener() {}
+    },
     performance: { now: () => clock },
     Blob, crypto: webcrypto, Uint8Array,
     fetch: async url => {
@@ -75,6 +75,8 @@ function fixture(known = true, delayedRead = null, candidates = 1,
     function open_favicon_dataset() {
       return typeof delayedOpen === 'function' ? delayedOpen() : delayedOpen || session;
     }
+    ${productionFunctionSource('agentFaviconCurrentTheme')}
+    ${productionFunctionSource('agentFaviconHandleThemeChange')}
     ${source}
     this.api = { get: get_favicon, pulse: agentFaviconPulseIndex,
       render: agentFaviconRenderState, dispose: agentFaviconDispose };
@@ -94,7 +96,7 @@ test('all forty time slots use exactly twenty-one symmetric pulse frames', () =>
   assert.equal(h.api.pulse(Infinity), null);
 });
 
-test('all 588 state, step, and pulse combinations reach the B V1 provider', async () => {
+test('all 588 state, step, and pulse combinations select a ready V2 frame', async () => {
   const h = fixture();
   const unique = new Set();
   for (let base = 0; base < 4; base++) {
@@ -108,7 +110,7 @@ test('all 588 state, step, and pulse combinations reach the B V1 provider', asyn
   }
   assert.equal(unique.size, 588);
   assert.equal(h.created.length, 588);
-  assert.equal(h.fetched.length, 1);
+  assert.equal(h.fetched.length, 0, 'consumer does not fetch original source');
   assert.equal(await h.api.get('1.11.8', 4, 0, 0), null);
   assert.equal(await h.api.get('1.11.8', 0, 7, 0), null);
   assert.equal(await h.api.get('1.11.8', 0, 0, Infinity), null);
@@ -130,7 +132,7 @@ test('all stock candidates keep link attributes, use URLs and skip redundant hre
   ]);
 });
 
-test('unknown source digest preserves stock favicon unchanged', async () => {
+test('unavailable original source sequence preserves stock favicon unchanged', async () => {
   const h = fixture(false);
   assert.equal(await h.api.render('processing'), false);
   assert.equal(h.links[0].href, 'https://chatgpt.com/favicon0.png');
@@ -141,7 +143,7 @@ test('late yellow lookup cannot overwrite later red error', async () => {
   let firstRead;
   const gate = new Promise(resolve => { release = resolve; });
   const entered = new Promise(resolve => { firstRead = resolve; });
-  const h = fixture(true, async (_variant, base) => {
+  const h = fixture(true, async (_url, _theme, base) => {
     if (base === 0) {
       firstRead();
       await gate;
@@ -170,7 +172,7 @@ test('page navigation restores stock href before revoking displayed PNG', async 
 test('renderer no longer performs per-heartbeat canvas or PNG encoding', () => {
   assert.match(productionFunctionSource('agentFaviconRenderState'), /get_favicon\(/);
   assert.match(productionFunctionSource('get_favicon'),
-    /get_favicon\(compatible_version_key, base_type, completion_time, time_offset\)/);
+    /get_favicon\(version_key, base_type, completion_time, time_offset\)/);
   assert.doesNotMatch(downloadConversationSource,
     /canvas\.toDataURL\(['"]image\/png['"]\)|context\.(?:get|put)ImageData\(/);
 });
@@ -184,26 +186,24 @@ test('two independent tabs use their exact version-scoped provider sessions', as
   ]);
   assert.equal(oldResult.length, 1);
   assert.equal(newResult.length, 1);
-  assert.equal(oldTab.reads[0][1], 0);
-  assert.equal(newTab.reads[0][1], 3);
-  assert.equal(newTab.reads[0][2], 6);
-  assert.equal(newTab.reads[0][3], 20);
+  assert.equal(oldTab.reads[0][1], 'light');
+  assert.equal(oldTab.reads[0][2], 0);
+  assert.equal(newTab.reads[0][1], 'light');
+  assert.equal(newTab.reads[0][2], 3);
+  assert.equal(newTab.reads[0][3], 6);
+  assert.equal(newTab.reads[0][4], 20);
   assert.equal(oldTab.created.length, 1);
   assert.equal(newTab.created.length, 1);
   assert.equal(oldTab.revoked.length, 0);
   assert.equal(newTab.revoked.length, 0);
 });
 
-test('an unmatched source candidate remains original beside a recognized variant', async () => {
+test('an unavailable source sequence leaves only that candidate untouched', async () => {
   const firstUrl = 'https://chatgpt.com/favicon0.png';
-  const digest = await webcrypto.subtle.digest('SHA-256',
-    new TextEncoder().encode(firstUrl));
-  const recognized = Buffer.from(digest).toString('hex');
-  const h = fixture(sourceDigest => sourceDigest === recognized ? 'light' : null,
-    null, 2);
+  const h = fixture(url => url === firstUrl, null, 2);
   assert.equal(await h.api.render('processing'), false);
-  assert.equal(h.reads.length, 1);
-  assert.equal(h.reads[0][0], 'light');
+  assert.equal(h.reads.length, 2);
+  assert.equal(h.reads[0][0], firstUrl);
   assert.ok(h.links[0].href.startsWith('blob:test/'));
   assert.equal(h.links[1].href, 'https://chatgpt.com/favicon1.png');
 });
