@@ -57,7 +57,8 @@ function browserCanvasRender(input) {
               data[index+2] = Math.round(color[2] * intensity);
             }
             context.putImageData(pixels, 0, 0);
-            if (step > 0) {
+            // Legacy error state deliberately has no pie or progress ring.
+            if (step > 0 && state !== 2) {
               const size = Math.min(width, height), cx = width / 2, cy = height / 2;
               const from = -Math.PI / 2, to = from + 2 * Math.PI * step / 6;
               context.globalCompositeOperation = 'destination-over';
