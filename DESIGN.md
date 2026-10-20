@@ -637,7 +637,13 @@ The authoritative immutable format is Section A of
 `docs/FAVICON_CACHE_INTERFACES_V1.md`, Git blob
 `e2460ba2bf1c1852579782ecbb05139de32e505e`.  The committed binary asset
 must precede catalogue publication so the catalogue pins an immutable Git
-commit containing precisely those validated asset bytes.  This tooling does
+commit containing precisely those validated asset bytes.  Its deterministic
+producer and byte-exact verifier are declared as a committed artifact in
+`.ci/repoworkflow.json`.  The permanent CI prepare phase materializes and
+commits the 10.6 MB pack through the allowlisted RepoWorkflow artifact
+mechanism before validation; the GitHub API connector does not transport
+this entire binary through one request.  The generated pack is never
+hand-edited and no other files may be included in its generated commit.  This tooling does
 not change the current runtime favicon path; DC #334 provides storage, DC #335
 provides the runtime consumer, and DC #336 owns end-to-end certification.
 Until genuine source images, their hashes and the external binary pack have
