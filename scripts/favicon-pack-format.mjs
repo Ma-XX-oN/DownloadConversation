@@ -56,7 +56,9 @@ export function versionTriplet(value) {
  * @returns {object|null} Matching dataset, or null.
  */
 export function selectDataset(catalogue, runningVersion) {
-  assert(catalogue?.schema === CATALOGUE_SCHEMA, 'Catalogue schema mismatch');
+  assert(catalogue?.schema === CATALOGUE_SCHEMA &&
+    Object.keys(catalogue).sort().join(',') === 'datasets,schema',
+    'Catalogue schema/fields mismatch');
   assert(Array.isArray(catalogue.datasets) && catalogue.datasets.length <= 256,
     'Catalogue count invalid');
   const wanted = versionTriplet(runningVersion);
@@ -64,6 +66,8 @@ export function selectDataset(catalogue, runningVersion) {
   let chosen = null;
   let chosenParts = null;
   for (const dataset of catalogue.datasets) {
+    assert(dataset && Object.keys(dataset).sort().join(',') ===
+      'favicons,update_every_ms,version', 'Unexpected catalogue dataset fields');
     const v = versionTriplet(dataset.version);
     const key = v.join('.');
     assert(!seen.has(key), 'Duplicate normalized dataset boundary');
@@ -72,6 +76,8 @@ export function selectDataset(catalogue, runningVersion) {
     assert(Number.isSafeInteger(dataset.update_every_ms) && dataset.update_every_ms > 0,
       'Invalid update interval');
     const asset = dataset.favicons;
+    assert(asset && Object.keys(asset).sort().join(',') ===
+      'bytes,commit,path,sha256', 'Unexpected asset fields');
     assert(asset && HEX40.test(asset.commit) &&
       typeof asset.path === 'string' &&
       /^assets\/favicons\/v1\/[a-z0-9-]+\.dcfav$/.test(asset.path) &&
@@ -234,6 +240,8 @@ export function validatePack(input) {
   const json = pack.toString('utf8', 12, 12 + length);
   const manifest = JSON.parse(json);
   assert(json === canonicalJson(manifest), 'Manifest must be canonical JSON');
+  assert(Object.keys(manifest).sort().join(',') === 'schema,variants',
+    'Unexpected manifest fields');
   assert(manifest.schema === PACK_SCHEMA && Array.isArray(manifest.variants) &&
     manifest.variants.length > 0 && manifest.variants.length <= MAX_VARIANTS,
     'Pack schema/variants invalid');
@@ -242,6 +250,8 @@ export function validatePack(input) {
   const sources = new Set();
   for (let n = 0; n < manifest.variants.length; n++) {
     const variant = manifest.variants[n];
+    assert(variant && Object.keys(variant).sort().join(',') ===
+      'height,id,images,source_sha256,width', 'Unexpected variant fields');
     assert(variant.id === String(n) && HEX256.test(variant.source_sha256) &&
       !sources.has(variant.source_sha256) &&
       Number.isInteger(variant.width) && variant.width > 0 && variant.width <= 512 &&
