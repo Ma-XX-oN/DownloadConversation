@@ -34,7 +34,7 @@ function fixture(known = true, delayedRead = null, candidates = 1) {
     async close() { closed++; }
   };
   const h = vm.createContext({
-    document: { querySelectorAll(s) {
+    document: { addEventListener() {}, querySelectorAll(s) {
       assert.equal(s, 'link[rel~="icon"]');
       return links;
     } },
