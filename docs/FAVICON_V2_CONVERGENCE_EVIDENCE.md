@@ -111,3 +111,19 @@ until an authenticated before/after comparable trace is captured.
    handoff and closure using the authoritative RWF process. Do not
    mistake issue comments for an atomic claim transfer. Do not merge
    #346 or any child PR before the user's explicit authorization.
+
+## Added negative-cache RED regression (DC #334)
+
+Current provider source at `b8d62af2a0e9799cc164ecfd1ec58414aa9fbe40`
+clears in-flight work on rendering failure without enforcing a cooldown.
+A 250ms heartbeat repeats the exact unsupported tuple, recreating expensive
+renderer work and diagnostics. This is an identified defect, not an
+accepted no-op. New test
+`tests/issue332-v2-failure-backoff.test.mjs` uses the true #333 renderer,
+#334 IndexedDB, #335 consumer, a 48×48 fully opaque SVG known to yield
+`FaviconRenderError`, and 2450ms of actual heartbeat callbacks. The
+acceptance expects no more than two failed render attempts in that interval,
+no ready markers, and preservation of the stock icon. Independent GREEN
+verification remains blocked until DC #334's source owner fixes the
+per-sequence failure backoff and provider tests prove a later retry.
+The new regression is a RED witness, never a production PASS.
