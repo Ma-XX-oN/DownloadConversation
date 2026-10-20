@@ -41,6 +41,7 @@ function browserFixture(svgBytes,webpBytes,moduleSource) {
   const script = async function (serialized) {
     const result=document.getElementById('result');
     try {
+      result.textContent='PHASE:module-import';
       const moduleUrl=URL.createObjectURL(new Blob([serialized.module],{type:'text/javascript'}));
       const provider=await import(moduleUrl);
       URL.revokeObjectURL(moduleUrl);
@@ -49,6 +50,7 @@ function browserFixture(svgBytes,webpBytes,moduleSource) {
       const ticks=[];
       const task=setTimeout(()=>ticks.push(performance.now()),0);
       const start=performance.now();
+      result.textContent='PHASE:first-sequence';
       const sequence=await provider.renderFaviconPulseSequence({
         originalUrl:source,theme,base:'processing',progressStep:3
       });
@@ -80,6 +82,7 @@ function browserFixture(svgBytes,webpBytes,moduleSource) {
         originalImage.onerror=reject;
         originalImage.src=source;
       });
+      result.textContent='PHASE:legacy-pixel-comparison';
       for(const frame of [0,10,20]){
         const target=document.createElement('canvas');
         target.width=180;target.height=180;
@@ -120,11 +123,13 @@ function browserFixture(svgBytes,webpBytes,moduleSource) {
       // Test lazy rendering: a new call for another URL produces exactly one
       // separate 21-Blob result; the first must never pre-render that URL.
       const weblink='data:image/webp;base64,'+serialized.webp;
+      result.textContent='PHASE:second-source';
       const web=await provider.renderFaviconPulseSequence({
         originalUrl:weblink,theme,base:'completed',progressStep:0
       });
       aggregate.otherWidth=web.width;aggregate.otherFrames=web.frames.length;
       // Deterministic repeated request must yield the same decoded pixels.
+      result.textContent='PHASE:deterministic-replay';
       const replay=await provider.renderFaviconPulseSequence({
         originalUrl:source,theme,base:'processing',progressStep:3
       });
@@ -132,6 +137,7 @@ function browserFixture(svgBytes,webpBytes,moduleSource) {
         JSON.stringify(a);
       // Later abort: interrupt at the first yield to event loop, return NO
       // partially successful frames.
+      result.textContent='PHASE:cancellation';
       const aborter=new AbortController();
       const pending=provider.renderFaviconPulseSequence({
         originalUrl:source,theme,base:'processing',progressStep:3,
@@ -188,7 +194,7 @@ test('real Chromium renders only one 21-Blob sequence at a time in each theme',(
         '--headless','--no-sandbox','--disable-dev-shm-usage',
         '--disable-gpu','--disable-background-networking',
         '--force-prefers-color-scheme='+scheme,
-        '--virtual-time-budget=120000','--dump-dom','file://'+page
+        '--virtual-time-budget=30000','--dump-dom','file://'+page
       ],{encoding:'utf8',maxBuffer:6*1024*1024,timeout:120000,
         stdio:['ignore','pipe','ignore']});
       const status=/<pre id="result">([^<]*)<\/pre>/.exec(output)?.[1];
