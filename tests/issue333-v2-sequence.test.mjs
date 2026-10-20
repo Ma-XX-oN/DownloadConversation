@@ -60,6 +60,13 @@ function browserFixture(svgBytes,webpBytes,moduleSource) {
         mime:frame.type, size:frame.size,
         sig:Array.from(new Uint8Array(await frame.slice(0,8).arrayBuffer()))
       })));
+      // PNG binary equality, not compressed sizes, proves all 21 are unique.
+      const binary=await Promise.all(sequence.frames.map(async frame=>
+        new Uint8Array(await frame.arrayBuffer())));
+      const identical=(a,b)=>a.length===b.length &&
+        a.every((value,index)=>value===b[index]);
+      const allFramesUnique=binary.every((frame,index)=>
+        binary.slice(0,index).every(previous=>!identical(frame,previous)));
       const decode=async(blob)=>{
         const url=URL.createObjectURL(blob);
         const image=new Image();
@@ -118,6 +125,7 @@ function browserFixture(svgBytes,webpBytes,moduleSource) {
         theme:sequence.theme, pngs,
         firstAlpha:opacity(a),midAlpha:opacity(mid),lastAlpha:opacity(b),
         distinct:new Set(pngs.map(p=>p.size)).size,
+        allFramesUnique,
         ticks:ticks.length,elapsedMs:times
       };
       // Test lazy rendering: a new call for another URL produces exactly one
@@ -218,10 +226,14 @@ test('real Chromium renders only one 21-Blob sequence at a time in each theme',(
     const page=join(temp,'test.html');
     writeFileSync(page,fixture);
     for(const scheme of ['light','dark']){
+      const themeFlags=scheme==='dark' ?
+        ['--force-dark-mode','--force-prefers-color-scheme=dark'] :
+        ['--force-prefers-color-scheme=light'];
       const output=execFileSync(chrome,[
         '--headless','--no-sandbox','--disable-dev-shm-usage',
         '--disable-gpu','--disable-background-networking',
-        '--force-prefers-color-scheme='+scheme,
+        '--user-data-dir='+join(temp,'chrome-profile-'+scheme),
+        ...themeFlags,
         '--virtual-time-budget=45000','--dump-dom','file://'+page
       ],{encoding:'utf8',maxBuffer:6*1024*1024,timeout:120000,
         stdio:['ignore','pipe','ignore']});
@@ -229,6 +241,7 @@ test('real Chromium renders only one 21-Blob sequence at a time in each theme',(
       assert(status?.startsWith('PASS:'),scheme+' browser fixture '+status);
       const result=JSON.parse(status.slice(5));
       assert.equal(result.frames,21);
+      assert.equal(result.allFramesUnique,true);
       assert.equal(result.theme,scheme);
       assert.equal(result.width,180);
       assert.equal(result.height,180);
