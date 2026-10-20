@@ -131,12 +131,17 @@ test('unknown source digest preserves stock favicon unchanged', async () => {
 
 test('late yellow lookup cannot overwrite later red error', async () => {
   let release;
+  let firstRead;
   const gate = new Promise(resolve => { release = resolve; });
+  const entered = new Promise(resolve => { firstRead = resolve; });
   const h = fixture(true, async (_variant, base) => {
-    if (base === 0) await gate;
+    if (base === 0) {
+      firstRead();
+      await gate;
+    }
   });
   const pending = h.api.render('processing');
-  while (!h.reads.some(args => args[1] === 0)) await Promise.resolve();
+  await entered;
   assert.equal(await h.api.render('error'), true);
   const red = h.links[0].href;
   release();
