@@ -65,6 +65,7 @@ const ordinaryStages = [
   ['Agent turn stopwatch reload restoration', nodeCommand, ['--test', 'tests/agent-turn-stopwatch-reload.test.mjs']],
   ['Agent favicon state regression', nodeCommand, ['--test', 'tests/agent-favicon-state.test.mjs', 'tests/agent-favicon-browser-selection.test.mjs', 'tests/agent-favicon-thirty-minute-ring.test.mjs', 'tests/agent-favicon-heartbeat.test.mjs']],
   ['DC #333 favicon pack format and pixel parity', nodeCommand, ['--test', 'tests/favicon-pack-v1.test.mjs', 'tests/favicon-pack-pixel-equivalence.test.mjs']],
+  ['DC #333 original WebP acquisition', nodeCommand, ['--test', 'tests/favicon-source-recovery.test.mjs']],
   ['Agent WebSocket delayed-final regression', nodeCommand, ['--test', 'tests/agent-websocket-delayed-final.test.mjs']],
   ['Agent sound readiness regression', nodeCommand, ['--test', 'tests/agent-sound-initialization-indicator.test.mjs']],
   ['Agent terminal polling-timeout regression', nodeCommand, ['--test', 'tests/agent-terminal-polling-timeout.test.mjs', 'tests/agent-terminal-polling-timeout-observer.test.mjs', 'tests/agent-terminal-polling-timeout-integration.test.mjs']],
