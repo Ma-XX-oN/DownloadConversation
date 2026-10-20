@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         ChatGPT Conversation Markdown Recorder
 // @namespace    https://chatgpt.com/
-// @version      1.11.9
+// @version      1.11.10-issue.338.4
 // @description  Exports the current ChatGPT conversation directly from the Conversation API as Markdown or JSONL.
 // @match        https://chatgpt.com/*
 // @match        https://chat.openai.com/*
@@ -7079,6 +7079,8 @@ globalThis.__dcCompressor = {
   let communicationLogDirectoryRestorePromise = null;
   /** Whether this document has installed cross-tab/foreground retry listeners. */
   let communicationLogDirectoryRetryInstalled = false;
+  /** Whether non-permission COMM storage failure requires attention without a page blocker. */
+  let communicationLogStorageFailed = false;
   /** A denied reauthorisation must fall back to the normal chooser. */
   let communicationLogDirectoryReselectRequired = false;
 
@@ -7843,7 +7845,7 @@ globalThis.__dcCompressor = {
    */
   async function communicationLogRetryStoredDirectory() {
     if (communicationLogReady || communicationLogDirectoryPickerOpening ||
-        communicationLogDirectoryReselectRequired) return false;
+        communicationLogDirectoryReselectRequired || communicationLogStorageFailed) return false;
     if (communicationLogDirectoryRestorePromise) return communicationLogDirectoryRestorePromise;
     // Startup already checks the same handle; defer concurrent notifications until it finishes.
     if (communicationLogInitializationPromise && !communicationLogPromptShown) return false;
@@ -7860,6 +7862,7 @@ globalThis.__dcCompressor = {
       return await restore;
     } catch (error) {
       communicationLogReportFailure('directory-cross-tab-restore', error);
+      communicationLogSuspendDirectoryAfterStorageFailure('directory-cross-tab-restore', error);
       return false;
     } finally {
       communicationLogDirectoryRestorePromise = null;
@@ -8010,6 +8013,7 @@ globalThis.__dcCompressor = {
       file_name: communicationLogActiveFileName
     });
     communicationLogReady = true;
+    communicationLogStorageFailed = false;
     const recoveredDuplicateRequest =
       communicationLogSegmentManifest?.duplicate_request
         ? { ...communicationLogSegmentManifest.duplicate_request }
@@ -8053,6 +8057,25 @@ globalThis.__dcCompressor = {
    * @param {string} reason - Why directory authorization is required.
    * @returns {void} No value is returned.
    */
+  /**
+   * Keeps a COMM file/storage failure from masquerading as lost folder permission.
+   * The diagnostic remains available in GEN; ChatGPT page interaction is restored.
+   *
+   * @param {string} stage - Failing recorder operation.
+   * @param {Object} error - Original exception.
+   * @returns {void} No value is returned.
+   */
+  function communicationLogSuspendDirectoryAfterStorageFailure(stage, error) {
+    communicationLogStorageFailed = true;
+    communicationLogDisarmDirectoryGesture();
+    document.getElementById('tm-communication-directory-required')?.remove();
+    communicationLogPromptShown = false;
+    logDiagnostic('warnings', 'communication-log-storage-unavailable', {
+      stage,
+      message: boundedDiagnosticText(errorMessage(error), 2000)
+    });
+  }
+
   /**
    * Removes the trusted-gesture listeners once directory authorization succeeds.
    *
@@ -8113,12 +8136,14 @@ globalThis.__dcCompressor = {
       return;
     }
 
+    let storageAttempted = false;
     Promise.resolve(pickerPromise)
       .then(async handle => {
         const permission = await communicationLogPermissionState(handle);
         if (permission !== 'granted') {
           throw new Error('The selected folder did not grant read/write permission.');
         }
+        storageAttempted = true;
         await communicationLogStoreDirectoryHandle(handle);
         communicationLogDirectoryReselectRequired = false;
         communicationLogPendingDirectoryHandle = handle;
@@ -8129,7 +8154,9 @@ globalThis.__dcCompressor = {
           logDiagnostic('debug', 'communication-directory-picker-cancelled', {});
         } else {
           communicationLogReportFailure('directory-authorization', error);
-          if (communicationLogDirectoryReselectRequired) {
+          if (storageAttempted) {
+            communicationLogSuspendDirectoryAfterStorageFailure('directory-authorization', error);
+          } else if (communicationLogDirectoryReselectRequired) {
             document.getElementById('tm-communication-directory-required')?.remove();
             communicationLogPromptShown = false;
             communicationLogShowDirectoryPrompt('Saved folder access was denied; choose a new folder.');
@@ -8150,6 +8177,7 @@ globalThis.__dcCompressor = {
    * @returns {void} No value is returned.
    */
   function communicationLogShowDirectoryPrompt(reason) {
+    if (communicationLogStorageFailed) return;
     logDiagnostic('warnings', 'communication-directory-required', { reason });
     if (!communicationLogDirectoryGestureArmed) {
       communicationLogDirectoryGestureArmed = true;
@@ -8233,7 +8261,7 @@ globalThis.__dcCompressor = {
         );
       }
       communicationLogReportFailure('startup', error);
-      communicationLogShowDirectoryPrompt('The saved log folder could not be restored.');
+      communicationLogSuspendDirectoryAfterStorageFailure('startup', error);
       return false;
     }
   }
@@ -8673,6 +8701,49 @@ globalThis.__dcCompressor = {
   }
 
   /**
+   * Preserves the exact corrupt manifest before reconstructing recoverable control state.
+   * Historical archives and the two active JSONL files remain on disk.
+   *
+   * @param {Object} directory - The existing private segment directory.
+   * @param {File} original - The unreadable manifest file snapshot.
+   * @returns {Promise<Object>} Reconstructed control state after exact backup verification.
+   */
+  async function communicationLogQuarantineMalformedManifest(directory, original) {
+    if (original.size > 1024 * 1024) {
+      throw new Error('Malformed manifest exceeds the safe one-megabyte backup limit.');
+    }
+    const originalBytes = new Uint8Array(await original.arrayBuffer());
+    const backupName = `manifest.corrupt-${Date.now()}-${crypto.randomUUID()}.json`;
+    const backupHandle = await directory.getFileHandle(backupName, { create: true });
+    const writer = await backupHandle.createWritable();
+    try {
+      await writer.write(originalBytes);
+      await writer.close();
+    } catch (error) {
+      await abortWritableQuietly(writer);
+      throw error;
+    }
+    const copied = new Uint8Array(await (await backupHandle.getFile()).arrayBuffer());
+    if (copied.byteLength !== originalBytes.byteLength ||
+        copied.some((byte, index) => byte !== originalBytes[index])) {
+      throw new Error('Damaged segment manifest backup could not be verified.');
+    }
+    // Refuse to overwrite a manifest another restored tab replaced in the meantime.
+    const current = await (await directory.getFileHandle('manifest.json', { create: false })).getFile();
+    const now = new Uint8Array(await current.arrayBuffer());
+    if (now.byteLength !== originalBytes.byteLength ||
+        now.some((byte, index) => byte !== originalBytes[index])) {
+      throw new Error('Segment manifest changed during quarantine; reload to retry.');
+    }
+    logDiagnostic('warnings', 'communication-log-manifest-quarantined', {
+      backup_name: backupName,
+      preserved_bytes: originalBytes.byteLength,
+      recovery: 'rebuild control metadata from surviving segment files'
+    });
+    return communicationLogCreateSegmentManifest();
+  }
+
+  /**
    * Loads the small control/recovery manifest.
    *
    * Historical segment membership is filesystem-derived and is never catalogued
@@ -8686,7 +8757,14 @@ globalThis.__dcCompressor = {
     if (!directory) throw new Error('Communication segment directory is not ready.');
     try {
       const handle = await directory.getFileHandle('manifest.json', { create: false });
-      const parsed = JSON.parse(await (await handle.getFile()).text());
+      const file = await handle.getFile();
+      let parsed;
+      try {
+        parsed = JSON.parse(await file.text());
+      } catch (error) {
+        if (!(error instanceof SyntaxError)) throw error;
+        return communicationLogQuarantineMalformedManifest(directory, file);
+      }
       if (parsed?.schema !== COMMUNICATION_LOG_SEGMENT_SCHEMA) return null;
       if (typeof parsed.logical_log_id !== 'string') {
         throw new Error('Invalid communication segment manifest.');

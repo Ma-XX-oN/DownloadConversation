@@ -195,7 +195,7 @@
    */
   async function communicationLogRetryStoredDirectory() {
     if (communicationLogReady || communicationLogDirectoryPickerOpening ||
-        communicationLogDirectoryReselectRequired) return false;
+        communicationLogDirectoryReselectRequired || communicationLogStorageFailed) return false;
     if (communicationLogDirectoryRestorePromise) return communicationLogDirectoryRestorePromise;
     // Startup already checks the same handle; defer concurrent notifications until it finishes.
     if (communicationLogInitializationPromise && !communicationLogPromptShown) return false;
@@ -212,6 +212,7 @@
       return await restore;
     } catch (error) {
       communicationLogReportFailure('directory-cross-tab-restore', error);
+      communicationLogSuspendDirectoryAfterStorageFailure('directory-cross-tab-restore', error);
       return false;
     } finally {
       communicationLogDirectoryRestorePromise = null;

@@ -61,6 +61,7 @@
       file_name: communicationLogActiveFileName
     });
     communicationLogReady = true;
+    communicationLogStorageFailed = false;
     const recoveredDuplicateRequest =
       communicationLogSegmentManifest?.duplicate_request
         ? { ...communicationLogSegmentManifest.duplicate_request }
@@ -104,6 +105,25 @@
    * @param {string} reason - Why directory authorization is required.
    * @returns {void} No value is returned.
    */
+  /**
+   * Keeps a COMM file/storage failure from masquerading as lost folder permission.
+   * The diagnostic remains available in GEN; ChatGPT page interaction is restored.
+   *
+   * @param {string} stage - Failing recorder operation.
+   * @param {Object} error - Original exception.
+   * @returns {void} No value is returned.
+   */
+  function communicationLogSuspendDirectoryAfterStorageFailure(stage, error) {
+    communicationLogStorageFailed = true;
+    communicationLogDisarmDirectoryGesture();
+    document.getElementById('tm-communication-directory-required')?.remove();
+    communicationLogPromptShown = false;
+    logDiagnostic('warnings', 'communication-log-storage-unavailable', {
+      stage,
+      message: boundedDiagnosticText(errorMessage(error), 2000)
+    });
+  }
+
   /**
    * Removes the trusted-gesture listeners once directory authorization succeeds.
    *
@@ -164,12 +184,14 @@
       return;
     }
 
+    let storageAttempted = false;
     Promise.resolve(pickerPromise)
       .then(async handle => {
         const permission = await communicationLogPermissionState(handle);
         if (permission !== 'granted') {
           throw new Error('The selected folder did not grant read/write permission.');
         }
+        storageAttempted = true;
         await communicationLogStoreDirectoryHandle(handle);
         communicationLogDirectoryReselectRequired = false;
         communicationLogPendingDirectoryHandle = handle;
@@ -180,7 +202,9 @@
           logDiagnostic('debug', 'communication-directory-picker-cancelled', {});
         } else {
           communicationLogReportFailure('directory-authorization', error);
-          if (communicationLogDirectoryReselectRequired) {
+          if (storageAttempted) {
+            communicationLogSuspendDirectoryAfterStorageFailure('directory-authorization', error);
+          } else if (communicationLogDirectoryReselectRequired) {
             document.getElementById('tm-communication-directory-required')?.remove();
             communicationLogPromptShown = false;
             communicationLogShowDirectoryPrompt('Saved folder access was denied; choose a new folder.');
@@ -201,6 +225,7 @@
    * @returns {void} No value is returned.
    */
   function communicationLogShowDirectoryPrompt(reason) {
+    if (communicationLogStorageFailed) return;
     logDiagnostic('warnings', 'communication-directory-required', { reason });
     if (!communicationLogDirectoryGestureArmed) {
       communicationLogDirectoryGestureArmed = true;
@@ -284,7 +309,7 @@
         );
       }
       communicationLogReportFailure('startup', error);
-      communicationLogShowDirectoryPrompt('The saved log folder could not be restored.');
+      communicationLogSuspendDirectoryAfterStorageFailure('startup', error);
       return false;
     }
   }

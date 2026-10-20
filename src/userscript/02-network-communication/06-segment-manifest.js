@@ -18,6 +18,49 @@
   }
 
   /**
+   * Preserves the exact corrupt manifest before reconstructing recoverable control state.
+   * Historical archives and the two active JSONL files remain on disk.
+   *
+   * @param {Object} directory - The existing private segment directory.
+   * @param {File} original - The unreadable manifest file snapshot.
+   * @returns {Promise<Object>} Reconstructed control state after exact backup verification.
+   */
+  async function communicationLogQuarantineMalformedManifest(directory, original) {
+    if (original.size > 1024 * 1024) {
+      throw new Error('Malformed manifest exceeds the safe one-megabyte backup limit.');
+    }
+    const originalBytes = new Uint8Array(await original.arrayBuffer());
+    const backupName = `manifest.corrupt-${Date.now()}-${crypto.randomUUID()}.json`;
+    const backupHandle = await directory.getFileHandle(backupName, { create: true });
+    const writer = await backupHandle.createWritable();
+    try {
+      await writer.write(originalBytes);
+      await writer.close();
+    } catch (error) {
+      await abortWritableQuietly(writer);
+      throw error;
+    }
+    const copied = new Uint8Array(await (await backupHandle.getFile()).arrayBuffer());
+    if (copied.byteLength !== originalBytes.byteLength ||
+        copied.some((byte, index) => byte !== originalBytes[index])) {
+      throw new Error('Damaged segment manifest backup could not be verified.');
+    }
+    // Refuse to overwrite a manifest another restored tab replaced in the meantime.
+    const current = await (await directory.getFileHandle('manifest.json', { create: false })).getFile();
+    const now = new Uint8Array(await current.arrayBuffer());
+    if (now.byteLength !== originalBytes.byteLength ||
+        now.some((byte, index) => byte !== originalBytes[index])) {
+      throw new Error('Segment manifest changed during quarantine; reload to retry.');
+    }
+    logDiagnostic('warnings', 'communication-log-manifest-quarantined', {
+      backup_name: backupName,
+      preserved_bytes: originalBytes.byteLength,
+      recovery: 'rebuild control metadata from surviving segment files'
+    });
+    return communicationLogCreateSegmentManifest();
+  }
+
+  /**
    * Loads the small control/recovery manifest.
    *
    * Historical segment membership is filesystem-derived and is never catalogued
@@ -31,7 +74,14 @@
     if (!directory) throw new Error('Communication segment directory is not ready.');
     try {
       const handle = await directory.getFileHandle('manifest.json', { create: false });
-      const parsed = JSON.parse(await (await handle.getFile()).text());
+      const file = await handle.getFile();
+      let parsed;
+      try {
+        parsed = JSON.parse(await file.text());
+      } catch (error) {
+        if (!(error instanceof SyntaxError)) throw error;
+        return communicationLogQuarantineMalformedManifest(directory, file);
+      }
       if (parsed?.schema !== COMMUNICATION_LOG_SEGMENT_SCHEMA) return null;
       if (typeof parsed.logical_log_id !== 'string') {
         throw new Error('Invalid communication segment manifest.');

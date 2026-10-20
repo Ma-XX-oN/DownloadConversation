@@ -6,6 +6,8 @@
   let communicationLogDirectoryRestorePromise = null;
   /** Whether this document has installed cross-tab/foreground retry listeners. */
   let communicationLogDirectoryRetryInstalled = false;
+  /** Whether non-permission COMM storage failure requires attention without a page blocker. */
+  let communicationLogStorageFailed = false;
   /** A denied reauthorisation must fall back to the normal chooser. */
   let communicationLogDirectoryReselectRequired = false;
 

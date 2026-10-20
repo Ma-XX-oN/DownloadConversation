@@ -115,6 +115,7 @@ function makeBrowser(options = {}) {
       let communicationLogDirectoryGestureArmed = false;
       let communicationLogDirectoryPickerOpening = false;
       let communicationLogDirectoryReselectRequired = false;
+      let communicationLogStorageFailed = false;
       let communicationLogDirectoryRestorePromise = null;
       let communicationLogDirectoryRetryInstalled = false;
       let communicationLogPendingDirectoryHandle = null;
@@ -307,6 +308,7 @@ test('deferred prompt does not remount after peer has activated the recorder', (
     let communicationLogReady = false;
     let communicationLogPendingDirectoryHandle = null;
     let communicationLogDirectoryReselectRequired = false;
+    let communicationLogStorageFailed = false;
     function communicationLogHandleDirectoryGesture() {}
     ${productionFunctionSource('communicationLogShowDirectoryPrompt')}
     this.api = {
