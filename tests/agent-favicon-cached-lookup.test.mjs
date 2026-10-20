@@ -156,11 +156,14 @@ test('late yellow lookup cannot overwrite later red error', async () => {
   assert.equal(h.links[0].href, red);
 });
 
-test('page navigation disposes tab URLs and closes provider session', async () => {
+test('page navigation restores stock href before revoking displayed PNG', async () => {
   const h = fixture();
   assert.equal(await h.api.render('processing'), true);
+  const displayed = h.links[0].href;
+  assert.match(displayed, /^blob:/);
   h.api.dispose();
-  assert.equal(h.revoked.length, 1);
+  assert.equal(h.links[0].href, 'https://chatgpt.com/favicon0.png');
+  assert.deepEqual(h.revoked, [displayed]);
   assert.equal(h.closed(), 1);
 });
 
