@@ -106,11 +106,6 @@
    * @returns {void} No value is returned.
    */
   /**
-   * Removes the trusted-gesture listeners once directory authorization succeeds.
-   *
-   * @returns {void} No value is returned.
-   */
-  /**
    * Keeps a COMM file/storage failure from masquerading as lost folder permission.
    * The diagnostic remains available in GEN; ChatGPT page interaction is restored.
    *
@@ -129,6 +124,11 @@
     });
   }
 
+  /**
+   * Removes the trusted-gesture listeners once directory authorization succeeds.
+   *
+   * @returns {void} No value is returned.
+   */
   function communicationLogDisarmDirectoryGesture() {
     if (!communicationLogDirectoryGestureArmed) return;
     communicationLogDirectoryGestureArmed = false;
