@@ -12,12 +12,8 @@
       "mirror_git_blob": "1634901adeecceabf98a9855b7d610dbb2a5179c",
       "source_links": [
         {
-          "href": "/favicon.ico",
-          "sizes": "any"
-        },
-        {
-          "href": "/cdn/assets/favicon-eex17e9e.ico",
-          "sizes": "48x48"
+          "href": "https://cdn.oaistatic.com/assets/favicon-eex17e9e.ico",
+          "sizes": "32x32"
         }
       ]
     },
@@ -32,12 +28,11 @@
       "mirror_git_blob": "9ff13061181678e8869a6fa8fce6057c534ee510",
       "source_links": [
         {
-          "href": "/cdn/assets/favicon-l4nq08hd.svg",
-          "type": "image/svg+xml",
-          "media": ""
+          "href": "https://cdn.oaistatic.com/assets/favicon-l4nq08hd.svg",
+          "type": "image/svg+xml"
         },
         {
-          "href": "/cdn/assets/favicon-l4nq08hd.svg",
+          "href": "https://cdn.oaistatic.com/assets/favicon-l4nq08hd.svg",
           "type": "image/svg+xml",
           "media": "(prefers-color-scheme: dark)"
         }
@@ -52,13 +47,8 @@
       "source_url": "https://chatgpt.com/cdn/assets/favicon-48x48-glnpepm0.webp",
       "mirror_repository": "lingcang728/ZeppBridge",
       "mirror_git_blob": "adaf8b9285d3a206d7c270a913b7e0aac8fab0ad",
-      "source_links": [
-        {
-          "href": "/cdn/assets/favicon-48x48-glnpepm0.webp",
-          "type": "image/png",
-          "sizes": "48x48"
-        }
-      ]
+      "source_links": []
     }
-  ]
+  ],
+  "link_observation": "Historical observed ChatGPT HTML rel=icon for ICO and SVG (2025). The WebP is a verified genuine source asset, but rel=icon status not established. Source links must be rechecked in a live logged-in current tab."
 }
