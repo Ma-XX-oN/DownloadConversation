@@ -66,6 +66,10 @@
     if (agentFaviconPulseUpdatePending?.key === key) return;
     const pending = { key };
     agentFaviconPulseUpdatePending = pending;
+    /**
+     * Releases only the matching periodic request after async completion.
+     * @returns {void} No result is returned.
+     */
     const complete = () => {
       if (agentFaviconPulseUpdatePending === pending) {
         agentFaviconPulseUpdatePending = null;
