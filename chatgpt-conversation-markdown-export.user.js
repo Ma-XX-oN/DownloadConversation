@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         ChatGPT Conversation Markdown Recorder
 // @namespace    https://chatgpt.com/
-// @version      1.11.8
+// @version      1.11.9
 // @description  Exports the current ChatGPT conversation directly from the Conversation API as Markdown or JSONL.
 // @match        https://chatgpt.com/*
 // @match        https://chat.openai.com/*
@@ -20015,6 +20015,7 @@ Image elapsed: ${formatDuration(imageElapsed)} — Completed: ${imageCompleted}/
    * @returns {void} No value is returned.
    */
   function workStackScheduleRecovery(delayMs = WORKSTACK_RECOVERY_RETRY_MS) {
+    if (localStorage.getItem(WORKSTACK_ENABLED_KEY) !== 'true') return;
     if (workStackRecoveryTimer !== null) return;
     workStackRecoveryTimer = setTimeout(() => {
       workStackRecoveryTimer = null;
@@ -20049,6 +20050,7 @@ Image elapsed: ${formatDuration(imageElapsed)} — Completed: ${imageCompleted}/
    * @returns {Promise<void>} Resolves after the current recovery attempt completes or is deferred.
    */
   async function recoverWorkStackLane() {
+    if (localStorage.getItem(WORKSTACK_ENABLED_KEY) !== 'true') return;
     const conversationId = currentConversationId();
     workStackObserveConversation(conversationId);
     if (!conversationId) return;
@@ -20061,19 +20063,21 @@ Image elapsed: ${formatDuration(imageElapsed)} — Completed: ${imageCompleted}/
     workStackState.recovery_promise = (async () => {
       try {
         const fetched = await fetchConversationPages(conversationId);
-        if (currentConversationId() !== conversationId) return;
+        if (currentConversationId() !== conversationId ||
+            localStorage.getItem(WORKSTACK_ENABLED_KEY) !== 'true') return;
         const resolved = workStackResolveLaneFromSpine(conversationSpineFromPages(fetched.pages));
         workStackState.status = resolved.status;
         workStackState.lane = resolved.lane;
         workStackState.detail = '';
         if (resolved.status === 'fetching') workStackScheduleRecovery();
       } catch (error) {
+        if (localStorage.getItem(WORKSTACK_ENABLED_KEY) !== 'true') return;
         workStackState.status = 'fetching';
         workStackState.detail = `Lane recovery waiting: ${errorMessage(error)}`;
         workStackScheduleRecovery(1500);
       } finally {
         workStackState.recovery_promise = null;
-        workStackRender();
+        if (localStorage.getItem(WORKSTACK_ENABLED_KEY) === 'true') workStackRender();
       }
     })();
     return workStackState.recovery_promise;
@@ -20194,6 +20198,8 @@ Image elapsed: ${formatDuration(imageElapsed)} — Completed: ${imageCompleted}/
   }
   // END Issue #163 shared DOM Markdown extraction
   // BEGIN Issue #163 WorkStack continuation UI/transaction
+  /** Persisted WorkStack feature preference; absent means disabled. */
+  const WORKSTACK_ENABLED_KEY = 'tm-recorder-workstack-enabled';
   /** Root observer that refreshes WorkStack UI across ChatGPT SPA changes. */
   let workStackRootObserver = null;
   /** Resize observer that keeps WorkStack below the independent stopwatch. */
@@ -20529,6 +20535,7 @@ Image elapsed: ${formatDuration(imageElapsed)} — Completed: ${imageCompleted}/
    * @returns {void} No value is returned.
    */
   function installWorkStackContinuation() {
+    if (localStorage.getItem(WORKSTACK_ENABLED_KEY) !== 'true') return;
     if (workStackRootObserver) return;
     workStackObserveConversation(currentConversationId());
     workStackRender();
@@ -20548,6 +20555,29 @@ Image elapsed: ${formatDuration(imageElapsed)} — Completed: ${imageCompleted}/
       document.documentElement,
       { childList: true, subtree: true }
     );
+  }
+  /**
+   * Enables or stops WorkStack without disturbing the independent stopwatch.
+   *
+   * @param {boolean} enabled - Whether WorkStack should operate.
+   * @returns {void} No value is returned.
+   */
+  function setWorkStackEnabled(enabled) {
+    localStorage.setItem(WORKSTACK_ENABLED_KEY, String(enabled));
+    if (enabled) {
+      installWorkStackContinuation();
+      return;
+    }
+    workStackRootObserver?.disconnect();
+    workStackRootObserver = null;
+    workStackStopwatchResizeObserver?.disconnect();
+    workStackStopwatchResizeObserver = null;
+    workStackObservedStopwatch = null;
+    if (workStackRecoveryTimer !== null) {
+      clearTimeout(workStackRecoveryTimer);
+      workStackRecoveryTimer = null;
+    }
+    document.getElementById(WORKSTACK_CONTROL_ID)?.remove();
   }
   // END Issue #163 WorkStack continuation UI/control
   // BEGIN Issue #163 WorkStack handoff transaction
@@ -23686,7 +23716,7 @@ Image elapsed: ${formatDuration(imageElapsed)} — Completed: ${imageCompleted}/
       <div class="tm-row tm-diagnostics-row"><label for="tm-recorder-diagnostics">Diagnostics:</label><select id="tm-recorder-diagnostics" data-role="diagnostics"><option value="errors">Errors</option><option value="warnings">Warnings</option><option value="debug">Debug</option><option value="verbose">Verbose</option></select></div>
       <div class="tm-recorder-section tm-recording-section">
         <div class="tm-recording-location"><div class="tm-row tm-communication-log-row"><div class="tm-log-name-viewport" data-role="communication-log-directory" aria-label="Destination directory"></div><button class="tm-icon-button" data-role="change-communication-log-directory" type="button" aria-label="Change destination directory" title="Change destination directory"></button></div><div class="tm-row tm-communication-log-row"><div class="tm-log-name-viewport" data-role="communication-log-name-viewport" role="textbox" aria-readonly="true" aria-label="Current communication log filename base" title="Current communication log filename base"><span class="tm-log-name-text" data-role="communication-log-name"></span></div><button class="tm-icon-button" data-role="rename-communication-log" type="button" aria-label="Rename communication log" title="Rename communication log"></button><button class="tm-icon-button" data-role="reset-communication-log-filename" type="button" aria-label="Reset filename to project and conversation" title="Reset filename to project and conversation"></button></div></div>
-        <div class="tm-row tm-recording-modes"><label><input data-role="record-general" type="checkbox" checked> Gen</label><label><input data-role="record-communication" type="checkbox" checked> Comm</label><label><input data-role="console-diagnostics" type="checkbox"> Con</label><label><input data-role="record-one-group" type="checkbox"> 1</label></div>
+        <div class="tm-row tm-recording-modes"><label><input data-role="record-general" type="checkbox" checked> Gen</label><label><input data-role="record-communication" type="checkbox" checked> Comm</label><label><input data-role="console-diagnostics" type="checkbox"> Con</label><label><input data-role="record-one-group" type="checkbox"> 1</label><label><input data-role="workstack-enabled" type="checkbox"> WS</label></div>
         <div class="tm-row tm-recording-actions"><button class="tm-icon-button" data-role="save-log" type="button" aria-label="Save merged log" title="Save merged log"></button><button class="tm-icon-button" data-role="reset-communication-log" type="button" aria-label="Reset communication log" title="Reset communication log"></button></div>
       </div>
       <div class="tm-recorder-section tm-export-section">
@@ -23721,6 +23751,11 @@ Image elapsed: ${formatDuration(imageElapsed)} — Completed: ${imageCompleted}/
       consoleDiagnostics = consoleOutput.checked;
       localStorage.setItem(CONSOLE_DIAGNOSTICS_STORAGE_KEY, String(consoleDiagnostics));
       logDiagnostic('debug', 'console-diagnostics-changed', { enabled: consoleDiagnostics });
+    });
+    const workStackToggle = panel.querySelector('[data-role="workstack-enabled"]');
+    workStackToggle.checked = localStorage.getItem(WORKSTACK_ENABLED_KEY) === 'true';
+    workStackToggle.addEventListener('change', () => {
+      setWorkStackEnabled(workStackToggle.checked);
     });
     const oneGroup = panel.querySelector('[data-role="record-one-group"]');
     oneGroup.checked = recordingGroupState().enabled;
