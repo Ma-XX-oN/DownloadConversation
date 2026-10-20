@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         DC #313 Exact Producer HMAC Browser Probe
 // @namespace    https://chatgpt.com/dc313-probe/
-// @version      0.9.0
+// @version      0.9.1
 // @description  Synthetic HMAC producer, Web Locks, GM and Worker acceptance; no conversation access.
 // @match        https://chatgpt.com/*
 // @grant        GM_getValue
@@ -667,26 +667,61 @@
   }
 
   async function diagnoseCrossTabStorage() {
-    if (diagActive || inProgress) return;
+    if (diagActive || inProgress) {
+      publishResult('GM cross-tab diagnostic', { version: '0.9.1',
+        status: 'BUSY', note: 'A diagnostic is already running.' });
+      return;
+    }
     diagActive = true;
-    const report = { version: '0.9.0', status: 'FAIL' };
-    try {
+    const report = { version: '0.9.1', status: 'RUNNING' };
+    let phase = 'preparing';
+    let timedOut = false;
+    const stage = async (label, task) => {
+      phase = label;
+      publishResult('GM cross-tab diagnostic', { ...report,
+        status: 'RUNNING', phase });
+      const result = await task();
+      return result;
+    };
+    const perform = async () => {
       if (!diagChannel) throw Error('BroadcastChannel unavailable');
-      report.synchronousGM = await diagPhase('sync');
+      report.synchronousGM = await stage('synchronous GM counter',
+        () => diagPhase('sync'));
       if (typeof GM === 'undefined' ||
           typeof GM.getValue !== 'function' ||
           typeof GM.setValue !== 'function') {
         throw Error('GM async API unavailable');
       }
-      report.asynchronousGM = await diagPhase('async');
-      report.visibility = await diagnoseVisibility();
-      report.exclusiveWebLock = await diagnoseSharedLock();
+      report.asynchronousGM = await stage('asynchronous GM counter',
+        () => diagPhase('async'));
+      report.visibility = await stage('cross-tab GM visibility',
+        () => diagnoseVisibility());
+      report.exclusiveWebLock = await stage('exclusive Web Lock',
+        () => diagnoseSharedLock());
       report.status = report.asynchronousGM.status === 'PASS' &&
         report.visibility.status === 'PASS' &&
         report.exclusiveWebLock.status === 'PASS' ?
         'ASYNC_PATH_PASS' : 'FAIL';
-    } catch (error) { report.error = String(error); }
-    finally { diagActive = false; }
+    };
+    publishResult('GM cross-tab diagnostic', { ...report, phase });
+    let deadline;
+    const watchdog = new Promise((_, reject) => {
+      deadline = setTimeout(() => {
+        timedOut = true;
+        reject(Error('diagnostic timeout at phase: ' + phase));
+      }, 45000);
+    });
+    try { await Promise.race([perform(), watchdog]); }
+    catch (error) {
+      report.status = timedOut ? 'INCOMPLETE_TIMEOUT' : 'FAIL';
+      report.phase = phase;
+      report.error = String(error);
+      if (timedOut) report.note = 'Reload both tabs before another run.';
+    } finally {
+      clearTimeout(deadline);
+      // A timed-out operation may still hold a native lock; require reload.
+      if (!timedOut) diagActive = false;
+    }
     publishResult('GM cross-tab diagnostic', report);
   }
 
