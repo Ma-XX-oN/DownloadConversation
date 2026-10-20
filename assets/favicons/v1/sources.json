@@ -42,6 +42,23 @@
           "media": "(prefers-color-scheme: dark)"
         }
       ]
+    },
+    {
+      "path": "assets/favicons/v1/originals/chatgpt-favicon-48x48.webp",
+      "sha256": "3481f245b6d560f855e49a16fc66ee7fdec2dee4115949179b113839149a9649",
+      "mime": "image/webp",
+      "width": 48,
+      "height": 48,
+      "source_url": "https://chatgpt.com/cdn/assets/favicon-48x48-glnpepm0.webp",
+      "mirror_repository": "lingcang728/ZeppBridge",
+      "mirror_git_blob": "adaf8b9285d3a206d7c270a913b7e0aac8fab0ad",
+      "source_links": [
+        {
+          "href": "/cdn/assets/favicon-48x48-glnpepm0.webp",
+          "type": "image/png",
+          "sizes": "48x48"
+        }
+      ]
     }
   ]
 }
