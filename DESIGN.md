@@ -642,6 +642,9 @@ controls only scheduled lookup cadence. The actual browser colour scheme is
 observed with `matchMedia('(prefers-color-scheme: dark)')`. A change restores
 the untouched original favicon and triggers the currently needed theme
 lookup; its URL may be identical in both themes while its raster differs.
+Only stock icon links matching the active media conditions request sequences.
+A newly requested five-minute progress step also restores the original
+favicon synchronously until its complete 21-frame sequence is ready.
 The existing `link[rel~="icon"]` elements retain their `media`, `type` and
 `sizes`, and missing/in-progress frames leave the corresponding original
 href unchanged. A bounded tab-local PNG Blob URL cache uses the full
