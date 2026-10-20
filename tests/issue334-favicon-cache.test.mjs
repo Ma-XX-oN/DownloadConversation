@@ -26,6 +26,12 @@ function harness(cat, pack) {
     navigator: { locks: { request: () => Promise.resolve() } },
     setInterval: () => 0,
     Date,
+    // Node tests check the pack's structural invariants. Browser tests use
+    // genuine Chromium PNG decoding and reject valid-CRC invalid IDAT data.
+    createImageBitmap: async blob => {
+      const png = new DataView(await blob.arrayBuffer());
+      return { width: png.getUint32(16), height: png.getUint32(20), close() {} };
+    },
     logDiagnostic: (...args) => output.warnings.push(args),
     GM_xmlhttpRequest({ url, responseType, onload }) {
       output.requests.push(url);
