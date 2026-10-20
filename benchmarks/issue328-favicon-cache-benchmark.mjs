@@ -180,9 +180,37 @@ async function runBrowserCase() {
     const second = await openPage();
     const sharedCount = await second.evaluate(`(${countSharedImages.toString()})()`);
     assert.equal(sharedCount, 21, 'Tabs must share the same origin IndexedDB entries');
+    const maintenance = await first.evaluate(`(${browserMaintenanceCase.toString()})()`);
+    assert.deepEqual(maintenance.remaining, ['active', 'boundary', 'recent']);
+    assert.equal(maintenance.staleRemoved, 1);
+    assert.equal(maintenance.writeCount, 1);
+
+    await first.send('Runtime.evaluate', {
+      expression: "globalThis.__lease = navigator.locks.request('dc-favicon-test-lease', () => new Promise(resolve => { globalThis.__releaseLease = resolve; }));",
+      awaitPromise:false
+    });
+    await delay(100);
+    const held = await first.evaluate("navigator.locks.query().then(result => result.held.some(lock => lock.name === 'dc-favicon-test-lease'))");
+    assert.equal(held, true, 'First tab must hold lease');
+    await second.send('Runtime.evaluate', {
+      expression: "globalThis.__cleanupCompleted = false; globalThis.__waitingCleanup = navigator.locks.request('dc-favicon-test-lease', () => { globalThis.__cleanupCompleted = true; return true; });",
+      awaitPromise:false
+    });
+    await delay(100);
+    assert.equal(await second.evaluate('globalThis.__cleanupCompleted'), false,
+      'Second tab cleanup must wait for active lease');
+    await first.evaluate('globalThis.__releaseLease()');
+    let cleanupDone = false;
+    for (let retry = 0; retry < 20; retry++) {
+      cleanupDone = await second.evaluate('globalThis.__cleanupCompleted');
+      if (cleanupDone) break;
+      await delay(50);
+    }
+    assert.equal(cleanupDone, true, 'Cleanup proceeds when active lease is released');
     console.log(JSON.stringify({test:'Chromium IndexedDB binary PNG/favicon switching',
       resolution:'256x256', frames:40, ...result, paced250ms:paced,
-      secondTabStoredFrames:sharedCount}, null, 2));
+      secondTabStoredFrames:sharedCount, tenMinuteEviction:maintenance,
+      crossTabLeaseProtected:true}, null, 2));
   } finally {
     for (const page of pages) page.close();
     chrome.kill('SIGTERM');
@@ -318,6 +346,61 @@ async function countSharedImages() {
   });
   db.close();
   return total;
+}
+
+async function browserMaintenanceCase() {
+  const now = Date.now();
+  const cutoff = 600000;
+  const connection = await new Promise((resolve,reject) => {
+    const req = indexedDB.open('dc-favicon-maintenance-test', 1);
+    req.onupgradeneeded = () => req.result.createObjectStore('collections', {keyPath:'key'});
+    req.onsuccess = () => resolve(req.result);
+    req.onerror = () => reject(req.error);
+  });
+  const seed = [
+    {key:'stale',last_used:now-cutoff-1},
+    {key:'active',last_used:now-cutoff-1},
+    {key:'boundary',last_used:now-cutoff},
+    {key:'recent',last_used:now-cutoff+1}
+  ];
+  await new Promise((resolve,reject) => {
+    const tx = connection.transaction('collections','readwrite');
+    seed.forEach(item => tx.objectStore('collections').put(item));
+    tx.oncomplete = resolve;
+    tx.onerror = () => reject(tx.error);
+  });
+  let writeCount = 0;
+  await new Promise((resolve,reject) => {
+    const tx = connection.transaction('collections','readwrite');
+    tx.objectStore('collections').put({key:'active', last_used:now});
+    writeCount++;
+    tx.oncomplete = resolve;
+    tx.onerror = () => reject(tx.error);
+  });
+  let staleRemoved = 0;
+  await new Promise((resolve,reject) => {
+    const tx = connection.transaction('collections','readwrite');
+    const store = tx.objectStore('collections');
+    const cursorRequest = store.openCursor();
+    cursorRequest.onsuccess = () => {
+      const cursor = cursorRequest.result;
+      if (!cursor) return;
+      if (now - cursor.value.last_used > cutoff) {
+        cursor.delete();
+        staleRemoved++;
+      }
+      cursor.continue();
+    };
+    tx.oncomplete = resolve;
+    tx.onerror = () => reject(tx.error);
+  });
+  const remaining = await new Promise((resolve,reject) => {
+    const req = connection.transaction('collections','readonly').objectStore('collections').getAllKeys();
+    req.onsuccess = () => resolve(req.result);
+    req.onerror = () => reject(req.error);
+  });
+  connection.close();
+  return {remaining, staleRemoved, writeCount, writeThrottleMs:cutoff, expiryMs:cutoff};
 }
 
 checkContract();
