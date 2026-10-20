@@ -12,18 +12,27 @@ const source = readFileSync(new URL('../src/userscript/03-agent-lifecycle/03-fav
 const original = syntheticPack();
 const corrupt = Buffer.from(original.pack);
 corrupt[corrupt.length - 20] ^= 0x04;
+const invalidIdat = syntheticPack({ badDecode: true });
 const cat = catalogue(original, ['1.11.7', '1.12.0']);
+const invalidDescriptor = catalogue(invalidIdat, ['1.13.0']).datasets[0];
+invalidDescriptor.favicons.path = 'assets/favicons/v1/invalid-idat.dcfav';
+cat.datasets.push(invalidDescriptor);
 
 // Chromium runs the exact browser implementation with origin-scoped Web Locks and IndexedDB.
 test('Chromium: two tabs share one import, lock eviction, recover corruption', { timeout: 85000 }, async () => {
   let packRequests = 0;
   let corruptNext = false;
   const server = createServer((req, res) => {
+    if (req.url === '/corrupt/on' || req.url === '/corrupt/off') {
+      corruptNext = req.url === '/corrupt/on';
+      res.writeHead(204); res.end(); return;
+    }
     if (req.url === '/hold') { setTimeout(() => { res.writeHead(204); res.end(); }, 12000); return; }
     if (req.url?.startsWith('/pack')) {
       packRequests++;
       res.setHeader('Content-Type', 'application/octet-stream');
-      res.end(corruptNext ? corrupt : original.pack);
+      res.end(req.url === '/pack-invalid' ? invalidIdat.pack
+        : corruptNext ? corrupt : original.pack);
       return;
     }
     if (req.url?.startsWith('/catalogue')) {
@@ -43,7 +52,8 @@ test('Chromium: two tabs share one import, lock eviction, recover corruption', {
         return get.apply(this, args);
       };
       function GM_xmlhttpRequest(options) {
-        const target = options.url.endsWith('.dcfav') ? '/pack' : '/catalogue';
+        const target = options.url.endsWith('invalid-idat.dcfav') ? '/pack-invalid'
+          : options.url.endsWith('.dcfav') ? '/pack' : '/catalogue';
         fetch(target).then(r => options.responseType === 'arraybuffer' ? r.arrayBuffer() : r.text())
           .then(response => options.onload({ status: 200, response })).catch(options.onerror);
       }
@@ -97,7 +107,21 @@ test('Chromium: two tabs share one import, lock eviction, recover corruption', {
         await other.close();
         if (!await faviconCacheMetadata(db, '1.11.7')) throw Error('first version disappeared');
         if (!await faviconCacheMetadata(db, '1.12.0')) throw Error('second version missing');
-        // Force expiration and confirm exact stale eviction and re-download.
+        // A dataset exactly 600000 ms old must survive; >600000 must not.
+        const actualNow = Date.now;
+        const cutoffNow = actualNow();
+        Date.now = () => cutoffNow;
+        try {
+          const tx = db.transaction('datasets', 'readwrite');
+          const store = tx.objectStore('datasets');
+          const record = await faviconCacheRequest(store.get('1.11.7'));
+          record.last_used = cutoffNow - 600000;
+          store.put(record);
+          await delay(100);
+          await faviconCacheSweep(db);
+          if (!await faviconCacheMetadata(db, '1.11.7')) throw Error('exact 10-minute cutoff evicted');
+        } finally { Date.now = actualNow; }
+        // Force expiration and confirm strict stale eviction.
         { const tx = db.transaction('datasets', 'readwrite');
           const store = tx.objectStore('datasets');
           const record = await faviconCacheRequest(store.get('1.11.7'));
@@ -106,12 +130,51 @@ test('Chromium: two tabs share one import, lock eviction, recover corruption', {
         await delay(100);
         await faviconCacheSweep(db);
         if (await faviconCacheMetadata(db, '1.11.7')) throw Error('expired dataset retained');
+        // Corrupted hash must fail closed without committing a ready marker.
+        await fetch('/corrupt/on');
+        const corruptRead = await open_favicon_dataset(key);
+        if (corruptRead !== null) throw Error('corrupted pack accepted');
+        if (await faviconCacheMetadata(db, key)) throw Error('corrupt dataset published');
+        await fetch('/corrupt/off');
         const revived = await open_favicon_dataset(key);
-        if (!revived) throw Error('redownload after eviction failed');
+        if (!revived) throw Error('redownload after corruption failed');
         await revived.close();
+        // Valid CRC/hash with undecodable IDAT must also fail closed.
+        const invalidFrame = await open_favicon_dataset('1.13.0');
+        if (invalidFrame !== null) throw Error('undecodable PNG accepted');
+        if (await faviconCacheMetadata(db, '1.13.0')) throw Error('invalid PNG published');
+        // Simulate an interrupted transaction after PNG puts but before ready.
+        { const tx = db.transaction('datasets', 'readwrite');
+          const store = tx.objectStore('datasets');
+          const record = await faviconCacheRequest(store.get(key));
+          record.last_used = Date.now() - 600001;
+          store.put(record); }
+        await delay(100);
+        await faviconCacheSweep(db);
+        const originalPut = IDBObjectStore.prototype.put;
+        let injectedAbort = false;
+        IDBObjectStore.prototype.put = function(...args) {
+          if (!injectedAbort && this.name === 'datasets' && args[0]?.version === key) {
+            injectedAbort = true;
+            throw Error('injected-atomic-import-failure');
+          }
+          return originalPut.apply(this, args);
+        };
+        let partial;
+        try { partial = await open_favicon_dataset(key); }
+        finally { IDBObjectStore.prototype.put = originalPut; }
+        if (partial !== null || !injectedAbort) throw Error('interrupted import accepted');
+        if (await faviconCacheMetadata(db, key)) throw Error('aborted ready marker committed');
+        const rows = await faviconCacheRequest(db.transaction('pngs', 'readonly')
+          .objectStore('pngs').index('by_version').getAllKeys(IDBKeyRange.only(key)));
+        if (rows.length) throw Error('aborted PNG records committed');
+        const afterAbort = await open_favicon_dataset(key);
+        if (!afterAbort) throw Error('retry after aborted transaction failed');
+        await afterAbort.close();
         document.getElementById('result').textContent = JSON.stringify({
           cross_tab: true, warm_reads: reads, child_reads: child.childResult.reads,
-          two_versions: true, stale_evicted: true, recovered: true });
+          two_versions: true, stale_evicted: true, cutoff_exact: true,
+          corrupt_rejected: true, idat_rejected: true, atomic_abort: true, recovered: true });
       }
       (location.pathname === '/child' ? runChild() : runParent()).catch(error => {
         document.getElementById('result').textContent = JSON.stringify({ error: String(error), diagnostics: window.diags });
@@ -160,7 +223,12 @@ test('Chromium: two tabs share one import, lock eviction, recover corruption', {
     assert.equal(report.two_versions, true);
     assert.equal(report.stale_evicted, true);
     assert.equal(report.recovered, true);
-    assert.equal(packRequests, 3, 'one first pack, second version, re-download');
+    assert.equal(report.cutoff_exact, true);
+    assert.equal(report.corrupt_rejected, true);
+    assert.equal(report.idat_rejected, true);
+    assert.equal(report.atomic_abort, true);
+    assert.equal(packRequests, 7,
+      'initial, second version, corruption, recovery, bad IDAT, aborted import, recovery');
   } finally {
     server.closeAllConnections();
     await new Promise(done => server.close(done));
