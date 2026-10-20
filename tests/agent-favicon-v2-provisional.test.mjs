@@ -246,3 +246,33 @@ test('V2 RED: async provider generation coalesces 250ms pulse refreshes', async 
   assert.match(h.links[0].href, /^blob:/,
     'latest waiting render eventually presents fully ready sequence');
 });
+
+test('V2 RED: unresolved old theme cannot block new theme pulse updates', async () => {
+  let enteredLight, releaseLight;
+  const pendingLight = new Promise(resolve => { releaseLight = resolve; });
+  const started = new Promise(resolve => { enteredLight = resolve; });
+  const h = fixture({ delayedRead: async (_url, theme) => {
+    if (theme === 'light') {
+      enteredLight();
+      await pendingLight;
+    }
+  } });
+  const url = 'https://chatgpt.com/favicon0.svg';
+  h.publish(url, 'light', 0, 0);
+  h.publish(url, 'dark', 0, 0);
+  const initial = h.api.render('processing');
+  await started;
+  const pulse = h.intervals[0].fn;
+  pulse();
+  await new Promise(resolve => setImmediate(resolve));
+  h.changeTheme('dark');
+  assert.equal(await h.api.render('processing'), true);
+  h.setTime(250);
+  pulse();
+  await new Promise(resolve => setImmediate(resolve));
+  assert.ok(h.reads.some(read => read[1] === 'dark' && read[4] === 1),
+    'new theme frame 1 must refresh even if old light read remains pending');
+  assert.match(h.links[0].href, /^blob:/);
+  releaseLight();
+  await initial;
+});
