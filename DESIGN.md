@@ -628,6 +628,17 @@ The favicon is a presentation-only consumer of the shared lifecycle observer. Wh
 
 A reload whose structured stream status is not active leaves the stock favicon untouched; `NOT_STREAMING` is not treated as evidence that this page observed completion. Browsers may choose among multiple `link[rel~="icon"]` candidates according to media/type/sizes, so DownloadConversation does not rely on one appended generic icon link. On each colored render it enumerates the current stock favicon candidates, captures each candidate's original source once, generates that candidate's yellow/green/red image from its own original source, and updates the existing candidate. Every later state is regenerated from the captured original rather than from a previously recolored image. An explicit original state restores the captured hrefs. Visible near-white pixels are recolored while alpha and non-white pixels are preserved. Image/canvas failure is diagnostic-only; there is no DOM-text, local-storage, alternate-network, or other fallback state path.
 
+## Planned shared favicon cache — DC #332 (not implemented)
+
+The proposed favicon optimisation has a frozen provider/consumer boundary in
+[docs/FAVICON_CACHE_INTERFACES_V1.md](docs/FAVICON_CACHE_INTERFACES_V1.md).
+DC #333 owns versioned binary PNG datasets, DC #334 owns shared origin-wide
+IndexedDB loading/retention, DC #335 owns live favicon presentation, and
+DC #336 owns convergence certification.  The current per-pulse canvas
+renderer described above remains authoritative until these tickets are
+integrated and verified.  Speculative downstream implementation does not
+retire prerequisites or authorize a merge.
+
 ## Modular userscript source and deterministic build
 
 Issue #150 makes `src/userscript-header.js`, `src/userscript-manifest.json`, and the ordered files under `src/userscript/` the authoritative DownloadConversation source. The root `chatgpt-conversation-markdown-export.user.js` is deterministic generated distribution output. It is tracked and committed at the repository root, is never authoritative, and must never be edited directly. The manifest groups ordered source segments under logical subsystem ownership while preserving the userscript IIFE execution order; segmentation is a source/build layout boundary, not a runtime module loader or a semantic rewrite.
