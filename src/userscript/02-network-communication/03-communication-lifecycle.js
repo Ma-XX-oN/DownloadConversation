@@ -187,6 +187,8 @@
       })
       .finally(() => {
         communicationLogDirectoryPickerOpening = false;
+        // A peer can finish authorisation while this tab's chooser is open.
+        if (!communicationLogReady) void communicationLogRetryStoredDirectory();
       });
   }
 
@@ -212,6 +214,8 @@
      * @returns {void} No value is returned.
      */
     const mount = () => {
+      // Another restored tab can authorise this one before deferred mounting occurs.
+      if (!communicationLogPromptShown || communicationLogReady) return;
       if (!document.body) {
         requestAnimationFrame(mount);
         return;
