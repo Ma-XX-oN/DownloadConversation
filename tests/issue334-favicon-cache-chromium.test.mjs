@@ -87,6 +87,26 @@ test('Chromium: two tabs share one import, lock eviction, recover corruption', {
         if (!first || first !== second || reads !== 1) throw Error('warm cache read count '+reads);
         if (await parent.read_png(variant, 4, 0, 0) !== null) throw Error('bad frame accepted');
         const db = await faviconCacheDatabase();
+        // Initial/warm use cannot advance the dataset clock before 600000 ms.
+        const baselineUse = (await faviconCacheMetadata(db, key)).last_used;
+        const realDateNow = Date.now;
+        try {
+          Date.now = () => baselineUse + 599999;
+          await faviconCacheTouch(db, key);
+          if ((await faviconCacheMetadata(db, key)).last_used !== baselineUse) {
+            throw Error('early last_used write');
+          }
+          Date.now = () => baselineUse + 600000;
+          await faviconCacheTouch(db, key);
+          if ((await faviconCacheMetadata(db, key)).last_used !== baselineUse + 600000) {
+            throw Error('missing exact ten-minute touch');
+          }
+          Date.now = () => baselineUse + 600001;
+          await faviconCacheTouch(db, key);
+          if ((await faviconCacheMetadata(db, key)).last_used !== baselineUse + 600000) {
+            throw Error('double touch inside ten-minute interval');
+          }
+        } finally { Date.now = realDateNow; }
         // The active shared lock must suppress an otherwise expired cleanup.
         { const tx = db.transaction('datasets', 'readwrite');
           const store = tx.objectStore('datasets');
@@ -173,7 +193,7 @@ test('Chromium: two tabs share one import, lock eviction, recover corruption', {
         await afterAbort.close();
         document.getElementById('result').textContent = JSON.stringify({
           cross_tab: true, warm_reads: reads, child_reads: child.childResult.reads,
-          two_versions: true, stale_evicted: true, cutoff_exact: true,
+          two_versions: true, stale_evicted: true, cutoff_exact: true, touch_throttled: true,
           corrupt_rejected: true, idat_rejected: true, atomic_abort: true, recovered: true });
       }
       (location.pathname === '/child' ? runChild() : runParent()).catch(error => {
@@ -224,6 +244,7 @@ test('Chromium: two tabs share one import, lock eviction, recover corruption', {
     assert.equal(report.stale_evicted, true);
     assert.equal(report.recovered, true);
     assert.equal(report.cutoff_exact, true);
+    assert.equal(report.touch_throttled, true);
     assert.equal(report.corrupt_rejected, true);
     assert.equal(report.idat_rejected, true);
     assert.equal(report.atomic_abort, true);
