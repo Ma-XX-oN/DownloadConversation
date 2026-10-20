@@ -653,8 +653,12 @@ reads and duplicate href writes. Render generations and explicit checks
 of the current theme, stock candidates and stopwatch step reject outdated
 asynchronous completions. Page navigation first restores original link
 hrefs, then revokes local Blob URLs, invalidates pending reads and closes
-the provider session. No canvas recolouring, pixel iteration, PNG encoding
-or extra Agent lifecycle observer runs on warm 250 ms updates. V2 remains
+the provider session. Scheduled 250 ms updates coalesce concurrent pending reads only when
+the lifecycle state, active theme, progress step and source candidates are
+identical. A new context can refresh while an obsolete provider request
+remains blocked; completion rejects stale replies. No canvas recolouring,
+pixel iteration, PNG encoding or extra Agent lifecycle observer runs on
+warm 250 ms updates. V2 remains
 unfrozen and provider integration unverified: these behaviours are
 speculative consumer implementation using a proposed provider test double,
 not authoritative DC #333/#334 integrated certification.
