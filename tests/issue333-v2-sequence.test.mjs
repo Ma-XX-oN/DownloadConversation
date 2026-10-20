@@ -163,7 +163,7 @@ function browserFixture(svgBytes,webpBytes,moduleSource) {
     'agentFaviconRecolorPixels','agentFaviconDrawPieSlice',
     'agentFaviconDrawRing','agentFaviconRingColor',
     'agentFaviconApplyOpacity','agentFaviconPulseOpacity'
-  ].map(productionFunctionSource).join('\\n');
+  ].map(productionFunctionSource).join('\n');
   return '<!doctype html><html><body><pre id="result">RUNNING</pre>'+
     '<script>const AGENT_FAVICON_PULSE_INTERVAL_MS=10000;'+
     'function assert(condition,reason){if(!condition)throw new Error(reason)};'+
