@@ -168,12 +168,21 @@
     const db = await communicationLogOpenDb();
     try {
       await new Promise((resolve, reject) => {
-        const request = db.transaction(COMMUNICATION_LOG_DB_STORE, 'readwrite')
-          .objectStore(COMMUNICATION_LOG_DB_STORE)
-          .put(handle, 'communication-directory');
-        request.onsuccess = () => resolve();
-        request.onerror = () => reject(request.error ?? new Error('Could not store communication-log directory handle.'));
+        const transaction = db.transaction(COMMUNICATION_LOG_DB_STORE, 'readwrite');
+        transaction.objectStore(COMMUNICATION_LOG_DB_STORE).put(handle, COMMUNICATION_LOG_HANDLE_KEY);
+        transaction.oncomplete = () => resolve();
+        transaction.onerror = () => reject(transaction.error ?? new Error('Could not store communication-log directory handle.'));
+        transaction.onabort = () => reject(transaction.error ?? new Error('Communication-log directory transaction aborted.'));
       });
+      // Notify only after the shared handle is durably committed in IndexedDB.
+      try {
+        localStorage.setItem(COMMUNICATION_LOG_DIRECTORY_SIGNAL_KEY,
+          `${Date.now()}:${crypto.randomUUID()}`);
+      } catch (error) {
+        logDiagnostic('warnings', 'communication-directory-notification-failed', {
+          message: String(error?.message ?? error)
+        });
+      }
     } finally {
       db.close();
     }
