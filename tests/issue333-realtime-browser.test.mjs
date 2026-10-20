@@ -148,11 +148,25 @@ test('real-time Chromium services event loop while producing 21 PNGs',
     console.log('DC333_REALTIME_BROWSER='+JSON.stringify(result));
   } finally {
     socket?.close();
-    child.kill('SIGKILL');
-    await Promise.race([
-      new Promise(resolve=>child.once('exit',resolve)),
-      sleep(2500)
-    ]);
-    rmSync(temp,{recursive:true,force:true,maxRetries:10,retryDelay:100});
+    const exited=(child.exitCode!==null || child.signalCode!==null) ?
+      Promise.resolve() : new Promise(resolve=>child.once('exit',resolve));
+    child.kill('SIGTERM');
+    await Promise.race([exited,sleep(1500)]);
+    if(child.exitCode===null && child.signalCode===null)child.kill('SIGKILL');
+    await Promise.race([exited,sleep(1500)]);
+    // Chromium child processes can briefly write into a profile after exit.
+    // Retry only transient profile cleanup races; do not mask other errors.
+    let cleaned=false;
+    for(let attempt=0;attempt<30;attempt++){
+      try {
+        rmSync(temp,{recursive:true,force:true,maxRetries:3,retryDelay:100});
+        cleaned=true;
+        break;
+      } catch(error){
+        if(!['ENOTEMPTY','EBUSY','EPERM'].includes(error.code))throw error;
+        await sleep(100);
+      }
+    }
+    assert(cleaned,'Chromium temporary profile could not be cleaned');
   }
 });
