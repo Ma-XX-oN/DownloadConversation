@@ -266,7 +266,7 @@ test('real Chromium renders only one 21-Blob sequence at a time in each theme',(
   } finally {rmSync(temp,{recursive:true,force:true});}
 });
 
-/** Exhaustively exercise the requested 4 x 7 tuple space, without prefetch. */
+/** Every browser fixture requests exactly ONE colour/progress sequence. */
 test('all four colours and seven progress steps render only requested frames',()=>{
   const chrome=process.env.DC_FAVICON_CHROME ||
     (existsSync('/usr/bin/chromium')?'/usr/bin/chromium':'/usr/bin/google-chrome');
@@ -282,85 +282,82 @@ test('all four colours and seven progress steps render only requested frames',()
       const theme=matchMedia('(prefers-color-scheme: dark)').matches?'dark':'light';
       if(theme!=='light')throw new Error('Expected isolated light theme');
       const toBlob=HTMLCanvasElement.prototype.toBlob;
-      const signatures=[];
-      let encodes=0, requests=0;
-      const equal=(a,b)=>a.length===b.length &&
-        a.every((value,index)=>value===b[index]);
+      let encodes=0;
       HTMLCanvasElement.prototype.toBlob=function(callback,...args){
         encodes++;
         return toBlob.call(this,callback,...args);
       };
+      let sequence;
       try {
-        for(const base of ['processing','completed','acknowledged','error']){
-          for(let progressStep=0;progressStep<=6;progressStep++){
-            result.textContent='PHASE:'+base+':'+progressStep;
-            const before=encodes;
-            const sequence=await provider.renderFaviconPulseSequence({
-              originalUrl:source,theme,base,progressStep
-            });
-            if(sequence.frames.length!==21 || encodes-before!==21) {
-              throw new Error('Wrong frame count for '+base+':'+progressStep);
-            }
-            if(sequence.frames.some(blob=>blob.type!=='image/png')) {
-              throw new Error('Non-PNG returned');
-            }
-            signatures.push({base,step:progressStep,
-              bytes:new Uint8Array(await sequence.frames[0].arrayBuffer())});
-            requests++;
-          }
-        }
+        sequence=await provider.renderFaviconPulseSequence({
+          originalUrl:source,theme,
+          base:payload.base,progressStep:payload.progressStep
+        });
       } finally {
         HTMLCanvasElement.prototype.toBlob=toBlob;
       }
-      const signature=(base,step)=>signatures.find(entry=>
-        entry.base===base && entry.step===step).bytes;
-      for(const base of ['processing','completed','acknowledged']) {
-        if(equal(signature(base,0),signature(base,6))) {
-          throw new Error('Missing progress overlay for '+base);
-        }
+      if(sequence.frames.length!==21 || encodes!==21 ||
+        sequence.frames.some(blob=>blob.type!=='image/png')){
+        throw new Error('Expected exactly 21 requested PNG encodes');
       }
-      if(!equal(signature('error',0),signature('error',6))) {
-        throw new Error('Error state unexpectedly includes progress overlay');
-      }
-      const states=['processing','completed','acknowledged','error'];
-      for(let i=0;i<states.length;i++){
-        for(let k=i+1;k<states.length;k++){
-          if(equal(signature(states[i],0),signature(states[k],0))) {
-            throw new Error('Base colours identical: '+states[i]+','+states[k]);
-          }
-        }
-      }
-      result.textContent='PASS:'+JSON.stringify({requests,encodes,theme});
-    } catch(error) {
+      const first=Array.from(new Uint8Array(
+        await sequence.frames[0].arrayBuffer()));
+      result.textContent='PASS:'+JSON.stringify({encodes,theme,first});
+    } catch(error){
       result.textContent='FAIL:'+error.name+':'+error.message;
     }
   };
-  const payload={webp:readFileSync(PINNED_WEBP).toString('base64'),
+  const data={webp:readFileSync(PINNED_WEBP).toString('base64'),
     module:readFileSync(new URL('../src/favicon/browser-sequence.mjs',
       import.meta.url),'utf8')};
-  const html='<!doctype html><html><body><pre id="matrix-result">RUNNING</pre>'+
-    '<script>('+script.toString()+')('+
-    JSON.stringify(payload).replaceAll('<','\\u003c')+
-    ');</script></body></html>';
   const temp=mkdtempSync(join(tmpdir(),'dc333-matrix-'));
+  const signatures=new Map();
+  const equal=(a,b)=>a.length===b.length &&
+    a.every((value,index)=>value===b[index]);
   try {
-    const page=join(temp,'matrix.html');
-    writeFileSync(page,html);
-    const output=execFileSync(chrome,[
-      '--headless','--no-sandbox','--disable-dev-shm-usage',
-      '--disable-gpu','--disable-background-networking',
-      '--force-prefers-color-scheme=light',
-      '--user-data-dir='+join(temp,'chrome-profile'),
-      '--virtual-time-budget=180000','--dump-dom','file://'+page
-    ],{encoding:'utf8',maxBuffer:1024*1024,timeout:120000,
-      stdio:['ignore','pipe','ignore']});
-    const status=/<pre id="matrix-result">([^<]*)<\/pre>/.exec(output)?.[1];
-    assert(status?.startsWith('PASS:'),'Colour matrix '+status);
-    const result=JSON.parse(status.slice(5));
-    assert.equal(result.requests,28);
-    assert.equal(result.encodes,588);
-    assert.equal(result.theme,'light');
-    console.log('DC333_V2_4X7_COLOUR_PROGRESS='+JSON.stringify(result));
+    for(const base of ['processing','completed','acknowledged','error']){
+      for(let step=0;step<=6;step++){
+        const payload={...data,base,progressStep:step};
+        const html='<!doctype html><html><body>'+
+          '<pre id="matrix-result">RUNNING</pre><script>'+
+          '('+script.toString()+')('+
+          JSON.stringify(payload).replaceAll('<','\\u003c')+
+          ');</script></body></html>';
+        const page=join(temp,'case.html');
+        writeFileSync(page,html);
+        const output=execFileSync(chrome,[
+          '--headless','--no-sandbox','--disable-dev-shm-usage',
+          '--disable-gpu','--disable-background-networking',
+          '--force-prefers-color-scheme=light',
+          '--user-data-dir='+join(temp,'profile-'+base+'-'+step),
+          '--virtual-time-budget=45000','--dump-dom','file://'+page
+        ],{encoding:'utf8',maxBuffer:1024*1024,timeout:30000,
+          stdio:['ignore','pipe','ignore']});
+        const status=/<pre id="matrix-result">([^<]*)<\/pre>/.exec(output)?.[1];
+        assert(status?.startsWith('PASS:'),
+          'Colour matrix '+base+':'+step+' '+status);
+        const response=JSON.parse(status.slice(5));
+        assert.equal(response.theme,'light');
+        assert.equal(response.encodes,21);
+        signatures.set(base+':'+step,response.first);
+      }
+    }
+    for(const base of ['processing','completed','acknowledged']){
+      assert(!equal(signatures.get(base+':0'),signatures.get(base+':6')),
+        'Expected progress overlay for '+base);
+    }
+    assert(equal(signatures.get('error:0'),signatures.get('error:6')),
+      'Error state must suppress the progress overlay');
+    const states=['processing','completed','acknowledged','error'];
+    for(let i=0;i<states.length;i++){
+      for(let k=i+1;k<states.length;k++){
+        assert(!equal(signatures.get(states[i]+':0'),
+          signatures.get(states[k]+':0')),'Base states differ');
+      }
+    }
+    assert.equal(signatures.size,28);
+    console.log('DC333_V2_4X7_COLOUR_PROGRESS='+
+      JSON.stringify({requests:signatures.size,encodes:signatures.size*21}));
   } finally {
     rmSync(temp,{recursive:true,force:true});
   }
