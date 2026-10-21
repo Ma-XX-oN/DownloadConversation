@@ -1,16 +1,16 @@
   /** A favicon pulse has forty 250-ms slots and 21 unique symmetric frames. */
   const AGENT_FAVICON_PULSE_PERIOD_MS = 10000;
-  /** Periodic pulse timer, started only after the dataset session is ready. */
+  /** Pulse timer starts after session readiness. */
   let agentFaviconPulseTimer = null;
   /** Existing lifecycle's presented favicon colour. */
   let agentFaviconVisibleState = 'original';
-  /** Provisional V2 dataset session; #334 owns atomic sequence generation. */
+  /** V2 dataset session owned by #334. */
   let agentFaviconDatasetSession = null;
-  /** In-flight provisional V2 cache session, shared by presentation calls. */
+  /** In-flight shared cache session. */
   let agentFaviconSessionPending = null;
-  /** Resolved minimum compatible version for this installed DC version. */
+  /** Compatible installed DC version. */
   let agentFaviconVersionPending = null;
-  /** Observed browser colour-scheme query; the same SVG URL can differ by theme. */
+  /** Browser theme query for scheme-dependent SVGs. */
   let agentFaviconThemeQuery = null;
   /** LRU PNG URLs. */
   const agentFaviconObjectUrls = new Map();
