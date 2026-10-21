@@ -1,13 +1,23 @@
   // Frozen V2.0 cache provider; runtime manifest binding belongs to DC #332.
+  // Expiry and last_used touch interval, milliseconds.
   const FAVICON_SEQUENCE_TTL_MS = 600000;
+  // Same-origin persistent 21-PNG sequence database name.
   const FAVICON_SEQUENCE_DB = 'dc-favicon-sequences-v2';
+  // Cross-tab Web Locks prefix for sequence and dataset locks.
   const FAVICON_SEQUENCE_LOCK = 'dc-favicon-v2:';
+  // Maximum accepted PNG Blob size, bytes.
   const FAVICON_SEQUENCE_MAX_PNG = 524288;
+  // Shared negative-render retry cooldown duration, milliseconds.
   const FAVICON_SEQUENCE_FAILURE_BACKOFF_MS = 5000;
+  // Maximum active tuple cooldown records retained per version.
   const FAVICON_SEQUENCE_FAILURE_LIMIT = 64;
+  // Local numeric minimum-compatible version boundaries.
   const faviconSequenceVersions = new Map();
+  // Cached version selection results (invalidated on configuration).
   const faviconSequenceResolved = new Map();
+  // Shared deferred IndexedDB connection.
   let faviconSequenceDatabasePromise = null;
+  // Per-tab interval handle for inactive dataset expiry.
   let faviconSequenceSweeper = null;
 
   /**

@@ -188,7 +188,16 @@ function pageHtml(isChild) {
         verify(rejected===null, 'bad generator output accepted');
         verify(!(await faviconSequenceRequest(db.transaction('sequences','readonly')
           .objectStore('sequences').get(failId))), 'failed generation published');
-        verify((await a.read_png(URL1,'light',1,3,0)) instanceof Blob,'retry after failed render');
+        const attemptsBeforeCooldown = calls.length;
+        verify(await a.read_png(URL1,'light',1,3,0) === null,
+          'failed sequence rendered during five-second cooldown');
+        verify(calls.length === attemptsBeforeCooldown,
+          'renderer invoked again during failure cooldown');
+        await wait(5150);
+        verify((await a.read_png(URL1,'light',1,3,0)) instanceof Blob,
+          'retry after cooldown expired failed');
+        verify(calls.length === attemptsBeforeCooldown+1,
+          'post-cooldown sequence was not regenerated once');
         // Abort during IndexedDB write: all 21 inserts are rolled back.
         const originalPut=IDBObjectStore.prototype.put;
         const abortId=faviconSequenceKey(key, URL1, 'light', 2, 4);
