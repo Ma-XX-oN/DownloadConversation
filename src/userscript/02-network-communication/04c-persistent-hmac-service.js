@@ -41,45 +41,6 @@
     }
 
     /**
-     * @param {Object} item - Stored record.
-     * @returns {Object} Validated record.
-     */
-    function validated(item) {
-      if (!item || typeof item !== 'object' || Array.isArray(item) ||
-          item.format !== 'dc-secret-key-record/2' ||
-          !/^[a-f0-9]{64}$/.test(item.key_hex ?? '') ||
-          !/^[a-f0-9]{32}$/.test(item.generation ?? '') ||
-          !Number.isSafeInteger(item.epoch) || item.epoch < 1 ||
-          !['open', 'draining'].includes(item.phase) ||
-          !Array.isArray(item.pending) || item.pending.length > 256 ||
-          item.pending.some(token => !/^[a-f0-9]{32}$/.test(token)) ||
-          new Set(item.pending).size !== item.pending.length ||
-          !Number.isSafeInteger(item.issued_at_ms) ||
-          !Number.isSafeInteger(item.expires_at_ms) ||
-          item.expires_at_ms - item.issued_at_ms < 23 * hourMs ||
-          item.expires_at_ms - item.issued_at_ms > 25 * hourMs ||
-          !Array.isArray(item.cycle_events) ||
-          !item.cycle_events.length ||
-          item.cycle_events.at(-1).generation !== item.generation ||
-          item.cycle_events.at(-1).epoch !== item.epoch) {
-        throw new Error('persistent-key-storage-corrupt');
-      }
-      if (item.phase === 'open' && item.next !== null) {
-        throw new Error('persistent-key-storage-corrupt');
-      }
-      if (item.phase === 'draining' && (!item.next ||
-          !/^[a-f0-9]{64}$/.test(item.next.key_hex ?? '') ||
-          !/^[a-f0-9]{32}$/.test(item.next.generation ?? '') ||
-          item.next.generation === item.generation ||
-          item.next.key_hex === item.key_hex ||
-          !Number.isSafeInteger(item.next.epoch) ||
-          item.next.epoch !== item.epoch + 1)) {
-        throw new Error('persistent-key-storage-corrupt');
-      }
-      return item;
-    }
-
-    /**
      * @returns {Object} Cryptographic first-generation record.
      */
     function initial() {
@@ -117,7 +78,7 @@
           let stored;
           try { stored = await storage.get(recordName, null); }
           catch { throw new Error('persistent-key-storage-read-failed'); }
-          return stored === null ? null : validated(stored);
+          return stored === null ? null : communicationPersistentHmacValidated(stored);
         };
         /**
          * Persist and verify exactly one complete storage record.
@@ -125,7 +86,7 @@
          * @returns {Promise<void>} Resolves after successful readback.
          */
         const write = async (value) => {
-          validated(value);
+          communicationPersistentHmacValidated(value);
           try { await storage.set(recordName, value); }
           catch { throw new Error('persistent-key-storage-write-failed'); }
           const actual = await read();
@@ -413,65 +374,3 @@
       recover, cycleEvents, dispose });
   }
 
-  /**
-   * Expose only the Tampermonkey script-installation storage interface.
-   * A shared storage adapter is NOT an exclusive transaction authority.
-   * @returns {Object|null} Storage adapter or null when GM is unavailable.
-   */
-  function communicationPersistentHmacTampermonkeyStorage() {
-    if (typeof GM === 'undefined' || typeof GM.getValue !== 'function' ||
-        typeof GM.setValue !== 'function') return null;
-    return Object.freeze({
-      get(name, fallback) { return GM.getValue(name, fallback); },
-      set(name, value) { return GM.setValue(name, value); }
-    });
-  }
-
-  /**
-   * Coordinate one HTTPS origin with native exclusive Web Locks.
-   * Never store keys in page-accessible IndexedDB.
-   * @param {Object} browserNavigator - Current tab's navigator.
-   * @param {Object} browserLocation - Current tab's location.
-   * @returns {Object|null} Same-origin serializing authority or unavailable.
-   */
-  function communicationPersistentHmacChatgptAuthority(
-    browserNavigator, browserLocation) {
-    const origin = 'https://chatgpt.com';
-    if (browserLocation?.origin !== origin ||
-        typeof browserNavigator?.locks?.request !== 'function') return null;
-    const name = 'downloadconversation:secret-marker-key-v2:all-tabs';
-    return Object.freeze({
-      capability: 'exclusive-chatgpt-web-lock-only-v1',
-      async runExclusive(callback) {
-        if (browserLocation.origin !== origin ||
-            typeof callback !== 'function') {
-          throw new Error('persistent-key-origin-or-callback-invalid');
-        }
-        return browserNavigator.locks.request(name, { mode: 'exclusive' },
-          async lock => {
-            if (!lock || lock.mode !== 'exclusive') {
-              throw new Error('persistent-key-web-lock-not-acquired');
-            }
-            return callback();
-          });
-      }
-    });
-  }
-
-  /**
-   * Build the production tab's lazy persistent key service.
-   * Web Locks alone cannot prove GM storage coherence: fail closed.
-   * @returns {Object} Lifecycle service with native same-origin coordination.
-   */
-  function communicationPersistentHmacCurrentTabService() {
-    const pageNavigator = typeof navigator === 'undefined' ? null : navigator;
-    const pageLocation = typeof location === 'undefined' ? null : location;
-    const sharedStorage = communicationPersistentHmacIndexedDbStorage(
-      typeof indexedDB === 'undefined' ? null : indexedDB, pageLocation);
-    return communicationPersistentHmacService({
-      storage: sharedStorage,
-      authority: communicationPersistentHmacIndexedDbAuthority(
-        pageNavigator, pageLocation, sharedStorage),
-      crypto: typeof crypto === 'undefined' ? null : crypto
-    });
-  }
