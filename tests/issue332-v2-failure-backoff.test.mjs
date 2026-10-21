@@ -18,7 +18,7 @@ const headerVersion = /^\/\/\s*@version\s+(\S+)\s*$/m
   .exec(read('../src/userscript-header.js'))?.[1];
 assert.ok(headerVersion, 'source header version is mandatory');
 const opaque = '<svg xmlns="http://www.w3.org/2000/svg" width="48" height="48">'
-  + '<rect width="48" height="48" fill="#ffffff"/></svg>';
+  + '</svg>';
 const script = [
   'const faviconV2RenderSource = (() => {',
   renderer, 'return {renderFaviconPulseSequence}; })();',
@@ -67,7 +67,7 @@ function page() {
     + '</script><img hidden src="/hold">';
 }
 
-test('DC #334: permanent renderer failure backs off across 250ms real heartbeats',
+test('DC #334: permanent renderer failure backs off across 1000ms real heartbeats',
   {timeout: 35000}, async () => {
     const server = createServer((req,res) => {
       if (req.url === '/opaque.svg') {
