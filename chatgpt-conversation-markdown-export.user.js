@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         ChatGPT Conversation Markdown Recorder
 // @namespace    https://chatgpt.com/
-// @version      1.11.12
+// @version      1.11.12-issue.354.1
 // @description  Exports the current ChatGPT conversation directly from the Conversation API as Markdown or JSONL.
 // @match        https://chatgpt.com/*
 // @match        https://chat.openai.com/*
@@ -6834,7 +6834,7 @@ const faviconV2RenderSource = (() => {
 
 const BASE_COLOURS = Object.freeze({
   processing: Object.freeze([255, 255, 0]),
-  completed: Object.freeze([144, 238, 144]),
+  completed: Object.freeze([0, 255, 0]),
   acknowledged: Object.freeze([255, 255, 255]),
   error: Object.freeze([255, 0, 0])
 });
@@ -6954,23 +6954,12 @@ function recolour(data, rgb) {
   }
 }
 
-/** Draw the legacy five-minute pie beneath the logo, and ring above. */
+/** Draw only the six-step five-minute outer progress ring above the logo. */
 function compositeProgress(ctx, width, height, step) {
   if (step < 1) return;
   const size = Math.min(width, height);
   const centerX = width / 2, centerY = height / 2;
   const start = -Math.PI / 2, end = start + Math.PI * 2 * step / 6;
-  ctx.globalCompositeOperation = 'destination-over';
-  try {
-    ctx.beginPath();
-    ctx.moveTo(centerX, centerY);
-    ctx.fillStyle = RING_COLOURS[step - 1];
-    ctx.arc(centerX, centerY, size * 0.49, start, end);
-    ctx.closePath();
-    ctx.fill();
-  } finally {
-    ctx.globalCompositeOperation = 'source-over';
-  }
   ctx.beginPath();
   ctx.strokeStyle = RING_COLOURS[step - 1];
   ctx.lineWidth = Math.max(1, size * 0.12);
@@ -13074,8 +13063,8 @@ return Object.freeze({renderFaviconPulseSequence});
     return rendered.frames;
   }
 
-  // Independent animation version; existing 1.11.8 datasets are historical.
-  const FAVICON_ANIMATION_VERSION = '2.0.0';
+  // Independent ring-only animation; retain historical 1.11.8 and 2.0.0 datasets.
+  const FAVICON_ANIMATION_VERSION = '2.1.0';
   faviconCacheV2Configure([{version: FAVICON_ANIMATION_VERSION, update_every_ms: 1000}]);
   /** Animation V2 is a two-second blink with one frame per second. */
   const AGENT_FAVICON_PULSE_PERIOD_MS = 2000;
