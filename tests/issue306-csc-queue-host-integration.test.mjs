@@ -133,3 +133,126 @@ test('exact Core pin and no second network parsing in assembled CSC path', () =>
   assert.ok(compiled.includes('connectChatGPTSubjectHost'));
   assert.ok(compiled.includes('0.1.0-issue.1.29'));
 });
+
+test('real CSC queue and browser bridge deliver one backend identity then restore A on A-B-A', async () => {
+  const queue = readFileSync(new URL(
+    '../src/userscript/02-network-communication/03-csc-plugin-backlog.js',
+    import.meta.url
+  ), 'utf8');
+  const logs = [];
+  const callbacks = new Map();
+  const page = {
+    location: { origin: 'https://chatgpt.com', href: 'https://chatgpt.com/' },
+    history: {
+      pushState(_state, _title, path) {
+        page.location.href = new URL(path, page.location.href).href;
+      },
+      replaceState(_state, _title, path) {
+        page.location.href = new URL(path, page.location.href).href;
+      }
+    },
+    addEventListener(name, cb) { callbacks.set(name, cb); },
+    removeEventListener(name, cb) {
+      if (callbacks.get(name) === cb) callbacks.delete(name);
+    }
+  };
+  let captured = null;
+  let sequence = 0;
+  let order = 0;
+  const identity = [];
+  const cache = new Map();
+  const pending = new Map();
+  let route = null;
+  let active = null;
+  const host = {
+    navigation({ url }) {
+      const next = new URL(url).pathname;
+      if (route === next) return false;
+      route = next;
+      pending.clear();
+      logs.push('nav:' + next);
+      identity.push(cache.get(next) ?? null);
+      return true;
+    },
+    request({ network_sequence }) {
+      logs.push('req:' + network_sequence);
+      pending.set(network_sequence, route);
+      return true;
+    },
+    response({ network_sequence, status, body }) {
+      logs.push('resp:' + network_sequence);
+      const expected = pending.get(network_sequence);
+      pending.delete(network_sequence);
+      if (status !== 200 || expected !== route) return false;
+      cache.set(route, body.title);
+      identity.push(body.title);
+      return true;
+    },
+    dispose() { logs.push('dispose'); }
+  };
+  const ctx = {
+    assert, Reflect, URL, JSON, Object, Promise, setTimeout, clearTimeout,
+    logDiagnostic() {},
+    agentPluginPageWindow: page,
+    chatGPTAgent: { version: () => ({}) },
+    chatGPTSubjectHost: null, disconnectChatGPTNavigation: null,
+    chatGPTPluginModule: {
+      connectChatGPTSubjectHost() { return host; }
+    },
+    cscCaptureNow(transport, direction) {
+      sequence++;
+      order++;
+      return {
+        transport, direction, capture_order: order,
+        network_sequence: sequence, capture_id: 'page:' + order,
+        connection_id: 'nav:' + order, captured_at_epoch_ms: 1
+      };
+    },
+    cscBindPluginIngress(callback) { captured = callback; },
+    cancelReadableBodyQuietly: async () => {}
+  };
+  vm.runInNewContext(queue + '\n' + navigation + '\n' +
+    extracted('reconnectChatGPTSubjectHost') + '\n' +
+    extracted('disconnectChatGPTSubjectHost') + '\n' +
+    'this.api = { reconnectChatGPTSubjectHost, disconnectChatGPTSubjectHost,' +
+    ' cscPluginQueueSnapshot };', ctx);
+  assert.equal(typeof captured, 'function');
+  ctx.api.reconnectChatGPTSubjectHost();
+  const flush = async () => {
+    for (let i = 0; i < 10; i++) {
+      await new Promise(resolve => setImmediate(resolve));
+    }
+  };
+  await flush();
+  const a = '/c/11111111-1111-4111-8111-111111111111';
+  const b = '/c/22222222-2222-4222-8222-222222222222';
+  page.history.pushState(null, '', a);
+  await flush();
+  const request = Object.freeze({
+    transport: 'fetch', direction: 'request',
+    capture_order: ++order, network_sequence: ++sequence,
+    capture_id: 'page:request', connection_id: 'requestA',
+    method: 'GET', request_url: 'https://chatgpt.com/backend-api/conversation/A'
+  });
+  const response = Object.freeze({
+    transport: 'fetch', direction: 'response',
+    capture_order: ++order, network_sequence: ++sequence,
+    capture_id: 'page:response', connection_id: 'requestA', status: 200
+  });
+  captured({ envelope: request, source: null, source_available: false });
+  captured({
+    envelope: response, source: { title: 'verified A' },
+    source_available: true, source_incomplete: false
+  });
+  await flush();
+  page.history.pushState(null, '', b);
+  page.history.pushState(null, '', a);
+  await flush();
+  assert.equal(identity.at(-1), 'verified A');
+  assert.deepEqual(logs.filter(x => x.startsWith('req:')).length, 1);
+  assert.deepEqual(logs.filter(x => x.startsWith('resp:')).length, 1);
+  assert.equal(ctx.api.cscPluginQueueSnapshot().queued, 0);
+  ctx.api.disconnectChatGPTSubjectHost();
+  assert.equal(ctx.api.cscPluginQueueSnapshot().connected, false);
+  assert.equal(logs.at(-1), 'dispose');
+});
