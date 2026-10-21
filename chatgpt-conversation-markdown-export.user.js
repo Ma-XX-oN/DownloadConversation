@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         ChatGPT Conversation Markdown Recorder
 // @namespace    https://chatgpt.com/
-// @version      1.11.7-issue.306.12
+// @version      1.11.7-issue.306.13
 // @description  Exports the current ChatGPT conversation directly from the Conversation API as Markdown or JSONL.
 // @match        https://chatgpt.com/*
 // @match        https://chat.openai.com/*
@@ -6411,7 +6411,6 @@ async function loadAgent(id, { loadModule, context = {} } = {}) {
   /** Current provider-owned navigation and network identity host. */
   let chatGPTSubjectHost = null;
   /** Disconnects the active generic navigation observer. */
-  let disconnectChatGPTNavigation = null;
   /** Current in-flight canonical agent construction, shared by concurrent callers. */
   let chatGPTAgentPromise = null;
   /** Browser page realm used by the provider-neutral navigation listener. */
@@ -6660,29 +6659,15 @@ async function loadAgent(id, { loadModule, context = {} } = {}) {
       });
       return;
     }
-    let disconnect = null;
     try {
+      cscEnsureEarlyNavigationIngress();
       cscPluginQueueConnect(host);
-      disconnect = observeGenericBrowserNavigation(agentPluginPageWindow,
-        event => {
-          try {
-            cscPluginQueueNavigation(event.url);
-          } catch (error) {
-            logDiagnostic('warnings', 'agent-plugin-navigation-publish-failed', {
-              error: boundedDiagnosticText(errorMessage(error), 200)
-            });
-          }
-        });
-      assert(typeof disconnect === 'function',
-        'Generic navigation observer returned no teardown.');
     } catch (error) {
-      disconnect?.();
       cscPluginQueueDisconnect(host);
       host.dispose();
       throw error;
     }
     chatGPTSubjectHost = host;
-    disconnectChatGPTNavigation = disconnect;
   }
 
   /**
@@ -6690,8 +6675,7 @@ async function loadAgent(id, { loadModule, context = {} } = {}) {
    * @returns {void} No value is returned.
    */
   function disconnectChatGPTSubjectHost() {
-    disconnectChatGPTNavigation?.();
-    disconnectChatGPTNavigation = null;
+    cscDisposeEarlyNavigationIngress();
     if (chatGPTSubjectHost) {
       cscPluginQueueDisconnect(chatGPTSubjectHost);
       chatGPTSubjectHost.dispose();
@@ -11895,6 +11879,36 @@ globalThis.__dcCompressor = {
   // Runs before network interception at document-start; no page COMM queue.
   cscBindPluginIngress(cscPluginQueuePublish);
   // END #310 independent same-page plugin backlog.
+
+  /** Current document's early provider-neutral URL observer; queue outlives host. */
+  let cscEarlyNavigationDisconnect = null;
+
+  /**
+   * Capture initial route before asynchronous Core/plugin readiness and
+   * preserve subsequent SPA transitions while the provider is disconnected.
+   * The #310 backlog owns ordering and delivers each captured URL once.
+   * @returns {void} No value is returned.
+   */
+  function cscEnsureEarlyNavigationIngress() {
+    if (cscEarlyNavigationDisconnect) return;
+    const page = typeof unsafeWindow !== 'undefined' ? unsafeWindow : window;
+    cscEarlyNavigationDisconnect = observeGenericBrowserNavigation(page,
+      event => cscPluginQueueNavigation(event.url));
+  }
+
+  /**
+   * Release browser hooks on pagehide without touching queued captures.
+   * @returns {void} No value is returned.
+   */
+  function cscDisposeEarlyNavigationIngress() {
+    const dispose = cscEarlyNavigationDisconnect;
+    cscEarlyNavigationDisconnect = null;
+    dispose?.();
+  }
+
+  // Document-start and before the plugin host is acquired. Unlike the old
+  // provider-ready observer, this records A/B/A during late host readiness.
+  cscEnsureEarlyNavigationIngress();
 
   /** Current authoritative Agent lifecycle state, distinct from timing state. */
   let agentLifecycleState = 'unknown';
