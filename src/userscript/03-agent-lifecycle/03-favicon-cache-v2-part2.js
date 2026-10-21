@@ -107,11 +107,11 @@
      * @param {string} theme - Actual current light/dark scheme.
      * @param {number} base_type - Yellow/green/red/white index.
      * @param {number} progress_step - Completed 5-minute step.
-     * @param {number} pulse_index - Frame 0..20 within one sequence.
+     * @param {number} pulse_index - Renderer-defined frame index.
      * @returns {Promise<Blob|null>} Requested original PNG Blob or null on failure.
      */
     async read_png(original_favicon_url, theme, base_type, progress_step, pulse_index) {
-      if (this.closing || !Number.isInteger(pulse_index) || pulse_index < 0 || pulse_index > 20) return null;
+      if (this.closing || !Number.isInteger(pulse_index) || pulse_index < 0 || pulse_index >= FAVICON_SEQUENCE_MAX_FRAMES) return null;
       const id = faviconSequenceKey(this.version, original_favicon_url, theme, base_type, progress_step);
       if (!id) return null;
       const frameKey = JSON.stringify([id, pulse_index]);
@@ -239,7 +239,7 @@
   /**
    * Opens a session using a supplied provisional local #333 renderer.
    * @param {string} version_key - Selected normalized minimum version.
-   * @param {Function} render_sequence - Exact-tuple 21-frame renderer.
+   * @param {Function} render_sequence - Complete sequence renderer for selected animation version.
    * @returns {Promise<FaviconDatasetSession|null>} Shared session or null.
    */
   async function open_favicon_dataset(version_key, render_sequence) {
