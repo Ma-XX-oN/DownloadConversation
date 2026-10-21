@@ -41,6 +41,7 @@
         "src/userscript/02-network-communication/06-communication-files.js",
         "src/userscript/02-network-communication/07-communication-streams.js",
         "src/userscript/02-network-communication/08-communication-xhr.js",
+        "src/userscript/02-network-communication/04b-persistent-hmac-indexeddb.js",
         "src/userscript/02-network-communication/04c-persistent-hmac-service.js"
       ]
     },
