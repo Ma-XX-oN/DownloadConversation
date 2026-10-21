@@ -87,7 +87,8 @@ async function scenario() {
   await second.complete(next.token);
   clock.value += 25 * 3600000 + 1;
   child.probe.clock.value = clock.value;
-  const expired = await Promise.all([make().admit(), child.probe.make().admit()]);
+  const dueLead = make(), duePeer = child.probe.make();
+  const expired = await Promise.all([dueLead.admit(), duePeer.admit()]);
   if (expired[0].metadata.redaction_key_epoch !== 3 ||
       expired[1].metadata.redaction_key_epoch !== 3 ||
       expired[0].metadata.redaction_scope !==
@@ -101,8 +102,8 @@ async function scenario() {
       genCycles[1].reason !== 'overdue') {
     throw Error('cross-tab dual-log cycle event mismatch');
   }
-  await make().complete(expired[0].token);
-  await child.probe.make().complete(expired[1].token);
+  await dueLead.complete(expired[0].token);
+  await duePeer.complete(expired[1].token);
   document.getElementById('result').textContent = JSON.stringify({
     nativeWebLocks: true, nativeIndexedDb: true,
     sameOriginTabs: 2, firstUseAdmissions: 40,
