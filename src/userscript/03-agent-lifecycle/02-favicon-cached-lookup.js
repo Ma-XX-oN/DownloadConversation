@@ -302,14 +302,15 @@
     for (const candidate of candidates) {
       const desired = matched.get(candidate.link) ?? candidate.original_href;
       if (candidate.link.href !== desired) {
+        const oldHref = candidate.link.href;
+        candidate.link.href = desired;
         if (typeof faviconProvenanceNoteWrite === 'function') {
-          faviconProvenanceNoteWrite(candidate.link, candidate.link.href, desired,
+          faviconProvenanceNoteWrite(candidate.link, oldHref, desired,
             matched.has(candidate.link) ? 'generated' : 'original', {
               original_url: candidate.original_href, theme: requestedTheme,
               state, progress_step: requestedStep
             });
         }
-        candidate.link.href = desired;
       }
       if (matched.has(candidate.link)) agentFaviconDisplayedHrefs.set(candidate.link, desired);
       else agentFaviconDisplayedHrefs.delete(candidate.link);
