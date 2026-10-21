@@ -712,4 +712,10 @@ comparison; it never intercepts ChatGPT functions or becomes a new lifecycle
 classifier.  Attribution is conservative: unknown DOM writers remain unknown.
 Full signed query values and Blob identifiers are omitted from diagnostics,
 while a compact local fingerprint distinguishes changed URLs.  Warm 250-ms
-frame changes do not emit ordinary Debug events.
+frame changes do not emit ordinary Debug events.  The gear beside the recorder's
+Save and Reset controls opens persistent diagnostic-category settings for
+stock favicon observations, browser/app theme, DC icon assignments, cache
+activity, and other diagnostics.  This category filter applies before
+console mirroring or log retention; the existing Diagnostics severity selector
+still governs which enabled events are retained.  The Gen/Comm/Con recording
+switches are independent.
