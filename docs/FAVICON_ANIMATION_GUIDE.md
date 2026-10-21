@@ -65,6 +65,13 @@ Web Locks, lifecycle, network observers, or DC build-version parsing.
   Store the selected SVG source URL and theme in the tuple; never silently
   reuse a different source/theme's frames.
 
+## Meaning of the blink
+
+The animation is a local page-timer responsiveness indicator, not proof that
+ChatGPT is delivering responses. Browser background-tab timer throttling can
+suspend or slow it; this is not a network-liveness measurement. A distinct
+server-receipt `Last:` indicator is deferred to a separate ticket.
+
 ## Storage, concurrency, and failure
 
 - IndexedDB remains `dc-favicon-sequences-v2` with existing datasets,
