@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         ChatGPT Conversation Markdown Recorder
 // @namespace    https://chatgpt.com/
-// @version      1.11.10-issue.347.3
+// @version      1.11.10-issue.347.4
 // @description  Exports the current ChatGPT conversation directly from the Conversation API as Markdown or JSONL.
 // @match        https://chatgpt.com/*
 // @match        https://chat.openai.com/*
@@ -13073,31 +13073,31 @@ return Object.freeze({renderFaviconPulseSequence});
   faviconCacheV2Configure([{version: '1.11.8', update_every_ms: 250}]);
   /** A favicon pulse has forty 250-ms slots and 21 unique symmetric frames. */
   const AGENT_FAVICON_PULSE_PERIOD_MS = 10000;
-  /** Periodic pulse timer, started only after the dataset session is ready. */
+  /** Pulse timer starts after session readiness. */
   let agentFaviconPulseTimer = null;
   /** Existing lifecycle's presented favicon colour. */
   let agentFaviconVisibleState = 'original';
-  /** Provisional V2 dataset session; #334 owns atomic sequence generation. */
+  /** V2 dataset session owned by #334. */
   let agentFaviconDatasetSession = null;
-  /** In-flight provisional V2 cache session, shared by presentation calls. */
+  /** In-flight shared cache session. */
   let agentFaviconSessionPending = null;
-  /** Resolved minimum compatible version for this installed DC version. */
+  /** Compatible installed DC version. */
   let agentFaviconVersionPending = null;
-  /** Observed browser colour-scheme query; the same SVG URL can differ by theme. */
+  /** Browser theme query for scheme-dependent SVGs. */
   let agentFaviconThemeQuery = null;
-  /** Requested tab-local PNG URLs in LRU order. */
+  /** LRU PNG URLs. */
   const agentFaviconObjectUrls = new Map();
   /** URLs currently assigned to original stock links. */
   const agentFaviconDisplayedHrefs = new Map();
-  /** Maximum tab-local frame URLs. */
+  /** Tab-local URL limit. */
   const AGENT_FAVICON_URL_LIMIT = 84;
   /** Progress-step state for the existing shared stopwatch observer. */
   let agentFaviconRingRenderedStep = 0;
   /** Last successfully displayed 5-minute progress step. */
   let agentFaviconPresentedStep = null;
-  /** Whether pagehide has invalidated active and pending cache reads. */
+  /** Invalidated after pagehide. */
   let agentFaviconPageHidden = false;
-  /** Incremented at navigation to reject late reads across bfcache restoration. */
+  /** Navigation epoch rejects stale reads. */
   let agentFaviconPageEpoch = 0;
 
   /**
@@ -13111,6 +13111,30 @@ return Object.freeze({renderFaviconPulseSequence});
       AGENT_FAVICON_PULSE_PERIOD_MS) % AGENT_FAVICON_PULSE_PERIOD_MS;
     const slot = Math.floor(phase / 250);
     return Math.min(slot, 40 - slot);
+  }
+
+  /**
+   * Captures all stock link candidates, without changing media/type/sizes.
+   * @returns {Array<Object>} Links and their original unmodified hrefs.
+   */
+  function agentFaviconCurrentCandidates() {
+    return [...document.querySelectorAll('link[rel~="icon"]')]
+      .filter(link => typeof link?.href === 'string' && link.href)
+      .map(link => {
+        const previous = agentFaviconOriginalSources.get(link);
+        const assigned = agentFaviconDisplayedHrefs.get(link);
+        if (!previous || (link.href !== previous && link.href !== assigned)) {
+          agentFaviconOriginalSources.set(link, link.href);
+          agentFaviconDisplayedHrefs.delete(link);
+        }
+        return {
+          link,
+          original_href: agentFaviconOriginalSources.get(link),
+          media: typeof link.media === 'string' ? link.media : '',
+          type: typeof link.type === 'string' ? link.type : '',
+          sizes: typeof link.sizes?.value === 'string' ? link.sizes.value : ''
+        };
+      });
   }
 
   /**
@@ -13187,15 +13211,11 @@ return Object.freeze({renderFaviconPulseSequence});
       agentFaviconObjectUrls.set(key, url);
       return url;
     }
-    if (typeof faviconProvenanceCacheEvent === 'function') {
+    if (typeof faviconProvenanceCacheEvent === 'function')
       faviconProvenanceCacheEvent(session.version, originalUrl, theme, base, step, false);
-    }
     const blob = await session.read_png(originalUrl, theme, base, step, frame);
     if (epoch !== agentFaviconPageEpoch || agentFaviconPageHidden) return null;
     if (!(blob instanceof Blob) || blob.type !== 'image/png' || !blob.size) return null;
-    if (typeof faviconProvenanceCacheEvent === 'function') {
-      faviconProvenanceCacheEvent(session.version, originalUrl, theme, base, step, true);
-    }
     // Concurrent heartbeats can request one frame while its IDB read is pending.
     if (agentFaviconObjectUrls.has(key)) return agentFaviconObjectUrls.get(key);
     const url = URL.createObjectURL(blob);
@@ -13346,17 +13366,7 @@ return Object.freeze({renderFaviconPulseSequence});
     const matched = new Map((pairs ?? []).map(pair => [pair.link, pair.href]));
     for (const candidate of candidates) {
       const desired = matched.get(candidate.link) ?? candidate.original_href;
-      if (candidate.link.href !== desired) {
-        const oldHref = candidate.link.href;
-        candidate.link.href = desired;
-        if (typeof faviconProvenanceNoteWrite === 'function') {
-          faviconProvenanceNoteWrite(candidate.link, oldHref, desired,
-            matched.has(candidate.link) ? 'generated' : 'original', {
-              original_url: candidate.original_href, theme: requestedTheme,
-              state, progress_step: requestedStep
-            });
-        }
-      }
+      if (candidate.link.href !== desired) candidate.link.href = desired;
       if (matched.has(candidate.link)) agentFaviconDisplayedHrefs.set(candidate.link, desired);
       else agentFaviconDisplayedHrefs.delete(candidate.link);
     }
@@ -13550,35 +13560,6 @@ return Object.freeze({renderFaviconPulseSequence});
   let faviconProvenanceObserver = null;
 
   /**
-   * Captures all stock link candidates, without changing media/type/sizes.
-   * @returns {Array<Object>} Links and their original unmodified hrefs.
-   */
-  function agentFaviconCurrentCandidates() {
-    return [...document.querySelectorAll('link[rel~="icon"]')]
-      .filter(link => typeof link?.href === 'string' && link.href)
-      .map(link => {
-        const previous = agentFaviconOriginalSources.get(link);
-        const assigned = agentFaviconDisplayedHrefs.get(link);
-        if (!previous || (link.href !== previous && link.href !== assigned)) {
-          agentFaviconOriginalSources.set(link, link.href);
-          agentFaviconDisplayedHrefs.delete(link);
-        }
-        const candidate = {
-          link,
-          original_href: agentFaviconOriginalSources.get(link),
-          media: typeof link.media === 'string' ? link.media : '',
-          type: typeof link.type === 'string' ? link.type : '',
-          sizes: typeof link.sizes?.value === 'string' ? link.sizes.value : ''
-        };
-        if (typeof faviconProvenanceTrackCandidate === 'function') {
-          faviconProvenanceTrackCandidate(candidate);
-        }
-        return candidate;
-      });
-  }
-
-
-  /**
    * Build a diagnostic-only URL identity without leaking query values.
    *
    * @param {string|null|undefined} value - Candidate URL or Blob href to summarize.
@@ -13631,6 +13612,21 @@ return Object.freeze({renderFaviconPulseSequence});
     const stock = candidate.original_href;
     const meta = [candidate.media, candidate.type, candidate.sizes].join('|');
     const before = faviconProvenanceSeen.get(link);
+    const dcHref = agentFaviconDisplayedHrefs.get(link);
+    if (dcHref === current && (!before || before.observed !== current)) {
+      faviconProvenanceNoteWrite(link, before?.observed || stock, current,
+        'generated', {
+          original_url: stock,
+          theme: typeof agentFaviconCurrentTheme === 'function'
+            ? agentFaviconCurrentTheme() : faviconProvenanceLastTheme,
+          state: agentFaviconVisibleState,
+          progress_step: agentFaviconRingStep()
+        });
+      faviconProvenanceLog('cache-frame-available', {
+        original_url: faviconProvenanceUrl(stock),
+        note: 'generated image became available for display'
+      });
+    }
     const own = faviconProvenanceOwnWrites.get(link);
     const wasOurs = own === current;
     if (wasOurs) faviconProvenanceOwnWrites.delete(link);
@@ -13792,7 +13788,9 @@ return Object.freeze({renderFaviconPulseSequence});
         media_type_sizes: previous.meta
       });
     }
-    agentFaviconCurrentCandidates();
+    for (const candidate of agentFaviconCurrentCandidates()) {
+      faviconProvenanceTrackCandidate(candidate);
+    }
   }
 
   /**
@@ -13804,7 +13802,9 @@ return Object.freeze({renderFaviconPulseSequence});
     // @run-at document-start may precede creation of document.head.
     // Observing Document also catches subsequent <head> and icon insertion.
     faviconProvenanceLastAppTheme = faviconProvenanceAppTheme();
-    agentFaviconCurrentCandidates();
+    for (const candidate of agentFaviconCurrentCandidates()) {
+      faviconProvenanceTrackCandidate(candidate);
+    }
     if (typeof window.matchMedia === 'function') {
       faviconProvenanceThemeChanged(
         window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light'
