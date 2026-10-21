@@ -49,7 +49,10 @@ function fixture(ids, options = {}) {
           } : {
             type: 'done', run: msg.run, from,
             outcome: options.mismatch === from ?
-              { ...observation, fingerprint: 'WRONG' } : observation
+              { ...observation, fingerprint: 'WRONG' } :
+              options.journalMismatch === from ?
+                { ...observation, events: [{ id: 'cycle-DIFFERENT' }] } :
+                observation
           };
           this.onmessage({ data: signal });
           // Repeated peer messages should not count as separate participants.
@@ -133,4 +136,20 @@ test('one missing selected peer is a failure, never a partial PASS', async () =>
     f.participatingInstances('test', 'measure', 123),
     /participant-timeout:1 missing out of 3/
   );
+});
+
+test('sixteen participating peers are checked without a fixed upper count', async () => {
+  const names = Array.from({ length: 16 }, (_, i) => 'peer-' + i);
+  const f = fixture(names);
+  const result = await f.participatingInstances('test', 'measure', 123);
+  assert.equal(result.participants, 17);
+  assert.equal(f.equalIdentity(result), true);
+  assert.equal(f.journalsAgree(result), true);
+});
+
+test('one mismatched cycle journal fails whole-cohort parity', async () => {
+  const f = fixture(['A', 'B', 'C', 'D'], { journalMismatch: 'D' });
+  const result = await f.participatingInstances('test', 'measure', 123);
+  assert.equal(f.equalIdentity(result), true);
+  assert.equal(f.journalsAgree(result), false);
 });
