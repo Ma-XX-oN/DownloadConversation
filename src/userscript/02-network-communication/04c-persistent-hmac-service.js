@@ -6,8 +6,10 @@
    */
   function communicationPersistentHmacService(dependencies) {
     const { storage, authority, crypto: secureCrypto } = dependencies;
+    const now = dependencies.now || (() => Date.now());
+    const hourMs = 60 * 60 * 1000;
     const recordName = 'downloadconversation:secret-marker-key-v2';
-    const scopeStorage = 'tampermonkey-script-installation';
+    const scopeStorage = 'chatgpt-origin-indexeddb';
     const format = 'dc-secret-marker/2';
     const internal = new Map();
     let disposed = false;
@@ -51,7 +53,15 @@
           !['open', 'draining'].includes(item.phase) ||
           !Array.isArray(item.pending) || item.pending.length > 256 ||
           item.pending.some(token => !/^[a-f0-9]{32}$/.test(token)) ||
-          new Set(item.pending).size !== item.pending.length) {
+          new Set(item.pending).size !== item.pending.length ||
+          !Number.isSafeInteger(item.issued_at_ms) ||
+          !Number.isSafeInteger(item.expires_at_ms) ||
+          item.expires_at_ms - item.issued_at_ms < 23 * hourMs ||
+          item.expires_at_ms - item.issued_at_ms > 25 * hourMs ||
+          !Array.isArray(item.cycle_events) ||
+          !item.cycle_events.length ||
+          item.cycle_events.at(-1).generation !== item.generation ||
+          item.cycle_events.at(-1).epoch !== item.epoch) {
         throw new Error('persistent-key-storage-corrupt');
       }
       if (item.phase === 'open' && item.next !== null) {
@@ -73,9 +83,12 @@
      * @returns {Object} Cryptographic first-generation record.
      */
     function initial() {
+      const issued = now();
+      const generation = randomHex(16);
       return { format: 'dc-secret-key-record/2', key_hex: randomHex(32),
-        generation: randomHex(16), epoch: 1, phase: 'open',
-        pending: [], next: null };
+        generation, epoch: 1, phase: 'open', pending: [], next: null,
+        issued_at_ms: issued, expires_at_ms: deadline(issued),
+        cycle_events: [cycleEvent(generation, 1, issued, 'initial')] };
     }
 
     /**
@@ -141,9 +154,64 @@
      * @returns {Object} Next record.
      */
     function finishRotation(stored) {
+      const issued = now();
+      const generation = stored.next.generation;
+      const epoch = stored.next.epoch;
       return { format: stored.format, key_hex: stored.next.key_hex,
-        generation: stored.next.generation, epoch: stored.next.epoch,
-        phase: 'open', pending: [], next: null };
+        generation, epoch, phase: 'open', pending: [], next: null,
+        issued_at_ms: issued, expires_at_ms: deadline(issued),
+        cycle_events: [...stored.cycle_events,
+          cycleEvent(generation, epoch, issued, stored.next.reason)] };
+    }
+
+    /**
+     * @param {number} issued - Committed rotation wall-clock time.
+     * @returns {number} Random due time in inclusive 23–25 hour interval.
+     */
+    function deadline(issued) {
+      const sample = Number.parseInt(randomHex(4), 16);
+      return issued + 23 * hourMs +
+        Math.floor(sample / 4294967296 * (2 * hourMs + 1));
+    }
+
+    /**
+     * @param {string} generation - Public generation identifier.
+     * @param {number} epoch - Public key epoch.
+     * @param {number} time - Committed timestamp.
+     * @param {string} reason - Initial, scheduled, overdue or manual.
+     * @returns {Object} Stable nonsecret record for GEN and COMM.
+     */
+    function cycleEvent(generation, epoch, time, reason) {
+      return { type: 'hmac-key-cycle',
+        id: 'hmac-key-cycle:' + epoch + ':' + generation,
+        generation, epoch, occurred_at_ms: time, reason };
+    }
+
+    /**
+     * @param {Function} read - Shared record reader.
+     * @param {Function} write - Atomic record writer.
+     * @returns {Promise<Object|null>} Fresh record, or absent state.
+     */
+    async function rotateIfDue(read, write) {
+      const stored = await read();
+      if (!stored || stored.phase !== 'open') return stored;
+      const time = now();
+      if (time < stored.issued_at_ms) {
+        throw Error('persistent-key-clock-regression');
+      }
+      if (time < stored.expires_at_ms) return stored;
+      if (stored.epoch >= Number.MAX_SAFE_INTEGER) {
+        throw Error('persistent-key-epoch-overflow');
+      }
+      const reason = time - stored.issued_at_ms > 25 * hourMs
+        ? 'overdue' : 'scheduled';
+      const draining = { ...stored, phase: 'draining',
+        next: { key_hex: randomHex(32), generation: randomHex(16),
+          epoch: stored.epoch + 1, reason } };
+      const next = stored.pending.length === 0
+        ? finishRotation(draining) : draining;
+      await write(next);
+      return next;
     }
 
     /**
@@ -174,7 +242,7 @@
       let result;
       try {
         result = await transaction(async (read, write) => {
-          let stored = await read();
+          let stored = await rotateIfDue(read, write);
           if (!stored) { stored = initial(); await write(stored); }
           if (stored.phase !== 'open') throw new Error('persistent-key-rotation-draining');
           if (stored.pending.length >= 256) throw new Error('persistent-key-admission-capacity');
@@ -271,7 +339,7 @@
         }
         const next = { ...stored, phase: 'draining',
           next: { key_hex: randomHex(32), generation: randomHex(16),
-            epoch: stored.epoch + 1 } };
+            epoch: stored.epoch + 1, reason: 'manual' } };
         const committed = next.pending.length === 0
           ? finishRotation(next) : next;
         try { await write(committed); }
@@ -293,10 +361,11 @@
      * @returns {Promise<Object>} Nonsecret status, including interruption state.
      */
     async function status() {
-      return transaction(async read => {
-        const stored = await read();
+      return transaction(async (read, write) => {
+        const stored = await rotateIfDue(read, write);
         return stored ? { state: stored.phase, ...metadata(stored),
-          pending_count: stored.pending.length } : { state: 'uninitialized' };
+          pending_count: stored.pending.length,
+          expires_at_ms: stored.expires_at_ms } : { state: 'uninitialized' };
       });
     }
 
@@ -307,7 +376,7 @@
      */
     async function recover() {
       return transaction(async (read, write) => {
-        const stored = await read();
+        const stored = await rotateIfDue(read, write);
         if (!stored) return { state: 'uninitialized' };
         if (stored.phase === 'draining' && stored.pending.length === 0) {
           const next = finishRotation(stored);
@@ -328,8 +397,20 @@
       disposed = true;
     }
 
+    /**
+     * @param {number} afterEpoch - Exclusive previous epoch to query.
+     * @returns {Promise<Object[]>} Committed nonsecret dual-log cycle events.
+     */
+    async function cycleEvents(afterEpoch = 0) {
+      return transaction(async read => {
+        const record = await read();
+        return record ? record.cycle_events.filter(
+          event => event.epoch > afterEpoch) : [];
+      });
+    }
+
     return Object.freeze({ admit, provision, complete, randomize, status,
-      recover, dispose });
+      recover, cycleEvents, dispose });
   }
 
   /**
@@ -383,11 +464,14 @@
    * @returns {Object} Lifecycle service with native same-origin coordination.
    */
   function communicationPersistentHmacCurrentTabService() {
+    const pageNavigator = typeof navigator === 'undefined' ? null : navigator;
+    const pageLocation = typeof location === 'undefined' ? null : location;
+    const sharedStorage = communicationPersistentHmacIndexedDbStorage(
+      typeof indexedDB === 'undefined' ? null : indexedDB, pageLocation);
     return communicationPersistentHmacService({
-      storage: communicationPersistentHmacTampermonkeyStorage(),
-      authority: communicationPersistentHmacChatgptAuthority(
-        typeof navigator === 'undefined' ? null : navigator,
-        typeof location === 'undefined' ? null : location),
+      storage: sharedStorage,
+      authority: communicationPersistentHmacIndexedDbAuthority(
+        pageNavigator, pageLocation, sharedStorage),
       crypto: typeof crypto === 'undefined' ? null : crypto
     });
   }
