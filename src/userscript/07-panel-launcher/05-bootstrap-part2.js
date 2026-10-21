@@ -38,6 +38,14 @@
   });
   installNetworkCapture();
   bootstrapUi();
+  // Title monitoring must not block recorder startup.
+  try {
+    agentFaviconTitleMonitorStart();
+  } catch (error) {
+    logConsoleDiagnostic('warnings', '[ChatGPT Recorder] favicon title watch disabled', {
+      reason: error instanceof Error ? error.message : String(error)
+    });
+  }
   // Optional favicon diagnostics must never prevent the recorder from mounting.
   try {
     faviconProvenanceStart();

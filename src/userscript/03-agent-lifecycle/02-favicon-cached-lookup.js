@@ -29,7 +29,7 @@
 
   /**
    * Selects one of the two blink frames from monotonic time.
-   * @param {number} time_offset - Monotonic offset in milliseconds.
+   * @param {number} time_offset - Milliseconds.
    * @returns {number|null} Blink frame 0 or 1, or null for invalid input.
    */
   function agentFaviconPulseIndex(time_offset) {
@@ -40,7 +40,7 @@
   }
 
   /**
-   * Captures all stock link candidates, without changing media/type/sizes.
+   * Captures original icon links.
    * @returns {Array<Object>} Links and their original unmodified hrefs.
    */
   function agentFaviconCurrentCandidates() {
@@ -64,7 +64,7 @@
   }
 
   /**
-   * Resolves and memoizes the provider's minimum compatible numeric version.
+   * Resolves the animation version.
    * @returns {Promise<string|null>} Selected numeric version boundary or null.
    */
   async function agentFaviconCompatibleVersion() {
@@ -82,7 +82,7 @@
 
   /**
    * Open the shared cache dataset.
-   * @param {string} version_key - Animation version.
+   * @param {string} version_key - Version.
    * @returns {Promise<Object|null>} Session or null.
    */
   async function agentFaviconOpenSession(version_key) {
@@ -165,11 +165,11 @@
   }
 
   /**
-   * Select a versioned animation frame without leaking layout to callers.
-   * @param {string} version_key - Animation version.
+   * Selects one cached frame.
+   * @param {string} version_key - Version.
    * @param {number} base_type - Colour.
    * @param {number} completion_time - Progress step.
-   * @param {number} time_offset - Monotonic milliseconds.
+   * @param {number} time_offset - Milliseconds.
    * @returns {Promise<Array<Object>|null>} Icon URL assignments.
    */
   async function get_favicon(version_key, base_type, completion_time, time_offset) {
@@ -192,8 +192,8 @@
   }
 
   /**
-   * Revokes only object URLs no longer displayed by a stock favicon link.
-   * @param {boolean} all - Dispose every URL during page navigation.
+   * Releases unreferenced object URLs.
+   * @param {boolean} all - Dispose all.
    * @returns {void} No value is returned.
    */
   function agentFaviconTrimObjectUrls(all = false) {
@@ -208,7 +208,7 @@
 
   /**
    * Derives progress solely from the authoritative stopwatch state.
-   * @param {number} nowMs - Monotonic current time.
+   * @param {number} nowMs - Clock.
    * @returns {number} Saturated five-minute progress step 0..6.
    */
   function agentFaviconRingStep(nowMs = performance.now()) {
@@ -224,15 +224,16 @@
    * @returns {Promise<void>} Resolves after attempting a dataset session.
    */
   async function agentFaviconStartPulse() {
-    if (agentFaviconPageHidden || agentFaviconPulseTimer !== null) return;
+    const cadence = agentFaviconHeartbeatCadence();
+    if (agentFaviconPageHidden || agentFaviconPulseTimer !== null ||
+        cadence === null) return;
     const key = await agentFaviconCompatibleVersion();
     if (!key) return;
     const session = await agentFaviconOpenSession(key);
     if (!session || agentFaviconVisibleState === 'original' ||
-        agentFaviconPulseTimer !== null) return;
-    agentFaviconPulseTimer = setInterval(
-      agentFaviconPulseHeartbeat, session.update_every_ms
-    );
+        agentFaviconPulseTimer !== null ||
+        agentFaviconHeartbeatCadence() !== cadence) return;
+    agentFaviconPulseTimer = setInterval(agentFaviconPulseHeartbeat, cadence);
   }
 
   /**
@@ -246,9 +247,9 @@
   }
 
   /**
-   * Projects lifecycle state through pending-safe provisional V2 lookup.
-   * @param {string} state - Original, processing, completed, error or acknowledged.
-   * @param {boolean} heartbeat - True only for scheduled pulse refresh.
+   * Projects lifecycle safely.
+   * @param {string} state - Lifecycle.
+   * @param {boolean} heartbeat - Pulse tick.
    * @returns {Promise<boolean>} True if all recognized favicon links updated safely.
    */
   async function agentFaviconRenderState(state, heartbeat = false) {
@@ -279,7 +280,8 @@
       requestedStep = nextStep;
       try {
         const key = await agentFaviconCompatibleVersion();
-        if (key) pairs = await get_favicon(key, base, requestedStep, performance.now());
+        if (key) pairs = await get_favicon(key, base, requestedStep,
+          agentFaviconFrameTimeOffset(performance.now()));
       } catch (error) {
         if (!heartbeat) logDiagnostic('warnings', 'agent-favicon-cache-unavailable', {
           state, message: errorMessage(error)
@@ -347,7 +349,7 @@
   }
 
   /**
-   * Acknowledges completion only when its own browser tab is focused.
+   * Acknowledges completion in a focused tab.
    * @returns {void} No result is returned.
    */
   function agentFaviconAcknowledgeCompletion() {
@@ -357,7 +359,7 @@
   }
 
   /**
-   * Allows page-restored tabs to acquire a fresh provider session.
+   * Restores a session after page navigation.
    * @param {PageTransitionEvent} event - Page restoration lifecycle event.
    * @returns {void} No result is returned.
    */

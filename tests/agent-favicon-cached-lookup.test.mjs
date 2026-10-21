@@ -64,6 +64,8 @@ function fixture(known = true, delayedRead = null, candidates = 1,
     const VERSION = ${JSON.stringify(version)};
     const FAVICON_ANIMATION_VERSION = ${JSON.stringify(version)};
     const agentFaviconOriginalSources = new Map();
+    function agentFaviconHeartbeatCadence() { return 1000; }
+    function agentFaviconFrameTimeOffset(ms) { return ms; }
     let agentFaviconRenderGeneration = 0;
     let agentFaviconPulseUpdatePending = null;
     let agentStopwatchState = { active: true, started_at_ms: 0, total_ms: null };
