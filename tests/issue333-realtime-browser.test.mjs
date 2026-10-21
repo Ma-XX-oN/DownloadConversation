@@ -61,7 +61,7 @@ async function runSequence(payload){
 
 /** Terminate an attempted browser before retrying with a fresh profile. */
 async function stopChrome(child) {
-  if(!child)return;
+  if(!child?.pid)return;
   const exited=(child.exitCode!==null || child.signalCode!==null) ?
     Promise.resolve() : new Promise(resolve=>child.once('exit',resolve));
   child.kill('SIGTERM');
@@ -71,11 +71,13 @@ async function stopChrome(child) {
 }
 
 /** A failed CDP startup is retried; renderer failures never are. */
-async function launchChrome(chrome,temp) {
+async function launchChrome(chrome,temp,forceFirstUnavailable=false) {
   const diagnostics=[];
   for(let attempt=1;attempt<=3;attempt++){
     const profile=join(temp,'chrome-profile-'+attempt);
-    const child=spawn(chrome,[
+    const executable=forceFirstUnavailable && attempt===1 ?
+      '/__dc333_missing_chromium_executable__' : chrome;
+    const child=spawn(executable,[
       '--headless=new','--no-sandbox','--disable-dev-shm-usage',
       '--disable-gpu','--disable-background-networking','--no-first-run',
       '--force-prefers-color-scheme=light',
@@ -120,7 +122,7 @@ async function launchChrome(chrome,temp) {
       if(attempt>1){
         console.log('DC333_CHROMIUM_STARTUP_RECOVERED='+attempt);
       }
-      return {child,socket};
+      return {child,socket,attempt};
     } catch(error){
       socket?.close();
       diagnostics.push('attempt='+attempt+', error='+error.message+
@@ -207,5 +209,27 @@ test('real-time Chromium services event loop while producing 21 PNGs',
       }
     }
     assert(cleaned,'Chromium temporary profile could not be cleaned');
+  }
+});
+
+test('Chromium CDP startup recovers after a failed first spawn',
+  {timeout:45000},async()=>{
+  const chrome=process.env.DC_FAVICON_CHROME ||
+    (existsSync('/usr/bin/chromium')?'/usr/bin/chromium':'/usr/bin/google-chrome');
+  assert(existsSync(chrome),'Chromium required for startup retry proof');
+  const temp=mkdtempSync(join(tmpdir(),'dc333-retry-'));
+  let browser=null;
+  try {
+    browser=await launchChrome(chrome,temp,true);
+    assert.equal(browser.attempt,2,
+      'Fresh-profile startup did not recover on the second attempt');
+    assert.equal(browser.socket.readyState,WebSocket.OPEN);
+    console.log('DC333_CDP_RECOVERY='+JSON.stringify({
+      failedAttempts:1,recoveredOnAttempt:browser.attempt
+    }));
+  } finally {
+    browser?.socket.close();
+    await stopChrome(browser?.child);
+    rmSync(temp,{recursive:true,force:true,maxRetries:10,retryDelay:100});
   }
 });
