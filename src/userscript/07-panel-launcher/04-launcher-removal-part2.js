@@ -4,6 +4,7 @@
       const launcher = document.getElementById(LAUNCHER_ID);
       if (launcher) launcher.style.display = '';
     });
+    bindDiagnosticCategoryPopup(panel);
     const diagnostics = panel.querySelector('[data-role="diagnostics"]');
     diagnostics.value = diagnosticsLevel;
     diagnostics.addEventListener('change', () => {
