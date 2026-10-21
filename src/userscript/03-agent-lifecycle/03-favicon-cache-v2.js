@@ -1,12 +1,14 @@
   // Frozen V2.0 cache provider; runtime manifest binding belongs to DC #332.
   // Expiry and last_used touch interval, milliseconds.
   const FAVICON_SEQUENCE_TTL_MS = 600000;
-  // Same-origin persistent 21-PNG sequence database name.
+  // Same-origin persistent, version-partitioned PNG sequence database.
   const FAVICON_SEQUENCE_DB = 'dc-favicon-sequences-v2';
   // Cross-tab Web Locks prefix for sequence and dataset locks.
   const FAVICON_SEQUENCE_LOCK = 'dc-favicon-v2:';
   // Maximum accepted PNG Blob size, bytes.
   const FAVICON_SEQUENCE_MAX_PNG = 524288;
+  // Storage bound, independent of any animation's actual frame count.
+  const FAVICON_SEQUENCE_MAX_FRAMES = 256;
   // Shared negative-render retry cooldown duration, milliseconds.
   const FAVICON_SEQUENCE_FAILURE_BACKOFF_MS = 5000;
   // Maximum active tuple cooldown records retained per version.
@@ -203,19 +205,22 @@
   async function faviconSequenceRead(db, id, index) {
     const tx = db.transaction(['sequences', 'pngs'], 'readonly');
     const meta = await faviconSequenceRequest(tx.objectStore('sequences').get(id));
-    if (meta?.ready !== true || meta.count !== 21) return null;
+    if (meta?.ready !== true || !Number.isInteger(meta.count) ||
+      meta.count < 1 || meta.count > FAVICON_SEQUENCE_MAX_FRAMES ||
+      index < 0 || index >= meta.count) return null;
     const record = await faviconSequenceRequest(tx.objectStore('pngs').get([id, index]));
     return record?.blob instanceof Blob && record.blob.type === 'image/png' ? record.blob : null;
   }
 
   /**
-   * Validates all 21 locally rendered PNGs before any store mutation.
+   * Validates every locally rendered frame before any store mutation.
    * @param {ReadonlyArray<Blob>} frames - Provisional #333 output.
    * @param {AbortSignal} signal - Abort on session close/navigation.
    * @returns {Promise<void>} Completes after validating every image.
    */
   async function faviconSequenceValidate(frames, signal) {
-    if (!Array.isArray(frames) || frames.length !== 21) throw Error('frame-count');
+    if (!Array.isArray(frames) || frames.length < 1 ||
+      frames.length > FAVICON_SEQUENCE_MAX_FRAMES) throw Error('frame-count');
     let width = 0;
     let height = 0;
     for (const png of frames) {
@@ -234,10 +239,10 @@
   }
 
   /**
-   * Stores 21 native PNG Blobs and their ready marker in one transaction.
+   * Atomically stores the supplied frame sequence and its ready marker.
    * @param {IDBDatabase} db - Cache connection.
    * @param {Object} key - Requested sequence data.
-   * @param {ReadonlyArray<Blob>} frames - Verified 21 frames.
+   * @param {ReadonlyArray<Blob>} frames - Complete validated frame sequence.
    * @returns {Promise<void>} Atomic commit completion.
    */
   async function faviconSequencePublish(db, key, frames) {
@@ -245,10 +250,10 @@
     const done = faviconSequenceTransaction(tx);
     try {
       const rows = tx.objectStore('pngs');
-      for (let pulse_index = 0; pulse_index < 21; pulse_index++) {
+      for (let pulse_index = 0; pulse_index < frames.length; pulse_index++) {
         rows.put({ version: key.version, sequence: key.id, pulse_index, blob: frames[pulse_index] });
       }
-      tx.objectStore('sequences').put({ id: key.id, version: key.version, ready: true, count: 21 });
+      tx.objectStore('sequences').put({ id: key.id, version: key.version, ready: true, count: frames.length });
       await done;
     } catch (error) { try { tx.abort(); } catch {} await done.catch(() => {}); throw error; }
   }
