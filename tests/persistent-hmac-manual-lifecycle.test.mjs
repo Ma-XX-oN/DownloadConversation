@@ -38,7 +38,7 @@ test('probe keeps synthetic key records isolated from production IndexedDB', () 
 });
 
 test('probe tests reload, shared secret identity, draining and both cycle types', () => {
-  assert.match(source, /HMAC lifecycle stage 1 \(two tabs\)/);
+  assert.match(source, /HMAC lifecycle stage 1 \(all participants\)/);
   assert.match(source, /HMAC lifecycle stage 2 \(after reload\)/);
   assert.match(source, /localStorage\.setItem\(baselineName/);
   assert.match(source, /localStorage\.getItem\(baselineName\)/);
