@@ -12,19 +12,19 @@
   let agentFaviconVersionPending = null;
   /** Observed browser colour-scheme query; the same SVG URL can differ by theme. */
   let agentFaviconThemeQuery = null;
-  /** Requested tab-local PNG URLs in LRU order. */
+  /** LRU PNG URLs. */
   const agentFaviconObjectUrls = new Map();
   /** URLs currently assigned to original stock links. */
   const agentFaviconDisplayedHrefs = new Map();
-  /** Maximum tab-local frame URLs. */
+  /** Tab-local URL limit. */
   const AGENT_FAVICON_URL_LIMIT = 84;
   /** Progress-step state for the existing shared stopwatch observer. */
   let agentFaviconRingRenderedStep = 0;
   /** Last successfully displayed 5-minute progress step. */
   let agentFaviconPresentedStep = null;
-  /** Whether pagehide has invalidated active and pending cache reads. */
+  /** Invalidated after pagehide. */
   let agentFaviconPageHidden = false;
-  /** Incremented at navigation to reject late reads across bfcache restoration. */
+  /** Navigation epoch rejects stale reads. */
   let agentFaviconPageEpoch = 0;
 
   /**
@@ -38,6 +38,30 @@
       AGENT_FAVICON_PULSE_PERIOD_MS) % AGENT_FAVICON_PULSE_PERIOD_MS;
     const slot = Math.floor(phase / 250);
     return Math.min(slot, 40 - slot);
+  }
+
+  /**
+   * Captures all stock link candidates, without changing media/type/sizes.
+   * @returns {Array<Object>} Links and their original unmodified hrefs.
+   */
+  function agentFaviconCurrentCandidates() {
+    return [...document.querySelectorAll('link[rel~="icon"]')]
+      .filter(link => typeof link?.href === 'string' && link.href)
+      .map(link => {
+        const previous = agentFaviconOriginalSources.get(link);
+        const assigned = agentFaviconDisplayedHrefs.get(link);
+        if (!previous || (link.href !== previous && link.href !== assigned)) {
+          agentFaviconOriginalSources.set(link, link.href);
+          agentFaviconDisplayedHrefs.delete(link);
+        }
+        return {
+          link,
+          original_href: agentFaviconOriginalSources.get(link),
+          media: typeof link.media === 'string' ? link.media : '',
+          type: typeof link.type === 'string' ? link.type : '',
+          sizes: typeof link.sizes?.value === 'string' ? link.sizes.value : ''
+        };
+      });
   }
 
   /**
@@ -114,15 +138,11 @@
       agentFaviconObjectUrls.set(key, url);
       return url;
     }
-    if (typeof faviconProvenanceCacheEvent === 'function') {
+    if (typeof faviconProvenanceCacheEvent === 'function')
       faviconProvenanceCacheEvent(session.version, originalUrl, theme, base, step, false);
-    }
     const blob = await session.read_png(originalUrl, theme, base, step, frame);
     if (epoch !== agentFaviconPageEpoch || agentFaviconPageHidden) return null;
     if (!(blob instanceof Blob) || blob.type !== 'image/png' || !blob.size) return null;
-    if (typeof faviconProvenanceCacheEvent === 'function') {
-      faviconProvenanceCacheEvent(session.version, originalUrl, theme, base, step, true);
-    }
     // Concurrent heartbeats can request one frame while its IDB read is pending.
     if (agentFaviconObjectUrls.has(key)) return agentFaviconObjectUrls.get(key);
     const url = URL.createObjectURL(blob);
@@ -273,17 +293,7 @@
     const matched = new Map((pairs ?? []).map(pair => [pair.link, pair.href]));
     for (const candidate of candidates) {
       const desired = matched.get(candidate.link) ?? candidate.original_href;
-      if (candidate.link.href !== desired) {
-        const oldHref = candidate.link.href;
-        candidate.link.href = desired;
-        if (typeof faviconProvenanceNoteWrite === 'function') {
-          faviconProvenanceNoteWrite(candidate.link, oldHref, desired,
-            matched.has(candidate.link) ? 'generated' : 'original', {
-              original_url: candidate.original_href, theme: requestedTheme,
-              state, progress_step: requestedStep
-            });
-        }
-      }
+      if (candidate.link.href !== desired) candidate.link.href = desired;
       if (matched.has(candidate.link)) agentFaviconDisplayedHrefs.set(candidate.link, desired);
       else agentFaviconDisplayedHrefs.delete(candidate.link);
     }
