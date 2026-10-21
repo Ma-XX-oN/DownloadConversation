@@ -1,10 +1,10 @@
   /** Exact reference URLs observed in the October 2026 favicon logs. */
   const FAVICON_PREVIEW_REFERENCE = Object.freeze([
-    { key: 'light-svg', label: 'Light SVG', file: /^favicon\\.[^/]+\\.svg$/i,
+    { key: 'light-svg', label: 'Light SVG', file: /^favicon\.[^/]+\.svg$/i,
       url: 'https://chatgpt.com/cdn/assets/favicon.6a33781f61.svg' },
-    { key: 'dark-svg', label: 'Dark SVG', file: /^favicon-dark\\.[^/]+\\.svg$/i,
+    { key: 'dark-svg', label: 'Dark SVG', file: /^favicon-dark\.[^/]+\.svg$/i,
       url: 'https://chatgpt.com/cdn/assets/favicon-dark.cdf009c235.svg' },
-    { key: 'png', label: '48×48 PNG', file: /^favicon-48x48\\.[^/]+\\.png$/i,
+    { key: 'png', label: '48×48 PNG', file: /^favicon-48x48\.[^/]+\.png$/i,
       url: 'https://chatgpt.com/cdn/assets/favicon-48x48.7d42b2e65f.png' }
   ]);
 
