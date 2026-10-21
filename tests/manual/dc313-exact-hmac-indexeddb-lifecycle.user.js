@@ -358,8 +358,19 @@
   GM_registerMenuCommand('DC #313: HMAC lifecycle stage 2 (after reload)',
     afterReload);
   GM_registerMenuCommand('DC #313: HMAC lifecycle probe readiness',
-    () => show('DC #313 HMAC lifecycle readiness', {
-      status: 'READY', version: '0.1.0', isolate: databaseName,
-      instructions: 'Stage 1 in Tab 1; reload both; stage 2 in Tab 1.'
-    }));
+    () => {
+      const imports = [
+        ['IndexedDB storage', typeof communicationPersistentHmacIndexedDbStorage],
+        ['IndexedDB authority', typeof communicationPersistentHmacIndexedDbAuthority],
+        ['HMAC record validation', typeof communicationPersistentHmacValidated],
+        ['HMAC service', typeof communicationPersistentHmacService]
+      ];
+      const missing = imports.filter(item => item[1] !== 'function')
+        .map(item => item[0]);
+      show('DC #313 HMAC lifecycle readiness', {
+        status: missing.length === 0 ? 'READY' : 'FAIL',
+        missing, version: '0.1.0', isolate: databaseName,
+        instructions: 'Stage 1 in Tab 1; reload both; stage 2 in Tab 1.'
+      });
+    });
 })();
