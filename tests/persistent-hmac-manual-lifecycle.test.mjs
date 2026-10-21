@@ -1,11 +1,16 @@
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import test from 'node:test';
+import { Script } from 'node:vm';
 
 const source = readFileSync(new URL(
   './manual/dc313-exact-hmac-indexeddb-lifecycle.user.js',
   import.meta.url), 'utf8');
 const revision = 'de934cb66047fd6144e6888939fd83b8d650781e';
+
+test('installed lifecycle probe is syntactically valid JavaScript', () => {
+  assert.doesNotThrow(() => new Script(source));
+});
 
 test('installed lifecycle probe requires four immutable exact producer modules', () => {
   for (const file of [
