@@ -186,7 +186,7 @@ test('crashed generator and aborted transaction leave no partial ready',async()=
 
 test('contender takes over after generator failure, original while waiting',async()=>{
   const s=new SequenceModel(), held=gate(), a=s.tab(),b=s.tab();
-  const failed=s.request(a,tuple,500,{gate:held,crashAt:2});
+  const failed=s.request(a,tuple,500,{gate:held,crashAt:1});
   await new Promise(resolve=>setImmediate(resolve));
   const takeover=s.request(b,tuple,500);
   assert.equal(b.href,b.stock);
