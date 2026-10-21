@@ -70,7 +70,8 @@
    * @returns {void} Does not return a value.
    */
   function agentFaviconPulseHeartbeat() {
-    if (agentFaviconVisibleState === 'original') return;
+    if (agentFaviconVisibleState === 'original' ||
+        agentFaviconHeartbeatCadence() === null) return;
     const candidates = agentFaviconActiveCandidates(agentFaviconCurrentCandidates());
     const key = JSON.stringify([agentFaviconVisibleState,
       agentFaviconRingStep(), agentFaviconCurrentTheme(),

@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         ChatGPT Conversation Markdown Recorder
 // @namespace    https://chatgpt.com/
-// @version      1.11.11
+// @version      1.11.12
 // @description  Exports the current ChatGPT conversation directly from the Conversation API as Markdown or JSONL.
 // @match        https://chatgpt.com/*
 // @match        https://chat.openai.com/*
@@ -12504,7 +12504,8 @@ return Object.freeze({renderFaviconPulseSequence});
    * @returns {void} Does not return a value.
    */
   function agentFaviconPulseHeartbeat() {
-    if (agentFaviconVisibleState === 'original') return;
+    if (agentFaviconVisibleState === 'original' ||
+        agentFaviconHeartbeatCadence() === null) return;
     const candidates = agentFaviconActiveCandidates(agentFaviconCurrentCandidates());
     const key = JSON.stringify([agentFaviconVisibleState,
       agentFaviconRingStep(), agentFaviconCurrentTheme(),
@@ -13107,7 +13108,7 @@ return Object.freeze({renderFaviconPulseSequence});
 
   /**
    * Selects one of the two blink frames from monotonic time.
-   * @param {number} time_offset - Monotonic offset in milliseconds.
+   * @param {number} time_offset - Milliseconds.
    * @returns {number|null} Blink frame 0 or 1, or null for invalid input.
    */
   function agentFaviconPulseIndex(time_offset) {
@@ -13118,7 +13119,7 @@ return Object.freeze({renderFaviconPulseSequence});
   }
 
   /**
-   * Captures all stock link candidates, without changing media/type/sizes.
+   * Captures original icon links.
    * @returns {Array<Object>} Links and their original unmodified hrefs.
    */
   function agentFaviconCurrentCandidates() {
@@ -13142,7 +13143,7 @@ return Object.freeze({renderFaviconPulseSequence});
   }
 
   /**
-   * Resolves and memoizes the provider's minimum compatible numeric version.
+   * Resolves the animation version.
    * @returns {Promise<string|null>} Selected numeric version boundary or null.
    */
   async function agentFaviconCompatibleVersion() {
@@ -13160,7 +13161,7 @@ return Object.freeze({renderFaviconPulseSequence});
 
   /**
    * Open the shared cache dataset.
-   * @param {string} version_key - Animation version.
+   * @param {string} version_key - Version.
    * @returns {Promise<Object|null>} Session or null.
    */
   async function agentFaviconOpenSession(version_key) {
@@ -13243,11 +13244,11 @@ return Object.freeze({renderFaviconPulseSequence});
   }
 
   /**
-   * Select a versioned animation frame without leaking layout to callers.
-   * @param {string} version_key - Animation version.
+   * Selects one cached frame.
+   * @param {string} version_key - Version.
    * @param {number} base_type - Colour.
    * @param {number} completion_time - Progress step.
-   * @param {number} time_offset - Monotonic milliseconds.
+   * @param {number} time_offset - Milliseconds.
    * @returns {Promise<Array<Object>|null>} Icon URL assignments.
    */
   async function get_favicon(version_key, base_type, completion_time, time_offset) {
@@ -13270,8 +13271,8 @@ return Object.freeze({renderFaviconPulseSequence});
   }
 
   /**
-   * Revokes only object URLs no longer displayed by a stock favicon link.
-   * @param {boolean} all - Dispose every URL during page navigation.
+   * Releases unreferenced object URLs.
+   * @param {boolean} all - Dispose all.
    * @returns {void} No value is returned.
    */
   function agentFaviconTrimObjectUrls(all = false) {
@@ -13286,7 +13287,7 @@ return Object.freeze({renderFaviconPulseSequence});
 
   /**
    * Derives progress solely from the authoritative stopwatch state.
-   * @param {number} nowMs - Monotonic current time.
+   * @param {number} nowMs - Clock.
    * @returns {number} Saturated five-minute progress step 0..6.
    */
   function agentFaviconRingStep(nowMs = performance.now()) {
@@ -13302,15 +13303,16 @@ return Object.freeze({renderFaviconPulseSequence});
    * @returns {Promise<void>} Resolves after attempting a dataset session.
    */
   async function agentFaviconStartPulse() {
-    if (agentFaviconPageHidden || agentFaviconPulseTimer !== null) return;
+    const cadence = agentFaviconHeartbeatCadence();
+    if (agentFaviconPageHidden || agentFaviconPulseTimer !== null ||
+        cadence === null) return;
     const key = await agentFaviconCompatibleVersion();
     if (!key) return;
     const session = await agentFaviconOpenSession(key);
     if (!session || agentFaviconVisibleState === 'original' ||
-        agentFaviconPulseTimer !== null) return;
-    agentFaviconPulseTimer = setInterval(
-      agentFaviconPulseHeartbeat, session.update_every_ms
-    );
+        agentFaviconPulseTimer !== null ||
+        agentFaviconHeartbeatCadence() !== cadence) return;
+    agentFaviconPulseTimer = setInterval(agentFaviconPulseHeartbeat, cadence);
   }
 
   /**
@@ -13324,9 +13326,9 @@ return Object.freeze({renderFaviconPulseSequence});
   }
 
   /**
-   * Projects lifecycle state through pending-safe provisional V2 lookup.
-   * @param {string} state - Original, processing, completed, error or acknowledged.
-   * @param {boolean} heartbeat - True only for scheduled pulse refresh.
+   * Projects lifecycle safely.
+   * @param {string} state - Lifecycle.
+   * @param {boolean} heartbeat - Pulse tick.
    * @returns {Promise<boolean>} True if all recognized favicon links updated safely.
    */
   async function agentFaviconRenderState(state, heartbeat = false) {
@@ -13357,7 +13359,8 @@ return Object.freeze({renderFaviconPulseSequence});
       requestedStep = nextStep;
       try {
         const key = await agentFaviconCompatibleVersion();
-        if (key) pairs = await get_favicon(key, base, requestedStep, performance.now());
+        if (key) pairs = await get_favicon(key, base, requestedStep,
+          agentFaviconFrameTimeOffset(performance.now()));
       } catch (error) {
         if (!heartbeat) logDiagnostic('warnings', 'agent-favicon-cache-unavailable', {
           state, message: errorMessage(error)
@@ -13425,7 +13428,7 @@ return Object.freeze({renderFaviconPulseSequence});
   }
 
   /**
-   * Acknowledges completion only when its own browser tab is focused.
+   * Acknowledges completion in a focused tab.
    * @returns {void} No result is returned.
    */
   function agentFaviconAcknowledgeCompletion() {
@@ -13435,7 +13438,7 @@ return Object.freeze({renderFaviconPulseSequence});
   }
 
   /**
-   * Allows page-restored tabs to acquire a fresh provider session.
+   * Restores a session after page navigation.
    * @param {PageTransitionEvent} event - Page restoration lifecycle event.
    * @returns {void} No result is returned.
    */
@@ -13448,6 +13451,138 @@ return Object.freeze({renderFaviconPulseSequence});
   window.addEventListener('focus', agentFaviconAcknowledgeCompletion);
   window.addEventListener('pagehide', agentFaviconDispose);
   window.addEventListener('pageshow', agentFaviconHandlePageShow);
+  /** Add a suffix/rate entry here; all matching titles use one scheduler. */
+  const AGENT_FAVICON_TITLE_CADENCES = Object.freeze({
+    '- ACTIVE': 1000,
+    '- USER ACTION REQUIRED': 2000
+  });
+  /** Last resolved frame cadence; null is the static policy. */
+  let agentFaviconTitleLastCadence = null;
+  /** Whether DOM observer bindings currently exist. */
+  let agentFaviconTitleMonitoring = false;
+  /** Watches the actual HTML title element. */
+  let agentFaviconTitleHeadObserver = null;
+  /** Title node currently observed (head watches direct child replacement only). */
+  let agentFaviconTitleObservedTitle = null;
+  /** Watches only the current sidebar's title region. */
+  let agentFaviconTitleSidebarObserver = null;
+  /** Currently observed sidebar container. */
+  let agentFaviconTitleSidebarRoot = null;
+
+  /**
+   * Looks up exact case-sensitive suffix and its frame interval.
+   * @returns {number|null} Milliseconds per frame or null for static.
+   */
+  function agentFaviconHeartbeatCadence() {
+    const title = conversationTitle();
+    const dash = title.lastIndexOf('-');
+    if (dash < 0) return null;
+    const suffix = title.slice(dash).trimEnd();
+    const ms = AGENT_FAVICON_TITLE_CADENCES[suffix];
+    return Number.isFinite(ms) && ms > 0 ? ms : null;
+  }
+
+  /**
+   * Adapts frame timing to the same unchanged two-frame cache selector.
+   * @param {number} nowMs - Monotonic clock.
+   * @returns {number} Existing selector offset; zero yields static frame 0.
+   */
+  function agentFaviconFrameTimeOffset(nowMs) {
+    const cadence = agentFaviconHeartbeatCadence();
+    return cadence === null ? 0 : Math.floor(nowMs / cadence) * 1000;
+  }
+
+  /**
+   * Observes only the page title and active sidebar, not the transcript.
+   * @returns {void} No result.
+   */
+  function agentFaviconTitleBindObservers() {
+    if (!agentFaviconTitleMonitoring) return;
+    const titleNode = document.head?.querySelector('title') ?? null;
+    if (document.head && (!agentFaviconTitleHeadObserver ||
+        titleNode !== agentFaviconTitleObservedTitle)) {
+      agentFaviconTitleHeadObserver?.disconnect();
+      agentFaviconTitleHeadObserver = new MutationObserver(agentFaviconTitleRefresh);
+      agentFaviconTitleHeadObserver.observe(document.head, { childList: true });
+      if (titleNode) agentFaviconTitleHeadObserver.observe(titleNode, {
+        subtree: true, childList: true, characterData: true
+      });
+      agentFaviconTitleObservedTitle = titleNode;
+    }
+    const current = document.querySelector(
+      'a[data-interactive-row-link][aria-current="page"][href]');
+    const root = current?.closest('nav') ??
+      document.querySelector('nav') ?? current ?? null;
+    if (root === agentFaviconTitleSidebarRoot) return;
+    agentFaviconTitleSidebarObserver?.disconnect();
+    agentFaviconTitleSidebarRoot = root;
+    agentFaviconTitleSidebarObserver = null;
+    if (!root) return;
+    agentFaviconTitleSidebarObserver = new MutationObserver(agentFaviconTitleRefresh);
+    agentFaviconTitleSidebarObserver.observe(root, {
+      subtree: true, childList: true, characterData: true,
+      attributes: true, attributeFilter: ['href', 'aria-label', 'aria-current']
+    });
+  }
+
+  /**
+   * Invalidates pending frames whenever title cadence changes.
+   * @returns {void} No result.
+   */
+  function agentFaviconTitleRefresh() {
+    agentFaviconTitleBindObservers();
+    if (agentFaviconPageHidden) return;
+    const cadence = agentFaviconHeartbeatCadence();
+    if (cadence === agentFaviconTitleLastCadence) return;
+    agentFaviconTitleLastCadence = cadence;
+    ++agentFaviconRenderGeneration;
+    agentFaviconPulseUpdatePending = null;
+    agentFaviconStopPulse();
+    if (agentFaviconVisibleState !== 'original') {
+      void agentFaviconRenderState(agentFaviconVisibleState, true);
+    }
+  }
+
+  /**
+   * Disconnects scoped observers on pagehide, including BFCache.
+   * @returns {void} No result.
+   */
+  function agentFaviconTitlePause() {
+    agentFaviconTitleHeadObserver?.disconnect();
+    agentFaviconTitleSidebarObserver?.disconnect();
+    agentFaviconTitleHeadObserver = null;
+    agentFaviconTitleObservedTitle = null;
+    agentFaviconTitleSidebarObserver = null;
+    agentFaviconTitleSidebarRoot = null;
+    agentFaviconTitleLastCadence = null;
+    agentFaviconTitleMonitoring = false;
+  }
+
+  /**
+   * Installs one listener set; reattaches observers on page restoration.
+   * @returns {void} No result.
+   */
+  function agentFaviconTitleMonitorStart() {
+    if (agentFaviconTitleMonitoring) return;
+    agentFaviconTitleMonitoring = true;
+    agentFaviconTitleRefresh();
+    agentFaviconTitleBindObservers();
+    document.addEventListener('DOMContentLoaded', agentFaviconTitleRefresh,
+      { once: true });
+    if (!agentFaviconTitleMonitorStart.bound) {
+      agentFaviconTitleMonitorStart.bound = true;
+      window.addEventListener('popstate', agentFaviconTitleRefresh);
+      window.addEventListener('focus', agentFaviconTitleRefresh);
+      window.addEventListener('pageshow', agentFaviconTitleMonitorStart);
+      window.addEventListener('pagehide', agentFaviconTitlePause);
+      document.addEventListener('click', event => {
+        if (!event.target?.closest?.('a[data-interactive-row-link]')) return;
+        Promise.resolve().then(agentFaviconTitleRefresh);
+      }, true);
+      window.navigation?.addEventListener?.('navigatesuccess',
+        agentFaviconTitleRefresh);
+    }
+  }
   /** Persistent diagnostic event categories; Gen/Comm recording remains separate. */
   const DIAGNOSTIC_CATEGORY_STORAGE_KEY = 'tm-recorder-diagnostic-categories';
   /** Explicit persisted categories exposed by the logging gear. */
@@ -25729,6 +25864,14 @@ Image elapsed: ${formatDuration(imageElapsed)} — Completed: ${imageCompleted}/
   });
   installNetworkCapture();
   bootstrapUi();
+  // Title monitoring must not block recorder startup.
+  try {
+    agentFaviconTitleMonitorStart();
+  } catch (error) {
+    logConsoleDiagnostic('warnings', '[ChatGPT Recorder] favicon title watch disabled', {
+      reason: error instanceof Error ? error.message : String(error)
+    });
+  }
   // Optional favicon diagnostics must never prevent the recorder from mounting.
   try {
     faviconProvenanceStart();

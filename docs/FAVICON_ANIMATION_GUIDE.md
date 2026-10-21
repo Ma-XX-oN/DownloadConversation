@@ -11,8 +11,9 @@ frozen V2.0 document remains historical evidence and must not be rewritten.
 - `@version` / `VERSION` identify the DC userscript build, **not** the
   favicon animation. An `-issue.*` suffix has no animation semantics.
 - `FAVICON_ANIMATION_VERSION` is a separate numeric triplet, currently
-  `2.0.0`. Change it whenever the frame bytes/selection semantics or
-  cadence change. Do not change it just for a DC build.
+  `2.0.0`. Change it when frame bytes or frame-index semantics change.
+  Per-title heartbeat cadence is a presentation scheduling policy and does
+  **not** alter cached frames, the frame-index API or animation identity.
 - Old animation `1.11.8` (21-frame cosine) already exists in the shared
   IndexedDB database and belongs to old running tabs. Do not migrate it.
   New tabs select `2.0.0` explicitly. Old tabs continue independently.
@@ -111,3 +112,36 @@ server-receipt `Last:` indicator is deferred to a separate ticket.
   `chatgpt-conversation-markdown-export.user.js` when source changes.
 - Require exact-source hosted CI and real Chrome acceptance before
   merging. No merge without explicit user authorization.
+
+## Title-controlled heartbeat cadence (DC #352)
+
+The only per-conversation blink policy is the milliseconds dictionary in
+`src/userscript/03-agent-lifecycle/02-favicon-title-policy.js`:
+
+```js
+const AGENT_FAVICON_TITLE_CADENCES = Object.freeze({
+  '- ACTIVE': 1000,
+  '- USER ACTION REQUIRED': 2000
+});
+```
+
+Use the canonical active-sidebar-first `conversationTitle()` resolver;
+find its **last hyphen**, take everything from that hyphen, trim trailing
+whitespace and look up the resulting suffix in the dictionary. Prefixes
+and ticket numbers do not matter. Suffix matching is case-sensitive.
+A missing dictionary entry means a static, fully opaque frame 0 without
+a recurring timer. To add a new rate, insert one dictionary entry.
+
+`agentFaviconHeartbeatCadence()` produces milliseconds, or null;
+`agentFaviconFrameTimeOffset()` converts that cadence into the existing
+two-frame selector's time offset. The renderer, cache and
+`get_favicon(version_key, base_type, completion_time, time_offset)`
+are unchanged, as is independent animation version `2.0.0`.
+Both existing cached frames are reused at either rate.
+
+The title observer is event-driven, bound to the document title and
+current sidebar, not the transcript. Route changes, focus and BFCache
+restore also re-evaluate. Switching rates stops the previous interval,
+invalidates pending asynchronous presentations, repaints once and starts
+a new interval if the dictionary matches. Recording, diagnostics,
+network capture, lifecycle colours and progress-ring changes are not gated.

@@ -76,6 +76,7 @@ test('observer start failure is isolated after recorder mounting', () => {
   const context = {events};
   vm.runInNewContext(`
     function bootstrapUi() { events.push('recorder-ui-bootstrap'); }
+    function agentFaviconTitleMonitorStart() {};
     function faviconProvenanceStart() { throw new Error('synthetic observer failure'); }
     function logConsoleDiagnostic(level, message, details) {
       events.push([level, message, details.reason]);
