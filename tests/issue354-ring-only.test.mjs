@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import {execFileSync} from 'node:child_process';
+import {spawn,spawnSync} from 'node:child_process';
 import {existsSync,mkdtempSync,readFileSync,rmSync,writeFileSync} from 'node:fs';
 import {join} from 'node:path';
 import {tmpdir} from 'node:os';
@@ -104,31 +104,91 @@ function htmlFor(scheme) {
     + ');</script></body></html>';
 }
 
+/** Run the real Chromium fixture without virtual-time fast-forward. */
+async function runBrowserPage(theme,page,temp) {
+  const chrome=process.env.DC_FAVICON_CHROME ||
+    ['google-chrome','chromium','chromium-browser']
+      .map(name=>spawnSync('which',[name],{encoding:'utf8'}))
+      .find(result=>result.status===0)?.stdout.trim();
+  assert.ok(chrome && existsSync(chrome),'Real Chromium required');
+  const profile=join(temp,'profile-'+theme);
+  const child=spawn(chrome,['--headless=new','--no-sandbox',
+    '--disable-dev-shm-usage','--disable-background-networking',
+    '--remote-debugging-port=0','--user-data-dir='+profile,
+    '--force-prefers-color-scheme='+theme,'about:blank'],{stdio:'ignore'});
+  let socket;
+  try {
+    let port=null;
+    for(let i=0;i<100;i++) {
+      const filename=join(profile,'DevToolsActivePort');
+      if(existsSync(filename)) {
+        port=Number(readFileSync(filename,'utf8').split('\n')[0]);
+        break;
+      }
+      if(child.exitCode!==null)throw Error('Chromium exited early');
+      await new Promise(resolve=>setTimeout(resolve,80));
+    }
+    assert.ok(port,'Chromium debugging port unavailable');
+    const targets=await fetch('http://127.0.0.1:'+port+'/json/list')
+      .then(response=>response.json());
+    const target=targets.find(item=>item.type==='page');
+    assert.ok(target,'Chromium page target unavailable');
+    socket=new WebSocket(target.webSocketDebuggerUrl);
+    await new Promise((resolve,reject)=>{
+      socket.onopen=resolve; socket.onerror=reject;
+    });
+    let serial=0;
+    const waiting=new Map();
+    socket.onmessage=event=>{
+      const result=JSON.parse(event.data);
+      const finish=waiting.get(result.id);
+      if(!finish)return;
+      waiting.delete(result.id);
+      finish(result);
+    };
+    const send=(method,params={})=>new Promise((resolve,reject)=>{
+      const id=++serial;
+      waiting.set(id,result=>{
+        if(result.error)reject(Error(JSON.stringify(result.error)));
+        else resolve(result.result);
+      });
+      socket.send(JSON.stringify({id,method,params}));
+    });
+    await send('Page.enable');
+    await send('Runtime.enable');
+    await send('Page.navigate',{url:'file://'+page});
+    let last='UNLOADED';
+    for(let i=0;i<450;i++){
+      const data=await send('Runtime.evaluate',{
+        expression:'document.getElementById("result")?.textContent',
+        returnByValue:true
+      });
+      last=data.result?.value ?? 'UNLOADED';
+      if(last.startsWith('PASS:') || last.startsWith('FAIL:'))return last;
+      await new Promise(resolve=>setTimeout(resolve,80));
+    }
+    throw Error('Chromium rendering timed out: '+last);
+  } finally {
+    socket?.close();
+    child.kill('SIGKILL');
+    await new Promise(resolve=>setTimeout(resolve,75));
+  }
+}
+
 test('ring-only pixel matrix: all 7 steps, 4 states, both frames and themes',
-  {timeout:180000}, () => {
-    const chrome=process.env.DC_FAVICON_CHROME ||
-      (existsSync('/usr/bin/chromium')?'/usr/bin/chromium':'/usr/bin/google-chrome');
-    assert.ok(existsSync(chrome),'Real Chromium required for pixel acceptance');
+  {timeout:120000}, async () => {
     const temp=mkdtempSync(join(tmpdir(),'dc354-ring-'));
     try {
       for(const theme of ['light','dark']) {
         const page=join(temp,'test-'+theme+'.html');
         writeFileSync(page,htmlFor(theme),'utf8');
-        const output=execFileSync(chrome,[
-          '--headless','--no-sandbox','--disable-dev-shm-usage',
-          '--disable-gpu','--disable-background-networking',
-          '--force-prefers-color-scheme='+theme,
-          '--user-data-dir='+join(temp,'profile-'+theme),
-          '--virtual-time-budget=120000','--dump-dom','file://'+page
-        ],{encoding:'utf8',maxBuffer:1024*1024,timeout:120000,
-          stdio:['ignore','pipe','ignore']});
-        const status=/<pre id="result">([^<]*)<\/pre>/.exec(output)?.[1];
+        const status=await runBrowserPage(theme,page,temp);
         assert.ok(status?.startsWith('PASS:'),theme+': '+status);
         const result=JSON.parse(status.slice(5));
         assert.deepEqual(result,{theme,cases:28,frames:56});
       }
     } finally {
-      rmSync(temp,{recursive:true,force:true});
+      rmSync(temp,{recursive:true,force:true,maxRetries:10,retryDelay:100});
     }
   });
 
