@@ -89,9 +89,11 @@ test('fails closed when Web Locks or IndexedDB are absent', async () => {
   assert.equal(await api.open('2.0.0', async () => []), null);
 });
 
-test('21 Blob frames and ready marker share one atomic transaction', () => {
-  assert.match(source, /for \(let pulse_index = 0; pulse_index < 21; pulse_index\+\+\)/);
+test('renderer-defined frame count and ready marker share one atomic transaction', () => {
+  assert.match(source, /for \(let pulse_index = 0; pulse_index < frames\.length; pulse_index\+\+\)/);
   assert.match(source, /\['sequences', 'pngs'\], 'readwrite'/);
-  assert.match(source, /ready: true, count: 21/);
+  assert.match(source, /ready: true, count: frames\.length/);
   assert.match(source, /await faviconSequenceValidate\(frames, signal\)/);
+  assert.match(source, /meta\.count > FAVICON_SEQUENCE_MAX_FRAMES/);
+  assert.doesNotMatch(source, /frames\.length !== 21/);
 });
