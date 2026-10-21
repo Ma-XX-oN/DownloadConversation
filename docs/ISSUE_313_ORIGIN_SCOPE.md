@@ -7,22 +7,31 @@ DC #312, without rewriting that frozen design artifact or its marker vectors.
 
 ## Coordination and storage
 
-All cooperating tabs on the supported origin acquire the same named
-`navigator.locks` exclusive Web Lock before doing a Tampermonkey HMAC storage
-read, creation, admission, release, recovery or user-confirmed rotation.
-The lock is held through GM storage write and readback. Unavailable locks and
-storage failures suspend capture rather than falling back to an ephemeral key.
+The operator approved origin-scoped IndexedDB despite page visibility of the
+stored HMAC secret. All participating tabs use the same named exclusive
+`navigator.locks` lock and commit complete versioned records through
+IndexedDB `readwrite` transactions. This replaces the prior GM-based primary
+key store, which failed the real two-tab 24/48 consistency test. No GM value,
+local readback, fixed delay or event listener serves as transaction authority.
 
-A single versioned Tampermonkey record stores the private random 256-bit key,
-128-bit generation identifier, epoch, drain phase and pending admissions.
-Do not store the secret key in page-origin IndexedDB: ordinary page scripts
-have access to origin storage. IndexedDB can atomically update its own records,
-but cannot make separate asynchronous GM storage writes part of the same IDB
-transaction. Web Locks therefore coordinate the protected GM operations.
+Each complete record contains the random 256-bit key, generation, epoch,
+pending admissions, issued timestamp, randomized expiry and nonsecret cycle
+event journal. The key is readable to scripts executing in the ChatGPT origin;
+the operator explicitly accepts this confidentiality tradeoff. No key bytes
+enter GEN/COMM records, exported logs or status metadata.
 
-Every admitted capture retains its own generation snapshot and metadata.
-Explicit Randomize stops new admissions while the old generation drains.
-Never use an old admission token for a new record after the epoch transition.
+Randomized expiry is inclusive 23–25 hours from the last committed cycle.
+An active tab checks near the deadline; browser startup/status/admission
+checks catch overdue keys. An inactive browser cannot run scheduled work.
+No new capture may use an expired generation. Existing pending captures
+must drain (or fail closed) before the next generation is committed.
+
+Manual Randomize remains confirmation-gated. Automatic scheduled/overdue
+rotation requires no additional user approval and creates one committed
+cycle event. Both GEN and COMM writers must persist an identical stable
+event ID, generation, epoch, timestamp and reason with idempotent replay.
+Producer exposes `cycleEvents(afterEpoch)`; actual dual disk writing is
+owned by the downstream GEN/COMM recording integrations.
 
 ## Failure and recovery
 
@@ -39,11 +48,12 @@ has disappeared. No implicit key regeneration follows storage corruption.
 
 ## Evidence levels
 
-Synthetic Node tests check lifecycle algorithms, corruption, race injection,
-unacknowledged writes and key non-disclosure. Real Chromium tests validate
-same-origin browser Web Locks with synthetic storage, not actual Tampermonkey.
-Only an installed Chrome/Tampermonkey witness can certify cross-tab GM storage,
-browser restart persistence and the source's userscript sandbox access.
+Synthetic Node tests check the lifecycle, randomized expiry boundaries,
+corruption, races and nonsecret event IDs. The Chromium localhost fixture
+runs actual IndexedDB transactions and actual Web Locks but deliberately
+supplies a synthetic `chatgpt.com` location to the origin adapter; this
+does not certify the installed Tampermonkey execution sandbox.
+A signed-in, installed Chrome/Tampermonkey test remains required.
 Actual COMM Worker key usage and redacted segment provenance require the
 separately owned CSC Worker pipeline and independent #319 convergence gate.
 
