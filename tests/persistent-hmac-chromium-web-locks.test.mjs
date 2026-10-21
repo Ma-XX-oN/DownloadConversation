@@ -34,6 +34,7 @@ async function scenario() {
   if (!child) throw Error('second same-origin tab unavailable');
   for (let i = 0; i < 80 && !child.probe?.ready; i++) await delay(50);
   if (!child.probe?.ready) throw Error('second tab not ready');
+  child.probe.clock.value = clock.value;
   const first = make(), second = child.probe.make();
   const services = Array.from({ length: 40 },
     (_, i) => i % 2 ? first : second);
