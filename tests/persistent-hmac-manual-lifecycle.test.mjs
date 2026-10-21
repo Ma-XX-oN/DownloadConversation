@@ -47,8 +47,9 @@ test('probe tests reload, shared secret identity, draining and both cycle types'
   assert.match(source, /draining\.local\.eventCount === 1/);
   assert.match(source, /baseline\.time \+ 25 \* hour \+ 1/);
   assert.match(source, /events\[1\]\?\.reason === 'overdue'/);
-  assert.match(source, /const oldClock = \\{ value: now \\}/);
-  assert.match(source, /now: typeof time === 'function' \\? time/);
+  assert.ok(source.includes('const oldClock = { value: now };'));
+  assert.ok(source.includes(
+    "now: typeof time === 'function' ? time : () => time"));
   const advance = source.indexOf('oldClock.value = future;');
   const complete = source.indexOf('await oldService.complete(old.token);');
   assert.ok(advance > 0 && complete > advance,
