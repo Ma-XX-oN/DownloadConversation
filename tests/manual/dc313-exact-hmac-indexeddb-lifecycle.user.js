@@ -305,7 +305,7 @@
           fingerprint: first.fingerprint, deadline: first.deadline
         }));
       }
-      show('DC #313 HMAC lifecycle: initial two-tab', {
+      show('DC #313 HMAC lifecycle: initial participant cohort', {
         status: pass ? 'PASS' : 'FAIL',
         participants: pair.participants,
         allInstancesShareKey: equalIdentity(pair),
@@ -313,10 +313,10 @@
         epoch: first.epoch, initialEvent: first.events[0]?.reason,
         deadlineInRange: first.deadline - time >= 23 * hour &&
           first.deadline - time <= 25 * hour,
-        baselineSaved: pass, next: 'Reload both tabs; then run stage 2.'
+        baselineSaved: pass, next: 'Reload all participating tabs; then run stage 2.'
       });
     } catch (error) {
-      show('DC #313 HMAC lifecycle: initial two-tab', {
+      show('DC #313 HMAC lifecycle: initial participant cohort', {
         status: 'FAIL', error: String(error)
       });
     } finally { busy = false; }
@@ -413,7 +413,7 @@
     } finally { busy = false; }
   }
 
-  GM_registerMenuCommand('DC #313: HMAC lifecycle stage 1 (two tabs)', begin);
+  GM_registerMenuCommand('DC #313: HMAC lifecycle stage 1 (all participants)', begin);
   GM_registerMenuCommand('DC #313: HMAC lifecycle stage 2 (after reload)',
     afterReload);
   GM_registerMenuCommand('DC #313: HMAC lifecycle probe readiness',
