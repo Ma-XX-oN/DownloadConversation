@@ -14,35 +14,6 @@
   let faviconProvenanceObserver = null;
 
   /**
-   * Captures all stock link candidates, without changing media/type/sizes.
-   * @returns {Array<Object>} Links and their original unmodified hrefs.
-   */
-  function agentFaviconCurrentCandidates() {
-    return [...document.querySelectorAll('link[rel~="icon"]')]
-      .filter(link => typeof link?.href === 'string' && link.href)
-      .map(link => {
-        const previous = agentFaviconOriginalSources.get(link);
-        const assigned = agentFaviconDisplayedHrefs.get(link);
-        if (!previous || (link.href !== previous && link.href !== assigned)) {
-          agentFaviconOriginalSources.set(link, link.href);
-          agentFaviconDisplayedHrefs.delete(link);
-        }
-        const candidate = {
-          link,
-          original_href: agentFaviconOriginalSources.get(link),
-          media: typeof link.media === 'string' ? link.media : '',
-          type: typeof link.type === 'string' ? link.type : '',
-          sizes: typeof link.sizes?.value === 'string' ? link.sizes.value : ''
-        };
-        if (typeof faviconProvenanceTrackCandidate === 'function') {
-          faviconProvenanceTrackCandidate(candidate);
-        }
-        return candidate;
-      });
-  }
-
-
-  /**
    * Build a diagnostic-only URL identity without leaking query values.
    *
    * @param {string|null|undefined} value - Candidate URL or Blob href to summarize.
@@ -95,6 +66,21 @@
     const stock = candidate.original_href;
     const meta = [candidate.media, candidate.type, candidate.sizes].join('|');
     const before = faviconProvenanceSeen.get(link);
+    const dcHref = agentFaviconDisplayedHrefs.get(link);
+    if (dcHref === current && (!before || before.observed !== current)) {
+      faviconProvenanceNoteWrite(link, before?.observed || stock, current,
+        'generated', {
+          original_url: stock,
+          theme: typeof agentFaviconCurrentTheme === 'function'
+            ? agentFaviconCurrentTheme() : faviconProvenanceLastTheme,
+          state: agentFaviconVisibleState,
+          progress_step: agentFaviconRingStep()
+        });
+      faviconProvenanceLog('cache-frame-available', {
+        original_url: faviconProvenanceUrl(stock),
+        note: 'generated image became available for display'
+      });
+    }
     const own = faviconProvenanceOwnWrites.get(link);
     const wasOurs = own === current;
     if (wasOurs) faviconProvenanceOwnWrites.delete(link);
@@ -256,7 +242,9 @@
         media_type_sizes: previous.meta
       });
     }
-    agentFaviconCurrentCandidates();
+    for (const candidate of agentFaviconCurrentCandidates()) {
+      faviconProvenanceTrackCandidate(candidate);
+    }
   }
 
   /**
@@ -268,7 +256,9 @@
     // @run-at document-start may precede creation of document.head.
     // Observing Document also catches subsequent <head> and icon insertion.
     faviconProvenanceLastAppTheme = faviconProvenanceAppTheme();
-    agentFaviconCurrentCandidates();
+    for (const candidate of agentFaviconCurrentCandidates()) {
+      faviconProvenanceTrackCandidate(candidate);
+    }
     if (typeof window.matchMedia === 'function') {
       faviconProvenanceThemeChanged(
         window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light'
