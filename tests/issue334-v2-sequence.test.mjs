@@ -5,9 +5,9 @@ import vm from 'node:vm';
 
 const source = readFileSync(
   new URL('../src/userscript/03-agent-lifecycle/03-favicon-cache-v2.js', import.meta.url), 'utf8'
-) + readFileSync(new URL(
-  '../src/userscript/03-agent-lifecycle/03-favicon-cache-v2-part2.js',
-  import.meta.url), 'utf8');
+) + readFileSync(
+  new URL('../src/userscript/03-agent-lifecycle/03-favicon-cache-v2-part2.js', import.meta.url), 'utf8'
+);
 
 function harness() {
   const context = { Blob, AbortController, navigator: { locks: {} }, console };
