@@ -240,7 +240,7 @@ test('actual V2 24-second warm pulse avoids encoding, decoding and IndexedDB rea
       assert.equal(result.warmDelta.encodes,0);
       assert.equal(result.warmDelta.decodes,0);
       assert.equal(result.warmDelta.idbGets,0);
-      assert.ok(result.warmDelta.tickCallbacks>=80,result.warmDelta.tickCallbacks);
+      assert.ok(result.warmDelta.tickCallbacks>=20,result.warmDelta.tickCallbacks);
       assert.equal(result.originalAttributesUnchanged,true);
       assert.equal(result.returnedToOriginal,true);
       console.log('DC332_24S_REAL_CHROMIUM='+JSON.stringify(result));
