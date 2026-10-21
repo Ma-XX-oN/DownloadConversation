@@ -1,5 +1,5 @@
-  /** A favicon pulse has forty 250-ms slots and 21 unique symmetric frames. */
-  const AGENT_FAVICON_PULSE_PERIOD_MS = 10000;
+  /** Animation V2 is a two-second blink with one frame per second. */
+  const AGENT_FAVICON_PULSE_PERIOD_MS = 2000;
   /** Pulse timer starts after session readiness. */
   let agentFaviconPulseTimer = null;
   /** Existing lifecycle's presented favicon colour. */
@@ -8,7 +8,7 @@
   let agentFaviconDatasetSession = null;
   /** In-flight shared cache session. */
   let agentFaviconSessionPending = null;
-  /** Compatible installed DC version. */
+  /** Independent animation dataset version, never inferred from the DC build. */
   let agentFaviconVersionPending = null;
   /** Browser theme query for scheme-dependent SVGs. */
   let agentFaviconThemeQuery = null;
@@ -28,16 +28,15 @@
   let agentFaviconPageEpoch = 0;
 
   /**
-   * Selects one of 21 full-composite PNG pulse frames from monotonic time.
+   * Selects one of the two blink frames from monotonic time.
    * @param {number} time_offset - Monotonic offset in milliseconds.
-   * @returns {number|null} Symmetric frame index 0..20, or null for invalid input.
+   * @returns {number|null} Blink frame 0 or 1, or null for invalid input.
    */
   function agentFaviconPulseIndex(time_offset) {
     if (!Number.isFinite(time_offset)) return null;
     const phase = ((time_offset % AGENT_FAVICON_PULSE_PERIOD_MS) +
       AGENT_FAVICON_PULSE_PERIOD_MS) % AGENT_FAVICON_PULSE_PERIOD_MS;
-    const slot = Math.floor(phase / 250);
-    return Math.min(slot, 40 - slot);
+    return Math.floor(phase / 1000);
   }
 
   /**
@@ -72,7 +71,7 @@
     if (typeof get_compatible_version_key !== 'function') return null;
     if (!agentFaviconVersionPending) {
       agentFaviconVersionPending = Promise.resolve()
-        .then(() => get_compatible_version_key(VERSION))
+        .then(() => get_compatible_version_key(FAVICON_ANIMATION_VERSION))
         .then(key => typeof key === 'string' ? key : null)
         .catch(() => null);
     }
@@ -158,6 +157,23 @@
    * @param {number} time_offset - Monotonic milliseconds, not a pulse index.
    * @returns {Promise<Array<Object>|null>} Matched link and PNG URL pairs or null.
    */
+  /**
+   * Prefer the real theme-appropriate SVG artwork over the black-knot PNG.
+   * All eligible icon links receive the same rendered PNG, so Chrome cannot
+   * select a different artwork merely by choosing another stock link.
+   * @param {Array<Object>} candidates - Media-eligible stock links.
+   * @param {string} theme - Actual browser light/dark scheme.
+   * @returns {string|null} Single original icon URL for this presentation.
+   */
+  function agentFaviconPreferredSource(candidates, theme) {
+    const svgs = candidates.filter(candidate =>
+      candidate.type.toLowerCase() === 'image/svg+xml' ||
+      /\.svg(?:[?#]|$)/i.test(candidate.original_href));
+    const themed = svgs.find(candidate =>
+      /favicon-dark[.\-_]/i.test(candidate.original_href) === (theme === 'dark'));
+    return (themed ?? svgs[0] ?? candidates[0])?.original_href ?? null;
+  }
+
   async function get_favicon(version_key, base_type, completion_time, time_offset) {
     if (agentFaviconPageHidden) return null;
     const frame = agentFaviconPulseIndex(time_offset);
@@ -168,15 +184,13 @@
     if (theme === null) return null;
     const session = await agentFaviconOpenSession(version_key);
     if (!session) return null;
-    const matches = [];
-    for (const candidate of agentFaviconActiveCandidates(agentFaviconCurrentCandidates())) {
-      const href = await agentFaviconFrameUrl(
-        session, candidate.original_href, theme, base_type, completion_time, frame
-      );
-      if (agentFaviconCurrentTheme() !== theme || agentFaviconPageHidden) return null;
-      if (href) matches.push({ link: candidate.link, href });
-    }
-    return matches.length ? matches : null;
+    const candidates = agentFaviconActiveCandidates(agentFaviconCurrentCandidates());
+    const source = agentFaviconPreferredSource(candidates, theme);
+    if (!source) return null;
+    const href = await agentFaviconFrameUrl(
+      session, source, theme, base_type, completion_time, frame);
+    if (agentFaviconCurrentTheme() !== theme || agentFaviconPageHidden) return null;
+    return href ? candidates.map(candidate => ({ link: candidate.link, href })) : null;
   }
 
   /**
