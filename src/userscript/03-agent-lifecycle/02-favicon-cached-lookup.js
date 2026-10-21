@@ -41,34 +41,6 @@
   }
 
   /**
-   * Captures all stock link candidates, without changing media/type/sizes.
-   * @returns {Array<Object>} Links and their original unmodified hrefs.
-   */
-  function agentFaviconCurrentCandidates() {
-    return [...document.querySelectorAll('link[rel~="icon"]')]
-      .filter(link => typeof link?.href === 'string' && link.href)
-      .map(link => {
-        const previous = agentFaviconOriginalSources.get(link);
-        const assigned = agentFaviconDisplayedHrefs.get(link);
-        if (!previous || (link.href !== previous && link.href !== assigned)) {
-          agentFaviconOriginalSources.set(link, link.href);
-          agentFaviconDisplayedHrefs.delete(link);
-        }
-        const candidate = {
-          link,
-          original_href: agentFaviconOriginalSources.get(link),
-          media: typeof link.media === 'string' ? link.media : '',
-          type: typeof link.type === 'string' ? link.type : '',
-          sizes: typeof link.sizes?.value === 'string' ? link.sizes.value : ''
-        };
-        if (typeof faviconProvenanceTrackCandidate === 'function') {
-          faviconProvenanceTrackCandidate(candidate);
-        }
-        return candidate;
-      });
-  }
-
-  /**
    * Resolves and memoizes the provider's minimum compatible numeric version.
    * @returns {Promise<string|null>} Selected numeric version boundary or null.
    */
