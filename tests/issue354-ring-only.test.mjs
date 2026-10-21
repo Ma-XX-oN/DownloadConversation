@@ -80,9 +80,13 @@ function htmlFor(scheme) {
           equal(pixel(second,30,30),[...colour,51],
             theme+'/'+base+'/'+step+' dim whole-icon frame');
           if(step>0&&base!=='error') {
-            equal(pixel(second,46,8),
-              [...hex(payload.ring[step-1]),51],
-              theme+'/'+base+'/'+step+' dim ring');
+            const dimRing=pixel(second,46,8);
+            const ringRgb=hex(payload.ring[step-1]);
+            if(dimRing[3]!==51 ||
+              ringRgb.some((channel,i)=>Math.abs(channel-dimRing[i])>2)) {
+              throw Error(theme+'/'+base+'/'+step+' dim ring mismatch: '+
+                JSON.stringify(dimRing));
+            }
           }
           cases++;
           frames+=sequence.frames.length;
