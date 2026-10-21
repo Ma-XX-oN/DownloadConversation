@@ -24,6 +24,7 @@ const ordinaryStages = [
     'tests/persistent-hmac-clock-fixture.test.mjs',
     'tests/persistent-hmac-manual-lifecycle.test.mjs',
     'tests/persistent-hmac-participant-cohort.test.mjs',
+    'tests/persistent-hmac-legacy-version-discovery.test.mjs',
     'tests/persistent-hmac-indexeddb-probe.test.mjs',
     'tests/persistent-hmac-browser-probe.test.mjs',
      'tests/persistent-hmac-fence-prototype.test.mjs']],
