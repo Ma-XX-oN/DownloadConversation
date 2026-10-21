@@ -15,7 +15,7 @@ test('Test opens the interactive built-in test matrix instead of immediately run
   for (const heading of ['Type', 'Previous Result', 'Current Result']) {
     assert.ok(userscript.includes(`<th>${heading}</th>`), `Matrix is missing ${heading}.`);
   }
-  assert.match(userscript, /data-role="run-test">Run<\/button>/,
+  assert.match(userscript, /data-role="run-test">\$\{type === 'Visual' \? 'Show' : 'Run'\}<\/button>/,
     'Every matrix row must expose an individual Run control.');
   assert.match(userscript, /data-role="run-all-tests">Run All<\/button>/,
     'Matrix must expose Run All.');
