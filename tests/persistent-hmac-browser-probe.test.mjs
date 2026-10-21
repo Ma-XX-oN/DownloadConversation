@@ -40,8 +40,10 @@ test('diagnostic menu is registered and never auto-starts', () => {
   assert.equal(operations, 0);
 });
 
-async function runTwoTabDiagnostic(isolatedLocks, staleVisibility = false) {
+async function runTwoTabDiagnostic(isolatedLocks, staleVisibility = false,
+  staleAsyncCounters = false) {
   const shared = new Map(), sync = [new Map(), new Map()];
+  const asyncReplicas = [new Map(), new Map()];
   const menus = [new Map(), new Map()], members = new Map(), tails = new Map();
   let counter = 0, done, listenerId = 0, staleReadApplied = false;
   const listeners = new Map();
@@ -92,6 +94,10 @@ async function runTwoTabDiagnostic(isolatedLocks, staleVisibility = false) {
         sync[scope].set(key, structuredClone(value)),
       GM: {
         async getValue(key, fallback) {
+          if (staleAsyncCounters &&
+              key.startsWith('dc313-gm-diag:async:')) {
+            return asyncReplicas[scope].get(key) ?? fallback;
+          }
           if (staleVisibility && scope === 1 &&
               key.startsWith('dc313-gm-visibility:') &&
               !staleReadApplied && shared.has(key)) {
@@ -101,6 +107,11 @@ async function runTwoTabDiagnostic(isolatedLocks, staleVisibility = false) {
           return shared.has(key) ? structuredClone(shared.get(key)) : fallback;
         },
         async setValue(key, value) {
+          if (staleAsyncCounters &&
+              key.startsWith('dc313-gm-diag:async:')) {
+            asyncReplicas[scope].set(key, structuredClone(value));
+            return;
+          }
           const previous = shared.get(key);
           shared.set(key, structuredClone(value));
           for (const listener of listeners.values()) {
@@ -166,6 +177,38 @@ test('two-tab diagnostic distinguishes stale sync values from shared async GM', 
   assert.equal(report.exclusiveWebLock.peersAcquiredEventually, 1);
   assert.equal(report.exclusiveWebLock.peersAcquiredWhileHeld, 0);
   assert.equal(report.status, 'ASYNC_PATH_PASS');
+});
+
+test('Chrome v0.9.2 failure signature rejects delayed GM replicas despite exclusive lock', async () => {
+  const report = await runTwoTabDiagnostic(false, true, true);
+  assert.equal(report.trace.peersReady, 1);
+  assert.equal(report.trace.peersDone, 1);
+  assert.equal(report.trace.peerErrors, 0);
+  assert.equal(report.trace.local.step, 'complete');
+  assert.equal(report.trace.peer.step, 'complete');
+  for (const mode of [report.synchronousGM, report.asynchronousGM]) {
+    assert.equal(mode.status, 'FAIL');
+    assert.equal(mode.expected, 48);
+    assert.equal(mode.observed, 24);
+    assert.equal(mode.observedAfter500ms, 24);
+    assert.equal(mode.local.firstRead, 0);
+    assert.equal(mode.local.highestPriorRead, 23);
+    assert.equal(mode.local.finishedRead, 24);
+    assert.equal(mode.peer[0].firstRead, 0);
+    assert.equal(mode.peer[0].highestPriorRead, 23);
+    assert.equal(mode.peer[0].finishedRead, 24);
+    assert.deepEqual(mode.errors, []);
+  }
+  assert.equal(report.visibility.status, 'FAIL');
+  assert.equal(report.visibility.peerSawLeaderWrite, false);
+  assert.equal(report.visibility.peerSawLeaderWriteAfter300ms, true);
+  assert.equal(report.visibility.peerSawLeaderWriteAfter1300ms, true);
+  assert.equal(report.visibility.leaderSawPeerWrite, true);
+  assert.ok(report.visibility.peerRemoteEvents[0].some(
+    event => event.remote && event.sawLeaderValue));
+  assert.equal(report.exclusiveWebLock.status, 'PASS');
+  assert.equal(report.exclusiveWebLock.peersAcquiredWhileHeld, 0);
+  assert.equal(report.status, 'FAIL');
 });
 
 test('Web Lock diagnostic rejects isolated per-tab lock namespaces', async () => {
