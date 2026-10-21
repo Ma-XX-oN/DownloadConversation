@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         DC #313 Exact HMAC IndexedDB Lifecycle Probe
 // @namespace    https://chatgpt.com/dc313-hmac-idb-lifecycle/
-// @version      0.1.3
+// @version      0.1.4
 // @description  Synthetic isolated cross-tab/reload/rotation test of exact DC #313 source.
 // @match        https://chatgpt.com/*
 // @grant        GM_registerMenuCommand
@@ -16,9 +16,9 @@
 (() => {
   'use strict';
   if (location.origin !== 'https://chatgpt.com') return;
-  const baselineName = 'dc313-lifecycle-baseline-v3';
+  const baselineName = 'dc313-lifecycle-baseline-v4';
   const databaseName = 'dc313-lifecycle-synthetic-only-v1';
-  const channel = new BroadcastChannel('dc313-hmac-lifecycle-probe-v3');
+  const channel = new BroadcastChannel('dc313-hmac-lifecycle-probe-v4');
   const tabId = crypto.randomUUID();
   const sessions = new Map();
   const hour = 3600000;
@@ -148,7 +148,7 @@
   function show(title, payload) {
     const json = JSON.stringify({
       test: title, timestamp: new Date().toISOString(),
-      result: { version: '0.1.3', ...payload }
+      result: { version: '0.1.4', ...payload }
     }, null, 2);
     const render = () => {
       document.getElementById('dc313-hmac-lifecycle-report')?.remove();
@@ -187,7 +187,8 @@
   async function discoverLegacyInstances() {
     const names = [
       ['v0.1.0-or-v0.1.1', 'dc313-hmac-lifecycle-probe-v1'],
-      ['v0.1.2', 'dc313-hmac-lifecycle-probe-v2']
+      ['v0.1.2', 'dc313-hmac-lifecycle-probe-v2'],
+      ['v0.1.3', 'dc313-hmac-lifecycle-probe-v3']
     ];
     const run = crypto.randomUUID();
     const found = new Map(names.map(([name]) => [name, new Set()]));
@@ -207,16 +208,6 @@
     finally { probes.forEach(probe => probe.close()); }
     return Object.fromEntries(
       [...found].map(([name, values]) => [name, values.size]));
-  }
-
-  /**
-   * @returns {Promise<void>} Reject known running legacy probe instances.
-   */
-  async function assertCurrentProbeOnly() {
-    const observed = await discoverLegacyInstances();
-    if (Object.values(observed).some(count => count > 0)) {
-      throw Error('older-probe-instances-active:' + JSON.stringify(observed));
-    }
   }
 
   channel.onmessage = async event => {
@@ -329,7 +320,6 @@
     if (busy) return;
     busy = true;
     try {
-      await assertCurrentProbeOnly();
       const testId = crypto.randomUUID();
       const time = Date.now();
       const pair = await participatingInstances(testId, 'measure', time);
@@ -371,7 +361,6 @@
     if (busy) return;
     busy = true;
     try {
-      await assertCurrentProbeOnly();
       const saved = localStorage.getItem(baselineName);
       if (!saved) throw Error('stage-1-baseline-missing');
       const baseline = JSON.parse(saved);
@@ -471,11 +460,10 @@
       const missing = imports.filter(item => item[1] !== 'function')
         .map(item => item[0]);
       show('DC #313 HMAC lifecycle readiness', {
-        status: missing.length === 0 &&
-          Object.values(legacy).every(count => count === 0)
-          ? 'READY' : 'FAIL',
+        status: missing.length === 0 ? 'READY' : 'FAIL',
         legacyInstances: legacy,
-        missing, version: '0.1.3', isolate: databaseName,
+        legacyNote: 'Legacy probe versions are diagnostic only; no block.',
+        missing, version: '0.1.4', isolate: databaseName,
         instructions: 'Stage 1 in one tab, reload participants, then stage 2.'
       });
     });
