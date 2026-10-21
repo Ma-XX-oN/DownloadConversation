@@ -140,7 +140,8 @@
          * Handles test.
          */
         const test = tests.find(([candidate]) => candidate === name);
-        if (test) void runOneTest(test[0], test[1]);
+        if (test?.[2] === 'Visual') showFaviconSourceComparison(row);
+        else if (test) void runOneTest(test[0], test[1]);
         return;
       }
       if (target.closest('[data-role="run-all-tests"]')) void runTests();
