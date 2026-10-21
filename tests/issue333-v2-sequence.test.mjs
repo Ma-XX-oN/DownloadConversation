@@ -194,6 +194,17 @@ function browserFixture(svgBytes,webpBytes,moduleSource) {
         HTMLCanvasElement.prototype.toBlob=nativeToBlob;
       }
       aggregate.flippedAfterEncode=flippedAfterEncode;
+      // Fully opaque sources cannot always represent 21 distinct alpha
+      // samples after 8-bit PNG quantization.  Reject rather than publish
+      // an incomplete or duplicate-frame sequence.
+      const opaqueSvg='<svg xmlns="http://www.w3.org/2000/svg" '+
+        'width="48" height="48"><rect width="48" height="48" '+
+        'fill="white"/></svg>';
+      const opaqueUrl='data:image/svg+xml;base64,'+btoa(opaqueSvg);
+      result.textContent='PHASE:unsupported-opaque-source';
+      aggregate.opaqueSource=await provider.renderFaviconPulseSequence({
+        originalUrl:opaqueUrl,theme,base:'processing',progressStep:3
+      }).then(()=> 'UNEXPECTED_SUCCESS',error=>error.name);
       const recovery=await provider.renderFaviconPulseSequence({
         originalUrl:source,theme,base:'processing',progressStep:3
       });
@@ -262,6 +273,7 @@ test('real Chromium renders only one 21-Blob sequence at a time in each theme',(
       assert.equal(result.themeFlip,'AbortError');
       assert.equal(result.flippedAfterEncode,true);
       assert.equal(result.recovered,true);
+      assert.equal(result.opaqueSource,'FaviconRenderError');
       assert(result.ticks>=1,'Generation starved a queued UI task');
       console.log('DC333_V2_BROWSER_'+scheme.toUpperCase()+'='+JSON.stringify({
         frames:result.frames,elapsed_ms:result.elapsedMs,timer_ticks:result.ticks,
