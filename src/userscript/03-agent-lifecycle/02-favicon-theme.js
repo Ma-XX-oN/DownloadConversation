@@ -47,15 +47,16 @@
   function agentFaviconRestoreStockCandidates() {
     for (const candidate of agentFaviconCurrentCandidates()) {
       if (candidate.link.href !== candidate.original_href) {
+        const oldHref = candidate.link.href;
+        candidate.link.href = candidate.original_href;
         if (typeof faviconProvenanceNoteWrite === 'function') {
-          faviconProvenanceNoteWrite(candidate.link, candidate.link.href,
+          faviconProvenanceNoteWrite(candidate.link, oldHref,
             candidate.original_href, 'original', {
               original_url: candidate.original_href,
               theme: agentFaviconCurrentTheme(), state: 'original',
               progress_step: null
             });
         }
-        candidate.link.href = candidate.original_href;
       }
       agentFaviconDisplayedHrefs.delete(candidate.link);
     }
