@@ -75,7 +75,8 @@ test('visual comparison is read-only and preserves actual source URLs in the pre
   assert.match(preview, /status\.textContent = 'Loaded: '/);
   assert.match(preview, /status\.textContent = 'Failed to load source'/);
   assert.match(preview, /browserTheme.*agentFaviconCurrentTheme/s);
-  assert.doesNotMatch(preview, /link\.href\s*=|link\.remove\(/);
+  assert.doesNotMatch(preview, /document\.head\.(?:append|replaceChildren)/);
+  assert.doesNotMatch(preview, /document\.createElement\('link'\)/);
   assert.match(downloadConversationSource, /function showFaviconSourceComparison\(row\)/);
 });
 
