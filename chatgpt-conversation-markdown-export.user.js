@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         ChatGPT Conversation Markdown Recorder
 // @namespace    https://chatgpt.com/
-// @version      1.11.7-issue.313.31
+// @version      1.11.7-issue.313.32
 // @description  Exports the current ChatGPT conversation directly from the Conversation API as Markdown or JSONL.
 // @match        https://chatgpt.com/*
 // @connect      github.com
@@ -11138,6 +11138,7 @@ globalThis.__dcCompressor = {
     function openDatabase() {
       return new Promise((resolve, reject) => {
         let request;
+        let failed = false;
         try { request = api.open(databaseName, 1); }
         catch (error) { reject(error); return; }
         request.onupgradeneeded = () => {
@@ -11146,12 +11147,17 @@ globalThis.__dcCompressor = {
             db.createObjectStore(objectStoreName);
           }
         };
-        request.onerror = () => reject(request.error ||
-          Error('persistent-key-indexeddb-open-failed'));
-        request.onblocked = () => reject(
-          Error('persistent-key-indexeddb-open-blocked'));
+        request.onerror = () => {
+          failed = true;
+          reject(request.error || Error('persistent-key-indexeddb-open-failed'));
+        };
+        request.onblocked = () => {
+          failed = true;
+          reject(Error('persistent-key-indexeddb-open-blocked'));
+        };
         request.onsuccess = () => {
           const db = request.result;
+          if (failed) { db.close(); return; }
           db.onversionchange = () => db.close();
           resolve(db);
         };
