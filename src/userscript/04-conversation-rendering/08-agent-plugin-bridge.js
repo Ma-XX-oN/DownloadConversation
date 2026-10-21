@@ -14,7 +14,6 @@
   /** Current provider-owned navigation and network identity host. */
   let chatGPTSubjectHost = null;
   /** Disconnects the active generic navigation observer. */
-  let disconnectChatGPTNavigation = null;
   /** Current in-flight canonical agent construction, shared by concurrent callers. */
   let chatGPTAgentPromise = null;
   /** Browser page realm used by the provider-neutral navigation listener. */
@@ -263,29 +262,15 @@
       });
       return;
     }
-    let disconnect = null;
     try {
+      cscEnsureEarlyNavigationIngress();
       cscPluginQueueConnect(host);
-      disconnect = observeGenericBrowserNavigation(agentPluginPageWindow,
-        event => {
-          try {
-            cscPluginQueueNavigation(event.url);
-          } catch (error) {
-            logDiagnostic('warnings', 'agent-plugin-navigation-publish-failed', {
-              error: boundedDiagnosticText(errorMessage(error), 200)
-            });
-          }
-        });
-      assert(typeof disconnect === 'function',
-        'Generic navigation observer returned no teardown.');
     } catch (error) {
-      disconnect?.();
       cscPluginQueueDisconnect(host);
       host.dispose();
       throw error;
     }
     chatGPTSubjectHost = host;
-    disconnectChatGPTNavigation = disconnect;
   }
 
   /**
@@ -293,8 +278,7 @@
    * @returns {void} No value is returned.
    */
   function disconnectChatGPTSubjectHost() {
-    disconnectChatGPTNavigation?.();
-    disconnectChatGPTNavigation = null;
+    cscDisposeEarlyNavigationIngress();
     if (chatGPTSubjectHost) {
       cscPluginQueueDisconnect(chatGPTSubjectHost);
       chatGPTSubjectHost.dispose();
