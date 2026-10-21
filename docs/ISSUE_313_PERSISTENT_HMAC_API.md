@@ -253,7 +253,7 @@ This fixture must remain explicitly labelled a reproduction of
 unsatisfied safety acceptance until a changed producer candidate
 correctly fails closed or safely converges under the same test.
 
-## Fail-closed production gate after stale-GM negative control
+## Historical GM fail-closed gate (superseded by IndexedDB)
 
 **Observed failure:** The installed Chrome/Tampermonkey witness showed
 exclusive Web Locks PASS but async GM cross-tab counter 24/48 FAIL and
@@ -321,12 +321,11 @@ per-tab async GM counter replicas, independently delayed visibility,
 and eventual remote notifications. It MUST return FAIL under those
 conditions. Synthetic tests do not replace the installed-browser FAIL.
 
-**Release gate:** The current-tab persistent HMAC factory remains
-FAIL-CLOSED. Genuine persistent first-use, restart, stale-tab
-reconciliation, rotation, interrupted write and page-visible metadata
-tampering remain INCOMPLETE. Do not merge or enable the key service
-until a secure cross-tab authority has both independent adversarial
-acceptance and real installed-browser verification.
+**Release gate:** At the time of the 0.9.2 GM witness the factory
+failed closed. The new IndexedDB-backed factory is a DRAFT candidate,
+not installed-browser certified. Actual first-use/restart/rotation
+and cross-stream event-file readback remain INCOMPLETE. Do not merge
+or activate the candidate based solely on synthetic hosted tests.
 
 ## Operator-authorized 23–25 hour cycle and dual-stream event contract
 
