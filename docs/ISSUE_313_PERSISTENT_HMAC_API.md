@@ -272,5 +272,49 @@ Web Lock capability or by assuming local GM readback is an atomic
 cross-tab commit. A verified synchronization authority must be
 designed and certified first; page-readable IndexedDB must not
 contain any HMAC key, original credential, or recording payload.
-The operator's existing diagnostic probe 0.9.0 remains available
-and has not been run in the installed browser.
+The operator has now completed the v0.9.2 browser diagnostic.
+Its observed result and limitations appear below.
+
+## Real installed Chrome/Tampermonkey — v0.9.2, 2026-10-21
+
+The operator returned the complete probe JSON at
+`2026-10-21T15:29:59.712Z`. The actual signed-in two-tab run did not
+time out. Both participants reported `complete`, 24 iterations each;
+`peersReady=1`, `peersDone=1`, `peerErrors=0`.
+
+- Sync GM: FAIL, expected 48, observed 24, observed 24 after 500 ms.
+- Async GM: FAIL, expected 48, observed 24, observed 24 after 500 ms.
+- Both participants first read 0, reached prior count 23 and finished
+  at 24 in each mode, with no reported errors.
+- Peer immediate read of leader's write: FALSE. At 300 and 1300 ms,
+  TRUE. Leader saw peer's reply both immediately and after delays.
+- Remote GM change events arrived in both directions. Their arrival
+  is an observation, not an atomicity or ordering guarantee.
+- Exclusive Web Lock: PASS, the peer requested while held and only
+  acquired after release; 0 acquisitions while held.
+
+This narrows the previous v0.9.1 timeout: the new failure is a completed
+cross-tab storage-coherence test, not a stalled participant. A delayed
+peer read provides direct evidence of *at least one* stale immediate GM
+view. The experiment does not prove a particular internal Tampermonkey
+cache design, a guaranteed 300-ms propagation bound or durability.
+
+The native Web Lock correctly excludes simultaneous holders in its
+independent control, but holding it across GM read-modify-write does
+not establish that another tab immediately reads the published value.
+Do not use a fixed delay, remote change events or a local GM readback
+as a substitute for a verified atomic/linearizable key record.
+
+An adversarial regression fixture in
+`tests/persistent-hmac-browser-probe.test.mjs` now reproduces this
+diagnostic signature with correctly shared exclusive Web Locks,
+per-tab async GM counter replicas, independently delayed visibility,
+and eventual remote notifications. It MUST return FAIL under those
+conditions. Synthetic tests do not replace the installed-browser FAIL.
+
+**Release gate:** The current-tab persistent HMAC factory remains
+FAIL-CLOSED. Genuine persistent first-use, restart, stale-tab
+reconciliation, rotation, interrupted write and page-visible metadata
+tampering remain INCOMPLETE. Do not merge or enable the key service
+until a secure cross-tab authority has both independent adversarial
+acceptance and real installed-browser verification.
