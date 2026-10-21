@@ -24,10 +24,11 @@ const storage = communicationPersistentHmacIndexedDbStorage(
   indexedDB, { origin: 'https://chatgpt.com' });
 const authority = communicationPersistentHmacIndexedDbAuthority(
   navigator, { origin: 'https://chatgpt.com' }, storage);
+const clock = { value: Date.now() };
 const make = () => communicationPersistentHmacService({
-  storage, authority, crypto
+  storage, authority, crypto, now: () => clock.value
 });
-window.probe = { ready: true, make };
+window.probe = { ready: true, make, clock };
 async function scenario() {
   const child = window.open(location.href + '#child', '_blank');
   if (!child) throw Error('second same-origin tab unavailable');
@@ -84,11 +85,30 @@ async function scenario() {
     URL.revokeObjectURL(workerUrl);
   }
   await second.complete(next.token);
+  clock.value += 25 * 3600000 + 1;
+  child.probe.clock.value = clock.value;
+  const expired = await Promise.all([make().admit(), child.probe.make().admit()]);
+  if (expired[0].metadata.redaction_key_epoch !== 3 ||
+      expired[1].metadata.redaction_key_epoch !== 3 ||
+      expired[0].metadata.redaction_scope !==
+      expired[1].metadata.redaction_scope) {
+    throw Error('overdue IndexedDB key split across real tabs');
+  }
+  const genCycles = await make().cycleEvents(1);
+  const commCycles = await child.probe.make().cycleEvents(1);
+  if (JSON.stringify(genCycles) !== JSON.stringify(commCycles) ||
+      genCycles.length !== 2 ||
+      genCycles[1].reason !== 'overdue') {
+    throw Error('cross-tab dual-log cycle event mismatch');
+  }
+  await make().complete(expired[0].token);
+  await child.probe.make().complete(expired[1].token);
   document.getElementById('result').textContent = JSON.stringify({
     nativeWebLocks: true, nativeIndexedDb: true,
     sameOriginTabs: 2, firstUseAdmissions: 40,
     singleScope: true, fenced: true, rotatedEpoch: 2,
-    workerKeyReceived: workerAck.length
+    workerKeyReceived: workerAck.length, overdueEpoch: 3,
+    dualCycleEvents: genCycles.length
   });
   child.close();
 }
