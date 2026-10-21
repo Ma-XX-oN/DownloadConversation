@@ -27,7 +27,8 @@
   function diagnosticCategoryForEvent(message) {
     if (/^agent-favicon-(?:stock-|original-|external-)/.test(message))
       return 'favicon-stock';
-    if (message === 'agent-favicon-browser-theme-changed')
+    if (message === 'agent-favicon-browser-theme-changed' ||
+        message === 'agent-favicon-app-theme-changed')
       return 'favicon-theme';
     if (/^agent-favicon-dc-/.test(message))
       return 'favicon-write';
