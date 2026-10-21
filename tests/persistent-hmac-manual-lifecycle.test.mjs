@@ -26,7 +26,7 @@ test('installed lifecycle probe requires four immutable exact producer modules',
   }
   assert.equal((source.match(/^\/\/ @require /gm) ?? []).length, 4);
   assert.match(source, /\/\/ @match\s+https:\/\/chatgpt\.com\/\*/);
-  assert.match(source, /\/\/ @version\s+0\.1\.0/);
+  assert.match(source, /\/\/ @version\s+0\.1\.1/);
 });
 
 test('probe keeps synthetic key records isolated from production IndexedDB', () => {
@@ -46,7 +46,14 @@ test('probe tests reload, shared secret identity, draining and both cycle types'
   assert.match(source, /peer\.fingerprint/);
   assert.match(source, /draining\.local\.eventCount === 1/);
   assert.match(source, /baseline\.time \+ 25 \* hour \+ 1/);
-  assert.match(source, /events\[1\]\.reason === 'overdue'/);
+  assert.match(source, /events\[1\]\?\.reason === 'overdue'/);
+  assert.match(source, /const oldClock = \\{ value: now \\}/);
+  assert.match(source, /now: typeof time === 'function' \\? time/);
+  const advance = source.indexOf('oldClock.value = future;');
+  const complete = source.indexOf('await oldService.complete(old.token);');
+  assert.ok(advance > 0 && complete > advance,
+    'capture clock advances before the pending drain commits');
+  assert.match(source, /overdueChecks/);
   assert.match(source, /manualService\.randomize\(true\)/);
   assert.match(source, /events\[2\]\.reason === 'manual'/);
 });
