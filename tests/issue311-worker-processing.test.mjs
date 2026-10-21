@@ -471,37 +471,26 @@ test('native ReadableStream can unlock after its transferred bytes are consumed'
   async () => {
     const { MessageChannel } = await import('node:worker_threads');
     const { port1, port2 } = new MessageChannel();
-    const original = new Response(new Uint8Array(1024));
-    const body = original.clone().body;
-    const received = new Promise((resolve, reject) => {
-      port2.on('message', async stream => {
+    const stock = new Response(new Uint8Array(1024));
+    const body = stock.clone().body;
+    const delivered = new Promise((resolve, reject) => {
+      port2.once('message', async stream => {
         try {
-          const reader = stream.getReader();
-          let length = 0;
-          while (true) {
-            const chunk = await reader.read();
-            if (chunk.done) break;
-            length += chunk.value.byteLength;
-          }
-          reader.releaseLock();
-          resolve(length);
-        } catch (error) {
-          reject(error);
-        }
+          let count = 0;
+          for await (const chunk of stream) count += chunk.byteLength;
+          resolve(count);
+        } catch (error) { reject(error); }
       });
     });
     try {
       assert.equal(body.locked, false);
       port1.postMessage(body, [body]);
-      assert.equal(body.locked, true, 'Transfer locks ownership synchronously');
-      assert.equal(await received, 1024);
-      for (let i = 0; i < 100 && body.locked; i += 1) {
+      assert.equal(body.locked, true, 'Transfer must lock synchronously');
+      assert.equal(await delivered, 1024);
+      for (let i = 0; i < 100 && body.locked; i += 1)
         await new Promise(resolve => setTimeout(resolve, 10));
-      }
-      assert.equal(body.locked, false,
-        'A completed transferred stream can be unlocked');
-      assert.equal((await original.arrayBuffer()).byteLength, 1024,
-        'Original stock bytes are independent from transfer');
+      assert.equal(body.locked, false, 'Drained transfer may be unlocked');
+      assert.equal((await stock.arrayBuffer()).byteLength, 1024);
     } finally {
       port1.close();
       port2.close();
