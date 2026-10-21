@@ -6,12 +6,12 @@ import {
 } from './helpers/userscript-source.mjs';
 
 const consumer = markedBlock(
-  '  /** A favicon pulse has forty 250-ms slots',
+  '  /** Animation V2 is a two-second blink',
   "window.addEventListener('pagehide', agentFaviconDispose);"
 );
 
 function fixture({
-  theme = 'light', candidates = 1, delayedRead = null, version = '1.11.8'
+  theme = 'light', candidates = 1, delayedRead = null, version = '2.0.0'
 } = {}) {
   let now = 0, closed = 0, serial = 0;
   const reads = [], requested = [], revoked = [], created = [];
@@ -32,7 +32,7 @@ function fixture({
   const keyFor = (url, scheme, base, step) =>
     JSON.stringify([version, url, scheme, base, step]);
   const provider = {
-    version, update_every_ms: 250,
+    version, update_every_ms: 1000,
     async read_png(url, scheme, base, step, frame) {
       reads.push([url, scheme, base, step, frame]);
       if (delayedRead) await delayedRead(url, scheme, base, step, frame);
@@ -68,6 +68,7 @@ function fixture({
   });
   vm.runInContext(`
     const VERSION = ${JSON.stringify(version)};
+    const FAVICON_ANIMATION_VERSION = ${JSON.stringify(version)};
     const agentFaviconOriginalSources = new Map();
     let agentFaviconRenderGeneration = 0;
     let agentFaviconPulseUpdatePending = null;
@@ -97,7 +98,7 @@ function fixture({
   return {
     api: context.api, links, reads, requested, intervals, revoked, created,
     publish(url, scheme, base, step) {
-      const frames = Array.from({ length: 21 }, (_, i) =>
+      const frames = Array.from({ length: 2 }, (_, i) =>
         new Blob([`frame-${i}`], { type: 'image/png' }));
       sequences.set(keyFor(url, scheme, base, step), frames);
     },
@@ -110,26 +111,25 @@ function fixture({
   };
 }
 
-test('V2 RED: one cold miss requests only one complete 21-frame sequence', async () => {
+test('animation V2: a cold miss requests only one two-frame sequence', async () => {
   const h = fixture();
   const url = 'https://chatgpt.com/favicon0.svg';
   assert.equal(await h.api.render('processing'), false);
   assert.equal(h.links[0].href, url, 'missing sequence retains untouched original');
   assert.equal(h.requested.length, 1);
-  assert.deepEqual(JSON.parse(h.requested[0]), ['1.11.8', url, 'light', 0, 0]);
+  assert.deepEqual(JSON.parse(h.requested[0]), ['2.0.0', url, 'light', 0, 0]);
   h.publish(url, 'light', 0, 0);
   assert.equal(await h.api.render('processing', true), true);
   const displayed = [];
-  for (let slot = 0; slot < 40; slot++) {
-    h.setTime(slot * 250);
-    const result = await h.api.get('1.11.8', 0, 0, slot * 250);
+  for (let slot = 0; slot < 4; slot++) {
+    h.setTime(slot * 1000);
+    const result = await h.api.get('2.0.0', 0, 0, slot * 1000);
     assert.equal(result.length, 1);
     displayed.push(result[0].href);
   }
-  assert.equal(new Set(displayed).size, 21);
-  for (let slot = 21; slot < 40; slot++) {
-    assert.equal(displayed[slot], displayed[40 - slot]);
-  }
+  assert.equal(new Set(displayed).size, 2);
+  assert.equal(displayed[0], displayed[2]);
+  assert.equal(displayed[1], displayed[3]);
   assert.equal(h.requested.length, 1, 'no unrelated version/theme/colour/step');
 });
 
@@ -143,7 +143,7 @@ test('V2 RED: same SVG URL has distinct light and dark cache sequences', async (
   assert.equal(h.links[0].href, url,
     'theme flip immediately restores original while dark sequence generates');
   assert.equal(await h.api.render('processing'), false);
-  assert.deepEqual(JSON.parse(h.requested[0]), ['1.11.8', url, 'dark', 0, 0]);
+  assert.deepEqual(JSON.parse(h.requested[0]), ['2.0.0', url, 'dark', 0, 0]);
   h.publish(url, 'dark', 0, 0);
   assert.equal(await h.api.render('processing', true), true);
   assert.notEqual(h.links[0].href, light);
@@ -156,7 +156,7 @@ test('V2 RED: cold tuples never leak one colour or progress into another', async
   assert.equal(await h.api.render('processing'), true);
   assert.equal(await h.api.render('error'), false);
   assert.equal(h.links[0].href, url);
-  assert.deepEqual(JSON.parse(h.requested[0]), ['1.11.8', url, 'light', 2, 0]);
+  assert.deepEqual(JSON.parse(h.requested[0]), ['2.0.0', url, 'light', 2, 0]);
   assert.equal(h.requested.length, 1);
 });
 
@@ -210,13 +210,13 @@ test('V2 RED: cold next progress step immediately displays stock favicon', async
     'do not display the outdated pie while the next sequence is generating');
   assert.equal(await cold, false);
   assert.deepEqual(JSON.parse(h.requested[0]),
-    ['1.11.8', original, 'light', 0, 1]);
+    ['2.0.0', original, 'light', 0, 1]);
   h.publish(original, 'light', 0, 1);
   assert.equal(await h.api.render('processing', true), true);
   assert.match(h.links[0].href, /^blob:/);
 });
 
-test('V2 RED: async provider generation coalesces 250ms pulse refreshes', async () => {
+test('V2 RED: async provider generation coalesces 1000ms blink refreshes', async () => {
   let enteredRead, releaseGeneration;
   const entered = new Promise(resolve => { enteredRead = resolve; });
   const release = new Promise(resolve => { releaseGeneration = resolve; });
@@ -268,7 +268,7 @@ test('V2 RED: unresolved old theme cannot block new theme pulse updates', async 
   await new Promise(resolve => setImmediate(resolve));
   h.changeTheme('dark');
   assert.equal(await h.api.render('processing'), true);
-  h.setTime(250);
+  h.setTime(1000);
   pulse();
   await new Promise(resolve => setImmediate(resolve));
   assert.ok(h.reads.some(read => read[1] === 'dark' && read[4] === 1),
