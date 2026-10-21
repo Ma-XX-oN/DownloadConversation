@@ -75,11 +75,8 @@
           nextDelay = Math.max(1000, Math.min(60000,
             state.expires_at_ms - Date.now()));
         }
-      } catch (error) {
-        if (!stopped && typeof console !== 'undefined') {
-          console.warn('DC persistent HMAC expiry check failed',
-            String(error));
-        }
+      } catch {
+        // Admission/status still reject storage errors; retry this poll.
       } finally {
         if (!stopped) timer = setTimeout(checkExpiry, nextDelay);
       }
