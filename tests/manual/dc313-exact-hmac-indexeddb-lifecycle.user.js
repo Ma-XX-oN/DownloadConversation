@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         DC #313 Exact HMAC IndexedDB Lifecycle Probe
 // @namespace    https://chatgpt.com/dc313-hmac-idb-lifecycle/
-// @version      0.1.0
+// @version      0.1.1
 // @description  Synthetic isolated cross-tab/reload/rotation test of exact DC #313 source.
 // @match        https://chatgpt.com/*
 // @grant        GM_registerMenuCommand
@@ -41,7 +41,8 @@
     const authority = communicationPersistentHmacIndexedDbAuthority(
       navigator, location, scoped);
     return communicationPersistentHmacService({
-      storage: scoped, authority, crypto, now: () => time
+      storage: scoped, authority, crypto,
+      now: typeof time === 'function' ? time : () => time
     });
   }
 
@@ -147,7 +148,7 @@
   function show(title, payload) {
     const json = JSON.stringify({
       test: title, timestamp: new Date().toISOString(),
-      result: { version: '0.1.0', ...payload }
+      result: { version: '0.1.1', ...payload }
     }, null, 2);
     const render = () => {
       document.getElementById('dc313-hmac-lifecycle-report')?.remove();
@@ -305,27 +306,46 @@
 
       const future = Math.max(now + 100, baseline.time + 25 * hour + 1);
       // Hold an old capture across the automatic expiry boundary.
-      const oldService = service(baseline.testId, now);
+      const oldClock = { value: now };
+      const oldService = service(baseline.testId, () => oldClock.value);
       const old = await oldService.admit();
       const draining = await twoTabs(baseline.testId, 'status', future);
       const safeDrain = draining.local.phase === 'draining' &&
         draining.peer.phase === 'draining' &&
         draining.local.eventCount === 1 &&
         draining.peer.eventCount === 1;
+      // Move the capture's clock forward before releasing the last admission.
+      // Otherwise an old frozen `now` backdates the rotation commit and its
+      // randomized deadline, so the later simulated `future` rotates again.
+      oldClock.value = future;
       await oldService.complete(old.token);
       oldService.dispose();
       if (!safeDrain) throw Error('old-generation-drain-or-journal-failed');
 
       const overdue = await twoTabs(baseline.testId, 'measure', future);
-      const duePass = equalIdentity(overdue) &&
-        overdue.local.epoch === 2 &&
-        overdue.local.generation !== baseline.generation &&
-        overdue.local.fingerprint !== baseline.fingerprint &&
-        overdue.local.events.length === 2 &&
-        overdue.local.events[1].reason === 'overdue' &&
-        JSON.stringify(overdue.local.events) ===
-          JSON.stringify(overdue.peer.events);
-      if (!duePass) throw Error('overdue-cycle-or-journal-mismatch');
+      const overdueChecks = {
+        sameIdentity: equalIdentity(overdue),
+        epochTwo: overdue.local.epoch === 2,
+        differentGeneration: overdue.local.generation !==
+          baseline.generation,
+        changedHmac: overdue.local.fingerprint !== baseline.fingerprint,
+        journalLengthTwo: overdue.local.events.length === 2,
+        overdueReason: overdue.local.events[1]?.reason === 'overdue',
+        journalsMatch: JSON.stringify(overdue.local.events) ===
+          JSON.stringify(overdue.peer.events)
+      };
+      const duePass = Object.values(overdueChecks).every(Boolean);
+      if (!duePass) {
+        show('DC #313 HMAC lifecycle: reload and rotations', {
+          status: 'FAIL', stage: 'overdue',
+          realReloadPersistence: stable, pendingDrain: safeDrain,
+          overdueChecks, localEpoch: overdue.local.epoch,
+          peerEpoch: overdue.peer.epoch,
+          localReasons: overdue.local.events.map(e => e.reason),
+          peerReasons: overdue.peer.events.map(e => e.reason)
+        });
+        return;
+      }
 
       const manualService = service(baseline.testId, future + 1);
       const manualResult = await manualService.randomize(true);
@@ -369,7 +389,7 @@
         .map(item => item[0]);
       show('DC #313 HMAC lifecycle readiness', {
         status: missing.length === 0 ? 'READY' : 'FAIL',
-        missing, version: '0.1.0', isolate: databaseName,
+        missing, version: '0.1.1', isolate: databaseName,
         instructions: 'Stage 1 in Tab 1; reload both; stage 2 in Tab 1.'
       });
     });
