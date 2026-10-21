@@ -26,7 +26,7 @@ test('installed lifecycle probe requires four immutable exact producer modules',
   }
   assert.equal((source.match(/^\/\/ @require /gm) ?? []).length, 4);
   assert.match(source, /\/\/ @match\s+https:\/\/chatgpt\.com\/\*/);
-  assert.match(source, /\/\/ @version\s+0\.1\.3/);
+  assert.match(source, /\/\/ @version\s+0\.1\.4/);
 });
 
 test('probe keeps synthetic key records isolated from production IndexedDB', () => {
@@ -58,12 +58,14 @@ test('probe tests reload, shared secret identity, draining and both cycle types'
   assert.match(source, /state.selected = new Set\(state.ready\)/);
   assert.match(source, /peers: peers.map\(id => state.done.get\(id\)\)/);
   assert.doesNotMatch(source, /expected-exactly-one-peer/);
-  assert.match(source, /older-probe-instances-active/);
+  assert.doesNotMatch(source, /older-probe-instances-active/);
   assert.match(source, /dc313-hmac-lifecycle-probe-v1/);
   assert.match(source, /dc313-hmac-lifecycle-probe-v2/);
   assert.match(source, /dc313-hmac-lifecycle-probe-v3/);
-  assert.match(source, /assertCurrentProbeOnly\(\)/);
+  assert.match(source, /dc313-hmac-lifecycle-probe-v4/);
+  assert.doesNotMatch(source, /assertCurrentProbeOnly/);
   assert.match(source, /legacyInstances: legacy/);
+  assert.match(source, /status: missing.length === 0 \? 'READY' : 'FAIL'/);
     assert.match(source, /overdueChecks/);
   assert.match(source, /manualService\.randomize\(true\)/);
   assert.match(source, /events\[2\]\.reason === 'manual'/);
