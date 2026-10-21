@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         ChatGPT Conversation Markdown Recorder
 // @namespace    https://chatgpt.com/
-// @version      1.11.7-issue.313.33
+// @version      1.11.7-issue.313.34
 // @description  Exports the current ChatGPT conversation directly from the Conversation API as Markdown or JSONL.
 // @match        https://chatgpt.com/*
 // @connect      github.com
@@ -11743,11 +11743,8 @@ globalThis.__dcCompressor = {
           nextDelay = Math.max(1000, Math.min(60000,
             state.expires_at_ms - Date.now()));
         }
-      } catch (error) {
-        if (!stopped && typeof console !== 'undefined') {
-          console.warn('DC persistent HMAC expiry check failed',
-            String(error));
-        }
+      } catch {
+        // Admission/status still reject storage errors; retry this poll.
       } finally {
         if (!stopped) timer = setTimeout(checkExpiry, nextDelay);
       }
