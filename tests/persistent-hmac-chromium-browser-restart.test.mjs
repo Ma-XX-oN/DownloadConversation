@@ -61,14 +61,10 @@ async function runChromium(binary, profile, url) {
  */
 async function browserPhase() {
   const origin = { origin: 'https://chatgpt.com' };
-  const storage = communicationPersistentHmacIndexedDbStorage(
-    indexedDB, origin);
-  const authority = communicationPersistentHmacIndexedDbAuthority(
-    navigator, origin, storage);
-  if (!storage || !authority) throw Error('native authority missing');
-  const service = communicationPersistentHmacService({
-    storage, authority, crypto
-  });
+  // Call the exact production factory with a shadowed approved origin,
+  // while IndexedDB/Web Locks remain the REAL Chromium browser APIs.
+  const factory = hmacFactory(origin, indexedDB, navigator, crypto);
+  const service = factory();
   const admission = await service.admit();
   const workerCode = [
     'self.onmessage = async event => {',
@@ -128,8 +124,12 @@ test('Chromium browser-process exit/restart preserves native IDB HMAC', {
   assert.ok(binary, 'Chromium required to verify browser restart');
   const profile = mkdtempSync(path.join(os.tmpdir(), 'dc313-restart-'));
   const html = '<!doctype html><meta charset="utf-8">' +
-    '<pre id="result">RUNNING</pre><script>\n' + source + '\n(' +
-    browserPhase.toString() + ')().catch(error => {' +
+    '<pre id="result">RUNNING</pre><script>\n' + source +
+    '\nconst hmacFactory = new Function("location","indexedDB",' +
+    '"navigator","crypto",' +
+    JSON.stringify(source +
+      '\nreturn communicationPersistentHmacCurrentTabService;') +
+    ');\n(' + browserPhase.toString() + ')().catch(error => {' +
     'document.querySelector("#result").textContent=' +
     'JSON.stringify({error:String(error)});' +
     '});<\/script><img src="/hold" hidden>';
