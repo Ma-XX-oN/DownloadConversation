@@ -230,6 +230,17 @@ test('Chromium CDP startup recovers after a failed first spawn',
   } finally {
     browser?.socket.close();
     await stopChrome(browser?.child);
-    rmSync(temp,{recursive:true,force:true,maxRetries:10,retryDelay:100});
+    let cleaned=false;
+    for(let attempt=0;attempt<30;attempt++){
+      try {
+        rmSync(temp,{recursive:true,force:true,maxRetries:3,retryDelay:100});
+        cleaned=true;
+        break;
+      } catch(error){
+        if(!['ENOTEMPTY','EBUSY','EPERM'].includes(error.code))throw error;
+        await sleep(100);
+      }
+    }
+    assert(cleaned,'Chromium temporary profile could not be cleaned');
   }
 });
