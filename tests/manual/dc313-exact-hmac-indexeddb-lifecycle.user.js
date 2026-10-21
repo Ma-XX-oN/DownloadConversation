@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         DC #313 Exact HMAC IndexedDB Lifecycle Probe
 // @namespace    https://chatgpt.com/dc313-hmac-idb-lifecycle/
-// @version      0.1.1
+// @version      0.1.2
 // @description  Synthetic isolated cross-tab/reload/rotation test of exact DC #313 source.
 // @match        https://chatgpt.com/*
 // @grant        GM_registerMenuCommand
@@ -16,9 +16,9 @@
 (() => {
   'use strict';
   if (location.origin !== 'https://chatgpt.com') return;
-  const baselineName = 'dc313-lifecycle-baseline-v1';
+  const baselineName = 'dc313-lifecycle-baseline-v2';
   const databaseName = 'dc313-lifecycle-synthetic-only-v1';
-  const channel = new BroadcastChannel('dc313-hmac-lifecycle-probe-v1');
+  const channel = new BroadcastChannel('dc313-hmac-lifecycle-probe-v2');
   const tabId = crypto.randomUUID();
   const sessions = new Map();
   const hour = 3600000;
@@ -148,7 +148,7 @@
   function show(title, payload) {
     const json = JSON.stringify({
       test: title, timestamp: new Date().toISOString(),
-      result: { version: '0.1.1', ...payload }
+      result: { version: '0.1.2', ...payload }
     }, null, 2);
     const render = () => {
       document.getElementById('dc313-hmac-lifecycle-report')?.remove();
@@ -187,6 +187,11 @@
     } else if (msg.type === 'start') {
       const state = sessions.get(msg.run);
       if (!state || state.leader !== msg.from || busy) return;
+      // Only the frozen, leader-selected cohort may affect this run.
+      if (!Array.isArray(msg.peers) || !msg.peers.includes(tabId)) {
+        sessions.delete(msg.run);
+        return;
+      }
       busy = true;
       try {
         const outcome = await inspect(msg.testId, msg.mode, msg.time);
@@ -203,50 +208,77 @@
       }
     } else if (['ready', 'done', 'error'].includes(msg.type)) {
       const state = sessions.get(msg.run);
-      if (!state || state.leader) return;
-      if (msg.type === 'ready') state.ready.add(msg.from);
-      if (msg.type === 'done') state.done.set(msg.from, msg.outcome);
-      if (msg.type === 'error') state.errors.push(msg.error);
+      if (!state || state.leader || typeof msg.from !== 'string') return;
+      if (msg.type === 'ready') {
+        if (!state.selected) state.ready.add(msg.from);
+      } else if (state.selected?.has(msg.from) &&
+          !state.done.has(msg.from) && !state.errors.has(msg.from)) {
+        if (msg.type === 'done') state.done.set(msg.from, msg.outcome);
+        else state.errors.set(msg.from, String(msg.error));
+      }
     }
   };
 
   /**
    * @param {string} testId - Stable synthetic namespace.
    * @param {string} mode - One test operation.
-   * @param {number} time - Common clock across both tabs.
-   * @returns {Promise<Object>} Local and peer results.
+   * @param {number} time - Common clock across every participant.
+   * @returns {Promise<Object>} Leader and all frozen-cohort peer results.
    */
-  async function twoTabs(testId, mode, time) {
+  async function participatingInstances(testId, mode, time) {
     const run = crypto.randomUUID();
-    const state = { ready: new Set(), done: new Map(), errors: [] };
+    const state = {
+      ready: new Set(), selected: null, done: new Map(),
+      errors: new Map(), leader: null
+    };
     sessions.set(run, state);
     try {
       channel.postMessage({ type: 'prepare', from: tabId, run });
       await delay(850);
-      if (state.ready.size !== 1) {
-        throw Error('expected-exactly-one-peer:' + state.ready.size);
-      }
+      if (!state.ready.size) throw Error('at-least-one-peer-required');
+      state.selected = new Set(state.ready);
+      const peers = [...state.selected];
       channel.postMessage({
-        type: 'start', from: tabId, run, testId, mode, time
+        type: 'start', from: tabId, run, testId, mode, time, peers
       });
       const local = await inspect(testId, mode, time);
       const started = Date.now();
-      while (state.done.size + state.errors.length < 1 &&
-          Date.now() - started < 12000) await delay(50);
-      if (state.errors.length) throw Error('peer:' + state.errors.join(';'));
-      if (state.done.size !== 1) throw Error('peer-timeout');
-      return { local, peer: [...state.done.values()][0] };
+      while (state.done.size + state.errors.size < peers.length &&
+          Date.now() - started < 25000) await delay(50);
+      if (state.errors.size) {
+        throw Error('participant-errors:' +
+          JSON.stringify([...state.errors.values()]));
+      }
+      const missing = peers.filter(id => !state.done.has(id));
+      if (missing.length) {
+        throw Error('participant-timeout:' + missing.length +
+          ' missing out of ' + peers.length);
+      }
+      return {
+        local, peers: peers.map(id => state.done.get(id)),
+        participants: peers.length + 1
+      };
     } finally { sessions.delete(run); }
   }
 
   /**
-   * @param {Object} pair - Paired key observations.
-   * @returns {boolean} Exact same epoch, generation and HMAC fingerprint.
+   * @param {Object} pair - Leader and all peer observations.
+   * @returns {boolean} Same key identity for every participating instance.
    */
   function equalIdentity(pair) {
-    return pair.local.generation === pair.peer.generation &&
-      pair.local.epoch === pair.peer.epoch &&
-      pair.local.fingerprint === pair.peer.fingerprint;
+    return pair.peers.length > 0 && pair.peers.every(peer =>
+      pair.local.generation === peer.generation &&
+      pair.local.epoch === peer.epoch &&
+      pair.local.fingerprint === peer.fingerprint);
+  }
+
+  /**
+   * @param {Object} pair - Observations with committed public event journals.
+   * @returns {boolean} All peers observed the exact same cycle event records.
+   */
+  function journalsAgree(pair) {
+    return pair.peers.length > 0 && pair.peers.every(peer =>
+      JSON.stringify(pair.local.events) === JSON.stringify(peer.events));
   }
 
   /**
@@ -258,9 +290,10 @@
     try {
       const testId = crypto.randomUUID();
       const time = Date.now();
-      const pair = await twoTabs(testId, 'measure', time);
+      const pair = await participatingInstances(testId, 'measure', time);
       const first = pair.local;
-      const pass = equalIdentity(pair) && first.epoch === 1 &&
+      const pass = equalIdentity(pair) && journalsAgree(pair) &&
+        first.epoch === 1 &&
         first.events.length === 1 &&
         first.events[0].reason === 'initial' &&
         first.deadline - time >= 23 * hour &&
@@ -273,7 +306,10 @@
         }));
       }
       show('DC #313 HMAC lifecycle: initial two-tab', {
-        status: pass ? 'PASS' : 'FAIL', twoTabs: equalIdentity(pair),
+        status: pass ? 'PASS' : 'FAIL',
+        participants: pair.participants,
+        allInstancesShareKey: equalIdentity(pair),
+        allCycleJournalsAgree: journalsAgree(pair),
         epoch: first.epoch, initialEvent: first.events[0]?.reason,
         deadlineInRange: first.deadline - time >= 23 * hour &&
           first.deadline - time <= 25 * hour,
@@ -297,7 +333,7 @@
       if (!saved) throw Error('stage-1-baseline-missing');
       const baseline = JSON.parse(saved);
       const now = Date.now();
-      const persisted = await twoTabs(baseline.testId, 'measure', now);
+      const persisted = await participatingInstances(baseline.testId, 'measure', now);
       const stable = equalIdentity(persisted) &&
         persisted.local.generation === baseline.generation &&
         persisted.local.fingerprint === baseline.fingerprint &&
@@ -309,11 +345,12 @@
       const oldClock = { value: now };
       const oldService = service(baseline.testId, () => oldClock.value);
       const old = await oldService.admit();
-      const draining = await twoTabs(baseline.testId, 'status', future);
+      const draining = await participatingInstances(baseline.testId, 'status', future);
       const safeDrain = draining.local.phase === 'draining' &&
-        draining.peer.phase === 'draining' &&
+        draining.peers.every(peer => peer.phase === 'draining' &&
+          peer.eventCount === 1) &&
         draining.local.eventCount === 1 &&
-        draining.peer.eventCount === 1;
+        draining.peers.length > 0;
       // Move the capture's clock forward before releasing the last admission.
       // Otherwise an old frozen `now` backdates the rotation commit and its
       // randomized deadline, so the later simulated `future` rotates again.
@@ -322,17 +359,17 @@
       oldService.dispose();
       if (!safeDrain) throw Error('old-generation-drain-or-journal-failed');
 
-      const overdue = await twoTabs(baseline.testId, 'measure', future);
+      const overdue = await participatingInstances(baseline.testId, 'measure', future);
       const overdueChecks = {
         sameIdentity: equalIdentity(overdue),
-        epochTwo: overdue.local.epoch === 2,
+        epochTwo: overdue.local.epoch === 2 &&
+          overdue.peers.every(peer => peer.epoch === 2),
         differentGeneration: overdue.local.generation !==
           baseline.generation,
         changedHmac: overdue.local.fingerprint !== baseline.fingerprint,
         journalLengthTwo: overdue.local.events.length === 2,
         overdueReason: overdue.local.events[1]?.reason === 'overdue',
-        journalsMatch: JSON.stringify(overdue.local.events) ===
-          JSON.stringify(overdue.peer.events)
+        journalsMatch: journalsAgree(overdue)
       };
       const duePass = Object.values(overdueChecks).every(Boolean);
       if (!duePass) {
@@ -340,9 +377,10 @@
           status: 'FAIL', stage: 'overdue',
           realReloadPersistence: stable, pendingDrain: safeDrain,
           overdueChecks, localEpoch: overdue.local.epoch,
-          peerEpoch: overdue.peer.epoch,
+          peerEpochs: overdue.peers.map(peer => peer.epoch),
           localReasons: overdue.local.events.map(e => e.reason),
-          peerReasons: overdue.peer.events.map(e => e.reason)
+          peerReasons: overdue.peers.map(peer =>
+            peer.events.map(e => e.reason))
         });
         return;
       }
@@ -352,20 +390,21 @@
       manualService.dispose();
       if (manualResult.state !== 'COMMITTED' ||
           manualResult.epoch !== 3) throw Error('manual-rotation-not-committed');
-      const manual = await twoTabs(baseline.testId, 'measure', future + 2);
+      const manual = await participatingInstances(baseline.testId, 'measure', future + 2);
       const manualPass = equalIdentity(manual) &&
         manual.local.epoch === 3 &&
         manual.local.fingerprint !== overdue.local.fingerprint &&
         manual.local.events.length === 3 &&
         manual.local.events[2].reason === 'manual' &&
-        JSON.stringify(manual.local.events) ===
-          JSON.stringify(manual.peer.events);
+        journalsAgree(manual) &&
+        manual.peers.every(peer => peer.epoch === 3);
       show('DC #313 HMAC lifecycle: reload and rotations', {
         status: manualPass ? 'PASS' : 'FAIL',
         realReloadPersistence: stable, pendingDrain: safeDrain,
         simulatedOverdue25Hours: duePass,
         manualRotation: manualPass, finalEpoch: manual.local.epoch,
-        crossTabCycleEventsAgree: manualPass, errors: []
+        crossInstanceCycleEventsAgree: journalsAgree(manual),
+        participants: manual.participants, errors: []
       });
     } catch (error) {
       show('DC #313 HMAC lifecycle: reload and rotations', {
@@ -389,8 +428,8 @@
         .map(item => item[0]);
       show('DC #313 HMAC lifecycle readiness', {
         status: missing.length === 0 ? 'READY' : 'FAIL',
-        missing, version: '0.1.1', isolate: databaseName,
-        instructions: 'Stage 1 in Tab 1; reload both; stage 2 in Tab 1.'
+        missing, version: '0.1.2', isolate: databaseName,
+        instructions: 'Stage 1 in one tab, reload participants, then stage 2.'
       });
     });
 })();
