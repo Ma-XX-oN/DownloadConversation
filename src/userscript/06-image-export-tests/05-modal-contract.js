@@ -110,7 +110,7 @@
           <table class="tm-test-table">
             <thead><tr><th>Test</th><th>Type</th><th>Previous Result</th><th>Current Result</th><th></th></tr></thead>
             <tbody>
-              ${tests.map(([name]) => `
+              ${tests.map(([name, , type]) => `
                 <tr data-test-name="${escapeHtmlAttribute(name)}">
                   <td>${escapeHtmlText(name)}</td>
                   <td>Automatic</td>
