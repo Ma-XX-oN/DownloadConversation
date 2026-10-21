@@ -113,7 +113,7 @@
               ${tests.map(([name, , type]) => `
                 <tr data-test-name="${escapeHtmlAttribute(name)}">
                   <td>${escapeHtmlText(name)}</td>
-                  <td>Automatic</td>
+                  <td>${type === 'Visual' ? 'Visual' : 'Automatic'}</td>
                   <td data-role="previous-result">—</td>
                   <td data-role="current-result">—</td>
                   <td><button type="button" data-role="run-test">Run</button></td>
