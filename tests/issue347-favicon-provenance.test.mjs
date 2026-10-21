@@ -5,7 +5,7 @@ import { markedBlock, productionFunctionSource } from './helpers/userscript-sour
 
 const provenance = markedBlock(
   '  /** Event-driven favicon provenance, separate from lifecycle/cache behaviour. */',
-  '  faviconProvenanceStart();'
+  '  // Provenance startup is deferred until the recorder capture state is initialized.'
 );
 
 function fixture() {
@@ -61,6 +61,7 @@ function fixture() {
     function diagnosticEnabled(level) { return level === 'debug'; }
     ${productionFunctionSource('agentFaviconCurrentCandidates')}
     ${provenance}
+    faviconProvenanceStart();
     this.api = {
       seen: agentFaviconCurrentCandidates,
       write: faviconProvenanceNoteWrite,
