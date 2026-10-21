@@ -20,8 +20,6 @@
   // Capture sequencing and recording-group state are now initialized.
   // Record the current version once per page initialization, unfiltered.
   logDiagnostic('lifecycle', 'dc-version-transition', { version: VERSION });
-  // Debug favicon events use logCapturePosition; never start them before its state.
-  faviconProvenanceStart();
   communicationLogInitializationPromise = initializeCommunicationDiskRecorder();
   installLiveTailTracking();
   /** Persisted scalar volume present when the userscript was initialized. */
@@ -40,4 +38,12 @@
   });
   installNetworkCapture();
   bootstrapUi();
+  // Optional favicon diagnostics must never prevent the recorder from mounting.
+  try {
+    faviconProvenanceStart();
+  } catch (error) {
+    logConsoleDiagnostic('warnings', '[ChatGPT Recorder] favicon diagnostics disabled', {
+      reason: error instanceof Error ? error.message : String(error)
+    });
+  }
 })();
