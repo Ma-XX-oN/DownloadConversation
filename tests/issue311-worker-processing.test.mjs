@@ -449,3 +449,61 @@ test('legacy page-side HMAC key cannot be written as a secret in a COMM body', a
   assert.equal(value.reason, 'csc-unsupported-sensitive-value');
   assert.ok(!Buffer.concat(h.writes).includes(Buffer.from('private-value-')));
 });
+
+test('browser probe asserts stream ownership before asynchronous processing', () => {
+  const source = readFileSync(path.join(root,
+    'src/userscript/06-image-export-tests/10-csc-comm-worker-processing-probe.js'),
+  'utf8');
+  const transferred = source.indexOf('}, [body]);');
+  const ownership = source.indexOf(
+    "'Transferred COMM stream was not locked immediately after transfer'");
+  const completion = source.indexOf('const outcome = await waitFor', transferred);
+  assert.ok(transferred >= 0 && ownership > transferred &&
+    completion > ownership, 'Transfer ownership must be checked synchronously');
+  assert.match(source, /const successes = \[\];/);
+  assert.match(source, /successes\.push\(name \+ ' Worker/);
+  assert.match(source, /if \(failures\.length\)/);
+  assert.match(source, /return successes\.join\('\s*\|\s*'\);/);
+  assert.doesNotMatch(source, /return name \+ ' Worker/);
+});
+
+test('native ReadableStream can unlock after its transferred bytes are consumed',
+  async () => {
+    const { MessageChannel } = await import('node:worker_threads');
+    const { port1, port2 } = new MessageChannel();
+    const original = new Response(new Uint8Array(1024));
+    const body = original.clone().body;
+    const received = new Promise((resolve, reject) => {
+      port2.on('message', async stream => {
+        try {
+          const reader = stream.getReader();
+          let length = 0;
+          while (true) {
+            const chunk = await reader.read();
+            if (chunk.done) break;
+            length += chunk.value.byteLength;
+          }
+          reader.releaseLock();
+          resolve(length);
+        } catch (error) {
+          reject(error);
+        }
+      });
+    });
+    try {
+      assert.equal(body.locked, false);
+      port1.postMessage(body, [body]);
+      assert.equal(body.locked, true, 'Transfer locks ownership synchronously');
+      assert.equal(await received, 1024);
+      for (let i = 0; i < 100 && body.locked; i += 1) {
+        await new Promise(resolve => setTimeout(resolve, 10));
+      }
+      assert.equal(body.locked, false,
+        'A completed transferred stream can be unlocked');
+      assert.equal((await original.arrayBuffer()).byteLength, 1024,
+        'Original stock bytes are independent from transfer');
+    } finally {
+      port1.close();
+      port2.close();
+    }
+  });

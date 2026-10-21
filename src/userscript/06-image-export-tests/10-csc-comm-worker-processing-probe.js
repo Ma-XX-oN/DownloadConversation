@@ -58,6 +58,7 @@
   async function testCscCommWorkerProcessing() {
     const page = typeof unsafeWindow !== 'undefined' ? unsafeWindow : window;
     const failures = [];
+    const successes = [];
     for (const [name, realm] of [['page', page], ['userscript', window]]) {
       if (name === 'userscript' && realm === page) continue;
       if (typeof realm.Worker !== 'function') {
@@ -136,12 +137,13 @@
             redaction_key_storage: 'tampermonkey-script-installation'
           }
         }, [body]);
+        assert(body.locked,
+          'Transferred COMM stream was not locked immediately after transfer');
         const outcome = await waitFor(message =>
           message.type === 'csc-comm-status' &&
           message.capture_id === 'synthetic-csc311-test');
         assert(outcome.status === 'completed' && outcome.source_bytes === count &&
           outcome.durable === false, 'Worker COMM completion mismatch');
-        assert(body.locked, 'Transferred COMM stream did not become locked');
         worker.postMessage({ type: 'csc-comm-probe-report' });
         const report = await waitFor(message =>
           message.type === 'csc-comm-probe-report');
@@ -155,8 +157,8 @@
           assert(untouched[i] === ((Math.imul(i, 29) + 7) & 255),
             'Original stock body changed at byte ' + i);
         }
-        return name + ' Worker; binary ' + count + ' bytes exact; ' +
-          'start/body/end verified; V2 key token; stock intact';
+        successes.push(name + ' Worker; binary ' + count + ' bytes exact; ' +
+          'start/body/end verified; V2 key token; stock intact');
       } catch (error) {
         failures.push(name + ': ' + errorMessage(error));
       } finally {
@@ -164,5 +166,8 @@
         if (url) realm.URL.revokeObjectURL(url);
       }
     }
-    throw new Error('CSC COMM Worker test failed: ' + failures.join(' | '));
+    if (failures.length) {
+      throw new Error('CSC COMM Worker test failed: ' + failures.join(' | '));
+    }
+    return successes.join(' | ');
   }
