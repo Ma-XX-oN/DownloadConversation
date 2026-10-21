@@ -33,6 +33,6 @@
     return rendered.frames;
   }
 
-  // Independent animation version; existing 1.11.8 datasets are historical.
-  const FAVICON_ANIMATION_VERSION = '2.0.0';
+  // Independent ring-only animation; retain historical 1.11.8 and 2.0.0 datasets.
+  const FAVICON_ANIMATION_VERSION = '2.1.0';
   faviconCacheV2Configure([{version: FAVICON_ANIMATION_VERSION, update_every_ms: 1000}]);

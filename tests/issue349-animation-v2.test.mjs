@@ -21,14 +21,14 @@ function isolated(name, globals = '') {
   return context.selected;
 }
 
-test('independent 2.0.0 animation is not selected from userscript build', () => {
-  assert.match(adapter, /FAVICON_ANIMATION_VERSION = '2\.0\.0'/);
+test('independent 2.1.0 animation is not selected from userscript build', () => {
+  assert.match(adapter, /FAVICON_ANIMATION_VERSION = '2\.1\.0'/);
   assert.match(adapter, /update_every_ms: 1000/);
   assert.match(consumer, /get_compatible_version_key\(FAVICON_ANIMATION_VERSION\)/);
   assert.doesNotMatch(consumer, /get_compatible_version_key\(VERSION\)/);
   const build = /@version\s+(\d+\.\d+\.\d+(?:-issue\.\d+\.\d+)?)/.exec(header)?.[1];
   assert.ok(build, 'the userscript build retains its independent version');
-  assert.notEqual(build, '2.0.0');
+  assert.notEqual(build, '2.1.0');
 });
 
 test('one-second slot changes are selected inside unchanged public get_favicon', () => {

@@ -89,6 +89,8 @@ const ordinaryStages = [
     'tests/issue333-realtime-browser.test.mjs']],
   ['DC #333 renderer pixel parity Chromium', nodeCommand, ['--test',
     'tests/issue333-v2-sequence.test.mjs']],
+  ['DC #354 ring-only seven-step dual-theme pixels', nodeCommand, ['--test',
+    'tests/issue354-ring-only.test.mjs']],
   ['DC #336 CSS-sensitive SVG Chromium', nodeCommand, ['--test',
     'tests/issue336-v2-theme-chromium.test.mjs']],
   ['Agent favicon state regression', nodeCommand, ['--test', 'tests/agent-favicon-state.test.mjs', 'tests/agent-favicon-browser-selection.test.mjs', 'tests/agent-favicon-thirty-minute-ring.test.mjs', 'tests/agent-favicon-heartbeat.test.mjs']],

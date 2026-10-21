@@ -245,5 +245,5 @@ test('single policy module, unchanged cache and animation version', () => {
   assert.match(consumer, /agentFaviconFrameTimeOffset\(performance\.now\(\)\)/);
   assert.doesNotMatch(policy, /setInterval|setTimeout/);
   assert.match(read('src/userscript/03-agent-lifecycle/02-favicon-v2-adapter.js'),
-    /FAVICON_ANIMATION_VERSION = '2\.0\.0'/);
+    /FAVICON_ANIMATION_VERSION = '2\.1\.0'/);
 });

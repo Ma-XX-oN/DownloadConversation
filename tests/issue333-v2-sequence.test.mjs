@@ -86,7 +86,7 @@ function browserFixture(svgBytes,webpBytes,moduleSource) {
         } finally {URL.revokeObjectURL(url);}
       };
       // Independent pixel proof: project exactly the existing production
-      // recolour, pie, ring, and cosine helpers against the same original.
+      // recolour, ring and opacity helpers against the same original.
       const originalImage=new Image();
       await new Promise((resolve,reject)=>{
         originalImage.onload=resolve;
@@ -102,9 +102,6 @@ function browserFixture(svgBytes,webpBytes,moduleSource) {
         const pixels=tctx.getImageData(0,0,180,180);
         agentFaviconRecolorPixels(pixels.data,[255,255,0]);
         tctx.putImageData(pixels,0,0);
-        tctx.globalCompositeOperation='destination-over';
-        try {agentFaviconDrawPieSlice(tctx,180,180,3);}
-        finally {tctx.globalCompositeOperation='source-over';}
         agentFaviconDrawRing(tctx,180,180,3);
         const expectedPixels=tctx.getImageData(0,0,180,180);
         agentFaviconApplyOpacity(expectedPixels.data,
@@ -115,7 +112,7 @@ function browserFixture(svgBytes,webpBytes,moduleSource) {
         if(actual.length!==expected.length)throw new Error('Frame dimensions differ');
         for(let i=0;i<actual.length;i++){
           if(actual[i]!==expected[i])throw new Error(
-            'Legacy pixel mismatch, scheme='+theme+', frame='+frame+
+            'Ring-only pixel mismatch, scheme='+theme+', frame='+frame+
             ', channel='+i+', expected='+expected[i]+', actual='+actual[i]);
         }
       }
@@ -209,7 +206,7 @@ function browserFixture(svgBytes,webpBytes,moduleSource) {
     'show', 'e9906a2b607315cf380cf33d8ea25c261bbf270e:src/userscript/03-agent-lifecycle/02-terminal-events-part2.js'
   ], {encoding:'utf8'});
   const legacyFunctions = [
-    'agentFaviconRecolorPixels','agentFaviconDrawPieSlice',
+    'agentFaviconRecolorPixels',
     'agentFaviconDrawRing','agentFaviconRingColor',
     'agentFaviconApplyOpacity','agentFaviconPulseOpacity'
   ].map(name => functionSourceFrom(frozenHistorical,name)).join('\n');
