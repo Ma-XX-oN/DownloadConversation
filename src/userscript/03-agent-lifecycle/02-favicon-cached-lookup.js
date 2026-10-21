@@ -54,13 +54,17 @@
           agentFaviconOriginalSources.set(link, link.href);
           agentFaviconDisplayedHrefs.delete(link);
         }
-        return {
+        const candidate = {
           link,
           original_href: agentFaviconOriginalSources.get(link),
           media: typeof link.media === 'string' ? link.media : '',
           type: typeof link.type === 'string' ? link.type : '',
           sizes: typeof link.sizes?.value === 'string' ? link.sizes.value : ''
         };
+        if (typeof faviconProvenanceTrackCandidate === 'function') {
+          faviconProvenanceTrackCandidate(candidate);
+        }
+        return candidate;
       });
   }
 
@@ -138,9 +142,15 @@
       agentFaviconObjectUrls.set(key, url);
       return url;
     }
+    if (typeof faviconProvenanceCacheEvent === 'function') {
+      faviconProvenanceCacheEvent(session.version, originalUrl, theme, base, step, false);
+    }
     const blob = await session.read_png(originalUrl, theme, base, step, frame);
     if (epoch !== agentFaviconPageEpoch || agentFaviconPageHidden) return null;
     if (!(blob instanceof Blob) || blob.type !== 'image/png' || !blob.size) return null;
+    if (typeof faviconProvenanceCacheEvent === 'function') {
+      faviconProvenanceCacheEvent(session.version, originalUrl, theme, base, step, true);
+    }
     // Concurrent heartbeats can request one frame while its IDB read is pending.
     if (agentFaviconObjectUrls.has(key)) return agentFaviconObjectUrls.get(key);
     const url = URL.createObjectURL(blob);
@@ -291,7 +301,16 @@
     const matched = new Map((pairs ?? []).map(pair => [pair.link, pair.href]));
     for (const candidate of candidates) {
       const desired = matched.get(candidate.link) ?? candidate.original_href;
-      if (candidate.link.href !== desired) candidate.link.href = desired;
+      if (candidate.link.href !== desired) {
+        if (typeof faviconProvenanceNoteWrite === 'function') {
+          faviconProvenanceNoteWrite(candidate.link, candidate.link.href, desired,
+            matched.has(candidate.link) ? 'generated' : 'original', {
+              original_url: candidate.original_href, theme: requestedTheme,
+              state, progress_step: requestedStep
+            });
+        }
+        candidate.link.href = desired;
+      }
       if (matched.has(candidate.link)) agentFaviconDisplayedHrefs.set(candidate.link, desired);
       else agentFaviconDisplayedHrefs.delete(candidate.link);
     }
