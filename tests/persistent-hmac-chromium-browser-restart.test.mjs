@@ -63,7 +63,10 @@ async function browserPhase() {
   const origin = { origin: 'https://chatgpt.com' };
   // Call the exact production factory with a shadowed approved origin,
   // while IndexedDB/Web Locks remain the REAL Chromium browser APIs.
-  const factory = hmacFactory(origin, indexedDB, navigator, crypto);
+  const timeOffset = location.search === '?overdue' ?
+    25 * 3600000 + 1 : 0;
+  const clock = { now: () => Date.now() + timeOffset };
+  const factory = hmacFactory(origin, indexedDB, navigator, crypto, clock);
   const service = factory();
   const admission = await service.admit();
   const workerCode = [
@@ -105,6 +108,7 @@ async function browserPhase() {
       generation: state.redaction_scope,
       pending: state.pending_count, cycleCount: journal.length,
       cycleReason: journal[0]?.reason,
+      lastCycleReason: journal.at(-1)?.reason,
       nativeIndexedDB: true, nativeWebLocks: true
     });
   } finally {
@@ -126,7 +130,7 @@ test('Chromium browser-process exit/restart preserves native IDB HMAC', {
   const html = '<!doctype html><meta charset="utf-8">' +
     '<pre id="result">RUNNING</pre><script>\n' + source +
     '\nconst hmacFactory = new Function("location","indexedDB",' +
-    '"navigator","crypto",' +
+    '"navigator","crypto","Date",' +
     JSON.stringify(source +
       '\nreturn communicationPersistentHmacCurrentTabService;') +
     ');\n(' + browserPhase.toString() + ')().catch(error => {' +
@@ -160,6 +164,19 @@ test('Chromium browser-process exit/restart preserves native IDB HMAC', {
     }
     assert.equal(second.generation, first.generation);
     assert.equal(second.fingerprint, first.fingerprint);
+    // A THIRD fresh Chromium process starts after a simulated >25h
+    // offline interval. The factory must rotate before first admission.
+    const overdue = await runChromium(binary, profile, base + '?overdue');
+    assert.equal(overdue.phase, 'overdue');
+    assert.equal(overdue.nativeIndexedDB, true);
+    assert.equal(overdue.nativeWebLocks, true);
+    assert.equal(overdue.epoch, 2);
+    assert.equal(overdue.pending, 0);
+    assert.equal(overdue.cycleCount, 2);
+    assert.equal(overdue.cycleReason, 'initial');
+    assert.equal(overdue.lastCycleReason, 'overdue');
+    assert.notEqual(overdue.generation, first.generation);
+    assert.notEqual(overdue.fingerprint, first.fingerprint);
   } finally {
     await new Promise(resolve => server.close(resolve));
     rmSync(profile, { recursive: true, force: true });
