@@ -1,11 +1,16 @@
   /** Persistent diagnostic event categories; Gen/Comm recording remains separate. */
   const DIAGNOSTIC_CATEGORY_STORAGE_KEY = 'tm-recorder-diagnostic-categories';
+  /** Explicit persisted categories exposed by the logging gear. */
   const DIAGNOSTIC_CATEGORIES = Object.freeze([
     'favicon-stock', 'favicon-theme', 'favicon-write',
     'favicon-cache', 'other'
   ]);
 
-  /** Load only declared boolean category values, defaulting to current logging. */
+  /**
+   * Load only declared boolean category values, defaulting to current logging.
+   *
+   * @returns {Object} - Current boolean values for supported categories.
+   */
   function diagnosticCategoryLoad() {
     const defaults = Object.fromEntries(DIAGNOSTIC_CATEGORIES.map(key => [key, true]));
     try {
@@ -21,9 +26,15 @@
     }
     return defaults;
   }
+  /** Mutable category preferences loaded once per page. */
   const diagnosticCategorySettings = diagnosticCategoryLoad();
 
-  /** Route existing and new events without changing global diagnostic severity. */
+  /**
+   * Route existing and new events without changing global diagnostic severity.
+   *
+   * @param {string} message - Diagnostic event name.
+   * @returns {string} - One of the supported diagnostic categories.
+   */
   function diagnosticCategoryForEvent(message) {
     if (/^agent-favicon-(?:stock-|original-|external-)/.test(message))
       return 'favicon-stock';
@@ -37,16 +48,30 @@
     return 'other';
   }
 
-  /** Check a category before mirroring to console or saving to the log. */
+  /**
+   * Check a category before mirroring to console or saving to the log.
+   *
+   * @param {string} message - Diagnostic event name.
+   * @returns {boolean} - Whether that event category is enabled.
+   */
   function diagnosticCategoryEnabled(message) {
     return diagnosticCategorySettings[diagnosticCategoryForEvent(message)] !== false;
   }
 
-  /** Bind gear popup controls and persist the user's chosen event categories. */
+  /**
+   * Bind gear popup controls and persist the user's chosen event categories.
+   *
+   * @param {HTMLElement} panel - Recorder panel containing the gear and popup.
+   * @returns {void} - Binds category controls, persistence and dismissal.
+   */
   function bindDiagnosticCategoryPopup(panel) {
     const trigger = panel.querySelector('[data-role="log-settings"]');
     const popup = panel.querySelector('[data-role="log-settings-popup"]');
     if (!trigger || !popup) return;
+    /**
+     * Dismisses the settings popup without changing saved categories.
+     * @returns {void} Closes the dialog.
+     */
     const close = () => {
       popup.hidden = true;
       trigger.setAttribute('aria-expanded', 'false');
