@@ -219,7 +219,6 @@ test('real CSC queue and browser bridge deliver one backend identity then restor
     'this.api = { reconnectChatGPTSubjectHost, disconnectChatGPTSubjectHost,' +
     ' cscPluginQueueSnapshot };', ctx);
   assert.equal(typeof captured, 'function');
-  ctx.api.reconnectChatGPTSubjectHost();
   const flush = async () => {
     for (let i = 0; i < 10; i++) {
       await new Promise(resolve => setImmediate(resolve));
@@ -246,6 +245,9 @@ test('real CSC queue and browser bridge deliver one backend identity then restor
     envelope: response, source: { title: 'verified A' },
     source_available: true, source_incomplete: false
   });
+  assert.equal(ctx.api.cscPluginQueueSnapshot().queued, 4,
+    'Initial route, A route, request and response must wait for late host');
+  ctx.api.reconnectChatGPTSubjectHost();
   await flush();
   page.history.pushState(null, '', b);
   page.history.pushState(null, '', a);
