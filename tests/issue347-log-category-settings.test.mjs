@@ -113,7 +113,7 @@ test('event routing does not conflate app, browser theme and other diagnostics',
   assert.equal(h.ctx.api.category('agent-favicon-cache-unavailable'), 'favicon-cache');
   assert.equal(h.ctx.api.category('fatal-export-error'), 'other');
   assert.match(downloadConversationSource,
-    /function logDiagnostic\(level, message, data = null\) \{\s*if \(!diagnosticCategoryEnabled\(message\)\) return;/);
+    /function logDiagnostic\(level, message, data = null\) \{\s*if \(typeof diagnosticCategoryEnabled === 'function' &&\s*!diagnosticCategoryEnabled\(message\)\) return;/);
 });
 
 test('popup closes on Escape and outside pointer but not inside clicks', () => {
