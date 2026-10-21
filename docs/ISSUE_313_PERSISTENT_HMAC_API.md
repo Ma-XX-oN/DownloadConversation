@@ -6,18 +6,27 @@ certification or RWF #691 decoder ownership.
 
 ## Production entry point
 
-`communicationPersistentHmacCurrentTabService()` constructs a lazy service
-using the current `https://chatgpt.com` origin's exclusive Web Locks and
-Tampermonkey GM script storage. It has no side effects until an API call.
-On another origin, unavailable browser locks, unavailable GM APIs or failed
-CSPRNG, sensitive COMM processing must fail closed, not use an ephemeral key.
+`communicationPersistentHmacCurrentTabService()` now selects the
+`https://chatgpt.com`-origin IndexedDB record adapter and same-origin
+Web Locks. The operator explicitly accepted page-readable HMAC key storage.
+The factory starts a best-effort expiry check when constructed. It checks
+immediately at startup and near due time while a tab stays alive.
+All service admissions independently check expiry under the same lock.
+Do not claim a sleeping/closed browser executes timers.
 
-`communicationPersistentHmacService({storage, authority, crypto})` is the
-same implementation with independently injectable test dependencies.
-`communicationPersistentHmacChatgptAuthority(navigator, location)` acquires
-one named exclusive same-origin lock and retains it across asynchronous GM
-storage transactions. Do not use notifications as a lock. The key is stored
-only in Tampermonkey script storage; do not copy it into page IndexedDB.
+`communicationPersistentHmacService({storage, authority, crypto, now})`
+is the exact lifecycle implementation with injectable test dependencies.
+`communicationPersistentHmacIndexedDbStorage(indexedDB, location)`
+opens the origin's `downloadconversation-persistent-hmac-v2` database
+and commits complete records in a `readwrite` transaction.
+`communicationPersistentHmacIndexedDbAuthority` composes this store
+with the native exclusive Web Lock. The old GM adapter and Web Locks-only
+authority remain available for negative tests but no longer qualify as
+the production atomic key-record authority.
+
+A stored key is visible to other same-origin page scripts. This is an
+explicitly accepted risk; key bytes never belong in recording records,
+exported files, diagnostic JSON or the public HMAC marker metadata.
 
 ## Per-capture state protocol
 
@@ -318,3 +327,39 @@ reconciliation, rotation, interrupted write and page-visible metadata
 tampering remain INCOMPLETE. Do not merge or enable the key service
 until a secure cross-tab authority has both independent adversarial
 acceptance and real installed-browser verification.
+
+## Operator-authorized 23–25 hour cycle and dual-stream event contract
+
+An initial key commits at epoch 1 and draws one random expiry timestamp
+between 23 and 25 hours after that commit. Each subsequent committed
+manual, scheduled or overdue rotation chooses a fresh expiry. A
+`status()`, `recover()` or `admit()` call checks the deadline; an
+active current-tab factory additionally schedules best-effort polls.
+Browser startup after more than 25 hours is an overdue rotation.
+A pending capture keeps its old immutable scope; new admissions are
+fenced until it drains and the new generation commits.
+
+`service.cycleEvents(afterEpoch = 0)` reads committed nonsecret events,
+for example `{type:'hmac-key-cycle', id, generation, epoch,
+occurred_at_ms, reason}`. Reasons are `initial`, `scheduled`,
+`overdue`, and `manual`. The ID is deterministically
+`hmac-key-cycle:<epoch>:<generation>` and is identical for all
+consumer tabs. A pending rotation produces NO committed cycle event.
+
+**Both GEN and COMM must independently persist each committed event**
+with the same ID/timestamp/epoch/reason. GEN and COMM consumers must
+deduplicate by stable ID on replay, acknowledge durable writes,
+and detect incomplete/missing events. DC #313 provides the producer
+event journal, and owners of #311/#317 and the GEN recording path must
+provide actual log emission and disk readback. The Node test's
+synthetic GEN and COMM arrays are contract evidence, not proof of
+real recorder record insertion. Handoff comments are posted to the
+respective existing issue owners.
+
+A new independent manual probe at
+`tests/manual/dc313-indexeddb-browser-probe.user.js` v0.1.0 tests
+atomic 24+24 IndexedDB updates in TWO real installed browser tabs
+using an isolated synthetic database. It does not read/write the real
+HMAC key or recordings and does not itself certify dual-log persistence.
+This probe and a later installed real-key lifecycle/GEN/COMM readback
+remain required before merging #313.
