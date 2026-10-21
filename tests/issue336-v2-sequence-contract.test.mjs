@@ -2,12 +2,12 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 
 // An isolated behavioural oracle. It is NOT a proposed #333/#334/#335 API.
-// V2's provider, IndexedDB stores, and notification API remain unfrozen.
+// This model checks the independent animation V2 semantics.
 const bases = ['processing','completed','error','acknowledged'];
-const cadence = 250;
+const cadence = 1000;
 const expiry = 600000;
 const original = 'https://chatgpt.com/favicon.svg';
-const tuple = Object.freeze({version:'1.11.8-issue.336.1',
+const tuple = Object.freeze({version:'2.0.0',
   url:original,theme:'light',base:'processing',step:2});
 
 function numericVersion(version) {
@@ -39,9 +39,8 @@ function selectVersion(boundaries, running) {
 
 function frameIndex(ms) {
   assert.ok(Number.isFinite(ms));
-  const phase=((ms%10000)+10000)%10000;
-  const slot=Math.floor(phase/cadence);
-  return Math.min(slot,40-slot);
+  const phase=((ms%2000)+2000)%2000;
+  return Math.floor(phase/cadence);
 }
 
 function gate() {
@@ -86,7 +85,7 @@ class SequenceModel {
     this.generations++;
     if(options.gate)await options.gate.wait;
     const frames=[];
-    for(let i=0;i<21;i++) {
+    for(let i=0;i<2;i++) {
       if(options.crashAt===i)throw Error('generator crashed');
       const bytes=new Uint8Array([137,80,78,71,13,10,26,10,
         t.theme==='dark'?1:0,bases.indexOf(t.base),t.step,i]);
@@ -106,9 +105,9 @@ class SequenceModel {
       await this.lock(key,async()=>{
         if(this.ready.get(key))return;
         const produced=await this.produce(t,options);
-        assert.equal(produced.length,21);
+        assert.equal(produced.length,2);
         const staged=new Map();
-        for(let i=0;i<21;i++) {
+        for(let i=0;i<2;i++) {
           staged.set(key+'/'+i,produced[i]);
           if(options.abortAt===i)throw Error('transaction aborted');
         }
@@ -138,20 +137,20 @@ class SequenceModel {
       if(this.active.has(key)||this.claims.has(key))continue;
       if(this.now-meta.lastUsed<=expiry)continue;
       this.ready.delete(key);
-      for(let i=0;i<21;i++)this.images.delete(key+'/'+i);
+      for(let i=0;i<2;i++)this.images.delete(key+'/'+i);
       deleted++;
     }
     return deleted;
   }
 }
 
-test('first request for pulse slot 39 generates 21 and no other tuples',async()=>{
+test('first request for a blink frame generates two and no other tuples',async()=>{
   const s=new SequenceModel(), tab=s.tab();
   await s.request(tab,tuple,9750);
-  assert.equal(s.images.size,21);
+  assert.equal(s.images.size,2);
   assert.equal(s.ready.size,1);
   assert.equal(s.generations,1);
-  assert.deepEqual(s.rendered.map(x=>x[1]),Array.from({length:21},(_,i)=>i));
+  assert.deepEqual(s.rendered.map(x=>x[1]),Array.from({length:2},(_,i)=>i));
   assert.deepEqual([...new Set(s.rendered.map(x=>x[0]))],[s.key(tuple)]);
   assert.equal(tab.urls.size,1);
 });
@@ -168,26 +167,26 @@ test('only first tab generates; contender shows original until fully ready',asyn
   held.open();
   await Promise.all([a,b]);
   assert.equal(s.generations,1);
-  assert.equal(s.images.size,21);
+  assert.equal(s.images.size,2);
   assert.notEqual(second.href,second.stock);
 });
 
 test('crashed generator and aborted transaction leave no partial ready',async()=>{
   const s=new SequenceModel();
-  await assert.rejects(s.request(s.tab(),tuple,0,{crashAt:8}),/crashed/);
+  await assert.rejects(s.request(s.tab(),tuple,0,{crashAt:1}),/crashed/);
   assert.equal(s.ready.size,0);
   assert.equal(s.images.size,0);
-  await assert.rejects(s.request(s.tab(),tuple,0,{abortAt:10}),/aborted/);
+  await assert.rejects(s.request(s.tab(),tuple,0,{abortAt:1}),/aborted/);
   assert.equal(s.ready.size,0);
   assert.equal(s.images.size,0);
   await s.request(s.tab(),tuple,0);
   assert.equal(s.generations,3);
-  assert.equal(s.images.size,21);
+  assert.equal(s.images.size,2);
 });
 
 test('contender takes over after generator failure, original while waiting',async()=>{
   const s=new SequenceModel(), held=gate(), a=s.tab(),b=s.tab();
-  const failed=s.request(a,tuple,500,{gate:held,crashAt:2});
+  const failed=s.request(a,tuple,500,{gate:held,crashAt:1});
   await new Promise(resolve=>setImmediate(resolve));
   const takeover=s.request(b,tuple,500);
   assert.equal(b.href,b.stock);
@@ -195,16 +194,16 @@ test('contender takes over after generator failure, original while waiting',asyn
   await assert.rejects(failed,/crashed/);
   await takeover;
   assert.equal(s.generations,2);
-  assert.equal(s.images.size,21);
+  assert.equal(s.images.size,2);
 });
 
 test('light-only; same URL dark-only on later theme change',async()=>{
   const s=new SequenceModel(), tab=s.tab();
   await s.request(tab,tuple,1000);
-  assert.equal(s.images.size,21);
+  assert.equal(s.images.size,2);
   const dark={...tuple,theme:'dark'};
   await s.request(tab,dark,1000);
-  assert.equal(s.images.size,42);
+  assert.equal(s.images.size,4);
   assert.equal(s.ready.size,2);
   assert.deepEqual([...s.ready.keys()],[s.key(tuple),s.key(dark)]);
 });
@@ -214,30 +213,30 @@ test('four colours and seven steps are strictly request-driven',async()=>{
   for(const base of bases)for(let step=0;step<=6;step++)
     await s.request(s.tab(),{...tuple,base,step},5000);
   assert.equal(s.generations,28);
-  assert.equal(s.images.size,588);
+  assert.equal(s.images.size,56);
   assert.equal(s.ready.size,28);
 });
 
 test('different source URL/version do not reuse the requested sequence',async()=>{
   const s=new SequenceModel();
   const keys=[tuple,{...tuple,url:'https://chatgpt.com/other.svg'},
-    {...tuple,version:'1.12.0'}];
+    {...tuple,version:'3.0.0'}];
   for(const t of keys)await s.request(s.tab(),t,5000);
   assert.equal(s.ready.size,3);
   assert.equal(s.generations,3);
-  assert.equal(s.images.size,63);
+  assert.equal(s.images.size,6);
 });
 
-test('40-frame cycle maps to 21 warm frames; no repeat generation/read',async()=>{
+test('two-frame cycle repeats without additional generation/read',async()=>{
   const s=new SequenceModel(),tab=s.tab();
-  for(let i=0;i<40;i++)await s.request(tab,tuple,i*cadence);
+  for(let i=0;i<4;i++)await s.request(tab,tuple,i*cadence);
   assert.equal(s.generations,1);
-  assert.equal(s.reads,21);
-  for(let i=0;i<40;i++)await s.request(tab,tuple,i*cadence);
+  assert.equal(s.reads,2);
+  for(let i=0;i<4;i++)await s.request(tab,tuple,i*cadence);
   assert.equal(s.generations,1);
-  assert.equal(s.reads,21);
+  assert.equal(s.reads,2);
   assert.equal(frameIndex(0),0);
-  assert.equal(frameIndex(5000),20);
+  assert.equal(frameIndex(5000),1);
   assert.equal(frameIndex(9750),1);
   assert.equal(frameIndex(-250),1);
 });
@@ -274,5 +273,5 @@ test('touch no more often than 10m; >10m only; active reader protected',async()=
   assert.equal(s.images.size,0);
   await s.request(s.tab(),tuple,0);
   assert.equal(s.generations,2);
-  assert.equal(s.images.size,21);
+  assert.equal(s.images.size,2);
 });

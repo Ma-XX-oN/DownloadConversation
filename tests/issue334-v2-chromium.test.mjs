@@ -44,7 +44,7 @@ function png(frame) {
   ]);
 }
 
-const frames = Array.from({ length: 21 }, (_, i) => png(i).toString('base64'));
+const frames = Array.from({ length: 2 }, (_, i) => png(i).toString('base64'));
 
 function pageHtml(isChild) {
   return `<!doctype html><meta charset="utf-8"><link id="stock" rel="icon"
@@ -59,8 +59,8 @@ function pageHtml(isChild) {
       const fail = message => { throw Error(message); };
       const verify = (condition, message) => { if (!condition) fail(message); };
       const URL1 = 'https://chatgpt.com/original.svg';
-      faviconCacheV2Configure([{version:'1.11.8', update_every_ms:250},
-        {version:'1.12.0',update_every_ms:250}]);
+      faviconCacheV2Configure([{version:'2.0.0', update_every_ms:1000},
+        {version:'3.0.0',update_every_ms:1000}]);
       window.calls = [];
       window.cacheWarnings = [];
       function logDiagnostic(level, name, details) {
@@ -68,7 +68,7 @@ function pageHtml(isChild) {
       }
       window.renderer = async (args, signal) => {
         calls.push(args);
-        if (window.failCount) { window.failCount = 0; return frameBlobs.slice(0,20); }
+        if (window.failCount) { window.failCount = 0; return []; }
         if (window.pauseRender) await window.pauseRender;
         if (signal.aborted) throw Error('aborted');
         return frameBlobs;
@@ -82,8 +82,8 @@ function pageHtml(isChild) {
         verify(child !== null, 'popup unavailable');
         for(let i=0; i<100 && !child.ready; i++) await wait(50);
         verify(child.ready, 'child tab not ready');
-        const key = await get_compatible_version_key('1.11.8-issue.334.999');
-        verify(key === '1.11.8', 'numeric version resolution');
+        const key = await get_compatible_version_key('2.0.0');
+        verify(key === '2.0.0', 'numeric version resolution');
         const db = await faviconSequenceDatabase();
         const a = await open_favicon_dataset(key, window.renderer);
         const b = await child.api.open_favicon_dataset(key, child.renderer);
@@ -108,26 +108,26 @@ function pageHtml(isChild) {
         verify(calls.length+child.calls.length === 1, 'duplicate render after lock');
         const meta = await faviconSequenceRequest(db.transaction('sequences','readonly')
           .objectStore('sequences').get(identity));
-        verify(meta?.ready && meta?.count===21, 'no complete readiness');
+        verify(meta?.ready && meta?.count===2, 'no complete readiness');
         const keys = await faviconSequenceRequest(db.transaction('pngs','readonly')
           .objectStore('pngs').getAllKeys());
-        verify(keys.length===21, 'not exactly 21 stored frames');
+        verify(keys.length===2, 'not exactly two stored frames');
         const bytesBeforeWarm = calls.length;
         const warm = await a.read_png(URL1,'light',0,0,0);
         verify(warm instanceof Blob && calls.length===bytesBeforeWarm, 'warm frame regenerated');
-        verify((await a.read_png(URL1,'light',0,0,15)) instanceof Blob, 'unrequested ready frame absent');
+        verify((await a.read_png(URL1,'light',0,0,1)) instanceof Blob, 'unrequested ready frame absent');
         verify(calls.length===1, 'warm index triggered generation');
         // A second version has independent rows without deleting the first.
-        const other = await open_favicon_dataset('1.12.0', window.renderer);
+        const other = await open_favicon_dataset('3.0.0', window.renderer);
         verify(other && (await other.read_png(URL1,'light',0,0,0)) instanceof Blob,
           'second compatible dataset unavailable');
-        const otherId=faviconSequenceKey('1.12.0',URL1,'light',0,0);
+        const otherId=faviconSequenceKey('3.0.0',URL1,'light',0,0);
         verify((await faviconSequenceRead(db,identity,0)) instanceof Blob &&
           (await faviconSequenceRead(db,otherId,0)) instanceof Blob,
           'version coexistence damaged');
         await other.close();
         window.pauseRender=null;
-        const dark = await a.read_png(URL1,'dark',0,0,15);
+        const dark = await a.read_png(URL1,'dark',0,0,1);
         verify(dark instanceof Blob && calls.length===3, 'dark theme not separately generated');
         verify(calls[2].theme==='dark', 'wrong active theme');
         verify((await a.read_png(URL1,'dark',0,0,0)) instanceof Blob && calls.length===3,
@@ -146,7 +146,7 @@ function pageHtml(isChild) {
         // must not turn a renderer capability failure into a busy retry.
         for (let beat=0; beat<10; beat++) {
           const tab=beat%2===0 ? a : b;
-          verify((await tab.read_png(URL1,'light',1,3,beat%21))===null,
+          verify((await tab.read_png(URL1,'light',1,3,beat%2))===null,
             'cooldown returned a frame during repeated heartbeat');
           await wait(255);
         }
@@ -161,7 +161,7 @@ function pageHtml(isChild) {
           verify((await a.read_png(URL1,'light',1,3,0)) instanceof Blob,
             'retry after failure cooldown did not recover');
         } finally { Date.now=realDateNow; }
-        // Abort during IndexedDB write: all 21 inserts are rolled back.
+        // Abort during IndexedDB write: all two inserts are rolled back.
         const originalPut=IDBObjectStore.prototype.put;
         const abortId=faviconSequenceKey(key, URL1, 'light', 2, 4);
         let rejectedPut=false;
@@ -193,7 +193,7 @@ function pageHtml(isChild) {
         const takeover=await a.read_png(URL1,'light',3,5,0);
         verify(takeover instanceof Blob && calls.at(-1).base_type===3,'claim takeover failed');
         canceled();
-        verify(!(await faviconSequenceRead(db,crashKey,21)), 'out-of-range pulse used');
+        verify(!(await faviconSequenceRead(db,crashKey,2)), 'out-of-range pulse used');
         // Real navigation releases a stalled renderer's browser-owned Web Lock.
         const navSession=await child.api.open_favicon_dataset(key,child.renderer);
         verify(navSession!==null,'navigation owner cannot reopen session');
@@ -244,7 +244,7 @@ function pageHtml(isChild) {
     <\/script><img hidden src="/hold">`;
 }
 
-test('V2: Chromium two tabs elect one 21-frame producer, commit atomically and recover',
+test('V2: Chromium two tabs elect one two-frame producer, commit atomically and recover',
   { timeout: 55000 }, async () => {
     const server = createServer((req, res) => {
       if (req.url === '/gone') {

@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         ChatGPT Conversation Markdown Recorder
 // @namespace    https://chatgpt.com/
-// @version      1.11.10-issue.347.11
+// @version      1.11.10-issue.349.3
 // @description  Exports the current ChatGPT conversation directly from the Conversation API as Markdown or JSONL.
 // @match        https://chatgpt.com/*
 // @match        https://chat.openai.com/*
@@ -6825,7 +6825,7 @@ globalThis.__dcCompressor = {
 // BEGIN bundled V2 renderer
 const faviconV2RenderSource = (() => {
 /**
- * DC #333 proposed V2: render one requested 21-frame pulse sequence locally.
+ * DC #349: render a complete version-owned two-frame blink sequence locally.
  *
  * This provider intentionally does not manage IndexedDB, cross-tab election,
  * object URLs, lifecycle observers, favicon <link> elements or background work.
@@ -6867,11 +6867,10 @@ function activeFaviconTheme() {
   return matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light';
 }
 
-/** Map the 40 equally spaced ten-second cycle positions to 21 PNG indices. */
+/** Select a frame for successive one-second slots of the two-second blink. */
 function pulseFrameForSlot(slot) {
   if (!Number.isFinite(slot)) throw new TypeError('Invalid pulse slot');
-  const normalized = ((Math.floor(slot) % 40) + 40) % 40;
-  return Math.min(normalized, 40 - normalized);
+  return ((Math.floor(slot) % 2) + 2) % 2;
 }
 
 /** Require exactly one original URL, theme, colour, and progress step. */
@@ -7038,10 +7037,10 @@ async function renderFaviconPulseSequence(request) {
     const composite = ctx.getImageData(0, 0, width, height);
     const frames = [];
     let priorAlphas = null;
-    for (let frame = 0; frame <= 20; frame++) {
+    for (let frame = 0; frame < 2; frame++) {
       await yieldToBrowser();
       ensureCurrent(key.theme, key.signal);
-      const opacity = 0.75 + 0.25 * Math.cos(2 * Math.PI * frame / 40);
+      const opacity = frame === 0 ? 1 : 0.2;
       const next = ctx.createImageData(width, height);
       next.data.set(composite.data);
       const currentAlphas = new Uint8Array(width * height);
@@ -7055,7 +7054,7 @@ async function renderFaviconPulseSequence(request) {
       }
       if (!differs) {
         throw new FaviconRenderError(
-          'Source alpha precision cannot represent 21 distinct pulse frames');
+          'Source alpha precision cannot represent both distinct blink frames');
       }
       priorAlphas = currentAlphas;
       ctx.putImageData(next, 0, 0);
@@ -7063,7 +7062,7 @@ async function renderFaviconPulseSequence(request) {
       ensureCurrent(key.theme, key.signal);
       frames.push(blob);
     }
-    // Only return all 21 complete Blobs. Failed requests expose no partial set.
+    // Only return both complete Blobs. Failed requests expose no partial set.
     return {originalUrl:key.originalUrl,theme:key.theme,base:key.base,
       progressStep:key.progressStep,width,height,frames};
   } catch (error) {
@@ -12529,12 +12528,14 @@ return Object.freeze({renderFaviconPulseSequence});
   // Frozen V2.0 cache provider; runtime manifest binding belongs to DC #332.
   // Expiry and last_used touch interval, milliseconds.
   const FAVICON_SEQUENCE_TTL_MS = 600000;
-  // Same-origin persistent 21-PNG sequence database name.
+  // Same-origin persistent, version-partitioned PNG sequence database.
   const FAVICON_SEQUENCE_DB = 'dc-favicon-sequences-v2';
   // Cross-tab Web Locks prefix for sequence and dataset locks.
   const FAVICON_SEQUENCE_LOCK = 'dc-favicon-v2:';
   // Maximum accepted PNG Blob size, bytes.
   const FAVICON_SEQUENCE_MAX_PNG = 524288;
+  // Storage bound, independent of any animation's actual frame count.
+  const FAVICON_SEQUENCE_MAX_FRAMES = 256;
   // Shared negative-render retry cooldown duration, milliseconds.
   const FAVICON_SEQUENCE_FAILURE_BACKOFF_MS = 5000;
   // Maximum active tuple cooldown records retained per version.
@@ -12731,19 +12732,22 @@ return Object.freeze({renderFaviconPulseSequence});
   async function faviconSequenceRead(db, id, index) {
     const tx = db.transaction(['sequences', 'pngs'], 'readonly');
     const meta = await faviconSequenceRequest(tx.objectStore('sequences').get(id));
-    if (meta?.ready !== true || meta.count !== 21) return null;
+    if (meta?.ready !== true || !Number.isInteger(meta.count) ||
+      meta.count < 1 || meta.count > FAVICON_SEQUENCE_MAX_FRAMES ||
+      index < 0 || index >= meta.count) return null;
     const record = await faviconSequenceRequest(tx.objectStore('pngs').get([id, index]));
     return record?.blob instanceof Blob && record.blob.type === 'image/png' ? record.blob : null;
   }
 
   /**
-   * Validates all 21 locally rendered PNGs before any store mutation.
+   * Validates every locally rendered frame before any store mutation.
    * @param {ReadonlyArray<Blob>} frames - Provisional #333 output.
    * @param {AbortSignal} signal - Abort on session close/navigation.
    * @returns {Promise<void>} Completes after validating every image.
    */
   async function faviconSequenceValidate(frames, signal) {
-    if (!Array.isArray(frames) || frames.length !== 21) throw Error('frame-count');
+    if (!Array.isArray(frames) || frames.length < 1 ||
+      frames.length > FAVICON_SEQUENCE_MAX_FRAMES) throw Error('frame-count');
     let width = 0;
     let height = 0;
     for (const png of frames) {
@@ -12762,10 +12766,10 @@ return Object.freeze({renderFaviconPulseSequence});
   }
 
   /**
-   * Stores 21 native PNG Blobs and their ready marker in one transaction.
+   * Atomically stores the supplied frame sequence and its ready marker.
    * @param {IDBDatabase} db - Cache connection.
    * @param {Object} key - Requested sequence data.
-   * @param {ReadonlyArray<Blob>} frames - Verified 21 frames.
+   * @param {ReadonlyArray<Blob>} frames - Complete validated frame sequence.
    * @returns {Promise<void>} Atomic commit completion.
    */
   async function faviconSequencePublish(db, key, frames) {
@@ -12773,10 +12777,10 @@ return Object.freeze({renderFaviconPulseSequence});
     const done = faviconSequenceTransaction(tx);
     try {
       const rows = tx.objectStore('pngs');
-      for (let pulse_index = 0; pulse_index < 21; pulse_index++) {
+      for (let pulse_index = 0; pulse_index < frames.length; pulse_index++) {
         rows.put({ version: key.version, sequence: key.id, pulse_index, blob: frames[pulse_index] });
       }
-      tx.objectStore('sequences').put({ id: key.id, version: key.version, ready: true, count: 21 });
+      tx.objectStore('sequences').put({ id: key.id, version: key.version, ready: true, count: frames.length });
       await done;
     } catch (error) { try { tx.abort(); } catch {} await done.catch(() => {}); throw error; }
   }
@@ -12890,11 +12894,11 @@ return Object.freeze({renderFaviconPulseSequence});
      * @param {string} theme - Actual current light/dark scheme.
      * @param {number} base_type - Yellow/green/red/white index.
      * @param {number} progress_step - Completed 5-minute step.
-     * @param {number} pulse_index - Frame 0..20 within one sequence.
+     * @param {number} pulse_index - Renderer-defined frame index.
      * @returns {Promise<Blob|null>} Requested original PNG Blob or null on failure.
      */
     async read_png(original_favicon_url, theme, base_type, progress_step, pulse_index) {
-      if (this.closing || !Number.isInteger(pulse_index) || pulse_index < 0 || pulse_index > 20) return null;
+      if (this.closing || !Number.isInteger(pulse_index) || pulse_index < 0 || pulse_index >= FAVICON_SEQUENCE_MAX_FRAMES) return null;
       const id = faviconSequenceKey(this.version, original_favicon_url, theme, base_type, progress_step);
       if (!id) return null;
       const frameKey = JSON.stringify([id, pulse_index]);
@@ -13022,7 +13026,7 @@ return Object.freeze({renderFaviconPulseSequence});
   /**
    * Opens a session using a supplied provisional local #333 renderer.
    * @param {string} version_key - Selected normalized minimum version.
-   * @param {Function} render_sequence - Exact-tuple 21-frame renderer.
+   * @param {Function} render_sequence - Complete sequence renderer for selected animation version.
    * @returns {Promise<FaviconDatasetSession|null>} Shared session or null.
    */
   async function open_favicon_dataset(version_key, render_sequence) {
@@ -13043,7 +13047,7 @@ return Object.freeze({renderFaviconPulseSequence});
    * Adapt the numeric cache tuple to the true browser-local PNG renderer.
    * @param {Object} request - Complete cache tuple, including version, stock URL, theme, colour and step.
    * @param {AbortSignal} signal - Exclusive generation's abort signal.
-   * @returns {Promise<Blob[]>} Exactly 21 complete PNG Blob frames.
+   * @returns {Promise<Blob[]>} Exactly two complete PNG Blob frames.
    */
   async function faviconV2RenderSequenceAdapter(request, signal) {
     const base = faviconV2NumericBases[request.base_type];
@@ -13063,16 +13067,17 @@ return Object.freeze({renderFaviconPulseSequence});
     if (rendered.originalUrl !== request.original_favicon_url ||
         rendered.theme !== request.theme || rendered.base !== base ||
         rendered.progressStep !== request.progress_step ||
-        !Array.isArray(rendered.frames) || rendered.frames.length !== 21) {
+        !Array.isArray(rendered.frames) || rendered.frames.length !== 2) {
       throw new Error('Favicon V2 renderer returned mismatched sequence');
     }
     return rendered.frames;
   }
 
-  // Local V2 compatibility authority; no external asset catalogue.
-  faviconCacheV2Configure([{version: '1.11.8', update_every_ms: 250}]);
-  /** A favicon pulse has forty 250-ms slots and 21 unique symmetric frames. */
-  const AGENT_FAVICON_PULSE_PERIOD_MS = 10000;
+  // Independent animation version; existing 1.11.8 datasets are historical.
+  const FAVICON_ANIMATION_VERSION = '2.0.0';
+  faviconCacheV2Configure([{version: FAVICON_ANIMATION_VERSION, update_every_ms: 1000}]);
+  /** Animation V2 is a two-second blink with one frame per second. */
+  const AGENT_FAVICON_PULSE_PERIOD_MS = 2000;
   /** Pulse timer starts after session readiness. */
   let agentFaviconPulseTimer = null;
   /** Existing lifecycle's presented favicon colour. */
@@ -13081,7 +13086,7 @@ return Object.freeze({renderFaviconPulseSequence});
   let agentFaviconDatasetSession = null;
   /** In-flight shared cache session. */
   let agentFaviconSessionPending = null;
-  /** Compatible installed DC version. */
+  /** Independent animation dataset version, never inferred from the DC build. */
   let agentFaviconVersionPending = null;
   /** Browser theme query for scheme-dependent SVGs. */
   let agentFaviconThemeQuery = null;
@@ -13101,16 +13106,15 @@ return Object.freeze({renderFaviconPulseSequence});
   let agentFaviconPageEpoch = 0;
 
   /**
-   * Selects one of 21 full-composite PNG pulse frames from monotonic time.
+   * Selects one of the two blink frames from monotonic time.
    * @param {number} time_offset - Monotonic offset in milliseconds.
-   * @returns {number|null} Symmetric frame index 0..20, or null for invalid input.
+   * @returns {number|null} Blink frame 0 or 1, or null for invalid input.
    */
   function agentFaviconPulseIndex(time_offset) {
     if (!Number.isFinite(time_offset)) return null;
     const phase = ((time_offset % AGENT_FAVICON_PULSE_PERIOD_MS) +
       AGENT_FAVICON_PULSE_PERIOD_MS) % AGENT_FAVICON_PULSE_PERIOD_MS;
-    const slot = Math.floor(phase / 250);
-    return Math.min(slot, 40 - slot);
+    return Math.floor(phase / 1000);
   }
 
   /**
@@ -13145,7 +13149,7 @@ return Object.freeze({renderFaviconPulseSequence});
     if (typeof get_compatible_version_key !== 'function') return null;
     if (!agentFaviconVersionPending) {
       agentFaviconVersionPending = Promise.resolve()
-        .then(() => get_compatible_version_key(VERSION))
+        .then(() => get_compatible_version_key(FAVICON_ANIMATION_VERSION))
         .then(key => typeof key === 'string' ? key : null)
         .catch(() => null);
     }
@@ -13155,9 +13159,9 @@ return Object.freeze({renderFaviconPulseSequence});
   }
 
   /**
-   * Opens one provisional V2 cache session without guessed provider data.
-   * @param {string} version_key - Exact normalized compatible dataset boundary.
-   * @returns {Promise<Object|null>} Shared session or null when unavailable.
+   * Open the shared cache dataset.
+   * @param {string} version_key - Animation version.
+   * @returns {Promise<Object|null>} Session or null.
    */
   async function agentFaviconOpenSession(version_key) {
     if (agentFaviconPageHidden) return null;
@@ -13192,14 +13196,14 @@ return Object.freeze({renderFaviconPulseSequence});
   }
 
   /**
-   * Reads only the requested PNG blob, reusing tab-local object URLs on hits.
-   * @param {Object} session - Open provisional V2 provider session.
-   * @param {string} originalUrl - Captured untouched source favicon URL.
-   * @param {string} theme - Current browser light/dark colour scheme.
-   * @param {number} base - Base state 0 yellow, 1 green, 2 red, 3 white.
-   * @param {number} step - Saturated five-minute progress index 0..6.
-   * @param {number} frame - Symmetric ten-second pulse index 0..20.
-   * @returns {Promise<string|null>} Stable PNG Blob URL or null.
+   * Read one cached PNG as a reusable object URL.
+   * @param {Object} session - Provider.
+   * @param {string} originalUrl - SVG source.
+   * @param {string} theme - Browser theme.
+   * @param {number} base - Colour.
+   * @param {number} step - Progress.
+   * @param {number} frame - Frame index.
+   * @returns {Promise<string|null>} Object URL or null.
    */
   async function agentFaviconFrameUrl(session, originalUrl, theme, base, step, frame) {
     if (agentFaviconPageHidden) return null;
@@ -13224,12 +13228,27 @@ return Object.freeze({renderFaviconPulseSequence});
   }
 
   /**
-   * Looks up only requested frames of complete, ready V2 cache sequences.
-   * @param {string} version_key - Normalized numeric version boundary.
-   * @param {0|1|2|3} base_type - Yellow/green/red/white index.
-   * @param {0|1|2|3|4|5|6} completion_time - Five-minute progress step.
-   * @param {number} time_offset - Monotonic milliseconds, not a pulse index.
-   * @returns {Promise<Array<Object>|null>} Matched link and PNG URL pairs or null.
+   * Prefer the theme's SVG artwork for all browser icon links.
+   * @param {Array<Object>} candidates - Eligible stock links.
+   * @param {string} theme - Browser scheme.
+   * @returns {string|null} Source URL.
+   */
+  function agentFaviconPreferredSource(candidates, theme) {
+    const svgs = candidates.filter(candidate =>
+      candidate.type.toLowerCase() === 'image/svg+xml' ||
+      /\.svg(?:[?#]|$)/i.test(candidate.original_href));
+    const themed = svgs.find(candidate =>
+      /favicon-dark[.\-_]/i.test(candidate.original_href) === (theme === 'dark'));
+    return (themed ?? svgs[0] ?? candidates[0])?.original_href ?? null;
+  }
+
+  /**
+   * Select a versioned animation frame without leaking layout to callers.
+   * @param {string} version_key - Animation version.
+   * @param {number} base_type - Colour.
+   * @param {number} completion_time - Progress step.
+   * @param {number} time_offset - Monotonic milliseconds.
+   * @returns {Promise<Array<Object>|null>} Icon URL assignments.
    */
   async function get_favicon(version_key, base_type, completion_time, time_offset) {
     if (agentFaviconPageHidden) return null;
@@ -13241,15 +13260,13 @@ return Object.freeze({renderFaviconPulseSequence});
     if (theme === null) return null;
     const session = await agentFaviconOpenSession(version_key);
     if (!session) return null;
-    const matches = [];
-    for (const candidate of agentFaviconActiveCandidates(agentFaviconCurrentCandidates())) {
-      const href = await agentFaviconFrameUrl(
-        session, candidate.original_href, theme, base_type, completion_time, frame
-      );
-      if (agentFaviconCurrentTheme() !== theme || agentFaviconPageHidden) return null;
-      if (href) matches.push({ link: candidate.link, href });
-    }
-    return matches.length ? matches : null;
+    const candidates = agentFaviconActiveCandidates(agentFaviconCurrentCandidates());
+    const source = agentFaviconPreferredSource(candidates, theme);
+    if (!source) return null;
+    const href = await agentFaviconFrameUrl(
+      session, source, theme, base_type, completion_time, frame);
+    if (agentFaviconCurrentTheme() !== theme || agentFaviconPageHidden) return null;
+    return href ? candidates.map(candidate => ({ link: candidate.link, href })) : null;
   }
 
   /**

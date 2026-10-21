@@ -6,12 +6,12 @@ import {
 } from './helpers/userscript-source.mjs';
 
 const source = markedBlock(
-  '  /** A favicon pulse has forty 250-ms slots',
+  '  /** Animation V2 is a two-second blink',
   "window.addEventListener('pagehide', agentFaviconDispose);"
 );
 
 function fixture(known = true, delayedRead = null, candidates = 1,
-  version = '1.11.8', delayedOpen = null) {
+  version = '2.0.0', delayedOpen = null) {
   const links = Array.from({ length: candidates }, (_, i) => {
     let href = `https://chatgpt.com/favicon${i}.png`;
     return {
@@ -24,7 +24,7 @@ function fixture(known = true, delayedRead = null, candidates = 1,
   const reads = [], fetched = [], revoked = [], created = [], intervals = [];
   let clock = 0, closed = 0;
   const session = {
-    version, update_every_ms: 250,
+    version, update_every_ms: 1000,
     async read_png(...args) {
       reads.push(args);
       if (delayedRead) await delayedRead(...args);
@@ -62,6 +62,7 @@ function fixture(known = true, delayedRead = null, candidates = 1,
   });
   vm.runInContext(`
     const VERSION = ${JSON.stringify(version)};
+    const FAVICON_ANIMATION_VERSION = ${JSON.stringify(version)};
     const agentFaviconOriginalSources = new Map();
     let agentFaviconRenderGeneration = 0;
     let agentFaviconPulseUpdatePending = null;
@@ -90,35 +91,35 @@ function fixture(known = true, delayedRead = null, candidates = 1,
     setClock(n) { clock = n; }, closed: () => closed };
 }
 
-test('all forty time slots use exactly twenty-one symmetric pulse frames', () => {
+test('two-second cycle alternates two frames once per second', () => {
   const h = fixture();
-  for (let slot = 0; slot < 40; slot++) {
-    assert.equal(h.api.pulse(slot * 250), Math.min(slot, 40 - slot));
+  for (let slot = 0; slot < 8; slot++) {
+    assert.equal(h.api.pulse(slot * 1000), slot % 2);
   }
-  assert.equal(h.api.pulse(10000), 0);
-  assert.equal(h.api.pulse(-250), 1);
+  assert.equal(h.api.pulse(2000), 0);
+  assert.equal(h.api.pulse(-1000), 1);
   assert.equal(h.api.pulse(NaN), null);
   assert.equal(h.api.pulse(Infinity), null);
 });
 
-test('all 588 state, step, and pulse combinations select a ready V2 frame', async () => {
+test('all 56 state, step, and blink combinations select a ready frame', async () => {
   const h = fixture();
   const unique = new Set();
   for (let base = 0; base < 4; base++) {
     for (let step = 0; step <= 6; step++) {
-      for (let slot = 0; slot < 40; slot++) {
-        const selected = await h.api.get('1.11.8', base, step, slot * 250);
+      for (let slot = 0; slot < 2; slot++) {
+        const selected = await h.api.get('2.0.0', base, step, slot * 1000);
         assert.equal(selected.length, 1);
-        unique.add(JSON.stringify([base, step, Math.min(slot, 40 - slot)]));
+        unique.add(JSON.stringify([base, step, slot]));
       }
     }
   }
-  assert.equal(unique.size, 588);
-  assert.equal(h.created.length, 588);
+  assert.equal(unique.size, 56);
+  assert.equal(h.created.length, 56);
   assert.equal(h.fetched.length, 0, 'consumer does not fetch original source');
-  assert.equal(await h.api.get('1.11.8', 4, 0, 0), null);
-  assert.equal(await h.api.get('1.11.8', 0, 7, 0), null);
-  assert.equal(await h.api.get('1.11.8', 0, 0, Infinity), null);
+  assert.equal(await h.api.get('2.0.0', 4, 0, 0), null);
+  assert.equal(await h.api.get('2.0.0', 0, 7, 0), null);
+  assert.equal(await h.api.get('2.0.0', 0, 0, Infinity), null);
 });
 
 test('all stock candidates keep link attributes, use URLs and skip redundant hrefs', async () => {
@@ -131,7 +132,7 @@ test('all stock candidates keep link attributes, use URLs and skip redundant hre
   assert.deepEqual(h.links.map(link => link.writes), writes);
   assert.equal(h.links[1].media, '(prefers-color-scheme: dark)');
   assert.equal(h.links[1].sizes.value, '48x48');
-  assert.ok(h.intervals.every(x => x.ms === 250));
+  assert.ok(h.intervals.every(x => x.ms === 1000));
   assert.equal(await h.api.render('original'), true);
   assert.deepEqual(h.links.map(link => link.href), [
     'https://chatgpt.com/favicon0.png', 'https://chatgpt.com/favicon1.png'
@@ -197,7 +198,7 @@ test('two independent tabs use their exact version-scoped provider sessions', as
   assert.equal(newTab.reads[0][1], 'light');
   assert.equal(newTab.reads[0][2], 3);
   assert.equal(newTab.reads[0][3], 6);
-  assert.equal(newTab.reads[0][4], 20);
+  assert.equal(newTab.reads[0][4], 1);
   assert.equal(oldTab.created.length, 1);
   assert.equal(newTab.created.length, 1);
   assert.equal(oldTab.revoked.length, 0);
@@ -237,7 +238,7 @@ test('navigation during session acquisition closes the late shared lease', async
   let entered;
   const opening = new Promise(resolve => { finishOpen = resolve; });
   const started = new Promise(resolve => { entered = resolve; });
-  const h = fixture(true, null, 1, '1.11.8', () => {
+  const h = fixture(true, null, 1, '2.0.0', () => {
     entered();
     return opening;
   });
@@ -251,15 +252,15 @@ test('navigation during session acquisition closes the late shared lease', async
   assert.equal(h.created.length, 0);
 });
 
-test('bounded URL cache evicts old frames but never revokes the displayed one', async () => {
+test('bounded URL cache never revokes the displayed blink frame', async () => {
   const h = fixture();
   for (let step = 0; step <= 5; step++) {
-    for (let slot = 0; slot <= 20; slot++) {
-      h.setClock(step * 300000 + slot * 250);
+    for (let slot = 0; slot < 2; slot++) {
+      h.setClock(step * 300000 + slot * 1000);
       assert.equal(await h.api.render('processing', true), true);
       assert.ok(!h.revoked.includes(h.links[0].href));
     }
   }
-  assert.ok(h.revoked.length > 0, 'historical frames must be evicted');
+  assert.ok(h.created.length <= 84, 'two-frame warm playback stays bounded');
   assert.ok(h.created.length - h.revoked.length <= 84);
 });

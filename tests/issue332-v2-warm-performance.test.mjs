@@ -92,15 +92,15 @@ async function benchmark() {
     const coldStart = performance.now();
     const selected = await agentFaviconRenderState('processing');
     if (!selected) throw Error('real consumer could not display initial favicon');
-    for (let index = 0; index <= 20; index++) {
-      const pair = await get_favicon('1.11.8', 0, 0, index * 250);
+    for (let index = 0; index < 2; index++) {
+      const pair = await get_favicon('2.0.0', 0, 0, index * 1000);
       if (!pair?.length) throw Error('failed to preload pulse frame '+index);
     }
     const coldMs = performance.now() - coldStart;
     const cold = take();
-    if (cold.encodes !== 21) throw Error('expected exactly 21 cold encodes');
-    if (agentFaviconObjectUrls.size !== 21)
-      throw Error('expected 21 tab-local warmed PNG URLs');
+    if (cold.encodes !== 2) throw Error('expected exactly two cold encodes');
+    if (agentFaviconObjectUrls.size !== 2)
+      throw Error('expected two tab-local warmed PNG URLs');
     const warmStart = performance.now();
     await new Promise(resolve => setTimeout(resolve, 24000));
     const warmElapsedMs = performance.now() - warmStart;
@@ -236,11 +236,11 @@ test('actual V2 24-second warm pulse avoids encoding, decoding and IndexedDB rea
       client=await launch('http://127.0.0.1:'+server.address().port+'/');
       const result=await client.run();
       assert.equal(result.status,'PASS',JSON.stringify(result));
-      assert.equal(result.cold.encodes,21);
+      assert.equal(result.cold.encodes,2);
       assert.equal(result.warmDelta.encodes,0);
       assert.equal(result.warmDelta.decodes,0);
       assert.equal(result.warmDelta.idbGets,0);
-      assert.ok(result.warmDelta.tickCallbacks>=80,result.warmDelta.tickCallbacks);
+      assert.ok(result.warmDelta.tickCallbacks>=20,result.warmDelta.tickCallbacks);
       assert.equal(result.originalAttributesUnchanged,true);
       assert.equal(result.returnedToOriginal,true);
       console.log('DC332_24S_REAL_CHROMIUM='+JSON.stringify(result));
@@ -285,7 +285,7 @@ test('actual provider cache consumer: CSS theme flip reuses exact original URL',
         + '})()');
       assert.equal(light.keys.length,1);
       assert.equal(JSON.parse(light.keys[0])[2],'light');
-      assert.equal(light.encodes,21);
+      assert.equal(light.encodes,2);
       await scheme('dark');
       const dark=await client.evaluate('(async()=>{'
         + 'const until=performance.now()+12000;'
@@ -304,7 +304,7 @@ test('actual provider cache consumer: CSS theme flip reuses exact original URL',
       assert.equal(dark.keys.length,2,JSON.stringify(dark));
       assert.deepEqual(dark.keys.map(key=>JSON.parse(key)[2]).sort(),['dark','light']);
       assert.equal(dark.original,light.original);
-      assert.equal(dark.encodes,42);
+      assert.equal(dark.encodes,4);
       const pixels=await client.evaluate('(async()=>{'
         + 'const db=await faviconSequenceDatabase();'
         + 'const keys=await faviconSequenceRequest('
@@ -328,7 +328,7 @@ test('actual provider cache consumer: CSS theme flip reuses exact original URL',
         + 'await new Promise(done=>setTimeout(done,40));}'
         + 'return {theme:agentFaviconCurrentTheme(),encodes:window.renderEncodes};})()');
       assert.equal(back.theme,'light');
-      assert.equal(back.encodes,42,'cached light sequence must not regenerate');
+      assert.equal(back.encodes,4,'cached light sequence must not regenerate');
       console.log('DC332_REAL_THEME_FLIP='+JSON.stringify({
         light, dark, hashes:pixels, back, distinctGenerationKeys:2}));
     } finally {
