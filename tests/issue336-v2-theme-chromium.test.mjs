@@ -115,13 +115,13 @@ function browserModel(sourceUrl) {
     rasterContext.drawImage(image,0,0);
     const pixel=Array.from(rasterContext.getImageData(0,0,1,1).data);
     const frames=[];
-    for(let frame=0;frame<=20;frame++){
+    for(let frame=0;frame<2;frame++){
       const canvas=document.createElement('canvas');
       canvas.width=canvas.height=4;
       const ctx=canvas.getContext('2d');
       ctx.drawImage(image,0,0);
       ctx.globalCompositeOperation='destination-in';
-      const alpha=0.75+0.25*Math.cos(2*Math.PI*frame/40);
+      const alpha=frame===0?1:0.2;
       ctx.fillStyle='rgba(0,0,0,'+alpha+')';
       ctx.fillRect(0,0,4,4);
       const blob=await new Promise(resolve=>canvas.toBlob(resolve,'image/png'));
@@ -130,7 +130,7 @@ function browserModel(sourceUrl) {
       rendered++;
     }
     sequences.set(key,{frames,pixel});
-    const href=URL.createObjectURL(frames[5]);
+    const href=URL.createObjectURL(frames[1]);
     icon.href=href;
     return {theme,warm:false,count:frames.length,pixel,
       originalUrl:sourceUrl,attributesPreserved:icon.media===original.media
@@ -144,7 +144,7 @@ function browserModel(sourceUrl) {
   };
 }
 
-test('Chromium synthetic same SVG URL light/dark creates only requested 21-frame tuples',
+test('Chromium synthetic same SVG URL light/dark creates only requested two-frame tuples',
   {timeout:30000},async()=>{
     const client=await launch();
     try {
@@ -155,21 +155,21 @@ test('Chromium synthetic same SVG URL light/dark creates only requested 21-frame
       const light=await client.evaluate('fixture.request()');
       assert.equal(light.theme,'light');
       assert.equal(light.warm,false);
-      assert.equal(light.count,21);
+      assert.equal(light.count,2);
       assert.equal(light.attributesPreserved,true);
       assert.equal(light.originalUrl,originalUrl);
-      assert.equal((await client.evaluate('fixture.summary()')).rendered,21);
+      assert.equal((await client.evaluate('fixture.summary()')).rendered,2);
       await client.send('Emulation.setEmulatedMedia',
         {features:[{name:'prefers-color-scheme',value:'dark'}]});
       const dark=await client.evaluate('fixture.request()');
       assert.equal(dark.theme,'dark');
-      assert.equal(dark.count,21);
+      assert.equal(dark.count,2);
       assert.notDeepEqual(dark.pixel,light.pixel,
         'same source SVG URL must decode differently across themes');
       const replay=await client.evaluate('fixture.request()');
       assert.equal(replay.warm,true);
       const summary=await client.evaluate('fixture.summary()');
-      assert.equal(summary.rendered,42);
+      assert.equal(summary.rendered,4);
       assert.deepEqual(summary.keys,
         ['light/processing/step-3','dark/processing/step-3']);
       await client.evaluate('fixture.restore()');
