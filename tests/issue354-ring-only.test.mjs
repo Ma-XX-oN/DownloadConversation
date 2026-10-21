@@ -156,6 +156,9 @@ async function runBrowserPage(theme,page,temp) {
     });
     await send('Page.enable');
     await send('Runtime.enable');
+    await send('Emulation.setEmulatedMedia',{
+      features:[{name:'prefers-color-scheme',value:theme}]
+    });
     await send('Page.navigate',{url:'file://'+page});
     let last='UNLOADED';
     for(let i=0;i<450;i++){
