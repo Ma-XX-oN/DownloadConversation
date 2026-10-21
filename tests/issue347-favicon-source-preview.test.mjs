@@ -80,6 +80,14 @@ test('visual comparison is read-only and preserves actual source URLs in the pre
   assert.match(downloadConversationSource, /function showFaviconSourceComparison\(row\)/);
 });
 
+test('favicon comparison draws a complete outline outside each icon, without a split background', () => {
+  assert.match(preview, /width:88px;height:88px;box-sizing:border-box/);
+  assert.match(preview, /border:1px solid #777/);
+  assert.match(preview, /background:transparent/);
+  assert.match(preview, /image.style.cssText = 'width:72px;height:72px;object-fit:contain'/);
+  assert.doesNotMatch(preview, /linear-gradient/);
+});
+
 test('built-in Test matrix treats preview as Visual and excludes it from Run All', () => {
   assert.match(testMatrix, /\['Favicon source comparison', null, 'Visual'\]/);
   assert.match(testMatrix, /if \(type !== 'Visual'\) await executeBuiltInTest\(name, fn\)/);
