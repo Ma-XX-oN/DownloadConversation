@@ -150,3 +150,62 @@ never invoked `resolve` and therefore never reached Chromium. Correct
 VERSION is read from the current source header before constructing page
 source. .332.9/.332.10 hanging runs **are not functional RED evidence**.
 The 2450ms failure-backoff and stock/atomic assertions remain unchanged.
+
+## DC #332 2026-10-20 — exact integrated final controlled-browser PASS
+
+This section supersedes historical blockers and obsolete readiness statements
+above while preserving their RED/failure chronology. Frozen V2.0 interface
+blob `1361fdd928d1a456485cf4ec4559dd1492945598` is unchanged.
+
+Full actual provider + consumer integration **PASS** on version
+`1.11.10-issue.332.14`, source `4e44a995600e6db856dbdc95834971c856a25214`,
+prepared/tagged exact commit `1a90e6d457b23415d838621375710e5a977c5051`,
+Git tag `v1.11.10-issue.332.14`, Git Blob userscript artifact
+`5658e845944f0b8dadd6241fdb4e5fc7da61275b`.
+Full hosted push CI run 39527314467: policy PASS, prepare PASS,
+repository-owned structured validation **PASS/returncode 0** with
+160.82s execution, finalize PASS. Structured artifact 12313164336.
+Every applicable stage executed; no skipped/mocked test is credited as
+end-to-end PASS. Both corrected upstream sources are assembled on this
+commit: #333 CDP cleanup prepared revision `605ec8121a10d75d3727a50e364b0b54be35f9e9`
+and #334 five-second shared cooldown revision
+`7ed9578a284167f281c08612e95dd7ee1ac791cb`.
+
+Actual integrated Chromium acceptance on the combined candidate:
+- Two-tab first-winner/losing original favicon, exactly 21 PNG Blobs,
+  atomic publish, failed transaction/crashed-generator takeover,
+  independent version+URL+theme+colour+progress tuple, warm no-render
+  reuse, active-reader expiry and navigation/reload restoration: PASS.
+- Real provider plus consumer first acquisition: 21 cold PNG encodes,
+  0 warm encodes, 339.7ms cold vs 3.0ms warmed consumer lookup.
+- Opaque unsupported SVG, true renderer and actual 250ms heartbeat:
+  1 failed render attempt in 2520.8ms, original favicon preserved,
+  0 ready sequences, 2 bounded warnings; previously 10 attempts RED.
+  Post-5000ms failure cooldown successful re-generation: PASS.
+- Same original SVG URL, actual CSS light/dark: 21 light frames, then
+  21 dark frames with distinct SHA-256 raster outputs; switch back to
+  light uses existing sequence with 0 new encodes: PASS.
+- Real 24,000.3ms warm Chrome period, 96 scheduled 250ms heartbeats:
+  0 new PNG encodes, 0 bitmap decodes, 0 DB transactions/gets,
+  7.7ms aggregate synchronous heartbeat JavaScript, 2416 nominal 10ms
+  sampling callbacks, maximum event-loop gap 16.7ms, 0 observed long tasks.
+  Cold 21 decodes total 18.5ms, 27 DB transactions/46 get requests;
+  observed JS heap 5,170,198 bytes (snapshot only), 21 warm object URLs.
+  Original favicon media/type/sizes unchanged; original href restored.
+- Chrome real-time renderer: 21 frames, 21 encodes, 17 real timer ticks,
+  384.5ms duration. Intentionally failed first CDP startup recovered on
+  second attempt; teardown PASS, no test skipped.
+- General lifecycle, state, stopwatch, network, packaging, JSDoc and
+  exact userscript verification: PASS.
+
+**Still INCOMPLETE:** authenticated actual ChatGPT page performance
+against the original 23.98s / 91 image-load callbacks / 20,090.134ms
+aggregate callback JS baseline. The zero favicon-link load callbacks on a
+controlled localhost fixture and 7.7ms instrumented heartbeat JS are
+**not comparable to the authenticated production measurement**; no
+percentage CPU improvement is claimed. Final browser operator must install
+an exact CI-GREEN pinned artifact and collect separate cold and warm Chrome
+Performance traces with CPU, callback counts, PNG/IDB activity, memory,
+long tasks and lifecycle observations. Do not export private chat bodies,
+auth cookies, tokens or secrets. DC #332 owns final acceptance/closure,
+DC #336 authenticated evidence pending, PR #346 **DRAFT/UNMERGED**.

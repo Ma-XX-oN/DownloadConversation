@@ -199,3 +199,23 @@ controlled-origin Chromium results are not authenticated ChatGPT traces.
 The prior 23.98 s, 91 callbacks, 20,090.134 ms aggregate baseline is
 historical production evidence; actual authenticated browser comparison
 is a separate acceptance gate.
+
+## Updated actual combined V2.0 controlled-browser certification — 2026-10-20
+
+The historical speculative-only and not-yet-frozen V2 statements earlier in
+this document are superseded for the *controlled Chromium* part of acceptance.
+Frozen V2.0 blob `1361fdd928d1a456485cf4ec4559dd1492945598`.
+Exact controlled integrated PASS is version `1.11.10-issue.332.14`,
+prepared commit `1a90e6d457b23415d838621375710e5a977c5051`,
+full CI run 39527314467 with all jobs and structured validation PASS.
+The real #333 renderer + #334 IndexedDB/Web Locks + #335 250ms consumer
+were exercised under two tabs, unsupported-source failure/retry,
+light/dark same URL, inactive eviction, lifecycle recovery, and a
+24-second warm pulse without canvas or IndexedDB reads/encodes. See
+`docs/FAVICON_V2_CONVERGENCE_EVIDENCE.md` for the actual measurements,
+source hashes and RED/GREEN chronology. **Authenticated chatgpt.com**
+Chrome before/after trace remains **INCOMPLETE**. The controlled fixture
+has different workload/instrumentation from the historical 23.98s,
+91 image-load callbacks, 20,090.134ms callback-JS baseline. Do not call
+this performance requirement PASS or close #336 without its real trace.
+Draft integration PR #346 remains unmerged awaiting explicit authorization.
