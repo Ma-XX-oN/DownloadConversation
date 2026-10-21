@@ -1,13 +1,24 @@
   /** Event-driven favicon provenance, separate from lifecycle/cache behaviour. */
   const faviconProvenanceSeen = new Map();
+  /** Last href assigned by DC for each observed favicon element. */
   const faviconProvenanceOwnWrites = new WeakMap();
+  /** Last logged DC display context per favicon element. */
   const faviconProvenanceDisplayContext = new WeakMap();
+  /** Bounded record of logical sequence requests and readiness. */
   const faviconProvenanceCacheStates = new Map();
+  /** Last observed browser preferred colour scheme. */
   let faviconProvenanceLastTheme = null;
+  /** Last observed ChatGPT data-theme value, if present. */
   let faviconProvenanceLastAppTheme = 'unobserved';
+  /** DOM favicon observer; disconnected on pagehide. */
   let faviconProvenanceObserver = null;
 
-  /** Build a diagnostic-only URL identity without leaking query values. */
+  /**
+   * Build a diagnostic-only URL identity without leaking query values.
+   *
+   * @param {string|null|undefined} value - Candidate URL or Blob href to summarize.
+   * @returns {string|null} - Redacted URL identity or null.
+   */
   function faviconProvenanceUrl(value) {
     if (!value) return null;
     const href = String(value);
@@ -30,14 +41,25 @@
     }
   }
 
-  /** Only emit Debug entries, never a 250-ms heartbeat-sized stream. */
+  /**
+   * Only emit Debug entries, never a 250-ms heartbeat-sized stream.
+   *
+   * @param {string} event - Semantic favicon event name.
+   * @param {Object} fields - Compact event fields.
+   * @returns {void} - Emits an event only when Debug is enabled.
+   */
   function faviconProvenanceLog(event, fields) {
     if (typeof logDiagnostic !== 'function' ||
         (typeof diagnosticEnabled === 'function' && !diagnosticEnabled('debug'))) return;
     logDiagnostic('debug', 'agent-favicon-' + event, fields);
   }
 
-  /** Record the stock link, including changes detected by periodic inspection. */
+  /**
+   * Record the stock link, including changes detected by periodic inspection.
+   *
+   * @param {Object} candidate - Observed original favicon link descriptor.
+   * @returns {void} - Updates the provenance record and logs changes.
+   */
   function faviconProvenanceTrackCandidate(candidate) {
     const link = candidate.link;
     const current = link.href;
@@ -70,7 +92,16 @@
     }
   }
 
-  /** Log only when DC changes display context, not when it advances a frame. */
+  /**
+   * Log only when DC changes display context, not when it advances a frame.
+   *
+   * @param {HTMLLinkElement} link - Favicon element updated by DC.
+   * @param {string} before - Previous displayed href.
+   * @param {string} after - Successfully assigned href.
+   * @param {string} kind - Generated or original display.
+   * @param {Object} details - Lifecycle and cache-context fields.
+   * @returns {void} - Records a distinct DC display-context transition.
+   */
   function faviconProvenanceNoteWrite(link, before, after, kind, details = {}) {
     faviconProvenanceOwnWrites.set(link, after);
     const observed = faviconProvenanceSeen.get(link);
@@ -93,7 +124,17 @@
     });
   }
 
-  /** Log once per logical sequence, not once per pulse frame read. */
+  /**
+   * Log once per logical sequence, not once per pulse frame read.
+   *
+   * @param {string} version - Compatible dataset version.
+   * @param {string} url - Original favicon URL.
+   * @param {string} theme - Actual rendering theme.
+   * @param {number} base - Base colour identifier.
+   * @param {number} step - Progress step.
+   * @param {boolean} ready - Whether a valid frame was returned.
+   * @returns {void} - Records bounded cache request/available transitions.
+   */
   function faviconProvenanceCacheEvent(version, url, theme, base, step, ready) {
     const key = JSON.stringify([version, url, theme, base, step]);
     const old = faviconProvenanceCacheStates.get(key);
@@ -111,13 +152,22 @@
     });
   }
 
-  /** Read the application's observed data-theme without treating it as media preference. */
+  /**
+   * Read the application's observed data-theme without treating it as media preference.
+   *
+   * @returns {string} - Observed ChatGPT data-theme or unobserved.
+   */
   function faviconProvenanceAppTheme() {
     const value = document.documentElement?.getAttribute?.('data-theme');
     return value === 'dark' || value === 'light' ? value : 'unobserved';
   }
 
-  /** Theme changes are browser preference changes, not proven app-theme changes. */
+  /**
+   * Theme changes are browser preference changes, not proven app-theme changes.
+   *
+   * @param {string} theme - Observed browser preferred colour scheme.
+   * @returns {void} - Logs an actual browser preference transition.
+   */
   function faviconProvenanceThemeChanged(theme) {
     if (!theme || theme === faviconProvenanceLastTheme) return;
     const previous = faviconProvenanceLastTheme;
@@ -134,7 +184,12 @@
     });
   }
 
-  /** Observe DOM link changes without patching any ChatGPT or browser setter. */
+  /**
+   * Observe DOM link changes without patching any ChatGPT or browser setter.
+   *
+   * @param {Array<MutationRecord>} records - Favicon-related DOM mutation batch.
+   * @returns {void} - Records relevant changes without modifying favicon selection.
+   */
   function faviconProvenanceObserveDom(records) {
     const relevant = records.some(record => {
       if (record.type === 'attributes') {
@@ -175,7 +230,11 @@
     agentFaviconCurrentCandidates();
   }
 
-  /** Install once; missing MutationObserver leaves the existing polling intact. */
+  /**
+   * Install once; missing MutationObserver leaves the existing polling intact.
+   *
+   * @returns {void} - Installs event-driven favicon provenance tracking.
+   */
   function faviconProvenanceStart() {
     // @run-at document-start may precede creation of document.head.
     // Observing Document also catches subsequent <head> and icon insertion.
