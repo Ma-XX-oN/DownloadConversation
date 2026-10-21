@@ -82,7 +82,8 @@
       ['AI-transcript renderer parity', testRendererParityFeatures],
       ['Generated sandbox download link', testGeneratedSandboxDownloadLink],
       ['Jump identifier resolution', testJumpIdentifierResolution],
-      ['Conversation API access/schema', testConversationApiAccessAndSchema]
+      ['Conversation API access/schema', testConversationApiAccessAndSchema],
+      ['Favicon source comparison', null, 'Visual']
     ];
   }
 
