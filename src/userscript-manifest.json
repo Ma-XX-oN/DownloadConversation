@@ -55,6 +55,7 @@
         "src/userscript/03-agent-lifecycle/03-favicon-cache-v2-part2.js",
         "src/userscript/03-agent-lifecycle/02-favicon-v2-adapter.js",
         "src/userscript/03-agent-lifecycle/02-favicon-cached-lookup.js",
+        "src/userscript/03-agent-lifecycle/02-favicon-provenance.js",
         "src/userscript/03-agent-lifecycle/03-favicon.js",
         "src/userscript/03-agent-lifecycle/04-stopwatch-live.js",
         "src/userscript/03-agent-lifecycle/05-stopwatch-recovery.js",
