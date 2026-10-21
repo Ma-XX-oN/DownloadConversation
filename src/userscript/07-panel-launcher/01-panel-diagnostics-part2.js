@@ -94,6 +94,14 @@
       #${PANEL_ID} .tm-recording-actions{justify-content:center;gap:14px}
       #${PANEL_ID} .tm-recording-actions .tm-icon-button{width:40px;height:36px;flex:0 0 40px}
       #${PANEL_ID} .tm-recording-actions .tm-icon-button svg{width:21px;height:21px}
+      #${PANEL_ID} .tm-log-settings-popup[hidden]{display:none}
+      #${PANEL_ID} .tm-log-settings-popup{position:fixed;top:50%;left:50%;transform:translate(-50%,-50%);z-index:30;box-sizing:border-box;width:min(330px,calc(100vw - 32px));max-height:85dvh;overflow:auto;padding:14px;border:1px solid #777;border-radius:12px;background:#202020;box-shadow:0 12px 42px rgba(0,0,0,.65);display:flex;flex-direction:column;gap:10px}
+      #${PANEL_ID} .tm-log-settings-heading{display:flex;align-items:center;justify-content:space-between;gap:12px}
+      #${PANEL_ID} .tm-log-settings-heading strong{font-size:15px}
+      #${PANEL_ID} .tm-log-settings-heading button{font-size:22px;padding:1px 8px}
+      #${PANEL_ID} .tm-log-settings-popup label{display:flex;align-items:center;gap:8px;cursor:pointer}
+      #${PANEL_ID} .tm-log-settings-popup input{width:16px;height:16px;accent-color:#78b8ff}
+      #${PANEL_ID} .tm-log-settings-popup small{color:#bbb;line-height:1.4}
       #${PANEL_ID} .tm-export-section{display:grid;gap:8px}
       #${PANEL_ID} .tm-md-metadata{display:flex;justify-content:space-between;flex-wrap:nowrap;gap:4px;font-size:12px}
       #${PANEL_ID} .tm-md-metadata label{gap:3px}
