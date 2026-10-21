@@ -14,31 +14,18 @@ const source = [
 ].map(name => readFileSync(new URL(name, import.meta.url), 'utf8'))
   .join('\n');
 
-test('Chromium native Web Locks serialize multi-tab first-use and rotation',
+test('Chromium native IndexedDB and Web Locks serialize first-use and rotation',
   { timeout: 40000 }, async () => {
     const page = `<!doctype html><meta charset="utf-8">
 <pre id="result">RUNNING</pre><script>
 ${source}
 const delay = ms => new Promise(resolve => setTimeout(resolve, ms));
-const storage = {
-  async get(name, fallback) {
-    const value = localStorage.getItem(name);
-    await delay(1);
-    return value === null ? fallback : JSON.parse(value);
-  },
-  async set(name, value) {
-    await delay(1);
-    localStorage.setItem(name, JSON.stringify(value));
-  }
-};
+const storage = communicationPersistentHmacIndexedDbStorage(
+  indexedDB, { origin: 'https://chatgpt.com' });
+const authority = communicationPersistentHmacIndexedDbAuthority(
+  navigator, { origin: 'https://chatgpt.com' }, storage);
 const make = () => communicationPersistentHmacService({
-  storage,
-  // Localhost localStorage is coherent in this isolated browser fixture.
-  // This is NOT an assertion about installed Tampermonkey GM storage.
-  authority: { ...communicationPersistentHmacChatgptAuthority(
-    navigator, { origin: 'https://chatgpt.com' }),
-    capability: 'linearizable-chatgpt-key-record-v2' },
-  crypto
+  storage, authority, crypto
 });
 window.probe = { ready: true, make };
 async function scenario() {
@@ -98,7 +85,8 @@ async function scenario() {
   }
   await second.complete(next.token);
   document.getElementById('result').textContent = JSON.stringify({
-    nativeWebLocks: true, sameOriginTabs: 2, firstUseAdmissions: 40,
+    nativeWebLocks: true, nativeIndexedDb: true,
+    sameOriginTabs: 2, firstUseAdmissions: 40,
     singleScope: true, fenced: true, rotatedEpoch: 2,
     workerKeyReceived: workerAck.length
   });
