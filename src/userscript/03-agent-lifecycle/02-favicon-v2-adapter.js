@@ -7,7 +7,7 @@
    * Adapt the numeric cache tuple to the true browser-local PNG renderer.
    * @param {Object} request - Complete cache tuple, including version, stock URL, theme, colour and step.
    * @param {AbortSignal} signal - Exclusive generation's abort signal.
-   * @returns {Promise<Blob[]>} Exactly 21 complete PNG Blob frames.
+   * @returns {Promise<Blob[]>} Exactly two complete PNG Blob frames.
    */
   async function faviconV2RenderSequenceAdapter(request, signal) {
     const base = faviconV2NumericBases[request.base_type];
@@ -27,11 +27,12 @@
     if (rendered.originalUrl !== request.original_favicon_url ||
         rendered.theme !== request.theme || rendered.base !== base ||
         rendered.progressStep !== request.progress_step ||
-        !Array.isArray(rendered.frames) || rendered.frames.length !== 21) {
+        !Array.isArray(rendered.frames) || rendered.frames.length !== 2) {
       throw new Error('Favicon V2 renderer returned mismatched sequence');
     }
     return rendered.frames;
   }
 
-  // Local V2 compatibility authority; no external asset catalogue.
-  faviconCacheV2Configure([{version: '1.11.8', update_every_ms: 250}]);
+  // Independent animation version; existing 1.11.8 datasets are historical.
+  const FAVICON_ANIMATION_VERSION = '2.0.0';
+  faviconCacheV2Configure([{version: FAVICON_ANIMATION_VERSION, update_every_ms: 1000}]);
