@@ -13,6 +13,7 @@ function fixture() {
   const logs = [];
   const links = [];
   let dark = false;
+  let appTheme = 'light';
   let observer;
   const matchMedia = query => ({
     matches: query.includes('dark') ? dark : !dark,
@@ -20,6 +21,9 @@ function fixture() {
   });
   const document = {
     head: {}, baseURI: 'https://chatgpt.com/c/test',
+    documentElement: {
+      getAttribute(name) { return name === 'data-theme' ? appTheme : null; }
+    },
     querySelectorAll(selector) {
       assert.equal(selector, 'link[rel~="icon"]');
       return links.filter(link => link.rel.split(/\s+/).includes('icon'));
@@ -64,6 +68,13 @@ function fixture() {
   return {
     link, links, logs, makeLink, api: context.api,
     setDark(value) { dark = value; },
+    setAppTheme(value) {
+      appTheme = value;
+      observer.callback([{
+        type: 'attributes', target: document.documentElement,
+        attributeName: 'data-theme'
+      }]);
+    },
     notifyAttributes(element, attributeName = 'href') {
       observer.callback([{type:'attributes',target:element,attributeName}]);
     },
@@ -169,4 +180,15 @@ test('removal recorded, and cache tuple activity logged only once', () => {
     /not exposed/);
   h.remove(h.link);
   assert.equal(events(h, 'stock-link-removed').length, 1);
+});
+
+test('ChatGPT application data-theme changes are logged independently of OS scheme', () => {
+  const h = fixture();
+  h.setAppTheme('dark');
+  assert.equal(events(h, 'app-theme-changed').length, 1);
+  assert.equal(events(h, 'app-theme-changed')[0].details.browser_theme, 'light');
+  assert.equal(events(h, 'app-theme-changed')[0].details.current, 'dark');
+  h.setAppTheme('dark');
+  assert.equal(events(h, 'app-theme-changed').length, 1,
+    'same observed theme must not create duplicates');
 });
