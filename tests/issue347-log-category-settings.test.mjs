@@ -1,16 +1,13 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import vm from 'node:vm';
+import {readFileSync} from 'node:fs';
 import {downloadConversationSource} from './helpers/userscript-source.mjs';
 
-const from = downloadConversationSource.indexOf(
-  '  /** Persistent diagnostic event categories; Gen/Comm recording remains separate. */'
+const settingsSource = readFileSync(
+  new URL('../src/userscript/07-panel-launcher/01-log-category-settings.js', import.meta.url),
+  'utf8'
 );
-const until = downloadConversationSource.indexOf(
-  '  /**\n   * Returns the AgentPanelSpeaker config-reset icon', from
-);
-assert.ok(from >= 0 && until > from, 'Logging settings module must be assembled');
-const settingsSource = downloadConversationSource.slice(from, until);
 
 function harness(storage = new Map()) {
   const inputs = ['favicon-stock', 'favicon-theme', 'favicon-write',
