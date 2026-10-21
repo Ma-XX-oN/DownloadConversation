@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         ChatGPT Conversation Markdown Recorder
 // @namespace    https://chatgpt.com/
-// @version      1.11.10-issue.332.15
+// @version      1.11.10-issue.347.1
 // @description  Exports the current ChatGPT conversation directly from the Conversation API as Markdown or JSONL.
 // @match        https://chatgpt.com/*
 // @match        https://chat.openai.com/*
@@ -12454,6 +12454,9 @@ return Object.freeze({renderFaviconPulseSequence});
    * @returns {void} Does not return a value.
    */
   function agentFaviconHandleThemeChange() {
+    if (typeof faviconProvenanceThemeChanged === 'function') {
+      faviconProvenanceThemeChanged(agentFaviconCurrentTheme());
+    }
     ++agentFaviconRenderGeneration;
     agentFaviconRestoreStockCandidates();
     agentFaviconTrimObjectUrls();
@@ -12479,7 +12482,16 @@ return Object.freeze({renderFaviconPulseSequence});
   function agentFaviconRestoreStockCandidates() {
     for (const candidate of agentFaviconCurrentCandidates()) {
       if (candidate.link.href !== candidate.original_href) {
+        const oldHref = candidate.link.href;
         candidate.link.href = candidate.original_href;
+        if (typeof faviconProvenanceNoteWrite === 'function') {
+          faviconProvenanceNoteWrite(candidate.link, oldHref,
+            candidate.original_href, 'original', {
+              original_url: candidate.original_href,
+              theme: agentFaviconCurrentTheme(), state: 'original',
+              progress_step: null
+            });
+        }
       }
       agentFaviconDisplayedHrefs.delete(candidate.link);
     }
@@ -13115,13 +13127,17 @@ return Object.freeze({renderFaviconPulseSequence});
           agentFaviconOriginalSources.set(link, link.href);
           agentFaviconDisplayedHrefs.delete(link);
         }
-        return {
+        const candidate = {
           link,
           original_href: agentFaviconOriginalSources.get(link),
           media: typeof link.media === 'string' ? link.media : '',
           type: typeof link.type === 'string' ? link.type : '',
           sizes: typeof link.sizes?.value === 'string' ? link.sizes.value : ''
         };
+        if (typeof faviconProvenanceTrackCandidate === 'function') {
+          faviconProvenanceTrackCandidate(candidate);
+        }
+        return candidate;
       });
   }
 
@@ -13199,9 +13215,15 @@ return Object.freeze({renderFaviconPulseSequence});
       agentFaviconObjectUrls.set(key, url);
       return url;
     }
+    if (typeof faviconProvenanceCacheEvent === 'function') {
+      faviconProvenanceCacheEvent(session.version, originalUrl, theme, base, step, false);
+    }
     const blob = await session.read_png(originalUrl, theme, base, step, frame);
     if (epoch !== agentFaviconPageEpoch || agentFaviconPageHidden) return null;
     if (!(blob instanceof Blob) || blob.type !== 'image/png' || !blob.size) return null;
+    if (typeof faviconProvenanceCacheEvent === 'function') {
+      faviconProvenanceCacheEvent(session.version, originalUrl, theme, base, step, true);
+    }
     // Concurrent heartbeats can request one frame while its IDB read is pending.
     if (agentFaviconObjectUrls.has(key)) return agentFaviconObjectUrls.get(key);
     const url = URL.createObjectURL(blob);
@@ -13352,7 +13374,17 @@ return Object.freeze({renderFaviconPulseSequence});
     const matched = new Map((pairs ?? []).map(pair => [pair.link, pair.href]));
     for (const candidate of candidates) {
       const desired = matched.get(candidate.link) ?? candidate.original_href;
-      if (candidate.link.href !== desired) candidate.link.href = desired;
+      if (candidate.link.href !== desired) {
+        const oldHref = candidate.link.href;
+        candidate.link.href = desired;
+        if (typeof faviconProvenanceNoteWrite === 'function') {
+          faviconProvenanceNoteWrite(candidate.link, oldHref, desired,
+            matched.has(candidate.link) ? 'generated' : 'original', {
+              original_url: candidate.original_href, theme: requestedTheme,
+              state, progress_step: requestedStep
+            });
+        }
+      }
       if (matched.has(candidate.link)) agentFaviconDisplayedHrefs.set(candidate.link, desired);
       else agentFaviconDisplayedHrefs.delete(candidate.link);
     }
@@ -13417,6 +13449,203 @@ return Object.freeze({renderFaviconPulseSequence});
   window.addEventListener('focus', agentFaviconAcknowledgeCompletion);
   window.addEventListener('pagehide', agentFaviconDispose);
   window.addEventListener('pageshow', agentFaviconHandlePageShow);
+  /** Event-driven favicon provenance, separate from lifecycle/cache behaviour. */
+  const faviconProvenanceSeen = new Map();
+  const faviconProvenanceOwnWrites = new WeakMap();
+  const faviconProvenanceDisplayContext = new WeakMap();
+  const faviconProvenanceCacheStates = new Map();
+  let faviconProvenanceLastTheme = null;
+  let faviconProvenanceLastAppTheme = 'unobserved';
+  let faviconProvenanceObserver = null;
+
+  /** Build a diagnostic-only URL identity without leaking query values. */
+  function faviconProvenanceUrl(value) {
+    if (!value) return null;
+    const href = String(value);
+    let hash = 2166136261;
+    for (let i = 0; i < href.length; i++) {
+      hash ^= href.charCodeAt(i);
+      hash = Math.imul(hash, 16777619);
+    }
+    const id = (hash >>> 0).toString(16).padStart(8, '0');
+    if (href.startsWith('blob:')) return 'blob:[redacted]#' + id;
+    if (href.startsWith('data:')) {
+      return 'data:' + href.slice(5).split(/[;,]/, 1)[0].slice(0, 40) + '#' + id;
+    }
+    try {
+      const url = new URL(href, document.baseURI);
+      return (url.origin + url.pathname).slice(0, 220) +
+        (url.search ? '?[query-hidden]' : '') + '#' + id;
+    } catch {
+      return '[unparseable-url]#' + id;
+    }
+  }
+
+  /** Only emit Debug entries, never a 250-ms heartbeat-sized stream. */
+  function faviconProvenanceLog(event, fields) {
+    if (typeof logDiagnostic !== 'function' ||
+        (typeof diagnosticEnabled === 'function' && !diagnosticEnabled('debug'))) return;
+    logDiagnostic('debug', 'agent-favicon-' + event, fields);
+  }
+
+  /** Record the stock link, including changes detected by periodic inspection. */
+  function faviconProvenanceTrackCandidate(candidate) {
+    const link = candidate.link;
+    const current = link.href;
+    const stock = candidate.original_href;
+    const meta = [candidate.media, candidate.type, candidate.sizes].join('|');
+    const before = faviconProvenanceSeen.get(link);
+    const own = faviconProvenanceOwnWrites.get(link);
+    const wasOurs = own === current;
+    if (wasOurs) faviconProvenanceOwnWrites.delete(link);
+    const next = { original: stock, observed: current, meta };
+    faviconProvenanceSeen.set(link, next);
+    if (!before || before.original !== stock || before.meta !== meta ||
+        (before.observed !== current && !wasOurs)) {
+      const mediaMatches = !candidate.media || typeof window.matchMedia !== 'function'
+        ? !candidate.media : window.matchMedia(candidate.media).matches;
+      const event = !before ? 'stock-link-observed'
+        : before.original !== stock ? 'stock-source-changed'
+        : before.meta !== meta ? 'stock-attributes-changed'
+        : 'stock-href-overwritten';
+      faviconProvenanceLog(event, {
+        origin: 'observed-dom-not-attributed-to-chatgpt',
+        previous_original: faviconProvenanceUrl(before?.original),
+        original_url: faviconProvenanceUrl(stock),
+        previous_href: faviconProvenanceUrl(before?.observed),
+        current_href: faviconProvenanceUrl(current),
+        media: candidate.media, media_matches: mediaMatches,
+        type: candidate.type, sizes: candidate.sizes,
+        theme: faviconProvenanceLastTheme
+      });
+    }
+  }
+
+  /** Log only when DC changes display context, not when it advances a frame. */
+  function faviconProvenanceNoteWrite(link, before, after, kind, details = {}) {
+    faviconProvenanceOwnWrites.set(link, after);
+    const observed = faviconProvenanceSeen.get(link);
+    if (observed) faviconProvenanceSeen.set(link, {
+      ...observed, observed: after
+    });
+    const context = JSON.stringify([kind, details.original_url, details.theme,
+      details.state, details.progress_step]);
+    if (faviconProvenanceDisplayContext.get(link) === context) return;
+    faviconProvenanceDisplayContext.set(link, context);
+    faviconProvenanceLog(kind === 'original' ? 'dc-restored' : 'dc-assigned', {
+      origin: 'dc', previous_href: faviconProvenanceUrl(before),
+      assigned_href: faviconProvenanceUrl(after),
+      original_url: faviconProvenanceUrl(details.original_url),
+      theme: details.theme ?? faviconProvenanceLastTheme,
+      state: details.state ?? 'original',
+      progress_step: details.progress_step ?? null,
+      media: link.media || '', media_matches: !link.media ||
+        (typeof window.matchMedia === 'function' && window.matchMedia(link.media).matches)
+    });
+  }
+
+  /** Log once per logical sequence, not once per pulse frame read. */
+  function faviconProvenanceCacheEvent(version, url, theme, base, step, ready) {
+    const key = JSON.stringify([version, url, theme, base, step]);
+    const old = faviconProvenanceCacheStates.get(key);
+    if (old === 'ready' || (old === 'requested' && !ready)) return;
+    faviconProvenanceCacheStates.delete(key);
+    faviconProvenanceCacheStates.set(key, ready ? 'ready' : 'requested');
+    while (faviconProvenanceCacheStates.size > 128) {
+      faviconProvenanceCacheStates.delete(faviconProvenanceCacheStates.keys().next().value);
+    }
+    faviconProvenanceLog(ready ? 'cache-frame-available' : 'cache-frame-requested', {
+      version, original_url: faviconProvenanceUrl(url), theme,
+      base_type: base, progress_step: step,
+      note: ready ? 'frame returned; cache-hit status is not exposed'
+        : 'frame lookup; not proof of a cache miss'
+    });
+  }
+
+  /** Read the application's observed data-theme without treating it as media preference. */
+  function faviconProvenanceAppTheme() {
+    const value = document.documentElement?.getAttribute?.('data-theme');
+    return value === 'dark' || value === 'light' ? value : 'unobserved';
+  }
+
+  /** Theme changes are browser preference changes, not proven app-theme changes. */
+  function faviconProvenanceThemeChanged(theme) {
+    if (!theme || theme === faviconProvenanceLastTheme) return;
+    const previous = faviconProvenanceLastTheme;
+    faviconProvenanceLastTheme = theme;
+    const links = [...document.querySelectorAll('link[rel~="icon"]')];
+    faviconProvenanceLog('browser-theme-changed', {
+      previous, current: theme, source: 'prefers-color-scheme',
+      app_theme: faviconProvenanceAppTheme(),
+      candidates: links.map(link => ({
+        original_url: faviconProvenanceUrl(agentFaviconOriginalSources.get(link) || link.href),
+        media: link.media || '',
+        media_matches: !link.media || window.matchMedia(link.media).matches
+      }))
+    });
+  }
+
+  /** Observe DOM link changes without patching any ChatGPT or browser setter. */
+  function faviconProvenanceObserveDom(records) {
+    const relevant = records.some(record => {
+      if (record.type === 'attributes') {
+        if (record.target === document.documentElement &&
+            record.attributeName === 'data-theme') {
+          const appTheme = faviconProvenanceAppTheme();
+          if (appTheme !== faviconProvenanceLastAppTheme) {
+            faviconProvenanceLog('app-theme-changed', {
+              previous: faviconProvenanceLastAppTheme, current: appTheme,
+              browser_theme: faviconProvenanceLastTheme,
+              source: 'observed-data-theme'
+            });
+            faviconProvenanceLastAppTheme = appTheme;
+          }
+          return false;
+        }
+        const link = record.target;
+        if (!link || String(link.tagName).toLowerCase() !== 'link') return false;
+        if (record.attributeName === 'href' &&
+            faviconProvenanceOwnWrites.get(link) === link.href) return false;
+        return link.rel?.split(/\s+/).includes('icon') || faviconProvenanceSeen.has(link);
+      }
+      return [...record.addedNodes, ...record.removedNodes].some(node =>
+        node.nodeType === 1 && (node.matches?.('link[rel~="icon"]') ||
+          node.querySelector?.('link[rel~="icon"]')));
+    });
+    if (!relevant) return;
+    const current = new Set(document.querySelectorAll('link[rel~="icon"]'));
+    for (const [link, previous] of faviconProvenanceSeen) {
+      if (current.has(link)) continue;
+      faviconProvenanceSeen.delete(link);
+      faviconProvenanceLog('stock-link-removed', {
+        origin: 'observed-dom-not-attributed-to-chatgpt',
+        original_url: faviconProvenanceUrl(previous.original),
+        media_type_sizes: previous.meta
+      });
+    }
+    agentFaviconCurrentCandidates();
+  }
+
+  /** Install once; missing MutationObserver leaves the existing polling intact. */
+  function faviconProvenanceStart() {
+    // @run-at document-start may precede creation of document.head.
+    // Observing Document also catches subsequent <head> and icon insertion.
+    faviconProvenanceLastAppTheme = faviconProvenanceAppTheme();
+    agentFaviconCurrentCandidates();
+    if (typeof window.matchMedia === 'function') {
+      faviconProvenanceThemeChanged(
+        window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light'
+      );
+    }
+    if (typeof MutationObserver !== 'function') return;
+    faviconProvenanceObserver = new MutationObserver(faviconProvenanceObserveDom);
+    faviconProvenanceObserver.observe(document, {
+      childList: true, subtree: true, attributes: true,
+      attributeFilter: ['href', 'rel', 'media', 'type', 'sizes', 'data-theme']
+    });
+    window.addEventListener('pagehide', () => faviconProvenanceObserver?.disconnect());
+  }
+  faviconProvenanceStart();
   /**
    * Refresh on stopwatch ticks.
    * @param {number} nowMs - Monotonic time.
@@ -23712,6 +23941,94 @@ Image elapsed: ${formatDuration(imageElapsed)} — Completed: ${imageCompleted}/
     recordingGroupUuid = sessionStorage.getItem(RECORDING_GROUP_UUID_KEY);
     void recordingGroupClaim();
   }
+  /** Persistent diagnostic event categories; Gen/Comm recording remains separate. */
+  const DIAGNOSTIC_CATEGORY_STORAGE_KEY = 'tm-recorder-diagnostic-categories';
+  const DIAGNOSTIC_CATEGORIES = Object.freeze([
+    'favicon-stock', 'favicon-theme', 'favicon-write',
+    'favicon-cache', 'other'
+  ]);
+
+  /** Load only declared boolean category values, defaulting to current logging. */
+  function diagnosticCategoryLoad() {
+    const defaults = Object.fromEntries(DIAGNOSTIC_CATEGORIES.map(key => [key, true]));
+    try {
+      const raw = localStorage.getItem(DIAGNOSTIC_CATEGORY_STORAGE_KEY);
+      if (!raw) return defaults;
+      const saved = JSON.parse(raw);
+      if (!saved || typeof saved !== 'object' || Array.isArray(saved)) return defaults;
+      for (const key of DIAGNOSTIC_CATEGORIES) {
+        if (typeof saved[key] === 'boolean') defaults[key] = saved[key];
+      }
+    } catch {
+      // A malformed/blocked storage entry must not suppress normal diagnostics.
+    }
+    return defaults;
+  }
+  const diagnosticCategorySettings = diagnosticCategoryLoad();
+
+  /** Route existing and new events without changing global diagnostic severity. */
+  function diagnosticCategoryForEvent(message) {
+    if (/^agent-favicon-(?:stock-|original-|external-)/.test(message))
+      return 'favicon-stock';
+    if (message === 'agent-favicon-browser-theme-changed' ||
+        message === 'agent-favicon-app-theme-changed')
+      return 'favicon-theme';
+    if (/^agent-favicon-dc-/.test(message))
+      return 'favicon-write';
+    if (/^(?:agent-favicon-cache-|favicon-sequence-)/.test(message))
+      return 'favicon-cache';
+    return 'other';
+  }
+
+  /** Check a category before mirroring to console or saving to the log. */
+  function diagnosticCategoryEnabled(message) {
+    return diagnosticCategorySettings[diagnosticCategoryForEvent(message)] !== false;
+  }
+
+  /** Bind gear popup controls and persist the user's chosen event categories. */
+  function bindDiagnosticCategoryPopup(panel) {
+    const trigger = panel.querySelector('[data-role="log-settings"]');
+    const popup = panel.querySelector('[data-role="log-settings-popup"]');
+    if (!trigger || !popup) return;
+    const close = () => {
+      popup.hidden = true;
+      trigger.setAttribute('aria-expanded', 'false');
+    };
+    for (const input of popup.querySelectorAll('input[data-log-category]')) {
+      const category = input.dataset.logCategory;
+      if (!DIAGNOSTIC_CATEGORIES.includes(category)) continue;
+      input.checked = diagnosticCategorySettings[category] !== false;
+      input.addEventListener('change', () => {
+        diagnosticCategorySettings[category] = input.checked;
+        localStorage.setItem(DIAGNOSTIC_CATEGORY_STORAGE_KEY,
+          JSON.stringify(diagnosticCategorySettings));
+      });
+    }
+    trigger.innerHTML = '<svg viewBox="0 0 24 24" aria-hidden="true">'
+      + '<path d="M9.7 2h4.6l.7 2.6 2.3 1.3 2.6-.7 2.3 4-1.9 1.9v2.6'
+      + 'l1.9 1.9-2.3 4-2.6-.7-2.3 1.3-.7 2.6H9.7L9 20.2l-2.3-1.3'
+      + '-2.6.7-2.3-4 1.9-1.9v-2.6L1.8 9.2l2.3-4 2.6.7L9 4.6z"/>'
+      + '<circle cx="12" cy="12" r="3"/></svg>';
+    trigger.addEventListener('click', () => {
+      popup.hidden = !popup.hidden;
+      trigger.setAttribute('aria-expanded', String(!popup.hidden));
+      if (!popup.hidden) popup.querySelector('input')?.focus();
+    });
+    popup.querySelector('[data-role="close-log-settings"]')
+      ?.addEventListener('click', () => { close(); trigger.focus(); });
+    panel.addEventListener('keydown', event => {
+      if (event.key === 'Escape' && !popup.hidden) {
+        close();
+        trigger.focus();
+        event.stopPropagation();
+      }
+    });
+    document.addEventListener('pointerdown', event => {
+      if (!popup.hidden && !popup.contains(event.target) && event.target !== trigger)
+        close();
+    });
+    panel.querySelector('.tm-close')?.addEventListener('click', close);
+  }
 
   /**
    * Returns the AgentPanelSpeaker config-reset icon using its exact PNG bytes.
@@ -23811,6 +24128,7 @@ Image elapsed: ${formatDuration(imageElapsed)} — Completed: ${imageCompleted}/
    * @returns {void} No value is returned.
    */
   function logDiagnostic(level, message, data = null) {
+    if (!diagnosticCategoryEnabled(message)) return;
     logConsoleDiagnostic(level, `[ChatGPT Recorder ${level}] ${message}`, data);
     if (localStorage.getItem('tm-recorder-general-capture') === 'false') return;
     if (!diagnosticEnabled(level)) return;
@@ -23936,6 +24254,14 @@ Image elapsed: ${formatDuration(imageElapsed)} — Completed: ${imageCompleted}/
       #${PANEL_ID} .tm-recording-actions{justify-content:center;gap:14px}
       #${PANEL_ID} .tm-recording-actions .tm-icon-button{width:40px;height:36px;flex:0 0 40px}
       #${PANEL_ID} .tm-recording-actions .tm-icon-button svg{width:21px;height:21px}
+      #${PANEL_ID} .tm-log-settings-popup[hidden]{display:none}
+      #${PANEL_ID} .tm-log-settings-popup{position:fixed;top:50%;left:50%;transform:translate(-50%,-50%);z-index:30;box-sizing:border-box;width:min(330px,calc(100vw - 32px));max-height:85dvh;overflow:auto;padding:14px;border:1px solid #777;border-radius:12px;background:#202020;box-shadow:0 12px 42px rgba(0,0,0,.65);display:flex;flex-direction:column;gap:10px}
+      #${PANEL_ID} .tm-log-settings-heading{display:flex;align-items:center;justify-content:space-between;gap:12px}
+      #${PANEL_ID} .tm-log-settings-heading strong{font-size:15px}
+      #${PANEL_ID} .tm-log-settings-heading button{font-size:22px;padding:1px 8px}
+      #${PANEL_ID} .tm-log-settings-popup label{display:flex;align-items:center;gap:8px;cursor:pointer}
+      #${PANEL_ID} .tm-log-settings-popup input{width:16px;height:16px;accent-color:#78b8ff}
+      #${PANEL_ID} .tm-log-settings-popup small{color:#bbb;line-height:1.4}
       #${PANEL_ID} .tm-export-section{display:grid;gap:8px}
       #${PANEL_ID} .tm-md-metadata{display:flex;justify-content:space-between;flex-wrap:nowrap;gap:4px;font-size:12px}
       #${PANEL_ID} .tm-md-metadata label{gap:3px}
@@ -24657,7 +24983,16 @@ Image elapsed: ${formatDuration(imageElapsed)} — Completed: ${imageCompleted}/
       <div class="tm-recorder-section tm-recording-section">
         <div class="tm-recording-location"><div class="tm-row tm-communication-log-row"><div class="tm-log-name-viewport" data-role="communication-log-directory" aria-label="Destination directory"></div><button class="tm-icon-button" data-role="change-communication-log-directory" type="button" aria-label="Change destination directory" title="Change destination directory"></button></div><div class="tm-row tm-communication-log-row"><div class="tm-log-name-viewport" data-role="communication-log-name-viewport" role="textbox" aria-readonly="true" aria-label="Current communication log filename base" title="Current communication log filename base"><span class="tm-log-name-text" data-role="communication-log-name"></span></div><button class="tm-icon-button" data-role="rename-communication-log" type="button" aria-label="Rename communication log" title="Rename communication log"></button><button class="tm-icon-button" data-role="reset-communication-log-filename" type="button" aria-label="Reset filename to project and conversation" title="Reset filename to project and conversation"></button></div></div>
         <div class="tm-row tm-recording-modes"><label><input data-role="record-general" type="checkbox" checked> Gen</label><label><input data-role="record-communication" type="checkbox" checked> Comm</label><label><input data-role="console-diagnostics" type="checkbox"> Con</label><label><input data-role="record-one-group" type="checkbox"> 1</label><label><input data-role="workstack-enabled" type="checkbox"> WS</label></div>
-        <div class="tm-row tm-recording-actions"><button class="tm-icon-button" data-role="save-log" type="button" aria-label="Save merged log" title="Save merged log"></button><button class="tm-icon-button" data-role="reset-communication-log" type="button" aria-label="Reset communication log" title="Reset communication log"></button></div>
+        <div class="tm-row tm-recording-actions"><button class="tm-icon-button" data-role="save-log" type="button" aria-label="Save merged log" title="Save merged log"></button><button class="tm-icon-button" data-role="reset-communication-log" type="button" aria-label="Reset communication log" title="Reset communication log"></button><button class="tm-icon-button" data-role="log-settings" type="button" aria-haspopup="dialog" aria-expanded="false" aria-controls="tm-recorder-log-settings" aria-label="Logging settings" title="Logging settings"></button></div>
+          <div class="tm-log-settings-popup" data-role="log-settings-popup" id="tm-recorder-log-settings" role="dialog" aria-label="Logging categories" hidden>
+            <div class="tm-log-settings-heading"><strong>Logging categories</strong><button type="button" data-role="close-log-settings" aria-label="Close logging settings">×</button></div>
+            <label><input type="checkbox" data-log-category="favicon-stock"> Stock favicon changes</label>
+            <label><input type="checkbox" data-log-category="favicon-theme"> Theme and candidate selection</label>
+            <label><input type="checkbox" data-log-category="favicon-write"> DC favicon assignments</label>
+            <label><input type="checkbox" data-log-category="favicon-cache"> Favicon cache activity</label>
+            <label><input type="checkbox" data-log-category="other"> Other diagnostics</label>
+            <small>Use Diagnostics: Debug to record favicon events. Gen, Comm and Con remain separate.</small>
+          </div>
       </div>
       <div class="tm-recorder-section tm-export-section">
         <div class="tm-row tm-md-metadata"><label><input data-role="show-timestamps" type="checkbox"> Timestamp</label><label><input data-role="show-record-numbers" type="checkbox"> Record #</label><label><input data-role="show-turn-ids" type="checkbox"> Turn ID</label><label><input data-role="show-debug-provenance" type="checkbox"> Provenance</label></div>
@@ -24677,6 +25012,7 @@ Image elapsed: ${formatDuration(imageElapsed)} — Completed: ${imageCompleted}/
       const launcher = document.getElementById(LAUNCHER_ID);
       if (launcher) launcher.style.display = '';
     });
+    bindDiagnosticCategoryPopup(panel);
     const diagnostics = panel.querySelector('[data-role="diagnostics"]');
     diagnostics.value = diagnosticsLevel;
     diagnostics.addEventListener('change', () => {
