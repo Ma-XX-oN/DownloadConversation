@@ -12,10 +12,9 @@ const PINNED_SVG = new URL(
 const PINNED_WEBP = new URL(
   '../assets/favicons/v1/originals/chatgpt-favicon-48x48.webp', import.meta.url);
 
-test('40 slots address just 21 stored cosine frames, independent of issue suffix', () => {
+test('two-frame selector alternates consecutive one-second slots', () => {
   assert.deepEqual(Array.from({length:40}, (_, i) => pulseFrameForSlot(i)),
-    [...Array.from({length:21},(_,i)=>i),
-      ...Array.from({length:19},(_,i)=>19-i)]);
+    Array.from({length:40}, (_, i) => i % 2));
   assert.equal(pulseFrameForSlot(40),0);
   assert.equal(pulseFrameForSlot(41),1);
   assert.equal(pulseFrameForSlot(-1),1);
@@ -65,7 +64,7 @@ function browserFixture(svgBytes,webpBytes,moduleSource) {
         mime:frame.type, size:frame.size,
         sig:Array.from(new Uint8Array(await frame.slice(0,8).arrayBuffer()))
       })));
-      // PNG binary equality, not compressed sizes, proves all 21 are unique.
+      // PNG binary equality proves the two requested frames differ.
       const binary=await Promise.all(sequence.frames.map(async frame=>
         new Uint8Array(await frame.arrayBuffer())));
       const identical=(a,b)=>a.length===b.length &&
@@ -95,7 +94,7 @@ function browserFixture(svgBytes,webpBytes,moduleSource) {
         originalImage.src=source;
       });
       result.textContent='PHASE:legacy-pixel-comparison';
-      for(const frame of [0,10,20]){
+      for(const frame of [0,1]){
         const target=document.createElement('canvas');
         target.width=180;target.height=180;
         const tctx=target.getContext('2d',{willReadFrequently:true});
@@ -109,7 +108,7 @@ function browserFixture(svgBytes,webpBytes,moduleSource) {
         agentFaviconDrawRing(tctx,180,180,3);
         const expectedPixels=tctx.getImageData(0,0,180,180);
         agentFaviconApplyOpacity(expectedPixels.data,
-          agentFaviconPulseOpacity(frame*250));
+          frame===0?1:0.2);
         tctx.putImageData(expectedPixels,0,0);
         const actual=await decode(sequence.frames[frame]);
         const expected=tctx.getImageData(0,0,180,180).data;
@@ -121,8 +120,8 @@ function browserFixture(svgBytes,webpBytes,moduleSource) {
         }
       }
       const a=await decode(sequence.frames[0]);
-      const mid=await decode(sequence.frames[10]);
-      const b=await decode(sequence.frames[20]);
+      const mid=await decode(sequence.frames[1]);
+      const b=await decode(sequence.frames[1]);
       const opacity=(pixels)=>pixels.filter((_,i)=>i%4===3).reduce((v,n)=>v+n,0);
       const aggregate={
         frames:sequence.frames.length,
@@ -134,7 +133,7 @@ function browserFixture(svgBytes,webpBytes,moduleSource) {
         ticks:ticks.length,elapsedMs:times
       };
       // Test lazy rendering: a new call for another URL produces exactly one
-      // separate 21-Blob result; the first must never pre-render that URL.
+      // separate two-Blob result; the first must never pre-render that URL.
       const weblink='data:image/webp;base64,'+serialized.webp;
       result.textContent='PHASE:second-source';
       const web=await provider.renderFaviconPulseSequence({
@@ -197,7 +196,7 @@ function browserFixture(svgBytes,webpBytes,moduleSource) {
       const recovery=await provider.renderFaviconPulseSequence({
         originalUrl:source,theme,base:'processing',progressStep:3
       });
-      aggregate.recovered=recovery.frames.length===21;
+      aggregate.recovered=recovery.frames.length===2;
       aggregate.returnedFields=Object.keys(sequence).sort();
       result.textContent='PASS:'+JSON.stringify(aggregate);
     } catch (error) {
@@ -223,7 +222,7 @@ function browserFixture(svgBytes,webpBytes,moduleSource) {
     ');</script></body></html>';
 }
 
-test('real Chromium renders only one 21-Blob sequence at a time in each theme',()=>{
+test('real Chromium renders only one two-Blob sequence at a time in each theme',()=>{
   const chrome=process.env.DC_FAVICON_CHROME ||
     (existsSync('/usr/bin/chromium')?'/usr/bin/chromium':'/usr/bin/google-chrome');
   assert(existsSync(chrome),'Chromium required for pixel and responsiveness proof');
@@ -248,17 +247,17 @@ test('real Chromium renders only one 21-Blob sequence at a time in each theme',(
       const status=/<pre id="result">([^<]*)<\/pre>/.exec(output)?.[1];
       assert(status?.startsWith('PASS:'),scheme+' browser fixture '+status);
       const result=JSON.parse(status.slice(5));
-      assert.equal(result.frames,21);
+      assert.equal(result.frames,2);
       assert.equal(result.allFramesUnique,true);
       assert.equal(result.theme,scheme);
       assert.equal(result.width,180);
       assert.equal(result.height,180);
       assert.equal(result.otherWidth,48);
-      assert.equal(result.otherFrames,21);
+      assert.equal(result.otherFrames,2);
       assert(result.pngs.every(p=>p.mime==='image/png' && p.size>100 &&
         p.sig.join(',')==='137,80,78,71,13,10,26,10'));
       assert(result.firstAlpha>result.midAlpha);
-      assert(result.midAlpha>result.lastAlpha);
+      assert.equal(result.midAlpha,result.lastAlpha);
       assert.equal(result.repeatPixels,true);
       assert.equal(result.aborted,'AbortError');
       assert.equal(result.cancelledAfterEncode,true);
@@ -304,9 +303,9 @@ test('all four colours and seven progress steps render only requested frames',()
       } finally {
         HTMLCanvasElement.prototype.toBlob=toBlob;
       }
-      if(sequence.frames.length!==21 || encodes!==21 ||
+      if(sequence.frames.length!==2 || encodes!==2 ||
         sequence.frames.some(blob=>blob.type!=='image/png')){
-        throw new Error('Expected exactly 21 requested PNG encodes');
+        throw new Error('Expected exactly two requested PNG encodes');
       }
       const first=Array.from(new Uint8Array(
         await sequence.frames[0].arrayBuffer()));
@@ -346,7 +345,7 @@ test('all four colours and seven progress steps render only requested frames',()
           'Colour matrix '+base+':'+step+' '+status);
         const response=JSON.parse(status.slice(5));
         assert.equal(response.theme,'light');
-        assert.equal(response.encodes,21);
+        assert.equal(response.encodes,2);
         signatures.set(base+':'+step,response.first);
       }
     }
@@ -365,7 +364,7 @@ test('all four colours and seven progress steps render only requested frames',()
     }
     assert.equal(signatures.size,28);
     console.log('DC333_V2_4X7_COLOUR_PROGRESS='+
-      JSON.stringify({requests:signatures.size,encodes:signatures.size*21}));
+      JSON.stringify({requests:signatures.size,encodes:signatures.size*2}));
   } finally {
     rmSync(temp,{recursive:true,force:true});
   }
