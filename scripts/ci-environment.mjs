@@ -82,6 +82,7 @@ const ordinaryStages = [
   ['Canonical final-render regressions', nodeCommand, ['--test', 'tests/core-integration.test.mjs', 'tests/phase5-rich-core-integration.test.mjs', 'tests/fallback-adaptive-fence.test.mjs', 'tests/tool-language-diagnostics.test.mjs', 'tests/sediment-resolver.test.mjs']],
   ['Worker + Zstd/CSP probe regression', nodeCommand, ['--test', 'tests/issue314-worker-zstd-csp-probe.test.mjs']],
   ['CSC Worker stream/directory preflight regression', nodeCommand, ['--test', 'tests/issue316-worker-stream-directory.test.mjs']],
+  ['DC #306 generic browser navigation integration', nodeCommand, ['--test', 'tests/issue306-generic-browser-navigation.test.mjs']],
   ['CSC canonical ingress regression', nodeCommand, ['--test', 'tests/issue309-csc-canonical-ingress.test.mjs', 'tests/issue309-interception-lifecycle.test.mjs', 'tests/issue309-stream-pressure.test.mjs', 'tests/issue309-plugin-body-ownership-red.test.mjs', 'tests/issue309-browser-dual-body-probe.test.mjs']],
   ['CSC plugin backlog and native ingress regression', nodeCommand, ['--test',
     'tests/issue310-plugin-backlog.test.mjs',
