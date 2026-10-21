@@ -4,6 +4,7 @@
   const faviconProvenanceDisplayContext = new WeakMap();
   const faviconProvenanceCacheStates = new Map();
   let faviconProvenanceLastTheme = null;
+  let faviconProvenanceLastAppTheme = 'unobserved';
   let faviconProvenanceObserver = null;
 
   /** Build a diagnostic-only URL identity without leaking query values. */
@@ -72,6 +73,10 @@
   /** Log only when DC changes display context, not when it advances a frame. */
   function faviconProvenanceNoteWrite(link, before, after, kind, details = {}) {
     faviconProvenanceOwnWrites.set(link, after);
+    const observed = faviconProvenanceSeen.get(link);
+    if (observed) faviconProvenanceSeen.set(link, {
+      ...observed, observed: after
+    });
     const context = JSON.stringify([kind, details.original_url, details.theme,
       details.state, details.progress_step]);
     if (faviconProvenanceDisplayContext.get(link) === context) return;
@@ -106,6 +111,12 @@
     });
   }
 
+  /** Read the application's observed data-theme without treating it as media preference. */
+  function faviconProvenanceAppTheme() {
+    const value = document.documentElement?.getAttribute?.('data-theme');
+    return value === 'dark' || value === 'light' ? value : 'unobserved';
+  }
+
   /** Theme changes are browser preference changes, not proven app-theme changes. */
   function faviconProvenanceThemeChanged(theme) {
     if (!theme || theme === faviconProvenanceLastTheme) return;
@@ -114,7 +125,7 @@
     const links = [...document.querySelectorAll('link[rel~="icon"]')];
     faviconProvenanceLog('browser-theme-changed', {
       previous, current: theme, source: 'prefers-color-scheme',
-      app_theme: 'unobserved',
+      app_theme: faviconProvenanceAppTheme(),
       candidates: links.map(link => ({
         original_url: faviconProvenanceUrl(agentFaviconOriginalSources.get(link) || link.href),
         media: link.media || '',
@@ -127,6 +138,19 @@
   function faviconProvenanceObserveDom(records) {
     const relevant = records.some(record => {
       if (record.type === 'attributes') {
+        if (record.target === document.documentElement &&
+            record.attributeName === 'data-theme') {
+          const appTheme = faviconProvenanceAppTheme();
+          if (appTheme !== faviconProvenanceLastAppTheme) {
+            faviconProvenanceLog('app-theme-changed', {
+              previous: faviconProvenanceLastAppTheme, current: appTheme,
+              browser_theme: faviconProvenanceLastTheme,
+              source: 'observed-data-theme'
+            });
+            faviconProvenanceLastAppTheme = appTheme;
+          }
+          return false;
+        }
         const link = record.target;
         if (!link || String(link.tagName).toLowerCase() !== 'link') return false;
         if (record.attributeName === 'href' &&
@@ -155,6 +179,7 @@
   function faviconProvenanceStart() {
     // @run-at document-start may precede creation of document.head.
     // Observing Document also catches subsequent <head> and icon insertion.
+    faviconProvenanceLastAppTheme = faviconProvenanceAppTheme();
     agentFaviconCurrentCandidates();
     if (typeof window.matchMedia === 'function') {
       faviconProvenanceThemeChanged(
@@ -165,7 +190,7 @@
     faviconProvenanceObserver = new MutationObserver(faviconProvenanceObserveDom);
     faviconProvenanceObserver.observe(document, {
       childList: true, subtree: true, attributes: true,
-      attributeFilter: ['href', 'rel', 'media', 'type', 'sizes']
+      attributeFilter: ['href', 'rel', 'media', 'type', 'sizes', 'data-theme']
     });
     window.addEventListener('pagehide', () => faviconProvenanceObserver?.disconnect());
   }
