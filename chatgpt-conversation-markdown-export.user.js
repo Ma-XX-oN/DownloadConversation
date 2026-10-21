@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         ChatGPT Conversation Markdown Recorder
 // @namespace    https://chatgpt.com/
-// @version      1.11.7-issue.313.29
+// @version      1.11.7-issue.313.30
 // @description  Exports the current ChatGPT conversation directly from the Conversation API as Markdown or JSONL.
 // @match        https://chatgpt.com/*
 // @connect      github.com
@@ -11118,6 +11118,162 @@ globalThis.__dcCompressor = {
     });
   }
   /**
+   * Store one complete HMAC record in origin-scoped IndexedDB.
+   * Web Locks serialize service operations across participating tabs;
+   * readwrite transactions commit each record atomically.
+   * Page scripts on this origin can access the stored key (approved risk).
+   * @param {IDBFactory|null} api - Browser IndexedDB factory.
+   * @param {Location|null} pageLocation - Current page origin.
+   * @returns {Object|null} Promise-based record storage adapter.
+   */
+  function communicationPersistentHmacIndexedDbStorage(api, pageLocation) {
+    if (pageLocation?.origin !== 'https://chatgpt.com' ||
+        !api || typeof api.open !== 'function') return null;
+    const databaseName = 'downloadconversation-persistent-hmac-v2';
+    const objectStoreName = 'records';
+
+    /**
+     * @returns {Promise<IDBDatabase>} Opened database.
+     */
+    function openDatabase() {
+      return new Promise((resolve, reject) => {
+        let request;
+        try { request = api.open(databaseName, 1); }
+        catch (error) { reject(error); return; }
+        request.onupgradeneeded = () => {
+          const db = request.result;
+          if (!db.objectStoreNames.contains(objectStoreName)) {
+            db.createObjectStore(objectStoreName);
+          }
+        };
+        request.onerror = () => reject(request.error ||
+          Error('persistent-key-indexeddb-open-failed'));
+        request.onblocked = () => reject(
+          Error('persistent-key-indexeddb-open-blocked'));
+        request.onsuccess = () => {
+          const db = request.result;
+          db.onversionchange = () => db.close();
+          resolve(db);
+        };
+      });
+    }
+
+    /**
+     * @param {'readonly'|'readwrite'} mode - Transaction mode.
+     * @param {string} name - Record identifier.
+     * @param {Object|undefined} value - Value for a write.
+     * @returns {Promise<Object|undefined>} Committed transaction result.
+     */
+    async function transact(mode, name, value) {
+      const db = await openDatabase();
+      try {
+        return await new Promise((resolve, reject) => {
+          let tx;
+          try { tx = db.transaction(objectStoreName, mode); }
+          catch (error) { reject(error); return; }
+          let result;
+          tx.oncomplete = () => resolve(result);
+          tx.onabort = () => reject(tx.error ||
+            Error('persistent-key-indexeddb-transaction-aborted'));
+          tx.onerror = () => reject(tx.error ||
+            Error('persistent-key-indexeddb-transaction-failed'));
+          try {
+            const store = tx.objectStore(objectStoreName);
+            const request = mode === 'readonly'
+              ? store.get(name) : store.put(value, name);
+            request.onsuccess = () => {
+              if (mode === 'readonly') result = request.result;
+            };
+          } catch (error) {
+            try { tx.abort(); } catch {}
+            reject(error);
+          }
+        });
+      } finally { db.close(); }
+    }
+
+    return Object.freeze({
+      async get(name, fallback) {
+        const value = await transact('readonly', name);
+        return value === undefined ? fallback : value;
+      },
+      async set(name, value) {
+        await transact('readwrite', name, value);
+      }
+    });
+  }
+
+  /**
+   * Strong authority uses Web Locks plus the atomic IndexedDB record.
+   * Only the installed same-origin browser can certify this combination.
+   * @param {Navigator|null} pageNavigator - Browser Web Locks host.
+   * @param {Location|null} pageLocation - Current origin.
+   * @param {Object|null} storage - IndexedDB adapter.
+   * @returns {Object|null} Verified-capability candidate.
+   */
+  function communicationPersistentHmacIndexedDbAuthority(
+    pageNavigator, pageLocation, storage) {
+    if (!storage || pageLocation?.origin !== 'https://chatgpt.com' ||
+        typeof pageNavigator?.locks?.request !== 'function') return null;
+    const lockName = 'downloadconversation:secret-marker-key-v2:all-tabs';
+    return Object.freeze({
+      capability: 'linearizable-chatgpt-key-record-v2',
+      async runExclusive(callback) {
+        if (pageLocation.origin !== 'https://chatgpt.com' ||
+            typeof callback !== 'function') {
+          throw Error('persistent-key-origin-or-callback-invalid');
+        }
+        return pageNavigator.locks.request(lockName, { mode: 'exclusive' },
+          async lock => {
+            if (lock?.mode !== 'exclusive') {
+              throw Error('persistent-key-web-lock-not-acquired');
+            }
+            return callback();
+          });
+      }
+    });
+  }
+  /**
+   * @param {Object} item - Stored record.
+   * @returns {Object} Validated record.
+   */
+  function communicationPersistentHmacValidated(item) {
+    const hourMs = 60 * 60 * 1000;
+    if (!item || typeof item !== 'object' || Array.isArray(item) ||
+        item.format !== 'dc-secret-key-record/2' ||
+        !/^[a-f0-9]{64}$/.test(item.key_hex ?? '') ||
+        !/^[a-f0-9]{32}$/.test(item.generation ?? '') ||
+        !Number.isSafeInteger(item.epoch) || item.epoch < 1 ||
+        !['open', 'draining'].includes(item.phase) ||
+        !Array.isArray(item.pending) || item.pending.length > 256 ||
+        item.pending.some(token => !/^[a-f0-9]{32}$/.test(token)) ||
+        new Set(item.pending).size !== item.pending.length ||
+        !Number.isSafeInteger(item.issued_at_ms) ||
+        !Number.isSafeInteger(item.expires_at_ms) ||
+        item.expires_at_ms - item.issued_at_ms < 23 * hourMs ||
+        item.expires_at_ms - item.issued_at_ms > 25 * hourMs ||
+        !Array.isArray(item.cycle_events) ||
+        !item.cycle_events.length ||
+        item.cycle_events.at(-1).generation !== item.generation ||
+        item.cycle_events.at(-1).epoch !== item.epoch) {
+      throw new Error('persistent-key-storage-corrupt');
+    }
+    if (item.phase === 'open' && item.next !== null) {
+      throw new Error('persistent-key-storage-corrupt');
+    }
+    if (item.phase === 'draining' && (!item.next ||
+        !/^[a-f0-9]{64}$/.test(item.next.key_hex ?? '') ||
+        !/^[a-f0-9]{32}$/.test(item.next.generation ?? '') ||
+        item.next.generation === item.generation ||
+        item.next.key_hex === item.key_hex ||
+        !Number.isSafeInteger(item.next.epoch) ||
+        item.next.epoch !== item.epoch + 1)) {
+      throw new Error('persistent-key-storage-corrupt');
+    }
+    return item;
+  }
+
+  /**
    * Manage persistent V2 HMAC keys under verified shared authority.
    *
    * @param {Object} dependencies - GM storage, verified authority and WebCrypto.
@@ -11125,8 +11281,10 @@ globalThis.__dcCompressor = {
    */
   function communicationPersistentHmacService(dependencies) {
     const { storage, authority, crypto: secureCrypto } = dependencies;
+    const now = dependencies.now || (() => Date.now());
+    const hourMs = 60 * 60 * 1000;
     const recordName = 'downloadconversation:secret-marker-key-v2';
-    const scopeStorage = 'tampermonkey-script-installation';
+    const scopeStorage = 'chatgpt-origin-indexeddb';
     const format = 'dc-secret-marker/2';
     const internal = new Map();
     let disposed = false;
@@ -11158,43 +11316,15 @@ globalThis.__dcCompressor = {
     }
 
     /**
-     * @param {Object} item - Stored record.
-     * @returns {Object} Validated record.
-     */
-    function validated(item) {
-      if (!item || typeof item !== 'object' || Array.isArray(item) ||
-          item.format !== 'dc-secret-key-record/2' ||
-          !/^[a-f0-9]{64}$/.test(item.key_hex ?? '') ||
-          !/^[a-f0-9]{32}$/.test(item.generation ?? '') ||
-          !Number.isSafeInteger(item.epoch) || item.epoch < 1 ||
-          !['open', 'draining'].includes(item.phase) ||
-          !Array.isArray(item.pending) || item.pending.length > 256 ||
-          item.pending.some(token => !/^[a-f0-9]{32}$/.test(token)) ||
-          new Set(item.pending).size !== item.pending.length) {
-        throw new Error('persistent-key-storage-corrupt');
-      }
-      if (item.phase === 'open' && item.next !== null) {
-        throw new Error('persistent-key-storage-corrupt');
-      }
-      if (item.phase === 'draining' && (!item.next ||
-          !/^[a-f0-9]{64}$/.test(item.next.key_hex ?? '') ||
-          !/^[a-f0-9]{32}$/.test(item.next.generation ?? '') ||
-          item.next.generation === item.generation ||
-          item.next.key_hex === item.key_hex ||
-          !Number.isSafeInteger(item.next.epoch) ||
-          item.next.epoch !== item.epoch + 1)) {
-        throw new Error('persistent-key-storage-corrupt');
-      }
-      return item;
-    }
-
-    /**
      * @returns {Object} Cryptographic first-generation record.
      */
     function initial() {
+      const issued = now();
+      const generation = randomHex(16);
       return { format: 'dc-secret-key-record/2', key_hex: randomHex(32),
-        generation: randomHex(16), epoch: 1, phase: 'open',
-        pending: [], next: null };
+        generation, epoch: 1, phase: 'open', pending: [], next: null,
+        issued_at_ms: issued, expires_at_ms: deadline(issued),
+        cycle_events: [cycleEvent(generation, 1, issued, 'initial')] };
     }
 
     /**
@@ -11223,7 +11353,7 @@ globalThis.__dcCompressor = {
           let stored;
           try { stored = await storage.get(recordName, null); }
           catch { throw new Error('persistent-key-storage-read-failed'); }
-          return stored === null ? null : validated(stored);
+          return stored === null ? null : communicationPersistentHmacValidated(stored);
         };
         /**
          * Persist and verify exactly one complete storage record.
@@ -11231,7 +11361,7 @@ globalThis.__dcCompressor = {
          * @returns {Promise<void>} Resolves after successful readback.
          */
         const write = async (value) => {
-          validated(value);
+          communicationPersistentHmacValidated(value);
           try { await storage.set(recordName, value); }
           catch { throw new Error('persistent-key-storage-write-failed'); }
           const actual = await read();
@@ -11260,9 +11390,64 @@ globalThis.__dcCompressor = {
      * @returns {Object} Next record.
      */
     function finishRotation(stored) {
+      const issued = now();
+      const generation = stored.next.generation;
+      const epoch = stored.next.epoch;
       return { format: stored.format, key_hex: stored.next.key_hex,
-        generation: stored.next.generation, epoch: stored.next.epoch,
-        phase: 'open', pending: [], next: null };
+        generation, epoch, phase: 'open', pending: [], next: null,
+        issued_at_ms: issued, expires_at_ms: deadline(issued),
+        cycle_events: [...stored.cycle_events,
+          cycleEvent(generation, epoch, issued, stored.next.reason)] };
+    }
+
+    /**
+     * @param {number} issued - Committed rotation wall-clock time.
+     * @returns {number} Random due time in inclusive 23–25 hour interval.
+     */
+    function deadline(issued) {
+      const sample = Number.parseInt(randomHex(4), 16);
+      return issued + 23 * hourMs +
+        Math.floor(sample / 4294967296 * (2 * hourMs + 1));
+    }
+
+    /**
+     * @param {string} generation - Public generation identifier.
+     * @param {number} epoch - Public key epoch.
+     * @param {number} time - Committed timestamp.
+     * @param {string} reason - Initial, scheduled, overdue or manual.
+     * @returns {Object} Stable nonsecret record for GEN and COMM.
+     */
+    function cycleEvent(generation, epoch, time, reason) {
+      return { type: 'hmac-key-cycle',
+        id: 'hmac-key-cycle:' + epoch + ':' + generation,
+        generation, epoch, occurred_at_ms: time, reason };
+    }
+
+    /**
+     * @param {Function} read - Shared record reader.
+     * @param {Function} write - Atomic record writer.
+     * @returns {Promise<Object|null>} Fresh record, or absent state.
+     */
+    async function rotateIfDue(read, write) {
+      const stored = await read();
+      if (!stored || stored.phase !== 'open') return stored;
+      const time = now();
+      if (time < stored.issued_at_ms) {
+        throw Error('persistent-key-clock-regression');
+      }
+      if (time < stored.expires_at_ms) return stored;
+      if (stored.epoch >= Number.MAX_SAFE_INTEGER) {
+        throw Error('persistent-key-epoch-overflow');
+      }
+      const reason = time - stored.issued_at_ms > 25 * hourMs
+        ? 'overdue' : 'scheduled';
+      const draining = { ...stored, phase: 'draining',
+        next: { key_hex: randomHex(32), generation: randomHex(16),
+          epoch: stored.epoch + 1, reason } };
+      const next = stored.pending.length === 0
+        ? finishRotation(draining) : draining;
+      await write(next);
+      return next;
     }
 
     /**
@@ -11293,7 +11478,7 @@ globalThis.__dcCompressor = {
       let result;
       try {
         result = await transaction(async (read, write) => {
-          let stored = await read();
+          let stored = await rotateIfDue(read, write);
           if (!stored) { stored = initial(); await write(stored); }
           if (stored.phase !== 'open') throw new Error('persistent-key-rotation-draining');
           if (stored.pending.length >= 256) throw new Error('persistent-key-admission-capacity');
@@ -11390,7 +11575,7 @@ globalThis.__dcCompressor = {
         }
         const next = { ...stored, phase: 'draining',
           next: { key_hex: randomHex(32), generation: randomHex(16),
-            epoch: stored.epoch + 1 } };
+            epoch: stored.epoch + 1, reason: 'manual' } };
         const committed = next.pending.length === 0
           ? finishRotation(next) : next;
         try { await write(committed); }
@@ -11412,10 +11597,11 @@ globalThis.__dcCompressor = {
      * @returns {Promise<Object>} Nonsecret status, including interruption state.
      */
     async function status() {
-      return transaction(async read => {
-        const stored = await read();
+      return transaction(async (read, write) => {
+        const stored = await rotateIfDue(read, write);
         return stored ? { state: stored.phase, ...metadata(stored),
-          pending_count: stored.pending.length } : { state: 'uninitialized' };
+          pending_count: stored.pending.length,
+          expires_at_ms: stored.expires_at_ms } : { state: 'uninitialized' };
       });
     }
 
@@ -11426,7 +11612,7 @@ globalThis.__dcCompressor = {
      */
     async function recover() {
       return transaction(async (read, write) => {
-        const stored = await read();
+        const stored = await rotateIfDue(read, write);
         if (!stored) return { state: 'uninitialized' };
         if (stored.phase === 'draining' && stored.pending.length === 0) {
           const next = finishRotation(stored);
@@ -11447,8 +11633,20 @@ globalThis.__dcCompressor = {
       disposed = true;
     }
 
+    /**
+     * @param {number} afterEpoch - Exclusive previous epoch to query.
+     * @returns {Promise<Object[]>} Committed nonsecret dual-log cycle events.
+     */
+    async function cycleEvents(afterEpoch = 0) {
+      return transaction(async read => {
+        const record = await read();
+        return record ? record.cycle_events.filter(
+          event => event.epoch > afterEpoch) : [];
+      });
+    }
+
     return Object.freeze({ admit, provision, complete, randomize, status,
-      recover, dispose });
+      recover, cycleEvents, dispose });
   }
 
   /**
@@ -11467,7 +11665,7 @@ globalThis.__dcCompressor = {
 
   /**
    * Coordinate one HTTPS origin with native exclusive Web Locks.
-   * Never store keys in page-accessible IndexedDB.
+   * Only the lock is provided here; IndexedDB authority is separate.
    * @param {Object} browserNavigator - Current tab's navigator.
    * @param {Object} browserLocation - Current tab's location.
    * @returns {Object|null} Same-origin serializing authority or unavailable.
@@ -11498,15 +11696,18 @@ globalThis.__dcCompressor = {
 
   /**
    * Build the production tab's lazy persistent key service.
-   * Web Locks alone cannot prove GM storage coherence: fail closed.
+   * Uses the verified atomic IndexedDB adapter and cross-tab lock.
    * @returns {Object} Lifecycle service with native same-origin coordination.
    */
   function communicationPersistentHmacCurrentTabService() {
+    const pageNavigator = typeof navigator === 'undefined' ? null : navigator;
+    const pageLocation = typeof location === 'undefined' ? null : location;
+    const sharedStorage = communicationPersistentHmacIndexedDbStorage(
+      typeof indexedDB === 'undefined' ? null : indexedDB, pageLocation);
     return communicationPersistentHmacService({
-      storage: communicationPersistentHmacTampermonkeyStorage(),
-      authority: communicationPersistentHmacChatgptAuthority(
-        typeof navigator === 'undefined' ? null : navigator,
-        typeof location === 'undefined' ? null : location),
+      storage: sharedStorage,
+      authority: communicationPersistentHmacIndexedDbAuthority(
+        pageNavigator, pageLocation, sharedStorage),
       crypto: typeof crypto === 'undefined' ? null : crypto
     });
   }
