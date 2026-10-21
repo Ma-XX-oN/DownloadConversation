@@ -52,6 +52,9 @@ function fixture() {
   vm.runInContext(`
     const agentFaviconOriginalSources = new Map();
     const agentFaviconDisplayedHrefs = new Map();
+    let agentFaviconVisibleState = 'processing';
+    function agentFaviconRingStep() { return 0; }
+    function agentFaviconCurrentTheme() { return 'light'; }
     function logDiagnostic(level, event, details) {
       logs.push({ level, event, details });
     }
@@ -196,4 +199,17 @@ test('ChatGPT application data-theme changes are logged independently of OS sche
   h.setAppTheme('dark');
   assert.equal(events(h, 'app-theme-changed').length, 1,
     'same observed theme must not create duplicates');
+});
+
+test('DOM-observed 250ms pulse updates log one assignment and one first-ready frame', () => {
+  const h = fixture();
+  for (let i = 0; i < 40; i++) {
+    const href = h.blob();
+    h.link.href = href;
+    h.api.assignDisplayed(h.link, href);
+    h.notifyAttributes(h.link);
+  }
+  assert.equal(events(h, 'dc-assigned').length, 1);
+  assert.equal(events(h, 'cache-frame-available').length, 1);
+  assert.equal(events(h, 'stock-source-changed').length, 0);
 });
