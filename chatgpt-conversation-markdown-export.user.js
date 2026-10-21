@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         ChatGPT Conversation Markdown Recorder
 // @namespace    https://chatgpt.com/
-// @version      1.11.10-issue.332.11
+// @version      1.11.10-issue.332.12
 // @description  Exports the current ChatGPT conversation directly from the Conversation API as Markdown or JSONL.
 // @match        https://chatgpt.com/*
 // @match        https://chat.openai.com/*
@@ -12514,22 +12514,16 @@ return Object.freeze({renderFaviconPulseSequence});
       .then(complete, complete);
   }
 
-  // Frozen DC #332 V2, real #334 browser-local IndexedDB cache.
-  // Collection expiry and metadata touch throttle, milliseconds.
+  // Frozen V2.0 cache provider; runtime manifest binding belongs to DC #332.
   const FAVICON_SEQUENCE_TTL_MS = 600000;
-  // Same-origin database for sequence metadata and native PNG Blobs.
   const FAVICON_SEQUENCE_DB = 'dc-favicon-sequences-v2';
-  // Browser Web Lock namespace for generation and active reader leases.
   const FAVICON_SEQUENCE_LOCK = 'dc-favicon-v2:';
-  // Maximum accepted byte size of each stored PNG image.
   const FAVICON_SEQUENCE_MAX_PNG = 524288;
-  // Authoritative numeric minimum-compatible version registry.
+  const FAVICON_SEQUENCE_FAILURE_BACKOFF_MS = 5000;
+  const FAVICON_SEQUENCE_FAILURE_LIMIT = 64;
   const faviconSequenceVersions = new Map();
-  // Cached exact-version resolutions, cleared when registry changes.
   const faviconSequenceResolved = new Map();
-  // Shared pending IndexedDB connection acquisition.
   let faviconSequenceDatabasePromise = null;
-  // Current tab's periodic stale-dataset cleanup timer handle.
   let faviconSequenceSweeper = null;
 
   /**
@@ -12681,7 +12675,7 @@ return Object.freeze({renderFaviconPulseSequence});
       const old = await faviconSequenceRequest(store.get(version));
       const now = Date.now();
       if (!old || now - old.last_used >= FAVICON_SEQUENCE_TTL_MS) {
-        store.put({ version, last_used: now });
+        store.put({ ...old, version, last_used: now });
       }
       await done;
     } catch (error) { try { tx.abort(); } catch {} await done.catch(() => {}); throw error; }
@@ -12764,6 +12758,50 @@ return Object.freeze({renderFaviconPulseSequence});
       await done;
     } catch (error) { try { tx.abort(); } catch {} await done.catch(() => {}); throw error; }
   }
+
+  /**
+   * Checks a sequence's bounded cross-tab renderer failure cooldown.
+   * @param {IDBDatabase} db - Shared origin cache.
+   * @param {string} version - Compatible dataset version.
+   * @param {string} id - Complete five-field sequence identity.
+   * @returns {Promise<boolean>} Whether retry must wait.
+   */
+  async function faviconSequenceCooling(db, version, id) {
+    const row = await faviconSequenceRequest(db.transaction('datasets', 'readonly')
+      .objectStore('datasets').get(version));
+    return Number.isSafeInteger(row?.failed_sequences?.[id])
+      && row.failed_sequences[id] > Date.now();
+  }
+
+  /**
+   * Records a failed render without touching last_used or publishing readiness.
+   * @param {IDBDatabase} db - Shared origin cache.
+   * @param {string} version - Compatible dataset version.
+   * @param {string} id - Complete five-field sequence identity.
+   * @returns {Promise<void>} Committed bounded cooldown.
+   */
+  async function faviconSequenceRecordFailure(db, version, id) {
+    const tx = db.transaction('datasets', 'readwrite');
+    const done = faviconSequenceTransaction(tx);
+    try {
+      const store = tx.objectStore('datasets');
+      const row = await faviconSequenceRequest(store.get(version));
+      if (!row) throw Error('missing-failure-dataset');
+      const now = Date.now();
+      const active = Object.entries(row.failed_sequences || {})
+        .filter(([, until]) => Number.isSafeInteger(until) && until > now);
+      active.push([id, now + FAVICON_SEQUENCE_FAILURE_BACKOFF_MS]);
+      row.failed_sequences = Object.fromEntries(
+        active.slice(-FAVICON_SEQUENCE_FAILURE_LIMIT));
+      store.put(row);
+      await done;
+    } catch (error) {
+      try { tx.abort(); } catch {}
+      await done.catch(() => {});
+      throw error;
+    }
+  }
+
   /**
    * Waits for a missing sequence's exclusive lock and renders only if still absent.
    * @param {FaviconDatasetSession} session - Locked dataset reader.
@@ -12775,6 +12813,7 @@ return Object.freeze({renderFaviconPulseSequence});
     await navigator.locks.request(FAVICON_SEQUENCE_LOCK + 'seq:' + key.id,
       { mode: 'exclusive', signal }, async () => {
         if (await faviconSequenceRead(session.db, key.id, key.pulse_index)) return;
+        if (await faviconSequenceCooling(session.db, key.version, key.id)) return;
         const args = Object.freeze({ version: key.version,
           original_favicon_url: key.url, theme: key.theme,
           base_type: key.base, progress_step: key.progress });
@@ -12783,8 +12822,16 @@ return Object.freeze({renderFaviconPulseSequence});
           if (signal.aborted) { reject(Error('generation-aborted')); return; }
           signal.addEventListener('abort', () => reject(Error('generation-aborted')), { once: true });
         });
-        const frames = await Promise.race([generate, canceled]);
-        await faviconSequenceValidate(frames, signal);
+        let frames;
+        try {
+          frames = await Promise.race([generate, canceled]);
+          await faviconSequenceValidate(frames, signal);
+        } catch (error) {
+          if (signal.aborted || error?.name === 'AbortError') throw error;
+          await faviconSequenceRecordFailure(session.db, key.version, key.id);
+          faviconSequenceWarn('render-failed', error);
+          return;
+        }
         if (signal.aborted) throw Error('generation-aborted');
         await faviconSequencePublish(session.db, key, frames);
       });
@@ -12850,7 +12897,12 @@ return Object.freeze({renderFaviconPulseSequence});
           }
         }
         return this.closing ? null : png;
-      })().catch(error => { faviconSequenceWarn('read-or-render', error); return null; })
+      })().catch(error => {
+        if (!this.controller.signal.aborted && error?.name !== 'AbortError') {
+          faviconSequenceWarn('read-or-render', error);
+        }
+        return null;
+      })
         .finally(() => this.pending.delete(frameKey));
       this.pending.set(frameKey, task);
       return task;
@@ -12959,8 +13011,7 @@ return Object.freeze({renderFaviconPulseSequence});
       faviconSequenceStartSweep(db);
       return await faviconSequenceShared(db, faviconSequenceVersions.get(version_key), render_sequence);
     } catch (error) { faviconSequenceWarn('open', error); return null; }
-  }
-  // Stable numeric cache colour index to renderer semantic colour.
+  }  // Stable numeric cache colour index to renderer semantic colour.
   const faviconV2NumericBases = Object.freeze([
     'processing', 'completed', 'error', 'acknowledged'
   ]);
