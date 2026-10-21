@@ -68,6 +68,7 @@
     const before = faviconProvenanceSeen.get(link);
     const dcHref = agentFaviconDisplayedHrefs.get(link);
     if (dcHref === current && (!before || before.observed !== current)) {
+      const previousContext = faviconProvenanceDisplayContext.get(link);
       faviconProvenanceNoteWrite(link, before?.observed || stock, current,
         'generated', {
           original_url: stock,
@@ -76,10 +77,12 @@
           state: agentFaviconVisibleState,
           progress_step: agentFaviconRingStep()
         });
-      faviconProvenanceLog('cache-frame-available', {
-        original_url: faviconProvenanceUrl(stock),
-        note: 'generated image became available for display'
-      });
+      if (previousContext !== faviconProvenanceDisplayContext.get(link)) {
+        faviconProvenanceLog('cache-frame-available', {
+          original_url: faviconProvenanceUrl(stock),
+          note: 'first display of this generated sequence context'
+        });
+      }
     }
     const own = faviconProvenanceOwnWrites.get(link);
     const wasOurs = own === current;
