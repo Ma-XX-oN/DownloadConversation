@@ -33,7 +33,7 @@ function ringHarness() {
   return h;
 }
 
-test('six five-minute ring/pie indexes preserve the 30-minute saturated step', () => {
+test('six five-minute ring indexes preserve the 30-minute saturated step', () => {
   const h = ringHarness();
   for (let step = 0; step <= 6; step++) {
     assert.equal(h.api.step(1000 + step * 300000), step);

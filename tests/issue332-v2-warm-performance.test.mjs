@@ -95,7 +95,7 @@ async function benchmark() {
     const selected = await agentFaviconRenderState('processing');
     if (!selected) throw Error('real consumer could not display initial favicon');
     for (let index = 0; index < 2; index++) {
-      const pair = await get_favicon('2.0.0', 0, 0, index * 1000);
+      const pair = await get_favicon(FAVICON_ANIMATION_VERSION, 0, 0, index * 1000);
       if (!pair?.length) throw Error('failed to preload pulse frame '+index);
     }
     const coldMs = performance.now() - coldStart;

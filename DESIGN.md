@@ -624,7 +624,7 @@ This is a project-wide watcher/consumer design pattern, not an implementation de
 
 ## Agent favicon processing/completion/error state
 
-The favicon is a presentation-only consumer of the shared lifecycle observer. When a current-page generation request is observed, or reload restoration reports structured `IS_STREAMING`, the userscript recolors only the near-white portion of the original stock ChatGPT favicon to yellow. A successful normalized terminal event changes that favicon to light green only when processing was observed in the current loaded page. A successful terminal arriving without such page-lifetime processing evidence does not infer green. A normalized terminal error changes the favicon to red. If ChatGPT emits a successful final and then a same-exchange terminal error such as `conversation_too_large`, the visible sequence is yellow → light green → red. A subsequent current-page prompt returns green or red to yellow.
+The favicon is a presentation-only consumer of the shared lifecycle observer. When a current-page generation request is observed, or reload restoration reports structured `IS_STREAMING`, the userscript recolors only the near-white portion of the original stock ChatGPT favicon to yellow. A successful normalized terminal event changes that favicon to vivid bright green (#00FF00) only when processing was observed in the current loaded page. A successful terminal arriving without such page-lifetime processing evidence does not infer green. A normalized terminal error changes the favicon to red. If ChatGPT emits a successful final and then a same-exchange terminal error such as `conversation_too_large`, the visible sequence is yellow → bright green → red. A subsequent current-page prompt returns green or red to yellow.
 
 A reload whose structured stream status is not active leaves the stock favicon untouched; `NOT_STREAMING` is not treated as evidence that this page observed completion. Browsers may choose among multiple `link[rel~="icon"]` candidates according to media/type/sizes, so DownloadConversation does not rely on one appended generic icon link. On each colored render it enumerates the current stock favicon candidates, captures each candidate's original source once, generates that candidate's yellow/green/red image from its own original source, and updates the existing candidate. Every later state is regenerated from the captured original rather than from a previously recolored image. An explicit original state restores the captured hrefs. Visible near-white pixels are recolored while alpha and non-white pixels are preserved. Image/canvas failure is diagnostic-only; there is no DOM-text, local-storage, alternate-network, or other fallback state path.
 
@@ -724,3 +724,13 @@ SVG, dark SVG, 48×48 PNG), their source URLs and load status.  It prefers
 current stock asset URLs and clearly identifies a dated observed-log fallback
 when an asset is no longer available in the DOM.  The Visual test is excluded
 from automatic Run All; it never changes the current page favicon.
+
+## DC #354 current favicon ring-only rendering
+
+Animation version 2.1.0 preserves the existing two-frame whole-icon blink,
+original source/theme lookup, per-version IndexedDB keys, heartbeat cadence,
+cache election and lifecycle state machine.  The central progress pie behind
+the stock artwork is removed; only the established outer six-step ring is
+overlaid on its transparent original.  DONE uses #00FF00 rather than
+#90EE90; ring green starts at #00CC00.  The historical 1.11.8 and 2.0.0
+cache datasets remain untouched, with no cross-version frame reuse.

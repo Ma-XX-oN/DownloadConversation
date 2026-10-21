@@ -11,12 +11,13 @@ frozen V2.0 document remains historical evidence and must not be rewritten.
 - `@version` / `VERSION` identify the DC userscript build, **not** the
   favicon animation. An `-issue.*` suffix has no animation semantics.
 - `FAVICON_ANIMATION_VERSION` is a separate numeric triplet, currently
-  `2.0.0`. Change it when frame bytes or frame-index semantics change.
+  `2.1.0`. Change it when frame bytes or frame-index semantics change.
   Per-title heartbeat cadence is a presentation scheduling policy and does
   **not** alter cached frames, the frame-index API or animation identity.
 - Old animation `1.11.8` (21-frame cosine) already exists in the shared
   IndexedDB database and belongs to old running tabs. Do not migrate it.
-  New tabs select `2.0.0` explicitly. Old tabs continue independently.
+  New tabs select `2.1.0` explicitly. Old tabs continue independently.
+  Existing `2.0.0` two-frame disk/pie datasets also remain intact.
 - A dataset key includes the animation version, the **source favicon URL**,
   the active light/dark theme, the colour state and progress step. A frame
   index is a lookup *within* that tuple, never part of generation-lock key.
@@ -39,9 +40,9 @@ frozen V2.0 document remains historical evidence and must not be rewritten.
    bounded PNG frames, atomically store `frames.length` entries with
    `count:frames.length` readiness metadata, then return only requested
    indexes. It MUST NOT know the animation's waveform or exact frame count.
-5. **Lifecycle**: leave the yellow/green/red/white state machine, 0..6
-   five-minute pie and ring, focus acknowledgement, theme handling,
-   stopwatch, and terminal observer unchanged.
+5. **Lifecycle**: retain yellow processing, bright-green DONE, red error,
+   white acknowledgement, 0..6 five-minute **ring-only** progression,
+   focus acknowledgement, theme handling, stopwatch and terminal observer.
 
 For another animation (for example `3.0.0`), update the renderer, the
 time-to-index function in `get_favicon`, `update_every_ms`, and the
@@ -49,7 +50,17 @@ independent animation version constant. Update animation-specific tests and
 the generated userscript. Do **not** change shared cache/store shape,
 Web Locks, lifecycle, network observers, or DC build-version parsing.
 
-## Animation 2.0.0: strong whole-icon blink
+## Animation 2.1.0: ring-only strong whole-icon blink
+
+DC #354 removes the historical filled background pie/disk from every
+progress step and colour state; the untouched original artwork and its
+transparent background remain behind the unchanged outer progress arc.
+At step zero no arc is drawn.  Steps 1–6 use the same six five-minute
+arc angles, `0.12 * size` stroke width, `0.43 * size` radius and colours
+as 2.0.0.  Completed/DONE is `#00FF00` (previously `#90EE90`), distinct
+from the first ring green `#00CC00`.  Other base and ring colours and
+error ring suppression are unchanged.  Both 2.0.0 disk-backed and
+1.11.8 21-frame cached datasets stay version-isolated for older tabs.
 
 - Two **complete** PNG frames per on-demand tuple: index 0 uses full opacity
   and index 1 multiplies existing composite alpha by 0.20.
@@ -85,7 +96,8 @@ server-receipt `Last:` indicator is deferred to a separate ticket.
   generation/publishing validates actual `frames.length`. The explicit
   upper bound of 256 is a storage safety limit, NOT an animation format.
 - Old tabs using legacy `1.11.8` can keep reading their existing
-  21-frame dataset. New `2.0.0` sessions read only their own dataset.
+  21-frame dataset. New `2.1.0` sessions read only their own dataset; the prior
+  `2.0.0` dataset is neither rewritten nor shared with 2.1.0.
   There is no conversion or cross-animation backward compatibility.
 - The existing 600000 ms dataset `last_used` touch and collection policy
   is unchanged in DC #349: at most one timestamp update per ten minutes,
@@ -136,7 +148,7 @@ a recurring timer. To add a new rate, insert one dictionary entry.
 `agentFaviconFrameTimeOffset()` converts that cadence into the existing
 two-frame selector's time offset. The renderer, cache and
 `get_favicon(version_key, base_type, completion_time, time_offset)`
-are unchanged, as is independent animation version `2.0.0`.
+are unchanged; DC #354 advances independent animation version to `2.1.0`.
 Both existing cached frames are reused at either rate.
 
 The title observer is event-driven, bound to the document title and
