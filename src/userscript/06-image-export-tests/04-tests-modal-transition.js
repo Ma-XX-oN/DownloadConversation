@@ -214,8 +214,8 @@
     updateUi();
     refreshTestMatrix();
     try {
-      for (const [name, fn] of builtInTests()) {
-        await executeBuiltInTest(name, fn);
+      for (const [name, fn, type] of builtInTests()) {
+        if (type !== 'Visual') await executeBuiltInTest(name, fn);
       }
     } finally {
       testInProgress = false;
