@@ -21,6 +21,7 @@ const ordinaryStages = [
   ['#313 persistent HMAC key service and fail-closed negatives', nodeCommand, ['--test', 'tests/persistent-hmac-key-service.test.mjs',
     'tests/persistent-hmac-factory.test.mjs',
     'tests/persistent-hmac-auto-cycle.test.mjs',
+    'tests/persistent-hmac-indexeddb-probe.test.mjs',
     'tests/persistent-hmac-browser-probe.test.mjs',
      'tests/persistent-hmac-fence-prototype.test.mjs']],
   ['#313 Chromium multi-tab real Web Locks fence', nodeCommand, ['--test', 'tests/persistent-hmac-chromium-web-locks.test.mjs']],
