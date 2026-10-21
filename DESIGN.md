@@ -718,4 +718,9 @@ stock favicon observations, browser/app theme, DC icon assignments, cache
 activity, and other diagnostics.  This category filter applies before
 console mirroring or log retention; the existing Diagnostics severity selector
 still governs which enabled events are retained.  The Gen/Comm/Con recording
-switches are independent.
+switches are independent.  The built-in Test matrix also offers a manual
+Favicon source comparison: three read-only original previews (startup/light
+SVG, dark SVG, 48×48 PNG), their source URLs and load status.  It prefers
+current stock asset URLs and clearly identifies a dated observed-log fallback
+when an asset is no longer available in the DOM.  The Visual test is excluded
+from automatic Run All; it never changes the current page favicon.
