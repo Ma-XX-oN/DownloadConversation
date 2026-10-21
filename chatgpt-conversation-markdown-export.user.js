@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         ChatGPT Conversation Markdown Recorder
 // @namespace    https://chatgpt.com/
-// @version      1.11.10-issue.347.10
+// @version      1.11.10-issue.347.11
 // @description  Exports the current ChatGPT conversation directly from the Conversation API as Markdown or JSONL.
 // @match        https://chatgpt.com/*
 // @match        https://chat.openai.com/*
@@ -21145,7 +21145,10 @@ Image elapsed: ${formatDuration(imageElapsed)} — Completed: ${imageCompleted}/
       const title = document.createElement('strong');
       title.textContent = asset.label;
       const frame = document.createElement('div');
-      frame.style.cssText = 'height:100px;display:flex;align-items:center;justify-content:center;background:linear-gradient(90deg,#fff 50%,#202020 50%);margin:8px 0;border-radius:6px';
+      frame.style.cssText =
+        'width:88px;height:88px;box-sizing:border-box;display:flex;' +
+        'align-items:center;justify-content:center;border:1px solid #777;' +
+        'border-radius:6px;margin:8px 0;background:transparent';
       const image = document.createElement('img');
       image.width = 72;
       image.height = 72;
