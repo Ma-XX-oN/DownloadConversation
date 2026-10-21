@@ -13,7 +13,7 @@ function fixture() {
   const logs = [];
   const links = [];
   let dark = false;
-  let appTheme = 'light';
+  let appTheme = null;
   let observer;
   const matchMedia = query => ({
     matches: query.includes('dark') ? dark : !dark,
