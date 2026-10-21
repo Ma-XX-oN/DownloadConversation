@@ -123,7 +123,8 @@ test('v0.1.3 responders are independently reported from the v3 channel', async (
 
 test('mixed-version legacy responders do not block shipped Stage 1', async () => {
   const a = script.indexOf('  async function begin() {');
-  const b = script.indexOf('  async function afterReload() {', a);
+  const b = script.indexOf(
+    '  /**\n   * @returns {Promise<void>} Actual reload', a);
   assert.ok(a > 0 && b > a);
   const code = script.slice(a, b);
   const report = [];
