@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         ChatGPT Conversation Markdown Recorder
 // @namespace    https://chatgpt.com/
-// @version      1.11.10-issue.347.6
+// @version      1.11.10-issue.347.7
 // @description  Exports the current ChatGPT conversation directly from the Conversation API as Markdown or JSONL.
 // @match        https://chatgpt.com/*
 // @match        https://chat.openai.com/*
@@ -24259,7 +24259,7 @@ Image elapsed: ${formatDuration(imageElapsed)} — Completed: ${imageCompleted}/
     const style = document.createElement('style');
     style.id = `${PANEL_ID}-style`;
     style.textContent = `
-      #${LAUNCHER_ID}{position:fixed;right:16px;bottom:16px;z-index:2147483647;width:36px;height:32px;box-sizing:border-box;border:1px solid #777;border-radius:9px;background:#242424;color:#fff;padding:0;display:grid;place-items:center;box-shadow:0 1px 3px rgba(0,0,0,.35);cursor:pointer}
+      #${LAUNCHER_ID}{position:fixed;right:16px;bottom:16px;z-index:2147483647;width:36px;height:32px;border:1px solid #777;border-radius:9px;background:#242424;color:#fff;padding:0;display:grid;place-items:center;box-shadow:0 1px 3px rgba(0,0,0,.35);cursor:pointer}
       #${LAUNCHER_ID}::before{content:'';width:16px;height:16px;border-radius:50%;background:#d0d0d0;display:block}
       #${PANEL_ID}{position:fixed;right:16px;bottom:54px;z-index:2147483647;width:min(390px,calc(100vw - 20px));max-height:calc(100dvh - 76px);overflow-y:auto;overflow-x:hidden;overscroll-behavior:contain;box-sizing:border-box;padding:10px;border:1px solid rgba(127,127,127,.55);border-radius:12px;background:#181818;color:#f2f2f2;box-shadow:0 6px 24px rgba(0,0,0,.35);font:13px/1.35 system-ui,sans-serif}
       #${PANEL_ID} .tm-title{font-size:13px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;margin:0 32px 6px 0;font-weight:600}
@@ -24344,9 +24344,8 @@ Image elapsed: ${formatDuration(imageElapsed)} — Completed: ${imageCompleted}/
       #${PANEL_ID} .tm-recording-actions .tm-icon-button{width:40px;height:36px;flex:0 0 40px}
       #${PANEL_ID} .tm-recording-actions .tm-icon-button svg{width:21px;height:21px}
       #${PANEL_ID} .tm-log-settings-popup[hidden]{display:none}
-      #${PANEL_ID} .tm-log-settings-popup{position:fixed;top:50%;left:50%;transform:translate(-50%,-50%);z-index:30;box-sizing:border-box;width:min(330px,calc(100vw - 32px));max-height:85dvh;overflow:auto;padding:14px;border:1px solid #777;border-radius:12px;background:#202020;box-shadow:0 12px 42px rgba(0,0,0,.65);display:flex;flex-direction:column;gap:10px}
+      #${PANEL_ID} .tm-log-settings-popup{position:fixed;top:50%;left:50%;transform:translate(-50%,-50%);z-index:30;box-sizing:border-box;width:min(330px,calc(100vw - 32px));max-height:85dvh;overflow:auto;padding:14px;border:1px solid #777;border-radius:12px;background:#202020;display:flex;flex-direction:column;gap:10px}
       #${PANEL_ID} .tm-log-settings-heading{display:flex;align-items:center;justify-content:space-between;gap:12px}
-      #${PANEL_ID} .tm-log-settings-heading strong{font-size:15px}
       #${PANEL_ID} .tm-log-settings-heading button{font-size:22px;padding:1px 8px}
       #${PANEL_ID} .tm-log-settings-popup label{display:flex;align-items:center;gap:8px;cursor:pointer}
       #${PANEL_ID} .tm-log-settings-popup input{width:16px;height:16px;accent-color:#78b8ff}
