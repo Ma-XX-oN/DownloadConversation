@@ -97,6 +97,7 @@
    * @returns {void} No value is returned.
    */
   function logDiagnostic(level, message, data = null) {
+    if (!diagnosticCategoryEnabled(message)) return;
     logConsoleDiagnostic(level, `[ChatGPT Recorder ${level}] ${message}`, data);
     if (localStorage.getItem('tm-recorder-general-capture') === 'false') return;
     if (!diagnosticEnabled(level)) return;
