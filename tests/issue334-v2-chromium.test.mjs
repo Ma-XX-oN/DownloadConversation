@@ -140,6 +140,14 @@ function pageHtml(isChild) {
         const beforeCooling = calls.length+child.calls.length;
         verify((await a.read_png(URL1,'light',1,3,0))===null, 'local cooldown bypassed');
         verify((await b.read_png(URL1,'light',1,3,1))===null, 'cross-tab cooldown bypassed');
+        // Twenty-five hundred milliseconds of two-tab 250ms pulse requests
+        // must not turn a renderer capability failure into a busy retry.
+        for (let beat=0; beat<10; beat++) {
+          const tab=beat%2===0 ? a : b;
+          verify((await tab.read_png(URL1,'light',1,3,beat%21))===null,
+            'cooldown returned a frame during repeated heartbeat');
+          await wait(255);
+        }
         verify(calls.length+child.calls.length===beforeCooling, 'duplicate failed generation');
         verify(cacheWarnings.length===beforeWarning+1, 'failure warning repeated in cooldown');
         const failures = await faviconSequenceRequest(db.transaction('datasets','readonly')
