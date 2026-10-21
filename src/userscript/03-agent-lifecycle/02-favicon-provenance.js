@@ -275,4 +275,4 @@
     });
     window.addEventListener('pagehide', () => faviconProvenanceObserver?.disconnect());
   }
-  faviconProvenanceStart();
+  // Provenance startup is deferred until the recorder capture state is initialized.
