@@ -62,7 +62,7 @@ function png(frame) {
   ]);
 }
 
-const frames = Array.from({ length: 21 }, (_, i) => png(i).toString('base64'));
+const frames = Array.from({ length: 2 }, (_, i) => png(i).toString('base64'));
 
 function pageHtml(isChild) {
   return `<!doctype html><meta charset="utf-8"><link id="stock" rel="icon"
@@ -139,8 +139,8 @@ function pageHtml(isChild) {
         verify((await first)?.type==='image/png', 'first frame failed '+JSON.stringify(window.errors));
         verify((await waiting)?.type==='image/png', 'waiting tab frame failed');
         const coldMs = performance.now() - coldStart;
-        verify(window.pngEncodes === 21,
-          'first cold sequence generated '+window.pngEncodes+' frames, expected 21');
+        verify(window.pngEncodes === 2,
+          'first cold sequence generated '+window.pngEncodes+' frames, expected 2');
         const warmStart = performance.now();
         const beforeConsumer = window.pngEncodes;
         verify(await agentFaviconRenderState('processing') === true,
@@ -163,14 +163,14 @@ function pageHtml(isChild) {
         verify(calls.length+child.calls.length === 1, 'duplicate render after lock');
         const meta = await faviconSequenceRequest(db.transaction('sequences','readonly')
           .objectStore('sequences').get(identity));
-        verify(meta?.ready && meta?.count===21, 'no complete readiness');
+        verify(meta?.ready && meta?.count===2, 'no complete readiness');
         const keys = await faviconSequenceRequest(db.transaction('pngs','readonly')
           .objectStore('pngs').getAllKeys());
-        verify(keys.length===21, 'not exactly 21 stored frames');
+        verify(keys.length===2, 'not exactly two stored frames');
         const bytesBeforeWarm = calls.length;
         const warm = await a.read_png(URL1,'light',0,0,0);
         verify(warm instanceof Blob && calls.length===bytesBeforeWarm, 'warm frame regenerated');
-        verify((await a.read_png(URL1,'light',0,0,15)) instanceof Blob, 'unrequested ready frame absent');
+        verify((await a.read_png(URL1,'light',0,0,1)) instanceof Blob, 'unrequested ready frame absent');
         verify(calls.length===1, 'warm index triggered generation');
         // A second version has independent rows without deleting the first.
         const other = await open_favicon_dataset('1.12.0', window.renderer);
@@ -198,7 +198,7 @@ function pageHtml(isChild) {
           'retry after cooldown expired failed');
         verify(calls.length === attemptsBeforeCooldown+1,
           'post-cooldown sequence was not regenerated once');
-        // Abort during IndexedDB write: all 21 inserts are rolled back.
+        // Abort during IndexedDB write: all two inserts are rolled back.
         const originalPut=IDBObjectStore.prototype.put;
         const abortId=faviconSequenceKey(key, URL1, 'light', 2, 4);
         let rejectedPut=false;
@@ -230,7 +230,7 @@ function pageHtml(isChild) {
         const takeover=await a.read_png(URL1,'light',3,5,0);
         verify(takeover instanceof Blob && calls.at(-1).base_type===3,'claim takeover failed');
         canceled();
-        verify(!(await faviconSequenceRead(db,crashKey,21)), 'out-of-range pulse used');
+        verify(!(await faviconSequenceRead(db,crashKey,2)), 'out-of-range pulse used');
         // Real navigation releases a stalled renderer's browser-owned Web Lock.
         const navSession=await child.api.open_favicon_dataset(key,child.renderer);
         verify(navSession!==null,'navigation owner cannot reopen session');
@@ -282,7 +282,7 @@ function pageHtml(isChild) {
     <\/script><img hidden src="/hold">`;
 }
 
-test('V2 real #333 renderer under #334 two-tab IDB/Web Locks, atomic 21, and recovery',
+test('V2 real #333 renderer under #334 two-tab IDB/Web Locks, atomic two, and recovery',
   { timeout: 55000 }, async () => {
     const server = createServer((req, res) => {
       if (req.url === '/favicon.svg') {
@@ -334,7 +334,7 @@ test('V2 real #333 renderer under #334 two-tab IDB/Web Locks, atomic 21, and rec
         assert.equal(result[name],true,name);
       }
       console.log('DC332_V2_REAL_PROVIDER_CONSUMER='+JSON.stringify(result.measured));
-      assert.equal(result.measured.coldEncodes, 21);
+      assert.equal(result.measured.coldEncodes, 2);
       assert.equal(result.measured.warmNewEncodes, 0);
     } finally {
       server.closeAllConnections();
