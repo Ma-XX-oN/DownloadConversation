@@ -43,7 +43,8 @@
         "src/userscript/02-network-communication/07-communication-streams.js",
         "src/userscript/02-network-communication/08-communication-xhr.js",
         "src/userscript/02-network-communication/03-csc-canonical-ingress.js",
-        "src/userscript/02-network-communication/03-csc-plugin-backlog.js"
+        "src/userscript/02-network-communication/03-csc-plugin-backlog.js",
+        "src/userscript/02-network-communication/03-csc-provider-navigation-ingress.js"
       ]
     },
     {
