@@ -64,6 +64,7 @@ function runTsc(source, label) {
       ambientPath,
       [
         'declare const GM_info: any;',
+        'declare const faviconV2RenderSource: {renderFaviconPulseSequence(request: any): Promise<any>};',
         'declare const unsafeWindow: any;',
         'declare function GM_xmlhttpRequest(details: any): any;',
         'declare function GM_getValue(name: string, defaultValue?: any): any;',

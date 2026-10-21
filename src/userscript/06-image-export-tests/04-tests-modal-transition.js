@@ -82,7 +82,8 @@
       ['AI-transcript renderer parity', testRendererParityFeatures],
       ['Generated sandbox download link', testGeneratedSandboxDownloadLink],
       ['Jump identifier resolution', testJumpIdentifierResolution],
-      ['Conversation API access/schema', testConversationApiAccessAndSchema]
+      ['Conversation API access/schema', testConversationApiAccessAndSchema],
+      ['Favicon source comparison', null, 'Visual']
     ];
   }
 
@@ -213,8 +214,8 @@
     updateUi();
     refreshTestMatrix();
     try {
-      for (const [name, fn] of builtInTests()) {
-        await executeBuiltInTest(name, fn);
+      for (const [name, fn, type] of builtInTests()) {
+        if (type !== 'Visual') await executeBuiltInTest(name, fn);
       }
     } finally {
       testInProgress = false;

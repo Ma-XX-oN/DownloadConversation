@@ -38,4 +38,12 @@
   });
   installNetworkCapture();
   bootstrapUi();
+  // Optional favicon diagnostics must never prevent the recorder from mounting.
+  try {
+    faviconProvenanceStart();
+  } catch (error) {
+    logConsoleDiagnostic('warnings', '[ChatGPT Recorder] favicon diagnostics disabled', {
+      reason: error instanceof Error ? error.message : String(error)
+    });
+  }
 })();

@@ -41,7 +41,7 @@ export function diskBlock() {
   );
 }
 
-function functionSourceFrom(source, name) {
+export function functionSourceFrom(source, name) {
   const starts = [
     source.indexOf(`  async function ${name}(`),
     source.indexOf(`  function ${name}(`)

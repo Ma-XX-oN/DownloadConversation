@@ -110,13 +110,13 @@
           <table class="tm-test-table">
             <thead><tr><th>Test</th><th>Type</th><th>Previous Result</th><th>Current Result</th><th></th></tr></thead>
             <tbody>
-              ${tests.map(([name]) => `
+              ${tests.map(([name, , type]) => `
                 <tr data-test-name="${escapeHtmlAttribute(name)}">
                   <td>${escapeHtmlText(name)}</td>
-                  <td>Automatic</td>
+                  <td>${type === 'Visual' ? 'Visual' : 'Automatic'}</td>
                   <td data-role="previous-result">—</td>
                   <td data-role="current-result">—</td>
-                  <td><button type="button" data-role="run-test">Run</button></td>
+                  <td><button type="button" data-role="run-test">${type === 'Visual' ? 'Show' : 'Run'}</button></td>
                 </tr>`).join('')}
             </tbody>
           </table>
@@ -140,7 +140,8 @@
          * Handles test.
          */
         const test = tests.find(([candidate]) => candidate === name);
-        if (test) void runOneTest(test[0], test[1]);
+        if (test?.[2] === 'Visual') showFaviconSourceComparison(row);
+        else if (test) void runOneTest(test[0], test[1]);
         return;
       }
       if (target.closest('[data-role="run-all-tests"]')) void runTests();

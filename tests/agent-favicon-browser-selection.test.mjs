@@ -3,121 +3,31 @@ import test from 'node:test';
 import vm from 'node:vm';
 import { productionFunctionSource } from './helpers/userscript-source.mjs';
 
-function multiCandidateHarness() {
-  const originals = [
-    'https://chatgpt.com/favicon-32x32.png',
-    'https://chatgpt.com/favicon-48x48.png'
+test('capture all original stock favicon candidates without modifying browser selectors', () => {
+  const links = [
+    { href: 'https://chatgpt.com/light.png', rel: 'icon', type: 'image/png',
+      media: '', sizes: { value: '32x32' } },
+    { href: 'https://chatgpt.com/dark.png', rel: 'icon', type: 'image/png',
+      media: '(prefers-color-scheme: dark)', sizes: { value: '48x48' } }
   ];
-  const stockLinks = [
-    { id: '', rel: 'icon', href: originals[0], type: 'image/png', media: '', sizes: { value: '32x32' } },
-    { id: '', rel: 'icon', href: originals[1], type: 'image/png', media: '(prefers-color-scheme: dark)', sizes: { value: '48x48' } }
-  ];
-  let override = null;
-  const imageSources = [];
-  let dataUrlSequence = 0;
-
-  const document = {
-    head: { append(element) { override = element; } },
-    documentElement: { append(element) { override = element; } },
-    querySelectorAll(selector) {
-      assert.equal(selector, 'link[rel~="icon"]');
-      return override ? [...stockLinks, override] : [...stockLinks];
-    },
-    getElementById(id) {
-      return override?.id === id ? override : null;
-    },
-    createElement(tag) {
-      if (tag === 'link') {
-        return {
-          id: '',
-          rel: '',
-          href: '',
-          remove() { override = null; }
-        };
-      }
-      if (tag === 'canvas') {
-        return {
-          width: 0,
-          height: 0,
-          getContext() {
-            return {
-              drawImage() {},
-              getImageData() {
-                return { data: new Uint8ClampedArray([255, 255, 255, 255]) };
-              },
-              putImageData() {}
-            };
-          },
-          toDataURL() {
-            dataUrlSequence += 1;
-            return `data:image/png;render=${dataUrlSequence}`;
-          }
-        };
-      }
-      throw new Error(`Unexpected element ${tag}`);
-    }
-  };
-
-  class FakeImage {
-    constructor() {
-      this.onload = null;
-      this.onerror = null;
-      this.naturalWidth = 48;
-      this.naturalHeight = 48;
-    }
-    set src(value) {
-      imageSources.push(value);
-      queueMicrotask(() => this.onload?.());
-    }
-  }
-
-  const context = {
-    document,
-    Image: FakeImage,
-    Uint8ClampedArray,
-    performance: { now: () => 0 },
-    queueMicrotask,
-    diagnostics: []
-  };
-
+  const h = { document: { querySelectorAll() { return links; } } };
   vm.runInNewContext(`
-    const AGENT_FAVICON_PROCESSING_RGB = Object.freeze([255, 255, 0]);
-    const AGENT_FAVICON_COMPLETED_RGB = Object.freeze([144, 238, 144]);
     const agentFaviconOriginalSources = new Map();
-    let agentFaviconRenderGeneration = 0;
-    let agentFaviconVisibleState = 'original';
-    function agentFaviconStartPulse() {}
-    function agentFaviconStopPulse() {}
-    function agentFaviconPulseOpacity() { return 1; }
-    function agentFaviconApplyOpacity() {}
- 
-    let agentStopwatchState = null;
-    function logDiagnostic(level, name, details) { this.diagnostics.push({ level, name, details }); }
-    ${productionFunctionSource('errorMessage')}
+    const agentFaviconDisplayedHrefs = new Map();
     ${productionFunctionSource('agentFaviconCurrentCandidates')}
-    ${productionFunctionSource('agentFaviconRecolorPixels')}
-    ${productionFunctionSource('agentFaviconRenderCandidate')}
-    ${productionFunctionSource('agentFaviconRingStep')}
-    ${productionFunctionSource('agentFaviconRingColor')}
-    ${productionFunctionSource('agentFaviconDrawRing')}
-    ${productionFunctionSource('agentFaviconRenderState')}
-    this.render = agentFaviconRenderState;
-  `, context);
-
-  return { context, stockLinks, originals, imageSources, override: () => override };
-}
-
-test('colored state updates every stock favicon candidate from its own original source', async () => {
-  const harness = multiCandidateHarness();
-
-  assert.equal(await harness.context.render('processing'), true);
-
-  assert.deepEqual(harness.imageSources, harness.originals,
-    'Every candidate must be rendered from its own captured original source.');
-  assert.ok(harness.stockLinks.every((link, index) => link.href !== harness.originals[index]),
-    'Every stock favicon candidate Chromium may select must project the colored state.');
-  assert.ok(harness.stockLinks.every(link => link.href.startsWith('data:image/png;')),
-    'Each stock favicon candidate must point at its generated colored image.');
-  assert.equal(harness.override(), null,
-    'Do not rely on an extra generic rel=icon link winning Chromium candidate selection.');
+    this.candidates = agentFaviconCurrentCandidates;
+    this.displayed = agentFaviconDisplayedHrefs;
+  `, h);
+  let candidates = h.candidates();
+  assert.equal(candidates.length, 2);
+  assert.deepEqual(Array.from(candidates, c => c.original_href), links.map(l => l.href));
+  assert.equal(candidates[1].media, '(prefers-color-scheme: dark)');
+  assert.equal(candidates[1].sizes, '48x48');
+  h.displayed.set(links[0], 'blob:test');
+  links[0].href = 'blob:test';
+  assert.equal(h.candidates()[0].original_href, 'https://chatgpt.com/light.png');
+  links[0].href = 'https://chatgpt.com/changed.png';
+  candidates = h.candidates();
+  assert.equal(candidates[0].original_href, 'https://chatgpt.com/changed.png');
+  assert.equal(links.length, 2, 'no generic favicon candidate appended');
 });

@@ -162,9 +162,33 @@ async function main() {
     fail('Generated compressor prelude retains ES-module-only syntax.');
   }
 
+  // Compare the exact source-owned renderer bytes after the same strict
+  // module-to-classic transformation as the authoritative source builder.
+  const rendererSource = await readFile(
+    path.join(root, 'src/favicon/browser-sequence.mjs'), 'utf8');
+  const exportedNames = ['FaviconRenderError', 'activeFaviconTheme',
+    'pulseFrameForSlot', 'renderFaviconPulseSequence'];
+  const declarations = [...rendererSource.matchAll(
+    /^export (?:class|function|async function) ([A-Za-z_$][\w$]*)\b/gm
+  )].map(match => match[1]);
+  if (declarations.length !== exportedNames.length ||
+      exportedNames.some(name => !declarations.includes(name))) {
+    fail('Frozen V2 renderer exports changed.');
+  }
+  const classicRenderer = rendererSource.replace(
+    /^export (?=(?:class|function|async function) [A-Za-z_$][\w$]*\b)/gm, '');
+  if (/^\s*(?:import|export)\s/m.test(classicRenderer) ||
+      /\bimport\s*\(/.test(classicRenderer)) {
+    fail('Unexpected renderer ESM syntax.');
+  }
+  const rendererPrelude = '// BEGIN bundled V2 renderer\n'
+    + 'const faviconV2RenderSource = (() => {\n' + classicRenderer
+    + '\nreturn Object.freeze({renderFaviconPulseSequence});\n})();\n'
+    + '// END bundled V2 renderer\n';
   const expectedTail = iifePrefix
     + bridgeText
     + compressorPrelude
+    + rendererPrelude
     + sourceBody;
   if (artifactTail !== expectedTail) {
     fail('Generated userscript direct-plugin/compressor/source assembly differs from repository source.');

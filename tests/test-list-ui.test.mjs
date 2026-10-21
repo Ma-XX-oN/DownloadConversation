@@ -15,13 +15,13 @@ test('Test opens the interactive built-in test matrix instead of immediately run
   for (const heading of ['Type', 'Previous Result', 'Current Result']) {
     assert.ok(userscript.includes(`<th>${heading}</th>`), `Matrix is missing ${heading}.`);
   }
-  assert.match(userscript, /data-role="run-test">Run<\/button>/,
+  assert.match(userscript, /data-role="run-test">\$\{type === 'Visual' \? 'Show' : 'Run'\}<\/button>/,
     'Every matrix row must expose an individual Run control.');
   assert.match(userscript, /data-role="run-all-tests">Run All<\/button>/,
     'Matrix must expose Run All.');
   assert.match(userscript,
-    /for \(const \[name, fn\] of builtInTests\(\)\) \{/,
-    'Run All must execute the same registry shown by the matrix.');
+    /for \(const \[name, fn, type\] of builtInTests\(\)\) \{/,
+    'Run All must use the same registry while excluding Visual entries.');
 
   for (const name of [
     'API pagination',
@@ -30,7 +30,8 @@ test('Test opens the interactive built-in test matrix instead of immediately run
     'AI-transcript renderer parity',
     'Generated sandbox download link',
     'Jump identifier resolution',
-    'Conversation API access/schema'
+    'Conversation API access/schema',
+    'Favicon source comparison'
   ]) {
     assert.ok(userscript.includes(`['${name}',`), `Built-in registry is missing ${name}.`);
   }

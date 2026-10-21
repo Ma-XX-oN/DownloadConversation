@@ -41,6 +41,11 @@ const ordinaryStages = [
     'tests/recording-panel-modes.test.mjs',
     'tests/agent-stopwatch-v1-identity.test.mjs'
   ]],
+  ['DC #347 favicon provenance and settings regression', nodeCommand, ['--test',
+    'tests/issue347-favicon-provenance.test.mjs',
+    'tests/issue347-log-category-settings.test.mjs',
+    'tests/issue347-startup-order.test.mjs',
+    'tests/issue347-favicon-source-preview.test.mjs']],
   ['CI test inventory regression', nodeCommand, ['--test', 'tests/ci-test-inventory.test.mjs']],
   ['Actions policy regression', nodeCommand, ['--test', 'tests/actions-policy.test.mjs']],
   ['RepoWorkflow adoption contract', nodeCommand, ['--test', 'tests/repoworkflow-adoption.test.mjs']],
@@ -63,6 +68,25 @@ const ordinaryStages = [
   ['Agent turn stopwatch stream integration', nodeCommand, ['--test', 'tests/agent-resume-metadata-patch.test.mjs', 'tests/agent-turn-stopwatch-stream.test.mjs']],
   ['Agent turn stopwatch live total', nodeCommand, ['--test', 'tests/agent-turn-stopwatch-live-total.test.mjs']],
   ['Agent turn stopwatch reload restoration', nodeCommand, ['--test', 'tests/agent-turn-stopwatch-reload.test.mjs']],
+  ['DC #332 V2 Node and consumer contracts', nodeCommand, ['--test',
+    'tests/issue334-v2-sequence.test.mjs',
+    'tests/agent-favicon-cached-lookup.test.mjs',
+    'tests/agent-favicon-v2-provisional.test.mjs',
+    'tests/issue336-v2-sequence-contract.test.mjs']],
+  ['DC #332 real Chromium multi-tab renderer/cache', nodeCommand, ['--test',
+    'tests/issue332-v2-real-integration.test.mjs']],
+  ['DC #332 24-second real Chromium warm pulse performance', nodeCommand, ['--test',
+    'tests/issue332-v2-warm-performance.test.mjs']],
+  ['DC #334 unsupported favicon backoff regression', nodeCommand, ['--test',
+    'tests/issue332-v2-failure-backoff.test.mjs'], { timeoutMs: 90000 }],
+  ['DC #334 Chromium cross-tab storage acceptance', nodeCommand, ['--test',
+    'tests/issue334-v2-chromium.test.mjs']],
+  ['DC #333 renderer real-time Chromium responsiveness', nodeCommand, ['--test',
+    'tests/issue333-realtime-browser.test.mjs']],
+  ['DC #333 renderer pixel parity Chromium', nodeCommand, ['--test',
+    'tests/issue333-v2-sequence.test.mjs']],
+  ['DC #336 CSS-sensitive SVG Chromium', nodeCommand, ['--test',
+    'tests/issue336-v2-theme-chromium.test.mjs']],
   ['Agent favicon state regression', nodeCommand, ['--test', 'tests/agent-favicon-state.test.mjs', 'tests/agent-favicon-browser-selection.test.mjs', 'tests/agent-favicon-thirty-minute-ring.test.mjs', 'tests/agent-favicon-heartbeat.test.mjs']],
   ['Agent WebSocket delayed-final regression', nodeCommand, ['--test', 'tests/agent-websocket-delayed-final.test.mjs']],
   ['Agent sound readiness regression', nodeCommand, ['--test', 'tests/agent-sound-initialization-indicator.test.mjs']],
@@ -107,7 +131,8 @@ function runStage(name, command, args, options = {}) {
     cwd: options.cwd ?? root,
     env: options.env ?? process.env,
     stdio: 'inherit',
-    shell: false
+    shell: false,
+    ...(options.timeoutMs ? { timeout: options.timeoutMs } : {})
   });
   if (result.error) {
     console.error(`${name}: ${result.error.message}`);

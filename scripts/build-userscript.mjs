@@ -71,6 +71,28 @@ async function readAgentPluginPrelude() {
   );
 }
 
+/** Bundle the exact #333 renderer ESM as private classic IIFE source. */
+async function buildFaviconRendererPrelude() {
+  const source = await readFile(path.join(root, 'src/favicon/browser-sequence.mjs'), 'utf8');
+  const names = ['FaviconRenderError', 'activeFaviconTheme',
+    'pulseFrameForSlot', 'renderFaviconPulseSequence'];
+  const declarations = [...source.matchAll(
+    /^export (?:class|function|async function) ([A-Za-z_$][\w$]*)\b/gm
+  )].map(match => match[1]);
+  if (declarations.length !== names.length ||
+      names.some(name => !declarations.includes(name))) {
+    throw new Error('Frozen V2 renderer exports changed.');
+  }
+  const classic = source.replace(/^export (?=(?:class|function|async function) [A-Za-z_$][\w$]*\b)/gm, '');
+  if (/^\s*(?:import|export)\s/m.test(classic) || /\bimport\s*\(/.test(classic)) {
+    throw new Error('Unexpected renderer module syntax.');
+  }
+  return '// BEGIN bundled V2 renderer\n'
+    + 'const faviconV2RenderSource = (() => {\n' + classic
+    + '\nreturn Object.freeze({renderFaviconPulseSequence});\n})();\n'
+    + '// END bundled V2 renderer\n';
+}
+
 async function buildCompressorPrelude() {
   const vendor = path.join(root, 'vendor', 'compressor');
   const manifest = JSON.parse(await readFile(path.join(vendor, 'manifest.json'), 'utf8'));
@@ -136,11 +158,12 @@ async function main() {
   }
   const agentPluginPrelude = await readAgentPluginPrelude();
   const compressorPrelude = await buildCompressorPrelude();
+  const faviconRendererPrelude = await buildFaviconRendererPrelude();
   const built = assembleUserscript(
     header,
     dependencies,
     source,
-    agentPluginPrelude + compressorPrelude
+    agentPluginPrelude + compressorPrelude + faviconRendererPrelude
   );
 
   if (args.check) {
