@@ -60,6 +60,10 @@ function pageHtml(isChild) {
       faviconCacheV2Configure([{version:'1.11.8', update_every_ms:250},
         {version:'1.12.0',update_every_ms:250}]);
       window.calls = [];
+      window.cacheWarnings = [];
+      function logDiagnostic(level, name, details) {
+        cacheWarnings.push({ level, name, details });
+      }
       window.renderer = async (args, signal) => {
         calls.push(args);
         if (window.failCount) { window.failCount = 0; return frameBlobs.slice(0,20); }
@@ -128,11 +132,25 @@ function pageHtml(isChild) {
           'new frame in existing dark sequence rerendered');
         window.failCount=1;
         const failId=faviconSequenceKey(key, URL1, 'light', 1, 3);
+        const beforeWarning = cacheWarnings.length;
         const rejected=await a.read_png(URL1,'light',1,3,0);
         verify(rejected===null, 'bad generator output accepted');
         verify(!(await faviconSequenceRequest(db.transaction('sequences','readonly')
           .objectStore('sequences').get(failId))), 'failed generation published');
-        verify((await a.read_png(URL1,'light',1,3,0)) instanceof Blob,'retry after failed render');
+        const beforeCooling = calls.length+child.calls.length;
+        verify((await a.read_png(URL1,'light',1,3,0))===null, 'local cooldown bypassed');
+        verify((await b.read_png(URL1,'light',1,3,1))===null, 'cross-tab cooldown bypassed');
+        verify(calls.length+child.calls.length===beforeCooling, 'duplicate failed generation');
+        verify(cacheWarnings.length===beforeWarning+1, 'failure warning repeated in cooldown');
+        const failures = await faviconSequenceRequest(db.transaction('datasets','readonly')
+          .objectStore('datasets').get(key));
+        verify(failures.failed_sequences[failId]>Date.now(), 'cross-tab cooldown missing');
+        const realDateNow=Date.now;
+        try {
+          Date.now=()=>realDateNow()+FAVICON_SEQUENCE_FAILURE_BACKOFF_MS+1;
+          verify((await a.read_png(URL1,'light',1,3,0)) instanceof Blob,
+            'retry after failure cooldown did not recover');
+        } finally { Date.now=realDateNow; }
         // Abort during IndexedDB write: all 21 inserts are rolled back.
         const originalPut=IDBObjectStore.prototype.put;
         const abortId=faviconSequenceKey(key, URL1, 'light', 2, 4);
@@ -207,7 +225,7 @@ function pageHtml(isChild) {
         child.close();
         document.getElementById('result').textContent=JSON.stringify({
           winner:true, atomic21:true, no_duplicate:true, theme:true,
-          no_eager:true, recovery:true, aborted_transaction:true,
+          no_eager:true, recovery:true, failure_cooldown:true, aborted_transaction:true,
           takeover:true, navigation:true, warm:true, strict_ttl:true, throttle:true, versions:true });
       }
       ${isChild ? '' : `runParent().catch(error => {
@@ -260,7 +278,7 @@ test('V2: Chromium two tabs elect one 21-frame producer, commit atomically and r
       const result=JSON.parse(match[1].replaceAll('&quot;','"').replaceAll('&amp;','&'));
       assert.equal(result.error, undefined, JSON.stringify(result));
       for (const name of ['winner','atomic21','no_duplicate','theme','no_eager',
-        'recovery','aborted_transaction','takeover','warm','strict_ttl',
+        'recovery','failure_cooldown','aborted_transaction','takeover','warm','strict_ttl',
         'throttle','versions','navigation']) {
         assert.equal(result[name],true,name);
       }
