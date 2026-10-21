@@ -19,8 +19,18 @@
         item.expires_at_ms - item.issued_at_ms > 25 * hourMs ||
         !Array.isArray(item.cycle_events) ||
         !item.cycle_events.length ||
+        item.cycle_events.some((event, i) =>
+          !event || event.type !== 'hmac-key-cycle' ||
+          !/^[a-f0-9]{32}$/.test(event.generation ?? '') ||
+          !Number.isSafeInteger(event.epoch) || event.epoch !== i + 1 ||
+          event.id !== 'hmac-key-cycle:' + event.epoch + ':' +
+            event.generation ||
+          !Number.isSafeInteger(event.occurred_at_ms) ||
+          !['initial', 'manual', 'scheduled', 'overdue'].includes(
+            event.reason)) ||
         item.cycle_events.at(-1).generation !== item.generation ||
-        item.cycle_events.at(-1).epoch !== item.epoch) {
+        item.cycle_events.at(-1).epoch !== item.epoch ||
+        item.cycle_events.at(-1).occurred_at_ms !== item.issued_at_ms) {
       throw new Error('persistent-key-storage-corrupt');
     }
     if (item.phase === 'open' && item.next !== null) {
@@ -32,7 +42,8 @@
         item.next.generation === item.generation ||
         item.next.key_hex === item.key_hex ||
         !Number.isSafeInteger(item.next.epoch) ||
-        item.next.epoch !== item.epoch + 1)) {
+        item.next.epoch !== item.epoch + 1 ||
+        !['manual', 'scheduled', 'overdue'].includes(item.next.reason))) {
       throw new Error('persistent-key-storage-corrupt');
     }
     return item;
