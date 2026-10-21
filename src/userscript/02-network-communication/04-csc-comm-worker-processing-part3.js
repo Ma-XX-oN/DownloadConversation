@@ -4,6 +4,7 @@
      * @returns {Promise<void>} Output from process.
      */
     async function process(event) {
+      if (event?.cycle_record === true) return processCycle(event.event);
       const counts = { source: 0, emitted: 0, derived: 0, source_known: true };
       const choice = selected(event);
       if (choice.status !== 'selected') {
@@ -221,7 +222,6 @@
         } else if (event.body?.cancel) {
           try { await event.body.cancel(); } catch {}
         }
-        // Failure records never contain private error details.
         try {
           await writeFrame({
             kind: 'csc-comm-end', capture_id: String(event.capture_id),
@@ -267,7 +267,6 @@
         if (event.body?.cancel) void event.body.cancel().catch(() => {});
         sendStatus(event, 'rejected', 'csc-worker-queue-full', { source: 0, emitted: 0 }); return;
       }
-      // No await before insertion: this is the first COMM queue.
       records.push(event);
       void drain();
     }
@@ -311,6 +310,7 @@
       const value = event.data;
       if (!value || typeof value.type !== 'string') return;
       if (value.type === 'csc-comm-capture') enqueue(value.envelope);
+      else if (value.type === 'csc-comm-key-cycle') enqueueCycle(value.event);
       else if (value.type === 'csc-comm-configure') {
         try { options(value.options); scope.postMessage({ type: 'csc-comm-configured' }); }
         catch { scope.postMessage({ type: 'csc-comm-configuration-failed' }); }

@@ -137,3 +137,21 @@ Required independently owned downstream evidence:
 
 No PR merge, production activation, successor takeover or completed
 end-to-end CSC claim is permitted by this handoff.
+
+## Committed HMAC key-cycle event handoff (DC #313)
+
+The Worker receives `{type:'csc-comm-key-cycle',event}` where `event`
+is a committed nonsecret `service.cycleEvents(afterEpoch)` entry:
+`{type:'hmac-key-cycle',id,generation,epoch,occurred_at_ms,reason}`.
+The ID is `hmac-key-cycle:<epoch>:<generation>`; reasons are initial,
+scheduled, overdue and manual. Pending rotations must not be sent.
+
+This Worker validates exact nonsecret fields, queues events alongside COMM
+descriptors and writes an `hmac-key-cycle` JSONL record through the same
+Worker sink. Unknown and private fields fail closed; same-Worker duplicates
+are suppressed. Every `csc-comm-cycle-status` ack is `durable:false`,
+including successful sink acceptance, because no disk flush/readback occurs
+in this leaf. DC #317 must guarantee persistent cross-restart/tab
+deduplication, file verification and durable acknowledgement. The GEN
+writer separately persists the same event; DC #319 must verify matching
+IDs/timestamps and no missing or premature events on actual file readback.

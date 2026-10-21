@@ -126,3 +126,81 @@
       let result = '';
       for (const b of bytes) result += String.fromCharCode(b); return btoa(result);
     }
+
+    /** Committed cycle IDs emitted during this Worker lifetime. */
+    const emittedCycleIds = new Set();
+    /** Committed cycle IDs awaiting Worker-local sink processing. */
+    const pendingCycleIds = new Set();
+    /**
+     * Validates the exact nonsecret committed producer journal shape.
+     * @param {Object} item - DC #313 producer event.
+     * @returns {boolean} Whether the event matches the contract.
+     */
+    function validCycle(item) {
+      if (!item || typeof item !== 'object' || Array.isArray(item)) return false;
+      const fields = ['type', 'id', 'generation', 'epoch',
+        'occurred_at_ms', 'reason'];
+      return Object.keys(item).length === fields.length &&
+        Object.keys(item).every(name => fields.includes(name)) &&
+        item.type === 'hmac-key-cycle' &&
+        /^[a-f0-9]{32}$/.test(item.generation) &&
+        Number.isSafeInteger(item.epoch) && item.epoch > 0 &&
+        item.id === 'hmac-key-cycle:' + item.epoch + ':' + item.generation &&
+        Number.isSafeInteger(item.occurred_at_ms) && item.occurred_at_ms > 0 &&
+        ['initial', 'scheduled', 'overdue', 'manual'].includes(item.reason);
+    }
+    /**
+     * Reports controlled nonsecret processing status, never durability.
+     * @param {string} id - Valid canonical ID or empty.
+     * @param {string} status - Controlled status.
+     * @param {string} reason - Controlled reason.
+     * @returns {void} No value is returned.
+     */
+    function cycleStatus(id, status, reason) {
+      scope.postMessage({
+        type: 'csc-comm-cycle-status', id, status, reason, durable: false
+      });
+    }
+    /**
+     * Queues one committed event with the ordinary COMM descriptors.
+     * @param {Object} item - Nonsecret producer event.
+     * @returns {void} No value is returned.
+     */
+    function enqueueCycle(item) {
+      if (!validCycle(item)) {
+        cycleStatus('', 'rejected', 'csc-invalid-key-cycle'); return;
+      }
+      if (emittedCycleIds.has(item.id) || pendingCycleIds.has(item.id)) {
+        cycleStatus(item.id, 'duplicate', 'csc-cycle-memory-duplicate'); return;
+      }
+      if (records.length >= maxQueue) {
+        cycleStatus(item.id, 'rejected', 'csc-worker-queue-full'); return;
+      }
+      pendingCycleIds.add(item.id);
+      records.push({ cycle_record: true, event: {
+        type: item.type, id: item.id, generation: item.generation,
+        epoch: item.epoch, occurred_at_ms: item.occurred_at_ms,
+        reason: item.reason
+      } });
+      void drain();
+    }
+    /**
+     * Writes one committed cycle through the existing serializer sink.
+     * @param {Object} item - Valid canonical nonsecret event.
+     * @returns {Promise<void>} Resolves after Worker-sink acceptance.
+     */
+    async function processCycle(item) {
+      try {
+        await writeFrame({
+          kind: 'hmac-key-cycle', type: item.type, id: item.id,
+          generation: item.generation, epoch: item.epoch,
+          occurred_at_ms: item.occurred_at_ms, reason: item.reason
+        }, { emitted: 0 });
+        emittedCycleIds.add(item.id);
+        cycleStatus(item.id, 'completed', 'csc-cycle-written-not-durable');
+      } catch {
+        cycleStatus(item.id, 'failed', 'csc-cycle-write-failed');
+      } finally {
+        pendingCycleIds.delete(item.id);
+      }
+    }

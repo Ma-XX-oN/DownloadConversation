@@ -9,6 +9,7 @@
     let started = 0;
     let finished = 0;
     let damaged = false;
+    let cycles = 0;
     self.cscCommWriteChunk = async bytes => {
       const jsonl = new TextDecoder('utf-8', { fatal: true }).decode(bytes);
       for (const line of jsonl.split('\n').filter(Boolean)) {
@@ -24,6 +25,12 @@
                 ((Math.imul(verified + i, 29) + 7) & 255)) damaged = true;
           }
           verified += binary.length;
+        } else if (frame.kind === 'hmac-key-cycle') {
+          cycles += 1;
+          if (frame.type !== 'hmac-key-cycle' ||
+              frame.id !== 'hmac-key-cycle:1:00112233445566778899aabbccddeeff' ||
+              frame.epoch !== 1 || frame.reason !== 'initial' ||
+              frame.occurred_at_ms !== 10000) damaged = true;
         } else if (frame.kind === 'csc-comm-end') {
           if (frame.status !== 'completed' ||
               frame.source_bytes !== verified) damaged = true;
@@ -35,7 +42,7 @@
       if (event.data?.type === 'csc-comm-probe-report') {
         self.postMessage({
           type: 'csc-comm-probe-report', bytes: verified,
-          starts: started, ends: finished, damaged
+          starts: started, ends: finished, cycles, damaged
         });
       }
     });
@@ -144,11 +151,21 @@
           message.capture_id === 'synthetic-csc311-test');
         assert(outcome.status === 'completed' && outcome.source_bytes === count &&
           outcome.durable === false, 'Worker COMM completion mismatch');
+        const cycleId = 'hmac-key-cycle:1:00112233445566778899aabbccddeeff';
+        worker.postMessage({ type: 'csc-comm-key-cycle', event: {
+          type: 'hmac-key-cycle', id: cycleId,
+          generation: '00112233445566778899aabbccddeeff',
+          epoch: 1, occurred_at_ms: 10000, reason: 'initial'
+        } });
+        const cycleAck = await waitFor(message =>
+          message.type === 'csc-comm-cycle-status' && message.id === cycleId);
+        assert(cycleAck.status === 'completed' && cycleAck.durable === false,
+          'Committed cycle event did not reach the Worker sink');
         worker.postMessage({ type: 'csc-comm-probe-report' });
         const report = await waitFor(message =>
           message.type === 'csc-comm-probe-report');
         assert(!report.damaged && report.bytes === count &&
-          report.starts === 1 && report.ends === 1,
+          report.starts === 1 && report.ends === 1 && report.cycles === 1,
           'Sanitizing serializer changed synthetic binary data');
         const untouched = new Uint8Array(await original.arrayBuffer());
         assert(untouched.length === count,
@@ -158,7 +175,7 @@
             'Original stock body changed at byte ' + i);
         }
         successes.push(name + ' Worker; binary ' + count + ' bytes exact; ' +
-          'start/body/end verified; V2 key token; stock intact');
+          'start/body/end verified; V2 key token; cycle event; stock intact');
       } catch (error) {
         failures.push(name + ': ' + errorMessage(error));
       } finally {

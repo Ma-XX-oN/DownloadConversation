@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         ChatGPT Conversation Markdown Recorder
 // @namespace    https://chatgpt.com/
-// @version      1.11.7-issue.311.9
+// @version      1.11.7-issue.311.10
 // @description  Exports the current ChatGPT conversation directly from the Conversation API as Markdown or JSONL.
 // @match        https://chatgpt.com/*
 // @match        https://chat.openai.com/*
@@ -11809,12 +11809,91 @@ globalThis.__dcCompressor = {
       let result = '';
       for (const b of bytes) result += String.fromCharCode(b); return btoa(result);
     }
+
+    /** Committed cycle IDs emitted during this Worker lifetime. */
+    const emittedCycleIds = new Set();
+    /** Committed cycle IDs awaiting Worker-local sink processing. */
+    const pendingCycleIds = new Set();
+    /**
+     * Validates the exact nonsecret committed producer journal shape.
+     * @param {Object} item - DC #313 producer event.
+     * @returns {boolean} Whether the event matches the contract.
+     */
+    function validCycle(item) {
+      if (!item || typeof item !== 'object' || Array.isArray(item)) return false;
+      const fields = ['type', 'id', 'generation', 'epoch',
+        'occurred_at_ms', 'reason'];
+      return Object.keys(item).length === fields.length &&
+        Object.keys(item).every(name => fields.includes(name)) &&
+        item.type === 'hmac-key-cycle' &&
+        /^[a-f0-9]{32}$/.test(item.generation) &&
+        Number.isSafeInteger(item.epoch) && item.epoch > 0 &&
+        item.id === 'hmac-key-cycle:' + item.epoch + ':' + item.generation &&
+        Number.isSafeInteger(item.occurred_at_ms) && item.occurred_at_ms > 0 &&
+        ['initial', 'scheduled', 'overdue', 'manual'].includes(item.reason);
+    }
+    /**
+     * Reports controlled nonsecret processing status, never durability.
+     * @param {string} id - Valid canonical ID or empty.
+     * @param {string} status - Controlled status.
+     * @param {string} reason - Controlled reason.
+     * @returns {void} No value is returned.
+     */
+    function cycleStatus(id, status, reason) {
+      scope.postMessage({
+        type: 'csc-comm-cycle-status', id, status, reason, durable: false
+      });
+    }
+    /**
+     * Queues one committed event with the ordinary COMM descriptors.
+     * @param {Object} item - Nonsecret producer event.
+     * @returns {void} No value is returned.
+     */
+    function enqueueCycle(item) {
+      if (!validCycle(item)) {
+        cycleStatus('', 'rejected', 'csc-invalid-key-cycle'); return;
+      }
+      if (emittedCycleIds.has(item.id) || pendingCycleIds.has(item.id)) {
+        cycleStatus(item.id, 'duplicate', 'csc-cycle-memory-duplicate'); return;
+      }
+      if (records.length >= maxQueue) {
+        cycleStatus(item.id, 'rejected', 'csc-worker-queue-full'); return;
+      }
+      pendingCycleIds.add(item.id);
+      records.push({ cycle_record: true, event: {
+        type: item.type, id: item.id, generation: item.generation,
+        epoch: item.epoch, occurred_at_ms: item.occurred_at_ms,
+        reason: item.reason
+      } });
+      void drain();
+    }
+    /**
+     * Writes one committed cycle through the existing serializer sink.
+     * @param {Object} item - Valid canonical nonsecret event.
+     * @returns {Promise<void>} Resolves after Worker-sink acceptance.
+     */
+    async function processCycle(item) {
+      try {
+        await writeFrame({
+          kind: 'hmac-key-cycle', type: item.type, id: item.id,
+          generation: item.generation, epoch: item.epoch,
+          occurred_at_ms: item.occurred_at_ms, reason: item.reason
+        }, { emitted: 0 });
+        emittedCycleIds.add(item.id);
+        cycleStatus(item.id, 'completed', 'csc-cycle-written-not-durable');
+      } catch {
+        cycleStatus(item.id, 'failed', 'csc-cycle-write-failed');
+      } finally {
+        pendingCycleIds.delete(item.id);
+      }
+    }
     /**
      * Serializes COMM records in one pass.
      * @param {Object} event - Input event for process.
      * @returns {Promise<void>} Output from process.
      */
     async function process(event) {
+      if (event?.cycle_record === true) return processCycle(event.event);
       const counts = { source: 0, emitted: 0, derived: 0, source_known: true };
       const choice = selected(event);
       if (choice.status !== 'selected') {
@@ -12032,7 +12111,6 @@ globalThis.__dcCompressor = {
         } else if (event.body?.cancel) {
           try { await event.body.cancel(); } catch {}
         }
-        // Failure records never contain private error details.
         try {
           await writeFrame({
             kind: 'csc-comm-end', capture_id: String(event.capture_id),
@@ -12078,7 +12156,6 @@ globalThis.__dcCompressor = {
         if (event.body?.cancel) void event.body.cancel().catch(() => {});
         sendStatus(event, 'rejected', 'csc-worker-queue-full', { source: 0, emitted: 0 }); return;
       }
-      // No await before insertion: this is the first COMM queue.
       records.push(event);
       void drain();
     }
@@ -12122,6 +12199,7 @@ globalThis.__dcCompressor = {
       const value = event.data;
       if (!value || typeof value.type !== 'string') return;
       if (value.type === 'csc-comm-capture') enqueue(value.envelope);
+      else if (value.type === 'csc-comm-key-cycle') enqueueCycle(value.event);
       else if (value.type === 'csc-comm-configure') {
         try { options(value.options); scope.postMessage({ type: 'csc-comm-configured' }); }
         catch { scope.postMessage({ type: 'csc-comm-configuration-failed' }); }
@@ -21552,6 +21630,7 @@ Image elapsed: ${formatDuration(imageElapsed)} — Completed: ${imageCompleted}/
     let started = 0;
     let finished = 0;
     let damaged = false;
+    let cycles = 0;
     self.cscCommWriteChunk = async bytes => {
       const jsonl = new TextDecoder('utf-8', { fatal: true }).decode(bytes);
       for (const line of jsonl.split('\n').filter(Boolean)) {
@@ -21567,6 +21646,12 @@ Image elapsed: ${formatDuration(imageElapsed)} — Completed: ${imageCompleted}/
                 ((Math.imul(verified + i, 29) + 7) & 255)) damaged = true;
           }
           verified += binary.length;
+        } else if (frame.kind === 'hmac-key-cycle') {
+          cycles += 1;
+          if (frame.type !== 'hmac-key-cycle' ||
+              frame.id !== 'hmac-key-cycle:1:00112233445566778899aabbccddeeff' ||
+              frame.epoch !== 1 || frame.reason !== 'initial' ||
+              frame.occurred_at_ms !== 10000) damaged = true;
         } else if (frame.kind === 'csc-comm-end') {
           if (frame.status !== 'completed' ||
               frame.source_bytes !== verified) damaged = true;
@@ -21578,7 +21663,7 @@ Image elapsed: ${formatDuration(imageElapsed)} — Completed: ${imageCompleted}/
       if (event.data?.type === 'csc-comm-probe-report') {
         self.postMessage({
           type: 'csc-comm-probe-report', bytes: verified,
-          starts: started, ends: finished, damaged
+          starts: started, ends: finished, cycles, damaged
         });
       }
     });
@@ -21687,11 +21772,21 @@ Image elapsed: ${formatDuration(imageElapsed)} — Completed: ${imageCompleted}/
           message.capture_id === 'synthetic-csc311-test');
         assert(outcome.status === 'completed' && outcome.source_bytes === count &&
           outcome.durable === false, 'Worker COMM completion mismatch');
+        const cycleId = 'hmac-key-cycle:1:00112233445566778899aabbccddeeff';
+        worker.postMessage({ type: 'csc-comm-key-cycle', event: {
+          type: 'hmac-key-cycle', id: cycleId,
+          generation: '00112233445566778899aabbccddeeff',
+          epoch: 1, occurred_at_ms: 10000, reason: 'initial'
+        } });
+        const cycleAck = await waitFor(message =>
+          message.type === 'csc-comm-cycle-status' && message.id === cycleId);
+        assert(cycleAck.status === 'completed' && cycleAck.durable === false,
+          'Committed cycle event did not reach the Worker sink');
         worker.postMessage({ type: 'csc-comm-probe-report' });
         const report = await waitFor(message =>
           message.type === 'csc-comm-probe-report');
         assert(!report.damaged && report.bytes === count &&
-          report.starts === 1 && report.ends === 1,
+          report.starts === 1 && report.ends === 1 && report.cycles === 1,
           'Sanitizing serializer changed synthetic binary data');
         const untouched = new Uint8Array(await original.arrayBuffer());
         assert(untouched.length === count,
@@ -21701,7 +21796,7 @@ Image elapsed: ${formatDuration(imageElapsed)} — Completed: ${imageCompleted}/
             'Original stock body changed at byte ' + i);
         }
         successes.push(name + ' Worker; binary ' + count + ' bytes exact; ' +
-          'start/body/end verified; V2 key token; stock intact');
+          'start/body/end verified; V2 key token; cycle event; stock intact');
       } catch (error) {
         failures.push(name + ': ' + errorMessage(error));
       } finally {
