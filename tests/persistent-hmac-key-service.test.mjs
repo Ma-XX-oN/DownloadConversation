@@ -3,16 +3,18 @@ import { createHmac, webcrypto } from 'node:crypto';
 import { readFileSync } from 'node:fs';
 import test from 'node:test';
 import vm from 'node:vm';
-
-const source = readFileSync(new URL(
+const source = [
+  '../src/userscript/02-network-communication/04b-persistent-hmac-indexeddb.js',
+  '../src/userscript/02-network-communication/04ba-persistent-hmac-validation.js',
   '../src/userscript/02-network-communication/04c-persistent-hmac-service.js',
-  import.meta.url), 'utf8');
+  '../src/userscript/02-network-communication/04d-persistent-hmac-browser.js'
+].map(name => readFileSync(new URL(name, import.meta.url), 'utf8'))
+  .join('\n');
 const functions = vm.runInNewContext(source + '\n({ service: communicationPersistentHmacService, authority: communicationPersistentHmacChatgptAuthority });',
   { Uint8Array, Array, Map, Set, Object, Number, Error, JSON });
 const create = functions.service;
 const makeAuthority = functions.authority;
 const secret = '🔐é';
-
 function fixture() {
   let current = null;
   let failing = null;
@@ -64,7 +66,6 @@ function fixture() {
     authority, storage, randomCrypto
   };
 }
-
 function provision(service, token) {
   let payload;
   service.provision(token, { postMessage(item, transfers) {
@@ -76,7 +77,6 @@ function provision(service, token) {
   } });
   return payload;
 }
-
 function digest(key, value) {
   const bytes = Buffer.from(value, 'utf8');
   const size = Buffer.alloc(4);
@@ -84,7 +84,6 @@ function digest(key, value) {
   return createHmac('sha256', key).update('DC-SECRET-ID-V1\0')
     .update(size).update(bytes).digest('hex').slice(0, 48);
 }
-
 test('missing or unverified same-origin authority fails closed before first mutation', async () => {
   const f = fixture();
   for (const authority of [null, undefined, { capability: 'web-locks-origin-only',
@@ -96,12 +95,11 @@ test('missing or unverified same-origin authority fails closed before first muta
   assert.equal(f.raw(), null);
   assert.equal(f.randomCount, 0);
 });
-
 test('100 racing first-use sessions across chatgpt.com tabs converge to one persisted K', async () => {
   const f = fixture();
   const services = Array.from({ length: 100 }, () => f.open());
   const admissions = await Promise.all(services.map(s => s.admit()));
-  assert.equal(f.randomCount, 102);
+  assert.equal(f.randomCount, 103);
   const scopes = new Set(admissions.map(a => a.metadata.redaction_scope));
   assert.equal(scopes.size, 1);
   assert.equal(f.raw().pending.length, 100);
@@ -129,7 +127,7 @@ test('A→B→A, simulated browser restart, Unicode marker identity is stable', 
   }
   assert.equal(new Set(keyIds).size, 1);
   assert.equal(new Set(scopes).size, 1);
-  assert.equal(f.randomCount, 5);
+  assert.equal(f.randomCount, 6);
 });
 
 test('rotation fences new captures, drains old before new segment, then changes equality', async () => {
@@ -227,7 +225,7 @@ test('admission provisioning and disposal never expose key via public status', a
   const a = await s.admit();
   const status = await s.status();
   assert.equal(status.redaction_format, 'dc-secret-marker/2');
-  assert.equal(status.redaction_key_storage, 'tampermonkey-script-installation');
+  assert.equal(status.redaction_key_storage, 'chatgpt-origin-indexeddb');
   assert.equal(JSON.stringify(status).includes(f.raw().key_hex), false);
   assert.throws(() => s.provision('unknown', { postMessage() {} }), /invalid-provision/);
   assert.throws(() => s.provision(a.token, { postMessage() { throw Error('error'); } }),
