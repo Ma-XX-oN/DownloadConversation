@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         ChatGPT Conversation Markdown Recorder
 // @namespace    https://chatgpt.com/
-// @version      1.11.7-issue.313.30
+// @version      1.11.7-issue.313.31
 // @description  Exports the current ChatGPT conversation directly from the Conversation API as Markdown or JSONL.
 // @match        https://chatgpt.com/*
 // @connect      github.com
@@ -11254,8 +11254,18 @@ globalThis.__dcCompressor = {
         item.expires_at_ms - item.issued_at_ms > 25 * hourMs ||
         !Array.isArray(item.cycle_events) ||
         !item.cycle_events.length ||
+        item.cycle_events.some((event, i) =>
+          !event || event.type !== 'hmac-key-cycle' ||
+          !/^[a-f0-9]{32}$/.test(event.generation ?? '') ||
+          !Number.isSafeInteger(event.epoch) || event.epoch !== i + 1 ||
+          event.id !== 'hmac-key-cycle:' + event.epoch + ':' +
+            event.generation ||
+          !Number.isSafeInteger(event.occurred_at_ms) ||
+          !['initial', 'manual', 'scheduled', 'overdue'].includes(
+            event.reason)) ||
         item.cycle_events.at(-1).generation !== item.generation ||
-        item.cycle_events.at(-1).epoch !== item.epoch) {
+        item.cycle_events.at(-1).epoch !== item.epoch ||
+        item.cycle_events.at(-1).occurred_at_ms !== item.issued_at_ms) {
       throw new Error('persistent-key-storage-corrupt');
     }
     if (item.phase === 'open' && item.next !== null) {
@@ -11267,7 +11277,8 @@ globalThis.__dcCompressor = {
         item.next.generation === item.generation ||
         item.next.key_hex === item.key_hex ||
         !Number.isSafeInteger(item.next.epoch) ||
-        item.next.epoch !== item.epoch + 1)) {
+        item.next.epoch !== item.epoch + 1 ||
+        !['manual', 'scheduled', 'overdue'].includes(item.next.reason))) {
       throw new Error('persistent-key-storage-corrupt');
     }
     return item;
@@ -11704,11 +11715,44 @@ globalThis.__dcCompressor = {
     const pageLocation = typeof location === 'undefined' ? null : location;
     const sharedStorage = communicationPersistentHmacIndexedDbStorage(
       typeof indexedDB === 'undefined' ? null : indexedDB, pageLocation);
-    return communicationPersistentHmacService({
+    const service = communicationPersistentHmacService({
       storage: sharedStorage,
       authority: communicationPersistentHmacIndexedDbAuthority(
         pageNavigator, pageLocation, sharedStorage),
       crypto: typeof crypto === 'undefined' ? null : crypto
+    });
+    if (!sharedStorage || typeof setTimeout !== 'function') return service;
+    let stopped = false;
+    let timer = null;
+    /**
+     * Check on startup and while this tab stays alive. Timers can be
+     * throttled; admission always rechecks the atomic expiry itself.
+     * @returns {Promise<void>} A checked and rescheduled expiry poll.
+     */
+    async function checkExpiry() {
+      let nextDelay = 60000;
+      try {
+        const state = await service.status();
+        if (Number.isSafeInteger(state.expires_at_ms)) {
+          nextDelay = Math.max(1000, Math.min(60000,
+            state.expires_at_ms - Date.now()));
+        }
+      } catch (error) {
+        if (!stopped && typeof console !== 'undefined') {
+          console.warn('DC persistent HMAC expiry check failed',
+            String(error));
+        }
+      } finally {
+        if (!stopped) timer = setTimeout(checkExpiry, nextDelay);
+      }
+    }
+    timer = setTimeout(checkExpiry, 0);
+    return Object.freeze({ ...service,
+      dispose() {
+        stopped = true;
+        clearTimeout(timer);
+        service.dispose();
+      }
     });
   }
 
