@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         DC #313 Exact HMAC IndexedDB Lifecycle Probe
 // @namespace    https://chatgpt.com/dc313-hmac-idb-lifecycle/
-// @version      0.1.2
+// @version      0.1.3
 // @description  Synthetic isolated cross-tab/reload/rotation test of exact DC #313 source.
 // @match        https://chatgpt.com/*
 // @grant        GM_registerMenuCommand
@@ -16,9 +16,9 @@
 (() => {
   'use strict';
   if (location.origin !== 'https://chatgpt.com') return;
-  const baselineName = 'dc313-lifecycle-baseline-v2';
+  const baselineName = 'dc313-lifecycle-baseline-v3';
   const databaseName = 'dc313-lifecycle-synthetic-only-v1';
-  const channel = new BroadcastChannel('dc313-hmac-lifecycle-probe-v2');
+  const channel = new BroadcastChannel('dc313-hmac-lifecycle-probe-v3');
   const tabId = crypto.randomUUID();
   const sessions = new Map();
   const hour = 3600000;
@@ -148,7 +148,7 @@
   function show(title, payload) {
     const json = JSON.stringify({
       test: title, timestamp: new Date().toISOString(),
-      result: { version: '0.1.2', ...payload }
+      result: { version: '0.1.3', ...payload }
     }, null, 2);
     const render = () => {
       document.getElementById('dc313-hmac-lifecycle-report')?.remove();
@@ -176,6 +176,47 @@
     };
     if (document.body) render();
     else document.addEventListener('DOMContentLoaded', render, { once: true });
+  }
+
+  /**
+   * Probe legacy v1/v2 rendezvous channels without reading their key stores.
+   * Legacy responders do not advertise an exact version, so v1 means
+   * v0.1.0 or v0.1.1; v2 means v0.1.2. Silent/busy tabs cannot be enumerated.
+   * @returns {Promise<Object>} Counts of responding legacy script instances.
+   */
+  async function discoverLegacyInstances() {
+    const names = [
+      ['v0.1.0-or-v0.1.1', 'dc313-hmac-lifecycle-probe-v1'],
+      ['v0.1.2', 'dc313-hmac-lifecycle-probe-v2']
+    ];
+    const run = crypto.randomUUID();
+    const found = new Map(names.map(([name]) => [name, new Set()]));
+    const probes = names.map(([name, channelName]) => {
+      const probe = new BroadcastChannel(channelName);
+      probe.onmessage = event => {
+        const msg = event.data;
+        if (msg?.run === run && msg.type === 'ready' &&
+            typeof msg.from === 'string' && msg.from !== tabId) {
+          found.get(name).add(msg.from);
+        }
+      };
+      probe.postMessage({ type: 'prepare', from: tabId, run });
+      return probe;
+    });
+    try { await delay(1000); }
+    finally { probes.forEach(probe => probe.close()); }
+    return Object.fromEntries(
+      [...found].map(([name, values]) => [name, values.size]));
+  }
+
+  /**
+   * @returns {Promise<void>} Reject known running legacy probe instances.
+   */
+  async function assertCurrentProbeOnly() {
+    const observed = await discoverLegacyInstances();
+    if (Object.values(observed).some(count => count > 0)) {
+      throw Error('older-probe-instances-active:' + JSON.stringify(observed));
+    }
   }
 
   channel.onmessage = async event => {
@@ -288,6 +329,7 @@
     if (busy) return;
     busy = true;
     try {
+      await assertCurrentProbeOnly();
       const testId = crypto.randomUUID();
       const time = Date.now();
       const pair = await participatingInstances(testId, 'measure', time);
@@ -329,6 +371,7 @@
     if (busy) return;
     busy = true;
     try {
+      await assertCurrentProbeOnly();
       const saved = localStorage.getItem(baselineName);
       if (!saved) throw Error('stage-1-baseline-missing');
       const baseline = JSON.parse(saved);
@@ -417,7 +460,8 @@
   GM_registerMenuCommand('DC #313: HMAC lifecycle stage 2 (after reload)',
     afterReload);
   GM_registerMenuCommand('DC #313: HMAC lifecycle probe readiness',
-    () => {
+    async () => {
+      const legacy = await discoverLegacyInstances();
       const imports = [
         ['IndexedDB storage', typeof communicationPersistentHmacIndexedDbStorage],
         ['IndexedDB authority', typeof communicationPersistentHmacIndexedDbAuthority],
@@ -427,8 +471,11 @@
       const missing = imports.filter(item => item[1] !== 'function')
         .map(item => item[0]);
       show('DC #313 HMAC lifecycle readiness', {
-        status: missing.length === 0 ? 'READY' : 'FAIL',
-        missing, version: '0.1.2', isolate: databaseName,
+        status: missing.length === 0 &&
+          Object.values(legacy).every(count => count === 0)
+          ? 'READY' : 'FAIL',
+        legacyInstances: legacy,
+        missing, version: '0.1.3', isolate: databaseName,
         instructions: 'Stage 1 in one tab, reload participants, then stage 2.'
       });
     });
