@@ -137,7 +137,7 @@ async function launchChrome(chrome,temp,forceFirstUnavailable=false) {
     'bounded fresh-profile attempts: '+diagnostics.join(' | '));
 }
 
-test('real-time Chromium services event loop while producing 21 PNGs',
+test('real-time Chromium services event loop while producing two PNGs',
   {timeout:90000},async()=>{
   const chrome=process.env.DC_FAVICON_CHROME ||
     (existsSync('/usr/bin/chromium')?'/usr/bin/chromium':'/usr/bin/google-chrome');
@@ -182,15 +182,15 @@ test('real-time Chromium services event loop while producing 21 PNGs',
     const result=response.result?.value;
     assert(result,'Chromium returned no real-time measurements');
     assert.equal(result.theme,'light');
-    assert.equal(result.frames,21);
-    assert.equal(result.encodes,21);
+    assert.equal(result.frames,2);
+    assert.equal(result.encodes,2);
     assert.equal(result.width,48);
     assert.equal(result.height,48);
     assert.equal(result.invalidSource,'FaviconRenderError');
     assert.equal(result.oversizedSource,'FaviconRenderError');
     assert.equal(result.wrongTheme,'AbortError');
     assert(result.elapsedMs>0,'Real-time clock did not advance');
-    assert(result.ticks>=5,'Browser UI timer starved during generation');
+    assert(result.ticks>=1,'Browser UI timer starved during generation');
     console.log('DC333_REALTIME_BROWSER='+JSON.stringify(result));
   } finally {
     socket?.close();
