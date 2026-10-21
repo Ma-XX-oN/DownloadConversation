@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         ChatGPT Conversation Markdown Recorder
 // @namespace    https://chatgpt.com/
-// @version      1.11.10-issue.347.5
+// @version      1.11.10-issue.347.6
 // @description  Exports the current ChatGPT conversation directly from the Conversation API as Markdown or JSONL.
 // @match        https://chatgpt.com/*
 // @match        https://chat.openai.com/*
@@ -25595,8 +25595,6 @@ Image elapsed: ${formatDuration(imageElapsed)} — Completed: ${imageCompleted}/
   // Capture sequencing and recording-group state are now initialized.
   // Record the current version once per page initialization, unfiltered.
   logDiagnostic('lifecycle', 'dc-version-transition', { version: VERSION });
-  // Debug favicon events use logCapturePosition; never start them before its state.
-  faviconProvenanceStart();
   communicationLogInitializationPromise = initializeCommunicationDiskRecorder();
   installLiveTailTracking();
   /** Persisted scalar volume present when the userscript was initialized. */
@@ -25615,4 +25613,12 @@ Image elapsed: ${formatDuration(imageElapsed)} — Completed: ${imageCompleted}/
   });
   installNetworkCapture();
   bootstrapUi();
+  // Optional favicon diagnostics must never prevent the recorder from mounting.
+  try {
+    faviconProvenanceStart();
+  } catch (error) {
+    logConsoleDiagnostic('warnings', '[ChatGPT Recorder] favicon diagnostics disabled', {
+      reason: error instanceof Error ? error.message : String(error)
+    });
+  }
 })();
