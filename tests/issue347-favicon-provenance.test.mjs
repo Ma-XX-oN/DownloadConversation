@@ -61,6 +61,8 @@ function fixture() {
     this.api = {
       seen: agentFaviconCurrentCandidates,
       write: faviconProvenanceNoteWrite,
+      assignDisplayed: (link, href) => agentFaviconDisplayedHrefs.set(link, href),
+      clearDisplayed: link => agentFaviconDisplayedHrefs.delete(link),
       cache: faviconProvenanceCacheEvent,
       theme: faviconProvenanceThemeChanged
     };
@@ -126,6 +128,7 @@ test('DC pulse assignments and restores never masquerade as ChatGPT writes', () 
       original_url: source, theme: 'light', state: 'completed', progress_step: 0
     });
     h.link.href = generated;
+    h.api.assignDisplayed(h.link, generated);
     h.notifyAttributes(h.link);
     h.api.seen();
   }
@@ -136,6 +139,7 @@ test('DC pulse assignments and restores never masquerade as ChatGPT writes', () 
     original_url: source, state: 'original'
   });
   h.link.href = source;
+  h.api.clearDisplayed(h.link);
   h.notifyAttributes(h.link);
   assert.equal(events(h, 'dc-restored').length, 1);
   assert.equal(events(h, 'stock-href-overwritten').length, 0);
@@ -148,6 +152,7 @@ test('external stock restoration during a DC override is not treated as DC', () 
     original_url: original, theme: 'light', state: 'processing', progress_step: 0
   });
   h.link.href = generated;
+  h.api.assignDisplayed(h.link, generated);
   h.notifyAttributes(h.link);
   h.api.seen();
   h.link.href = original;
