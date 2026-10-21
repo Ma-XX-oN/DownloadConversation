@@ -19,6 +19,7 @@
     function openDatabase() {
       return new Promise((resolve, reject) => {
         let request;
+        let failed = false;
         try { request = api.open(databaseName, 1); }
         catch (error) { reject(error); return; }
         request.onupgradeneeded = () => {
@@ -27,12 +28,17 @@
             db.createObjectStore(objectStoreName);
           }
         };
-        request.onerror = () => reject(request.error ||
-          Error('persistent-key-indexeddb-open-failed'));
-        request.onblocked = () => reject(
-          Error('persistent-key-indexeddb-open-blocked'));
+        request.onerror = () => {
+          failed = true;
+          reject(request.error || Error('persistent-key-indexeddb-open-failed'));
+        };
+        request.onblocked = () => {
+          failed = true;
+          reject(Error('persistent-key-indexeddb-open-blocked'));
+        };
         request.onsuccess = () => {
           const db = request.result;
+          if (failed) { db.close(); return; }
           db.onversionchange = () => db.close();
           resolve(db);
         };
