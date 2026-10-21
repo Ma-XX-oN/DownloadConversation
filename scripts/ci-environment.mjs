@@ -41,6 +41,9 @@ const ordinaryStages = [
     'tests/recording-panel-modes.test.mjs',
     'tests/agent-stopwatch-v1-identity.test.mjs'
   ]],
+  ['DC #347 favicon provenance and settings regression', nodeCommand, ['--test',
+    'tests/issue347-favicon-provenance.test.mjs',
+    'tests/issue347-log-category-settings.test.mjs']],
   ['CI test inventory regression', nodeCommand, ['--test', 'tests/ci-test-inventory.test.mjs']],
   ['Actions policy regression', nodeCommand, ['--test', 'tests/actions-policy.test.mjs']],
   ['RepoWorkflow adoption contract', nodeCommand, ['--test', 'tests/repoworkflow-adoption.test.mjs']],
