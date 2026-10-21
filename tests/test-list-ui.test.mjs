@@ -30,7 +30,8 @@ test('Test opens the interactive built-in test matrix instead of immediately run
     'AI-transcript renderer parity',
     'Generated sandbox download link',
     'Jump identifier resolution',
-    'Conversation API access/schema'
+    'Conversation API access/schema',
+    'Favicon source comparison'
   ]) {
     assert.ok(userscript.includes(`['${name}',`), `Built-in registry is missing ${name}.`);
   }
