@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         ChatGPT Conversation Markdown Recorder
 // @namespace    https://chatgpt.com/
-// @version      1.11.10-issue.347.4
+// @version      1.11.10-issue.347.5
 // @description  Exports the current ChatGPT conversation directly from the Conversation API as Markdown or JSONL.
 // @match        https://chatgpt.com/*
 // @match        https://chat.openai.com/*
@@ -13614,6 +13614,7 @@ return Object.freeze({renderFaviconPulseSequence});
     const before = faviconProvenanceSeen.get(link);
     const dcHref = agentFaviconDisplayedHrefs.get(link);
     if (dcHref === current && (!before || before.observed !== current)) {
+      const previousContext = faviconProvenanceDisplayContext.get(link);
       faviconProvenanceNoteWrite(link, before?.observed || stock, current,
         'generated', {
           original_url: stock,
@@ -13622,10 +13623,12 @@ return Object.freeze({renderFaviconPulseSequence});
           state: agentFaviconVisibleState,
           progress_step: agentFaviconRingStep()
         });
-      faviconProvenanceLog('cache-frame-available', {
-        original_url: faviconProvenanceUrl(stock),
-        note: 'generated image became available for display'
-      });
+      if (previousContext !== faviconProvenanceDisplayContext.get(link)) {
+        faviconProvenanceLog('cache-frame-available', {
+          original_url: faviconProvenanceUrl(stock),
+          note: 'first display of this generated sequence context'
+        });
+      }
     }
     const own = faviconProvenanceOwnWrites.get(link);
     const wasOurs = own === current;
@@ -13818,7 +13821,7 @@ return Object.freeze({renderFaviconPulseSequence});
     });
     window.addEventListener('pagehide', () => faviconProvenanceObserver?.disconnect());
   }
-  faviconProvenanceStart();
+  // Provenance startup is deferred until the recorder capture state is initialized.
   /**
    * Refresh on stopwatch ticks.
    * @param {number} nowMs - Monotonic time.
@@ -25592,6 +25595,8 @@ Image elapsed: ${formatDuration(imageElapsed)} — Completed: ${imageCompleted}/
   // Capture sequencing and recording-group state are now initialized.
   // Record the current version once per page initialization, unfiltered.
   logDiagnostic('lifecycle', 'dc-version-transition', { version: VERSION });
+  // Debug favicon events use logCapturePosition; never start them before its state.
+  faviconProvenanceStart();
   communicationLogInitializationPromise = initializeCommunicationDiskRecorder();
   installLiveTailTracking();
   /** Persisted scalar volume present when the userscript was initialized. */
