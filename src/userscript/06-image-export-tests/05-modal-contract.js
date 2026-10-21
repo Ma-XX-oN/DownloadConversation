@@ -116,7 +116,7 @@
                   <td>${type === 'Visual' ? 'Visual' : 'Automatic'}</td>
                   <td data-role="previous-result">—</td>
                   <td data-role="current-result">—</td>
-                  <td><button type="button" data-role="run-test">Run</button></td>
+                  <td><button type="button" data-role="run-test">${type === 'Visual' ? 'Show' : 'Run'}</button></td>
                 </tr>`).join('')}
             </tbody>
           </table>
