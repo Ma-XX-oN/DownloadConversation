@@ -13,6 +13,7 @@ const navigation = readFileSync(new URL(
   '../src/userscript/04-conversation-rendering/08e-generic-browser-navigation.js',
   import.meta.url
 ), 'utf8');
+const early = readFileSync(new URL('../src/userscript/02-network-communication/03-csc-provider-navigation-ingress.js', import.meta.url), 'utf8');
 const lifecycle = readFileSync(new URL(
   '../src/userscript/07-panel-launcher/05-bootstrap-part2.js', import.meta.url
 ), 'utf8');
@@ -38,9 +39,10 @@ test('single capture ingress composes the verified #306 browser observer with #3
   const observer = paths.indexOf('src/userscript/04-conversation-rendering/08e-generic-browser-navigation.js');
   assert.ok(ingress >= 0 && queue > ingress && observer >= 0);
   assert.ok(observer < queue, 'Generic observer definition must exist before host binding');
+  assert.equal(paths[queue + 1], 'src/userscript/02-network-communication/03-csc-provider-navigation-ingress.js');
   assert.match(bridge, /cscPluginQueueConnect\(host\)/);
   assert.match(bridge, /cscPluginQueueDisconnect\(host\)/);
-  assert.match(bridge, /cscPluginQueueNavigation\(event\.url\)/);
+  assert.match(early, /cscPluginQueueNavigation\(event\.url\)/);
   assert.doesNotMatch(bridge, /host\.(?:navigation|request|response)\(/);
   assert.doesNotMatch(request + xhr, /agentPluginObserve(?:NetworkRequest|FetchResponse|XhrResponse)/);
   assert.match(lifecycle, /disconnectChatGPTSubjectHost\(\)/);
@@ -99,7 +101,7 @@ test('provider host connects once, initial and A-B-A navigation enqueue once and
       events.push('nav:' + new URL(url).pathname);
     }
   };
-  vm.runInNewContext(navigation + '\n' +
+  vm.runInNewContext(navigation + '\n' + early + '\n' +
     extracted('reconnectChatGPTSubjectHost') + '\n' +
     extracted('disconnectChatGPTSubjectHost') + '\n' +
     'this.reconnect = reconnectChatGPTSubjectHost;' +
@@ -111,7 +113,7 @@ test('provider host connects once, initial and A-B-A navigation enqueue once and
   browser.history.pushState(null, '', '/c/a');
   context.disconnect();
   assert.deepEqual(events, [
-    'construct', 'connect', 'nav:/', 'nav:/c/a', 'nav:/c/b', 'nav:/c/a',
+    'nav:/', 'construct', 'connect', 'nav:/c/a', 'nav:/c/b', 'nav:/c/a',
     'disconnect', 'dispose'
   ]);
   const length = events.length;
@@ -211,7 +213,7 @@ test('real CSC queue and browser bridge deliver one backend identity then restor
     cscBindPluginIngress(callback) { captured = callback; },
     cancelReadableBodyQuietly: async () => {}
   };
-  vm.runInNewContext(queue + '\n' + navigation + '\n' +
+  vm.runInNewContext(queue + '\n' + navigation + '\n' + early + '\n' +
     extracted('reconnectChatGPTSubjectHost') + '\n' +
     extracted('disconnectChatGPTSubjectHost') + '\n' +
     'this.api = { reconnectChatGPTSubjectHost, disconnectChatGPTSubjectHost,' +
