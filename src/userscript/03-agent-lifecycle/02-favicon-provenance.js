@@ -131,7 +131,7 @@
         if (!link || String(link.tagName).toLowerCase() !== 'link') return false;
         if (record.attributeName === 'href' &&
             faviconProvenanceOwnWrites.get(link) === link.href) return false;
-        return link.rel?.split(/\\s+/).includes('icon') || faviconProvenanceSeen.has(link);
+        return link.rel?.split(/\s+/).includes('icon') || faviconProvenanceSeen.has(link);
       }
       return [...record.addedNodes, ...record.removedNodes].some(node =>
         node.nodeType === 1 && (node.matches?.('link[rel~="icon"]') ||
@@ -153,7 +153,8 @@
 
   /** Install once; missing MutationObserver leaves the existing polling intact. */
   function faviconProvenanceStart() {
-    if (!document.head) return;
+    // @run-at document-start may precede creation of document.head.
+    // Observing Document also catches subsequent <head> and icon insertion.
     agentFaviconCurrentCandidates();
     if (typeof window.matchMedia === 'function') {
       faviconProvenanceThemeChanged(
@@ -162,7 +163,7 @@
     }
     if (typeof MutationObserver !== 'function') return;
     faviconProvenanceObserver = new MutationObserver(faviconProvenanceObserveDom);
-    faviconProvenanceObserver.observe(document.head, {
+    faviconProvenanceObserver.observe(document, {
       childList: true, subtree: true, attributes: true,
       attributeFilter: ['href', 'rel', 'media', 'type', 'sizes']
     });
