@@ -75,6 +75,8 @@ function pageHtml(isChild) {
       const agentFaviconOriginalSources = new Map();
       let agentFaviconRenderGeneration = 0;
       let agentStopwatchState = null;
+      function agentFaviconHeartbeatCadence() { return 1000; }
+      function agentFaviconFrameTimeOffset(ms) { return ms; }
       function errorMessage(error) { return String(error?.message || error); }
       ${themeSource}
       ${consumerSource}

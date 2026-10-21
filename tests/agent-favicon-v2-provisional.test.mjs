@@ -70,6 +70,8 @@ function fixture({
     const VERSION = ${JSON.stringify(version)};
     const FAVICON_ANIMATION_VERSION = ${JSON.stringify(version)};
     const agentFaviconOriginalSources = new Map();
+    function agentFaviconHeartbeatCadence() { return 1000; }
+    function agentFaviconFrameTimeOffset(ms) { return ms; }
     let agentFaviconRenderGeneration = 0;
     let agentFaviconPulseUpdatePending = null;
     let agentStopwatchState = {

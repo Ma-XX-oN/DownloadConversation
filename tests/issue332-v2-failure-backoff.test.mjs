@@ -27,6 +27,8 @@ const script = [
   'const agentFaviconOriginalSources = new Map();',
   'let agentFaviconRenderGeneration = 0;',
   'let agentStopwatchState = null;',
+  'function agentFaviconHeartbeatCadence(){return 1000;}',
+  'function agentFaviconFrameTimeOffset(ms){return ms;}',
   'window.warnings = [];',
   'function logDiagnostic(level,name,details) {warnings.push({level,name,details});}',
   'function errorMessage(error) {return String(error?.message || error);}',

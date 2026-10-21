@@ -22,7 +22,7 @@ test('completion becomes white only on visible focused tab', () => {
   assert.deepEqual(h.rendered, ['acknowledged']);
 });
 
-test('pulse schedules at provider interval only after session is ready', async () => {
+test('pulse schedules at title cadence only after session is ready', async () => {
   const intervals = [];
   const h = {
     setInterval(fn, ms) { intervals.push({ fn, ms }); return 7; },
@@ -34,6 +34,7 @@ test('pulse schedules at provider interval only after session is ready', async (
     let agentFaviconVisibleState = 'completed';
     let agentFaviconPageHidden = false;
     let agentFaviconPulseUpdatePending = null;
+    function agentFaviconHeartbeatCadence() { return 1000; }
     async function agentFaviconCompatibleVersion() { return '1.11.8'; }
     async function agentFaviconOpenSession() {
       return { version: '1.11.8', update_every_ms: 400 };
@@ -56,7 +57,7 @@ test('pulse schedules at provider interval only after session is ready', async (
   await h.start();
   await h.start();
   assert.equal(intervals.length, 1);
-  assert.equal(intervals[0].ms, 400);
+  assert.equal(intervals[0].ms, 1000);
   intervals[0].fn();
   assert.deepEqual(JSON.parse(JSON.stringify(h.renders)), [['completed', true]]);
   h.stop();

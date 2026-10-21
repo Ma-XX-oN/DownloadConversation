@@ -26,7 +26,9 @@ const scripts = [
     + 'let agentStopwatchState = null;\n'
     + 'function logDiagnostic(level,key,details){'
     + ' (window.diagnostics ||= []).push({level,key,details}); }\n'
-    + 'function errorMessage(error){return String(error?.message || error);}\n',
+    + 'function errorMessage(error){return String(error?.message || error);}\n'
+    + 'function agentFaviconHeartbeatCadence(){return 1000;}\n'
+    + 'function agentFaviconFrameTimeOffset(ms){return ms;}\n',
   source('../src/userscript/03-agent-lifecycle/02-favicon-theme.js'),
   source('../src/userscript/03-agent-lifecycle/02-favicon-cached-lookup.js')
 ].join('\n');

@@ -2,7 +2,7 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 import vm from 'node:vm';
 import { readFileSync } from 'node:fs';
-import { functionSourceFrom } from './helpers/userscript-source.mjs';
+import { functionSourceFrom, productionFunctionSource } from './helpers/userscript-source.mjs';
 
 const read = p => readFileSync(new URL('../' + p, import.meta.url), 'utf8');
 const policy = read('src/userscript/03-agent-lifecycle/02-favicon-title-policy.js');
@@ -195,7 +195,7 @@ test('unmatched titles cannot run old timer callbacks', () => {
     agentFaviconCurrentTheme: () => 'light',
     agentFaviconRenderState: async () => { calls++; }
   });
-  vm.runInContext(functionSourceFrom(theme, 'agentFaviconPulseHeartbeat') +
+  vm.runInContext(productionFunctionSource('agentFaviconPulseHeartbeat') +
     '\nthis.tick=agentFaviconPulseHeartbeat;', ctx);
   ctx.tick(); assert.equal(calls, 0);
   cadence = 2000;
