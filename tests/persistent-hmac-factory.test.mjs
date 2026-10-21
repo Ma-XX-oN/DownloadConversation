@@ -4,9 +4,13 @@ import { readFileSync } from 'node:fs';
 import test from 'node:test';
 import vm from 'node:vm';
 
-const source = readFileSync(new URL(
+const source = [
+  '../src/userscript/02-network-communication/04b-persistent-hmac-indexeddb.js',
+  '../src/userscript/02-network-communication/04ba-persistent-hmac-validation.js',
   '../src/userscript/02-network-communication/04c-persistent-hmac-service.js',
-  import.meta.url), 'utf8');
+  '../src/userscript/02-network-communication/04d-persistent-hmac-browser.js'
+].map(name => readFileSync(new URL(name, import.meta.url), 'utf8'))
+  .join('\n');
 
 test('production factory refuses ordinary Web Locks plus GM writes', async () => {
   let writes = 0;
