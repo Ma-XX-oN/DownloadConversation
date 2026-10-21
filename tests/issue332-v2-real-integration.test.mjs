@@ -86,8 +86,8 @@ function pageHtml(isChild) {
       const fail = message => { throw Error(message); };
       const verify = (condition, message) => { if (!condition) fail(message); };
       const URL1 = location.origin + '/favicon.svg';
-      faviconCacheV2Configure([{version:'1.11.8', update_every_ms:250},
-        {version:'1.12.0',update_every_ms:250}]);
+      faviconCacheV2Configure([{version:'2.0.0', update_every_ms:1000},
+        {version:'3.0.0',update_every_ms:1000}]);
       window.pngEncodes = 0;
       const originalToBlob = HTMLCanvasElement.prototype.toBlob;
       HTMLCanvasElement.prototype.toBlob = function (...args) {
@@ -114,8 +114,8 @@ function pageHtml(isChild) {
         verify(child !== null, 'popup unavailable');
         for(let i=0; i<100 && !child.ready; i++) await wait(50);
         verify(child.ready, 'child tab not ready');
-        const key = await get_compatible_version_key('1.11.8-issue.334.999');
-        verify(key === '1.11.8', 'numeric version resolution');
+        const key = await get_compatible_version_key('2.0.0');
+        verify(key === '2.0.0', 'numeric version resolution');
         const db = await faviconSequenceDatabase();
         const a = await open_favicon_dataset(key, window.renderer);
         const b = await child.api.open_favicon_dataset(key, child.renderer);
@@ -173,10 +173,10 @@ function pageHtml(isChild) {
         verify((await a.read_png(URL1,'light',0,0,1)) instanceof Blob, 'unrequested ready frame absent');
         verify(calls.length===1, 'warm index triggered generation');
         // A second version has independent rows without deleting the first.
-        const other = await open_favicon_dataset('1.12.0', window.renderer);
+        const other = await open_favicon_dataset('3.0.0', window.renderer);
         verify(other && (await other.read_png(URL1,'light',0,0,0)) instanceof Blob,
           'second compatible dataset unavailable');
-        const otherId=faviconSequenceKey('1.12.0',URL1,'light',0,0);
+        const otherId=faviconSequenceKey('3.0.0',URL1,'light',0,0);
         verify((await faviconSequenceRead(db,identity,0)) instanceof Blob &&
           (await faviconSequenceRead(db,otherId,0)) instanceof Blob,
           'version coexistence damaged');
