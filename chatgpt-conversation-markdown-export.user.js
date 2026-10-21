@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         ChatGPT Conversation Markdown Recorder
 // @namespace    https://chatgpt.com/
-// @version      1.11.10-issue.347.1
+// @version      1.11.10-issue.347.2
 // @description  Exports the current ChatGPT conversation directly from the Conversation API as Markdown or JSONL.
 // @match        https://chatgpt.com/*
 // @match        https://chat.openai.com/*
@@ -13449,16 +13449,140 @@ return Object.freeze({renderFaviconPulseSequence});
   window.addEventListener('focus', agentFaviconAcknowledgeCompletion);
   window.addEventListener('pagehide', agentFaviconDispose);
   window.addEventListener('pageshow', agentFaviconHandlePageShow);
+  /** Persistent diagnostic event categories; Gen/Comm recording remains separate. */
+  const DIAGNOSTIC_CATEGORY_STORAGE_KEY = 'tm-recorder-diagnostic-categories';
+  /** Explicit persisted categories exposed by the logging gear. */
+  const DIAGNOSTIC_CATEGORIES = Object.freeze([
+    'favicon-stock', 'favicon-theme', 'favicon-write',
+    'favicon-cache', 'other'
+  ]);
+
+  /**
+   * Load only declared boolean category values, defaulting to current logging.
+   *
+   * @returns {Object} - Current boolean values for supported categories.
+   */
+  function diagnosticCategoryLoad() {
+    const defaults = Object.fromEntries(DIAGNOSTIC_CATEGORIES.map(key => [key, true]));
+    try {
+      const raw = localStorage.getItem(DIAGNOSTIC_CATEGORY_STORAGE_KEY);
+      if (!raw) return defaults;
+      const saved = JSON.parse(raw);
+      if (!saved || typeof saved !== 'object' || Array.isArray(saved)) return defaults;
+      for (const key of DIAGNOSTIC_CATEGORIES) {
+        if (typeof saved[key] === 'boolean') defaults[key] = saved[key];
+      }
+    } catch {
+      // A malformed/blocked storage entry must not suppress normal diagnostics.
+    }
+    return defaults;
+  }
+  /** Mutable category preferences loaded once per page. */
+  const diagnosticCategorySettings = diagnosticCategoryLoad();
+
+  /**
+   * Route existing and new events without changing global diagnostic severity.
+   *
+   * @param {string} message - Diagnostic event name.
+   * @returns {string} - One of the supported diagnostic categories.
+   */
+  function diagnosticCategoryForEvent(message) {
+    if (/^agent-favicon-(?:stock-|original-|external-)/.test(message))
+      return 'favicon-stock';
+    if (message === 'agent-favicon-browser-theme-changed' ||
+        message === 'agent-favicon-app-theme-changed')
+      return 'favicon-theme';
+    if (/^agent-favicon-dc-/.test(message))
+      return 'favicon-write';
+    if (/^(?:agent-favicon-cache-|favicon-sequence-)/.test(message))
+      return 'favicon-cache';
+    return 'other';
+  }
+
+  /**
+   * Check a category before mirroring to console or saving to the log.
+   *
+   * @param {string} message - Diagnostic event name.
+   * @returns {boolean} - Whether that event category is enabled.
+   */
+  function diagnosticCategoryEnabled(message) {
+    return diagnosticCategorySettings[diagnosticCategoryForEvent(message)] !== false;
+  }
+
+  /**
+   * Bind gear popup controls and persist the user's chosen event categories.
+   *
+   * @param {HTMLElement} panel - Recorder panel containing the gear and popup.
+   * @returns {void} - Binds category controls, persistence and dismissal.
+   */
+  function bindDiagnosticCategoryPopup(panel) {
+    const trigger = panel.querySelector('[data-role="log-settings"]');
+    const popup = panel.querySelector('[data-role="log-settings-popup"]');
+    if (!trigger || !popup) return;
+    /**
+     * Dismisses the settings popup without changing saved categories.
+     * @returns {void} Closes the dialog.
+     */
+    const close = () => {
+      popup.hidden = true;
+      trigger.setAttribute('aria-expanded', 'false');
+    };
+    for (const input of popup.querySelectorAll('input[data-log-category]')) {
+      const category = input.dataset.logCategory;
+      if (!DIAGNOSTIC_CATEGORIES.includes(category)) continue;
+      input.checked = diagnosticCategorySettings[category] !== false;
+      input.addEventListener('change', () => {
+        diagnosticCategorySettings[category] = input.checked;
+        localStorage.setItem(DIAGNOSTIC_CATEGORY_STORAGE_KEY,
+          JSON.stringify(diagnosticCategorySettings));
+      });
+    }
+    trigger.innerHTML = '<svg viewBox="0 0 24 24" aria-hidden="true">'
+      + '<path d="M9.7 2h4.6l.7 2.6 2.3 1.3 2.6-.7 2.3 4-1.9 1.9v2.6'
+      + 'l1.9 1.9-2.3 4-2.6-.7-2.3 1.3-.7 2.6H9.7L9 20.2l-2.3-1.3'
+      + '-2.6.7-2.3-4 1.9-1.9v-2.6L1.8 9.2l2.3-4 2.6.7L9 4.6z"/>'
+      + '<circle cx="12" cy="12" r="3"/></svg>';
+    trigger.addEventListener('click', () => {
+      popup.hidden = !popup.hidden;
+      trigger.setAttribute('aria-expanded', String(!popup.hidden));
+      if (!popup.hidden) popup.querySelector('input')?.focus();
+    });
+    popup.querySelector('[data-role="close-log-settings"]')
+      ?.addEventListener('click', () => { close(); trigger.focus(); });
+    panel.addEventListener('keydown', event => {
+      if (event.key === 'Escape' && !popup.hidden) {
+        close();
+        trigger.focus();
+        event.stopPropagation();
+      }
+    });
+    document.addEventListener('pointerdown', event => {
+      if (!popup.hidden && !popup.contains(event.target) && event.target !== trigger)
+        close();
+    });
+    panel.querySelector('.tm-close')?.addEventListener('click', close);
+  }
   /** Event-driven favicon provenance, separate from lifecycle/cache behaviour. */
   const faviconProvenanceSeen = new Map();
+  /** Last href assigned by DC for each observed favicon element. */
   const faviconProvenanceOwnWrites = new WeakMap();
+  /** Last logged DC display context per favicon element. */
   const faviconProvenanceDisplayContext = new WeakMap();
+  /** Bounded record of logical sequence requests and readiness. */
   const faviconProvenanceCacheStates = new Map();
+  /** Last observed browser preferred colour scheme. */
   let faviconProvenanceLastTheme = null;
+  /** Last observed ChatGPT data-theme value, if present. */
   let faviconProvenanceLastAppTheme = 'unobserved';
+  /** DOM favicon observer; disconnected on pagehide. */
   let faviconProvenanceObserver = null;
 
-  /** Build a diagnostic-only URL identity without leaking query values. */
+  /**
+   * Build a diagnostic-only URL identity without leaking query values.
+   *
+   * @param {string|null|undefined} value - Candidate URL or Blob href to summarize.
+   * @returns {string|null} - Redacted URL identity or null.
+   */
   function faviconProvenanceUrl(value) {
     if (!value) return null;
     const href = String(value);
@@ -13481,14 +13605,25 @@ return Object.freeze({renderFaviconPulseSequence});
     }
   }
 
-  /** Only emit Debug entries, never a 250-ms heartbeat-sized stream. */
+  /**
+   * Only emit Debug entries, never a 250-ms heartbeat-sized stream.
+   *
+   * @param {string} event - Semantic favicon event name.
+   * @param {Object} fields - Compact event fields.
+   * @returns {void} - Emits an event only when Debug is enabled.
+   */
   function faviconProvenanceLog(event, fields) {
     if (typeof logDiagnostic !== 'function' ||
         (typeof diagnosticEnabled === 'function' && !diagnosticEnabled('debug'))) return;
     logDiagnostic('debug', 'agent-favicon-' + event, fields);
   }
 
-  /** Record the stock link, including changes detected by periodic inspection. */
+  /**
+   * Record the stock link, including changes detected by periodic inspection.
+   *
+   * @param {Object} candidate - Observed original favicon link descriptor.
+   * @returns {void} - Updates the provenance record and logs changes.
+   */
   function faviconProvenanceTrackCandidate(candidate) {
     const link = candidate.link;
     const current = link.href;
@@ -13521,7 +13656,16 @@ return Object.freeze({renderFaviconPulseSequence});
     }
   }
 
-  /** Log only when DC changes display context, not when it advances a frame. */
+  /**
+   * Log only when DC changes display context, not when it advances a frame.
+   *
+   * @param {HTMLLinkElement} link - Favicon element updated by DC.
+   * @param {string} before - Previous displayed href.
+   * @param {string} after - Successfully assigned href.
+   * @param {string} kind - Generated or original display.
+   * @param {Object} details - Lifecycle and cache-context fields.
+   * @returns {void} - Records a distinct DC display-context transition.
+   */
   function faviconProvenanceNoteWrite(link, before, after, kind, details = {}) {
     faviconProvenanceOwnWrites.set(link, after);
     const observed = faviconProvenanceSeen.get(link);
@@ -13544,7 +13688,17 @@ return Object.freeze({renderFaviconPulseSequence});
     });
   }
 
-  /** Log once per logical sequence, not once per pulse frame read. */
+  /**
+   * Log once per logical sequence, not once per pulse frame read.
+   *
+   * @param {string} version - Compatible dataset version.
+   * @param {string} url - Original favicon URL.
+   * @param {string} theme - Actual rendering theme.
+   * @param {number} base - Base colour identifier.
+   * @param {number} step - Progress step.
+   * @param {boolean} ready - Whether a valid frame was returned.
+   * @returns {void} - Records bounded cache request/available transitions.
+   */
   function faviconProvenanceCacheEvent(version, url, theme, base, step, ready) {
     const key = JSON.stringify([version, url, theme, base, step]);
     const old = faviconProvenanceCacheStates.get(key);
@@ -13562,13 +13716,22 @@ return Object.freeze({renderFaviconPulseSequence});
     });
   }
 
-  /** Read the application's observed data-theme without treating it as media preference. */
+  /**
+   * Read the application's observed data-theme without treating it as media preference.
+   *
+   * @returns {string} - Observed ChatGPT data-theme or unobserved.
+   */
   function faviconProvenanceAppTheme() {
     const value = document.documentElement?.getAttribute?.('data-theme');
     return value === 'dark' || value === 'light' ? value : 'unobserved';
   }
 
-  /** Theme changes are browser preference changes, not proven app-theme changes. */
+  /**
+   * Theme changes are browser preference changes, not proven app-theme changes.
+   *
+   * @param {string} theme - Observed browser preferred colour scheme.
+   * @returns {void} - Logs an actual browser preference transition.
+   */
   function faviconProvenanceThemeChanged(theme) {
     if (!theme || theme === faviconProvenanceLastTheme) return;
     const previous = faviconProvenanceLastTheme;
@@ -13585,7 +13748,12 @@ return Object.freeze({renderFaviconPulseSequence});
     });
   }
 
-  /** Observe DOM link changes without patching any ChatGPT or browser setter. */
+  /**
+   * Observe DOM link changes without patching any ChatGPT or browser setter.
+   *
+   * @param {Array<MutationRecord>} records - Favicon-related DOM mutation batch.
+   * @returns {void} - Records relevant changes without modifying favicon selection.
+   */
   function faviconProvenanceObserveDom(records) {
     const relevant = records.some(record => {
       if (record.type === 'attributes') {
@@ -13626,7 +13794,11 @@ return Object.freeze({renderFaviconPulseSequence});
     agentFaviconCurrentCandidates();
   }
 
-  /** Install once; missing MutationObserver leaves the existing polling intact. */
+  /**
+   * Install once; missing MutationObserver leaves the existing polling intact.
+   *
+   * @returns {void} - Installs event-driven favicon provenance tracking.
+   */
   function faviconProvenanceStart() {
     // @run-at document-start may precede creation of document.head.
     // Observing Document also catches subsequent <head> and icon insertion.
@@ -23941,94 +24113,6 @@ Image elapsed: ${formatDuration(imageElapsed)} — Completed: ${imageCompleted}/
     recordingGroupUuid = sessionStorage.getItem(RECORDING_GROUP_UUID_KEY);
     void recordingGroupClaim();
   }
-  /** Persistent diagnostic event categories; Gen/Comm recording remains separate. */
-  const DIAGNOSTIC_CATEGORY_STORAGE_KEY = 'tm-recorder-diagnostic-categories';
-  const DIAGNOSTIC_CATEGORIES = Object.freeze([
-    'favicon-stock', 'favicon-theme', 'favicon-write',
-    'favicon-cache', 'other'
-  ]);
-
-  /** Load only declared boolean category values, defaulting to current logging. */
-  function diagnosticCategoryLoad() {
-    const defaults = Object.fromEntries(DIAGNOSTIC_CATEGORIES.map(key => [key, true]));
-    try {
-      const raw = localStorage.getItem(DIAGNOSTIC_CATEGORY_STORAGE_KEY);
-      if (!raw) return defaults;
-      const saved = JSON.parse(raw);
-      if (!saved || typeof saved !== 'object' || Array.isArray(saved)) return defaults;
-      for (const key of DIAGNOSTIC_CATEGORIES) {
-        if (typeof saved[key] === 'boolean') defaults[key] = saved[key];
-      }
-    } catch {
-      // A malformed/blocked storage entry must not suppress normal diagnostics.
-    }
-    return defaults;
-  }
-  const diagnosticCategorySettings = diagnosticCategoryLoad();
-
-  /** Route existing and new events without changing global diagnostic severity. */
-  function diagnosticCategoryForEvent(message) {
-    if (/^agent-favicon-(?:stock-|original-|external-)/.test(message))
-      return 'favicon-stock';
-    if (message === 'agent-favicon-browser-theme-changed' ||
-        message === 'agent-favicon-app-theme-changed')
-      return 'favicon-theme';
-    if (/^agent-favicon-dc-/.test(message))
-      return 'favicon-write';
-    if (/^(?:agent-favicon-cache-|favicon-sequence-)/.test(message))
-      return 'favicon-cache';
-    return 'other';
-  }
-
-  /** Check a category before mirroring to console or saving to the log. */
-  function diagnosticCategoryEnabled(message) {
-    return diagnosticCategorySettings[diagnosticCategoryForEvent(message)] !== false;
-  }
-
-  /** Bind gear popup controls and persist the user's chosen event categories. */
-  function bindDiagnosticCategoryPopup(panel) {
-    const trigger = panel.querySelector('[data-role="log-settings"]');
-    const popup = panel.querySelector('[data-role="log-settings-popup"]');
-    if (!trigger || !popup) return;
-    const close = () => {
-      popup.hidden = true;
-      trigger.setAttribute('aria-expanded', 'false');
-    };
-    for (const input of popup.querySelectorAll('input[data-log-category]')) {
-      const category = input.dataset.logCategory;
-      if (!DIAGNOSTIC_CATEGORIES.includes(category)) continue;
-      input.checked = diagnosticCategorySettings[category] !== false;
-      input.addEventListener('change', () => {
-        diagnosticCategorySettings[category] = input.checked;
-        localStorage.setItem(DIAGNOSTIC_CATEGORY_STORAGE_KEY,
-          JSON.stringify(diagnosticCategorySettings));
-      });
-    }
-    trigger.innerHTML = '<svg viewBox="0 0 24 24" aria-hidden="true">'
-      + '<path d="M9.7 2h4.6l.7 2.6 2.3 1.3 2.6-.7 2.3 4-1.9 1.9v2.6'
-      + 'l1.9 1.9-2.3 4-2.6-.7-2.3 1.3-.7 2.6H9.7L9 20.2l-2.3-1.3'
-      + '-2.6.7-2.3-4 1.9-1.9v-2.6L1.8 9.2l2.3-4 2.6.7L9 4.6z"/>'
-      + '<circle cx="12" cy="12" r="3"/></svg>';
-    trigger.addEventListener('click', () => {
-      popup.hidden = !popup.hidden;
-      trigger.setAttribute('aria-expanded', String(!popup.hidden));
-      if (!popup.hidden) popup.querySelector('input')?.focus();
-    });
-    popup.querySelector('[data-role="close-log-settings"]')
-      ?.addEventListener('click', () => { close(); trigger.focus(); });
-    panel.addEventListener('keydown', event => {
-      if (event.key === 'Escape' && !popup.hidden) {
-        close();
-        trigger.focus();
-        event.stopPropagation();
-      }
-    });
-    document.addEventListener('pointerdown', event => {
-      if (!popup.hidden && !popup.contains(event.target) && event.target !== trigger)
-        close();
-    });
-    panel.querySelector('.tm-close')?.addEventListener('click', close);
-  }
 
   /**
    * Returns the AgentPanelSpeaker config-reset icon using its exact PNG bytes.
@@ -24128,7 +24212,8 @@ Image elapsed: ${formatDuration(imageElapsed)} — Completed: ${imageCompleted}/
    * @returns {void} No value is returned.
    */
   function logDiagnostic(level, message, data = null) {
-    if (!diagnosticCategoryEnabled(message)) return;
+    if (typeof diagnosticCategoryEnabled === 'function' &&
+        !diagnosticCategoryEnabled(message)) return;
     logConsoleDiagnostic(level, `[ChatGPT Recorder ${level}] ${message}`, data);
     if (localStorage.getItem('tm-recorder-general-capture') === 'false') return;
     if (!diagnosticEnabled(level)) return;
