@@ -26,7 +26,7 @@ test('installed lifecycle probe requires four immutable exact producer modules',
   }
   assert.equal((source.match(/^\/\/ @require /gm) ?? []).length, 4);
   assert.match(source, /\/\/ @match\s+https:\/\/chatgpt\.com\/\*/);
-  assert.match(source, /\/\/ @version\s+0\.1\.1/);
+  assert.match(source, /\/\/ @version\s+0\.1\.2/);
 });
 
 test('probe keeps synthetic key records isolated from production IndexedDB', () => {
@@ -54,7 +54,11 @@ test('probe tests reload, shared secret identity, draining and both cycle types'
   const complete = source.indexOf('await oldService.complete(old.token);');
   assert.ok(advance > 0 && complete > advance,
     'capture clock advances before the pending drain commits');
-  assert.match(source, /overdueChecks/);
+  assert.match(source, /participatingInstances\(/);
+  assert.match(source, /state.selected = new Set\(state.ready\)/);
+  assert.match(source, /peers: peers.map\(id => state.done.get\(id\)\)/);
+  assert.doesNotMatch(source, /expected-exactly-one-peer/);
+    assert.match(source, /overdueChecks/);
   assert.match(source, /manualService\.randomize\(true\)/);
   assert.match(source, /events\[2\]\.reason === 'manual'/);
 });
@@ -63,5 +67,5 @@ test('probe exposes only nonsecret PASS or FAIL metadata', () => {
   assert.doesNotMatch(source, /console\.(?:log|warn|error)\s*\(/);
   assert.doesNotMatch(source, /key_hex|privateKey|api[_-]?key/i);
   assert.match(source, /baselineSaved: pass/);
-  assert.match(source, /crossTabCycleEventsAgree: manualPass/);
+  assert.match(source, /crossInstanceCycleEventsAgree: journalsAgree\(manual\)/);
 });
