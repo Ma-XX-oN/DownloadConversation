@@ -26,8 +26,9 @@ test('independent 2.0.0 animation is not selected from userscript build', () => 
   assert.match(adapter, /update_every_ms: 1000/);
   assert.match(consumer, /get_compatible_version_key\(FAVICON_ANIMATION_VERSION\)/);
   assert.doesNotMatch(consumer, /get_compatible_version_key\(VERSION\)/);
-  assert.match(header, /@version\s+1\.11\.10-issue\.349\.1/);
-  assert.ok(!header.includes('@version      2.0.0'));
+  const build = /@version\s+(\d+\.\d+\.\d+(?:-issue\.\d+\.\d+)?)/.exec(header)?.[1];
+  assert.ok(build, 'the userscript build retains its independent version');
+  assert.notEqual(build, '2.0.0');
 });
 
 test('one-second slot changes are selected inside unchanged public get_favicon', () => {
