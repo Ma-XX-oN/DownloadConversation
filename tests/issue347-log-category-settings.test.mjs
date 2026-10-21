@@ -14,6 +14,7 @@ function harness(storage = new Map()) {
     'favicon-cache', 'other'].map(category => ({
     dataset: {logCategory: category},
     checked: false,
+    focus() { this.focused = true; },
     listeners: {},
     addEventListener(kind, callback) { this.listeners[kind] = callback; }
   }));
