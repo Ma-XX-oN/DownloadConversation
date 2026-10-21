@@ -81,9 +81,9 @@
   }
 
   /**
-   * Opens one provisional V2 cache session without guessed provider data.
-   * @param {string} version_key - Exact normalized compatible dataset boundary.
-   * @returns {Promise<Object|null>} Shared session or null when unavailable.
+   * Open the shared cache dataset.
+   * @param {string} version_key - Animation version.
+   * @returns {Promise<Object|null>} Session or null.
    */
   async function agentFaviconOpenSession(version_key) {
     if (agentFaviconPageHidden) return null;
@@ -118,14 +118,14 @@
   }
 
   /**
-   * Reads only the requested PNG blob, reusing tab-local object URLs on hits.
-   * @param {Object} session - Open provisional V2 provider session.
-   * @param {string} originalUrl - Captured untouched source favicon URL.
-   * @param {string} theme - Current browser light/dark colour scheme.
-   * @param {number} base - Base state 0 yellow, 1 green, 2 red, 3 white.
-   * @param {number} step - Saturated five-minute progress index 0..6.
-   * @param {number} frame - Symmetric ten-second pulse index 0..20.
-   * @returns {Promise<string|null>} Stable PNG Blob URL or null.
+   * Read one cached PNG as a reusable object URL.
+   * @param {Object} session - Provider.
+   * @param {string} originalUrl - SVG source.
+   * @param {string} theme - Browser theme.
+   * @param {number} base - Colour.
+   * @param {number} step - Progress.
+   * @param {number} frame - Frame index.
+   * @returns {Promise<string|null>} Object URL or null.
    */
   async function agentFaviconFrameUrl(session, originalUrl, theme, base, step, frame) {
     if (agentFaviconPageHidden) return null;
@@ -150,20 +150,10 @@
   }
 
   /**
-   * Looks up only requested frames of complete, ready V2 cache sequences.
-   * @param {string} version_key - Normalized numeric version boundary.
-   * @param {0|1|2|3} base_type - Yellow/green/red/white index.
-   * @param {0|1|2|3|4|5|6} completion_time - Five-minute progress step.
-   * @param {number} time_offset - Monotonic milliseconds, not a pulse index.
-   * @returns {Promise<Array<Object>|null>} Matched link and PNG URL pairs or null.
-   */
-  /**
-   * Prefer the real theme-appropriate SVG artwork over the black-knot PNG.
-   * All eligible icon links receive the same rendered PNG, so Chrome cannot
-   * select a different artwork merely by choosing another stock link.
-   * @param {Array<Object>} candidates - Media-eligible stock links.
-   * @param {string} theme - Actual browser light/dark scheme.
-   * @returns {string|null} Single original icon URL for this presentation.
+   * Prefer the theme's SVG artwork for all browser icon links.
+   * @param {Array<Object>} candidates - Eligible stock links.
+   * @param {string} theme - Browser scheme.
+   * @returns {string|null} Source URL.
    */
   function agentFaviconPreferredSource(candidates, theme) {
     const svgs = candidates.filter(candidate =>
@@ -174,6 +164,14 @@
     return (themed ?? svgs[0] ?? candidates[0])?.original_href ?? null;
   }
 
+  /**
+   * Select a versioned animation frame without leaking layout to callers.
+   * @param {string} version_key - Animation version.
+   * @param {number} base_type - Colour.
+   * @param {number} completion_time - Progress step.
+   * @param {number} time_offset - Monotonic milliseconds.
+   * @returns {Promise<Array<Object>|null>} Icon URL assignments.
+   */
   async function get_favicon(version_key, base_type, completion_time, time_offset) {
     if (agentFaviconPageHidden) return null;
     const frame = agentFaviconPulseIndex(time_offset);
