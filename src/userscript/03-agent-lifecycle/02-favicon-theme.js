@@ -19,6 +19,9 @@
    * @returns {void} Does not return a value.
    */
   function agentFaviconHandleThemeChange() {
+    if (typeof faviconProvenanceThemeChanged === 'function') {
+      faviconProvenanceThemeChanged(agentFaviconCurrentTheme());
+    }
     ++agentFaviconRenderGeneration;
     agentFaviconRestoreStockCandidates();
     agentFaviconTrimObjectUrls();
@@ -44,6 +47,14 @@
   function agentFaviconRestoreStockCandidates() {
     for (const candidate of agentFaviconCurrentCandidates()) {
       if (candidate.link.href !== candidate.original_href) {
+        if (typeof faviconProvenanceNoteWrite === 'function') {
+          faviconProvenanceNoteWrite(candidate.link, candidate.link.href,
+            candidate.original_href, 'original', {
+              original_url: candidate.original_href,
+              theme: agentFaviconCurrentTheme(), state: 'original',
+              progress_step: null
+            });
+        }
         candidate.link.href = candidate.original_href;
       }
       agentFaviconDisplayedHrefs.delete(candidate.link);
