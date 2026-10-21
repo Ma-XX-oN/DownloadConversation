@@ -42,7 +42,9 @@
         "src/userscript/02-network-communication/07-communication-streams.js",
         "src/userscript/02-network-communication/08-communication-xhr.js",
         "src/userscript/02-network-communication/04b-persistent-hmac-indexeddb.js",
-        "src/userscript/02-network-communication/04c-persistent-hmac-service.js"
+        "src/userscript/02-network-communication/04ba-persistent-hmac-validation.js",
+        "src/userscript/02-network-communication/04c-persistent-hmac-service.js",
+        "src/userscript/02-network-communication/04d-persistent-hmac-browser.js"
       ]
     },
     {
