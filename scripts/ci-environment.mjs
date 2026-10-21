@@ -22,6 +22,7 @@ const ordinaryStages = [
     'tests/persistent-hmac-factory.test.mjs',
     'tests/persistent-hmac-auto-cycle.test.mjs',
     'tests/persistent-hmac-clock-fixture.test.mjs',
+    'tests/persistent-hmac-orphan-recovery.test.mjs',
     'tests/persistent-hmac-manual-lifecycle.test.mjs',
     'tests/persistent-hmac-participant-cohort.test.mjs',
     'tests/persistent-hmac-legacy-version-discovery.test.mjs',
