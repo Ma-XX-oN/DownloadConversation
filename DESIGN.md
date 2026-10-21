@@ -703,3 +703,13 @@ active sessions protect the version-scoped ten-minute collection from eviction.
 Frozen provider/cache/consumer details and integration gate definitions are
 in `docs/FAVICON_CACHE_INTERFACES_V2.md`. The frozen V1 external PNG-pack design
 is preserved solely as historical evidence; no V1 asset loader runs in V2.
+
+The opt-in Debug favicon-provenance logger observes original icon link
+creation/replacement, source and media changes, browser colour-scheme
+transitions, requested cache tuples, first available frames and DC writes/
+restores.  A favicon-link MutationObserver works alongside the existing URL
+comparison; it never intercepts ChatGPT functions or becomes a new lifecycle
+classifier.  Attribution is conservative: unknown DOM writers remain unknown.
+Full signed query values and Blob identifiers are omitted from diagnostics,
+while a compact local fingerprint distinguishes changed URLs.  Warm 250-ms
+frame changes do not emit ordinary Debug events.
