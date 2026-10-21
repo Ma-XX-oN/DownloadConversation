@@ -1,5 +1,5 @@
 /**
- * DC #333 proposed V2: render one requested 21-frame pulse sequence locally.
+ * DC #349: render a complete version-owned two-frame blink sequence locally.
  *
  * This provider intentionally does not manage IndexedDB, cross-tab election,
  * object URLs, lifecycle observers, favicon <link> elements or background work.
@@ -41,11 +41,10 @@ export function activeFaviconTheme() {
   return matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light';
 }
 
-/** Map the 40 equally spaced ten-second cycle positions to 21 PNG indices. */
+/** Select a frame for successive one-second slots of the two-second blink. */
 export function pulseFrameForSlot(slot) {
   if (!Number.isFinite(slot)) throw new TypeError('Invalid pulse slot');
-  const normalized = ((Math.floor(slot) % 40) + 40) % 40;
-  return Math.min(normalized, 40 - normalized);
+  return ((Math.floor(slot) % 2) + 2) % 2;
 }
 
 /** Require exactly one original URL, theme, colour, and progress step. */
@@ -212,10 +211,10 @@ export async function renderFaviconPulseSequence(request) {
     const composite = ctx.getImageData(0, 0, width, height);
     const frames = [];
     let priorAlphas = null;
-    for (let frame = 0; frame <= 20; frame++) {
+    for (let frame = 0; frame < 2; frame++) {
       await yieldToBrowser();
       ensureCurrent(key.theme, key.signal);
-      const opacity = 0.75 + 0.25 * Math.cos(2 * Math.PI * frame / 40);
+      const opacity = frame === 0 ? 1 : 0.2;
       const next = ctx.createImageData(width, height);
       next.data.set(composite.data);
       const currentAlphas = new Uint8Array(width * height);
@@ -229,7 +228,7 @@ export async function renderFaviconPulseSequence(request) {
       }
       if (!differs) {
         throw new FaviconRenderError(
-          'Source alpha precision cannot represent 21 distinct pulse frames');
+          'Source alpha precision cannot represent both distinct blink frames');
       }
       priorAlphas = currentAlphas;
       ctx.putImageData(next, 0, 0);
@@ -237,7 +236,7 @@ export async function renderFaviconPulseSequence(request) {
       ensureCurrent(key.theme, key.signal);
       frames.push(blob);
     }
-    // Only return all 21 complete Blobs. Failed requests expose no partial set.
+    // Only return both complete Blobs. Failed requests expose no partial set.
     return {originalUrl:key.originalUrl,theme:key.theme,base:key.base,
       progressStep:key.progressStep,width,height,frames};
   } catch (error) {
