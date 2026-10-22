@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         ChatGPT Conversation Markdown Recorder
 // @namespace    https://chatgpt.com/
-// @version      1.11.7-issue.317.14
+// @version      1.11.7-issue.317.15
 // @description  Exports the current ChatGPT conversation directly from the Conversation API as Markdown or JSONL.
 // @match        https://chatgpt.com/*
 // @match        https://chat.openai.com/*
@@ -13295,7 +13295,8 @@ globalThis.__dcCompressor = {
    */
   /**
    * Performs cscCommDiskWorkerSource in the isolated COMM writer.
-   * @returns {any} cscCommDiskWorkerSource result.
+   * @param {boolean} includeProcessor - Whether to include the #311 processor.
+   * @returns {string} Executable source for one dedicated COMM Worker.
    */
   function cscCommDiskWorkerSource(includeProcessor = true) {
     const bridge = globalThis['__dcCompressor'];
