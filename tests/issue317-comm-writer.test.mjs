@@ -530,6 +530,7 @@ test('interrupted confirmed reset resumes from persisted manifest intent', async
   const f = fixture();
   await open(f);
   await normalCapture(f);
+  await f.writer.snapshot();
   const originalRemove = f.directory.removeEntry.bind(f.directory);
   let failOnce = true;
   f.directory.removeEntry = async name => {
