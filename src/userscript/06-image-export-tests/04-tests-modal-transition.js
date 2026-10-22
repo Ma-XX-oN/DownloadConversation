@@ -224,8 +224,8 @@
     try {
       for (const [name, fn] of builtInTests()) {
         // Directory selection requires an explicit, individual Run gesture.
-        if (name === 'CSC Worker stream + directory' ||
-            name === 'CSC Worker disk writer') continue;
+        if (name === 'CSC Worker stream + directory') continue;
+        if (name === 'CSC Worker disk writer') continue;
         await executeBuiltInTest(name, fn);
       }
     } finally {
