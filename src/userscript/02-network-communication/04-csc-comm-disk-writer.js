@@ -18,6 +18,7 @@
     let recoveredCapture = null;
     const lease = scope.__cscWriterLease;
     const manifest = scope.__cscWriterManifest;
+    const copy = scope.__cscWriterCopy;
     let directory = null;
     let version = null;
     let keyRestart = null;
