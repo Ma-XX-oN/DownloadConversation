@@ -14,6 +14,11 @@
         const capture = 'synthetic-writer-probe';
         const count = 11;
         const payload = 'x'.repeat(1024 * 1024);
+        /**
+         * Serializes a synthetic JSONL frame without private data.
+         * @param {Object} item - Synthetic record.
+         * @returns {Uint8Array} Encoded JSONL frame bytes.
+         */
         const frame = item => encoding.encode(JSON.stringify(item) + '\n');
         const start = { kind: 'csc-comm-start', capture_id: capture,
           key_restart: restart };
