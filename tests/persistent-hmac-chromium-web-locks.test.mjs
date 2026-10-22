@@ -86,7 +86,7 @@ async function scenario() {
     URL.revokeObjectURL(workerUrl);
   }
   await second.complete(next.token);
-  clock.value += 25 * 3600000 + 1;
+  clock.value += 25 * 3600000 + 2;
   child.probe.clock.value = clock.value;
   const dueLead = make(), duePeer = child.probe.make();
   const expired = await Promise.all([dueLead.admit(), duePeer.admit()]);
