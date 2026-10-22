@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         ChatGPT Conversation Markdown Recorder
 // @namespace    https://chatgpt.com/
-// @version      1.11.7-issue.317.19
+// @version      1.11.7-issue.317.20
 // @description  Exports the current ChatGPT conversation directly from the Conversation API as Markdown or JSONL.
 // @match        https://chatgpt.com/*
 // @match        https://chat.openai.com/*
@@ -13018,7 +13018,11 @@ globalThis.__dcCompressor = {
         activeCapture = null;
         committedCaptures.add(record.capture_id);
         message('csc-writer-durable-capture', {
-          capture_id: record.capture_id, durable: true
+          capture_id: record.capture_id, durable: true,
+          capture_complete: record.status === 'completed' &&
+            record.source_complete !== false,
+          capture_status: ['completed', 'failed', 'aborted'].includes(
+            record.status) ? record.status : 'unknown'
         });
       }
       if (record.kind === 'hmac-key-cycle') {
