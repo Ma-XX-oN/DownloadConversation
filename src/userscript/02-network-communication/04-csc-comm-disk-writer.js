@@ -177,13 +177,18 @@
       let offset = 0;
       let first = true;
       let last = null;
+      let fragmentVersion = null;
+      let fragmentRestart = null;
       while (offset < raw.length) {
         const end = raw.indexOf(10, offset);
         check(end !== -1, 'csc-writer-torn-fragment');
         const item = parseLine(raw.subarray(offset, end + 1));
         if (first) {
-          check(item?.version?.comm === version &&
-            validRestart(item.key_restart), 'csc-writer-invalid-header');
+          check(typeof item?.version?.comm === 'string' &&
+            item.version.comm.length > 0 && validRestart(item.key_restart),
+            'csc-writer-invalid-header');
+          fragmentVersion = item.version.comm;
+          fragmentRestart = item.key_restart;
           first = false;
         } else {
           if (item.kind === 'hmac-key-cycle') {
@@ -196,7 +201,7 @@
         offset = end + 1;
       }
       check(!first, 'csc-writer-empty-fragment');
-      return last;
+      return { last, fragmentVersion, fragmentRestart };
     }
     /**
      * Performs seal in the isolated COMM writer.
@@ -368,27 +373,39 @@
         directory = await options.handle.getDirectoryHandle(
           'dc-comm-' + options.namespace, { create: true });
         let max = 0;
+      let rawIndex = 0;
+      let oldFragment = false;
+      const candidates = [];
       for await (const [fileName, entry] of directory.entries()) {
-        if (entry.kind !== 'file') continue;
-        const match = /^fragment-(\d{8})\.jsonl(\.zst)?$/.exec(fileName);
-        if (!match) continue;
-        const number = Number(match[1]);
-        max = Math.max(max, number);
-        const raw = await bytesFrom(entry);
-        const unpacked = match[2] ? await codec.decompress(raw) : raw;
-        parseFragment(unpacked);
-        if (!match[2]) {
-          check(number === max && !activeName,
-            'csc-writer-ambiguous-raw-fragment');
-          activeName = fileName;
-          length = raw.length;
-          const firstEnd = raw.indexOf(10);
-          const original = parseLine(raw.subarray(0, firstEnd + 1));
-          check(original.key_restart === keyRestart,
-            'csc-writer-open-restart-mismatch');
+        if (entry.kind === 'file' &&
+            /^fragment-\\d{8}\\.jsonl(\\.zst)?$/.test(fileName)) {
+          candidates.push({ fileName, entry });
         }
       }
-        index = max;
+      candidates.sort((a, b) => a.fileName.localeCompare(b.fileName));
+      for (const { fileName, entry } of candidates) {
+        const number = Number(fileName.slice(9, 17));
+        max = Math.max(max, number);
+        const compressed = fileName.endsWith('.zst');
+        const raw = await bytesFrom(entry);
+        const unpacked = compressed ? await codec.decompress(raw) : raw;
+        const found = parseFragment(unpacked);
+        if (!compressed) {
+          check(!activeName, 'csc-writer-ambiguous-raw-fragment');
+          activeName = fileName;
+          rawIndex = number;
+          length = raw.length;
+          oldFragment = found.fragmentVersion !== version ||
+            found.fragmentRestart !== keyRestart;
+          check(found.last?.kind !== 'csc-comm-start' &&
+            found.last?.kind !== 'csc-comm-body',
+            'csc-writer-unresolved-old-capture');
+        }
+      }
+      check(!activeName || rawIndex === max,
+        'csc-writer-unsealed-historical-fragment');
+      index = max;
+      if (oldFragment) await seal();
         message('csc-writer-ready', {
           durable: true, fragment: index, committed_bytes: committed,
           key_restart: keyRestart
