@@ -69,7 +69,7 @@ const ordinaryStages = [
   ['Agent turn stopwatch live total', nodeCommand, ['--test', 'tests/agent-turn-stopwatch-live-total.test.mjs']],
   ['Agent turn stopwatch reload restoration', nodeCommand, ['--test', 'tests/agent-turn-stopwatch-reload.test.mjs']],
   ['DC #352 ACTIVE-only favicon heartbeat', nodeCommand, ['--test',
-    'tests/issue352-active-favicon-heartbeat.test.mjs']],
+    'tests/issue352-active-favicon-heartbeat.test.mjs', 'tests/issue356-interm-subject-title.test.mjs']],
   ['DC #349 animation-independent two-frame contract', nodeCommand, ['--test',
     'tests/issue349-animation-v2.test.mjs']],
   ['DC #332 V2 Node and consumer contracts', nodeCommand, ['--test',

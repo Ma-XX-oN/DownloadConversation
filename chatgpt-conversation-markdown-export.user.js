@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         ChatGPT Conversation Markdown Recorder
 // @namespace    https://chatgpt.com/
-// @version      1.11.12
+// @version      1.11.13-issue.356.4
 // @description  Exports the current ChatGPT conversation directly from the Conversation API as Markdown or JSONL.
 // @match        https://chatgpt.com/*
 // @match        https://chat.openai.com/*
@@ -13451,30 +13451,177 @@ return Object.freeze({renderFaviconPulseSequence});
   window.addEventListener('focus', agentFaviconAcknowledgeCompletion);
   window.addEventListener('pagehide', agentFaviconDispose);
   window.addEventListener('pageshow', agentFaviconHandlePageShow);
-  /** Add a suffix/rate entry here; all matching titles use one scheduler. */
+  /**
+   * TEMPORARY DC #356 subject adapter: DOM titles are provisional.
+   * REMOVE/MOVE when umbrella DC #272 "Independently certify DC
+   * subject-identification integration and retire identity fallbacks"
+   * completes (parent AICC #123 "Epic: Subject-identification observer and
+   * authoritative identity delivery"). DC #270 will bind the real agent.
+   * NEVER use provisional identities for persisted filenames or metadata.
+   */
+  const interm_agent = (() => {
+    const observers = new Set();
+    let active = false;
+    let titleObserver = null, headObserver = null, observedNode = null;
+    let route = null, name = null, revision = 0;
+
+    /**
+     * @returns {Object} Deep-frozen AICC V1-shaped unresolved snapshot.
+     */
+    function snapshot() {
+      return Object.freeze({
+        subject: 'subject-identification', revision, readiness: 'unresolved',
+        project: Object.freeze({status: 'unresolved', id: null, name: null}),
+        conversation: Object.freeze({status: 'unresolved', id: null, name})
+      });
+    }
+
+    /**
+     * @returns {string|null} Provisional title (not backend verified).
+     */
+    function readTitle() {
+      const title = String(document.title ?? '')
+        .replace(/\s*[-–—]\s*ChatGPT\s*$/i, '').trim();
+      return title && !/^ChatGPT(?: conversation)?$/i.test(title) ? title : null;
+    }
+
+    /**
+     * Publish a complete current snapshot only when the title changes.
+     * @param {string|null} next - Provisional title.
+     * @returns {void} No result.
+     */
+    function publish(next) {
+      if (next === name) return;
+      name = next;
+      ++revision;
+      const current = snapshot();
+      for (const callback of [...observers]) {
+        if (!observers.has(callback)) continue;
+        try { callback(current); }
+        catch (error) {
+          logConsoleDiagnostic('warnings', '[DC interm_agent] identity callback failed', { reason: errorMessage(error) });
+        }
+      }
+    }
+
+    /**
+     * @returns {void} Watch current title and title-element replacement.
+     */
+    function bind() {
+      if (!active || !document.head) return;
+      if (!headObserver) {
+        headObserver = new MutationObserver(refresh);
+        headObserver.observe(document.head, {childList: true});
+      }
+      const node = document.head.querySelector('title');
+      if (node === observedNode) return;
+      titleObserver?.disconnect();
+      titleObserver = null;
+      observedNode = node;
+      if (node) {
+        titleObserver = new MutationObserver(refresh);
+        titleObserver.observe(node, {
+          childList: true, characterData: true, subtree: true
+        });
+      }
+    }
+
+    /**
+     * @returns {void} Reconcile mutations/navigation without polling.
+     */
+    function refresh() {
+      bind();
+      const currentRoute = location.pathname + location.search;
+      const next = readTitle();
+      const stale = route !== null && route !== currentRoute && next === name;
+      route = currentRoute;
+      publish(stale ? null : next);
+    }
+
+    /**
+     * @returns {void} Start event-driven observation.
+     */
+    function start() {
+      if (active) return;
+      active = true;
+      window.addEventListener('popstate', refresh);
+      window.addEventListener('focus', refresh);
+      window.addEventListener('pageshow', refresh);
+      window.navigation?.addEventListener?.('navigatesuccess', refresh);
+      document.addEventListener('DOMContentLoaded', refresh);
+      refresh();
+    }
+
+    /**
+     * @returns {void} Disconnect when last subscriber leaves.
+     */
+    function stop() {
+      if (!active) return;
+      active = false;
+      headObserver?.disconnect();
+      titleObserver?.disconnect();
+      headObserver = null;
+      titleObserver = null;
+      observedNode = null;
+      window.removeEventListener('popstate', refresh);
+      window.removeEventListener('focus', refresh);
+      window.removeEventListener('pageshow', refresh);
+      window.navigation?.removeEventListener?.('navigatesuccess', refresh);
+      document.removeEventListener('DOMContentLoaded', refresh);
+    }
+
+    return Object.freeze({
+      /**
+       * AICC-compatible identity subject subscription, with synchronous
+       * initial complete snapshot and idempotent unsubscribe.
+       * @param {Function} callback - Identity snapshot consumer.
+       * @param {string} subject - subject-identification only.
+       * @returns {Function} Unsubscribe.
+       */
+      observeState(callback, subject) {
+        if (typeof callback !== 'function') throw new TypeError('callback');
+        if (subject !== 'subject-identification') {
+          throw new TypeError('Unsupported observation subject');
+        }
+        if (!active) start();
+        observers.add(callback);
+        try { callback(snapshot()); }
+        catch (error) {
+          observers.delete(callback);
+          if (!observers.size) stop();
+          throw error;
+        }
+        return () => {
+          observers.delete(callback);
+          if (!observers.size) stop();
+        };
+      }
+    });
+  })();
+
+  /** One table of exact terminal suffixes and frame intervals in ms. */
   const AGENT_FAVICON_TITLE_CADENCES = Object.freeze({
     '- ACTIVE': 1000,
     '- USER ACTION REQUIRED': 2000
   });
-  /** Last resolved frame cadence; null is the static policy. */
-  let agentFaviconTitleLastCadence = null;
-  /** Whether DOM observer bindings currently exist. */
-  let agentFaviconTitleMonitoring = false;
-  /** Watches the actual HTML title element. */
-  let agentFaviconTitleHeadObserver = null;
-  /** Title node currently observed (head watches direct child replacement only). */
-  let agentFaviconTitleObservedTitle = null;
-  /** Watches only the current sidebar's title region. */
-  let agentFaviconTitleSidebarObserver = null;
-  /** Currently observed sidebar container. */
-  let agentFaviconTitleSidebarRoot = null;
+  /** Most recent observer-delivered title, provisional until real AICC. */
+  let agentFaviconIdentityName = null;
+  /** Teardown for the current identity subscription, if any. */
+  let agentFaviconTitleUnsubscribe = null;
 
   /**
-   * Looks up exact case-sensitive suffix and its frame interval.
+   * TEMPORARY DC #356: swap only this provider to the real AICC agent from
+   * DC #270. Remove interm_agent when umbrella DC #272 "Independently
+   * certify DC subject-identification integration and retire identity
+   * fallbacks" (AICC #123) is complete. Consumer callback stays unchanged.
+   */
+  const agentFaviconIdentitySource = interm_agent;
+
+  /**
    * @returns {number|null} Milliseconds per frame or null for static.
    */
   function agentFaviconHeartbeatCadence() {
-    const title = conversationTitle();
+    const title = agentFaviconIdentityName ?? '';
     const dash = title.lastIndexOf('-');
     if (dash < 0) return null;
     const suffix = title.slice(dash).trimEnd();
@@ -13483,9 +13630,9 @@ return Object.freeze({renderFaviconPulseSequence});
   }
 
   /**
-   * Adapts frame timing to the same unchanged two-frame cache selector.
-   * @param {number} nowMs - Monotonic clock.
-   * @returns {number} Existing selector offset; zero yields static frame 0.
+   * Adapt source frame clock to desired per-title interval.
+   * @param {number} nowMs - Monotonic milliseconds.
+   * @returns {number} Existing selector offset.
    */
   function agentFaviconFrameTimeOffset(nowMs) {
     const cadence = agentFaviconHeartbeatCadence();
@@ -13493,48 +13640,17 @@ return Object.freeze({renderFaviconPulseSequence});
   }
 
   /**
-   * Observes only the page title and active sidebar, not the transcript.
+   * Consume one AICC-compatible subject-identification snapshot.
+   * @param {Object} snapshot - Complete identity state.
    * @returns {void} No result.
    */
-  function agentFaviconTitleBindObservers() {
-    if (!agentFaviconTitleMonitoring) return;
-    const titleNode = document.head?.querySelector('title') ?? null;
-    if (document.head && (!agentFaviconTitleHeadObserver ||
-        titleNode !== agentFaviconTitleObservedTitle)) {
-      agentFaviconTitleHeadObserver?.disconnect();
-      agentFaviconTitleHeadObserver = new MutationObserver(agentFaviconTitleRefresh);
-      agentFaviconTitleHeadObserver.observe(document.head, { childList: true });
-      if (titleNode) agentFaviconTitleHeadObserver.observe(titleNode, {
-        subtree: true, childList: true, characterData: true
-      });
-      agentFaviconTitleObservedTitle = titleNode;
-    }
-    const current = document.querySelector(
-      'a[data-interactive-row-link][aria-current="page"][href]');
-    const root = current?.closest('nav') ??
-      document.querySelector('nav') ?? current ?? null;
-    if (root === agentFaviconTitleSidebarRoot) return;
-    agentFaviconTitleSidebarObserver?.disconnect();
-    agentFaviconTitleSidebarRoot = root;
-    agentFaviconTitleSidebarObserver = null;
-    if (!root) return;
-    agentFaviconTitleSidebarObserver = new MutationObserver(agentFaviconTitleRefresh);
-    agentFaviconTitleSidebarObserver.observe(root, {
-      subtree: true, childList: true, characterData: true,
-      attributes: true, attributeFilter: ['href', 'aria-label', 'aria-current']
-    });
-  }
-
-  /**
-   * Invalidates pending frames whenever title cadence changes.
-   * @returns {void} No result.
-   */
-  function agentFaviconTitleRefresh() {
-    agentFaviconTitleBindObservers();
+  function agentFaviconTitleIdentityChanged(snapshot) {
+    if (snapshot?.subject !== 'subject-identification') return;
+    const name = typeof snapshot.conversation?.name === 'string'
+      ? snapshot.conversation.name : null;
+    if (name === agentFaviconIdentityName) return;
+    agentFaviconIdentityName = name;
     if (agentFaviconPageHidden) return;
-    const cadence = agentFaviconHeartbeatCadence();
-    if (cadence === agentFaviconTitleLastCadence) return;
-    agentFaviconTitleLastCadence = cadence;
     ++agentFaviconRenderGeneration;
     agentFaviconPulseUpdatePending = null;
     agentFaviconStopPulse();
@@ -13544,45 +13660,31 @@ return Object.freeze({renderFaviconPulseSequence});
   }
 
   /**
-   * Disconnects scoped observers on pagehide, including BFCache.
-   * @returns {void} No result.
+   * @returns {void} Start exactly one identity subscription.
    */
-  function agentFaviconTitlePause() {
-    agentFaviconTitleHeadObserver?.disconnect();
-    agentFaviconTitleSidebarObserver?.disconnect();
-    agentFaviconTitleHeadObserver = null;
-    agentFaviconTitleObservedTitle = null;
-    agentFaviconTitleSidebarObserver = null;
-    agentFaviconTitleSidebarRoot = null;
-    agentFaviconTitleLastCadence = null;
-    agentFaviconTitleMonitoring = false;
+  function agentFaviconTitleMonitorStart() {
+    if (agentFaviconTitleUnsubscribe) return;
+    agentFaviconTitleUnsubscribe = agentFaviconIdentitySource.observeState(
+      snapshot => agentFaviconTitleIdentityChanged(snapshot),
+      'subject-identification'
+    );
+    if (!agentFaviconTitleMonitorStart.bound) {
+      agentFaviconTitleMonitorStart.bound = true;
+      window.addEventListener('pagehide', agentFaviconTitlePause);
+      window.addEventListener('pageshow', agentFaviconTitleMonitorStart);
+    }
   }
 
   /**
-   * Installs one listener set; reattaches observers on page restoration.
-   * @returns {void} No result.
+   * @returns {void} Stop subscription on pagehide.
    */
-  function agentFaviconTitleMonitorStart() {
-    if (agentFaviconTitleMonitoring) return;
-    agentFaviconTitleMonitoring = true;
-    agentFaviconTitleRefresh();
-    agentFaviconTitleBindObservers();
-    document.addEventListener('DOMContentLoaded', agentFaviconTitleRefresh,
-      { once: true });
-    if (!agentFaviconTitleMonitorStart.bound) {
-      agentFaviconTitleMonitorStart.bound = true;
-      window.addEventListener('popstate', agentFaviconTitleRefresh);
-      window.addEventListener('focus', agentFaviconTitleRefresh);
-      window.addEventListener('pageshow', agentFaviconTitleMonitorStart);
-      window.addEventListener('pagehide', agentFaviconTitlePause);
-      document.addEventListener('click', event => {
-        if (!event.target?.closest?.('a[data-interactive-row-link]')) return;
-        Promise.resolve().then(agentFaviconTitleRefresh);
-      }, true);
-      window.navigation?.addEventListener?.('navigatesuccess',
-        agentFaviconTitleRefresh);
-    }
+  function agentFaviconTitlePause() {
+    agentFaviconTitleUnsubscribe?.();
+    agentFaviconTitleUnsubscribe = null;
+    agentFaviconIdentityName = null;
+    agentFaviconStopPulse();
   }
+
   /** Persistent diagnostic event categories; Gen/Comm recording remains separate. */
   const DIAGNOSTIC_CATEGORY_STORAGE_KEY = 'tm-recorder-diagnostic-categories';
   /** Explicit persisted categories exposed by the logging gear. */
