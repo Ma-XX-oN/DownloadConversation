@@ -435,3 +435,42 @@ test('corrupt or deleted manifest never silently recreates old log identity', as
     assert.ok(origin.files.has('fragment-00000001.jsonl.zst'));
   }
 });
+
+test('logical rename persists on disk without changing immutable fragment names', async () => {
+  const f = fixture();
+  await open(f);
+  await normalCapture(f);
+  await assert.rejects(() => f.writer.renameLogical('../unsafe.jsonl'),
+    /csc-writer-invalid-logical-name/);
+  const renamed = await f.writer.renameLogical('Bloor West.comm.jsonl');
+  assert.equal(renamed, 'Bloor West.comm.jsonl');
+  assert.ok(f.files.has('fragment-00000001.jsonl'));
+  await f.writer.close();
+  const after = fixture();
+  after.parent.getDirectoryHandle = f.parent.getDirectoryHandle;
+  await open(after);
+  const inventory = await after.writer.snapshot();
+  assert.equal(inventory.logical_name, renamed);
+  assert.equal(inventory.archives.length, 1);
+  await after.writer.close();
+});
+test('snapshot freezes full archived fragments with SHA256 integrity readback', async () => {
+  const f = fixture();
+  await open(f);
+  await f.writer.write(record('csc-comm-start', { key_restart: start }));
+  const payload = 'x'.repeat(4 * 1024 * 1024);
+  for (let i = 0; i < 3; i += 1) {
+    await f.writer.write(record('csc-comm-body', { data: payload }));
+  }
+  await f.writer.write(record('csc-comm-end', { status: 'completed' }));
+  const snapshot = await f.writer.snapshot();
+  assert.equal(snapshot.archives.length, 2);
+  for (const item of snapshot.archives) {
+    assert.match(item.sha256, /^[0-9a-f]{64}$/);
+    assert.ok(f.files.has(item.name));
+    assert.ok(item.name.endsWith('.zst'));
+  }
+  assert.ok(f.messages.some(m =>
+    m.type === 'csc-writer-snapshot-ready' && m.durable));
+  await f.writer.close();
+});
