@@ -55,6 +55,7 @@
         "src/userscript/03-agent-lifecycle/03-favicon-cache-v2-part2.js",
         "src/userscript/03-agent-lifecycle/02-favicon-v2-adapter.js",
         "src/userscript/03-agent-lifecycle/02-favicon-cached-lookup.js",
+        "src/userscript/03-agent-lifecycle/02-interm-subject-agent.js",
         "src/userscript/03-agent-lifecycle/02-favicon-title-policy.js",
         "src/userscript/07-panel-launcher/01-log-category-settings.js",
         "src/userscript/03-agent-lifecycle/02-favicon-provenance.js",
