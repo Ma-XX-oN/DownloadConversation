@@ -381,7 +381,11 @@
         activeCapture = null;
         committedCaptures.add(record.capture_id);
         message('csc-writer-durable-capture', {
-          capture_id: record.capture_id, durable: true
+          capture_id: record.capture_id, durable: true,
+          capture_complete: record.status === 'completed' &&
+            record.source_complete !== false,
+          capture_status: ['completed', 'failed', 'aborted'].includes(
+            record.status) ? record.status : 'unknown'
         });
       }
       if (record.kind === 'hmac-key-cycle') {
