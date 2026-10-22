@@ -39,7 +39,7 @@ async function scenario() {
   const services = Array.from({ length: 40 },
     (_, i) => i % 2 ? first : second);
   const admissions = await Promise.all(services.map(s => s.admit()));
-  const scopes = [...new Set(admissions.map(a => a.metadata.redaction_scope))];
+  const scopes = [...new Set(admissions.map(a => a.metadata.key_restart))];
   if (scopes.length !== 1) throw Error('first-use split brain');
   const rotation = first.randomize(true);
   await delay(20);
@@ -51,7 +51,7 @@ async function scenario() {
   const rotated = await rotation;
   if (rotated.state !== 'DRAINING') throw Error('unexpected rotation result');
   const next = await second.admit();
-  if (next.metadata.redaction_scope === scopes[0] ||
+  if (next.metadata.key_restart === scopes[0] ||
       next.metadata.redaction_key_epoch !== 2) {
     throw Error('rotation did not advance epoch');
   }
@@ -92,8 +92,8 @@ async function scenario() {
   const expired = await Promise.all([dueLead.admit(), duePeer.admit()]);
   if (expired[0].metadata.redaction_key_epoch !== 3 ||
       expired[1].metadata.redaction_key_epoch !== 3 ||
-      expired[0].metadata.redaction_scope !==
-      expired[1].metadata.redaction_scope) {
+      expired[0].metadata.key_restart !==
+      expired[1].metadata.key_restart) {
     throw Error('overdue IndexedDB key split across real tabs');
   }
   const genCycles = await make().cycleEvents(1);
