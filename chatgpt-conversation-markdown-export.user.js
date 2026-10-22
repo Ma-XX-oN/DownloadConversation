@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         ChatGPT Conversation Markdown Recorder
 // @namespace    https://chatgpt.com/
-// @version      1.11.7-issue.317.17
+// @version      1.11.7-issue.317.18
 // @description  Exports the current ChatGPT conversation directly from the Conversation API as Markdown or JSONL.
 // @match        https://chatgpt.com/*
 // @match        https://chat.openai.com/*
@@ -12866,6 +12866,24 @@ globalThis.__dcCompressor = {
      * @returns {Promise<any>} seal result.
      */
     async function seal() {
+      check(!poisoned, 'csc-writer-poisoned');
+      try {
+        await sealVerified();
+      } catch (error) {
+        // Compression, archived readback and manifest failures leave the
+        // original bytes for recovery, but this Worker must not continue.
+        poisoned = true;
+        message('csc-writer-incomplete', {
+          capture_id: activeCapture, reason: errorCode(error), durable: false
+        });
+        throw error;
+      }
+    }
+    /**
+     * Performs physical fragment sealing; caller catches every failure.
+     * @returns {Promise<void>} Archive committed, hashed and read back.
+     */
+    async function sealVerified() {
       if (!length) return;
       const source = await file(activeName);
       const raw = await bytesFrom(source);
