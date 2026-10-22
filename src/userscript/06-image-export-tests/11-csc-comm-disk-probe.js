@@ -106,7 +106,7 @@
       [source], { type: 'text/javascript' }));
     let worker = null;
     let timer = null;
-    let ownsTestNamespace = true;
+
     try {
       worker = new realm.Worker(url);
       const result = await new Promise((resolve, reject) => {
@@ -140,11 +140,11 @@
       if (timer !== null) clearTimeout(timer);
       worker?.terminate();
       realm.URL.revokeObjectURL(url);
-      if (ownsTestNamespace) {
-        try { await directory.removeEntry(name, { recursive: true }); }
-        catch (error) {
-          if (error?.name !== 'NotFoundError') throw error;
-        }
+      // The absence check above established exclusive test-namespace
+      // ownership before Worker startup; cleanup also covers early failure.
+      try { await directory.removeEntry(name, { recursive: true }); }
+      catch (error) {
+        if (error?.name !== 'NotFoundError') throw error;
       }
     }
   }
