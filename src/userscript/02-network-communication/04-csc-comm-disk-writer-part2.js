@@ -97,6 +97,32 @@
       }
     }
     /**
+     * Commits a user-visible name without renaming private live fragments.
+     * @param {string} logicalName - Validated COMM output filename.
+     * @returns {Promise<string>} Durable logical basename.
+     */
+    async function renameLogical(logicalName) {
+      check(directory !== null && !poisoned,
+        'csc-writer-not-open');
+      const result = await manifest.rename(logicalName);
+      message('csc-writer-renamed', { logical_name: result, durable: true });
+      return result;
+    }
+    /**
+     * Closes a durable snapshot boundary, preserving historical fragments.
+     * @returns {Promise<Object>} Exact-file hash inventory.
+     */
+    async function snapshot() {
+      check(directory !== null && !poisoned,
+        'csc-writer-not-open');
+      await seal();
+      const inventory = manifest.snapshot();
+      message('csc-writer-snapshot-ready', {
+        ...inventory, durable: true
+      });
+      return inventory;
+    }
+    /**
      * Performs close in the isolated COMM writer.
      * @returns {Promise<any>} close result.
      */
@@ -108,6 +134,7 @@
       message('csc-writer-closed', { durable: true });
     }
     const api = Object.freeze({ open, write, setRestart, seal, close,
+      snapshot, renameLogical,
       get committedBytes() { return committed; },
       get queueBytes() { return 0; } });
     scope.cscCommWriteChunk = bytes => {
@@ -123,6 +150,11 @@
         else if (value.type === 'csc-writer-key-restart') {
           await setRestart(value.key_restart);
         } else if (value.type === 'csc-writer-close') await close();
+        else if (value.type === 'csc-writer-rename') {
+          await renameLogical(value.logical_name);
+        } else if (value.type === 'csc-writer-snapshot') {
+          await snapshot();
+        }
         else if (value.type === 'csc-writer-query-capture') {
           const durable = committedCaptures.has(value.capture_id);
           message('csc-writer-capture-status', {
