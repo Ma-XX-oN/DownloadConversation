@@ -20,6 +20,8 @@ const copySource = readFileSync(path.join(root,
   'src/userscript/02-network-communication/04-csc-comm-disk-copy.js'), 'utf8');
 const browserProbeSource = readFileSync(path.join(root,
   'src/userscript/06-image-export-tests/11-csc-comm-disk-probe.js'), 'utf8');
+const bridgeSource = readFileSync(path.join(root,
+  'src/userscript/02-network-communication/04-csc-comm-disk-bridge.js'), 'utf8');
 const start = new Date(1761152400000).toISOString();
 const encoder = new TextEncoder();
 const frame = value => encoder.encode(JSON.stringify(value) + '\n');
@@ -625,4 +627,24 @@ test('installed-browser synthetic disk probe accepts real fragment manifest and 
   assert.ok(result.fragments >= 2);
   assert.equal(result.bodyBytes, 11 * 1024 * 1024);
   assert.equal(f.files.has('manifest.json'), true);
+});
+
+test('disk-only generated Worker is complete and omits obsolete #311 serializer', () => {
+  const fake = {
+    init: function __dcCompressorInit() {},
+    Encoder: class CompressorEncoder {},
+    decompress: function __dcCompressorDecompress() {},
+    wasmGzipBase64: 'abcdef0123456789'
+  };
+  const scope = vm.createContext({ assert, Uint8Array, globalThis: {
+    __dcCompressor: fake
+  } });
+  vm.runInContext(leaseSource + manifestSource + copySource + source +
+    bridgeSource + '\nglobalThis.builder = cscCommDiskWorkerSource;', scope);
+  const built = scope.globalThis.builder(false);
+  assert.ok(built.includes('self.__cscDiskWriter'));
+  assert.ok(built.includes('self.__cscWriterManifest'));
+  assert.ok(built.includes('self.__cscWriterLease'));
+  assert.ok(!built.includes('cscCommProcessingWorkerSource'));
+  assert.doesNotThrow(() => new Function(built));
 });
