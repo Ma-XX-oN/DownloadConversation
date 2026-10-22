@@ -13,7 +13,7 @@ assert.ok(start > 0 && end > start,
   'cohort tests must execute the shipped probe functions, not a rewrite');
 const cohortSource = script.slice(start, end);
 const observation = Object.freeze({
-  generation: 'GEN-1', epoch: 1, fingerprint: 'HMAC-1',
+  key_restart: '2026-10-22T16:30:00.123Z', epoch: 1, fingerprint: 'HMAC-1',
   events: [{ id: 'cycle-1', reason: 'initial' }]
 });
 
