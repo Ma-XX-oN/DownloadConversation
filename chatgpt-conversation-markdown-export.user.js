@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         ChatGPT Conversation Markdown Recorder
 // @namespace    https://chatgpt.com/
-// @version      1.11.7-issue.317.7
+// @version      1.11.7-issue.317.8
 // @description  Exports the current ChatGPT conversation directly from the Conversation API as Markdown or JSONL.
 // @match        https://chatgpt.com/*
 // @match        https://chat.openai.com/*
@@ -21176,8 +21176,8 @@ Image elapsed: ${formatDuration(imageElapsed)} — Completed: ${imageCompleted}/
     try {
       for (const [name, fn] of builtInTests()) {
         // Directory selection requires an explicit, individual Run gesture.
-        if (name === 'CSC Worker stream + directory' ||
-            name === 'CSC Worker disk writer') continue;
+        if (name === 'CSC Worker stream + directory') continue;
+        if (name === 'CSC Worker disk writer') continue;
         await executeBuiltInTest(name, fn);
       }
     } finally {
