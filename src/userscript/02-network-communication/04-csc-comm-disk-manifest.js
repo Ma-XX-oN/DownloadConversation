@@ -163,6 +163,19 @@
       return filename;
     }
     /**
+     * Returns immutable manifest metadata at a serialized snapshot boundary.
+     * @returns {Object} Logical name and independent archive checksums.
+     */
+    function snapshot() {
+      if (!state) throw new Error('csc-writer-manifest-unready');
+      return {
+        schema: state.schema,
+        logical_name: state.logical_name,
+        archives: Object.entries(state.archives).sort(([a], [b]) =>
+          a.localeCompare(b)).map(([name, sha256]) => ({ name, sha256 }))
+      };
+    }
+    /**
      * Releases the current memory handle after owner reset/close.
      * @returns {void} Clears transient manifest state only.
      */
@@ -171,7 +184,7 @@
       state = null;
     }
     return Object.freeze({
-      open, record, rename, release,
+      open, record, rename, snapshot, release,
       get logicalName() { return state?.logical_name ?? null; }
     });
   }
