@@ -60,7 +60,7 @@
    * Performs cscCommDiskWorkerSource in the isolated COMM writer.
    * @returns {any} cscCommDiskWorkerSource result.
    */
-  function cscCommDiskWorkerSource() {
+  function cscCommDiskWorkerSource(includeProcessor = true) {
     const bridge = globalThis['__dcCompressor'];
     assert(typeof bridge?.init === 'function' &&
       typeof bridge?.Encoder === 'function' &&
@@ -86,6 +86,6 @@
       'self.__cscWriterCopy = (' + cscCommDiskCopy.toString() + ')();',
       'self.__cscDiskWriter = (' + cscCommDiskWriter.toString() +
         ')(self, (' + cscCommWorkerZstdCodec.toString() + ')());',
-      cscCommProcessingWorkerSource()
+      ...(includeProcessor ? [cscCommProcessingWorkerSource()] : [])
     ].join('\n');
   }
