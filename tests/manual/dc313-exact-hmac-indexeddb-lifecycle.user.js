@@ -1,24 +1,24 @@
 // ==UserScript==
 // @name         DC #313 Exact HMAC IndexedDB Lifecycle Probe
 // @namespace    https://chatgpt.com/dc313-hmac-idb-lifecycle/
-// @version      0.1.4
+// @version      0.2.0
 // @description  Synthetic isolated cross-tab/reload/rotation test of exact DC #313 source.
 // @match        https://chatgpt.com/*
 // @grant        GM_registerMenuCommand
 // @grant        GM_setClipboard
-// @require      https://raw.githubusercontent.com/Ma-XX-oN/DownloadConversation/de934cb66047fd6144e6888939fd83b8d650781e/src/userscript/02-network-communication/04b-persistent-hmac-indexeddb.js
-// @require      https://raw.githubusercontent.com/Ma-XX-oN/DownloadConversation/de934cb66047fd6144e6888939fd83b8d650781e/src/userscript/02-network-communication/04ba-persistent-hmac-validation.js
-// @require      https://raw.githubusercontent.com/Ma-XX-oN/DownloadConversation/de934cb66047fd6144e6888939fd83b8d650781e/src/userscript/02-network-communication/04c-persistent-hmac-service.js
-// @require      https://raw.githubusercontent.com/Ma-XX-oN/DownloadConversation/de934cb66047fd6144e6888939fd83b8d650781e/src/userscript/02-network-communication/04d-persistent-hmac-browser.js
+// @require      https://raw.githubusercontent.com/Ma-XX-oN/DownloadConversation/82087e235fad802e10250311f22218e866dde634/src/userscript/02-network-communication/04b-persistent-hmac-indexeddb.js
+// @require      https://raw.githubusercontent.com/Ma-XX-oN/DownloadConversation/82087e235fad802e10250311f22218e866dde634/src/userscript/02-network-communication/04ba-persistent-hmac-validation.js
+// @require      https://raw.githubusercontent.com/Ma-XX-oN/DownloadConversation/82087e235fad802e10250311f22218e866dde634/src/userscript/02-network-communication/04c-persistent-hmac-service.js
+// @require      https://raw.githubusercontent.com/Ma-XX-oN/DownloadConversation/82087e235fad802e10250311f22218e866dde634/src/userscript/02-network-communication/04d-persistent-hmac-browser.js
 // @run-at       document-start
 // ==/UserScript==
 
 (() => {
   'use strict';
   if (location.origin !== 'https://chatgpt.com') return;
-  const baselineName = 'dc313-lifecycle-baseline-v4';
-  const databaseName = 'dc313-lifecycle-synthetic-only-v1';
-  const channel = new BroadcastChannel('dc313-hmac-lifecycle-probe-v4');
+  const baselineName = 'dc313-lifecycle-baseline-v5';
+  const databaseName = 'dc313-lifecycle-synthetic-only-v2';
+  const channel = new BroadcastChannel('dc313-hmac-lifecycle-probe-v5');
   const tabId = crypto.randomUUID();
   const sessions = new Map();
   const hour = 3600000;
@@ -120,12 +120,12 @@
       const state = await s.status();
       const events = await s.cycleEvents();
       return {
-        generation: admission.metadata.redaction_scope,
+        key_restart: admission.metadata.key_restart,
         epoch: admission.metadata.redaction_key_epoch,
         fingerprint,
         deadline: state.expires_at_ms,
         events: events.map(e => ({
-          id: e.id, generation: e.generation, epoch: e.epoch,
+          id: e.id, key_restart: e.key_restart, epoch: e.epoch,
           occurred_at_ms: e.occurred_at_ms, reason: e.reason
         }))
       };
@@ -148,7 +148,7 @@
   function show(title, payload) {
     const json = JSON.stringify({
       test: title, timestamp: new Date().toISOString(),
-      result: { version: '0.1.4', ...payload }
+      result: { version: '0.2.0', ...payload }
     }, null, 2);
     const render = () => {
       document.getElementById('dc313-hmac-lifecycle-report')?.remove();
@@ -176,38 +176,6 @@
     };
     if (document.body) render();
     else document.addEventListener('DOMContentLoaded', render, { once: true });
-  }
-
-  /**
-   * Probe legacy v1/v2 rendezvous channels without reading their key stores.
-   * Legacy responders do not advertise an exact version, so v1 means
-   * v0.1.0 or v0.1.1; v2 means v0.1.2. Silent/busy tabs cannot be enumerated.
-   * @returns {Promise<Object>} Counts of responding legacy script instances.
-   */
-  async function discoverLegacyInstances() {
-    const names = [
-      ['v0.1.0-or-v0.1.1', 'dc313-hmac-lifecycle-probe-v1'],
-      ['v0.1.2', 'dc313-hmac-lifecycle-probe-v2'],
-      ['v0.1.3', 'dc313-hmac-lifecycle-probe-v3']
-    ];
-    const run = crypto.randomUUID();
-    const found = new Map(names.map(([name]) => [name, new Set()]));
-    const probes = names.map(([name, channelName]) => {
-      const probe = new BroadcastChannel(channelName);
-      probe.onmessage = event => {
-        const msg = event.data;
-        if (msg?.run === run && msg.type === 'ready' &&
-            typeof msg.from === 'string' && msg.from !== tabId) {
-          found.get(name).add(msg.from);
-        }
-      };
-      probe.postMessage({ type: 'prepare', from: tabId, run });
-      return probe;
-    });
-    try { await delay(1000); }
-    finally { probes.forEach(probe => probe.close()); }
-    return Object.fromEntries(
-      [...found].map(([name, values]) => [name, values.size]));
   }
 
   channel.onmessage = async event => {
@@ -299,7 +267,7 @@
    */
   function equalIdentity(pair) {
     return pair.peers.length > 0 && pair.peers.every(peer =>
-      pair.local.generation === peer.generation &&
+      pair.local.key_restart === peer.key_restart &&
       pair.local.epoch === peer.epoch &&
       pair.local.fingerprint === peer.fingerprint);
   }
@@ -333,7 +301,7 @@
       if (pass) {
         // Stores only synthetic HMAC fingerprint and public generation.
         localStorage.setItem(baselineName, JSON.stringify({
-          testId, time, generation: first.generation,
+          testId, time, key_restart: first.key_restart,
           fingerprint: first.fingerprint, deadline: first.deadline
         }));
       }
@@ -367,7 +335,7 @@
       const now = Date.now();
       const persisted = await participatingInstances(baseline.testId, 'measure', now);
       const stable = equalIdentity(persisted) &&
-        persisted.local.generation === baseline.generation &&
+        persisted.local.key_restart === baseline.key_restart &&
         persisted.local.fingerprint === baseline.fingerprint &&
         persisted.local.epoch === 1;
       if (!stable) throw Error('reload-persistent-key-mismatch');
@@ -396,8 +364,8 @@
         sameIdentity: equalIdentity(overdue),
         epochTwo: overdue.local.epoch === 2 &&
           overdue.peers.every(peer => peer.epoch === 2),
-        differentGeneration: overdue.local.generation !==
-          baseline.generation,
+        differentKeyRestart: overdue.local.key_restart !==
+          baseline.key_restart,
         changedHmac: overdue.local.fingerprint !== baseline.fingerprint,
         journalLengthTwo: overdue.local.events.length === 2,
         overdueReason: overdue.local.events[1]?.reason === 'overdue',
@@ -450,7 +418,7 @@
     afterReload);
   GM_registerMenuCommand('DC #313: HMAC lifecycle probe readiness',
     async () => {
-      const legacy = await discoverLegacyInstances();
+
       const imports = [
         ['IndexedDB storage', typeof communicationPersistentHmacIndexedDbStorage],
         ['IndexedDB authority', typeof communicationPersistentHmacIndexedDbAuthority],
@@ -461,9 +429,7 @@
         .map(item => item[0]);
       show('DC #313 HMAC lifecycle readiness', {
         status: missing.length === 0 ? 'READY' : 'FAIL',
-        legacyInstances: legacy,
-        legacyNote: 'Legacy probe versions are diagnostic only; no block.',
-        missing, version: '0.1.4', isolate: databaseName,
+        missing, version: '0.2.0', isolate: databaseName,
         instructions: 'Stage 1 in one tab, reload participants, then stage 2.'
       });
     });
