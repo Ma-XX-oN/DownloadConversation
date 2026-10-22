@@ -8,7 +8,7 @@
     const { storage, authority, crypto: secureCrypto } = dependencies;
     const now = dependencies.now || (() => Date.now());
     const hourMs = 60 * 60 * 1000;
-    const recordName = 'downloadconversation:secret-marker-key-v2';
+    const recordName = 'downloadconversation:secret-marker-key-v3';
     const scopeStorage = 'chatgpt-origin-indexeddb';
     const format = 'dc-secret-marker/2';
     const internal = new Map();
@@ -45,7 +45,7 @@
      */
     function initial() {
       const issued = now();
-      return { format: 'dc-secret-key-record/2', key_hex: randomHex(32),
+      return { format: 'dc-secret-key-record/3', key_hex: randomHex(32),
         epoch: 1, phase: 'open', pending: [], next: null,
         issued_at_ms: issued, expires_at_ms: deadline(issued),
         cycle_events: [cycleEvent(1, issued, 'initial')] };
