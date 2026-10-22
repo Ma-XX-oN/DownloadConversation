@@ -82,6 +82,7 @@
       '  decompress: __dcCompressorDecompress',
       '};',
       'self.__cscWriterLease = (' + cscCommWriterLease.toString() + ')(self);',
+      'self.__cscWriterManifest = (' + cscCommDiskManifest.toString() + ')(self);',
       'self.__cscDiskWriter = (' + cscCommDiskWriter.toString() +
         ')(self, (' + cscCommWorkerZstdCodec.toString() + ')());',
       cscCommProcessingWorkerSource()
