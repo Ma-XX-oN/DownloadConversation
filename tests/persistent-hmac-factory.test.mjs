@@ -12,7 +12,7 @@ const source = [
 ].map(name => readFileSync(new URL(name, import.meta.url), 'utf8'))
   .join('\n');
 
-test('production factory refuses ordinary Web Locks plus GM writes', async () => {
+test('production factory refuses GM-only storage under otherwise valid Web Locks', async () => {
   let writes = 0;
   const context = { crypto: webcrypto, Uint8Array, Map, Set,
     location: { origin: 'https://chatgpt.com' },
@@ -28,7 +28,7 @@ test('production factory refuses ordinary Web Locks plus GM writes', async () =>
   assert.equal(writes, 0);
 });
 
-test('factory rejects missing GM APIs and unverified key authority', async () => {
+test('factory rejects missing IndexedDB even with legacy GM globals', async () => {
   const context = { crypto: webcrypto, Uint8Array, Map, Set,
     location: { origin: 'https://chatgpt.com' },
     navigator: { locks: { request: async (_name, _options, fn) =>
@@ -41,7 +41,7 @@ test('factory rejects missing GM APIs and unverified key authority', async () =>
   await assert.rejects(() => factory().admit(), /shared-authority-unavailable/);
 });
 
-test('factory blocks admission until asynchronous GM write is acknowledged', async () => {
+test('core service blocks admission until asynchronous authoritative storage write resolves', async () => {
   const records = new Map();
   let allowCommit;
   let reachedWrite;
@@ -85,7 +85,7 @@ test('factory blocks admission until asynchronous GM write is acknowledged', asy
   service.dispose();
 });
 
-test('production factory refuses an unverified Web-Lock-plus-GM authority', async () => {
+test('production factory does not fall back to split-brain GM storage', async () => {
   const records = new Map();
   let gmWrites = 0;
   const context = { crypto: webcrypto, Uint8Array, Map, Set,
@@ -109,4 +109,14 @@ test('production factory refuses an unverified Web-Lock-plus-GM authority', asyn
   assert.equal(gmWrites, 0, 'must not publish a split-brain key');
   assert.equal(records.size, 0);
   producer.dispose();
+});
+
+test('production entry point contains no dormant GM key-storage fallback', () => {
+  const browserSource = readFileSync(new URL(
+    '../src/userscript/02-network-communication/04d-persistent-hmac-browser.js',
+    import.meta.url), 'utf8');
+  assert.doesNotMatch(browserSource, /GM\.|GM_getValue|GM_setValue/);
+  assert.doesNotMatch(browserSource, /HmacTampermonkeyStorage|HmacChatgptAuthority/);
+  assert.match(browserSource, /communicationPersistentHmacIndexedDbStorage/);
+  assert.match(browserSource, /communicationPersistentHmacIndexedDbAuthority/);
 });
