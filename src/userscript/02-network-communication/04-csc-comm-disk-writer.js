@@ -17,6 +17,7 @@
     const committedCaptures = new Set();
     let recoveredCapture = null;
     const lease = scope.__cscWriterLease;
+    const manifest = scope.__cscWriterManifest;
     let directory = null;
     let version = null;
     let keyRestart = null;
@@ -243,6 +244,8 @@
         check(equal(await codec.decompress(onDisk), raw),
           'csc-writer-compression-mismatch');
       }
+      const storedArchive = await bytesFrom(await file(archiveName));
+      await manifest.record(archiveName, storedArchive);
       await directory.removeEntry(activeName);
       length = 0;
       activeName = null;
