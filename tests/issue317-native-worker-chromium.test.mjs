@@ -114,9 +114,65 @@ async function nativePageTest() {
         original.archives.length !== recovered.archives.length) {
       throw Error('physical-manifest-mismatch');
     }
+    // Native two-Worker contention is not proved by the in-memory lease
+    // fixture; contend against one persistent physical namespace.
+    async function checkNativeLock() {
+      const url = URL.createObjectURL(new Blob([workerScript],
+        { type: 'text/javascript' }));
+      const first = new Worker(url);
+      const contender = new Worker(url);
+      const successor = new Worker(url);
+      function message(worker, desired, operation) {
+        return new Promise((resolve, reject) => {
+          const timeout = setTimeout(() => reject(
+            Error('native-lock-timeout:' + desired)), 12000);
+          const handler = event => {
+            if (event.data?.type !== desired &&
+                event.data?.type !== 'csc-writer-error') return;
+            worker.removeEventListener('message', handler);
+            clearTimeout(timeout);
+            resolve(event.data);
+          };
+          worker.addEventListener('message', handler);
+          worker.postMessage(operation);
+        });
+      }
+      const config = { type: 'csc-writer-open', handle: root,
+        namespace: 'chromium-test',
+        version: '1.11.7-issue.317-native',
+        key_restart: '2026-10-22T00:00:00.000Z' };
+      try {
+        const acquired = await message(first, 'csc-writer-ready', config);
+        if (acquired.type !== 'csc-writer-ready') {
+          throw Error('native-first-lock-denied');
+        }
+        const blocked = await message(contender, 'csc-writer-error', config);
+        if (blocked.reason !== 'csc-writer-lock-contended') {
+          throw Error('native-writer-lock-not-exclusive');
+        }
+        const released = await message(first, 'csc-writer-closed',
+          { type: 'csc-writer-close' });
+        if (released.type !== 'csc-writer-closed') {
+          throw Error('native-lease-release-failed');
+        }
+        const resumed = await message(successor, 'csc-writer-ready', config);
+        if (resumed.type !== 'csc-writer-ready') {
+          throw Error('native-lock-not-reacquired');
+        }
+        const done = await message(successor, 'csc-writer-closed',
+          { type: 'csc-writer-close' });
+        if (done.type !== 'csc-writer-closed') {
+          throw Error('native-successor-close-failed');
+        }
+      } finally {
+        first.terminate(); contender.terminate(); successor.terminate();
+        URL.revokeObjectURL(url);
+      }
+    }
+    await checkNativeLock();
     await root.removeEntry('dc-comm-chromium-test', { recursive: true });
     out.textContent = JSON.stringify({ native_worker: true,
-      web_locks: true, opfs: true, immutable_restart: true, fragments: 2 });
+      web_locks: true, opfs: true, immutable_restart: true, cross_worker_lock: true, fragments: 2 });
   } catch (error) {
     out.textContent = JSON.stringify({ error: String(error) });
   }
@@ -181,6 +237,7 @@ test('Chromium Worker WebLocks + OPFS physical segments survive Worker restart',
       assert.match(output, /"web_locks":true/);
       assert.match(output, /"opfs":true/);
       assert.match(output, /"immutable_restart":true/);
+      assert.match(output, /"cross_worker_lock":true/);
       assert.match(output, /"fragments":2/);
     } finally {
       server.closeAllConnections();
