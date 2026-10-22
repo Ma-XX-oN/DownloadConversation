@@ -8,7 +8,9 @@ import vm from 'node:vm';
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const source = readFileSync(path.join(root,
-  'src/userscript/02-network-communication/04-csc-comm-disk-writer.js'), 'utf8');
+  'src/userscript/02-network-communication/04-csc-comm-disk-writer.js'), 'utf8') +
+  readFileSync(path.join(root,
+    'src/userscript/02-network-communication/04-csc-comm-disk-writer-part2.js'), 'utf8');
 const leaseSource = readFileSync(path.join(root,
   'src/userscript/02-network-communication/04-csc-comm-disk-lock.js'), 'utf8');
 const start = new Date(1761152400000).toISOString();
