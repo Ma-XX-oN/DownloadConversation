@@ -26,6 +26,7 @@
     let activeCapture = null;
     let chain = Promise.resolve();
     let committed = 0;
+    let poisoned = false;
 
     /**
      * Performs check in the isolated COMM writer.
@@ -295,6 +296,7 @@
      * @returns {Promise<any>} setRestart result.
      */
     async function setRestart(restart) {
+      check(!poisoned, 'csc-writer-poisoned');
       check(validRestart(restart),
         'csc-writer-invalid-restart');
       check(activeCapture === null, 'csc-writer-capture-in-progress');
@@ -310,6 +312,7 @@
      * @returns {Promise<any>} write result.
      */
     async function write(bytes) {
+      check(!poisoned, 'csc-writer-poisoned');
       check(directory && validRestart(keyRestart),
         'csc-writer-not-open');
       check(bytes instanceof Uint8Array, 'csc-writer-invalid-bytes');
@@ -339,10 +342,11 @@
         check(record.capture_id === activeCapture,
           'csc-writer-capture-order-mismatch');
       }
-      if (!activeName) await createFragment();
       try {
+        if (!activeName) await createFragment();
         await appendRaw(bytes);
       } catch (error) {
+        poisoned = true;
         message('csc-writer-incomplete', {
           capture_id: record.capture_id ?? null,
           reason: errorCode(error), durable: false
