@@ -73,7 +73,15 @@
      */
     function validate(parsed, namespace) {
       const names = Object.keys(parsed ?? {}).sort().join(',');
-      if (names !== 'archives,logical_name,namespace,schema' ||
+      if (names !== 'archives,logical_name,namespace,schema' &&
+          names !== 'archives,logical_name,namespace,reset_pending,schema') {
+        throw new Error('csc-writer-manifest-invalid');
+      }
+      if (parsed?.reset_pending !== undefined &&
+          parsed.reset_pending !== true) {
+        throw new Error('csc-writer-manifest-invalid');
+      }
+      if (
           parsed.schema !== schema || parsed.namespace !== namespace ||
           typeof parsed.logical_name !== 'string' ||
           !/^[A-Za-z0-9_. -]{1,160}\.comm\.jsonl$/.test(
@@ -114,6 +122,10 @@
         { fatal: true }).decode(bytes)); }
       catch { throw new Error('csc-writer-manifest-invalid'); }
       validate(state, namespace);
+      if (state.reset_pending === true) {
+        await finishReset();
+        return;
+      }
       for (const [name, expected] of Object.entries(state.archives)) {
         const stored = await getBytes(name);
         if (!stored || await digest(stored) !== expected) {
@@ -176,6 +188,39 @@
       };
     }
     /**
+     * Completes an explicitly committed reset, including after a crash.
+     * Only known private fragments are removed; unrelated names survive.
+     * @returns {Promise<void>} Verified empty fragment inventory.
+     */
+    async function finishReset() {
+      if (!state || state.reset_pending !== true) {
+        throw new Error('csc-writer-reset-not-committed');
+      }
+      const remove = [];
+      for await (const [name] of directory.entries()) {
+        if (/^fragment-\d{8}\.jsonl(\.zst)?$/.test(name)) remove.push(name);
+      }
+      for (const name of remove) await directory.removeEntry(name);
+      for await (const [name] of directory.entries()) {
+        if (/^fragment-\d{8}\.jsonl(\.zst)?$/.test(name)) {
+          throw new Error('csc-writer-reset-incomplete');
+        }
+      }
+      state.archives = {};
+      delete state.reset_pending;
+      await commit();
+    }
+    /**
+     * Persists the explicit reset intent before deleting any fragments.
+     * @returns {Promise<void>} Complete verified reset.
+     */
+    async function reset() {
+      if (!state) throw new Error('csc-writer-manifest-unready');
+      state.reset_pending = true;
+      await commit();
+      await finishReset();
+    }
+    /**
      * Releases the current memory handle after owner reset/close.
      * @returns {void} Clears transient manifest state only.
      */
@@ -184,7 +229,7 @@
       state = null;
     }
     return Object.freeze({
-      open, record, rename, snapshot, release,
+      open, record, rename, snapshot, reset, release,
       get logicalName() { return state?.logical_name ?? null; }
     });
   }
