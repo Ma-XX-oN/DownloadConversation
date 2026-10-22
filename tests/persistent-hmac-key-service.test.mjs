@@ -46,7 +46,7 @@ function fixture() {
       if (failing === 'silent-write') return;
       current = structuredClone(value);
       events.push({ phase: value.phase, epoch: value.epoch,
-        generation: value.generation, pending: value.pending.length });
+        key_restart: new Date(value.issued_at_ms).toISOString(), pending: value.pending.length });
     }
   };
   const randomCrypto = {
@@ -99,8 +99,8 @@ test('100 racing first-use sessions across chatgpt.com tabs converge to one pers
   const f = fixture();
   const services = Array.from({ length: 100 }, () => f.open());
   const admissions = await Promise.all(services.map(s => s.admit()));
-  assert.equal(f.randomCount, 103);
-  const scopes = new Set(admissions.map(a => a.metadata.redaction_scope));
+  assert.equal(f.randomCount, 102);
+  const scopes = new Set(admissions.map(a => a.metadata.key_restart));
   assert.equal(scopes.size, 1);
   assert.equal(f.raw().pending.length, 100);
   assert.equal(f.raw().epoch, 1);
@@ -119,7 +119,7 @@ test('A→B→A, simulated browser restart, Unicode marker identity is stable', 
   for (const context of ['chatgpt.com', 'chatgpt.com', 'chatgpt.com']) {
     const service = f.open();
     const admitted = await service.admit();
-    scopes.push(admitted.metadata.redaction_scope);
+    scopes.push(admitted.metadata.key_restart);
     keyIds.push(digest(provision(service, admitted.token), secret));
     assert.equal(context.length > 0, true);
     await service.complete(admitted.token);
@@ -127,7 +127,7 @@ test('A→B→A, simulated browser restart, Unicode marker identity is stable', 
   }
   assert.equal(new Set(keyIds).size, 1);
   assert.equal(new Set(scopes).size, 1);
-  assert.equal(f.randomCount, 6);
+  assert.equal(f.randomCount, 5);
 });
 
 test('rotation fences new captures, drains old before new segment, then changes equality', async () => {
@@ -137,7 +137,7 @@ test('rotation fences new captures, drains old before new segment, then changes 
   const keyBefore = provision(first, pending.token);
   const second = f.open();
   assert.deepEqual(JSON.parse(JSON.stringify(await second.randomize(true))), {
-    state: 'DRAINING', generation: pending.metadata.redaction_scope, epoch: 1
+    state: 'DRAINING', key_restart: pending.metadata.key_restart, epoch: 1
   });
   await assert.rejects(() => second.admit(), /rotation-draining/);
   assert.equal(f.raw().phase, 'draining');
@@ -146,7 +146,7 @@ test('rotation fences new captures, drains old before new segment, then changes 
   const after = await second.admit();
   const keyAfter = provision(second, after.token);
   assert.equal(after.metadata.redaction_key_epoch, 2);
-  assert.notEqual(after.metadata.redaction_scope, pending.metadata.redaction_scope);
+  assert.notEqual(after.metadata.key_restart, pending.metadata.key_restart);
   assert.notEqual(digest(keyBefore, secret), digest(keyAfter, secret));
   await second.complete(after.token);
 });
@@ -173,7 +173,7 @@ test('unconfirmed rotation, storage outages, malformed data and writeback errors
   f.fail('read');
   await assert.rejects(() => s.admit(), /storage-read-failed/);
   f.fail(null);
-  f.setRaw({ format: 'dc-secret-key-record/2', key_hex: 'ab' });
+  f.setRaw({ format: 'dc-secret-key-record/3', key_hex: 'ab' });
   await assert.rejects(() => s.admit(), /storage-corrupt/);
   assert.equal(f.raw().key_hex, 'ab');
   f.setRaw(null);
@@ -193,7 +193,7 @@ test('ambiguous acknowledged write remains fenced, read reconciliation does not 
   assert.ok(f.raw().key_hex);
   f.fail(null);
   const a = await s.admit();
-  assert.equal(f.raw().generation, a.metadata.redaction_scope);
+  assert.equal(new Date(f.raw().issued_at_ms).toISOString(), a.metadata.key_restart);
   await s.complete(a.token);
   const next = await s.randomize(true);
   assert.equal(next.state, 'COMMITTED');
@@ -204,14 +204,14 @@ test('interrupted rotating storage, stale tab and malformed next record never mi
   const f = fixture();
   const a = f.open();
   const first = await a.admit();
-  const oldScope = first.metadata.redaction_scope;
+  const oldScope = first.metadata.key_restart;
   const b = f.open();
   assert.equal((await b.randomize(true)).state, 'DRAINING');
   await assert.rejects(() => f.open().admit(), /rotation-draining/);
   assert.equal((await f.open().recover()).state, 'DRAINING');
   await a.complete(first.token);
   assert.equal((await f.open().recover()).state, 'READY');
-  assert.notEqual(f.raw().generation, oldScope);
+  assert.notEqual(new Date(f.raw().issued_at_ms).toISOString(), oldScope);
   const corrupt = f.raw();
   corrupt.next = { key_hex: 'ab', generation: 'g', epoch: 5 };
   corrupt.phase = 'draining';
@@ -405,8 +405,8 @@ test('Randomize reconciles committed rotation after lost GM acknowledgement', as
   assert.equal(result.state, 'COMMITTED');
   assert.equal(result.epoch, 2);
   assert.equal(f.raw().epoch, 2);
-  assert.equal(result.generation, f.raw().generation);
-  assert.notEqual(result.generation, first.metadata.redaction_scope);
+  assert.equal(result.key_restart, new Date(f.raw().issued_at_ms).toISOString());
+  assert.notEqual(result.key_restart, first.metadata.key_restart);
   s.dispose();
 });
 
@@ -418,7 +418,7 @@ test('Randomize rejects uncommitted failed write rather than invent new scope', 
   f.fail('write');
   await assert.rejects(() => s.randomize(true), /storage-write-failed/);
   assert.equal(f.raw().epoch, 1);
-  assert.equal(f.raw().generation, first.metadata.redaction_scope);
+  assert.equal(new Date(f.raw().issued_at_ms).toISOString(), first.metadata.key_restart);
   f.fail(null);
   const result = await s.randomize(true);
   assert.equal(result.epoch, 2);
@@ -478,7 +478,7 @@ test('negative control: serialized locks do not make stale GM replicas coherent'
   try {
     // Both operations acquired the SAME exclusive authority sequentially
     // and passed their local post-write readback, yet established two keys.
-    assert.notEqual(a.metadata.redaction_scope, b.metadata.redaction_scope);
+    // Split-brain is proved by differing keyed digests, not by clock time.
     assert.equal(a.metadata.redaction_key_epoch, 1);
     assert.equal(b.metadata.redaction_key_epoch, 1);
     const firstKey = provision(first, a.token);
