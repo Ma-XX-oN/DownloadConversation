@@ -12,7 +12,9 @@
     let titleObserver = null, headObserver = null, observedNode = null;
     let route = null, name = null, revision = 0;
 
-    /** @returns {Object} Deep-frozen AICC V1-shaped unresolved snapshot. */
+    /**
+     * @returns {Object} Deep-frozen AICC V1-shaped unresolved snapshot.
+     */
     function snapshot() {
       return Object.freeze({
         subject: 'subject-identification', revision, readiness: 'unresolved',
@@ -21,7 +23,9 @@
       });
     }
 
-    /** @returns {string|null} Provisional title (not backend verified). */
+    /**
+     * @returns {string|null} Provisional title (not backend verified).
+     */
     function readTitle() {
       const title = String(document.title ?? '')
         .replace(/\s*[-–—]\s*ChatGPT\s*$/i, '').trim();
@@ -42,12 +46,14 @@
         if (!observers.has(callback)) continue;
         try { callback(current); }
         catch (error) {
-          console.error('[DC interm_agent] identity callback failed', error);
+          logConsoleDiagnostic('warnings', '[DC interm_agent] identity callback failed', { reason: errorMessage(error) });
         }
       }
     }
 
-    /** @returns {void} Watch current title and title-element replacement. */
+    /**
+     * @returns {void} Watch current title and title-element replacement.
+     */
     function bind() {
       if (!active || !document.head) return;
       if (!headObserver) {
@@ -67,7 +73,9 @@
       }
     }
 
-    /** @returns {void} Reconcile mutations/navigation without polling. */
+    /**
+     * @returns {void} Reconcile mutations/navigation without polling.
+     */
     function refresh() {
       bind();
       const currentRoute = location.pathname + location.search;
@@ -77,7 +85,9 @@
       publish(stale ? null : next);
     }
 
-    /** @returns {void} Start event-driven observation. */
+    /**
+     * @returns {void} Start event-driven observation.
+     */
     function start() {
       if (active) return;
       active = true;
@@ -89,7 +99,9 @@
       refresh();
     }
 
-    /** @returns {void} Disconnect when last subscriber leaves. */
+    /**
+     * @returns {void} Disconnect when last subscriber leaves.
+     */
     function stop() {
       if (!active) return;
       active = false;

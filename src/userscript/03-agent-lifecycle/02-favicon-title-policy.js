@@ -3,7 +3,9 @@
     '- ACTIVE': 1000,
     '- USER ACTION REQUIRED': 2000
   });
+  /** Most recent observer-delivered title, provisional until real AICC. */
   let agentFaviconIdentityName = null;
+  /** Teardown for the current identity subscription, if any. */
   let agentFaviconTitleUnsubscribe = null;
 
   /**
@@ -14,7 +16,9 @@
    */
   const agentFaviconIdentitySource = interm_agent;
 
-  /** @returns {number|null} Milliseconds per frame or null for static. */
+  /**
+   * @returns {number|null} Milliseconds per frame or null for static.
+   */
   function agentFaviconHeartbeatCadence() {
     const title = agentFaviconIdentityName ?? '';
     const dash = title.lastIndexOf('-');
@@ -54,7 +58,9 @@
     }
   }
 
-  /** @returns {void} Start exactly one identity subscription. */
+  /**
+   * @returns {void} Start exactly one identity subscription.
+   */
   function agentFaviconTitleMonitorStart() {
     if (agentFaviconTitleUnsubscribe) return;
     agentFaviconTitleUnsubscribe = agentFaviconIdentitySource.observeState(
@@ -68,7 +74,9 @@
     }
   }
 
-  /** @returns {void} Stop subscription on pagehide. */
+  /**
+   * @returns {void} Stop subscription on pagehide.
+   */
   function agentFaviconTitlePause() {
     agentFaviconTitleUnsubscribe?.();
     agentFaviconTitleUnsubscribe = null;

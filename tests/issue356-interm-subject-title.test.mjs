@@ -120,8 +120,8 @@ test('initial exceptions unregister; bad subject is rejected', () => {
     () => { throw new Error('expected'); }, 'subject-identification'), /expected/);
   assert.equal(h.watchers.filter(x => x.live).length, 0);
   assert.throws(() => h.agent.observeState(null, 'subject-identification'),
-    TypeError);
-  assert.throws(() => h.agent.observeState(() => {}, 'wrong'), TypeError);
+    { name: 'TypeError' });
+  assert.throws(() => h.agent.observeState(() => {}, 'wrong'), { name: 'TypeError' });
   assert.equal(h.errors, 0);
 });
 
