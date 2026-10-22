@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         ChatGPT Conversation Markdown Recorder
 // @namespace    https://chatgpt.com/
-// @version      1.11.7-issue.317.8
+// @version      1.11.7-issue.317.9
 // @description  Exports the current ChatGPT conversation directly from the Conversation API as Markdown or JSONL.
 // @match        https://chatgpt.com/*
 // @match        https://chat.openai.com/*
@@ -12279,6 +12279,183 @@ globalThis.__dcCompressor = {
   }
 
   /**
+   * Small Worker-owned durable manifest for archive digests and logical name.
+   * Physical fragments remain the authority for data and capture recovery.
+   * @param {Object} scope - Dedicated Worker global with WebCrypto.
+   * @returns {Object} Manifest controls bound to one namespace.
+   */
+  function cscCommDiskManifest(scope) {
+    const schema = 'dc-csc-comm-segments/2';
+    const encoder = new TextEncoder();
+    let directory = null;
+    let state = null;
+    /**
+     * Computes the SHA256 digest from the physical file bytes.
+     * @param {Uint8Array} bytes - Exact stored bytes.
+     * @returns {Promise<string>} Lowercase hexadecimal digest.
+     */
+    async function digest(bytes) {
+      if (!scope.crypto?.subtle) {
+        throw new Error('csc-writer-digest-unavailable');
+      }
+      const hash = new Uint8Array(await scope.crypto.subtle.digest(
+        'SHA-256', bytes));
+      return Array.from(hash, b => b.toString(16).padStart(2, '0')).join('');
+    }
+    /**
+     * Fetches a private file without creating a missing entry.
+     * @param {string} fileName - Manifest or archive name.
+     * @returns {Promise<Uint8Array|null>} Physical bytes or null if absent.
+     */
+    async function getBytes(fileName) {
+      try {
+        const handle = await directory.getFileHandle(fileName, {
+          create: false
+        });
+        return new Uint8Array(await (await handle.getFile()).arrayBuffer());
+      } catch (error) {
+        if (error?.name === 'NotFoundError') return null;
+        throw error;
+      }
+    }
+    /**
+     * Commits a small manifest and compares exact physical readback.
+     * @returns {Promise<void>} Verified manifest persistence.
+     */
+    async function commit() {
+      if (!directory || !state) throw new Error('csc-writer-manifest-unready');
+      const bytes = encoder.encode(JSON.stringify(state) + '\n');
+      const handle = await directory.getFileHandle('manifest.json', {
+        create: true
+      });
+      let stream = null;
+      try {
+        stream = await handle.createWritable();
+        await stream.write(bytes);
+        await stream.close();
+        stream = null;
+        const stored = await getBytes('manifest.json');
+        if (!stored || stored.length !== bytes.length ||
+            stored.some((value, index) => value !== bytes[index])) {
+          throw new Error('csc-writer-manifest-readback-mismatch');
+        }
+      } catch (error) {
+        if (stream) await stream.abort().catch(() => {});
+        throw error;
+      }
+    }
+    /**
+     * Validates the on-disk manifest against the exact namespace.
+     * @param {Object} parsed - Untrusted disk JSON data.
+     * @param {string} namespace - Selected logical recorder namespace.
+     * @returns {void} Throws on any unexpected control-plane field.
+     */
+    function validate(parsed, namespace) {
+      const names = Object.keys(parsed ?? {}).sort().join(',');
+      if (names !== 'archives,logical_name,namespace,schema' ||
+          parsed.schema !== schema || parsed.namespace !== namespace ||
+          typeof parsed.logical_name !== 'string' ||
+          !/^[A-Za-z0-9_. -]{1,160}\.comm\.jsonl$/.test(
+            parsed.logical_name) ||
+          !parsed.archives || typeof parsed.archives !== 'object' ||
+          Array.isArray(parsed.archives)) {
+        throw new Error('csc-writer-manifest-invalid');
+      }
+      for (const [name, hash] of Object.entries(parsed.archives)) {
+        if (!/^fragment-\d{8}\.jsonl\.zst$/.test(name) ||
+            !/^[a-f0-9]{64}$/.test(hash)) {
+          throw new Error('csc-writer-manifest-invalid');
+        }
+      }
+    }
+    /**
+     * Opens and checks every previously indexed archive hash.
+     * @param {Object} handle - Existing private fragment directory.
+     * @param {string} namespace - Stable logical name.
+     * @returns {Promise<void>} Manifest ready, or explicit failure.
+     */
+    async function open(handle, namespace) {
+      if (directory) throw new Error('csc-writer-manifest-already-open');
+      directory = handle;
+      const bytes = await getBytes('manifest.json');
+      if (bytes === null) {
+        let found = false;
+        for await (const [name] of directory.entries()) {
+          if (/^fragment-\d{8}\.jsonl(\.zst)?$/.test(name)) found = true;
+        }
+        if (found) throw new Error('csc-writer-manifest-missing-with-data');
+        state = { schema, namespace,
+          logical_name: namespace + '.comm.jsonl', archives: {} };
+        await commit();
+        return;
+      }
+      try { state = JSON.parse(new TextDecoder('utf-8',
+        { fatal: true }).decode(bytes)); }
+      catch { throw new Error('csc-writer-manifest-invalid'); }
+      validate(state, namespace);
+      for (const [name, expected] of Object.entries(state.archives)) {
+        const stored = await getBytes(name);
+        if (!stored || await digest(stored) !== expected) {
+          throw new Error('csc-writer-manifest-archive-mismatch');
+        }
+      }
+    }
+    /**
+     * Validates or durably registers one archive after byte verification.
+     * @param {string} name - Immutable Zstd archive filename.
+     * @param {Uint8Array} bytes - Physical compressed file contents.
+     * @returns {Promise<void>} Hash persisted and verified.
+     */
+    async function record(name, bytes) {
+      if (!state || !/^fragment-\d{8}\.jsonl\.zst$/.test(name)) {
+        throw new Error('csc-writer-manifest-invalid');
+      }
+      const hash = await digest(bytes);
+      if (state.archives[name] !== undefined) {
+        if (state.archives[name] !== hash) {
+          throw new Error('csc-writer-manifest-archive-mismatch');
+        }
+        return;
+      }
+      state.archives[name] = hash;
+      try { await commit(); }
+      catch (error) {
+        delete state.archives[name];
+        throw error;
+      }
+    }
+    /**
+     * Changes only the logical user-visible filename; physical fragments stay.
+     * @param {string} filename - Validated COMM output basename.
+     * @returns {Promise<string>} Committed logical filename.
+     */
+    async function rename(filename) {
+      if (!state || typeof filename !== 'string' ||
+          !/^[A-Za-z0-9_. -]{1,160}\.comm\.jsonl$/.test(filename)) {
+        throw new Error('csc-writer-invalid-logical-name');
+      }
+      if (filename === state.logical_name) return filename;
+      const previous = state.logical_name;
+      state.logical_name = filename;
+      try { await commit(); }
+      catch (error) { state.logical_name = previous; throw error; }
+      return filename;
+    }
+    /**
+     * Releases the current memory handle after owner reset/close.
+     * @returns {void} Clears transient manifest state only.
+     */
+    function release() {
+      directory = null;
+      state = null;
+    }
+    return Object.freeze({
+      open, record, rename, release,
+      get logicalName() { return state?.logical_name ?? null; }
+    });
+  }
+
+  /**
    * Worker-owned COMM disk writer. No network interception or page DOM access.
    * Acknowledgements are durable only after close + exact physical readback.
    */
@@ -12296,6 +12473,7 @@ globalThis.__dcCompressor = {
     const committedCaptures = new Set();
     let recoveredCapture = null;
     const lease = scope.__cscWriterLease;
+    const manifest = scope.__cscWriterManifest;
     let directory = null;
     let version = null;
     let keyRestart = null;
@@ -12522,6 +12700,8 @@ globalThis.__dcCompressor = {
         check(equal(await codec.decompress(onDisk), raw),
           'csc-writer-compression-mismatch');
       }
+      const storedArchive = await bytesFrom(await file(archiveName));
+      await manifest.record(archiveName, storedArchive);
       await directory.removeEntry(activeName);
       length = 0;
       activeName = null;
@@ -12674,6 +12854,7 @@ globalThis.__dcCompressor = {
       try {
         directory = await options.handle.getDirectoryHandle(
           'dc-comm-' + options.namespace, { create: true });
+        await manifest.open(directory, options.namespace);
         let max = 0;
       let rawIndex = 0;
       let oldFragment = false;
@@ -12685,13 +12866,36 @@ globalThis.__dcCompressor = {
         }
       }
       candidates.sort((a, b) => a.fileName.localeCompare(b.fileName));
-      for (const { fileName, entry } of candidates) {
+      // A crash after an archive write can leave an identical raw twin.
+      // Compare independent physical bytes before retiring the raw copy.
+      const byNumber = new Map();
+      for (const candidate of candidates) {
+        const id = candidate.fileName.slice(9, 17);
+        const pair = byNumber.get(id) || {};
+        if (candidate.fileName.endsWith('.zst')) pair.archive = candidate;
+        else pair.raw = candidate;
+        byNumber.set(id, pair);
+      }
+      const canonical = [];
+      for (const pair of byNumber.values()) {
+        if (pair.archive && pair.raw) {
+          const sourceBytes = await bytesFrom(pair.raw.entry);
+          const archiveBytes = await codec.decompress(
+            await bytesFrom(pair.archive.entry));
+          check(equal(sourceBytes, archiveBytes),
+            'csc-writer-interrupted-archive-mismatch');
+          await directory.removeEntry(pair.raw.fileName);
+        }
+        canonical.push(pair.archive || pair.raw);
+      }
+      for (const { fileName, entry } of canonical) {
         const number = Number(fileName.slice(9, 17));
         max = Math.max(max, number);
         const compressed = fileName.endsWith('.zst');
         const raw = await bytesFrom(entry);
         const unpacked = compressed ? await codec.decompress(raw) : raw;
         const found = parseFragment(unpacked);
+        if (compressed) await manifest.record(fileName, raw);
         if (!compressed) {
           check(!activeName, 'csc-writer-ambiguous-raw-fragment');
           activeName = fileName;
@@ -12716,6 +12920,7 @@ globalThis.__dcCompressor = {
         });
       } catch (error) {
         directory = null;
+        manifest.release();
         await lease.release();
         throw error;
       }
@@ -12728,6 +12933,7 @@ globalThis.__dcCompressor = {
       check(!activeCapture, 'csc-writer-capture-in-progress');
       await seal();
       await lease.release();
+      manifest.release();
       message('csc-writer-closed', { durable: true });
     }
     const api = Object.freeze({ open, write, setRestart, seal, close,
@@ -12844,6 +13050,7 @@ globalThis.__dcCompressor = {
       '  decompress: __dcCompressorDecompress',
       '};',
       'self.__cscWriterLease = (' + cscCommWriterLease.toString() + ')(self);',
+      'self.__cscWriterManifest = (' + cscCommDiskManifest.toString() + ')(self);',
       'self.__cscDiskWriter = (' + cscCommDiskWriter.toString() +
         ')(self, (' + cscCommWorkerZstdCodec.toString() + ')());',
       cscCommProcessingWorkerSource()
