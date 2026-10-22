@@ -25,6 +25,7 @@
       try {
         directory = await options.handle.getDirectoryHandle(
           'dc-comm-' + options.namespace, { create: true });
+        await manifest.open(directory, options.namespace);
         let max = 0;
       let rawIndex = 0;
       let oldFragment = false;
@@ -65,6 +66,7 @@
         const raw = await bytesFrom(entry);
         const unpacked = compressed ? await codec.decompress(raw) : raw;
         const found = parseFragment(unpacked);
+        if (compressed) await manifest.record(fileName, raw);
         if (!compressed) {
           check(!activeName, 'csc-writer-ambiguous-raw-fragment');
           activeName = fileName;
@@ -89,6 +91,7 @@
         });
       } catch (error) {
         directory = null;
+        manifest.release();
         await lease.release();
         throw error;
       }
@@ -101,6 +104,7 @@
       check(!activeCapture, 'csc-writer-capture-in-progress');
       await seal();
       await lease.release();
+      manifest.release();
       message('csc-writer-closed', { durable: true });
     }
     const api = Object.freeze({ open, write, setRestart, seal, close,
