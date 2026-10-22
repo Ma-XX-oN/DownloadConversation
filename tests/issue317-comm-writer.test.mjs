@@ -9,7 +9,7 @@ import vm from 'node:vm';
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const source = readFileSync(path.join(root,
   'src/userscript/02-network-communication/04-csc-comm-disk-writer.js'), 'utf8');
-const start = 1761152400000;
+const start = new Date(1761152400000).toISOString();
 const encoder = new TextEncoder();
 const frame = value => encoder.encode(JSON.stringify(value) + '\n');
 
@@ -159,10 +159,10 @@ test('key rotation is an immutable fragment boundary', async () => {
   const f = fixture();
   await open(f);
   await normalCapture(f);
-  const later = start + 1000;
+  const later = new Date(Date.parse(start) + 1000).toISOString();
   await f.writer.setRestart(later);
   const event = { kind: 'hmac-key-cycle', id: 'hmac-key-cycle:' + later,
-    occurred_at_ms: later, reason: 'manual' };
+    key_restart: later, occurred_at_ms: Date.parse(later), reason: 'manual' };
   await f.writer.write(frame(event));
   await f.writer.close();
   const parts = readPlain(f).map(([name, raw]) => ({
@@ -178,7 +178,8 @@ test('restart finds disk-committed key cycle and suppresses duplicate replay', a
   const f = fixture();
   await open(f);
   const item = { kind: 'hmac-key-cycle',
-    id: 'hmac-key-cycle:synthetic:1', occurred_at_ms: start,
+    id: 'hmac-key-cycle:' + start, key_restart: start,
+    occurred_at_ms: Date.parse(start),
     reason: 'initial' };
   await f.writer.write(frame(item));
   await f.writer.close();
