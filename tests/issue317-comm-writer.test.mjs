@@ -112,9 +112,9 @@ function fixture({ denied = false, corrupt = false, locks = new Set() } = {}) {
   const writer = sandbox.factory(scope, codec);
   return { parent, directory, files, messages, handlers, scope, writer, codec };
 }
-async function open(f, restart = start) {
+async function open(f, restart = start, version = '1.11.7-issue.317.1') {
   await f.writer.open({ handle: f.parent, namespace: 'synthetic-tab',
-    version: '1.11.7-issue.317.1', key_restart: restart });
+    version, key_restart: restart });
 }
 function readPlain(f) {
   const sorted = [...f.files].sort(([a], [b]) => a.localeCompare(b));
@@ -292,4 +292,52 @@ test('unavailable Web Locks API fails without creating a fragment', async () => 
   delete f.scope.navigator;
   await assert.rejects(() => open(f), /csc-writer-lock-unavailable/);
   assert.equal(f.files.size, 0);
+});
+
+test('previous immutable version is sealed on restart without rewriting its header', async () => {
+  const f = fixture();
+  await open(f);
+  await normalCapture(f);
+  await f.scope.__cscWriterLease.release();
+  const successor = fixture();
+  successor.parent.getDirectoryHandle = f.parent.getDirectoryHandle;
+  await open(successor, start, '1.11.7-issue.317.2');
+  await successor.writer.write(frame({
+    kind: 'csc-comm-start', capture_id: 'second', key_restart: start
+  }));
+  await successor.writer.write(frame({
+    kind: 'csc-comm-end', capture_id: 'second', status: 'completed'
+  }));
+  await successor.writer.close();
+  const versions = readPlain(f).map(([, raw]) =>
+    JSON.parse(new TextDecoder().decode(raw).split('\n')[0]).version.comm);
+  assert.deepEqual(versions, ['1.11.7-issue.317.1', '1.11.7-issue.317.2']);
+});
+test('replayed completed capture cannot create another physical record', async () => {
+  const f = fixture();
+  await open(f);
+  await normalCapture(f);
+  await f.writer.close();
+  const bytes = [...f.files.values()].reduce((n, v) => n + v.length, 0);
+  const successor = fixture();
+  successor.parent.getDirectoryHandle = f.parent.getDirectoryHandle;
+  await open(successor);
+  await assert.rejects(() =>
+    successor.writer.write(record('csc-comm-start', { key_restart: start })),
+    /csc-writer-duplicate-capture/);
+  assert.equal([...f.files.values()].reduce((n, v) => n + v.length, 0), bytes);
+});
+test('crash with unterminated capture fails closed and preserves on-disk bytes', async () => {
+  const f = fixture();
+  await open(f);
+  await f.writer.write(record('csc-comm-start', { key_restart: start }));
+  await f.scope.__cscWriterLease.release();
+  const before = [...f.files.values()].map(b => Uint8Array.from(b));
+  const successor = fixture();
+  successor.parent.getDirectoryHandle = f.parent.getDirectoryHandle;
+  await assert.rejects(() => open(successor),
+    /csc-writer-unresolved-capture/);
+  assert.equal(f.files.size, before.length);
+  assert.deepEqual([...f.files.values()].map(b => Array.from(b)),
+    before.map(b => Array.from(b)));
 });
