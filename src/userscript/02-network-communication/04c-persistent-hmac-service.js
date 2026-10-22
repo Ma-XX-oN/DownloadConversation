@@ -1,7 +1,7 @@
   /**
-   * Manage persistent V2 HMAC keys under verified shared authority.
+   * Manage persistent HMAC keys with timestamp-identified key cycles.
    *
-   * @param {Object} dependencies - GM storage, verified authority and WebCrypto.
+   * @param {Object} dependencies - Atomic storage, verified authority and WebCrypto.
    * @returns {Object} Closed persistent key lifecycle API.
    */
   function communicationPersistentHmacService(dependencies) {
@@ -45,11 +45,10 @@
      */
     function initial() {
       const issued = now();
-      const generation = randomHex(16);
       return { format: 'dc-secret-key-record/2', key_hex: randomHex(32),
-        generation, epoch: 1, phase: 'open', pending: [], next: null,
+        epoch: 1, phase: 'open', pending: [], next: null,
         issued_at_ms: issued, expires_at_ms: deadline(issued),
-        cycle_events: [cycleEvent(generation, 1, issued, 'initial')] };
+        cycle_events: [cycleEvent(1, issued, 'initial')] };
     }
 
     /**
@@ -104,8 +103,7 @@
      */
     function metadata(stored) {
       return Object.freeze({ redaction_format: format,
-        redaction_scope: stored.generation,
-        redaction_key_generation: stored.generation,
+        key_restart: new Date(stored.issued_at_ms).toISOString(),
         redaction_key_epoch: stored.epoch,
         redaction_key_storage: scopeStorage });
     }
@@ -115,14 +113,14 @@
      * @returns {Object} Next record.
      */
     function finishRotation(stored) {
-      const issued = now();
-      const generation = stored.next.generation;
+      // Strictly monotonic even for immediate successive Randomize calls.
+      const issued = Math.max(now(), stored.issued_at_ms + 1);
       const epoch = stored.next.epoch;
       return { format: stored.format, key_hex: stored.next.key_hex,
-        generation, epoch, phase: 'open', pending: [], next: null,
+        epoch, phase: 'open', pending: [], next: null,
         issued_at_ms: issued, expires_at_ms: deadline(issued),
         cycle_events: [...stored.cycle_events,
-          cycleEvent(generation, epoch, issued, stored.next.reason)] };
+          cycleEvent(epoch, issued, stored.next.reason)] };
     }
 
     /**
@@ -136,16 +134,16 @@
     }
 
     /**
-     * @param {string} generation - Public generation identifier.
      * @param {number} epoch - Public key epoch.
-     * @param {number} time - Committed timestamp.
+     * @param {number} time - Authoritative activation timestamp.
      * @param {string} reason - Initial, scheduled, overdue or manual.
      * @returns {Object} Stable nonsecret record for GEN and COMM.
      */
-    function cycleEvent(generation, epoch, time, reason) {
+    function cycleEvent(epoch, time, reason) {
+      const key_restart = new Date(time).toISOString();
       return { type: 'hmac-key-cycle',
-        id: 'hmac-key-cycle:' + epoch + ':' + generation,
-        generation, epoch, occurred_at_ms: time, reason };
+        id: 'hmac-key-cycle:' + key_restart,
+        key_restart, epoch, occurred_at_ms: time, reason };
     }
 
     /**
@@ -157,7 +155,7 @@
       const stored = await read();
       if (!stored || stored.phase !== 'open') return stored;
       const time = now();
-      if (time < stored.issued_at_ms) {
+      if (time + 1000 < stored.issued_at_ms) {
         throw Error('persistent-key-clock-regression');
       }
       if (time < stored.expires_at_ms) return stored;
@@ -167,7 +165,7 @@
       const reason = time - stored.issued_at_ms > 25 * hourMs
         ? 'overdue' : 'scheduled';
       const draining = { ...stored, phase: 'draining',
-        next: { key_hex: randomHex(32), generation: randomHex(16),
+        next: { key_hex: randomHex(32),
           epoch: stored.epoch + 1, reason } };
       const next = stored.pending.length === 0
         ? finishRotation(draining) : draining;
@@ -299,7 +297,7 @@
           throw new Error('persistent-key-epoch-overflow');
         }
         const next = { ...stored, phase: 'draining',
-          next: { key_hex: randomHex(32), generation: randomHex(16),
+          next: { key_hex: randomHex(32),
             epoch: stored.epoch + 1, reason: 'manual' } };
         const committed = next.pending.length === 0
           ? finishRotation(next) : next;
@@ -313,7 +311,8 @@
           }
         }
         return { state: next.pending.length ? 'DRAINING' : 'COMMITTED',
-          generation: next.pending.length ? stored.generation : next.next.generation,
+          key_restart: new Date(next.pending.length
+            ? stored.issued_at_ms : committed.issued_at_ms).toISOString(),
           epoch: next.pending.length ? stored.epoch : next.next.epoch };
       });
     }
