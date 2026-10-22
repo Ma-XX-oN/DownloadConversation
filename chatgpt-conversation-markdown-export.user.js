@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         ChatGPT Conversation Markdown Recorder
 // @namespace    https://chatgpt.com/
-// @version      1.11.7-issue.317.4
+// @version      1.11.7-issue.317.5
 // @description  Exports the current ChatGPT conversation directly from the Conversation API as Markdown or JSONL.
 // @match        https://chatgpt.com/*
 // @match        https://chat.openai.com/*
@@ -12228,6 +12228,57 @@ globalThis.__dcCompressor = {
   }
 
   /**
+   * Holds a Web Lock for the entire open COMM writer session.
+   * @param {Object} scope - Dedicated Worker scope.
+   * @returns {Object} Exclusive lock lease controls.
+   */
+  function cscCommWriterLease(scope) {
+    let releaseHeld = null;
+    let held = false;
+    let completion = Promise.resolve();
+    /**
+     * Claims the unique logical log without awaiting the lease's closure.
+     * @param {string} namespace - One logical recording identity.
+     * @returns {Promise<void>} Resolves only after exclusive acquisition.
+     */
+    async function acquire(namespace) {
+      if (held || releaseHeld) throw new Error('csc-writer-lock-already-held');
+      const locks = scope.navigator?.locks;
+      if (typeof locks?.request !== 'function') {
+        throw new Error('csc-writer-lock-unavailable');
+      }
+      let pass; let fail;
+      const acquired = new Promise((resolve, reject) => {
+        pass = resolve; fail = reject;
+      });
+      const task = locks.request('dc-csc-writer:' + namespace,
+        { mode: 'exclusive', ifAvailable: true }, async lock => {
+          if (!lock) { pass(false); return; }
+          held = true;
+          const lifetime = new Promise(resolve => {
+            releaseHeld = resolve;
+          });
+          pass(true);
+          await lifetime;
+          held = false;
+          releaseHeld = null;
+        });
+      completion = Promise.resolve(task);
+      void completion.catch(fail);
+      if (!(await acquired)) throw new Error('csc-writer-lock-contended');
+    }
+    /**
+     * Relinquishes the exclusive lock on graceful close or failed startup.
+     * @returns {Promise<void>} Unlock completed.
+     */
+    async function release() {
+      if (releaseHeld) releaseHeld();
+      await completion;
+    }
+    return Object.freeze({ acquire, release, get held() { return held; } });
+  }
+
+  /**
    * Worker-owned COMM disk writer. No network interception or page DOM access.
    * Acknowledgements are durable only after close + exact physical readback.
    */
@@ -12242,6 +12293,9 @@ globalThis.__dcCompressor = {
     const decoder = new TextDecoder('utf-8', { fatal: true });
     const threshold = 10 * 1024 * 1024;
     const knownCycles = new Set();
+    const committedCaptures = new Set();
+    let recoveredCapture = null;
+    const lease = scope.__cscWriterLease;
     let directory = null;
     let version = null;
     let keyRestart = null;
@@ -12404,15 +12458,34 @@ globalThis.__dcCompressor = {
       let offset = 0;
       let first = true;
       let last = null;
+      let fragmentVersion = null;
+      let fragmentRestart = null;
       while (offset < raw.length) {
         const end = raw.indexOf(10, offset);
         check(end !== -1, 'csc-writer-torn-fragment');
         const item = parseLine(raw.subarray(offset, end + 1));
         if (first) {
-          check(item?.version?.comm === version &&
-            validRestart(item.key_restart), 'csc-writer-invalid-header');
+          check(typeof item?.version?.comm === 'string' &&
+            item.version.comm.length > 0 && validRestart(item.key_restart),
+            'csc-writer-invalid-header');
+          fragmentVersion = item.version.comm;
+          fragmentRestart = item.key_restart;
           first = false;
         } else {
+          if (item.kind === 'csc-comm-start') {
+            check(recoveredCapture === null &&
+              !committedCaptures.has(item.capture_id),
+              'csc-writer-recovery-capture-order');
+            recoveredCapture = item.capture_id;
+          } else if (item.kind === 'csc-comm-body' ||
+                     item.kind === 'csc-comm-end') {
+            check(recoveredCapture === item.capture_id,
+              'csc-writer-recovery-capture-order');
+            if (item.kind === 'csc-comm-end') {
+              committedCaptures.add(item.capture_id);
+              recoveredCapture = null;
+            }
+          }
           if (item.kind === 'hmac-key-cycle') {
             check(typeof item.id === 'string', 'csc-writer-invalid-cycle');
             check(!knownCycles.has(item.id), 'csc-writer-duplicate-cycle');
@@ -12423,7 +12496,7 @@ globalThis.__dcCompressor = {
         offset = end + 1;
       }
       check(!first, 'csc-writer-empty-fragment');
-      return last;
+      return { last, fragmentVersion, fragmentRestart };
     }
     /**
      * Performs seal in the isolated COMM writer.
@@ -12534,6 +12607,8 @@ globalThis.__dcCompressor = {
         }
       }
       if (record.kind === 'csc-comm-start') {
+        check(!committedCaptures.has(record.capture_id),
+          'csc-writer-duplicate-capture');
         check(activeCapture === null, 'csc-writer-overlapping-capture');
         check(record.key_restart === keyRestart,
           'csc-writer-capture-restart-mismatch');
@@ -12555,6 +12630,7 @@ globalThis.__dcCompressor = {
       }
       if (record.kind === 'csc-comm-end') {
         activeCapture = null;
+        committedCaptures.add(record.capture_id);
         message('csc-writer-durable-capture', {
           capture_id: record.capture_id, durable: true
         });
@@ -12588,34 +12664,57 @@ globalThis.__dcCompressor = {
         check(await options.handle.queryPermission({ mode: 'readwrite' }) ===
           'granted', 'csc-writer-permission-denied');
       }
-      directory = await options.handle.getDirectoryHandle(
-        'dc-comm-' + options.namespace, { create: true });
-      let max = 0;
+      check(lease && typeof lease.acquire === 'function',
+        'csc-writer-lock-unavailable');
+      await lease.acquire(options.namespace);
+      try {
+        directory = await options.handle.getDirectoryHandle(
+          'dc-comm-' + options.namespace, { create: true });
+        let max = 0;
+      let rawIndex = 0;
+      let oldFragment = false;
+      const candidates = [];
       for await (const [fileName, entry] of directory.entries()) {
-        if (entry.kind !== 'file') continue;
-        const match = /^fragment-(\d{8})\.jsonl(\.zst)?$/.exec(fileName);
-        if (!match) continue;
-        const number = Number(match[1]);
-        max = Math.max(max, number);
-        const raw = await bytesFrom(entry);
-        const unpacked = match[2] ? await codec.decompress(raw) : raw;
-        parseFragment(unpacked);
-        if (!match[2]) {
-          check(number === max && !activeName,
-            'csc-writer-ambiguous-raw-fragment');
-          activeName = fileName;
-          length = raw.length;
-          const firstEnd = raw.indexOf(10);
-          const original = parseLine(raw.subarray(0, firstEnd + 1));
-          check(original.key_restart === keyRestart,
-            'csc-writer-open-restart-mismatch');
+        if (entry.kind === 'file' &&
+            /^fragment-\\d{8}\\.jsonl(\\.zst)?$/.test(fileName)) {
+          candidates.push({ fileName, entry });
         }
       }
+      candidates.sort((a, b) => a.fileName.localeCompare(b.fileName));
+      for (const { fileName, entry } of candidates) {
+        const number = Number(fileName.slice(9, 17));
+        max = Math.max(max, number);
+        const compressed = fileName.endsWith('.zst');
+        const raw = await bytesFrom(entry);
+        const unpacked = compressed ? await codec.decompress(raw) : raw;
+        const found = parseFragment(unpacked);
+        if (!compressed) {
+          check(!activeName, 'csc-writer-ambiguous-raw-fragment');
+          activeName = fileName;
+          rawIndex = number;
+          length = raw.length;
+          oldFragment = found.fragmentVersion !== version ||
+            found.fragmentRestart !== keyRestart;
+          check(found.last?.kind !== 'csc-comm-start' &&
+            found.last?.kind !== 'csc-comm-body',
+            'csc-writer-unresolved-old-capture');
+        }
+      }
+      check(!activeName || rawIndex === max,
+        'csc-writer-unsealed-historical-fragment');
       index = max;
-      message('csc-writer-ready', {
-        durable: true, fragment: index, committed_bytes: committed,
-        key_restart: keyRestart
-      });
+      check(recoveredCapture === null,
+        'csc-writer-unresolved-capture');
+      if (oldFragment) await seal();
+        message('csc-writer-ready', {
+          durable: true, fragment: index, committed_bytes: committed,
+          key_restart: keyRestart
+        });
+      } catch (error) {
+        directory = null;
+        await lease.release();
+        throw error;
+      }
     }
     /**
      * Performs close in the isolated COMM writer.
@@ -12624,6 +12723,7 @@ globalThis.__dcCompressor = {
     async function close() {
       check(!activeCapture, 'csc-writer-capture-in-progress');
       await seal();
+      await lease.release();
       message('csc-writer-closed', { durable: true });
     }
     const api = Object.freeze({ open, write, setRestart, seal, close,
@@ -12642,6 +12742,12 @@ globalThis.__dcCompressor = {
         else if (value.type === 'csc-writer-key-restart') {
           await setRestart(value.key_restart);
         } else if (value.type === 'csc-writer-close') await close();
+        else if (value.type === 'csc-writer-query-capture') {
+          const durable = committedCaptures.has(value.capture_id);
+          message('csc-writer-capture-status', {
+            capture_id: String(value.capture_id ?? ''), durable
+          });
+        }
       });
       chain = operation.catch(error => message('csc-writer-error', {
         operation: value.type, reason: errorCode(error), durable: false
@@ -12733,6 +12839,7 @@ globalThis.__dcCompressor = {
       '  init: __dcCompressorInit, Encoder: CompressorEncoder,',
       '  decompress: __dcCompressorDecompress',
       '};',
+      'self.__cscWriterLease = (' + cscCommWriterLease.toString() + ')(self);',
       'self.__cscDiskWriter = (' + cscCommDiskWriter.toString() +
         ')(self, (' + cscCommWorkerZstdCodec.toString() + ')());',
       cscCommProcessingWorkerSource()
