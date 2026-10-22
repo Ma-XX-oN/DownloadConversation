@@ -343,3 +343,17 @@ test('crash with unterminated capture fails closed and preserves on-disk bytes',
   assert.deepEqual([...f.files.values()].map(b => Array.from(b)),
     before.map(b => Array.from(b)));
 });
+
+test('after a physical write failure the Worker rejects every subsequent write', async () => {
+  const f = fixture({ corrupt: true });
+  await open(f);
+  await assert.rejects(() => f.writer.write(record('csc-comm-start', {
+    key_restart: start
+  })), /csc-writer-readback-mismatch/);
+  await assert.rejects(() => f.writer.write(record('csc-comm-body', {
+    encoding: 'utf8', data: 'synthetic'
+  })), /csc-writer-poisoned/);
+  assert.ok(f.messages.some(m => m.type === 'csc-writer-incomplete' &&
+    m.durable === false));
+  assert.ok(!f.messages.some(m => m.type === 'csc-writer-durable-capture'));
+});
