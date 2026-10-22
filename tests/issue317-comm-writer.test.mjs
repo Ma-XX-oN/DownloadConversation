@@ -215,3 +215,52 @@ test('large selected streams rotate into bounded verified fragments', async () =
       raw.indexOf(10)))).key_restart === start));
   assert.ok(f.messages.some(m => m.type === 'csc-writer-durable-capture'));
 });
+
+test('writer rejects malformed or uncommitted key_restart without file changes', async () => {
+  const f = fixture();
+  await assert.rejects(() => open(f, 'not-a-timestamp'),
+    /csc-writer-invalid-restart/);
+  assert.equal(f.files.size, 0);
+  const g = fixture();
+  await open(g);
+  await assert.rejects(() => g.writer.write(record('csc-comm-start', {
+    key_restart: new Date(Date.parse(start) + 1000).toISOString()
+  })), /csc-writer-capture-restart-mismatch/);
+  assert.ok(!g.messages.some(m => m.type === 'csc-writer-durable-capture'));
+});
+test('two independent 101 MiB synthetic streams seal without payload loss', async () => {
+  for (let repetition = 0; repetition < 2; repetition += 1) {
+    const f = fixture();
+    await open(f);
+    await f.writer.write(record('csc-comm-start', { key_restart: start }));
+    const payload = 'b'.repeat(1024 * 1024);
+    for (let index = 0; index < 101; index += 1) {
+      await f.writer.write(record('csc-comm-body', {
+        encoding: 'utf8', data: payload
+      }));
+    }
+    await f.writer.write(record('csc-comm-end', {
+      status: 'completed', source_bytes: 101 * 1024 * 1024
+    }));
+    await f.writer.close();
+    const sealed = readPlain(f);
+    let total = 0;
+    let bodyCount = 0;
+    for (const [, bytes] of sealed) {
+      const records = new TextDecoder().decode(bytes).trimEnd().split('\n');
+      assert.equal(JSON.parse(records[0]).key_restart, start);
+      for (const json of records.slice(1)) {
+        const item = JSON.parse(json);
+        if (item.kind === 'csc-comm-body') {
+          total += item.data.length;
+          bodyCount += 1;
+          assert.equal(item.data, payload);
+        }
+      }
+    }
+    assert.equal(bodyCount, 101);
+    assert.equal(total, 101 * 1024 * 1024);
+    assert.ok(f.messages.some(m =>
+      m.type === 'csc-writer-durable-capture' && m.durable));
+  }
+});
