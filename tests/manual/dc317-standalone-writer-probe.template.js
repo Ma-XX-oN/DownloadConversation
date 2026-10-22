@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         DownloadConversation DC317 Standalone Disk Probe
 // @namespace    https://github.com/Ma-XX-oN/DownloadConversation/tests/dc317
-// @version      0.1.0
+// @version      __DC317_TEST_VERSION__
 // @description  Isolated synthetic Worker filesystem + actual Zstd test; does not run the recorder.
 // @match        https://chatgpt.com/*
 // @grant        none
