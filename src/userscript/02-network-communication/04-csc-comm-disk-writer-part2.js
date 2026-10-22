@@ -36,7 +36,29 @@
         }
       }
       candidates.sort((a, b) => a.fileName.localeCompare(b.fileName));
-      for (const { fileName, entry } of candidates) {
+      // A crash after an archive write can leave an identical raw twin.
+      // Compare independent physical bytes before retiring the raw copy.
+      const byNumber = new Map();
+      for (const candidate of candidates) {
+        const id = candidate.fileName.slice(9, 17);
+        const pair = byNumber.get(id) || {};
+        if (candidate.fileName.endsWith('.zst')) pair.archive = candidate;
+        else pair.raw = candidate;
+        byNumber.set(id, pair);
+      }
+      const canonical = [];
+      for (const pair of byNumber.values()) {
+        if (pair.archive && pair.raw) {
+          const sourceBytes = await bytesFrom(pair.raw.entry);
+          const archiveBytes = await codec.decompress(
+            await bytesFrom(pair.archive.entry));
+          check(equal(sourceBytes, archiveBytes),
+            'csc-writer-interrupted-archive-mismatch');
+          await directory.removeEntry(pair.raw.fileName);
+        }
+        canonical.push(pair.archive || pair.raw);
+      }
+      for (const { fileName, entry } of canonical) {
         const number = Number(fileName.slice(9, 17));
         max = Math.max(max, number);
         const compressed = fileName.endsWith('.zst');
