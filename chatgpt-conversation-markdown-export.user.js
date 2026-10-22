@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         ChatGPT Conversation Markdown Recorder
 // @namespace    https://chatgpt.com/
-// @version      1.11.7-issue.313.47
+// @version      1.11.7-issue.313.48
 // @description  Exports the current ChatGPT conversation directly from the Conversation API as Markdown or JSONL.
 // @match        https://chatgpt.com/*
 // @connect      github.com
@@ -11129,7 +11129,7 @@ globalThis.__dcCompressor = {
   function communicationPersistentHmacIndexedDbStorage(api, pageLocation) {
     if (pageLocation?.origin !== 'https://chatgpt.com' ||
         !api || typeof api.open !== 'function') return null;
-    const databaseName = 'downloadconversation-persistent-hmac-v2';
+    const databaseName = 'downloadconversation-persistent-hmac-v3';
     const objectStoreName = 'records';
 
     /**
@@ -11240,36 +11240,41 @@ globalThis.__dcCompressor = {
     });
   }
   /**
+   * Validate the non-migrating, timestamp-scoped HMAC key record.
    * @param {Object} item - Stored record.
    * @returns {Object} Validated record.
    */
   function communicationPersistentHmacValidated(item) {
     const hourMs = 60 * 60 * 1000;
+    const validTime = value => Number.isSafeInteger(value) &&
+      value >= 0 && value <= 8640000000000000;
+    const eventTime = event => validTime(event.occurred_at_ms) &&
+      event.key_restart === new Date(event.occurred_at_ms).toISOString();
     if (!item || typeof item !== 'object' || Array.isArray(item) ||
-        item.format !== 'dc-secret-key-record/2' ||
+        item.format !== 'dc-secret-key-record/3' ||
+        'generation' in item ||
         !/^[a-f0-9]{64}$/.test(item.key_hex ?? '') ||
-        !/^[a-f0-9]{32}$/.test(item.generation ?? '') ||
         !Number.isSafeInteger(item.epoch) || item.epoch < 1 ||
         !['open', 'draining'].includes(item.phase) ||
         !Array.isArray(item.pending) || item.pending.length > 256 ||
         item.pending.some(token => !/^[a-f0-9]{32}$/.test(token)) ||
         new Set(item.pending).size !== item.pending.length ||
-        !Number.isSafeInteger(item.issued_at_ms) ||
-        !Number.isSafeInteger(item.expires_at_ms) ||
+        !validTime(item.issued_at_ms) ||
+        !validTime(item.expires_at_ms) ||
         item.expires_at_ms - item.issued_at_ms < 23 * hourMs ||
         item.expires_at_ms - item.issued_at_ms > 25 * hourMs ||
         !Array.isArray(item.cycle_events) ||
-        !item.cycle_events.length ||
+        item.cycle_events.length !== item.epoch ||
         item.cycle_events.some((event, i) =>
           !event || event.type !== 'hmac-key-cycle' ||
-          !/^[a-f0-9]{32}$/.test(event.generation ?? '') ||
-          !Number.isSafeInteger(event.epoch) || event.epoch !== i + 1 ||
-          event.id !== 'hmac-key-cycle:' + event.epoch + ':' +
-            event.generation ||
-          !Number.isSafeInteger(event.occurred_at_ms) ||
+          !eventTime(event) ||
+          event.id !== 'hmac-key-cycle:' + event.key_restart ||
+          event.epoch !== i + 1 ||
+          (i > 0 && event.occurred_at_ms <=
+            item.cycle_events[i - 1].occurred_at_ms) ||
           !['initial', 'manual', 'scheduled', 'overdue'].includes(
-            event.reason)) ||
-        item.cycle_events.at(-1).generation !== item.generation ||
+            event.reason) ||
+          (i === 0 && event.reason !== 'initial')) ||
         item.cycle_events.at(-1).epoch !== item.epoch ||
         item.cycle_events.at(-1).occurred_at_ms !== item.issued_at_ms) {
       throw new Error('persistent-key-storage-corrupt');
@@ -11278,9 +11283,8 @@ globalThis.__dcCompressor = {
       throw new Error('persistent-key-storage-corrupt');
     }
     if (item.phase === 'draining' && (!item.next ||
+        'generation' in item.next ||
         !/^[a-f0-9]{64}$/.test(item.next.key_hex ?? '') ||
-        !/^[a-f0-9]{32}$/.test(item.next.generation ?? '') ||
-        item.next.generation === item.generation ||
         item.next.key_hex === item.key_hex ||
         !Number.isSafeInteger(item.next.epoch) ||
         item.next.epoch !== item.epoch + 1 ||
@@ -11289,18 +11293,17 @@ globalThis.__dcCompressor = {
     }
     return item;
   }
-
   /**
-   * Manage persistent V2 HMAC keys under verified shared authority.
+   * Manage persistent HMAC keys with timestamp-identified key cycles.
    *
-   * @param {Object} dependencies - GM storage, verified authority and WebCrypto.
+   * @param {Object} dependencies - Atomic storage, verified authority and WebCrypto.
    * @returns {Object} Closed persistent key lifecycle API.
    */
   function communicationPersistentHmacService(dependencies) {
     const { storage, authority, crypto: secureCrypto } = dependencies;
     const now = dependencies.now || (() => Date.now());
     const hourMs = 60 * 60 * 1000;
-    const recordName = 'downloadconversation:secret-marker-key-v2';
+    const recordName = 'downloadconversation:secret-marker-key-v3';
     const scopeStorage = 'chatgpt-origin-indexeddb';
     const format = 'dc-secret-marker/2';
     const internal = new Map();
@@ -11337,11 +11340,10 @@ globalThis.__dcCompressor = {
      */
     function initial() {
       const issued = now();
-      const generation = randomHex(16);
-      return { format: 'dc-secret-key-record/2', key_hex: randomHex(32),
-        generation, epoch: 1, phase: 'open', pending: [], next: null,
+      return { format: 'dc-secret-key-record/3', key_hex: randomHex(32),
+        epoch: 1, phase: 'open', pending: [], next: null,
         issued_at_ms: issued, expires_at_ms: deadline(issued),
-        cycle_events: [cycleEvent(generation, 1, issued, 'initial')] };
+        cycle_events: [cycleEvent(1, issued, 'initial')] };
     }
 
     /**
@@ -11396,8 +11398,7 @@ globalThis.__dcCompressor = {
      */
     function metadata(stored) {
       return Object.freeze({ redaction_format: format,
-        redaction_scope: stored.generation,
-        redaction_key_generation: stored.generation,
+        key_restart: new Date(stored.issued_at_ms).toISOString(),
         redaction_key_epoch: stored.epoch,
         redaction_key_storage: scopeStorage });
     }
@@ -11407,14 +11408,14 @@ globalThis.__dcCompressor = {
      * @returns {Object} Next record.
      */
     function finishRotation(stored) {
-      const issued = now();
-      const generation = stored.next.generation;
+      // Strictly monotonic even for immediate successive Randomize calls.
+      const issued = Math.max(now(), stored.issued_at_ms + 1);
       const epoch = stored.next.epoch;
       return { format: stored.format, key_hex: stored.next.key_hex,
-        generation, epoch, phase: 'open', pending: [], next: null,
+        epoch, phase: 'open', pending: [], next: null,
         issued_at_ms: issued, expires_at_ms: deadline(issued),
         cycle_events: [...stored.cycle_events,
-          cycleEvent(generation, epoch, issued, stored.next.reason)] };
+          cycleEvent(epoch, issued, stored.next.reason)] };
     }
 
     /**
@@ -11428,16 +11429,16 @@ globalThis.__dcCompressor = {
     }
 
     /**
-     * @param {string} generation - Public generation identifier.
      * @param {number} epoch - Public key epoch.
-     * @param {number} time - Committed timestamp.
+     * @param {number} time - Authoritative activation timestamp.
      * @param {string} reason - Initial, scheduled, overdue or manual.
      * @returns {Object} Stable nonsecret record for GEN and COMM.
      */
-    function cycleEvent(generation, epoch, time, reason) {
+    function cycleEvent(epoch, time, reason) {
+      const key_restart = new Date(time).toISOString();
       return { type: 'hmac-key-cycle',
-        id: 'hmac-key-cycle:' + epoch + ':' + generation,
-        generation, epoch, occurred_at_ms: time, reason };
+        id: 'hmac-key-cycle:' + key_restart,
+        key_restart, epoch, occurred_at_ms: time, reason };
     }
 
     /**
@@ -11449,7 +11450,7 @@ globalThis.__dcCompressor = {
       const stored = await read();
       if (!stored || stored.phase !== 'open') return stored;
       const time = now();
-      if (time < stored.issued_at_ms) {
+      if (time + 1000 < stored.issued_at_ms) {
         throw Error('persistent-key-clock-regression');
       }
       if (time < stored.expires_at_ms) return stored;
@@ -11459,7 +11460,7 @@ globalThis.__dcCompressor = {
       const reason = time - stored.issued_at_ms > 25 * hourMs
         ? 'overdue' : 'scheduled';
       const draining = { ...stored, phase: 'draining',
-        next: { key_hex: randomHex(32), generation: randomHex(16),
+        next: { key_hex: randomHex(32),
           epoch: stored.epoch + 1, reason } };
       const next = stored.pending.length === 0
         ? finishRotation(draining) : draining;
@@ -11591,7 +11592,7 @@ globalThis.__dcCompressor = {
           throw new Error('persistent-key-epoch-overflow');
         }
         const next = { ...stored, phase: 'draining',
-          next: { key_hex: randomHex(32), generation: randomHex(16),
+          next: { key_hex: randomHex(32),
             epoch: stored.epoch + 1, reason: 'manual' } };
         const committed = next.pending.length === 0
           ? finishRotation(next) : next;
@@ -11605,7 +11606,8 @@ globalThis.__dcCompressor = {
           }
         }
         return { state: next.pending.length ? 'DRAINING' : 'COMMITTED',
-          generation: next.pending.length ? stored.generation : next.next.generation,
+          key_restart: new Date(next.pending.length
+            ? stored.issued_at_ms : committed.issued_at_ms).toISOString(),
           epoch: next.pending.length ? stored.epoch : next.next.epoch };
       });
     }
