@@ -81,6 +81,7 @@
       '  init: __dcCompressorInit, Encoder: CompressorEncoder,',
       '  decompress: __dcCompressorDecompress',
       '};',
+      'self.__cscWriterLease = (' + cscCommWriterLease.toString() + ')(self);',
       'self.__cscDiskWriter = (' + cscCommDiskWriter.toString() +
         ')(self, (' + cscCommWorkerZstdCodec.toString() + ')());',
       cscCommProcessingWorkerSource()
