@@ -125,23 +125,16 @@ const AGENT_FAVICON_TITLE_CADENCES = Object.freeze({
 });
 ```
 
-Use the canonical active-sidebar-first `conversationTitle()` resolver;
-find its **last hyphen**, take everything from that hyphen, trim trailing
-whitespace and look up the resulting suffix in the dictionary. Prefixes
-and ticket numbers do not matter. Suffix matching is case-sensitive.
-A missing dictionary entry means a static, fully opaque frame 0 without
-a recurring timer. To add a new rate, insert one dictionary entry.
+DC #356 temporarily uses `interm_agent.observeState(callback,
+'subject-identification')`: an event-driven document-title observer.
+It emits an AICC V1-shaped, explicitly *unresolved* snapshot with a
+provisional `conversation.name`. No DOM title is backend-authoritative,
+and this provisional name must not feed filenames, recorded metadata,
+or the real AICC Core. The favicon consumer reads only subscription
+snapshots; it never reads sidebar or document titles directly. Its
+existing one-table suffix cadence and two cached frames are unchanged.
 
-`agentFaviconHeartbeatCadence()` produces milliseconds, or null;
-`agentFaviconFrameTimeOffset()` converts that cadence into the existing
-two-frame selector's time offset. The renderer, cache and
-`get_favicon(version_key, base_type, completion_time, time_offset)`
-are unchanged, as is independent animation version `2.0.0`.
-Both existing cached frames are reused at either rate.
-
-The title observer is event-driven, bound to the document title and
-current sidebar, not the transcript. Route changes, focus and BFCache
-restore also re-evaluate. Switching rates stops the previous interval,
-invalidates pending asynchronous presentations, repaints once and starts
-a new interval if the dictionary matches. Recording, diagnostics,
-network capture, lifecycle colours and progress-ring changes are not gated.
+**MANDATORY RETIREMENT:** When umbrella DC #272 — "Independently certify
+DC subject-identification integration and retire identity fallbacks"
+(under AICC #123) is completed, replace the single provider binding
+with the DC #270 Core-loaded agent and remove `interm_agent`.
