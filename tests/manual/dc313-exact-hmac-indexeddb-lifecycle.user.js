@@ -1,24 +1,24 @@
 // ==UserScript==
 // @name         DC #313 Exact HMAC IndexedDB Lifecycle Probe
 // @namespace    https://chatgpt.com/dc313-hmac-idb-lifecycle/
-// @version      0.2.0
+// @version      0.2.1
 // @description  Synthetic isolated cross-tab/reload/rotation test of exact DC #313 source.
 // @match        https://chatgpt.com/*
 // @grant        GM_registerMenuCommand
 // @grant        GM_setClipboard
-// @require      https://raw.githubusercontent.com/Ma-XX-oN/DownloadConversation/82087e235fad802e10250311f22218e866dde634/src/userscript/02-network-communication/04b-persistent-hmac-indexeddb.js
-// @require      https://raw.githubusercontent.com/Ma-XX-oN/DownloadConversation/82087e235fad802e10250311f22218e866dde634/src/userscript/02-network-communication/04ba-persistent-hmac-validation.js
-// @require      https://raw.githubusercontent.com/Ma-XX-oN/DownloadConversation/82087e235fad802e10250311f22218e866dde634/src/userscript/02-network-communication/04c-persistent-hmac-service.js
-// @require      https://raw.githubusercontent.com/Ma-XX-oN/DownloadConversation/82087e235fad802e10250311f22218e866dde634/src/userscript/02-network-communication/04d-persistent-hmac-browser.js
+// @require      https://raw.githubusercontent.com/Ma-XX-oN/DownloadConversation/f5cd55599c0e555b75e99d7973fd0e371b175ff7/src/userscript/02-network-communication/04b-persistent-hmac-indexeddb.js
+// @require      https://raw.githubusercontent.com/Ma-XX-oN/DownloadConversation/f5cd55599c0e555b75e99d7973fd0e371b175ff7/src/userscript/02-network-communication/04ba-persistent-hmac-validation.js
+// @require      https://raw.githubusercontent.com/Ma-XX-oN/DownloadConversation/f5cd55599c0e555b75e99d7973fd0e371b175ff7/src/userscript/02-network-communication/04c-persistent-hmac-service.js
+// @require      https://raw.githubusercontent.com/Ma-XX-oN/DownloadConversation/f5cd55599c0e555b75e99d7973fd0e371b175ff7/src/userscript/02-network-communication/04d-persistent-hmac-browser.js
 // @run-at       document-start
 // ==/UserScript==
 
 (() => {
   'use strict';
   if (location.origin !== 'https://chatgpt.com') return;
-  const baselineName = 'dc313-lifecycle-baseline-v5';
-  const databaseName = 'dc313-lifecycle-synthetic-only-v2';
-  const channel = new BroadcastChannel('dc313-hmac-lifecycle-probe-v5');
+  const baselineName = 'dc313-lifecycle-baseline-v6';
+  const databaseName = 'dc313-lifecycle-synthetic-only-v3';
+  const channel = new BroadcastChannel('dc313-hmac-lifecycle-probe-v6');
   const tabId = crypto.randomUUID();
   const sessions = new Map();
   const hour = 3600000;
@@ -148,7 +148,7 @@
   function show(title, payload) {
     const json = JSON.stringify({
       test: title, timestamp: new Date().toISOString(),
-      result: { version: '0.2.0', ...payload }
+      result: { version: '0.2.1', ...payload }
     }, null, 2);
     const render = () => {
       document.getElementById('dc313-hmac-lifecycle-report')?.remove();
@@ -296,10 +296,13 @@
         first.epoch === 1 &&
         first.events.length === 1 &&
         first.events[0].reason === 'initial' &&
+        first.events[0].key_restart === first.key_restart &&
+        first.events[0].occurred_at_ms === time &&
+        first.key_restart === new Date(time).toISOString() &&
         first.deadline - time >= 23 * hour &&
         first.deadline - time <= 25 * hour;
       if (pass) {
-        // Stores only synthetic HMAC fingerprint and public generation.
+        // Retain only synthetic HMAC fingerprint and shared key_restart.
         localStorage.setItem(baselineName, JSON.stringify({
           testId, time, key_restart: first.key_restart,
           fingerprint: first.fingerprint, deadline: first.deadline
@@ -337,7 +340,8 @@
       const stable = equalIdentity(persisted) &&
         persisted.local.key_restart === baseline.key_restart &&
         persisted.local.fingerprint === baseline.fingerprint &&
-        persisted.local.epoch === 1;
+        persisted.local.epoch === 1 &&
+        persisted.local.events[0]?.key_restart === baseline.key_restart;
       if (!stable) throw Error('reload-persistent-key-mismatch');
 
       const future = Math.max(now + 100, baseline.time + 25 * hour + 1);
@@ -369,6 +373,9 @@
         changedHmac: overdue.local.fingerprint !== baseline.fingerprint,
         journalLengthTwo: overdue.local.events.length === 2,
         overdueReason: overdue.local.events[1]?.reason === 'overdue',
+        overdueTimestamp: overdue.local.events[1]?.key_restart ===
+          overdue.local.key_restart &&
+          Date.parse(overdue.local.key_restart) > Date.parse(baseline.key_restart),
         journalsMatch: journalsAgree(overdue)
       };
       const duePass = Object.values(overdueChecks).every(Boolean);
@@ -393,9 +400,13 @@
       const manual = await participatingInstances(baseline.testId, 'measure', future + 2);
       const manualPass = equalIdentity(manual) &&
         manual.local.epoch === 3 &&
+        manual.local.key_restart === manualResult.key_restart &&
+        Date.parse(manual.local.key_restart) >
+          Date.parse(overdue.local.key_restart) &&
         manual.local.fingerprint !== overdue.local.fingerprint &&
         manual.local.events.length === 3 &&
         manual.local.events[2].reason === 'manual' &&
+        manual.local.events[2].key_restart === manual.local.key_restart &&
         journalsAgree(manual) &&
         manual.peers.every(peer => peer.epoch === 3);
       show('DC #313 HMAC lifecycle: reload and rotations', {
@@ -429,7 +440,7 @@
         .map(item => item[0]);
       show('DC #313 HMAC lifecycle readiness', {
         status: missing.length === 0 ? 'READY' : 'FAIL',
-        missing, version: '0.2.0', isolate: databaseName,
+        missing, version: '0.2.1', isolate: databaseName,
         instructions: 'Stage 1 in one tab, reload participants, then stage 2.'
       });
     });
