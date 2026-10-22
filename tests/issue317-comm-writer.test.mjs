@@ -553,3 +553,23 @@ test('interrupted confirmed reset resumes from persisted manifest intent', async
   assert.equal(snapshot.archives.length, 0);
   await resumed.writer.close();
 });
+
+test('Worker sink reports actual queued records and bytes until written', async () => {
+  const f = fixture();
+  await open(f);
+  const frames = [
+    record('csc-comm-start', { key_restart: start }),
+    record('csc-comm-body', { data: 'synthetic-payload' }),
+    record('csc-comm-end', { status: 'completed' })
+  ];
+  const work = frames.map(bytes => f.scope.cscCommWriteChunk(bytes));
+  assert.equal(f.writer.queueLength, frames.length);
+  assert.equal(f.writer.queueBytes,
+    frames.reduce((total, bytes) => total + bytes.length, 0));
+  await Promise.all(work);
+  assert.equal(f.writer.queueLength, 0);
+  assert.equal(f.writer.queueBytes, 0);
+  assert.ok(f.messages.some(m =>
+    m.type === 'csc-writer-durable-capture' && m.durable));
+  await f.writer.close();
+});
