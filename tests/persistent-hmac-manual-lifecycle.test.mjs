@@ -6,7 +6,7 @@ import { Script } from 'node:vm';
 const source = readFileSync(new URL(
   './manual/dc313-exact-hmac-indexeddb-lifecycle.user.js',
   import.meta.url), 'utf8');
-const revision = '82087e235fad802e10250311f22218e866dde634';
+const revision = 'f5cd55599c0e555b75e99d7973fd0e371b175ff7';
 
 test('new key_restart lifecycle probe is parseable immutable source', () => {
   assert.doesNotThrow(() => new Script(source));
@@ -23,13 +23,13 @@ test('new key_restart lifecycle probe is parseable immutable source', () => {
   }
   assert.equal((source.match(/^\/\/ @require /gm) ?? []).length, 4);
   assert.match(source, /\/\/ @match\s+https:\/\/chatgpt\.com\/\*/);
-  assert.match(source, /\/\/ @version\s+0\.2\.0/);
+  assert.match(source, /\/\/ @version\s+0\.2\.1/);
 });
 
 test('probe is synthetic-only and cannot mutate production key store', () => {
-  assert.match(source, /dc313-lifecycle-synthetic-only-v2/);
-  assert.match(source, /dc313-lifecycle-baseline-v5/);
-  assert.match(source, /dc313-hmac-lifecycle-probe-v5/);
+  assert.match(source, /dc313-lifecycle-synthetic-only-v3/);
+  assert.match(source, /dc313-lifecycle-baseline-v6/);
+  assert.match(source, /dc313-hmac-lifecycle-probe-v6/);
   assert.match(source, /indexedDB\.open\(databaseName, version\)/);
   assert.match(source, /testId \+ ':' \+ name/);
   assert.doesNotMatch(source, /indexedDB\.deleteDatabase/);
@@ -45,6 +45,8 @@ test('actual Stage 1 and Stage 2 compare key_restart and Worker HMAC', () => {
   assert.match(source, /pair\.local\.key_restart === peer\.key_restart/);
   assert.match(source, /persisted\.local\.key_restart === baseline\.key_restart/);
   assert.match(source, /overdue\.local\.key_restart !==/);
+  assert.match(source, /first\.events\[0\]\.key_restart === first\.key_restart/);
+  assert.match(source, /manual\.local\.key_restart === manualResult\.key_restart/);
   assert.match(source, /manualService\.randomize\(true\)/);
   assert.match(source, /events\[1\]\?\.reason === 'overdue'/);
   assert.match(source, /events\[2\]\.reason === 'manual'/);
