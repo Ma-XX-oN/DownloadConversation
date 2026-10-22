@@ -86,7 +86,8 @@
       ['Worker + Zstd/CSP', testWorkerZstdCsp],
       ['CSC Worker stream + directory', testCscWorkerBoundary],
       ['CSC dual clone + Worker', testCscDualCloneOwnership],
-      ['CSC COMM Worker processor', testCscCommWorkerProcessing]
+      ['CSC COMM Worker processor', testCscCommWorkerProcessing],
+      ['CSC Worker disk writer', testCscCommDiskWriter]
     ];
   }
 
