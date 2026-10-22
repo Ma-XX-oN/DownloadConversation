@@ -16,6 +16,8 @@ const leaseSource = readFileSync(path.join(root,
   'src/userscript/02-network-communication/04-csc-comm-disk-lock.js'), 'utf8');
 const manifestSource = readFileSync(path.join(root,
   'src/userscript/02-network-communication/04-csc-comm-disk-manifest.js'), 'utf8');
+const copySource = readFileSync(path.join(root,
+  'src/userscript/02-network-communication/04-csc-comm-disk-copy.js'), 'utf8');
 const start = new Date(1761152400000).toISOString();
 const encoder = new TextEncoder();
 const frame = value => encoder.encode(JSON.stringify(value) + '\n');
@@ -113,10 +115,11 @@ function fixture({ denied = false, corrupt = false, locks = new Set() } = {}) {
   };
   const sandbox = vm.createContext({ Uint8Array, TextEncoder, TextDecoder,
     DOMException, Blob, Number, Object, JSON, String, Promise, Set, Error });
-  vm.runInContext(leaseSource + manifestSource + source +
+  vm.runInContext(leaseSource + manifestSource + copySource + source +
     '\nglobalThis.factory = cscCommDiskWriter;', sandbox);
   scope.__cscWriterLease = sandbox.cscCommWriterLease(scope);
   scope.__cscWriterManifest = sandbox.cscCommDiskManifest(scope);
+  scope.__cscWriterCopy = sandbox.cscCommDiskCopy();
   const writer = sandbox.factory(scope, codec);
   return { parent, directory, files, messages, handlers, scope, writer, codec };
 }
@@ -473,4 +476,36 @@ test('snapshot freezes full archived fragments with SHA256 integrity readback', 
   assert.ok(f.messages.some(m =>
     m.type === 'csc-writer-snapshot-ready' && m.durable));
   await f.writer.close();
+});
+
+test('complete COMM duplicate copies archived fragments and manifest exactly', async () => {
+  const origin = fixture();
+  await open(origin);
+  await normalCapture(origin);
+  const output = fixture();
+  const directories = new Map();
+  const root = {
+    async queryPermission() { return 'granted'; },
+    async getDirectoryHandle(name, options = {}) {
+      if (!directories.has(name)) {
+        if (!options.create) throw new DOMException('Missing', 'NotFoundError');
+        directories.set(name, output.directory);
+      }
+      return directories.get(name);
+    },
+    async removeEntry(name) {
+      if (!directories.delete(name)) throw new Error('Missing');
+      output.files.clear();
+    }
+  };
+  const result = await origin.writer.duplicate(root, 'copyA');
+  assert.equal(result.directory_name, 'dc-comm-duplicate-copyA');
+  assert.equal(result.files, 2);
+  for (const [name, bytes] of output.files) {
+    assert.deepEqual(Array.from(bytes), Array.from(origin.files.get(name)));
+  }
+  await assert.rejects(() => origin.writer.duplicate(root, 'copyA'),
+    /csc-writer-duplicate-name-collision/);
+  assert.ok(origin.files.has('fragment-00000001.jsonl.zst'));
+  await origin.writer.close();
 });
