@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         ChatGPT Conversation Markdown Recorder
 // @namespace    https://chatgpt.com/
-// @version      1.11.7-issue.317.9
+// @version      1.11.7-issue.317.10
 // @description  Exports the current ChatGPT conversation directly from the Conversation API as Markdown or JSONL.
 // @match        https://chatgpt.com/*
 // @match        https://chat.openai.com/*
@@ -12352,7 +12352,15 @@ globalThis.__dcCompressor = {
      */
     function validate(parsed, namespace) {
       const names = Object.keys(parsed ?? {}).sort().join(',');
-      if (names !== 'archives,logical_name,namespace,schema' ||
+      if (names !== 'archives,logical_name,namespace,schema' &&
+          names !== 'archives,logical_name,namespace,reset_pending,schema') {
+        throw new Error('csc-writer-manifest-invalid');
+      }
+      if (parsed?.reset_pending !== undefined &&
+          parsed.reset_pending !== true) {
+        throw new Error('csc-writer-manifest-invalid');
+      }
+      if (
           parsed.schema !== schema || parsed.namespace !== namespace ||
           typeof parsed.logical_name !== 'string' ||
           !/^[A-Za-z0-9_. -]{1,160}\.comm\.jsonl$/.test(
@@ -12393,6 +12401,10 @@ globalThis.__dcCompressor = {
         { fatal: true }).decode(bytes)); }
       catch { throw new Error('csc-writer-manifest-invalid'); }
       validate(state, namespace);
+      if (state.reset_pending === true) {
+        await finishReset();
+        return;
+      }
       for (const [name, expected] of Object.entries(state.archives)) {
         const stored = await getBytes(name);
         if (!stored || await digest(stored) !== expected) {
@@ -12442,6 +12454,52 @@ globalThis.__dcCompressor = {
       return filename;
     }
     /**
+     * Returns immutable manifest metadata at a serialized snapshot boundary.
+     * @returns {Object} Logical name and independent archive checksums.
+     */
+    function snapshot() {
+      if (!state) throw new Error('csc-writer-manifest-unready');
+      return {
+        schema: state.schema,
+        logical_name: state.logical_name,
+        archives: Object.entries(state.archives).sort(([a], [b]) =>
+          a.localeCompare(b)).map(([name, sha256]) => ({ name, sha256 }))
+      };
+    }
+    /**
+     * Completes an explicitly committed reset, including after a crash.
+     * Only known private fragments are removed; unrelated names survive.
+     * @returns {Promise<void>} Verified empty fragment inventory.
+     */
+    async function finishReset() {
+      if (!state || state.reset_pending !== true) {
+        throw new Error('csc-writer-reset-not-committed');
+      }
+      const remove = [];
+      for await (const [name] of directory.entries()) {
+        if (/^fragment-\d{8}\.jsonl(\.zst)?$/.test(name)) remove.push(name);
+      }
+      for (const name of remove) await directory.removeEntry(name);
+      for await (const [name] of directory.entries()) {
+        if (/^fragment-\d{8}\.jsonl(\.zst)?$/.test(name)) {
+          throw new Error('csc-writer-reset-incomplete');
+        }
+      }
+      state.archives = {};
+      delete state.reset_pending;
+      await commit();
+    }
+    /**
+     * Persists the explicit reset intent before deleting any fragments.
+     * @returns {Promise<void>} Complete verified reset.
+     */
+    async function reset() {
+      if (!state) throw new Error('csc-writer-manifest-unready');
+      state.reset_pending = true;
+      await commit();
+      await finishReset();
+    }
+    /**
      * Releases the current memory handle after owner reset/close.
      * @returns {void} Clears transient manifest state only.
      */
@@ -12450,9 +12508,132 @@ globalThis.__dcCompressor = {
       state = null;
     }
     return Object.freeze({
-      open, record, rename, release,
+      open, record, rename, snapshot, reset, release,
       get logicalName() { return state?.logical_name ?? null; }
     });
+  }
+
+  /**
+   * Copies a frozen logical COMM snapshot into a new, separately authorized
+   * directory. Copies stored fragments and manifest, not a new format.
+   * @returns {Object} Physical file-copy service.
+   */
+  function cscCommDiskCopy() {
+    /**
+     * Returns a file with explicit create=false semantics.
+     * @param {Object} directory - Authorized FileSystemDirectoryHandle.
+     * @param {string} name - Validated filename.
+     * @returns {Promise<Object>} Existing file handle.
+     */
+    async function handle(directory, name) {
+      return directory.getFileHandle(name, { create: false });
+    }
+    /**
+     * Compares committed source and destination chunk by chunk.
+     * @param {Object} source - Source File snapshot.
+     * @param {Object} output - Destination File snapshot.
+     * @returns {Promise<void>} Exact byte identity proved.
+     */
+    async function compare(source, output) {
+      if (source.size !== output.size) {
+        throw new Error('csc-writer-duplicate-size-mismatch');
+      }
+      const chunkSize = 512 * 1024;
+      for (let pos = 0; pos < source.size; pos += chunkSize) {
+        const [a, b] = await Promise.all([
+          source.slice(pos, pos + chunkSize).arrayBuffer(),
+          output.slice(pos, pos + chunkSize).arrayBuffer()
+        ]);
+        const left = new Uint8Array(a);
+        const right = new Uint8Array(b);
+        if (left.length !== right.length ||
+            left.some((byte, i) => byte !== right[i])) {
+          throw new Error('csc-writer-duplicate-readback-mismatch');
+        }
+      }
+    }
+    /**
+     * Copies source bytes through bounded buffers to a fresh destination.
+     * @param {Object} sourceDir - Immutable source directory.
+     * @param {Object} outputDir - New empty destination directory.
+     * @param {string} fileName - A validated archive or manifest name.
+     * @returns {Promise<void>} Source and copy equal on disk.
+     */
+    async function copyFile(sourceDir, outputDir, fileName) {
+      const origin = await (await handle(sourceDir, fileName)).getFile();
+      const dest = await outputDir.getFileHandle(fileName, { create: true });
+      let writer = null;
+      try {
+        writer = await dest.createWritable();
+        const chunkSize = 512 * 1024;
+        for (let pos = 0; pos < origin.size; pos += chunkSize) {
+          const bytes = new Uint8Array(await origin.slice(
+            pos, pos + chunkSize).arrayBuffer());
+          await writer.write(bytes);
+        }
+        await writer.close();
+        writer = null;
+        await compare(origin, await dest.getFile());
+      } catch (error) {
+        if (writer) await writer.abort().catch(() => {});
+        throw error;
+      }
+    }
+    /**
+     * Copies a verified snapshot into a new private output directory.
+     * It never overwrites or deletes an existing target.
+     * @param {Object} sourceDir - Current Worker fragment directory.
+     * @param {Object} outputRoot - Explicitly authorized destination parent.
+     * @param {string} outputId - Unique caller-selected copy identity.
+     * @param {Object} inventory - Frozen manifest snapshot.
+     * @returns {Promise<Object>} Verified destination and file count.
+     */
+    async function duplicate(sourceDir, outputRoot, outputId, inventory) {
+      if (!outputRoot || typeof outputRoot.getDirectoryHandle !== 'function' ||
+          typeof outputRoot.removeEntry !== 'function' ||
+          typeof outputId !== 'string' ||
+          !/^[a-zA-Z0-9_-]{1,80}$/.test(outputId) ||
+          !Array.isArray(inventory?.archives)) {
+        throw new Error('csc-writer-invalid-duplicate-target');
+      }
+      if (typeof outputRoot.queryPermission === 'function' &&
+          await outputRoot.queryPermission({ mode: 'readwrite' }) !== 'granted') {
+        throw new Error('csc-writer-permission-denied');
+      }
+      const name = 'dc-comm-duplicate-' + outputId;
+      try {
+        await outputRoot.getDirectoryHandle(name, { create: false });
+        throw new Error('csc-writer-duplicate-name-collision');
+      } catch (error) {
+        if (error?.name !== 'NotFoundError') throw error;
+      }
+      let created = false;
+      try {
+        const target = await outputRoot.getDirectoryHandle(name, {
+          create: true
+        });
+        created = true;
+        const files = ['manifest.json', ...inventory.archives.map(
+          fragment => fragment.name)];
+        for (const filename of files) {
+          if (filename !== 'manifest.json' &&
+              !/^fragment-\d{8}\.jsonl\.zst$/.test(filename)) {
+            throw new Error('csc-writer-invalid-duplicate-source');
+          }
+          await copyFile(sourceDir, target, filename);
+        }
+        return { directory_name: name, files: files.length };
+      } catch (error) {
+        if (created) {
+          await outputRoot.removeEntry(name, { recursive: true })
+            .catch(() => {
+              throw new Error('csc-writer-duplicate-cleanup-failed');
+            });
+        }
+        throw error;
+      }
+    }
+    return Object.freeze({ duplicate });
   }
 
   /**
@@ -12474,6 +12655,7 @@ globalThis.__dcCompressor = {
     let recoveredCapture = null;
     const lease = scope.__cscWriterLease;
     const manifest = scope.__cscWriterManifest;
+    const copy = scope.__cscWriterCopy;
     let directory = null;
     let version = null;
     let keyRestart = null;
@@ -12926,6 +13108,72 @@ globalThis.__dcCompressor = {
       }
     }
     /**
+     * Commits a user-visible name without renaming private live fragments.
+     * @param {string} logicalName - Validated COMM output filename.
+     * @returns {Promise<string>} Durable logical basename.
+     */
+    async function renameLogical(logicalName) {
+      check(directory !== null && !poisoned,
+        'csc-writer-not-open');
+      const result = await manifest.rename(logicalName);
+      message('csc-writer-renamed', { logical_name: result, durable: true });
+      return result;
+    }
+    /**
+     * Closes a durable snapshot boundary, preserving historical fragments.
+     * @returns {Promise<Object>} Exact-file hash inventory.
+     */
+    async function snapshot() {
+      check(directory !== null && !poisoned,
+        'csc-writer-not-open');
+      check(activeCapture === null, 'csc-writer-capture-in-progress');
+      await seal();
+      const inventory = manifest.snapshot();
+      message('csc-writer-snapshot-ready', {
+        ...inventory, durable: true
+      });
+      return inventory;
+    }
+    /**
+     * Copies the complete frozen COMM fragment set to an authorized new
+     * directory; the existing source remains immutable.
+     * @param {Object} destination - Separately authorized parent directory.
+     * @param {string} id - Unique output identity.
+     * @returns {Promise<Object>} Verified duplicate metadata.
+     */
+    async function duplicate(destination, id) {
+      const inventory = await snapshot();
+      const result = await copy.duplicate(directory, destination, id, inventory);
+      message('csc-writer-duplicate-ready', { ...result, durable: true });
+      return result;
+    }
+    /**
+     * Applies an explicit, previously confirmed logical log reset.
+     * Incomplete deletion is reconciled from the durable reset journal.
+     * @param {boolean} confirmed - Exact user confirmation.
+     * @returns {Promise<void>} Empty durable segment inventory.
+     */
+    async function reset(confirmed) {
+      if (confirmed !== true) throw new Error('csc-writer-reset-unconfirmed');
+      check(directory !== null && !poisoned,
+        'csc-writer-not-open');
+      check(activeCapture === null, 'csc-writer-capture-in-progress');
+      try {
+        await seal();
+        await manifest.reset();
+        index = 0;
+        length = 0;
+        activeName = null;
+        committed = 0;
+        knownCycles.clear();
+        committedCaptures.clear();
+        message('csc-writer-reset-complete', { durable: true });
+      } catch (error) {
+        poisoned = true;
+        throw error;
+      }
+    }
+    /**
      * Performs close in the isolated COMM writer.
      * @returns {Promise<any>} close result.
      */
@@ -12937,6 +13185,7 @@ globalThis.__dcCompressor = {
       message('csc-writer-closed', { durable: true });
     }
     const api = Object.freeze({ open, write, setRestart, seal, close,
+      snapshot, renameLogical, duplicate, reset,
       get committedBytes() { return committed; },
       get queueBytes() { return 0; } });
     scope.cscCommWriteChunk = bytes => {
@@ -12952,6 +13201,15 @@ globalThis.__dcCompressor = {
         else if (value.type === 'csc-writer-key-restart') {
           await setRestart(value.key_restart);
         } else if (value.type === 'csc-writer-close') await close();
+        else if (value.type === 'csc-writer-rename') {
+          await renameLogical(value.logical_name);
+        } else if (value.type === 'csc-writer-snapshot') {
+          await snapshot();
+        } else if (value.type === 'csc-writer-duplicate') {
+          await duplicate(value.destination, value.output_id);
+        } else if (value.type === 'csc-writer-reset') {
+          await reset(value.confirmed === true);
+        }
         else if (value.type === 'csc-writer-query-capture') {
           const durable = committedCaptures.has(value.capture_id);
           message('csc-writer-capture-status', {
@@ -13051,6 +13309,7 @@ globalThis.__dcCompressor = {
       '};',
       'self.__cscWriterLease = (' + cscCommWriterLease.toString() + ')(self);',
       'self.__cscWriterManifest = (' + cscCommDiskManifest.toString() + ')(self);',
+      'self.__cscWriterCopy = (' + cscCommDiskCopy.toString() + ')();',
       'self.__cscDiskWriter = (' + cscCommDiskWriter.toString() +
         ')(self, (' + cscCommWorkerZstdCodec.toString() + ')());',
       cscCommProcessingWorkerSource()
@@ -22750,7 +23009,7 @@ Image elapsed: ${formatDuration(imageElapsed)} — Completed: ${imageCompleted}/
       [source], { type: 'text/javascript' }));
     let worker = null;
     let timer = null;
-    let created = false;
+
     try {
       worker = new realm.Worker(url);
       const result = await new Promise((resolve, reject) => {
@@ -22763,7 +23022,7 @@ Image elapsed: ${formatDuration(imageElapsed)} — Completed: ${imageCompleted}/
             reject(new Error('Worker disk error: ' + item.reason));
           } else if (item?.type === 'csc-writer-ready' && !started) {
             started = true;
-            created = true;
+            // Namespace is caller-owned from the preflight absence check.
             worker.postMessage({ type: 'csc-writer-probe-run',
               handle: directory, namespace, version, key_restart: restart });
           } else if (item?.type === 'csc-writer-probe-result') {
@@ -22784,8 +23043,11 @@ Image elapsed: ${formatDuration(imageElapsed)} — Completed: ${imageCompleted}/
       if (timer !== null) clearTimeout(timer);
       worker?.terminate();
       realm.URL.revokeObjectURL(url);
-      if (created) {
-        await directory.removeEntry(name, { recursive: true });
+      // The absence check above established exclusive test-namespace
+      // ownership before Worker startup; cleanup also covers early failure.
+      try { await directory.removeEntry(name, { recursive: true }); }
+      catch (error) {
+        if (error?.name !== 'NotFoundError') throw error;
       }
     }
   }
