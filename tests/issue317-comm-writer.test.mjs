@@ -217,26 +217,39 @@ test('restart finds disk-committed key cycle and suppresses duplicate replay', a
   assert.equal([...f.files.values()].reduce((n, x) => n + x.length, 0), before);
   assert.equal(restarted.messages.at(-1).duplicate, true);
 });
-test('large selected streams rotate into bounded verified fragments', async () => {
-  const f = fixture();
-  await open(f);
-  await f.writer.write(record('csc-comm-start', { key_restart: start }));
-  const part = 'a'.repeat(1024 * 1024);
-  for (let i = 0; i < 23; i += 1) {
-    await f.writer.write(record('csc-comm-body', {
-      encoding: 'utf8', data: part
-    }));
+test('10/23/40 MiB selected streams produce byte-exact sealed fragments', async () => {
+  for (const count of [10, 23, 40]) {
+    const f = fixture();
+    await open(f);
+    await f.writer.write(record('csc-comm-start', { key_restart: start }));
+    const part = 'a'.repeat(1024 * 1024);
+    for (let i = 0; i < count; i += 1) {
+      await f.writer.write(record('csc-comm-body', {
+        encoding: 'utf8', data: part
+      }));
+    }
+    await f.writer.write(record('csc-comm-end', { status: 'completed' }));
+    await f.writer.close();
+    const sealed = readPlain(f);
+    let verified = 0;
+    let emitted = 0;
+    for (const [, raw] of sealed) {
+      const lines = new TextDecoder().decode(raw).trimEnd().split('\n');
+      assert.equal(JSON.parse(lines.shift()).key_restart, start);
+      for (const line of lines) {
+        const record = JSON.parse(line);
+        if (record.kind === 'csc-comm-body') {
+          assert.equal(record.data, part);
+          verified += record.data.length;
+          emitted += 1;
+        }
+      }
+    }
+    assert.equal(emitted, count);
+    assert.equal(verified, count * 1024 * 1024);
+    assert.ok(f.messages.some(m =>
+      m.type === 'csc-writer-durable-capture' && m.durable));
   }
-  await f.writer.write(record('csc-comm-end', { status: 'completed' }));
-  await f.writer.close();
-  const sealed = readPlain(f);
-  assert.ok(sealed.length >= 3);
-  const actual = sealed.reduce((n, [, raw]) => n + raw.length, 0);
-  assert.ok(actual >= 23 * 1024 * 1024);
-  assert.ok(sealed.every(([, raw]) =>
-    JSON.parse(new TextDecoder().decode(raw.subarray(0,
-      raw.indexOf(10)))).key_restart === start));
-  assert.ok(f.messages.some(m => m.type === 'csc-writer-durable-capture'));
 });
 
 test('writer rejects malformed or uncommitted key_restart without file changes', async () => {
