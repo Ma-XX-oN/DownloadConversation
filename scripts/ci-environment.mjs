@@ -20,6 +20,8 @@ const ordinaryStages = [
   ['Modular userscript build regression', nodeCommand, ['--test', 'tests/modular-userscript-build.test.mjs', 'tests/development-version-source.test.mjs']],
   ['DC #317 native Worker OPFS and replay', nodeCommand,
     ['--test', 'tests/issue317-native-worker-chromium.test.mjs']],
+  ['DC #317 independent Tampermonkey script parity', nodeCommand,
+    ['scripts/build-issue317-standalone-probe.mjs', '--check']],
   ['Agent plugin authenticated background fetch regression', nodeCommand, ['--test', 'tests/agent-plugin-background-fetch.test.mjs']],
   ['#243 provenance and #274 lifecycle regressions', nodeCommand, ['--test',
     'tests/comm-duplicate-version-header.test.mjs',
