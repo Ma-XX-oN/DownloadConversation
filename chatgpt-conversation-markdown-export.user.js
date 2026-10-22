@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         ChatGPT Conversation Markdown Recorder
 // @namespace    https://chatgpt.com/
-// @version      1.11.7-issue.317.10
+// @version      1.11.7-issue.317.11
 // @description  Exports the current ChatGPT conversation directly from the Conversation API as Markdown or JSONL.
 // @match        https://chatgpt.com/*
 // @match        https://chat.openai.com/*
@@ -12666,6 +12666,8 @@ globalThis.__dcCompressor = {
     let chain = Promise.resolve();
     let committed = 0;
     let poisoned = false;
+    let queuedBytes = 0;
+    let queuedRecords = 0;
 
     /**
      * Performs check in the isolated COMM writer.
@@ -13187,10 +13189,19 @@ globalThis.__dcCompressor = {
     const api = Object.freeze({ open, write, setRestart, seal, close,
       snapshot, renameLogical, duplicate, reset,
       get committedBytes() { return committed; },
-      get queueBytes() { return 0; } });
+      get queueBytes() { return queuedBytes; },
+      get queueLength() { return queuedRecords; } });
     scope.cscCommWriteChunk = bytes => {
+      if (!(bytes instanceof Uint8Array)) {
+        return Promise.reject(new Error('csc-writer-invalid-bytes'));
+      }
+      queuedRecords += 1;
+      queuedBytes += bytes.byteLength;
       const operation = chain.then(() => api.write(bytes));
-      chain = operation.catch(() => {});
+      chain = operation.catch(() => undefined).then(() => {
+        queuedRecords -= 1;
+        queuedBytes -= bytes.byteLength;
+      });
       return operation;
     };
     scope.addEventListener('message', event => {
