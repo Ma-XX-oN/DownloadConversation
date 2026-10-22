@@ -105,7 +105,7 @@ async function browserPhase() {
     document.querySelector('#result').textContent = JSON.stringify({
       phase: location.search.slice(1), fingerprint,
       epoch: state.redaction_key_epoch,
-      generation: state.redaction_scope,
+      key_restart: state.key_restart,
       pending: state.pending_count, cycleCount: journal.length,
       cycleReason: journal[0]?.reason,
       lastCycleReason: journal.at(-1)?.reason,
@@ -162,7 +162,7 @@ test('Chromium browser-process exit/restart preserves native IDB HMAC', {
       assert.equal(result.cycleReason, 'initial');
       assert.match(result.fingerprint, /^[0-9a-f]{64}$/);
     }
-    assert.equal(second.generation, first.generation);
+    assert.equal(second.key_restart, first.key_restart);
     assert.equal(second.fingerprint, first.fingerprint);
     // A THIRD fresh Chromium process starts after a simulated >25h
     // offline interval. The factory must rotate before first admission.
@@ -175,7 +175,7 @@ test('Chromium browser-process exit/restart preserves native IDB HMAC', {
     assert.equal(overdue.cycleCount, 2);
     assert.equal(overdue.cycleReason, 'initial');
     assert.equal(overdue.lastCycleReason, 'overdue');
-    assert.notEqual(overdue.generation, first.generation);
+    assert.notEqual(overdue.key_restart, first.key_restart);
     assert.notEqual(overdue.fingerprint, first.fingerprint);
   } finally {
     await new Promise(resolve => server.close(resolve));
