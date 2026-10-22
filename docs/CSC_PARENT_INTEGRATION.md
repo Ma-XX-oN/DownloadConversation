@@ -135,3 +135,30 @@ deferred GitHub branch protection is already installed.
 **Current acceptance:** parent identity PASS; source assembly
 INCOMPLETE; independent #319 evidence INCOMPLETE; PRELIM DEFERRED;
 main promotion NOT AUTHORISED.
+
+## 6. Enforcement gaps verified during setup
+
+- GitHub's reported `main.protected` value is `false` as of this
+  checkpoint.  Protected-main server enforcement MUST NOT be claimed.
+  Operators and workers must observe the no-direct-merge rule manually.
+- DC's pinned `RepoWorkflow` submodule is historical v0.1.1, and
+  `.ci/branch-policy.json` is schema 1 with generic `issue-*`
+  branches assigned to parent `main`.  That configuration cannot
+  enforce new CSC child branches under `issue-359-csc-integration`
+  without an independently owned/verified consumer policy migration.
+- Current `.ci/repoworkflow.json` is schema 1 and identifies `main`
+  as the integration branch.  It does not represent the October 17
+  immutable PRELIM / separate INT-ATTEMPT submission/executor.
+- New CSC child branches must explicitly record their true Git parent;
+  merely editing a pull-request base or issue dependency cannot fix
+  existing ancestry.  An unverified manual source import is NOT a
+  source integration PASS.
+- The parent branch has exactly two new commits at initial setup: one
+  empty RWF identity commit and one documentation-only ledger commit.
+  `main` and all preexisting leaf PR branch bases are unchanged.
+
+Future enforcement should fail closed on a wrong parent identity,
+direct leaf-to-main PR, missing source SHA / artifact provenance,
+unsatisfied #319 acceptance, a stale destination tip and missing merge
+authorization.  Do not label any of these policies mechanically
+enforced until their exact implementation and verification exist.
