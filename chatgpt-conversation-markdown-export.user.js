@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         ChatGPT Conversation Markdown Recorder
 // @namespace    https://chatgpt.com/
-// @version      1.11.7-issue.317.18
+// @version      1.11.7-issue.317.19
 // @description  Exports the current ChatGPT conversation directly from the Conversation API as Markdown or JSONL.
 // @match        https://chatgpt.com/*
 // @match        https://chat.openai.com/*
@@ -13060,6 +13060,7 @@ globalThis.__dcCompressor = {
         let max = 0;
       let rawIndex = 0;
       let oldFragment = false;
+      let newestRestart = null;
       const candidates = [];
       for await (const [fileName, entry] of directory.entries()) {
         if (entry.kind === 'file' &&
@@ -13097,6 +13098,10 @@ globalThis.__dcCompressor = {
         const raw = await bytesFrom(entry);
         const unpacked = compressed ? await codec.decompress(raw) : raw;
         const found = parseFragment(unpacked);
+        check(newestRestart === null ||
+          found.fragmentRestart >= newestRestart,
+          'csc-writer-disk-key-restart-regression');
+        newestRestart = found.fragmentRestart;
         if (compressed) await manifest.record(fileName, raw);
         if (!compressed) {
           check(!activeName, 'csc-writer-ambiguous-raw-fragment');
@@ -13113,6 +13118,8 @@ globalThis.__dcCompressor = {
       check(!activeName || rawIndex === max,
         'csc-writer-unsealed-historical-fragment');
       index = max;
+      check(newestRestart === null || keyRestart >= newestRestart,
+        'csc-writer-stale-restart');
       check(recoveredCapture === null,
         'csc-writer-unresolved-capture');
       if (oldFragment) await seal();
