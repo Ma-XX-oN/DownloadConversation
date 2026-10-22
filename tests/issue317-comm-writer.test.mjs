@@ -648,3 +648,24 @@ test('disk-only generated Worker is complete and omits obsolete #311 serializer'
   assert.ok(!built.includes('cscCommProcessingWorkerSource'));
   assert.doesNotThrow(() => new Function(built));
 });
+
+test('Zstd compression failure poisons Worker and preserves raw segment', async () => {
+  const f = fixture();
+  await open(f);
+  await normalCapture(f);
+  const before = new Map([...f.files].map(([name, bytes]) =>
+    [name, Uint8Array.from(bytes)]));
+  f.codec.compress = async () => {
+    throw new Error('synthetic-compressor-failure');
+  };
+  await assert.rejects(() => f.writer.snapshot(),
+    /synthetic-compressor-failure/);
+  assert.ok(f.messages.some(event =>
+    event.type === 'csc-writer-incomplete' && event.durable === false));
+  await assert.rejects(() => f.writer.write(record('csc-comm-start', {
+    key_restart: start
+  })), /csc-writer-poisoned/);
+  for (const [name, bytes] of before) {
+    assert.deepEqual(Array.from(f.files.get(name)), Array.from(bytes));
+  }
+});
