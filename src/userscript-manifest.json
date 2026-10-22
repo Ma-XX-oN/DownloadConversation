@@ -44,7 +44,8 @@
         "src/userscript/02-network-communication/03-csc-canonical-ingress.js",
         "src/userscript/02-network-communication/04-csc-comm-worker-processing.js",
         "src/userscript/02-network-communication/04-csc-comm-worker-processing-part2.js",
-        "src/userscript/02-network-communication/04-csc-comm-worker-processing-part3.js"
+        "src/userscript/02-network-communication/04-csc-comm-worker-processing-part3.js",
+        "src/userscript/02-network-communication/04-csc-comm-disk-writer.js"
       ]
     },
     {
