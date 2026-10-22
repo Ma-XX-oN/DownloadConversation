@@ -1,34 +1,39 @@
   /**
+   * Validate the non-migrating, timestamp-scoped HMAC key record.
    * @param {Object} item - Stored record.
    * @returns {Object} Validated record.
    */
   function communicationPersistentHmacValidated(item) {
     const hourMs = 60 * 60 * 1000;
+    const validTime = value => Number.isSafeInteger(value) &&
+      value >= 0 && value <= 8640000000000000;
+    const eventTime = event => validTime(event.occurred_at_ms) &&
+      event.key_restart === new Date(event.occurred_at_ms).toISOString();
     if (!item || typeof item !== 'object' || Array.isArray(item) ||
-        item.format !== 'dc-secret-key-record/2' ||
+        item.format !== 'dc-secret-key-record/3' ||
+        'generation' in item ||
         !/^[a-f0-9]{64}$/.test(item.key_hex ?? '') ||
-        !/^[a-f0-9]{32}$/.test(item.generation ?? '') ||
         !Number.isSafeInteger(item.epoch) || item.epoch < 1 ||
         !['open', 'draining'].includes(item.phase) ||
         !Array.isArray(item.pending) || item.pending.length > 256 ||
         item.pending.some(token => !/^[a-f0-9]{32}$/.test(token)) ||
         new Set(item.pending).size !== item.pending.length ||
-        !Number.isSafeInteger(item.issued_at_ms) ||
-        !Number.isSafeInteger(item.expires_at_ms) ||
+        !validTime(item.issued_at_ms) ||
+        !validTime(item.expires_at_ms) ||
         item.expires_at_ms - item.issued_at_ms < 23 * hourMs ||
         item.expires_at_ms - item.issued_at_ms > 25 * hourMs ||
         !Array.isArray(item.cycle_events) ||
-        !item.cycle_events.length ||
+        item.cycle_events.length !== item.epoch ||
         item.cycle_events.some((event, i) =>
           !event || event.type !== 'hmac-key-cycle' ||
-          !/^[a-f0-9]{32}$/.test(event.generation ?? '') ||
-          !Number.isSafeInteger(event.epoch) || event.epoch !== i + 1 ||
-          event.id !== 'hmac-key-cycle:' + event.epoch + ':' +
-            event.generation ||
-          !Number.isSafeInteger(event.occurred_at_ms) ||
+          !eventTime(event) ||
+          event.id !== 'hmac-key-cycle:' + event.key_restart ||
+          event.epoch !== i + 1 ||
+          (i > 0 && event.occurred_at_ms <=
+            item.cycle_events[i - 1].occurred_at_ms) ||
           !['initial', 'manual', 'scheduled', 'overdue'].includes(
-            event.reason)) ||
-        item.cycle_events.at(-1).generation !== item.generation ||
+            event.reason) ||
+          (i === 0 && event.reason !== 'initial')) ||
         item.cycle_events.at(-1).epoch !== item.epoch ||
         item.cycle_events.at(-1).occurred_at_ms !== item.issued_at_ms) {
       throw new Error('persistent-key-storage-corrupt');
@@ -37,9 +42,8 @@
       throw new Error('persistent-key-storage-corrupt');
     }
     if (item.phase === 'draining' && (!item.next ||
+        'generation' in item.next ||
         !/^[a-f0-9]{64}$/.test(item.next.key_hex ?? '') ||
-        !/^[a-f0-9]{32}$/.test(item.next.generation ?? '') ||
-        item.next.generation === item.generation ||
         item.next.key_hex === item.key_hex ||
         !Number.isSafeInteger(item.next.epoch) ||
         item.next.epoch !== item.epoch + 1 ||
@@ -48,4 +52,3 @@
     }
     return item;
   }
-
