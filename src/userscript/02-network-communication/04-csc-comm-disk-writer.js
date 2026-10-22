@@ -34,6 +34,20 @@
       if (!ok) throw new Error(message);
     }
     /**
+     * Validates the exact, canonical UTC timestamp from DC #313.
+     * @param {string} value - Persisted producer key_restart value.
+     * @returns {boolean} Whether value encodes a canonical UTC instant.
+     */
+    function validRestart(value) {
+      if (typeof value !== 'string' ||
+          !/^\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}:\\d{2}\\.\\d{3}Z$/.test(value)) {
+        return false;
+      }
+      const instant = Date.parse(value);
+      return Number.isSafeInteger(instant) && instant > 0 &&
+        new Date(instant).toISOString() === value;
+    }
+    /**
      * Performs name in the isolated COMM writer.
      * @param {number} n - n input.
      * @param {boolean} compressed - compressed input.
@@ -168,8 +182,7 @@
         const item = parseLine(raw.subarray(offset, end + 1));
         if (first) {
           check(item?.version?.comm === version &&
-            Number.isSafeInteger(item.key_restart) &&
-            item.key_restart > 0, 'csc-writer-invalid-header');
+            validRestart(item.key_restart), 'csc-writer-invalid-header');
           first = false;
         } else {
           if (item.kind === 'hmac-key-cycle') {
@@ -260,7 +273,7 @@
      * @returns {Promise<any>} setRestart result.
      */
     async function setRestart(restart) {
-      check(Number.isSafeInteger(restart) && restart > 0,
+      check(validRestart(restart),
         'csc-writer-invalid-restart');
       check(activeCapture === null, 'csc-writer-capture-in-progress');
       check(keyRestart === null || restart >= keyRestart,
@@ -275,14 +288,15 @@
      * @returns {Promise<any>} write result.
      */
     async function write(bytes) {
-      check(directory && Number.isSafeInteger(keyRestart),
+      check(directory && validRestart(keyRestart),
         'csc-writer-not-open');
       check(bytes instanceof Uint8Array, 'csc-writer-invalid-bytes');
       const record = parseLine(bytes);
       if (record.kind === 'hmac-key-cycle') {
-        check(typeof record.id === 'string' &&
+        check(record.id === 'hmac-key-cycle:' + keyRestart &&
+          record.key_restart === keyRestart &&
           Number.isSafeInteger(record.occurred_at_ms) &&
-          record.occurred_at_ms === keyRestart,
+          record.occurred_at_ms === Date.parse(keyRestart),
           'csc-writer-cycle-boundary-mismatch');
         if (knownCycles.has(record.id)) {
           message('csc-writer-durable-cycle', {
@@ -339,7 +353,7 @@
         'csc-writer-invalid-config');
       version = options.version;
       keyRestart = options.key_restart;
-      check(Number.isSafeInteger(keyRestart) && keyRestart > 0,
+      check(validRestart(keyRestart),
         'csc-writer-invalid-restart');
       if (typeof codec.init === 'function') await codec.init(options.wasm_gzip_base64);
       if (typeof options.handle.queryPermission === 'function') {
