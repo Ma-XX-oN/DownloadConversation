@@ -137,6 +137,32 @@
       return result;
     }
     /**
+     * Applies an explicit, previously confirmed logical log reset.
+     * Incomplete deletion is reconciled from the durable reset journal.
+     * @param {boolean} confirmed - Exact user confirmation.
+     * @returns {Promise<void>} Empty durable segment inventory.
+     */
+    async function reset(confirmed) {
+      if (confirmed !== true) throw new Error('csc-writer-reset-unconfirmed');
+      check(directory !== null && !poisoned,
+        'csc-writer-not-open');
+      check(activeCapture === null, 'csc-writer-capture-in-progress');
+      try {
+        await seal();
+        await manifest.reset();
+        index = 0;
+        length = 0;
+        activeName = null;
+        committed = 0;
+        knownCycles.clear();
+        committedCaptures.clear();
+        message('csc-writer-reset-complete', { durable: true });
+      } catch (error) {
+        poisoned = true;
+        throw error;
+      }
+    }
+    /**
      * Performs close in the isolated COMM writer.
      * @returns {Promise<any>} close result.
      */
@@ -148,7 +174,7 @@
       message('csc-writer-closed', { durable: true });
     }
     const api = Object.freeze({ open, write, setRestart, seal, close,
-      snapshot, renameLogical, duplicate,
+      snapshot, renameLogical, duplicate, reset,
       get committedBytes() { return committed; },
       get queueBytes() { return 0; } });
     scope.cscCommWriteChunk = bytes => {
@@ -170,6 +196,8 @@
           await snapshot();
         } else if (value.type === 'csc-writer-duplicate') {
           await duplicate(value.destination, value.output_id);
+        } else if (value.type === 'csc-writer-reset') {
+          await reset(value.confirmed === true);
         }
         else if (value.type === 'csc-writer-query-capture') {
           const durable = committedCaptures.has(value.capture_id);
