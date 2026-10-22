@@ -29,6 +29,8 @@
     let chain = Promise.resolve();
     let committed = 0;
     let poisoned = false;
+    let queuedBytes = 0;
+    let queuedRecords = 0;
 
     /**
      * Performs check in the isolated COMM writer.
