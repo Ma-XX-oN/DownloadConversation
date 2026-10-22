@@ -4,6 +4,7 @@ import { readFileSync } from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import test from 'node:test';
+import { webcrypto } from 'node:crypto';
 import vm from 'node:vm';
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
@@ -13,6 +14,8 @@ const source = readFileSync(path.join(root,
     'src/userscript/02-network-communication/04-csc-comm-disk-writer-part2.js'), 'utf8');
 const leaseSource = readFileSync(path.join(root,
   'src/userscript/02-network-communication/04-csc-comm-disk-lock.js'), 'utf8');
+const manifestSource = readFileSync(path.join(root,
+  'src/userscript/02-network-communication/04-csc-comm-disk-manifest.js'), 'utf8');
 const start = new Date(1761152400000).toISOString();
 const encoder = new TextEncoder();
 const frame = value => encoder.encode(JSON.stringify(value) + '\n');
@@ -81,6 +84,7 @@ function fixture({ denied = false, corrupt = false, locks = new Set() } = {}) {
   const messages = [];
   const handlers = [];
   const scope = {
+    crypto: webcrypto,
     navigator: { locks: {
       request(name, options, callback) {
         if (locks.has(name)) return Promise.resolve(callback(null));
@@ -109,8 +113,10 @@ function fixture({ denied = false, corrupt = false, locks = new Set() } = {}) {
   };
   const sandbox = vm.createContext({ Uint8Array, TextEncoder, TextDecoder,
     DOMException, Blob, Number, Object, JSON, String, Promise, Set, Error });
-  vm.runInContext(leaseSource + source + '\nglobalThis.factory = cscCommDiskWriter;', sandbox);
+  vm.runInContext(leaseSource + manifestSource + source +
+    '\nglobalThis.factory = cscCommDiskWriter;', sandbox);
   scope.__cscWriterLease = sandbox.cscCommWriterLease(scope);
+  scope.__cscWriterManifest = sandbox.cscCommDiskManifest(scope);
   const writer = sandbox.factory(scope, codec);
   return { parent, directory, files, messages, handlers, scope, writer, codec };
 }
@@ -119,7 +125,9 @@ async function open(f, restart = start, version = '1.11.7-issue.317.1') {
     version, key_restart: restart });
 }
 function readPlain(f) {
-  const sorted = [...f.files].sort(([a], [b]) => a.localeCompare(b));
+  const sorted = [...f.files].filter(([name]) =>
+    /^fragment-\d{8}\.jsonl(\.zst)?$/.test(name))
+    .sort(([a], [b]) => a.localeCompare(b));
   return sorted.map(([name, raw]) => {
     if (name.endsWith('.zst')) return [name, raw.subarray(2)];
     return [name, raw];
