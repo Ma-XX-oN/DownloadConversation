@@ -669,3 +669,28 @@ test('Zstd compression failure poisons Worker and preserves raw segment', async 
     assert.deepEqual(Array.from(f.files.get(name)), Array.from(bytes));
   }
 });
+
+test('reopening persisted later HMAC key scope under a stale key fails closed', async () => {
+  const f = fixture();
+  await open(f);
+  await normalCapture(f);
+  const nextRestart = new Date(Date.parse(start) + 1000).toISOString();
+  await f.writer.setRestart(nextRestart);
+  await f.writer.write(frame({ kind: 'csc-comm-start',
+    capture_id: 'later-capture', key_restart: nextRestart }));
+  await f.writer.write(frame({ kind: 'csc-comm-end',
+    capture_id: 'later-capture', status: 'completed' }));
+  await f.writer.close();
+  const original = [...f.files].map(([name, bytes]) =>
+    [name, Array.from(bytes)]);
+  const stale = fixture();
+  stale.parent.getDirectoryHandle = f.parent.getDirectoryHandle;
+  await assert.rejects(() => open(stale, start),
+    /csc-writer-stale-restart/);
+  assert.deepEqual([...f.files].map(([name, bytes]) =>
+    [name, Array.from(bytes)]), original);
+  const current = fixture();
+  current.parent.getDirectoryHandle = f.parent.getDirectoryHandle;
+  await open(current, nextRestart);
+  await current.writer.close();
+});
