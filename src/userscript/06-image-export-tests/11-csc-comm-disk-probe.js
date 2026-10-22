@@ -36,12 +36,23 @@
         let fragments = 0;
         let bodyCount = 0;
         let bodyBytes = 0;
+        let manifest = null;
+        const archives = new Map();
         const dec = new TextDecoder('utf-8', { fatal: true });
         for await (const [fileName, entry] of dir.entries()) {
-          if (!/^fragment-\\d{8}\\.jsonl\\.zst$/.test(fileName)) {
+          const stored = new Uint8Array(await
+            (await entry.getFile()).arrayBuffer());
+          if (fileName === 'manifest.json') {
+            manifest = JSON.parse(dec.decode(stored));
+            continue;
+          }
+          if (!/^fragment-\d{8}\.jsonl\.zst$/.test(fileName)) {
             throw new Error('Unexpected Worker output ' + fileName);
           }
-          const stored = new Uint8Array(await (await entry.getFile()).arrayBuffer());
+          const hash = new Uint8Array(await self.crypto.subtle.digest(
+            'SHA-256', stored));
+          archives.set(fileName, Array.from(hash,
+            item => item.toString(16).padStart(2, '0')).join(''));
           const restored = self.__dcWorkerCompressorBridge.decompress(stored);
           const rows = dec.decode(restored).trimEnd().split('\n');
           const header = JSON.parse(rows.shift());
@@ -64,6 +75,13 @@
         if (fragments < 2 || bodyCount !== count ||
             bodyBytes !== count * payload.length) {
           throw new Error('Fragment count or exact body readback mismatch');
+        }
+        if (manifest?.schema !== 'dc-csc-comm-segments/2' ||
+            manifest.namespace !== config.namespace ||
+            Object.keys(manifest.archives ?? {}).length !== fragments ||
+            [...archives].some(([name, hash]) =>
+              manifest.archives[name] !== hash)) {
+          throw new Error('Physical manifest inventory or SHA256 mismatch');
         }
         self.postMessage({ type: 'csc-writer-probe-result',
           ok: true, fragments, bodyBytes });
