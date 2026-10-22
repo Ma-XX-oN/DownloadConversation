@@ -5,8 +5,16 @@
    */
   function communicationPersistentHmacValidated(item) {
     const hourMs = 60 * 60 * 1000;
+    /**
+     * @param {number} value - Candidate epoch milliseconds.
+     * @returns {boolean} Safe UTC time within the JavaScript Date range.
+     */
     const validTime = value => Number.isSafeInteger(value) &&
       value >= 0 && value <= 8640000000000000;
+    /**
+     * @param {Object} event - Committed nonsecret key lifecycle event.
+     * @returns {boolean} Event timestamp equals its canonical UTC string.
+     */
     const eventTime = event => validTime(event.occurred_at_ms) &&
       event.key_restart === new Date(event.occurred_at_ms).toISOString();
     if (!item || typeof item !== 'object' || Array.isArray(item) ||
