@@ -29,6 +29,7 @@
         let max = 0;
       let rawIndex = 0;
       let oldFragment = false;
+      let newestRestart = null;
       const candidates = [];
       for await (const [fileName, entry] of directory.entries()) {
         if (entry.kind === 'file' &&
@@ -66,6 +67,10 @@
         const raw = await bytesFrom(entry);
         const unpacked = compressed ? await codec.decompress(raw) : raw;
         const found = parseFragment(unpacked);
+        check(newestRestart === null ||
+          found.fragmentRestart >= newestRestart,
+          'csc-writer-disk-key-restart-regression');
+        newestRestart = found.fragmentRestart;
         if (compressed) await manifest.record(fileName, raw);
         if (!compressed) {
           check(!activeName, 'csc-writer-ambiguous-raw-fragment');
@@ -82,6 +87,8 @@
       check(!activeName || rawIndex === max,
         'csc-writer-unsealed-historical-fragment');
       index = max;
+      check(newestRestart === null || keyRestart >= newestRestart,
+        'csc-writer-stale-restart');
       check(recoveredCapture === null,
         'csc-writer-unresolved-capture');
       if (oldFragment) await seal();
