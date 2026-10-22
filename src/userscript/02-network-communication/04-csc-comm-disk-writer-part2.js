@@ -1,0 +1,113 @@
+    /**
+     * Performs open in the isolated COMM writer.
+     * @param {Object} options - options input.
+     * @returns {Promise<any>} open result.
+     */
+    async function open(options) {
+      check(!directory, 'csc-writer-already-open');
+      check(options?.handle &&
+        typeof options.handle.getDirectoryHandle === 'function' &&
+        /^[A-Za-z0-9._-]{1,100}$/.test(options.namespace) &&
+        typeof options.version === 'string' && options.version.length > 0,
+        'csc-writer-invalid-config');
+      version = options.version;
+      keyRestart = options.key_restart;
+      check(validRestart(keyRestart),
+        'csc-writer-invalid-restart');
+      if (typeof codec.init === 'function') await codec.init(options.wasm_gzip_base64);
+      if (typeof options.handle.queryPermission === 'function') {
+        check(await options.handle.queryPermission({ mode: 'readwrite' }) ===
+          'granted', 'csc-writer-permission-denied');
+      }
+      check(lease && typeof lease.acquire === 'function',
+        'csc-writer-lock-unavailable');
+      await lease.acquire(options.namespace);
+      try {
+        directory = await options.handle.getDirectoryHandle(
+          'dc-comm-' + options.namespace, { create: true });
+        let max = 0;
+      let rawIndex = 0;
+      let oldFragment = false;
+      const candidates = [];
+      for await (const [fileName, entry] of directory.entries()) {
+        if (entry.kind === 'file' &&
+            /^fragment-\d{8}\.jsonl(\.zst)?$/.test(fileName)) {
+          candidates.push({ fileName, entry });
+        }
+      }
+      candidates.sort((a, b) => a.fileName.localeCompare(b.fileName));
+      for (const { fileName, entry } of candidates) {
+        const number = Number(fileName.slice(9, 17));
+        max = Math.max(max, number);
+        const compressed = fileName.endsWith('.zst');
+        const raw = await bytesFrom(entry);
+        const unpacked = compressed ? await codec.decompress(raw) : raw;
+        const found = parseFragment(unpacked);
+        if (!compressed) {
+          check(!activeName, 'csc-writer-ambiguous-raw-fragment');
+          activeName = fileName;
+          rawIndex = number;
+          length = raw.length;
+          oldFragment = found.fragmentVersion !== version ||
+            found.fragmentRestart !== keyRestart;
+          check(found.last?.kind !== 'csc-comm-start' &&
+            found.last?.kind !== 'csc-comm-body',
+            'csc-writer-unresolved-old-capture');
+        }
+      }
+      check(!activeName || rawIndex === max,
+        'csc-writer-unsealed-historical-fragment');
+      index = max;
+      check(recoveredCapture === null,
+        'csc-writer-unresolved-capture');
+      if (oldFragment) await seal();
+        message('csc-writer-ready', {
+          durable: true, fragment: index, committed_bytes: committed,
+          key_restart: keyRestart
+        });
+      } catch (error) {
+        directory = null;
+        await lease.release();
+        throw error;
+      }
+    }
+    /**
+     * Performs close in the isolated COMM writer.
+     * @returns {Promise<any>} close result.
+     */
+    async function close() {
+      check(!activeCapture, 'csc-writer-capture-in-progress');
+      await seal();
+      await lease.release();
+      message('csc-writer-closed', { durable: true });
+    }
+    const api = Object.freeze({ open, write, setRestart, seal, close,
+      get committedBytes() { return committed; },
+      get queueBytes() { return 0; } });
+    scope.cscCommWriteChunk = bytes => {
+      const operation = chain.then(() => api.write(bytes));
+      chain = operation.catch(() => {});
+      return operation;
+    };
+    scope.addEventListener('message', event => {
+      const value = event.data;
+      if (!value || !/^csc-writer-/.test(value.type ?? '')) return;
+      const operation = chain.then(async () => {
+        if (value.type === 'csc-writer-open') await open(value);
+        else if (value.type === 'csc-writer-key-restart') {
+          await setRestart(value.key_restart);
+        } else if (value.type === 'csc-writer-close') await close();
+        else if (value.type === 'csc-writer-query-capture') {
+          const durable = committedCaptures.has(value.capture_id);
+          message('csc-writer-capture-status', {
+            capture_id: String(value.capture_id ?? ''), durable
+          });
+        }
+      });
+      chain = operation.catch(error => message('csc-writer-error', {
+        operation: value.type, reason: errorCode(error), durable: false
+      }));
+    });
+    return api;
+  }
+
