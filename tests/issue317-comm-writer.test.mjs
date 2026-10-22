@@ -338,7 +338,7 @@ test('crash with unterminated capture fails closed and preserves on-disk bytes',
   const successor = fixture();
   successor.parent.getDirectoryHandle = f.parent.getDirectoryHandle;
   await assert.rejects(() => open(successor),
-    /csc-writer-unresolved-capture/);
+    /csc-writer-unresolved-(?:old-)?capture/);
   assert.equal(f.files.size, before.length);
   assert.deepEqual([...f.files.values()].map(b => Array.from(b)),
     before.map(b => Array.from(b)));
