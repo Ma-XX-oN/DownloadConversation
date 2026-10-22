@@ -3,6 +3,12 @@
    * Worker-owned COMM disk writer. No network interception or page DOM access.
    * Acknowledgements are durable only after close + exact physical readback.
    */
+  /**
+   * Performs cscCommDiskWriter in the isolated COMM writer.
+   * @param {Object} scope - scope input.
+   * @param {Object} codec - codec input.
+   * @returns {any} cscCommDiskWriter result.
+   */
   function cscCommDiskWriter(scope, codec) {
     const encoder = new TextEncoder();
     const decoder = new TextDecoder('utf-8', { fatal: true });
@@ -18,13 +24,31 @@
     let chain = Promise.resolve();
     let committed = 0;
 
+    /**
+     * Performs check in the isolated COMM writer.
+     * @param {boolean} ok - ok input.
+     * @param {string} message - message input.
+     * @returns {any} check result.
+     */
     function check(ok, message) {
       if (!ok) throw new Error(message);
     }
+    /**
+     * Performs name in the isolated COMM writer.
+     * @param {number} n - n input.
+     * @param {boolean} compressed - compressed input.
+     * @returns {any} name result.
+     */
     function name(n, compressed = false) {
       return 'fragment-' + String(n).padStart(8, '0') +
         (compressed ? '.jsonl.zst' : '.jsonl');
     }
+    /**
+     * Performs equal in the isolated COMM writer.
+     * @param {Uint8Array} a - a input.
+     * @param {Uint8Array} b - b input.
+     * @returns {any} equal result.
+     */
     function equal(a, b) {
       if (a.byteLength !== b.byteLength) return false;
       for (let n = 0; n < a.byteLength; n += 1) {
@@ -32,18 +56,40 @@
       }
       return true;
     }
+    /**
+     * Performs errorCode in the isolated COMM writer.
+     * @param {Error} error - error input.
+     * @returns {any} errorCode result.
+     */
     function errorCode(error) {
       const message = String(error?.message ?? '');
       return /^csc-writer-[a-z-]+$/.test(message)
         ? message : 'csc-writer-io-failed';
     }
+    /**
+     * Performs message in the isolated COMM writer.
+     * @param {string} type - type input.
+     * @param {Object} payload - payload input.
+     * @returns {any} message result.
+     */
     function message(type, payload) {
       scope.postMessage({ type, ...payload });
     }
+    /**
+     * Performs file in the isolated COMM writer.
+     * @param {string} nameValue - nameValue input.
+     * @param {boolean} create - create input.
+     * @returns {Promise<any>} file result.
+     */
     async function file(nameValue, create = false) {
       check(directory !== null, 'csc-writer-not-open');
       return directory.getFileHandle(nameValue, { create });
     }
+    /**
+     * Performs exists in the isolated COMM writer.
+     * @param {string} fileName - fileName input.
+     * @returns {Promise<any>} exists result.
+     */
     async function exists(fileName) {
       try { return await file(fileName, false); }
       catch (error) {
@@ -51,9 +97,20 @@
         throw error;
       }
     }
+    /**
+     * Performs bytesFrom in the isolated COMM writer.
+     * @param {Object} handle - handle input.
+     * @returns {Promise<any>} bytesFrom result.
+     */
     async function bytesFrom(handle) {
       return new Uint8Array(await (await handle.getFile()).arrayBuffer());
     }
+    /**
+     * Performs writeNew in the isolated COMM writer.
+     * @param {string} fileName - fileName input.
+     * @param {Uint8Array} data - data input.
+     * @returns {Promise<any>} writeNew result.
+     */
     async function writeNew(fileName, data) {
       check(!(await exists(fileName)), 'csc-writer-name-collision');
       const handle = await file(fileName, true);
@@ -71,11 +128,21 @@
         throw error;
       }
     }
+    /**
+     * Performs header in the isolated COMM writer.
+     * @param {number} restart - restart input.
+     * @returns {any} header result.
+     */
     function header(restart) {
       return encoder.encode(JSON.stringify({
         version: { comm: version, gen: version }, key_restart: restart
       }) + '\n');
     }
+    /**
+     * Performs parseLine in the isolated COMM writer.
+     * @param {Uint8Array} raw - raw input.
+     * @returns {any} parseLine result.
+     */
     function parseLine(raw) {
       check(raw.byteLength > 0 && raw[raw.length - 1] === 10,
         'csc-writer-incomplete-frame');
@@ -86,6 +153,11 @@
         'csc-writer-invalid-frame');
       return value;
     }
+    /**
+     * Performs parseFragment in the isolated COMM writer.
+     * @param {Uint8Array} raw - raw input.
+     * @returns {any} parseFragment result.
+     */
     function parseFragment(raw) {
       let offset = 0;
       let first = true;
@@ -112,6 +184,10 @@
       check(!first, 'csc-writer-empty-fragment');
       return last;
     }
+    /**
+     * Performs seal in the isolated COMM writer.
+     * @returns {Promise<any>} seal result.
+     */
     async function seal() {
       if (!length) return;
       const source = await file(activeName);
@@ -139,6 +215,10 @@
         archive_bytes: compressed.byteLength, durable: true
       });
     }
+    /**
+     * Performs createFragment in the isolated COMM writer.
+     * @returns {Promise<any>} createFragment result.
+     */
     async function createFragment() {
       index += 1;
       activeName = name(index);
@@ -146,6 +226,11 @@
       await writeNew(activeName, contents);
       length = contents.length;
     }
+    /**
+     * Performs appendRaw in the isolated COMM writer.
+     * @param {Uint8Array} data - data input.
+     * @returns {Promise<any>} appendRaw result.
+     */
     async function appendRaw(data) {
       const handle = await file(activeName);
       const previous = await handle.getFile();
@@ -169,6 +254,11 @@
       length += data.length;
       committed += data.length;
     }
+    /**
+     * Performs setRestart in the isolated COMM writer.
+     * @param {number} restart - restart input.
+     * @returns {Promise<any>} setRestart result.
+     */
     async function setRestart(restart) {
       check(Number.isSafeInteger(restart) && restart > 0,
         'csc-writer-invalid-restart');
@@ -179,6 +269,11 @@
       await seal();
       keyRestart = restart;
     }
+    /**
+     * Performs write in the isolated COMM writer.
+     * @param {Uint8Array} bytes - bytes input.
+     * @returns {Promise<any>} write result.
+     */
     async function write(bytes) {
       check(directory && Number.isSafeInteger(keyRestart),
         'csc-writer-not-open');
@@ -230,6 +325,11 @@
       }
       if (length >= threshold) await seal();
     }
+    /**
+     * Performs open in the isolated COMM writer.
+     * @param {Object} options - options input.
+     * @returns {Promise<any>} open result.
+     */
     async function open(options) {
       check(!directory, 'csc-writer-already-open');
       check(options?.handle &&
@@ -275,6 +375,10 @@
         key_restart: keyRestart
       });
     }
+    /**
+     * Performs close in the isolated COMM writer.
+     * @returns {Promise<any>} close result.
+     */
     async function close() {
       check(!activeCapture, 'csc-writer-capture-in-progress');
       await seal();
@@ -304,82 +408,3 @@
     return api;
   }
 
-  /**
-   * Adapter for the exact DC vendored Zstd/WASM engine, initialized in Worker.
-   */
-  function cscCommWorkerZstdCodec() {
-    let ready = false;
-    const engine = self.__dcWorkerCompressorBridge;
-    return Object.freeze({
-      async init(b64) {
-        if (ready) return;
-        if (typeof b64 !== 'string' || b64.length < 16) {
-          throw new Error('csc-writer-invalid-wasm');
-        }
-        const zipped = Uint8Array.from(atob(b64), c => c.charCodeAt(0));
-        const stream = new Blob([zipped]).stream()
-          .pipeThrough(new DecompressionStream('gzip'));
-        const wasm = new Uint8Array(await new Response(stream).arrayBuffer());
-        await engine.init(wasm);
-        ready = true;
-      },
-      async compress(raw) {
-        if (!ready) throw new Error('csc-writer-compressor-not-ready');
-        const encoder = new engine.Encoder(3);
-        const chunks = [];
-        let total = 0;
-        try {
-          for (let i = 0; i < raw.length; i += 512 * 1024) {
-            const chunk = encoder.write(raw.subarray(i, i + 512 * 1024));
-            if (chunk.length) { chunks.push(chunk); total += chunk.length; }
-          }
-          const tail = encoder.finish();
-          if (tail.length) { chunks.push(tail); total += tail.length; }
-        } finally {
-          encoder.free();
-        }
-        const output = new Uint8Array(total);
-        let offset = 0;
-        for (const item of chunks) {
-          output.set(item, offset);
-          offset += item.length;
-        }
-        return output;
-      },
-      async decompress(zstd) {
-        if (!ready) throw new Error('csc-writer-compressor-not-ready');
-        return engine.decompress(zstd);
-      }
-    });
-  }
-
-  /**
-   * Bootstraps the writer and #311 processor in the SAME dedicated Worker.
-   * The calling page passes ONLY the granted handle and WASM codec bytes.
-   */
-  function cscCommDiskWorkerSource() {
-    const bridge = globalThis['__dcCompressor'];
-    assert(typeof bridge?.init === 'function' &&
-      typeof bridge?.Encoder === 'function' &&
-      typeof bridge?.decompress === 'function' &&
-      typeof bridge?.wasmGzipBase64 === 'string',
-    'Bundled DC Zstd/WASM compressor is not available.');
-    return [
-      "'use strict';",
-      'let __dcCompressorModule = null;',
-      'function __dcCompressorViews(module) {',
-      '  return { bytes: new Uint8Array(module.memory.buffer),',
-      '    words: new Uint32Array(module.memory.buffer) };',
-      '}',
-      bridge.init.toString(),
-      bridge.Encoder.toString(),
-      bridge.decompress.toString(),
-      'self.__dcWorkerCompressorBridge = {',
-      '  init: __dcCompressorInit, Encoder: CompressorEncoder,',
-      '  decompress: __dcCompressorDecompress',
-      '};',
-      'self.__cscDiskWriter = (' + cscCommDiskWriter.toString() +
-        ')(self, (' + cscCommWorkerZstdCodec.toString() + ')());',
-      cscCommProcessingWorkerSource()
-    ].join('\n');
-  }
