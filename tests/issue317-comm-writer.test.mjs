@@ -719,3 +719,30 @@ test('durable failed source is preserved but never acknowledged complete', async
   assert.equal(end.source_complete, false);
   assert.equal(end.data, undefined);
 });
+
+test('revoked permission after open fails and poisons the disk sink', async () => {
+  const f = fixture();
+  await open(f);
+  await f.writer.write(record('csc-comm-start', {
+    key_restart: start
+  }));
+  const before = [...f.files].map(([name, bytes]) =>
+    [name, Array.from(bytes)]);
+  const original = f.directory.getFileHandle.bind(f.directory);
+  f.directory.getFileHandle = async (...args) => {
+    throw new DOMException('synthetic-permission-revoked', 'NotAllowedError');
+  };
+  await assert.rejects(() => f.writer.write(record('csc-comm-body', {
+    data: 'should-never-be-written'
+  })), /synthetic-permission-revoked/);
+  assert.ok(f.messages.some(event =>
+    event.type === 'csc-writer-incomplete' &&
+    event.durable === false &&
+    event.reason === 'csc-writer-io-failed'));
+  await assert.rejects(() => f.writer.write(record('csc-comm-end', {
+    status: 'completed'
+  })), /csc-writer-poisoned/);
+  assert.deepEqual([...f.files].map(([name, bytes]) =>
+    [name, Array.from(bytes)]), before);
+  f.directory.getFileHandle = original;
+});
