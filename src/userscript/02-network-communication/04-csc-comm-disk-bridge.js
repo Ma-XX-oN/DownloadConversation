@@ -58,7 +58,8 @@
    */
   /**
    * Performs cscCommDiskWorkerSource in the isolated COMM writer.
-   * @returns {any} cscCommDiskWorkerSource result.
+   * @param {boolean} includeProcessor - Whether to include the #311 processor.
+   * @returns {string} Executable source for one dedicated COMM Worker.
    */
   function cscCommDiskWorkerSource(includeProcessor = true) {
     const bridge = globalThis['__dcCompressor'];
