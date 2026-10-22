@@ -68,13 +68,13 @@ test('startup after 25h rotates once and both log streams share event ID', async
   const f = fixture();
   const first = f.open();
   const admission = await first.admit();
-  const previous = admission.metadata.redaction_scope;
+  const previous = admission.metadata.key_restart;
   await first.complete(admission.token);
   f.clock.value += 25 * hourMs + 1;
   const restarted = f.open();
   const current = await restarted.status();
   assert.equal(current.redaction_key_epoch, 2);
-  assert.notEqual(current.redaction_scope, previous);
+  assert.notEqual(current.key_restart, previous);
   const committed = await restarted.cycleEvents();
   assert.equal(committed.length, 2);
   assert.equal(committed[1].reason, 'overdue');
@@ -104,8 +104,8 @@ test('rotation drains in-flight captures without a mixed-generation record', asy
   assert.equal(event.reason, 'scheduled');
   const next = await another.admit();
   assert.equal(next.metadata.redaction_key_epoch, 2);
-  assert.notEqual(next.metadata.redaction_scope,
-    oldAdmission.metadata.redaction_scope);
+  assert.notEqual(next.metadata.key_restart,
+    oldAdmission.metadata.key_restart);
   await another.complete(next.token);
 });
 
@@ -117,7 +117,7 @@ test('many overdue tabs converge and manual cycle creates distinct event', async
   f.clock.value += 25 * hourMs + 1;
   const tabs = Array.from({ length: 16 }, () => f.open());
   const next = await Promise.all(tabs.map(s => s.admit()));
-  assert.equal(new Set(next.map(a => a.metadata.redaction_scope)).size, 1);
+  assert.equal(new Set(next.map(a => a.metadata.key_restart)).size, 1);
   assert.equal(f.raw().epoch, 2);
   await Promise.all(tabs.map((s, i) => s.complete(next[i].token)));
   assert.equal((await first.randomize(true)).state, 'COMMITTED');
