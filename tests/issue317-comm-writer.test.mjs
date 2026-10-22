@@ -694,3 +694,28 @@ test('reopening persisted later HMAC key scope under a stale key fails closed', 
   await open(current, nextRestart);
   await current.writer.close();
 });
+
+test('durable failed source is preserved but never acknowledged complete', async () => {
+  const f = fixture();
+  await open(f);
+  await f.writer.write(record('csc-comm-start', { key_restart: start }));
+  await f.writer.write(record('csc-comm-body', {
+    encoding: 'utf8', data: 'known-synthetic-prefix'
+  }));
+  await f.writer.write(record('csc-comm-end', {
+    status: 'failed', reason: 'csc-source-incomplete',
+    source_complete: false
+  }));
+  const receipt = f.messages.find(e =>
+    e.type === 'csc-writer-durable-capture');
+  assert.equal(receipt.durable, true);
+  assert.equal(receipt.capture_complete, false);
+  assert.equal(receipt.capture_status, 'failed');
+  await f.writer.close();
+  const restored = readPlain(f);
+  const rows = new TextDecoder().decode(restored[0][1]).trimEnd().split('\n');
+  const end = JSON.parse(rows.at(-1));
+  assert.equal(end.status, 'failed');
+  assert.equal(end.source_complete, false);
+  assert.equal(end.data, undefined);
+});
