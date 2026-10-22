@@ -10,7 +10,7 @@ const source = [
   '../src/userscript/02-network-communication/04d-persistent-hmac-browser.js'
 ].map(name => readFileSync(new URL(name, import.meta.url), 'utf8'))
   .join('\n');
-const functions = vm.runInNewContext(source + '\n({ service: communicationPersistentHmacService, authority: communicationPersistentHmacChatgptAuthority });',
+const functions = vm.runInNewContext(source + '\n({ service: communicationPersistentHmacService, authority: communicationPersistentHmacIndexedDbAuthority });',
   { Uint8Array, Array, Map, Set, Object, Number, Error, JSON });
 const create = functions.service;
 const makeAuthority = functions.authority;
@@ -237,12 +237,15 @@ test('admission provisioning and disposal never expose key via public status', a
 });
 
 
-test('native Web Locks adapter enforces chatgpt.com origin and exclusive lifetime', async () => {
+test('native IndexedDB+Web Locks authority enforces origin and exclusive lifetime', async () => {
+  const storage = { get() {}, set() {} };
   assert.equal(makeAuthority({ locks: { request() {} } },
-    { origin: 'https://chat.openai.com' }), null);
+    { origin: 'https://chat.openai.com' }, storage), null);
   assert.equal(makeAuthority({ locks: { request() {} } },
-    { origin: 'http://chatgpt.com' }), null);
-  assert.equal(makeAuthority({}, { origin: 'https://chatgpt.com' }), null);
+    { origin: 'http://chatgpt.com' }, storage), null);
+  assert.equal(makeAuthority({}, { origin: 'https://chatgpt.com' }, storage), null);
+  assert.equal(makeAuthority({ locks: { request() {} } },
+    { origin: 'https://chatgpt.com' }, null), null);
   let previous = Promise.resolve();
   let active = 0;
   let peak = 0;
@@ -261,9 +264,9 @@ test('native Web Locks adapter enforces chatgpt.com origin and exclusive lifetim
   } };
   const origin = { origin: 'https://chatgpt.com' };
   const authorities = Array.from({ length: 100 }, () =>
-    makeAuthority(browserNavigator, origin));
+    makeAuthority(browserNavigator, origin, storage));
   assert.ok(authorities.every(a =>
-    a.capability === 'exclusive-chatgpt-web-lock-only-v1'));
+    a.capability === 'linearizable-chatgpt-key-record-v2'));
   await Promise.all(authorities.map((a, i) => a.runExclusive(async () => {
     active++;
     peak = Math.max(peak, active);
@@ -274,7 +277,7 @@ test('native Web Locks adapter enforces chatgpt.com origin and exclusive lifetim
   })));
   assert.equal(peak, 1);
   assert.equal(observedNames.size, 1);
-  const other = makeAuthority(browserNavigator, origin);
+  const other = makeAuthority(browserNavigator, origin, storage);
   origin.origin = 'https://chat.openai.com';
   await assert.rejects(() => other.runExclusive(() => {}),
     /origin-or-callback-invalid/);
@@ -288,7 +291,8 @@ test('failed Web Lock callback releases fence and no lock fails closed', async (
       return callback({ mode: 'exclusive' });
     }
   } };
-  const authority = makeAuthority(navigator, { origin: 'https://chatgpt.com' });
+  const authority = makeAuthority(navigator, { origin: 'https://chatgpt.com' },
+    { get() {}, set() {} });
   await assert.rejects(() => authority.runExclusive(() => {
     throw Error('abort');
   }), /abort/);
