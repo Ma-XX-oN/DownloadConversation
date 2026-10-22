@@ -357,3 +357,42 @@ test('after a physical write failure the Worker rejects every subsequent write',
     m.durable === false));
   assert.ok(!f.messages.some(m => m.type === 'csc-writer-durable-capture'));
 });
+
+test('crash after verified Zstd archive before raw deletion is idempotent', async () => {
+  const sourceWriter = fixture();
+  await open(sourceWriter);
+  await normalCapture(sourceWriter);
+  await sourceWriter.writer.close();
+  const archive = sourceWriter.files.get('fragment-00000001.jsonl.zst');
+  assert.ok(archive);
+  const raw = Uint8Array.from(archive.subarray(2));
+  sourceWriter.files.set('fragment-00000001.jsonl', raw);
+  const resumed = fixture();
+  resumed.parent.getDirectoryHandle = sourceWriter.parent.getDirectoryHandle;
+  await open(resumed);
+  assert.ok(!sourceWriter.files.has('fragment-00000001.jsonl'));
+  assert.deepEqual(Array.from(
+    sourceWriter.files.get('fragment-00000001.jsonl.zst')),
+    Array.from(archive));
+  await assert.rejects(() => resumed.writer.write(record('csc-comm-start', {
+    key_restart: start
+  })), /csc-writer-duplicate-capture/);
+  await resumed.writer.close();
+});
+test('mismatched raw/archive twins fail closed without deleting either copy', async () => {
+  const sourceWriter = fixture();
+  await open(sourceWriter);
+  await normalCapture(sourceWriter);
+  await sourceWriter.writer.close();
+  sourceWriter.files.set('fragment-00000001.jsonl',
+    frame({ version: { gen: 'tampered', comm: 'tampered' },
+      key_restart: start }));
+  const originals = [...sourceWriter.files].map(([name, bytes]) =>
+    [name, Array.from(bytes)]);
+  const resumed = fixture();
+  resumed.parent.getDirectoryHandle = sourceWriter.parent.getDirectoryHandle;
+  await assert.rejects(() => open(resumed),
+    /csc-writer-interrupted-archive-mismatch/);
+  assert.deepEqual([...sourceWriter.files].map(([name, bytes]) =>
+    [name, Array.from(bytes)]), originals);
+});
