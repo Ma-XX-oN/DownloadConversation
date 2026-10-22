@@ -118,7 +118,7 @@
     } catch (error) {
       if (error?.name !== 'NotFoundError') throw error;
     }
-    const source = cscCommDiskWorkerSource() + '\n(' +
+    const source = cscCommDiskWorkerSource(false) + '\n(' +
       cscCommDiskProbeEntrypoint.toString() + ')();';
     const url = realm.URL.createObjectURL(new realm.Blob(
       [source], { type: 'text/javascript' }));
