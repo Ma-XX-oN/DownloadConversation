@@ -50,11 +50,24 @@ Keep all source-owner restrictions and explicit merge approval gates.
 | #306 | PR #351, `bff52f99` | Existing stack based on #310 | PENDING owner coordination |
 | #311 | PR #326, `a0b06f94` | Worker sanitizer; old HMAC fields | PENDING schema fix |
 | #312 | PR #321, `4202b710` | Superseded random-ID scope design | DO NOT import old schema |
-| #313 | PR #323, `9485b8c7` | Timestamp-only producer, hosted PASS | PENDING browser/integration |
+| #313 | PR #323, `6020d4bd` | Producer CI PASS; installed Chrome lifecycle PASS | READY FOR ASSEMBLY REVIEW; physical GEN/COMM pending |
 | #317 | PR #358, `6cecd18e` | Writer WIP, not accepted | PENDING |
 | #318 | No integrated candidate verified | Config/rotation UI incomplete | PENDING |
 | #232 | Independent performance evidence | Final assembled measurements missing | PENDING |
 | #319 | Independent acceptance ticket | Must test completed #359 candidate | NOT STARTED |
+
+**#313 witness update (2026-10-22):** Exact producer SHA
+`6020d4bd9e811a46efe9a14074002cfa16862f05` passed hosted CI
+run #39833211392 and signed-in Chrome/Tampermonkey v0.2.1 two-tab
+Stage 1 and Stage 2.  Reload persistence, in-flight draining, 25h
+simulated overdue and confirmed manual key rotation passed.  An earlier
+`at-least-one-peer-required` report was an inconclusive BroadcastChannel
+peer-discovery observation within an artificial 850ms window; it does not
+show a failing key value, rotation, or cross-tab consistency.  Do NOT
+require tab-to-tab response timing as a production acceptance criterion.
+Source and exact test evidence: DC #313 issue comment #6349295095.
+The #313 producer is **ready for owner-reviewed integration**, not
+merged, and complete GEN/COMM disk/header evidence remains unverified.
 
 Other prerequisite probes (#314/#316), previous V1 encoder/decoder
 certification (#300/#301/#302/RWF #673/#691), and older source
