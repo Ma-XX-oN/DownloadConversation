@@ -14,6 +14,8 @@
     const decoder = new TextDecoder('utf-8', { fatal: true });
     const threshold = 10 * 1024 * 1024;
     const knownCycles = new Set();
+    const committedCaptures = new Set();
+    let recoveredCapture = null;
     const lease = scope.__cscWriterLease;
     let directory = null;
     let version = null;
@@ -191,6 +193,20 @@
           fragmentRestart = item.key_restart;
           first = false;
         } else {
+          if (item.kind === 'csc-comm-start') {
+            check(recoveredCapture === null &&
+              !committedCaptures.has(item.capture_id),
+              'csc-writer-recovery-capture-order');
+            recoveredCapture = item.capture_id;
+          } else if (item.kind === 'csc-comm-body' ||
+                     item.kind === 'csc-comm-end') {
+            check(recoveredCapture === item.capture_id,
+              'csc-writer-recovery-capture-order');
+            if (item.kind === 'csc-comm-end') {
+              committedCaptures.add(item.capture_id);
+              recoveredCapture = null;
+            }
+          }
           if (item.kind === 'hmac-key-cycle') {
             check(typeof item.id === 'string', 'csc-writer-invalid-cycle');
             check(!knownCycles.has(item.id), 'csc-writer-duplicate-cycle');
@@ -312,6 +328,8 @@
         }
       }
       if (record.kind === 'csc-comm-start') {
+        check(!committedCaptures.has(record.capture_id),
+          'csc-writer-duplicate-capture');
         check(activeCapture === null, 'csc-writer-overlapping-capture');
         check(record.key_restart === keyRestart,
           'csc-writer-capture-restart-mismatch');
@@ -333,6 +351,7 @@
       }
       if (record.kind === 'csc-comm-end') {
         activeCapture = null;
+        committedCaptures.add(record.capture_id);
         message('csc-writer-durable-capture', {
           capture_id: record.capture_id, durable: true
         });
@@ -405,6 +424,8 @@
       check(!activeName || rawIndex === max,
         'csc-writer-unsealed-historical-fragment');
       index = max;
+      check(recoveredCapture === null,
+        'csc-writer-unresolved-capture');
       if (oldFragment) await seal();
         message('csc-writer-ready', {
           durable: true, fragment: index, committed_bytes: committed,
@@ -442,6 +463,12 @@
         else if (value.type === 'csc-writer-key-restart') {
           await setRestart(value.key_restart);
         } else if (value.type === 'csc-writer-close') await close();
+        else if (value.type === 'csc-writer-query-capture') {
+          const durable = committedCaptures.has(value.capture_id);
+          message('csc-writer-capture-status', {
+            capture_id: String(value.capture_id ?? ''), durable
+          });
+        }
       });
       chain = operation.catch(error => message('csc-writer-error', {
         operation: value.type, reason: errorCode(error), durable: false
