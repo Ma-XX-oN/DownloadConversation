@@ -105,7 +105,8 @@
         "src/userscript/06-image-export-tests/07-worker-zstd-csp-probe.js",
         "src/userscript/06-image-export-tests/08-csc-worker-boundary-probe.js",
         "src/userscript/06-image-export-tests/09-csc-dual-body-clone-probe.js",
-        "src/userscript/06-image-export-tests/10-csc-comm-worker-processing-probe.js"
+        "src/userscript/06-image-export-tests/10-csc-comm-worker-processing-probe.js",
+        "src/userscript/06-image-export-tests/11-csc-comm-disk-probe.js"
       ]
     },
     {
