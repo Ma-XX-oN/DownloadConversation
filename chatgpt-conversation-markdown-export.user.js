@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         ChatGPT Conversation Markdown Recorder
 // @namespace    https://chatgpt.com/
-// @version      1.11.7-issue.313.50
+// @version      1.11.7-issue.313.51
 // @description  Exports the current ChatGPT conversation directly from the Conversation API as Markdown or JSONL.
 // @match        https://chatgpt.com/*
 // @connect      github.com
@@ -11674,51 +11674,6 @@ globalThis.__dcCompressor = {
 
     return Object.freeze({ admit, provision, complete, randomize, status,
       recover, cycleEvents, dispose });
-  }
-
-  /**
-   * Expose only the Tampermonkey script-installation storage interface.
-   * A shared storage adapter is NOT an exclusive transaction authority.
-   * @returns {Object|null} Storage adapter or null when GM is unavailable.
-   */
-  function communicationPersistentHmacTampermonkeyStorage() {
-    if (typeof GM === 'undefined' || typeof GM.getValue !== 'function' ||
-        typeof GM.setValue !== 'function') return null;
-    return Object.freeze({
-      get(name, fallback) { return GM.getValue(name, fallback); },
-      set(name, value) { return GM.setValue(name, value); }
-    });
-  }
-
-  /**
-   * Coordinate one HTTPS origin with native exclusive Web Locks.
-   * Only the lock is provided here; IndexedDB authority is separate.
-   * @param {Object} browserNavigator - Current tab's navigator.
-   * @param {Object} browserLocation - Current tab's location.
-   * @returns {Object|null} Same-origin serializing authority or unavailable.
-   */
-  function communicationPersistentHmacChatgptAuthority(
-    browserNavigator, browserLocation) {
-    const origin = 'https://chatgpt.com';
-    if (browserLocation?.origin !== origin ||
-        typeof browserNavigator?.locks?.request !== 'function') return null;
-    const name = 'downloadconversation:secret-marker-key-v2:all-tabs';
-    return Object.freeze({
-      capability: 'exclusive-chatgpt-web-lock-only-v1',
-      async runExclusive(callback) {
-        if (browserLocation.origin !== origin ||
-            typeof callback !== 'function') {
-          throw new Error('persistent-key-origin-or-callback-invalid');
-        }
-        return browserNavigator.locks.request(name, { mode: 'exclusive' },
-          async lock => {
-            if (!lock || lock.mode !== 'exclusive') {
-              throw new Error('persistent-key-web-lock-not-acquired');
-            }
-            return callback();
-          });
-      }
-    });
   }
 
   /**
