@@ -73,6 +73,8 @@ if (!match || !/^1\.11\.7-issue\.317\.\d+$/.test(match[1])) {
 }
 const output = (await readFile(templatePath, 'utf8'))
   .replace('__DC317_VERSION_JSON__', JSON.stringify(match[1]))
+  .replace('__DC317_TEST_VERSION__',
+    '0.1.' + /^1\.11\.7-issue\.317\.(\d+)$/.exec(match[1])[1])
   .replace('__DC317_WORKER_SOURCE_JSON__', JSON.stringify(workerScript))
   .replace('__DC317_WASM_GZIP_BASE64_JSON__', JSON.stringify(b64));
 if (/__DC317_\w+__/.test(output)) {
