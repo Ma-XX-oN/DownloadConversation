@@ -14,6 +14,7 @@
     const decoder = new TextDecoder('utf-8', { fatal: true });
     const threshold = 10 * 1024 * 1024;
     const knownCycles = new Set();
+    const lease = scope.__cscWriterLease;
     let directory = null;
     let version = null;
     let keyRestart = null;
@@ -360,9 +361,13 @@
         check(await options.handle.queryPermission({ mode: 'readwrite' }) ===
           'granted', 'csc-writer-permission-denied');
       }
-      directory = await options.handle.getDirectoryHandle(
-        'dc-comm-' + options.namespace, { create: true });
-      let max = 0;
+      check(lease && typeof lease.acquire === 'function',
+        'csc-writer-lock-unavailable');
+      await lease.acquire(options.namespace);
+      try {
+        directory = await options.handle.getDirectoryHandle(
+          'dc-comm-' + options.namespace, { create: true });
+        let max = 0;
       for await (const [fileName, entry] of directory.entries()) {
         if (entry.kind !== 'file') continue;
         const match = /^fragment-(\d{8})\.jsonl(\.zst)?$/.exec(fileName);
@@ -383,11 +388,16 @@
             'csc-writer-open-restart-mismatch');
         }
       }
-      index = max;
-      message('csc-writer-ready', {
-        durable: true, fragment: index, committed_bytes: committed,
-        key_restart: keyRestart
-      });
+        index = max;
+        message('csc-writer-ready', {
+          durable: true, fragment: index, committed_bytes: committed,
+          key_restart: keyRestart
+        });
+      } catch (error) {
+        directory = null;
+        await lease.release();
+        throw error;
+      }
     }
     /**
      * Performs close in the isolated COMM writer.
@@ -396,6 +406,7 @@
     async function close() {
       check(!activeCapture, 'csc-writer-capture-in-progress');
       await seal();
+      await lease.release();
       message('csc-writer-closed', { durable: true });
     }
     const api = Object.freeze({ open, write, setRestart, seal, close,
