@@ -83,6 +83,7 @@ const ordinaryStages = [
   ['Worker + Zstd/CSP probe regression', nodeCommand, ['--test', 'tests/issue314-worker-zstd-csp-probe.test.mjs']],
   ['CSC Worker stream/directory preflight regression', nodeCommand, ['--test', 'tests/issue316-worker-stream-directory.test.mjs']],
   ['CSC #311 Worker queue and sanitizing serialization', nodeCommand, ['--test', 'tests/issue311-worker-processing.test.mjs', 'tests/issue311-key-cycle-events.test.mjs']],
+  ['CSC #317 Worker disk durability regression', nodeCommand, ['--test', 'tests/issue317-comm-writer.test.mjs']],
   ['CSC canonical ingress regression', nodeCommand, ['--test', 'tests/issue309-csc-canonical-ingress.test.mjs', 'tests/issue309-interception-lifecycle.test.mjs', 'tests/issue309-stream-pressure.test.mjs', 'tests/issue309-plugin-body-ownership-red.test.mjs', 'tests/issue309-browser-dual-body-probe.test.mjs']],
   ['Built-in test list UI regression', nodeCommand, ['--test', 'tests/test-list-ui.test.mjs']],
   ['Recorder panel UI regression', nodeCommand, ['--test', 'tests/recorder-panel-ui.test.mjs', 'tests/modal-focus-retention.test.mjs', 'tests/heading-metadata-controls.test.mjs']]
