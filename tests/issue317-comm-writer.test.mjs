@@ -509,3 +509,47 @@ test('complete COMM duplicate copies archived fragments and manifest exactly', a
   assert.ok(origin.files.has('fragment-00000001.jsonl.zst'));
   await origin.writer.close();
 });
+
+test('reset requires explicit confirmation and preserves active key identity', async () => {
+  const f = fixture();
+  await open(f);
+  await normalCapture(f);
+  await assert.rejects(() => f.writer.reset(false),
+    /csc-writer-reset-unconfirmed/);
+  assert.ok(f.files.has('fragment-00000001.jsonl'));
+  await f.writer.reset(true);
+  assert.deepEqual([...f.files.keys()], ['manifest.json']);
+  const restored = await f.writer.snapshot();
+  assert.equal(restored.archives.length, 0);
+  assert.ok(f.messages.some(m =>
+    m.type === 'csc-writer-reset-complete' && m.durable));
+  await normalCapture(f);
+  await f.writer.close();
+});
+test('interrupted confirmed reset resumes from persisted manifest intent', async () => {
+  const f = fixture();
+  await open(f);
+  await normalCapture(f);
+  const originalRemove = f.directory.removeEntry.bind(f.directory);
+  let failOnce = true;
+  f.directory.removeEntry = async name => {
+    if (failOnce && name.startsWith('fragment-')) {
+      failOnce = false;
+      throw new Error('synthetic-reset-interruption');
+    }
+    return originalRemove(name);
+  };
+  await assert.rejects(() => f.writer.reset(true),
+    /synthetic-reset-interruption/);
+  const journal = JSON.parse(new TextDecoder().decode(
+    f.files.get('manifest.json')));
+  assert.equal(journal.reset_pending, true);
+  await f.scope.__cscWriterLease.release();
+  const resumed = fixture();
+  resumed.parent.getDirectoryHandle = f.parent.getDirectoryHandle;
+  await open(resumed);
+  assert.deepEqual([...f.files.keys()], ['manifest.json']);
+  const snapshot = await resumed.writer.snapshot();
+  assert.equal(snapshot.archives.length, 0);
+  await resumed.writer.close();
+});
