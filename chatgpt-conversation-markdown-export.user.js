@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         ChatGPT Conversation Markdown Recorder
 // @namespace    https://chatgpt.com/
-// @version      1.11.7-issue.317.1
+// @version      1.11.7-issue.317.2
 // @description  Exports the current ChatGPT conversation directly from the Conversation API as Markdown or JSONL.
 // @match        https://chatgpt.com/*
 // @match        https://chat.openai.com/*
@@ -12231,6 +12231,12 @@ globalThis.__dcCompressor = {
    * Worker-owned COMM disk writer. No network interception or page DOM access.
    * Acknowledgements are durable only after close + exact physical readback.
    */
+  /**
+   * Performs cscCommDiskWriter in the isolated COMM writer.
+   * @param {Object} scope - scope input.
+   * @param {Object} codec - codec input.
+   * @returns {any} cscCommDiskWriter result.
+   */
   function cscCommDiskWriter(scope, codec) {
     const encoder = new TextEncoder();
     const decoder = new TextDecoder('utf-8', { fatal: true });
@@ -12246,13 +12252,31 @@ globalThis.__dcCompressor = {
     let chain = Promise.resolve();
     let committed = 0;
 
+    /**
+     * Performs check in the isolated COMM writer.
+     * @param {boolean} ok - ok input.
+     * @param {string} message - message input.
+     * @returns {any} check result.
+     */
     function check(ok, message) {
       if (!ok) throw new Error(message);
     }
+    /**
+     * Performs name in the isolated COMM writer.
+     * @param {number} n - n input.
+     * @param {boolean} compressed - compressed input.
+     * @returns {any} name result.
+     */
     function name(n, compressed = false) {
       return 'fragment-' + String(n).padStart(8, '0') +
         (compressed ? '.jsonl.zst' : '.jsonl');
     }
+    /**
+     * Performs equal in the isolated COMM writer.
+     * @param {Uint8Array} a - a input.
+     * @param {Uint8Array} b - b input.
+     * @returns {any} equal result.
+     */
     function equal(a, b) {
       if (a.byteLength !== b.byteLength) return false;
       for (let n = 0; n < a.byteLength; n += 1) {
@@ -12260,18 +12284,40 @@ globalThis.__dcCompressor = {
       }
       return true;
     }
+    /**
+     * Performs errorCode in the isolated COMM writer.
+     * @param {Error} error - error input.
+     * @returns {any} errorCode result.
+     */
     function errorCode(error) {
       const message = String(error?.message ?? '');
       return /^csc-writer-[a-z-]+$/.test(message)
         ? message : 'csc-writer-io-failed';
     }
+    /**
+     * Performs message in the isolated COMM writer.
+     * @param {string} type - type input.
+     * @param {Object} payload - payload input.
+     * @returns {any} message result.
+     */
     function message(type, payload) {
       scope.postMessage({ type, ...payload });
     }
+    /**
+     * Performs file in the isolated COMM writer.
+     * @param {string} nameValue - nameValue input.
+     * @param {boolean} create - create input.
+     * @returns {Promise<any>} file result.
+     */
     async function file(nameValue, create = false) {
       check(directory !== null, 'csc-writer-not-open');
       return directory.getFileHandle(nameValue, { create });
     }
+    /**
+     * Performs exists in the isolated COMM writer.
+     * @param {string} fileName - fileName input.
+     * @returns {Promise<any>} exists result.
+     */
     async function exists(fileName) {
       try { return await file(fileName, false); }
       catch (error) {
@@ -12279,9 +12325,20 @@ globalThis.__dcCompressor = {
         throw error;
       }
     }
+    /**
+     * Performs bytesFrom in the isolated COMM writer.
+     * @param {Object} handle - handle input.
+     * @returns {Promise<any>} bytesFrom result.
+     */
     async function bytesFrom(handle) {
       return new Uint8Array(await (await handle.getFile()).arrayBuffer());
     }
+    /**
+     * Performs writeNew in the isolated COMM writer.
+     * @param {string} fileName - fileName input.
+     * @param {Uint8Array} data - data input.
+     * @returns {Promise<any>} writeNew result.
+     */
     async function writeNew(fileName, data) {
       check(!(await exists(fileName)), 'csc-writer-name-collision');
       const handle = await file(fileName, true);
@@ -12299,11 +12356,21 @@ globalThis.__dcCompressor = {
         throw error;
       }
     }
+    /**
+     * Performs header in the isolated COMM writer.
+     * @param {number} restart - restart input.
+     * @returns {any} header result.
+     */
     function header(restart) {
       return encoder.encode(JSON.stringify({
         version: { comm: version, gen: version }, key_restart: restart
       }) + '\n');
     }
+    /**
+     * Performs parseLine in the isolated COMM writer.
+     * @param {Uint8Array} raw - raw input.
+     * @returns {any} parseLine result.
+     */
     function parseLine(raw) {
       check(raw.byteLength > 0 && raw[raw.length - 1] === 10,
         'csc-writer-incomplete-frame');
@@ -12314,6 +12381,11 @@ globalThis.__dcCompressor = {
         'csc-writer-invalid-frame');
       return value;
     }
+    /**
+     * Performs parseFragment in the isolated COMM writer.
+     * @param {Uint8Array} raw - raw input.
+     * @returns {any} parseFragment result.
+     */
     function parseFragment(raw) {
       let offset = 0;
       let first = true;
@@ -12340,6 +12412,10 @@ globalThis.__dcCompressor = {
       check(!first, 'csc-writer-empty-fragment');
       return last;
     }
+    /**
+     * Performs seal in the isolated COMM writer.
+     * @returns {Promise<any>} seal result.
+     */
     async function seal() {
       if (!length) return;
       const source = await file(activeName);
@@ -12367,6 +12443,10 @@ globalThis.__dcCompressor = {
         archive_bytes: compressed.byteLength, durable: true
       });
     }
+    /**
+     * Performs createFragment in the isolated COMM writer.
+     * @returns {Promise<any>} createFragment result.
+     */
     async function createFragment() {
       index += 1;
       activeName = name(index);
@@ -12374,6 +12454,11 @@ globalThis.__dcCompressor = {
       await writeNew(activeName, contents);
       length = contents.length;
     }
+    /**
+     * Performs appendRaw in the isolated COMM writer.
+     * @param {Uint8Array} data - data input.
+     * @returns {Promise<any>} appendRaw result.
+     */
     async function appendRaw(data) {
       const handle = await file(activeName);
       const previous = await handle.getFile();
@@ -12397,6 +12482,11 @@ globalThis.__dcCompressor = {
       length += data.length;
       committed += data.length;
     }
+    /**
+     * Performs setRestart in the isolated COMM writer.
+     * @param {number} restart - restart input.
+     * @returns {Promise<any>} setRestart result.
+     */
     async function setRestart(restart) {
       check(Number.isSafeInteger(restart) && restart > 0,
         'csc-writer-invalid-restart');
@@ -12407,6 +12497,11 @@ globalThis.__dcCompressor = {
       await seal();
       keyRestart = restart;
     }
+    /**
+     * Performs write in the isolated COMM writer.
+     * @param {Uint8Array} bytes - bytes input.
+     * @returns {Promise<any>} write result.
+     */
     async function write(bytes) {
       check(directory && Number.isSafeInteger(keyRestart),
         'csc-writer-not-open');
@@ -12458,6 +12553,11 @@ globalThis.__dcCompressor = {
       }
       if (length >= threshold) await seal();
     }
+    /**
+     * Performs open in the isolated COMM writer.
+     * @param {Object} options - options input.
+     * @returns {Promise<any>} open result.
+     */
     async function open(options) {
       check(!directory, 'csc-writer-already-open');
       check(options?.handle &&
@@ -12503,6 +12603,10 @@ globalThis.__dcCompressor = {
         key_restart: keyRestart
       });
     }
+    /**
+     * Performs close in the isolated COMM writer.
+     * @returns {Promise<any>} close result.
+     */
     async function close() {
       check(!activeCapture, 'csc-writer-capture-in-progress');
       await seal();
@@ -12532,8 +12636,13 @@ globalThis.__dcCompressor = {
     return api;
   }
 
+
   /**
    * Adapter for the exact DC vendored Zstd/WASM engine, initialized in Worker.
+   */
+  /**
+   * Performs cscCommWorkerZstdCodec in the isolated COMM writer.
+   * @returns {any} cscCommWorkerZstdCodec result.
    */
   function cscCommWorkerZstdCodec() {
     let ready = false;
@@ -12584,6 +12693,10 @@ globalThis.__dcCompressor = {
   /**
    * Bootstraps the writer and #311 processor in the SAME dedicated Worker.
    * The calling page passes ONLY the granted handle and WASM codec bytes.
+   */
+  /**
+   * Performs cscCommDiskWorkerSource in the isolated COMM writer.
+   * @returns {any} cscCommDiskWorkerSource result.
    */
   function cscCommDiskWorkerSource() {
     const bridge = globalThis['__dcCompressor'];
