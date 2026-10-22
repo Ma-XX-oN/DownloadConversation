@@ -10,7 +10,7 @@
   function communicationPersistentHmacIndexedDbStorage(api, pageLocation) {
     if (pageLocation?.origin !== 'https://chatgpt.com' ||
         !api || typeof api.open !== 'function') return null;
-    const databaseName = 'downloadconversation-persistent-hmac-v2';
+    const databaseName = 'downloadconversation-persistent-hmac-v3';
     const objectStoreName = 'records';
 
     /**
