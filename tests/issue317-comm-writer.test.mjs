@@ -9,11 +9,13 @@ import vm from 'node:vm';
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const source = readFileSync(path.join(root,
   'src/userscript/02-network-communication/04-csc-comm-disk-writer.js'), 'utf8');
+const leaseSource = readFileSync(path.join(root,
+  'src/userscript/02-network-communication/04-csc-comm-disk-lock.js'), 'utf8');
 const start = new Date(1761152400000).toISOString();
 const encoder = new TextEncoder();
 const frame = value => encoder.encode(JSON.stringify(value) + '\n');
 
-function fixture({ denied = false, corrupt = false } = {}) {
+function fixture({ denied = false, corrupt = false, locks = new Set() } = {}) {
   const files = new Map();
   const parent = {};
   const directory = {
@@ -77,6 +79,13 @@ function fixture({ denied = false, corrupt = false } = {}) {
   const messages = [];
   const handlers = [];
   const scope = {
+    navigator: { locks: {
+      request(name, options, callback) {
+        if (locks.has(name)) return Promise.resolve(callback(null));
+        locks.add(name);
+        return Promise.resolve(callback({ name })).finally(() => locks.delete(name));
+      }
+    } },
     postMessage(value) { messages.push(value); },
     addEventListener(name, handler) {
       if (name === 'message') handlers.push(handler);
@@ -98,7 +107,8 @@ function fixture({ denied = false, corrupt = false } = {}) {
   };
   const sandbox = vm.createContext({ Uint8Array, TextEncoder, TextDecoder,
     DOMException, Blob, Number, Object, JSON, String, Promise, Set, Error });
-  vm.runInContext(source + '\nglobalThis.factory = cscCommDiskWriter;', sandbox);
+  vm.runInContext(leaseSource + source + '\nglobalThis.factory = cscCommDiskWriter;', sandbox);
+  scope.__cscWriterLease = sandbox.cscCommWriterLease(scope);
   const writer = sandbox.factory(scope, codec);
   return { parent, directory, files, messages, handlers, scope, writer, codec };
 }
@@ -263,4 +273,23 @@ test('two independent 101 MiB synthetic streams seal without payload loss', asyn
     assert.ok(f.messages.some(m =>
       m.type === 'csc-writer-durable-capture' && m.durable));
   }
+});
+
+test('second Worker on the same recording namespace fails closed until release', async () => {
+  const locks = new Set();
+  const first = fixture({ locks });
+  const competing = fixture({ locks });
+  await open(first);
+  await assert.rejects(() => open(competing), /csc-writer-lock-contended/);
+  assert.equal(competing.files.size, 0);
+  await first.writer.close();
+  await open(competing);
+  await competing.writer.close();
+  assert.equal(locks.size, 0);
+});
+test('unavailable Web Locks API fails without creating a fragment', async () => {
+  const f = fixture();
+  delete f.scope.navigator;
+  await assert.rejects(() => open(f), /csc-writer-lock-unavailable/);
+  assert.equal(f.files.size, 0);
 });
