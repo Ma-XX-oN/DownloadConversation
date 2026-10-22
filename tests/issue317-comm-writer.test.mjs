@@ -404,3 +404,34 @@ test('mismatched raw/archive twins fail closed without deleting either copy', as
   assert.deepEqual([...sourceWriter.files].map(([name, bytes]) =>
     [name, Array.from(bytes)]), originals);
 });
+
+test('archive bit corruption is caught by persisted manifest SHA256', async () => {
+  const origin = fixture();
+  await open(origin);
+  await normalCapture(origin);
+  await origin.writer.close();
+  const name = 'fragment-00000001.jsonl.zst';
+  const corrupted = Uint8Array.from(origin.files.get(name));
+  corrupted[corrupted.length - 2] ^= 1;
+  origin.files.set(name, corrupted);
+  const target = fixture();
+  target.parent.getDirectoryHandle = origin.parent.getDirectoryHandle;
+  await assert.rejects(() => open(target),
+    /csc-writer-manifest-archive-mismatch/);
+  assert.deepEqual(Array.from(origin.files.get(name)), Array.from(corrupted));
+});
+test('corrupt or deleted manifest never silently recreates old log identity', async () => {
+  for (const destroy of ['corrupt', 'delete']) {
+    const origin = fixture();
+    await open(origin);
+    await normalCapture(origin);
+    await origin.writer.close();
+    if (destroy === 'delete') origin.files.delete('manifest.json');
+    else origin.files.set('manifest.json', encoder.encode('{invalid'));
+    const target = fixture();
+    target.parent.getDirectoryHandle = origin.parent.getDirectoryHandle;
+    await assert.rejects(() => open(target),
+      /csc-writer-manifest-(invalid|missing-with-data)/);
+    assert.ok(origin.files.has('fragment-00000001.jsonl.zst'));
+  }
+});
