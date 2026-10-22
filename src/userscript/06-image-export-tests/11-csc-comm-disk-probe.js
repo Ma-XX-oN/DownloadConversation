@@ -106,7 +106,7 @@
       [source], { type: 'text/javascript' }));
     let worker = null;
     let timer = null;
-    let created = false;
+    let ownsTestNamespace = true;
     try {
       worker = new realm.Worker(url);
       const result = await new Promise((resolve, reject) => {
@@ -119,7 +119,7 @@
             reject(new Error('Worker disk error: ' + item.reason));
           } else if (item?.type === 'csc-writer-ready' && !started) {
             started = true;
-            created = true;
+            // Namespace is caller-owned from the preflight absence check.
             worker.postMessage({ type: 'csc-writer-probe-run',
               handle: directory, namespace, version, key_restart: restart });
           } else if (item?.type === 'csc-writer-probe-result') {
@@ -140,8 +140,11 @@
       if (timer !== null) clearTimeout(timer);
       worker?.terminate();
       realm.URL.revokeObjectURL(url);
-      if (created) {
-        await directory.removeEntry(name, { recursive: true });
+      if (ownsTestNamespace) {
+        try { await directory.removeEntry(name, { recursive: true }); }
+        catch (error) {
+          if (error?.name !== 'NotFoundError') throw error;
+        }
       }
     }
   }
