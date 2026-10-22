@@ -7,6 +7,7 @@
   function cscCommWriterLease(scope) {
     let releaseHeld = null;
     let held = false;
+    let completion = Promise.resolve();
     /**
      * Claims the unique logical log without awaiting the lease's closure.
      * @param {string} namespace - One logical recording identity.
@@ -34,15 +35,17 @@
           held = false;
           releaseHeld = null;
         });
-      void Promise.resolve(task).catch(fail);
+      completion = Promise.resolve(task);
+      void completion.catch(fail);
       if (!(await acquired)) throw new Error('csc-writer-lock-contended');
     }
     /**
      * Relinquishes the exclusive lock on graceful close or failed startup.
-     * @returns {void} Unlock scheduled.
+     * @returns {Promise<void>} Unlock completed.
      */
-    function release() {
+    async function release() {
       if (releaseHeld) releaseHeld();
+      await completion;
     }
     return Object.freeze({ acquire, release, get held() { return held; } });
   }
