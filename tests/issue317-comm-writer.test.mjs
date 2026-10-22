@@ -18,6 +18,8 @@ const manifestSource = readFileSync(path.join(root,
   'src/userscript/02-network-communication/04-csc-comm-disk-manifest.js'), 'utf8');
 const copySource = readFileSync(path.join(root,
   'src/userscript/02-network-communication/04-csc-comm-disk-copy.js'), 'utf8');
+const browserProbeSource = readFileSync(path.join(root,
+  'src/userscript/06-image-export-tests/11-csc-comm-disk-probe.js'), 'utf8');
 const start = new Date(1761152400000).toISOString();
 const encoder = new TextEncoder();
 const frame = value => encoder.encode(JSON.stringify(value) + '\n');
@@ -586,4 +588,41 @@ test('Worker sink reports actual queued records and bytes until written', async 
   assert.ok(f.messages.some(m =>
     m.type === 'csc-writer-durable-capture' && m.durable));
   await f.writer.close();
+});
+
+test('installed-browser synthetic disk probe accepts real fragment manifest and hashes', async () => {
+  const f = fixture();
+  await open(f);
+  let handler = null;
+  let settle = null;
+  const received = new Promise(resolve => { settle = resolve; });
+  const scope = {
+    crypto: webcrypto,
+    __cscDiskWriter: f.writer,
+    __dcWorkerCompressorBridge: {
+      decompress(value) {
+        assert.deepEqual(Array.from(value.subarray(0, 2)), [67, 83]);
+        return value.subarray(2);
+      }
+    },
+    addEventListener(type, listener) {
+      if (type === 'message') handler = listener;
+    },
+    postMessage(value) {
+      if (value?.type === 'csc-writer-probe-result') settle(value);
+    }
+  };
+  const sandbox = vm.createContext({ self: scope, TextEncoder, TextDecoder,
+    Uint8Array, Promise, Map, JSON, Error, Array });
+  vm.runInContext(browserProbeSource + '\n' +
+    'globalThis.cscCommDiskProbeEntrypoint();', sandbox);
+  assert.equal(typeof handler, 'function');
+  handler({ data: { type: 'csc-writer-probe-run', handle: f.parent,
+    namespace: 'synthetic-tab', version: '1.11.7-issue.317.1',
+    key_restart: start } });
+  const result = await received;
+  assert.equal(result.ok, true, result.reason);
+  assert.ok(result.fragments >= 2);
+  assert.equal(result.bodyBytes, 11 * 1024 * 1024);
+  assert.equal(f.files.has('manifest.json'), true);
 });
