@@ -115,12 +115,26 @@
     async function snapshot() {
       check(directory !== null && !poisoned,
         'csc-writer-not-open');
+      check(activeCapture === null, 'csc-writer-capture-in-progress');
       await seal();
       const inventory = manifest.snapshot();
       message('csc-writer-snapshot-ready', {
         ...inventory, durable: true
       });
       return inventory;
+    }
+    /**
+     * Copies the complete frozen COMM fragment set to an authorized new
+     * directory; the existing source remains immutable.
+     * @param {Object} destination - Separately authorized parent directory.
+     * @param {string} id - Unique output identity.
+     * @returns {Promise<Object>} Verified duplicate metadata.
+     */
+    async function duplicate(destination, id) {
+      const inventory = await snapshot();
+      const result = await copy.duplicate(directory, destination, id, inventory);
+      message('csc-writer-duplicate-ready', { ...result, durable: true });
+      return result;
     }
     /**
      * Performs close in the isolated COMM writer.
@@ -134,7 +148,7 @@
       message('csc-writer-closed', { durable: true });
     }
     const api = Object.freeze({ open, write, setRestart, seal, close,
-      snapshot, renameLogical,
+      snapshot, renameLogical, duplicate,
       get committedBytes() { return committed; },
       get queueBytes() { return 0; } });
     scope.cscCommWriteChunk = bytes => {
@@ -154,6 +168,8 @@
           await renameLogical(value.logical_name);
         } else if (value.type === 'csc-writer-snapshot') {
           await snapshot();
+        } else if (value.type === 'csc-writer-duplicate') {
+          await duplicate(value.destination, value.output_id);
         }
         else if (value.type === 'csc-writer-query-capture') {
           const durable = committedCaptures.has(value.capture_id);
