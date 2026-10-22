@@ -65,8 +65,11 @@ async function browserPhase() {
   // while IndexedDB/Web Locks remain the REAL Chromium browser APIs.
   const timeOffset = location.search === '?overdue' ?
     25 * 3600000 + 1 : 0;
-  const clock = { now: () => Date.now() + timeOffset };
-  const factory = hmacFactory(origin, indexedDB, navigator, crypto, clock);
+  const TestDate = class extends Date {
+    static now() { return Date.now() + timeOffset; }
+  };
+  const factory = hmacFactory(origin, indexedDB, navigator, crypto,
+    TestDate);
   const service = factory();
   const admission = await service.admit();
   const workerCode = [
