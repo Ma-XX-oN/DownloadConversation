@@ -1,8 +1,14 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import vm from 'node:vm';
+import { readFile } from 'node:fs/promises';
 import { coreBundle } from './helpers/core-pin.mjs';
-import { productionFunctionSource } from './helpers/userscript-source.mjs';
+import { functionSourceFrom } from './helpers/userscript-source.mjs';
+
+const bridgeSource = await readFile(
+  new URL('../src/userscript/04-conversation-rendering/08-agent-plugin-bridge.js', import.meta.url),
+  'utf8'
+);
 
 test('DC canonical agent bridge binds exact AICC browser loader registry through V1 only', async () => {
   const browser = { URL };
@@ -69,7 +75,7 @@ test('DC canonical agent bridge binds exact AICC browser loader registry through
       diagnostics.push({ level, event, details });
     }
   });
-  const bridge = productionFunctionSource('ensureChatGPTCanonicalAgent');
+  const bridge = functionSourceFrom(bridgeSource, 'ensureChatGPTCanonicalAgent');
   vm.runInContext(`
     let chatGPTAgent = null;
     let chatGPTCanonicalSession = null;
