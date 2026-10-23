@@ -197,6 +197,17 @@
     chatGPTCanonicalSession = loaded?.session ?? null;
     assert(chatGPTAgent && chatGPTCanonicalSession,
       'AIConversationCore did not create the ChatGPT agent and canonical session.');
+    // Last subscribes only to AICC's public V1 observer for this exact agent.
+    // The currently pinned older Core is an explicit unresolved integration
+    // prerequisite; it is never replaced with transport or callback-time data.
+    if (typeof loaded?.registry?.activityState === 'function' &&
+        typeof loaded?.registry?.observeActivity === 'function') {
+      agentTimingBindActivityObserver(loaded.registry, chatGPTAgent);
+    } else {
+      logDiagnostic('warnings', 'aicc-last-activity-v1-unavailable', {
+        core_version: CORE_VERSION
+      });
+    }
     const identity = chatGPTAgent.version();
     logDiagnostic('debug', 'agent-plugin-ready', {
       plugin_id: identity?.plugin ?? 'unknown',
