@@ -25,7 +25,7 @@ function fixture(raw = null) {
   const keys = {
     current: '2026-10-23T11:00:00.000Z',
     epoch: 1,
-    pending: false,
+    pending: false, statusFails: false, rotationFails: false,
     journal: [{ type: 'hmac-key-cycle', id:
       'hmac-key-cycle:2026-10-23T11:00:00.000Z',
       key_restart: '2026-10-23T11:00:00.000Z',
@@ -36,15 +36,19 @@ function fixture(raw = null) {
     genHeaders: [], commHeaders: [], genEvents: [], commEvents: [] };
   const committed = { gen: new Set(), comm: new Set() };
   const hmac = {
-    status: async () => ({ state: keys.pending ? 'draining' : 'open',
+    status: async () => {
+      if (keys.statusFails) throw Error('key-store-offline');
+      return { state: keys.pending ? 'draining' : 'open',
       key_restart: keys.current, redaction_key_epoch: keys.epoch,
-      expires_at_ms: Date.parse(keys.current) + 24 * 60 * 60 * 1000 }),
+      expires_at_ms: Date.parse(keys.current) + 24 * 60 * 60 * 1000 };
+    },
     cycleEvents: async after => keys.journal.filter(v => v.epoch > after),
     admit: async () => ({ token: 't01', metadata: { key_restart: keys.current } }),
     provision: (token, target) => target.postMessage({ type: 'dc-hmac-key-v2', token }),
     complete: async () => {},
     randomize: async confirmed => {
       assert.equal(confirmed, true);
+      if (keys.rotationFails) throw Error('rotation-transaction-failed');
       if (keys.pending) return { state: 'DRAINING' };
       keys.epoch++;
       keys.current = '2026-10-23T12:00:00.000Z';
@@ -234,4 +238,51 @@ test('no off-record capture may enter without Worker and both durable sinks', as
   await f.control.init();
   await assert.rejects(f.control.prepareCapture(), /csc-capture-not-ready/);
   await assert.rejects(f.control.randomize(true), /csc-randomize-ports-not-ready/);
+});
+
+test('Worker cannot apply defaults before persisted shared startup policy loads', async () => {
+  const f = fixture();
+  let resolveStorage;
+  f.store.read = () => new Promise(resolve => { resolveStorage = resolve; });
+  const boot = f.control.init();
+  const binding = f.control.bindWorker(f.worker);
+  await new Promise(resolve => setImmediate(resolve));
+  const earlyCount = f.calls.configure.length;
+  resolveStorage(fullOptions());
+  await boot;
+  await binding;
+  assert.equal(earlyCount, 0, 'no Worker configuration before GM read resolves');
+  assert.equal(f.calls.configure.at(-1).options.mode, 'everything');
+  assert.equal(f.control.snapshot().settings_applied, true);
+});
+
+test('Worker pause errors report failed settings rather than indefinite pending', async () => {
+  const f = fixture();
+  f.worker.pause = async () => { throw Error('worker-offline'); };
+  await f.control.init();
+  await assert.rejects(f.control.bindWorker(f.worker));
+  assert.equal(f.control.snapshot().settings_state, 'failed');
+  assert.equal(f.control.snapshot().settings_applied, false);
+});
+
+test('HMAC status failure blocks admission and provisioning after config ack', async () => {
+  const f = fixture();
+  await f.control.init();
+  f.control.bindSinks({ gen: f.gen, comm: f.comm });
+  await f.control.bindWorker(f.worker);
+  f.keys.statusFails = true;
+  await assert.rejects(f.control.prepareCapture(), /csc-capture-not-ready/);
+  assert.equal(f.calls.provision.length, 0);
+  assert.equal(f.control.snapshot().settings_applied, false);
+});
+
+test('failed confirmed HMAC rotation visibly remains failed and unapplied', async () => {
+  const f = fixture();
+  await f.control.init();
+  f.control.bindSinks({ gen: f.gen, comm: f.comm });
+  await f.control.bindWorker(f.worker);
+  f.keys.rotationFails = true;
+  await assert.rejects(f.control.randomize(true));
+  assert.equal(f.control.snapshot().settings_state, 'failed');
+  assert.equal(f.control.snapshot().settings_applied, false);
 });
