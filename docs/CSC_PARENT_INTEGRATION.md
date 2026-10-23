@@ -309,3 +309,47 @@ This audit is **documentation only**, not an imported source,
 a test run on assembled code, a rewritten child PR base or a
 certified release. All previous ledger evidence is retained.
 No existing source owner has authorized source import/merge here.
+## 8. DC #318 live interface and branch-policy observation
+
+As of 2026-10-23, #318's separately owned draft PR #362 exists:
+`issue-318-csc-controls`, targeting `issue-359-csc-integration`.
+Its first branch-specific commit
+`f52d572448f4688ea592c3fb281fb44ab950c6a5`
+has the correct `RWF-Branch` and `RWF-Parent` trailers.
+It points to #359's pre-doc-update `f03d90d0` and has the
+**identical Git tree**, confirming a real empty parent-marker commit.
+The branch remains active; the observed initial source HEAD
+`abe1a34a643d5b043409d1931cebabe73e32a565` was already
+followed by additional #318 commits during this audit.
+Do not record that provisional HEAD as accepted.
+
+#318 exports `cscCaptureControlPlane` with independent adapter ports:
+
+- Worker: `pause, configure, resume, provisionTarget, awaitKey`.
+- COMM: `drain, beginKeyBoundary, writeCycle, hasCycle`.
+- GEN: `beginSegment, writeCycle, hasCycle`.
+
+Its config-handshake contract requires an acknowledgement containing
+`type:'csc-comm-configured'` plus matching `schema` and `request_id`.
+The current #311 processor emits **only** the type (without those
+fields).  It therefore cannot satisfy #318's strict Worker adapter
+without reviewed #359 implementation.  Do not weaken the #318
+acknowledgement standard to accommodate the old producer.
+
+PR #362 hosted run
+[39950479289](https://github.com/Ma-XX-oN/DownloadConversation/actions/runs/39950479289)
+finished FAIL at the **branch policy** stage.  Jobs prepare,
+validate and finalize were SKIPPED.  Exact policy diagnostic:
+
+`RepoWorkflow error: pull request base issue-359-csc-integration`
+`does not match integration target main`
+
+This exposes the existing stale RWF main-parent schema.  The
+#318 PR has the correct new parent topology.  **Do not retarget
+it to main to silence policy CI.** The separate authorized
+branch-policy consumer migration must accept the true parent
+and re-execute actual hosted source validation before PASS.
+A policy-only failure does not certify or refute #318 source tests.
+
+#318 worker was notified in its issue at comment 6364545558;
+ownership and pending source acceptance remain unchanged.
