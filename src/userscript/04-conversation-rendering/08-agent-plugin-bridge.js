@@ -198,8 +198,8 @@
     assert(chatGPTAgent && chatGPTCanonicalSession,
       'AIConversationCore did not create the ChatGPT agent and canonical session.');
     // Last subscribes only to AICC's public V1 observer for this exact agent.
-    // The currently pinned older Core is an explicit unresolved integration
-    // prerequisite; it is never replaced with transport or callback-time data.
+    // Only the pinned Core V1 observer is accepted; provider integration is
+    // still unresolved, never substituted with transport or callback-time data.
     if (typeof loaded?.registry?.activityState === 'function' &&
         typeof loaded?.registry?.observeActivity === 'function') {
       agentTimingBindActivityObserver(loaded.registry, chatGPTAgent);
