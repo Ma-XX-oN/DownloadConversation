@@ -8,7 +8,6 @@
     schema: CSC_CONTROL_SCHEMA, mode: 'replay-essentials',
     binary: false, cross_origin: false, auth_headers: false, all: false
   });
-  /** Validate untrusted persisted options without enabling extra capture. */
   /**
    * Validate and freeze untrusted stored COMM capture options.
    * @param {Object} input - Untrusted stored or proposed option object
@@ -128,7 +127,6 @@
       notify();
       if (worker) await worker.pause();
     }
-    /** Apply settings only after versioned positive Worker acknowledgment. */
     /**
      * Apply persisted options and verify a correlated Worker acknowledgement.
      * @returns {Promise<boolean>} Apply persisted options and verify a correlated Worker acknowledgement.
@@ -278,7 +276,6 @@
       comm = ports.comm;
       notify();
     }
-    /** Obtain only the authoritative nonsecret producer identity. */
     /**
      * Read authoritative HMAC status without disclosing key bytes.
      * @returns {Promise<Object>} Read authoritative HMAC status without disclosing key bytes.
@@ -329,6 +326,10 @@
         if (commExists === true && genExists === true) continue;
         if (commExists !== false || genExists !== false) {
           throw new Error('csc-cycle-recovery-requires-parent');
+        }
+        // Never resurrect an old key's segment after a newer scope exists.
+        if (event.key_restart !== publicKey) {
+          throw new Error('csc-cycle-history-not-durable');
         }
         const header = Object.freeze({
           version, key_restart: event.key_restart
@@ -464,7 +465,6 @@
       randomize, dispose
     });
   }
-  /** Singleton control owner; #359 binds real Worker/GEN/COMM ports. */
   /** Shared control owner retained for the lifetime of this document. */
   let cscCaptureControls = null;
   /** Factory registered by the authorised #359 assembled producer bridge. */
