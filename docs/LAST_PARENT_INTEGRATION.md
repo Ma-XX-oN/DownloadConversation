@@ -164,3 +164,51 @@ nested parent branch policies already enforce these requirements.
 
 This document is **a manual RWF ledger**, not a substitute for automated
 workflow-policy enforcement or native provider dependency synchronization.
+
+## 8. Verified upstream handoff checkpoint (2026-10-22, 21:59 EDT)
+
+**AICC #132 independently certifiable Core leaf: PASS, unmerged.**
+- Verified branch `issue-132-retained-activity` at
+  `c3f9cbdcffe35ce1e8568faf4e9d518072c34fdd`.
+- First identity commit `18b8e4bf1b7f012edf79dc43fd4a8906dee683de`
+  has `RWF-Parent: main`, correct first-parent SHA and identical tree.
+- Draft AICC PR #133 remains OPEN and UNMERGED.
+- Hosted workflow run 39857275380 concluded success. That workflow's
+  request HEAD is not the source candidate HEAD; preserve the exact
+  reported source/result-tag provenance rather than conflating them.
+- Annotated `v1.1.0-issue.132.2` dereferences to exact source
+  `c3f9cbd...`.
+- AICC acceptance: 14 scoped PASS; 0 scoped FAIL/INCOMPLETE;
+  three excluded downstream/provider/merge obligations. Native network
+  ingress and final UI/browser conformance are **not certified**.
+- Frozen interface: `context.core.publishActivityTimestamp(timestampMs)`
+  and `registry.activityState(agent)` /
+  `registry.observeActivity(agent, callback)`; retained frozen snapshot
+  `{apiVersion:1,clockDomain:'unix-epoch-ms',latestIncomingAtMs:null|number}`.
+  See AICC #132 issue comments 6351775454 and 6351820013.
+
+**Plugin #9: source/hosted tests PASS, native browser evidence INCOMPLETE.**
+- Draft PR #36, branch `issue-9-server-receipt`, observed HEAD
+  `58c5ee1a1a3a8ef0bd1eb7857cca228d4cebe022`.
+- Hosted run 39857477668 concluded success at that exact HEAD.
+- Issue comment 6351831154 explicitly reports INCOMPLETE live Chrome
+  native transport and CSC queue connectivity. #9 issue stays OPEN.
+- Existing CSC #309/#310 are responsible for actual first-receipt
+  capture/queue invocation. No independent provider-origin browser PASS
+  may be inferred from the metadata-only isolated producer tests.
+
+**Readiness classification:** AICC #132 has its independent certified
+development contract; its PR is not merged. Plugin #9 still has required
+live integration evidence incomplete. Plugin #10 may prepare bounded
+speculative reducer implementation against pinned #9/AICC interfaces
+under RWF speculation rules, but is **not dependency-complete READY/DONE**
+and must revalidate against the final approved integrated artifacts.
+DC #298, #360 source assembly and #299 live certification remain
+unready. Resolve the concrete CSC first-receipt integration dependency
+with the #309/#310/#359 owners before claiming final #9/#299 acceptance.
+Do not silently add speculative PASS or merge any branch.
+
+Authoritative evidence:
+- https://github.com/Ma-XX-oN/AIConversationCore/issues/132#issuecomment-6351820013
+- https://github.com/Ma-XX-oN/Chat-Gpt-Plugin-2/issues/9#issuecomment-6351831154
+- https://github.com/Ma-XX-oN/Chat-Gpt-Plugin-2/issues/10#issuecomment-6351787848
