@@ -1,13 +1,20 @@
 
   /** DC #318.  Versioned UI policy and HMAC orchestration; no Worker code. */
   const CSC_CONTROL_SETTINGS_KEY = 'dc-csc-capture-options-v1';
+  /** Versioned capture settings schema used at the Worker boundary. */
   const CSC_CONTROL_SCHEMA = 1;
+  /** Default minimal recording policy, with all sensitive options disabled. */
   const CSC_CONTROL_DEFAULTS = Object.freeze({
     schema: CSC_CONTROL_SCHEMA, mode: 'replay-essentials',
     binary: false, cross_origin: false, auth_headers: false, all: false
   });
 
   /** Validate untrusted persisted options without enabling extra capture. */
+  /**
+   * Validate and freeze untrusted stored COMM capture options.
+   * @param {Object} input - Untrusted stored or proposed option object
+   * @returns {Object} Validate and freeze untrusted stored COMM capture options.
+   */
   function cscControlValidateOptions(input) {
     if (!input || typeof input !== 'object' || Array.isArray(input) ||
         input.schema !== CSC_CONTROL_SCHEMA ||
@@ -26,6 +33,10 @@
   }
 
   /** Construct the Tampermonkey shared-options adapter (not localStorage). */
+  /**
+   * Construct the Tampermonkey shared settings persistence adapter.
+   * @returns {Object} Construct the Tampermonkey shared settings persistence adapter.
+   */
   function cscControlSharedStore() {
     return Object.freeze({
       read: () => Promise.resolve(GM_getValue(CSC_CONTROL_SETTINGS_KEY, null)),
@@ -53,6 +64,11 @@
    * All acknowledgements must identify the current operation and durability.
    * This leaf does not manufacture the integration adapters owned by #359.
    */
+  /**
+   * Create the fail-closed CSC control plane without owning a Worker.
+   * @param {Object} deps - Injected persistence, HMAC factory, version and origin
+   * @returns {Object} Create the fail-closed CSC control plane without owning a Worker.
+   */
   function cscCaptureControlPlane(deps) {
     const { store, serviceFactory, version, origin } = deps;
     let settings = CSC_CONTROL_DEFAULTS;
@@ -73,6 +89,10 @@
     let lastError = null;
     const listeners = new Set();
 
+    /**
+     * Expose only nonsecret public state for the recorder panel.
+     * @returns {Object} Expose only nonsecret public state for the recorder panel.
+     */
     function snapshot() {
       return Object.freeze({
         settings, settings_state: state, settings_applied: applied,
@@ -80,10 +100,19 @@
         epoch, error: lastError
       });
     }
+    /**
+     * Publish nonsecret state changes to registered UI subscribers.
+     * @returns {void} Publish nonsecret state changes to registered UI subscribers.
+     */
     function notify() {
       const value = snapshot();
       for (const listener of listeners) listener(value);
     }
+    /**
+     * Mark settings as unapplied and throw a deterministic failure.
+     * @param {string} reason - Stable nonsecret failure identifier
+     * @returns {never} Mark settings as unapplied and throw a deterministic failure.
+     */
     function reject(reason) {
       lastError = reason;
       applied = false;
@@ -91,6 +120,10 @@
       notify();
       throw new Error(reason);
     }
+    /**
+     * Pause COMM admission before changing capture policy or key scope.
+     * @returns {Promise<void>} Pause COMM admission before changing capture policy or key scope.
+     */
     async function pause() {
       applied = false;
       state = 'pending';
@@ -98,6 +131,10 @@
       if (worker) await worker.pause();
     }
     /** Apply settings only after versioned positive Worker acknowledgment. */
+    /**
+     * Apply persisted options and verify a correlated Worker acknowledgement.
+     * @returns {Promise<boolean>} Apply persisted options and verify a correlated Worker acknowledgement.
+     */
     async function apply() {
       if (!worker) {
         state = 'pending';
@@ -126,11 +163,20 @@
       notify();
       return true;
     }
+    /**
+     * Serialize control mutations and recover the scheduling chain.
+     * @param {Function} operation - Asynchronous control mutation to serialize
+     * @returns {Promise<unknown>} Serialize control mutations and recover the scheduling chain.
+     */
     function schedule(operation) {
       const result = chain.then(operation);
       chain = result.catch(() => undefined);
       return result;
     }
+    /**
+     * Load shared preferences and initialize the HMAC service once.
+     * @returns {Promise<Object>} Load shared preferences and initialize the HMAC service once.
+     */
     async function init() {
       if (initialized) return snapshot();
       initialized = true;
@@ -166,6 +212,12 @@
       notify();
       return snapshot();
     }
+    /**
+     * Persist confirmed options and request a Worker settings transition.
+     * @param {Object} next - Versioned user-selected capture options
+     * @param {boolean} confirmed - Explicit consent for expanded sensitive capture
+     * @returns {Promise<boolean>} Persist confirmed options and request a Worker settings transition.
+     */
     async function setOptions(next, confirmed) {
       const options = cscControlValidateOptions(next);
       const broadened = options.mode === 'everything' ||
@@ -185,6 +237,11 @@
         return apply();
       });
     }
+    /**
+     * Bind a concrete Worker control adapter and replay saved options.
+     * @param {Object} adapter - Correlated Worker settings and key provisioning adapter
+     * @returns {Promise<boolean>} Bind a concrete Worker control adapter and replay saved options.
+     */
     async function bindWorker(adapter) {
       if (!adapter || !['pause', 'configure', 'resume', 'awaitKey']
         .every(name => typeof adapter[name] === 'function') ||
@@ -196,6 +253,11 @@
         return apply();
       });
     }
+    /**
+     * Bind durable GEN and COMM event/boundary adapters.
+     * @param {Object} ports - Required GEN and COMM sink ports
+     * @returns {void} Bind durable GEN and COMM event/boundary adapters.
+     */
     function bindSinks(ports) {
       if (!ports || !ports.gen || !ports.comm ||
           !['beginSegment', 'writeCycle'].every(key =>
@@ -208,6 +270,10 @@
       comm = ports.comm;
     }
     /** Obtain only the authoritative nonsecret producer identity. */
+    /**
+     * Read authoritative HMAC status without disclosing key bytes.
+     * @returns {Promise<Object>} Read authoritative HMAC status without disclosing key bytes.
+     */
     async function refreshKey() {
       if (!service) {
         keyState = 'unavailable';
@@ -231,6 +297,10 @@
       return snapshot();
     }
     /** Require each journal event to be durable in BOTH sinks before cursor. */
+    /**
+     * Reconcile committed key-cycle journal entries across both sinks.
+     * @returns {Promise<number>} Reconcile committed key-cycle journal entries across both sinks.
+     */
     async function reconcileCycles() {
       if (!service || !gen || !comm || !worker) {
         throw new Error('csc-cycle-ports-not-ready');
@@ -267,6 +337,10 @@
       }
       return events.length;
     }
+    /**
+     * Admit one capture only after settings and HMAC provisioning.
+     * @returns {Promise<Object>} Admit one capture only after settings and HMAC provisioning.
+     */
     async function prepareCapture() {
       if (!applied || !service || !worker || !gen || !comm) {
         throw new Error('csc-capture-not-ready');
@@ -288,11 +362,21 @@
         throw error;
       }
     }
+    /**
+     * Release one completed admission without discarding rotation fences.
+     * @param {string} token - Producer-issued active admission token
+     * @returns {Promise<void>} Release one completed admission without discarding rotation fences.
+     */
     async function completeCapture(token) {
       if (!service) throw new Error('csc-key-service-unavailable');
       await service.complete(token);
       await refreshKey();
     }
+    /**
+     * Rotate only after explicit consent and durable output drainage.
+     * @param {boolean} confirmed - Explicit confirmation supplied by the UI
+     * @returns {Promise<Object>} Rotate only after explicit consent and durable output drainage.
+     */
     async function randomize(confirmed) {
       if (confirmed !== true) throw new Error('csc-randomize-unconfirmed');
       if (!service || !worker || !gen || !comm) {
@@ -314,11 +398,20 @@
         return result;
       });
     }
+    /**
+     * Subscribe to nonsecret control state changes.
+     * @param {Function} listener - UI observer receiving snapshots
+     * @returns {Function} Subscribe to nonsecret control state changes.
+     */
     function onChange(listener) {
       listeners.add(listener);
       listener(snapshot());
       return () => listeners.delete(listener);
     }
+    /**
+     * Detach shared settings listeners and clear in-memory key handles.
+     * @returns {void} Detach shared settings listeners and clear in-memory key handles.
+     */
     function dispose() {
       unsubscribe?.();
       service?.dispose();
@@ -334,7 +427,12 @@
   }
 
   /** Singleton control owner; #359 binds real Worker/GEN/COMM ports. */
+  /** Shared control owner retained for the lifetime of this document. */
   let cscCaptureControls = null;
+  /**
+   * Return the singleton control port shared by startup and the UI.
+   * @returns {Object} Return the singleton control port shared by startup and the UI.
+   */
   function cscControlsCurrent() {
     if (!cscCaptureControls) {
       cscCaptureControls = cscCaptureControlPlane({
