@@ -47,29 +47,49 @@
 
   /** Shared listeners for authoritative Agent timing transitions. */
   const agentTimingListeners = new Set();
-  /** Monotonic timestamp of the newest Assistant message received from the stream. */
-  let agentTimingLastNetworkAtMs = null;
+  /** The sole accepted activity datum is a public AICC V1 retained snapshot. */
+  let agentTimingActivityState = null;
+  /** Registry and instance owning the current AICC observer subscription. */
+  let agentTimingActivityRegistry = null;
+  let agentTimingActivityAgent = null;
+  /** Independent idempotent unsubscribe from the current AICC subscription. */
+  let agentTimingActivityUnsubscribe = null;
+  /** Generation invalidates callbacks queued before replacement or teardown. */
+  let agentTimingActivityGeneration = 0;
+  /** Injectable epoch millisecond display clock; never used to stamp ingress. */
+  let agentTimingEpochNow = Date.now;
   /** Monotonic timestamp at which the Agent finished and began waiting for the User. */
   let agentTimingWaitingSinceMs = null;
 
   /**
-   * Returns the current authoritative timing state.
+   * Projects the Core-retained timestamp into an elapsed display duration.
+   * A null snapshot or null timestamp is unknown, not an age of zero.
    *
-   * @param {number} nowMs - Current monotonic timestamp.
-   * @returns {Object} Timing timestamps and elapsed durations.
+   * @param {number} epochNowMs - Injected Unix epoch millisecond display time.
+   * @returns {number|null} Nonnegative Last age, or null while unknown.
+   */
+  function agentTimingLastAge(epochNowMs) {
+    const stamp = agentTimingActivityState?.latestIncomingAtMs;
+    return Number.isSafeInteger(stamp)
+      ? Math.max(0, epochNowMs - stamp)
+      : null;
+  }
+
+  /**
+   * Returns view-only timing durations; Total/Waiting retain monotonic time.
+   *
+   * @param {number} nowMs - Current monotonic stopwatch timestamp.
+   * @returns {Object} Frozen, non-transport timing projection.
    */
   function agentTimingSnapshot(nowMs = performance.now()) {
     assert(Number.isFinite(nowMs), 'Agent timing snapshot timestamp must be finite.');
-    const lastMs = Number.isFinite(agentTimingLastNetworkAtMs)
-      ? Math.max(0, nowMs - agentTimingLastNetworkAtMs)
-      : null;
     const waitingMs = Number.isFinite(agentTimingWaitingSinceMs)
       ? Math.max(0, nowMs - agentTimingWaitingSinceMs)
       : null;
     return Object.freeze({
-      last_network_at_ms: agentTimingLastNetworkAtMs,
+      latest_incoming_at_ms: agentTimingActivityState?.latestIncomingAtMs ?? null,
       waiting_since_ms: agentTimingWaitingSinceMs,
-      last_ms: lastMs,
+      last_ms: agentTimingLastAge(agentTimingEpochNow()),
       waiting_ms: waitingMs
     });
   }
@@ -107,21 +127,107 @@
   }
 
   /**
-   * Records an Assistant message at the network stream-processing boundary.
+   * Checks the versioned public Core snapshot, never a provider transport.
    *
-   * @param {Object|null} event - Parsed provider stream event.
-   * @param {number} atMs - Monotonic timestamp captured synchronously from the stream.
-   * @returns {void} No value is returned.
+   * @param {Object} snapshot - Frozen AICC V1 activity snapshot.
+   * @returns {void} Throws on an incompatible public contract.
    */
-  function agentTimingObserveNetworkEvent(event, atMs) {
-    const message = event?.message;
-    if (message?.author?.role !== 'assistant') return;
-    assert(Number.isFinite(atMs), 'Agent network-message timestamp must be finite.');
-    agentTimingLastNetworkAtMs = atMs;
-    agentTimingPublish('last-network-message', atMs, {
-      message_id: typeof message.id === 'string' ? message.id : null
-    });
+  function agentTimingValidateActivitySnapshot(snapshot) {
+    assert(snapshot && Object.isFrozen(snapshot),
+      'AICC V1 activity snapshot must be a frozen object.');
+    assert(snapshot.apiVersion === 1 && snapshot.clockDomain === 'unix-epoch-ms',
+      'AICC activity observer contract version/domain mismatch.');
+    const value = snapshot.latestIncomingAtMs;
+    assert(value === null || (Number.isSafeInteger(value) && value >= 0),
+      'AICC retained activity timestamp must be null or nonnegative epoch milliseconds.');
+  }
+
+  /**
+   * Accepts only a newer retained AICC snapshot for this exact binding.
+   *
+   * @param {Object} snapshot - Public AICC V1 snapshot, not network data.
+   * @param {number} generation - Generation active when subscribed.
+   * @returns {boolean} Whether display state advanced.
+   */
+  function agentTimingObserveActivitySnapshot(snapshot, generation) {
+    if (generation !== agentTimingActivityGeneration) return false;
+    agentTimingValidateActivitySnapshot(snapshot);
+    const current = agentTimingActivityState?.latestIncomingAtMs ?? null;
+    const next = snapshot.latestIncomingAtMs;
+    if (current !== null && (next === null || next <= current)) return false;
+    if (current === null && next === null && agentTimingActivityState) return false;
+    agentTimingActivityState = snapshot;
+    const atMs = performance.now();
+    agentTimingPublish('last-activity-snapshot', atMs);
     agentStopwatchRender(atMs);
+    if (next !== null) agentStopwatchStartTimer();
+    return true;
+  }
+
+  /**
+   * Disposes the old subscription, invalidating even queued stale callbacks.
+   *
+   * @returns {void} Unbound Last becomes explicitly unknown.
+   */
+  function agentTimingUnbindActivityObserver() {
+    const previouslyBound = agentTimingActivityRegistry !== null;
+    agentTimingActivityGeneration += 1;
+    const unsubscribe = agentTimingActivityUnsubscribe;
+    agentTimingActivityRegistry = null;
+    agentTimingActivityAgent = null;
+    agentTimingActivityUnsubscribe = null;
+    agentTimingActivityState = null;
+    agentTimingEpochNow = Date.now;
+    if (typeof unsubscribe === 'function') unsubscribe();
+    if (previouslyBound) {
+      const atMs = performance.now();
+      agentTimingPublish('last-activity-unbound', atMs);
+      agentStopwatchRender(atMs);
+      if (!agentStopwatchState?.active && !Number.isFinite(agentTimingWaitingSinceMs)) {
+        agentTimingOriginalStopwatchStopTimer();
+      }
+    }
+  }
+
+  /**
+   * Binds an interchangeable Core registry/agent observer to pure Last view.
+   * No network, JSON, PI lifecycle observer or Core publication is accessed.
+   *
+   * @param {Object} registry - Public AICC activityState/observeActivity owner.
+   * @param {Object} agent - Registered agent instance belonging to registry.
+   * @param {Object} [options={}] - Injectable display-only clock.
+   * @param {Function} [options.now=Date.now] - Epoch millisecond clock.
+   * @returns {boolean} True if a live observer binding was installed.
+   */
+  function agentTimingBindActivityObserver(registry, agent, { now = Date.now } = {}) {
+    assert(registry && typeof registry.activityState === 'function' &&
+      typeof registry.observeActivity === 'function',
+      'AICC activity registry V1 methods are required.');
+    assert(agent && typeof agent === 'object', 'AICC agent instance is required.');
+    assert(typeof now === 'function', 'Last display clock must be a function.');
+    if (registry === agentTimingActivityRegistry && agent === agentTimingActivityAgent) {
+      return false;
+    }
+    const initial = registry.activityState(agent);
+    if (initial !== null) agentTimingValidateActivitySnapshot(initial);
+    agentTimingUnbindActivityObserver();
+    if (initial === null) return false;
+    agentTimingActivityRegistry = registry;
+    agentTimingActivityAgent = agent;
+    agentTimingEpochNow = now;
+    const generation = agentTimingActivityGeneration;
+    try {
+      const unsubscribe = registry.observeActivity(agent, snapshot => {
+        agentTimingObserveActivitySnapshot(snapshot, generation);
+      });
+      assert(typeof unsubscribe === 'function',
+        'AICC observeActivity must return an unsubscribe function.');
+      agentTimingActivityUnsubscribe = unsubscribe;
+      return true;
+    } catch (error) {
+      agentTimingUnbindActivityObserver();
+      throw error;
+    }
   }
 
   /**
@@ -191,12 +297,10 @@
       .filter(line => !/^Last:|^Waiting:/.test(line));
     const totalIndex = lines.findIndex(line => line.startsWith('Total:'));
     if (totalIndex < 0) return;
-    let insertAt = totalIndex;
-    if (Number.isFinite(agentTimingLastNetworkAtMs)) {
-      lines.splice(insertAt, 0,
-        `Last: ${agentStopwatchFormatDuration(Math.max(0, nowMs - agentTimingLastNetworkAtMs))}`);
-      insertAt += 1;
-    }
+    const lastMs = agentTimingLastAge(agentTimingEpochNow());
+    lines.splice(totalIndex, 0, lastMs === null
+      ? 'Last: —'
+      : 'Last: ' + agentStopwatchFormatDuration(lastMs));
     const currentTotalIndex = lines.findIndex(line => line.startsWith('Total:'));
     if (Number.isFinite(agentTimingWaitingSinceMs)) {
       lines.splice(currentTotalIndex + 1, 0,
@@ -205,12 +309,19 @@
     control.textContent = lines.join('\n');
   };
 
-  /** Existing stream hook, extended at the synchronous network-event boundary. */
-  const agentTimingOriginalObserveStreamEvent = agentStopwatchObserveStreamEvent;
-  agentStopwatchObserveStreamEvent = function agentTimingObserveStreamEvent(capture, event) {
-    const receivedAtMs = performance.now();
-    agentTimingObserveNetworkEvent(event, receivedAtMs);
-    return agentTimingOriginalObserveStreamEvent(capture, event);
+  /** Original stopwatch stop operation; Last reuses, never duplicates, its timer. */
+  const agentTimingOriginalStopwatchStopTimer = agentStopwatchStopTimer;
+  /**
+   * Keeps the existing stopwatch repaint cadence alive for known Last data.
+   *
+   * @returns {void} Total retains its frozen completion semantics.
+   */
+  agentStopwatchStopTimer = function agentTimingStopTimer() {
+    agentTimingOriginalStopwatchStopTimer();
+    if (agentTimingActivityRegistry !== null &&
+        agentTimingActivityState?.latestIncomingAtMs !== null) {
+      agentStopwatchStartTimer();
+    }
   };
 
   /** Existing terminal hook, extended without re-inferring state from the DOM. */
