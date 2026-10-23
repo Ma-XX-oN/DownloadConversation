@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import vm from 'node:vm';
+import { coreBundle } from './core-pin.mjs';
 import { readFile } from 'node:fs/promises';
 
 const timingSource = await readFile(
@@ -195,6 +196,9 @@ function timingHarness() {
           { now: () => epochNow });
       },
       unbind() { agentTimingUnbindActivityObserver(); },
+      bindExternal(registry, agent, nowFn) {
+        return agentTimingBindActivityObserver(registry, agent, { now: nowFn });
+      },
       incoming(stamp = epochNow) { return coreOne.publish(stamp); },
       terminal(terminal) { return agentTerminalObserve({}, { terminal }); },
       submit(atMs) {
@@ -347,4 +351,112 @@ test('fast Core updates do not install more listeners or parse network data', ()
   assert.equal(h.snapshot(30000).latest_incoming_at_ms, 120000);
   h.unbind();
   assert.equal(h.coreOne.observers(), 0);
+});
+
+
+test('pinned AICC browser loader drives identical Last consumer through public V1 API', async () => {
+  const coreContext = { URL };
+  coreContext.globalThis = coreContext;
+  vm.runInNewContext(coreBundle, coreContext, {
+    filename: 'aiconversationcore.chatgpt.browser.js'
+  });
+  const core = coreContext.AIConversationCore;
+  assert.equal(core.getVersion(), '1.1.0-issue.132.2');
+  assert.equal(typeof core.loadAgent, 'function');
+
+  let publishActivity = null;
+  const loaded = await core.loadAgent('chatgpt-web', {
+    loadModule: async descriptor => ({
+      default: {
+        id: 'chatgpt-web',
+        apiVersion: descriptor.apiVersion,
+        create(context) {
+          publishActivity = context.core.publishActivityTimestamp;
+          return {
+            sendMessage() {},
+            getResponse() {},
+            getTurns() { return []; },
+            currentState() { return {}; },
+            observeState() { return () => {}; },
+            commTraffic() {},
+            version() {
+              return {
+                plugin: 'chatgpt-web',
+                apiVersion: descriptor.apiVersion,
+                ref: context.ref
+              };
+            }
+          };
+        }
+      }
+    })
+  });
+
+  assert.ok(loaded.agent);
+  assert.ok(loaded.session);
+  assert.equal(typeof loaded.registry.activityState, 'function');
+  assert.equal(typeof loaded.registry.observeActivity, 'function');
+  assert.equal(typeof publishActivity, 'function');
+
+  const h = timingHarness();
+  let epochNow = Date.now();
+  const unknown = loaded.registry.activityState(loaded.agent);
+  assert.equal(unknown.latestIncomingAtMs, null);
+  assert.equal(Object.isFrozen(unknown), true);
+  assert.equal(h.bindExternal(loaded.registry, loaded.agent, () => epochNow), true);
+  assert.equal(h.render(5000), 'Last: —\nTotal: 0 m 5 s');
+
+  const stampedAtReceipt = epochNow - 2500;
+  assert.equal(publishActivity(stampedAtReceipt), true);
+  assert.equal(h.render(5000), 'Last: 0 m 2 s\nTotal: 0 m 5 s');
+  assert.equal(publishActivity(stampedAtReceipt), false);
+  assert.equal(publishActivity(stampedAtReceipt - 1000), false);
+  assert.equal(publishActivity(epochNow + 600000), false);
+  epochNow += 10000;
+  assert.equal(h.render(6000), 'Last: 0 m 12 s\nTotal: 0 m 6 s');
+  assert.equal(h.snapshot(6000).latest_incoming_at_ms, stampedAtReceipt);
+
+  assert.equal(loaded.registry.disposeActivity(loaded.agent), true);
+  assert.equal(publishActivity(stampedAtReceipt + 500), false);
+  assert.equal(loaded.registry.activityState(loaded.agent), null);
+  h.unbind();
+  assert.equal(h.render(7000), 'Last: —\nTotal: 0 m 7 s');
+});
+
+test('two public AICC agent instances interchange without changing view source', () => {
+  const ctx = { URL };
+  ctx.globalThis = ctx;
+  vm.runInNewContext(coreBundle, ctx);
+  const registry = new ctx.AIConversationCore.AgentPluginRegistry();
+  let send = null;
+  registry.register({
+    id: 'fixture',
+    apiVersion: 1,
+    create(context) {
+      send = context.core.publishActivityTimestamp;
+      return {
+        sendMessage() {}, getResponse() {}, getTurns() {},
+        currentState() {}, observeState() {},
+        commTraffic() {},
+        version() { return {plugin: 'fixture', apiVersion: 1}; }
+      };
+    }
+  });
+  const h = timingHarness();
+  const first = registry.create('fixture');
+  let epochNow = Date.now();
+  h.bindExternal(registry, first, () => epochNow);
+  assert.equal(send(epochNow - 1000), true);
+  assert.equal(h.render(3000), 'Last: 0 m 1 s\nTotal: 0 m 3 s');
+  const previousPublisher = send;
+  const second = registry.create('fixture');
+  assert.equal(h.bindExternal(registry, second, () => epochNow), true);
+  assert.equal(h.render(3000), 'Last: —\nTotal: 0 m 3 s');
+  assert.equal(previousPublisher(epochNow - 200), true);
+  assert.equal(h.render(3000), 'Last: —\nTotal: 0 m 3 s');
+  assert.equal(send(epochNow - 500), true);
+  assert.equal(h.render(3000), 'Last: 0 m 0 s\nTotal: 0 m 3 s');
+  h.unbind();
+  registry.disposeActivity(first);
+  registry.disposeActivity(second);
 });
