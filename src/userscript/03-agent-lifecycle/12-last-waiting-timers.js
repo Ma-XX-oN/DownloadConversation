@@ -161,7 +161,8 @@
     const atMs = performance.now();
     agentTimingPublish('last-activity-snapshot', atMs);
     agentStopwatchRender(atMs);
-    if (next !== null) agentStopwatchStartTimer();
+    // Do not start an idle repaint interval before a stopwatch is mounted.
+    if (next !== null && agentStopwatchState) agentStopwatchStartTimer();
     return true;
   }
 
