@@ -1,5 +1,10 @@
 
   /** DC #318 popup, mounted immediately beside the existing '1' label. */
+  /**
+   * Mount the recorder control popup without changing recording-group semantics.
+   * @param {HTMLElement} panel - Existing recorder panel
+   * @returns {void} Mount the recorder control popup without changing recording-group semantics.
+   */
   function bindCscCapturePopup(panel) {
     const group = panel.querySelector('[data-role="record-one-group"]');
     const groupLabel = group?.closest('label');
@@ -103,6 +108,11 @@
     const randomize = dialog.querySelector('[data-csc-randomize]');
     const apply = dialog.querySelector('[data-csc-apply]');
     const closeButton = dialog.querySelector('[data-csc-close]');
+    /**
+     * Render saved options and only nonsecret HMAC state.
+     * @param {Object} model - Current controller snapshot
+     * @returns {void} Render saved options and only nonsecret HMAC state.
+     */
     function render(model) {
       const { settings, settings_state, key_state, key_restart,
         expires_at_ms, error } = model;
@@ -118,6 +128,11 @@
       randomize.disabled = key_state === 'failed' || key_state === 'unavailable' ||
         key_state === 'draining' || key_state === 'DRAINING';
     }
+    /**
+     * Dismiss the popup and optionally restore keyboard focus.
+     * @param {boolean} refocus - Restore focus to the triggering button
+     * @returns {void} Dismiss the popup and optionally restore keyboard focus.
+     */
     function close(refocus = false) {
       dialog.hidden = true;
       trigger.setAttribute('aria-expanded', 'false');
