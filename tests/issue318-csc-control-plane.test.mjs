@@ -323,3 +323,29 @@ test('Randomize stays unavailable until settings and both durable sinks are boun
   await f.control.randomize(true);
   assert.equal(f.control.snapshot().can_randomize, true);
 });
+
+test('assembled #313 producer factory is registered explicitly before startup', async () => {
+  const context=vm.createContext({
+    GM_getValue:()=>null,
+    GM_setValue:()=>{},
+    GM_addValueChangeListener:()=>1,
+    GM_removeValueChangeListener:()=>{},
+    location:{origin:'https://chatgpt.com'},
+    VERSION:'1.11.13-issue.318.1'
+  });
+  vm.runInContext(source+'\nthis.bridge={register:cscControlsRegisterHmacFactory,'+
+    'current:cscControlsCurrent};',context);
+  let created=0;
+  context.bridge.register(()=>{
+    created++;
+    return { status:async()=>({state:'open',
+      key_restart:'2026-10-23T11:00:00.000Z'}),
+      dispose:()=>{} };
+  });
+  const control=context.bridge.current();
+  await control.init();
+  assert.equal(created,1);
+  assert.equal(control.snapshot().key_restart,'2026-10-23T11:00:00.000Z');
+  assert.throws(()=>context.bridge.register(()=>{}),/csc-hmac-factory-invalid-or-late/);
+  control.dispose();
+});
