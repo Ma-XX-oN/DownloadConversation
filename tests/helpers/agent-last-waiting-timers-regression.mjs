@@ -384,6 +384,7 @@ test('pinned AICC browser loader drives identical Last consumer through public V
               return {
                 plugin: 'chatgpt-web',
                 apiVersion: descriptor.apiVersion,
+                version: descriptor.version,
                 ref: context.ref
               };
             }
