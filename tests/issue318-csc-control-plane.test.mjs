@@ -26,6 +26,7 @@ function fixture(raw = null) {
     current: '2026-10-23T11:00:00.000Z',
     epoch: 1,
     pending: false, statusFails: false, rotationFails: false,
+    initialized: true,
     completeFails: false,
     journal: [{ type: 'hmac-key-cycle', id:
       'hmac-key-cycle:2026-10-23T11:00:00.000Z',
@@ -39,12 +40,22 @@ function fixture(raw = null) {
   const hmac = {
     status: async () => {
       if (keys.statusFails) throw Error('key-store-offline');
+      if (!keys.initialized) return { state: 'uninitialized' };
       return { state: keys.pending ? 'draining' : 'open',
       key_restart: keys.current, redaction_key_epoch: keys.epoch,
       expires_at_ms: Date.parse(keys.current) + 24 * 60 * 60 * 1000 };
     },
     cycleEvents: async after => keys.journal.filter(v => v.epoch > after),
-    admit: async () => ({ token: 't01', metadata: { key_restart: keys.current } }),
+    admit: async () => {
+      if (!keys.initialized) {
+        keys.initialized = true;
+        keys.journal.push({ type: 'hmac-key-cycle',
+          id: 'hmac-key-cycle:' + keys.current, key_restart: keys.current,
+          epoch: keys.epoch, occurred_at_ms: Date.parse(keys.current),
+          reason: 'initial' });
+      }
+      return { token: 't01', metadata: { key_restart: keys.current } };
+    },
     provision: (token, target) => target.postMessage({ type: 'dc-hmac-key-v2', token }),
     complete: async () => {
       if (keys.completeFails) throw Error('hmac-release-failed');
@@ -402,4 +413,20 @@ test('half recorded historical HMAC cycle rejects without regenerating old segme
   await assert.rejects(f.control.reconcileCycles(),
     /csc-cycle-recovery-requires-parent/);
   assert.equal(f.calls.genHeaders.length, 0);
+});
+
+test('genuine #313 first-admission semantics initialize key before cycle boundary', async () => {
+  const f = fixture();
+  f.keys.initialized = false;
+  f.keys.journal = [];
+  await f.control.init();
+  assert.equal(f.control.snapshot().key_state, 'uninitialized');
+  f.control.bindSinks({ gen: f.gen, comm: f.comm });
+  await f.control.bindWorker(f.worker);
+  const admission = await f.control.prepareCapture();
+  assert.equal(admission.metadata.key_restart, f.keys.current);
+  assert.equal(f.calls.genHeaders[0].key_restart, f.keys.current);
+  assert.equal(f.calls.commHeaders[0].key_restart, f.keys.current);
+  assert.equal(f.control.snapshot().key_restart, f.keys.current);
+  await f.control.completeCapture(admission.token);
 });
