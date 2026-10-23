@@ -360,3 +360,48 @@ A policy-only failure does not certify or refute #318 source tests.
 
 #318 worker was notified in its issue at comment 6364545558;
 ownership and pending source acceptance remain unchanged.
+## 9. Final V3 exact-source verification and replay-fidelity gap
+
+The coordinator independently re-opened the actual four GitHub Actions
+jobs (`policy`, `prepare`, `validate`, `finalize`) at each
+historical accepted leaf run.  All four jobs finished SUCCESS for
+each of the six sources below.  These are **leaf source tests**;
+they are not #359's unbuilt assembled test.
+
+| Leaf | Hosted Actions run | Four real jobs |
+| --- | --- | --- |
+| #306 | 39639619645 | 4/4 SUCCESS |
+| #309 | 39145603779 | 4/4 SUCCESS |
+| #310 | 39323944036 | 4/4 SUCCESS |
+| #311 | 39641245082 | 4/4 SUCCESS |
+| #313 | 39833211392 | 4/4 SUCCESS |
+| #317 | 39850208578 | 4/4 SUCCESS |
+
+#318 owner source handoff comment
+[#6364592750](https://github.com/Ma-XX-oN/DownloadConversation/issues/318#issuecomment-6364592750)
+confirms independent PR #362 remains INCOMPLETE and separately
+owned.  Its latest observed live HEAD is
+`4c1c0a629683be42d437514905e9ea6786bb0d3a`; source may
+continue changing under its original worker.  Its exact hosted
+source tests have **not** passed: run #39951490406 fails
+old parent policy; push run #39951483861 executes policy only.
+The #359 coordinator must not retarget the PR or treat policy
+success as source certification.
+
+**Additional fidelity defect (verified directly in pinned #311
+`04-csc-comm-worker-processing.js`):** selector `selected(event)`
+handles JSON, SSE and certain binary transport classes, but for
+other browser-accessible text returns
+`{status:'unsupported',reason:'csc-unsupported-text-format'}`
+even in `policy.mode === 'everything'`.  This violates the
+record-everything product requirement for selected accessible
+text; it explicitly records omission instead of preserving the
+requested data.  Preserve the fail-closed credential/privacy
+properties; parent #359 must negotiate a context-aware safe text
+serializer or an explicit user-approved exception.  Do not
+silently reinterpret `everything` as JSON/SSE-only and do not
+disable sanitization to force raw output.
+
+The currently accepted leaf code, #318 public control ports,
+#317 durability guarantees, existing recording group `1`,
+and all user-approved original-source boundaries remain unchanged.
