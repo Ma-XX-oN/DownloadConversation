@@ -45,7 +45,12 @@ adapter and explicit schema reconciliation; #318 does not edit #311.
 ### Producer and durable GEN/COMM sinks
 
 The accepted producer is #313
-`communicationPersistentHmacCurrentTabService()`.  Its public
+`communicationPersistentHmacCurrentTabService()`.  The source assembler MUST
+call `cscControlsRegisterHmacFactory(communicationPersistentHmacCurrentTabService)`
+**before** the first `cscControlsCurrent().init()` on the real userscript.
+This explicit late-bound LEGO registration avoids a compile-time reference
+to unassembled #313 code.  Late or invalid registrations fail closed.
+The producer's public
 `key_restart` is an authoritative UTC timestamp, unchanged on reload.
 Use its exact `admit/provision/complete/status/randomize/cycleEvents`
 methods.  Its `key_restart` is never invented from a local clock.
@@ -94,8 +99,28 @@ expiry must remain enforced by the #313 producer itself.
 | Full-fidelity everything-mode selector | INCOMPLETE | #311 rejects other text formats as unsupported; #359 owns reconciliation |
 | Physical GEN/COMM headers, events, durable cycle | INCOMPLETE | #359 source assembly then #319 independent readback |
 | Real Chrome popup, keyboard/screenshot, worker restart | INCOMPLETE | Built exact integrated userscript and installed Chrome |
-| Exact built artifact + executable CI | INCOMPLETE | PR #362 policy job FAIL; prepare/validate skipped |
+| Exact built isolated artifact + executable targeted CI | PASS | DC #318 focused GitHub workflow after final test run; not #359 assembled code |
+| Ordinary PR CI / policy | FAIL | PR #362 policy rejects parent target; prepare/validate skipped |
 | Main and production untouched | PASS | Draft child PR; no source imported to parent |
+
+## Exact isolated regression checkpoint — October 23, 2026
+
+A standalone #318-specific push workflow executes genuine GitHub-hosted
+Node 22 tests, headless Chromium popup interactions in light/dark modes,
+existing recorder and category regressions, manifest/JSDoc checks, source
+version check, TypeScript no-unresolved-reference check, and exact
+userscript build/byte verification with a retained non-production artifact.
+
+Earlier verified source commit `ae2fa64f0bfebcc4efb182cd14d323b639e43262`
+passed 18/18 control tests, 3/3 real headless Chromium popup tests,
+34/34 adjacent recorder tests and a byte-verified assembled-source
+userscript.  Later checks run on changing #318 source; DO NOT reuse
+older PASS evidence without exact HEAD reruns.
+
+The #318 standalone workflow does not modify repository CI policy,
+the parent branch, or main.  Its PASS does NOT imply functional
+#359 integration, live user-signed-in browser proof, #232 stress,
+or #319 physical dual-logger readback.
 
 ## Hosted CI boundary
 
