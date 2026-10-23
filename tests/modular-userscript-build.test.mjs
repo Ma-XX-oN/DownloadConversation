@@ -19,9 +19,9 @@ const root = path.resolve(
   '..'
 );
 const CORE_COMMIT =
-  '9e18441a1f68a1cac5ebb6e20dead945dd36d7dd';
+  'c3f9cbdcffe35ce1e8568faf4e9d518072c34fdd';
 const CORE_BLOB =
-  '47efb4f379f5bb27ae710a53d1cb84388aeeb1a2';
+  '6d6fa470d8342db08c543866514e7dc942100774';
 const LEGACY_BLOB =
   '44a4ab373a6515caed5527aeb19cbdff7ce91e07';
 const MIGRATION_SNAPSHOT_COMMIT =
@@ -129,7 +129,7 @@ test(
     assert.equal(dependency.name, 'AIConversationCore');
     assert.equal(dependency.commit, CORE_COMMIT);
     assert.equal(dependency.git_blob_sha1, CORE_BLOB);
-    assert.equal(dependency.byte_length, 282178);
+    assert.equal(dependency.byte_length, 288330);
     assert.equal(
       dependency.repository,
       'Ma-XX-oN/AIConversationCore'

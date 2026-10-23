@@ -1,0 +1,107 @@
+import assert from 'node:assert/strict';
+import test from 'node:test';
+import vm from 'node:vm';
+import { readFile } from 'node:fs/promises';
+import { coreBundle } from './helpers/core-pin.mjs';
+import { functionSourceFrom } from './helpers/userscript-source.mjs';
+
+const bridgeSource = await readFile(
+  new URL('../src/userscript/04-conversation-rendering/08-agent-plugin-bridge.js', import.meta.url),
+  'utf8'
+);
+
+test('DC canonical agent bridge binds exact AICC browser loader registry through V1 only', async () => {
+  const browser = { URL };
+  browser.globalThis = browser;
+  vm.runInNewContext(coreBundle, browser);
+  const core = browser.AIConversationCore;
+  assert.equal(core.getVersion(), '1.1.0-issue.132.2');
+
+  const observed = [];
+  const diagnostics = [];
+  let providerCreation = null;
+  let onPagehide = null;
+  let retiredSubscriptions = 0;
+  const context = vm.createContext({
+    window: {
+      addEventListener(type, listener, options) {
+        assert.equal(type, 'pagehide');
+        assert.equal(options.once, true);
+        assert.equal(onPagehide, null);
+        onPagehide = listener;
+      }
+    },
+    agentTimingUnbindActivityObserver() {
+      retiredSubscriptions += 1;
+    },
+    core,
+    CORE_VERSION: core.getVersion(),
+    assert(condition, message) {
+      if (!condition) throw new Error(message);
+    },
+    canonicalCore() { return core; },
+    currentConversationId() { return 'fixture-conversation'; },
+    importAgentPluginModule: async descriptor => ({
+      default: {
+        id: descriptor.id,
+        apiVersion: descriptor.apiVersion,
+        create(creation) {
+          providerCreation = creation;
+          return {
+            sendMessage() {},
+            getResponse() {},
+            getTurns() { return []; },
+            currentState() { return {}; },
+            observeState() { return () => {}; },
+            commTraffic() {},
+            version() {
+              return {
+                plugin: descriptor.id,
+                apiVersion: descriptor.apiVersion,
+                version: descriptor.version,
+                ref: creation.ref
+              };
+            }
+          };
+        }
+      }
+    }),
+    agentTimingBindActivityObserver(registry, agent) {
+      observed.push({ registry, agent });
+      assert.equal(registry.activityState(agent).apiVersion, 1);
+      return registry.observeActivity(agent, () => {});
+    },
+    logDiagnostic(level, event, details) {
+      diagnostics.push({ level, event, details });
+    }
+  });
+  const bridge = functionSourceFrom(bridgeSource, 'ensureChatGPTCanonicalAgent');
+  vm.runInContext(`
+    let chatGPTAgent = null;
+    let chatGPTCanonicalSession = null;
+    ${bridge}
+    globalThis.ensure = ensureChatGPTCanonicalAgent;
+  `, context);
+
+  const first = await context.ensure();
+  assert.ok(first);
+  assert.equal(observed.length, 1);
+  assert.equal(observed[0].agent, first);
+  assert.equal(providerCreation.conversationId, 'fixture-conversation');
+  assert.equal(typeof providerCreation.core.publishActivityTimestamp, 'function');
+  assert.equal(observed[0].registry.activityState(first).latestIncomingAtMs, null);
+
+  const capturedAtReceipt = Date.now() - 1000;
+  assert.equal(providerCreation.core.publishActivityTimestamp(capturedAtReceipt), true);
+  assert.equal(
+    observed[0].registry.activityState(first).latestIncomingAtMs,
+    capturedAtReceipt
+  );
+  assert.equal(await context.ensure(), first);
+  assert.equal(observed.length, 1, 'repeat ensure must not duplicate subscription');
+  assert.ok(diagnostics.some(item => item.event === 'agent-plugin-ready'));
+  assert.equal(diagnostics.some(item => item.event === 'aicc-last-activity-v1-unavailable'), false);
+  assert.equal(typeof onPagehide, 'function');
+  onPagehide();
+  assert.equal(retiredSubscriptions, 1, 'DC must unsubscribe at page teardown');
+});
