@@ -20,6 +20,7 @@
   // Capture sequencing and recording-group state are now initialized.
   // Record the current version once per page initialization, unfiltered.
   logDiagnostic('lifecycle', 'dc-version-transition', { version: VERSION });
+  void cscControlsCurrent().init();
   communicationLogInitializationPromise = initializeCommunicationDiskRecorder();
   installLiveTailTracking();
   /** Persisted scalar volume present when the userscript was initialized. */
