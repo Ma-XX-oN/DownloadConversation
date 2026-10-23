@@ -355,9 +355,11 @@ test('unrecorded historical HMAC scope is never re-created after newer scope', a
   await f.control.init();
   f.control.bindSinks({ gen: f.gen, comm: f.comm });
   await f.control.bindWorker(f.worker);
+  f.keys.epoch = 2;
+  f.keys.journal[0].epoch = 2;
   const older = '2026-10-23T10:00:00.000Z';
   f.keys.journal.unshift({ type: 'hmac-key-cycle', id: 'hmac-key-cycle:' + older,
-    key_restart: older, epoch: 0, occurred_at_ms: Date.parse(older),
+    key_restart: older, epoch: 1, occurred_at_ms: Date.parse(older),
     reason: 'initial' });
   await assert.rejects(f.control.reconcileCycles(),
     /csc-cycle-history-not-durable/);
@@ -370,10 +372,12 @@ test('old durable cycle events can be verified without replay to newer epoch', a
   await f.control.init();
   f.control.bindSinks({ gen: f.gen, comm: f.comm });
   await f.control.bindWorker(f.worker);
+  f.keys.epoch = 2;
+  f.keys.journal[0].epoch = 2;
   const older = '2026-10-23T10:00:00.000Z';
   const id = 'hmac-key-cycle:' + older;
   f.keys.journal.unshift({ type: 'hmac-key-cycle', id,
-    key_restart: older, epoch: 0, occurred_at_ms: Date.parse(older),
+    key_restart: older, epoch: 1, occurred_at_ms: Date.parse(older),
     reason: 'initial' });
   f.committed.gen.add(id);
   f.committed.comm.add(id);
@@ -387,10 +391,12 @@ test('half recorded historical HMAC cycle rejects without regenerating old segme
   await f.control.init();
   f.control.bindSinks({ gen: f.gen, comm: f.comm });
   await f.control.bindWorker(f.worker);
+  f.keys.epoch = 2;
+  f.keys.journal[0].epoch = 2;
   const older = '2026-10-23T10:00:00.000Z';
   const id = 'hmac-key-cycle:' + older;
   f.keys.journal.unshift({ type: 'hmac-key-cycle', id,
-    key_restart: older, epoch: 0, occurred_at_ms: Date.parse(older),
+    key_restart: older, epoch: 1, occurred_at_ms: Date.parse(older),
     reason: 'initial' });
   f.committed.gen.add(id);
   await assert.rejects(f.control.reconcileCycles(),
