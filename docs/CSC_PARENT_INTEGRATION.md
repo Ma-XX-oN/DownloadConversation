@@ -175,3 +175,137 @@ direct leaf-to-main PR, missing source SHA / artifact provenance,
 unsatisfied #319 acceptance, a stale destination tip and missing merge
 authorization.  Do not label any of these policies mechanically
 enforced until their exact implementation and verification exist.
+## 7. V3 coordinator audit (2026-10-23)
+
+Session: `dc-csc-359-v3-20261023T115716Z`. Exclusive claim is
+[#359 comment 6364342545](https://github.com/Ma-XX-oN/DownloadConversation/issues/359#issuecomment-6364342545).
+All previous #359 comments were reviewed for competing ownership.
+The posted claim was re-fetched and confirmed as the only active
+`DC-CSC-AGENT-CLAIM-V1` on #359. This is not merge authorization.
+
+### Live completion graph and source inventory
+
+The topmost 2026-10-22 Mermaid graph in #308 is authoritative:
+`#318 -> #359 -> #232 -> #319 -> #308`, with independent direct
+`#359 -> #319`. The required upstream #306/#310/#311/#313/#317
+leaves are DONE. The independent #297/AICC #127 identity witness
+is not an incoming #359 prerequisite. #320 remains DEFERRED.
+#318 is now STARTED (claim comment 6364205193; separate session
+`dc-csc-318-v3-20261023T114923Z`), but still INCOMPLETE.
+It must not be taken over by the #359 coordinator.
+
+All six PRs below are still open, draft, unmerged, and
+UNINTEGRATED into #359. They have separately retained owners.
+
+| Leaf | PR | Observed exact HEAD |
+| --- | --- | --- |
+| #309 | #324 | `22a889e9872a1eb21fb750de9cf8619c2b3fb0c7` |
+| #310 | #327 | `68515bfd38afad6d7eba389a7bc39e51d35d3584` |
+| #306 | #351 | `bff52f9996365e996e3dbe1a56b0c5fcb7a231b2` |
+| #311 | #326 | `a0b06f94033d321970b7781ccfb0b47b663433ef` |
+| #313 | #323 | `6020d4bd9e811a46efe9a14074002cfa16862f05` |
+| #317 | #358 | `197b346b505b2318e3155bf2557df416dd1702e3` |
+| #318 | — | no accepted completed source candidate |
+
+#306 PR #351 is stacked on #310; #317 contains inherited #311
+source. Import must compare exact deltas, resolve overlap under
+source-owner review and not cherry-pick cumulative changes twice.
+The original branch/PR parent identities must never be rewritten.
+
+Current observed server main:
+`9e52016e8271845873ab32914a79f18252391b17`.
+#359 parent before this documentation update:
+`f03d90d0dc76426df8fd96f88728a0627bfc382c`.
+Preserve #359's original RWF parent-identity commit
+`c0f9e6095488fb4d2fedc7250d7e36f02c41e826`.
+
+### Exact source-contract audit (not an assembled runtime test)
+
+9/9 static diagnostic assertions matched the pinned source bytes.
+
+1. #313 `communicationPersistentHmacService().admit()` returns
+   a private token and metadata containing canonical `key_restart`,
+   `redaction_key_epoch`, `redaction_key_storage` and format.
+   `provision(token,worker)` transfers the HMAC key privately;
+   `complete(token)` requires a terminal disposition.
+2. #313 committed `cycleEvents` use
+   `id = 'hmac-key-cycle:' + key_restart` and fields
+   `{type,id,key_restart,epoch,occurred_at_ms,reason}`.
+3. #311 `04-csc-comm-worker-processing-part3.js` still requires
+   `redaction_scope == redaction_key_generation` and storage
+   `tampermonkey-script-installation`. Its `csc-comm-start`
+   frame has no `key_restart`. The #313 metadata fails this
+   Worker check and then fails the #317 Writer start check.
+4. #311 `04-csc-comm-worker-processing-part2.js` still validates
+   a 32-hex `generation` and
+   `hmac-key-cycle:<epoch>:<generation>`. It does not emit the
+   #313 canonical cycle event, so #317 rejects the frame.
+5. #317 `04-csc-comm-disk-writer.js` already emits physical
+   `{version:{comm,gen},key_restart}` before fragment records,
+   requires start-record `key_restart` to match, and validates
+   `hmac-key-cycle:<key_restart>` plus matching timestamp.
+6. #317 `04-csc-comm-disk-bridge.js` includes the #311 processor
+   in the default Worker build. It uses Worker-local
+   `self.cscCommWriteChunk` as its sink. The isolated Writer
+   and processor tests DO NOT prove their joint compatibility.
+7. #309 exposes `cscBindCommWorker` and
+   `cscBindPluginIngress` as distinct consumer interfaces;
+   #310 binds `cscPluginQueuePublish` and uses
+   `cscPluginQueueConnect/Disconnect` for #306's existing
+   main-thread host. Preserve exactly this LEGO separation.
+
+**Confirmed failure:** these old #311 and new #313/#317 frame
+schemas are incompatible. This diagnosis belongs to #359; it
+does not reopen or invalidate the isolated DONE leaves.
+
+Required owner-reviewed #359 source correction:
+
+- Retire the *public* random generation/scope identity.
+  Validate canonical #313 `key_restart` and current storage scope.
+  Do not log private admission tokens, keys or credentials.
+- Pin each capture to its admitted key until a separately durable
+  terminal acknowledgement; allow old-key draining and only then
+  advance Writer/GEN fragment boundaries.
+- Carry the identical producer `key_restart` into every COMM start,
+  Writer control/header, GEN start and committed cycle event.
+  Never independently timestamp the persisted key boundary.
+- Align #311 event validation/serialization with the canonical
+  #313 shape and #317 idempotent durable-write protocol.
+- Leave #318's UI/GEN/confirmed Randomize implementation to its
+  current worker; coordinate Worker configuration and GEN handoff.
+- Keep original network timestamps, strict sequence, both
+  independent native clone consumers, and Worker-only COMM queue.
+  No source-size truncation, no legacy literal `[redacted]`
+  replacement and no unreviewed private-data exposure.
+- Review old main-thread log storage versus new
+  `dc-csc-comm-segments/2` and test physical export, recovery,
+  duplication, reset, key rotation and decoder compatibility.
+- Run negative tests for malformed/stale key timestamps, old/new
+  key mixing, missing Writer acknowledgements, duplicate cycles,
+  unsafe/opaque payloads and interrupted physical writes, then
+  test the exact assembled SHA. #232/#319 retain performance
+  and independent real-browser certification ownership.
+
+### V3 acceptance ledger
+
+| Gate | Evidence | Status / owner |
+| --- | --- | --- |
+| Exclusive #359 claim | Issue comment/readback | PASS / #359 |
+| Graph and separate #318 ownership | Live issues | PASS / #359 |
+| Six exact leaf HEADs and draft PRs | GitHub PR reads | PASS / #359 |
+| #306/#310 public host/queue contract | Pinned source | PASS / #359 |
+| #311/#313/#317 mismatch diagnosis | 9 static assertions | PASS / #359 |
+| Executable combined schema | Rejected current fields | FAIL / #359 |
+| #318 UI/GEN/Randomize acceptance | Worker active | INCOMPLETE / #318 |
+| Reviewed import + assembled source | No merge authorization | INCOMPLETE / #359 |
+| Exact GEN+COMM readback | No candidate | INCOMPLETE / #319 |
+| Decoder and full privacy certification | No candidate | INCOMPLETE / #319 |
+| 10/23/40/>100MiB sustained tests | No candidate | INCOMPLETE / #232 |
+| Exact assembly/full hosted/browser CI | No candidate | INCOMPLETE / #359 |
+| Automatic parent policy enforcement | Historic schema only | FAIL / policy |
+| PRELIM/INT-ATTEMPT/main promotion | Not authorized | DEFERRED |
+
+This audit is **documentation only**, not an imported source,
+a test run on assembled code, a rewritten child PR base or a
+certified release. All previous ledger evidence is retained.
+No existing source owner has authorized source import/merge here.
