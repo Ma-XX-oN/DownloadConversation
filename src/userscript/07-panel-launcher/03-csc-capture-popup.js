@@ -187,7 +187,9 @@
       randomize.disabled = true;
       void controls.randomize(true).catch(error => {
         status.textContent = 'Randomize failed: ' + error.message;
-      }).finally(() => { randomize.disabled = false; });
+      }).finally(() => {
+        randomize.disabled = !controls.snapshot().can_randomize;
+      });
     });
     controls.onChange(render);
     void controls.init().catch(error => {
