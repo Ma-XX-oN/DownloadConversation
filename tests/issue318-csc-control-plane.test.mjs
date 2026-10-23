@@ -26,6 +26,7 @@ function fixture(raw = null) {
     current: '2026-10-23T11:00:00.000Z',
     epoch: 1,
     pending: false, statusFails: false, rotationFails: false,
+    completeFails: false,
     journal: [{ type: 'hmac-key-cycle', id:
       'hmac-key-cycle:2026-10-23T11:00:00.000Z',
       key_restart: '2026-10-23T11:00:00.000Z',
@@ -45,7 +46,9 @@ function fixture(raw = null) {
     cycleEvents: async after => keys.journal.filter(v => v.epoch > after),
     admit: async () => ({ token: 't01', metadata: { key_restart: keys.current } }),
     provision: (token, target) => target.postMessage({ type: 'dc-hmac-key-v2', token }),
-    complete: async () => {},
+    complete: async () => {
+      if (keys.completeFails) throw Error('hmac-release-failed');
+    },
     randomize: async confirmed => {
       assert.equal(confirmed, true);
       if (keys.rotationFails) throw Error('rotation-transaction-failed');
@@ -285,4 +288,38 @@ test('failed confirmed HMAC rotation visibly remains failed and unapplied', asyn
   await assert.rejects(f.control.randomize(true));
   assert.equal(f.control.snapshot().settings_state, 'failed');
   assert.equal(f.control.snapshot().settings_applied, false);
+});
+
+test('settings transition fails visibly when a previously bound Worker goes offline', async () => {
+  const f = fixture();
+  await f.control.init();
+  await f.control.bindWorker(f.worker);
+  f.worker.pause = async () => { throw Error('worker-gone'); };
+  await assert.rejects(f.control.setOptions(fullOptions(), true));
+  assert.equal(f.control.snapshot().settings_state, 'failed');
+  assert.equal(f.control.snapshot().settings_applied, false);
+});
+
+test('admission release storage failure cannot leave stale applied state', async () => {
+  const f = fixture();
+  await f.control.init();
+  f.control.bindSinks({ gen: f.gen, comm: f.comm });
+  await f.control.bindWorker(f.worker);
+  f.keys.completeFails = true;
+  f.worker.awaitKey = async () => { throw Error('worker-ack-lost'); };
+  await assert.rejects(f.control.prepareCapture());
+  assert.equal(f.control.snapshot().settings_state, 'failed');
+  assert.equal(f.control.snapshot().settings_applied, false);
+});
+
+test('Randomize stays unavailable until settings and both durable sinks are bound', async () => {
+  const f = fixture();
+  await f.control.init();
+  assert.equal(f.control.snapshot().can_randomize, false);
+  await f.control.bindWorker(f.worker);
+  assert.equal(f.control.snapshot().can_randomize, false);
+  f.control.bindSinks({ gen: f.gen, comm: f.comm });
+  assert.equal(f.control.snapshot().can_randomize, true);
+  await f.control.randomize(true);
+  assert.equal(f.control.snapshot().can_randomize, true);
 });
