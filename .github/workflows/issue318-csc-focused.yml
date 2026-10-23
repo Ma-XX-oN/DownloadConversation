@@ -30,6 +30,13 @@ jobs:
         run: node --test tests/issue318-csc-control-plane.test.mjs
       - name: Run real Chromium popup interaction and contrast checks
         run: node --test tests/issue318-csc-popup-chromium.test.mjs
+      - name: Save standalone Chromium popup screenshot evidence
+        uses: actions/upload-artifact@v4
+        with:
+          name: dc318-chromium-popup-light-dark
+          path: dc318-popup-*.png
+          if-no-files-found: error
+          retention-days: 3
       - name: Run adjacent recorder and CI inventory regressions
         run: |
           node --test tests/recording-panel-modes.test.mjs \
