@@ -37,7 +37,7 @@ function tabsFixture() {
       GM_removeValueChangeListener: id => listeners.delete(id)
     };
     const ctx = vm.createContext(sandbox);
-    vm.runInContext(source + '\\nthis.controls = cscControlsCurrent();', ctx);
+    vm.runInContext(source + '\nthis.controls = cscControlsCurrent();', ctx);
     const worker = {
       pause: async () => events.push('pause'),
       configure: async request => {
