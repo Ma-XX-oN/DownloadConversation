@@ -53,14 +53,6 @@
     });
   }
   /**
-   * Explicit LEGO interfaces:
-   * worker: {pause, configure, resume, provisionTarget, awaitKey}
-   * comm: {drain, beginKeyBoundary, writeCycle}
-   * gen: {beginSegment, writeCycle}
-   * All acknowledgements must identify the current operation and durability.
-   * This leaf does not manufacture the integration adapters owned by #359.
-   */
-  /**
    * Create the fail-closed CSC control plane without owning a Worker.
    * @param {Object} deps - Injected persistence, HMAC factory, version and origin
    * @returns {Object} Create the fail-closed CSC control plane without owning a Worker.
@@ -370,6 +362,11 @@
       }
       const admission = await service.admit();
       try {
+        await refreshKey();
+        if (!applied || keyState !== 'open' ||
+            publicKey !== admission.metadata.key_restart) {
+          throw new Error('csc-key-admission-scope-changed');
+        }
         await reconcileCycles();
         service.provision(admission.token, worker.provisionTarget);
         const ack = await worker.awaitKey(admission.token);
