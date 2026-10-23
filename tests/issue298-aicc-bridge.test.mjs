@@ -39,6 +39,7 @@ test('DC canonical agent bridge binds exact AICC browser loader registry through
               return {
                 plugin: descriptor.id,
                 apiVersion: descriptor.apiVersion,
+                version: descriptor.version,
                 ref: creation.ref
               };
             }
