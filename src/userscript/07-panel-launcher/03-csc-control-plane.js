@@ -84,6 +84,7 @@
     let epoch = 0;
     let seq = 0;
     let initialized = false;
+    let settingsStorageAvailable = true;
     let unsubscribe = null;
     let chain = Promise.resolve();
     let lastError = null;
@@ -136,6 +137,9 @@
      * @returns {Promise<boolean>} Apply persisted options and verify a correlated Worker acknowledgement.
      */
     async function apply() {
+      if (!settingsStorageAvailable) {
+        return reject('csc-settings-storage-unavailable');
+      }
       if (!worker) {
         state = 'pending';
         applied = false;
@@ -199,6 +203,7 @@
         });
       } catch {
         settings = CSC_CONTROL_DEFAULTS;
+        settingsStorageAvailable = false;
         state = 'failed';
         lastError = 'csc-settings-storage-unavailable';
       }
@@ -233,6 +238,7 @@
         } catch {
           return reject('csc-settings-persist-failed');
         }
+        settingsStorageAvailable = true;
         settings = options;
         return apply();
       });
@@ -378,6 +384,11 @@
       if (!service) throw new Error('csc-key-service-unavailable');
       await service.complete(token);
       await refreshKey();
+      if (keyState === 'open' && state === 'pending' &&
+          worker && comm && gen) {
+        await reconcileCycles();
+        await apply();
+      }
     }
     /**
      * Rotate only after explicit consent and durable output drainage.
