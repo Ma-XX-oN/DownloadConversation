@@ -83,7 +83,7 @@
     let expiry = null;
     let epoch = 0;
     let seq = 0;
-    let initialized = false;
+    let initPromise = null;
     let settingsStorageAvailable = true;
     let unsubscribe = null;
     let chain = Promise.resolve();
@@ -146,13 +146,13 @@
         notify();
         return false;
       }
-      await pause();
-      const requestId = 'csc-options-' + ++seq;
-      const payload = {
-        type: 'csc-comm-configure', schema: CSC_CONTROL_SCHEMA,
-        request_id: requestId, options: { ...settings, origin }
-      };
       try {
+        await pause();
+        const requestId = 'csc-options-' + ++seq;
+        const payload = {
+          type: 'csc-comm-configure', schema: CSC_CONTROL_SCHEMA,
+          request_id: requestId, options: { ...settings, origin }
+        };
         const ack = await worker.configure(payload);
         if (ack?.type !== 'csc-comm-configured' ||
             ack.schema !== CSC_CONTROL_SCHEMA ||
@@ -182,8 +182,8 @@
      * @returns {Promise<Object>} Load shared preferences and initialize the HMAC service once.
      */
     async function init() {
-      if (initialized) return snapshot();
-      initialized = true;
+      if (initPromise) return initPromise;
+      initPromise = (async () => {
       try {
         const raw = await store.read();
         settings = raw == null ? CSC_CONTROL_DEFAULTS :
@@ -216,6 +216,8 @@
       }
       notify();
       return snapshot();
+      })();
+      return initPromise;
     }
     /**
      * Persist confirmed options and request a Worker settings transition.
@@ -232,6 +234,7 @@
         throw new Error('csc-sensitive-capture-not-confirmed');
       }
       return schedule(async () => {
+        await init();
         await pause();
         try {
           await store.write(options);
@@ -255,6 +258,7 @@
         throw new Error('csc-worker-adapter-invalid');
       }
       return schedule(async () => {
+        await init();
         worker = adapter;
         return apply();
       });
@@ -295,6 +299,7 @@
         if (keyState === 'draining' || keyState === 'DRAINING') await pause();
       } catch {
         keyState = 'failed';
+        lastError = 'csc-key-status-failed';
         publicKey = null;
         expiry = null;
         await pause().catch(() => {});
@@ -359,6 +364,10 @@
         throw new Error('csc-capture-not-ready');
       }
       await refreshKey();
+      if (!applied || keyState === 'failed' ||
+          keyState === 'draining' || keyState === 'DRAINING') {
+        throw new Error('csc-capture-not-ready');
+      }
       const admission = await service.admit();
       try {
         await reconcileCycles();
@@ -382,12 +391,17 @@
      */
     async function completeCapture(token) {
       if (!service) throw new Error('csc-key-service-unavailable');
-      await service.complete(token);
-      await refreshKey();
-      if (keyState === 'open' && state === 'pending' &&
-          worker && comm && gen) {
-        await reconcileCycles();
-        await apply();
+      try {
+        await service.complete(token);
+        await refreshKey();
+        if (keyState === 'open' && state === 'pending' &&
+            worker && comm && gen) {
+          await reconcileCycles();
+          await apply();
+        }
+      } catch {
+        await pause().catch(() => {});
+        return reject('csc-key-completion-failed');
       }
     }
     /**
@@ -401,19 +415,23 @@
         throw new Error('csc-randomize-ports-not-ready');
       }
       return schedule(async () => {
-        await pause();
-        const drained = await comm.drain();
-        if (drained?.durable !== true) return reject('csc-drain-not-durable');
-        const result = await service.randomize(true);
-        await refreshKey();
-        if (result.state !== 'COMMITTED') {
-          state = 'pending';
-          notify();
+        try {
+          await pause();
+          const drained = await comm.drain();
+          if (drained?.durable !== true) throw new Error('csc-drain-not-durable');
+          const result = await service.randomize(true);
+          await refreshKey();
+          if (result.state !== 'COMMITTED') {
+            state = 'pending';
+            notify();
+            return result;
+          }
+          await reconcileCycles();
+          await apply();
           return result;
+        } catch {
+          return reject('csc-randomize-failed');
         }
-        await reconcileCycles();
-        await apply();
-        return result;
       });
     }
     /**
