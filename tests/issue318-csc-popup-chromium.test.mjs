@@ -25,7 +25,7 @@ const binary = (process.platform === 'win32'
     process.platform === 'win32' ? 'where' : 'which',
     [candidate], { encoding: 'utf8' }).status === 0);
 
-function run(width, theme) {
+function run(width, theme, failRotation = false) {
   const page = `<!doctype html><meta charset="utf-8">
   <meta name="viewport" content="width=device-width,initial-scale=1">
   <style>
@@ -49,11 +49,48 @@ function run(width, theme) {
   window.GM_removeValueChangeListener=()=>{};
   ${control}
   ${popup}
+  const failRotation = ${failRotation};
+  if (failRotation) {
+    cscControlsRegisterHmacFactory(() => ({
+      status: async () => ({ state: 'open',
+        key_restart: '2026-10-23T11:00:00.000Z',
+        redaction_key_epoch: 1 }),
+      cycleEvents: async () => [],
+      randomize: async () => {throw Error('injected-rotation-failure')},
+      dispose: () => {}
+    }));
+  }
   async function scenario(){
     const panel=document.getElementById('tm-conversation-recorder');
     const one=panel.querySelector('[data-role="record-one-group"]');
     one.checked=true;
     bindCscCapturePopup(panel);
+    if (failRotation) {
+      const api = cscControlsCurrent();
+      api.bindSinks({
+        gen: {
+          beginSegment: async h => ({ durable: true, key_restart: h.key_restart }),
+          writeCycle: async e => ({ durable: true, id: e.id }),
+          hasCycle: async () => false
+        },
+        comm: {
+          drain: async () => ({ durable: true }),
+          beginKeyBoundary: async h => ({ durable: true,
+            key_restart: h.key_restart }),
+          writeCycle: async e => ({ durable: true, id: e.id }),
+          hasCycle: async () => false
+        }
+      });
+      await api.bindWorker({
+        pause: async () => {}, resume: async () => {},
+        configure: async request => ({
+          type: 'csc-comm-configured', schema: request.schema,
+          request_id: request.request_id
+        }),
+        provisionTarget: { postMessage: () => {} },
+        awaitKey: async token => ({ type: 'csc-comm-key-ready', token })
+      });
+    }
     await new Promise(resolve=>setTimeout(resolve,30));
     const trigger=panel.querySelector('[data-role="csc-popup-trigger"]');
     const dialog=panel.querySelector('[data-role="csc-popup"]');
@@ -83,6 +120,14 @@ function run(width, theme) {
     const box=dialog.getBoundingClientRect();
     const viewport=box.left>=0&&box.right<=innerWidth+1;
     const color=getComputedStyle(dialog).backgroundColor;
+    const rotationButton=dialog.querySelector('[data-csc-randomize]');
+    const rotationInitiallyEnabled=!rotationButton.disabled;
+    if (failRotation) {
+      rotationButton.click();
+      await new Promise(resolve=>setTimeout(resolve,40));
+    }
+    const rotationDisabledAfterError=rotationButton.disabled;
+    const rotationState=cscControlsCurrent().snapshot().settings_state;
     document.getElementById('result').textContent=JSON.stringify({
       after,onePreserved:one.checked,open,focused,
       defaultMode:initial.settings.mode,defaultAll:initial.settings.all,
@@ -90,7 +135,8 @@ function run(width, theme) {
       denied:blocked,confirmed:consentCount===2,
       savedMode:saved?.mode,savedSchema:saved?.schema,
       status:dialog.querySelector('[data-csc-status]').textContent,
-      escaped,outside,viewport,color,theme:'${theme}'
+      escaped,outside,viewport,color,theme:'${theme}',
+      rotationInitiallyEnabled,rotationDisabledAfterError,rotationState
     });
   }
   scenario().catch(error=>document.getElementById('result').textContent=
@@ -112,7 +158,8 @@ function run(width, theme) {
     assert.ok(match&&match[1]!=='PENDING','Actual Chromium script did not complete');
     if(process.env.GITHUB_WORKSPACE){
       const destination=path.join(process.env.GITHUB_WORKSPACE,
-        'dc318-popup-'+theme+'-'+width+'.png');
+        'dc318-popup-'+theme+'-'+width+
+        (failRotation?'-rotation-failure':'')+'.png');
       const shot=spawnSync(binary,[
         '--headless=new','--no-sandbox','--disable-gpu',
         '--disable-dev-shm-usage','--no-first-run',
@@ -146,3 +193,12 @@ for (const [width,theme] of [[430,'light'],[430,'dark'],[900,'dark']]) {
       assert.notEqual(result.color,'rgba(0, 0, 0, 0)');
     });
 }
+
+test('native Chromium keeps Randomize disabled after producer failure',
+  {timeout:35000},()=>{
+    const result=run(430,'dark',true);
+    assert.equal(result.error,undefined,result.error);
+    assert.equal(result.rotationInitiallyEnabled,true,JSON.stringify(result));
+    assert.equal(result.rotationDisabledAfterError,true,JSON.stringify(result));
+    assert.equal(result.rotationState,'failed',JSON.stringify(result));
+  });
