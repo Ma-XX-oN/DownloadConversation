@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         ChatGPT Conversation Markdown Recorder
 // @namespace    https://chatgpt.com/
-// @version      1.11.14-issue.298.8
+// @version      1.11.14-issue.298.9
 // @description  Exports the current ChatGPT conversation directly from the Conversation API as Markdown or JSONL.
 // @match        https://chatgpt.com/*
 // @match        https://chat.openai.com/*
@@ -11896,9 +11896,13 @@ return Object.freeze({renderFaviconPulseSequence});
     agentTimingActivityState = snapshot;
     const atMs = performance.now();
     agentTimingPublish('last-activity-snapshot', atMs);
-    agentStopwatchRender(atMs);
-    // Do not start an idle repaint interval before a stopwatch is mounted.
-    if (next !== null && agentStopwatchState) agentStopwatchStartTimer();
+    // Coalesce high-frequency updates into the existing 250ms repaint tick.
+    // A first timestamp starts the stopped timer with one immediate paint.
+    if (next !== null && agentStopwatchState) {
+      const firstPaint = agentStopwatchTimer === null;
+      agentStopwatchStartTimer();
+      if (firstPaint) agentStopwatchRender(atMs);
+    }
     return true;
   }
 
