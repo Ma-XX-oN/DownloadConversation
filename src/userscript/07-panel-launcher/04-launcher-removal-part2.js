@@ -5,6 +5,7 @@
       if (launcher) launcher.style.display = '';
     });
     bindDiagnosticCategoryPopup(panel);
+    bindCscCapturePopup(panel);
     const diagnostics = panel.querySelector('[data-role="diagnostics"]');
     diagnostics.value = diagnosticsLevel;
     diagnostics.addEventListener('change', () => {

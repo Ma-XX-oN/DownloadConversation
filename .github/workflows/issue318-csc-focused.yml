@@ -1,0 +1,68 @@
+name: DC 318 isolated controls verification
+
+on:
+  push:
+    branches:
+      - issue-318-csc-controls
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  focused-controls:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout exact child candidate
+        uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+          fetch-depth: 0
+      - name: Node 22
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - name: Syntax check control modules
+        run: |
+          node --check src/userscript/07-panel-launcher/03-csc-control-plane.js
+          node --check src/userscript/07-panel-launcher/03-csc-capture-popup.js
+      - name: Execute controls regression
+        run: node --test tests/issue318-csc-control-plane.test.mjs tests/issue318-csc-gm-cross-tab.test.mjs
+      - name: Run real Chromium popup interaction and contrast checks
+        run: node --test tests/issue318-csc-popup-chromium.test.mjs
+      - name: Save standalone Chromium popup screenshot evidence
+        uses: actions/upload-artifact@v4
+        with:
+          name: dc318-chromium-popup-light-dark
+          path: dc318-popup-*.png
+          if-no-files-found: error
+          retention-days: 3
+      - name: Run adjacent recorder and CI inventory regressions
+        run: |
+          node --test tests/recording-panel-modes.test.mjs \
+            tests/recording-panel-chromium-layout.test.mjs \
+            tests/recording-group-tab-identity.test.mjs \
+            tests/issue347-log-category-settings.test.mjs \
+            tests/issue347-startup-order.test.mjs \
+            tests/ci-test-inventory.test.mjs \
+            tests/recorder-panel-ui.test.mjs
+      - name: Validate development version identity
+        run: node scripts/check-development-version.mjs --branch issue-318-csc-controls
+      - name: Validate manifest and documentation contracts
+        run: node scripts/check-jsdoc.mjs
+      - name: TypeScript assembled source and negative-control regression
+        run: node scripts/check-userscript-types.mjs
+      - name: Build exact candidate to temporary artifact
+        run: |
+          node scripts/build-userscript.mjs --output "$RUNNER_TEMP/dc318.user.js"
+          node scripts/verify-userscript-artifact.mjs "$RUNNER_TEMP/dc318.user.js"
+          node --check "$RUNNER_TEMP/dc318.user.js"
+          sha256sum "$RUNNER_TEMP/dc318.user.js"
+      - name: Retain verified isolated candidate
+        uses: actions/upload-artifact@v4
+        with:
+          name: dc318-isolated-userscript
+          path: ${{ runner.temp }}/dc318.user.js
+          if-no-files-found: error
+          retention-days: 3
+
