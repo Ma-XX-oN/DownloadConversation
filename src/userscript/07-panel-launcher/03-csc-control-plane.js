@@ -183,10 +183,10 @@
         const raw = await store.read();
         settings = raw == null ? CSC_CONTROL_DEFAULTS :
           cscControlValidateOptions(raw);
-        unsubscribe = store.subscribe(rawValue => {
+        unsubscribe = store.subscribe(() => {
           void schedule(async () => {
             try {
-              settings = cscControlValidateOptions(rawValue);
+              settings = cscControlValidateOptions(await store.read());
               await apply();
             } catch {
               await pause().catch(() => {});
