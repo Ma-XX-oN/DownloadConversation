@@ -8,7 +8,6 @@
     schema: CSC_CONTROL_SCHEMA, mode: 'replay-essentials',
     binary: false, cross_origin: false, auth_headers: false, all: false
   });
-
   /** Validate untrusted persisted options without enabling extra capture. */
   /**
    * Validate and freeze untrusted stored COMM capture options.
@@ -31,7 +30,6 @@
       auth_headers: input.auth_headers, all: input.all
     });
   }
-
   /** Construct the Tampermonkey shared-options adapter (not localStorage). */
   /**
    * Construct the Tampermonkey shared settings persistence adapter.
@@ -55,7 +53,6 @@
       }
     });
   }
-
   /**
    * Explicit LEGO interfaces:
    * worker: {pause, configure, resume, provisionTarget, awaitKey}
@@ -89,7 +86,6 @@
     let chain = Promise.resolve();
     let lastError = null;
     const listeners = new Set();
-
     /**
      * Expose only nonsecret public state for the recorder panel.
      * @returns {Object} Expose only nonsecret public state for the recorder panel.
@@ -468,10 +464,22 @@
       randomize, dispose
     });
   }
-
   /** Singleton control owner; #359 binds real Worker/GEN/COMM ports. */
   /** Shared control owner retained for the lifetime of this document. */
   let cscCaptureControls = null;
+  /** Factory registered by the authorised #359 assembled producer bridge. */
+  let cscRegisteredHmacFactory = null;
+  /**
+   * Register the #313 HMAC factory before any controller construction.
+   * @param {Function} factory - Factory supplied by the accepted producer.
+   * @returns {void} Installs only a callable unclaimed source dependency.
+   */
+  function cscControlsRegisterHmacFactory(factory) {
+    if (typeof factory !== 'function' || cscCaptureControls) {
+      throw new Error('csc-hmac-factory-invalid-or-late');
+    }
+    cscRegisteredHmacFactory = factory;
+  }
   /**
    * Return the singleton control port shared by startup and the UI.
    * @returns {Object} Return the singleton control port shared by startup and the UI.
@@ -480,8 +488,7 @@
     if (!cscCaptureControls) {
       cscCaptureControls = cscCaptureControlPlane({
         store: cscControlSharedStore(),
-        serviceFactory: typeof communicationPersistentHmacCurrentTabService ===
-          'function' ? communicationPersistentHmacCurrentTabService : null,
+        serviceFactory: cscRegisteredHmacFactory,
         version: VERSION,
         origin: location.origin
       });
