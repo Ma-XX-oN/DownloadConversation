@@ -383,8 +383,11 @@
         return admission;
       } catch (error) {
         try { await service.complete(admission.token); }
-        catch { return reject('csc-admission-release-failed'); }
-        finally { await pause().catch(() => {}); }
+        catch {
+          await pause().catch(() => {});
+          return reject('csc-admission-release-failed');
+        }
+        await pause().catch(() => {});
         throw error;
       }
     }
