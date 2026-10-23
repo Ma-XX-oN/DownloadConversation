@@ -70,6 +70,7 @@ function run(width, theme) {
     await new Promise(resolve=>setTimeout(resolve,30));
     const blocked=shared.size===0;
     consent=true;
+    full.click();
     dialog.querySelector('[data-csc-apply]').click();
     await new Promise(resolve=>setTimeout(resolve,30));
     const saved=shared.get('dc-csc-capture-options-v1');
