@@ -93,12 +93,12 @@ expiry must remain enforced by the #313 producer itself.
 | --- | --- | --- |
 | Owner and true child Git parent | PASS | #318 claim 6364205193; first child commit with RWF parent trailers |
 | Isolated UI and public ports authored | PASS (isolated) | #362, headless Chromium and source contracts; no assembled Worker |
-| Safe default / confirmed opt-in | PASS (isolated) | Hosted 19 control tests and 3 Chromium interaction tests |
-| Shared-settings propagation | PASS (synthetic); INCOMPLETE (Tampermonkey) | GM adapter tests pass, signed-in duplicate-tab persistence remains |
+| Safe default / confirmed opt-in | PASS (isolated) | Hosted 23 controller tests, 4 GM tests and 4 Chromium tests |
+| Shared-settings propagation | PASS (simulated GM); INCOMPLETE (Tampermonkey) | Four real source-adapter VM tests cover remote updates, reload, conflicts, malformed settings; no installed TM proof |
 | Versioned Worker settings ack | INCOMPLETE | Existing #311 ack uncorrelated; #359 must reconcile |
 | Full-fidelity everything-mode selector | INCOMPLETE | #311 rejects other text formats as unsupported; #359 owns reconciliation |
 | Physical GEN/COMM headers, events, durable cycle | INCOMPLETE | #359 source assembly then #319 independent readback |
-| Actual headless Chrome popup, focus, themes, screenshot | PASS (synthetic page) | Three screenshots artifact #12501494196; 3/3 Chromium tests |
+| Actual headless Chrome popup, focus, themes, screenshot | PASS (synthetic page) | Four screenshots artifact #12509770712; 4/4 Chromium tests |
 | Installed Tampermonkey and real Worker restart | INCOMPLETE | Requires #359 assembled candidate and operator Chrome test |
 | Exact built isolated artifact + executable targeted CI | PASS | DC #318 focused GitHub workflow after final test run; not #359 assembled code |
 | Ordinary PR CI / policy | FAIL | PR #362 policy rejects parent target; prepare/validate skipped |
@@ -112,15 +112,16 @@ existing recorder and category regressions, manifest/JSDoc checks, source
 version check, TypeScript no-unresolved-reference check, and exact
 userscript build/byte verification with a retained non-production artifact.
 
-Latest completed isolated source candidate `bc822313cdda5a51111c0df9e6d4880fc1a4809c`
-passed 19/19 control tests, 3/3 real headless Chromium popup tests,
-34/34 adjacent recorder tests, TypeScript 7.0.2, and exact isolated
-userscript build/readback in workflow run #39954981350.  Artifact
-#12501454265 (1,280,772 bytes) SHA-256:
-`4bd960eb58ab1891794d4a68553494acd65e0fb7e88584d1dede7272c3f80800`.
-Three light/dark screenshot artifact #12501494196.  These attest
-standalone source, not integrated execution.  All new commits need
-fresh exact-HEAD reruns.
+Latest completed isolated source candidate `c41cb1f6a24e3636c1905d5ee892647fcbf19c49`
+passed 27/27 controls + simulated shared-GM cross-tab tests,
+4/4 real headless Chromium popup tests, 34/34 adjacent recorder tests,
+TypeScript 7.0.2, and exact isolated userscript build/readback in
+workflow run #39971248347 (65/65 executed tests).
+Artifact #12508209434 (1,280,676 bytes) SHA-256:
+`c043a9dda9a524d5ec44bde0d231dc21e24d1a4d8ff8acfbdbdc7cb3726ef0b5`.
+Four synthetic-page Chromium screenshot artifacts #12509770712.
+These attest standalone source, not integrated execution.  All changed
+commits require new exact-HEAD runs.
 
 The #318 standalone workflow does not modify repository CI policy,
 the parent branch, or main.  Its PASS does NOT imply functional
@@ -151,3 +152,29 @@ source import, Worker/GEN/COMM concrete adapters, old-schema correction,
 and newly assembled tests.  #319 owns physical readback and independent
 system certification.  #232 owns sustained performance/backpressure.
 No issue or PR is merged by this checkpoint.
+
+## October 23 V3 failure-focused extensions
+
+Seven additional controller defects were reproduced or narrowed with
+executed RED/GREEN evidence, without importing another owner's
+implementation: old-scope cycle resurrection, old-event-before-Randomize
+ordering, failed Randomize button re-enablement, lost concurrent
+cross-tab shared-setting updates, and producer first-use key status after
+admission.  Earlier failure paths also cover Worker readiness, admission
+release and rotation.  The correct producer chronology is:
+`status:uninitialized` before its first `admit()`, then the initial
+`key_restart` and cycle are created.  #318 now rereads status after
+admission and checks the issued scope **before** any durable port call.
+
+The accepted #308 graph expressly states **DC #318 -> DC #359**.
+Therefore DC #359 remains the independently owned source-assembly
+**successor**, not an incoming DC #318 completion prerequisite.
+Stand-alone source checks do not claim that integrated Worker or file
+recording is proved; those remain #359/#319 responsibilities.  The
+installed signed-in Tampermonkey acceptance in the #318 issue remains
+INCOMPLETE and must not be represented as a Chromium synthetic PASS.
+
+A rotation returning `DRAINING` still needs a real cross-tab old-key
+drain-completion notification/recovery adapter and genuine GEN/COMM
+boundary proof from the #359 assembled source.  The controller stays
+fail-closed while those interfaces are not installed.
