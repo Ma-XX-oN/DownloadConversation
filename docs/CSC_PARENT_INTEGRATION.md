@@ -333,7 +333,14 @@ Its config-handshake contract requires an acknowledgement containing
 `type:'csc-comm-configured'` plus matching `schema` and `request_id`.
 The current #311 processor emits **only** the type (without those
 fields).  It therefore cannot satisfy #318's strict Worker adapter
-without reviewed #359 implementation.  Do not weaken the #318
+without reviewed #359 implementation.
+
+Additionally, #318 requires a positive durable COMM key-boundary
+acknowledgement.  #317's current `setRestart` implementation seals
+and updates its key; the `csc-writer-key-restart` message listener
+returns **no correlated success event**.  A reviewed #359 adapter or
+Worker extension must produce a *real* durable boundary result, not
+assume a queued control message proves persistence.  Do not weaken the #318
 acknowledgement standard to accommodate the old producer.
 
 PR #362 hosted run
