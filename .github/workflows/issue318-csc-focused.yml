@@ -1,0 +1,33 @@
+name: DC 318 isolated controls verification
+
+on:
+  push:
+    branches:
+      - issue-318-csc-controls
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  focused-controls:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout exact child candidate
+        uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - name: Node 22
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - name: Syntax check control modules
+        run: |
+          node --check src/userscript/07-panel-launcher/03-csc-control-plane.js
+          node --check src/userscript/07-panel-launcher/03-csc-capture-popup.js
+      - name: Execute controls regression
+        run: node --test tests/issue318-csc-control-plane.test.mjs
+      - name: Validate development version identity
+        run: node scripts/check-development-version.mjs --branch issue-318-csc-controls
+      - name: Validate manifest and documentation contracts
+        run: node scripts/check-jsdoc.mjs
