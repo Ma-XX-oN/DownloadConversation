@@ -27,6 +27,8 @@ jobs:
           node --check src/userscript/07-panel-launcher/03-csc-capture-popup.js
       - name: Execute controls regression
         run: node --test tests/issue318-csc-control-plane.test.mjs
+      - name: Run real Chromium popup interaction and contrast checks
+        run: node --test tests/issue318-csc-popup-chromium.test.mjs
       - name: Validate development version identity
         run: node scripts/check-development-version.mjs --branch issue-318-csc-controls
       - name: Validate manifest and documentation contracts
