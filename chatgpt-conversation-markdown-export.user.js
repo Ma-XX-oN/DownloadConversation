@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         ChatGPT Conversation Markdown Recorder
 // @namespace    https://chatgpt.com/
-// @version      1.11.14-issue.298.5
+// @version      1.11.14-issue.298.6
 // @description  Exports the current ChatGPT conversation directly from the Conversation API as Markdown or JSONL.
 // @match        https://chatgpt.com/*
 // @match        https://chat.openai.com/*
@@ -6769,8 +6769,8 @@ async function loadAgent(id, { loadModule, context = {} } = {}) {
     assert(chatGPTAgent && chatGPTCanonicalSession,
       'AIConversationCore did not create the ChatGPT agent and canonical session.');
     // Last subscribes only to AICC's public V1 observer for this exact agent.
-    // The currently pinned older Core is an explicit unresolved integration
-    // prerequisite; it is never replaced with transport or callback-time data.
+    // Only the pinned Core V1 observer is accepted; provider integration is
+    // still unresolved, never substituted with transport or callback-time data.
     if (typeof loaded?.registry?.activityState === 'function' &&
         typeof loaded?.registry?.observeActivity === 'function') {
       agentTimingBindActivityObserver(loaded.registry, chatGPTAgent);
@@ -11895,7 +11895,8 @@ return Object.freeze({renderFaviconPulseSequence});
     const atMs = performance.now();
     agentTimingPublish('last-activity-snapshot', atMs);
     agentStopwatchRender(atMs);
-    if (next !== null) agentStopwatchStartTimer();
+    // Do not start an idle repaint interval before a stopwatch is mounted.
+    if (next !== null && agentStopwatchState) agentStopwatchStartTimer();
     return true;
   }
 
