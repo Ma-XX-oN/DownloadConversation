@@ -29,6 +29,13 @@ recording-group `1` checkbox without replacing or changing its handler.
   `worker.awaitKey(token)`: send #313 key bytes via its own factory and
   await `{type:"csc-comm-key-ready", token}` without public key exposure.
 
+**Selector fidelity mismatch identified in exact #311 source:** the default currently
+selects same-origin JSON and SSE bodies, not arbitrary text.  In
+`everything` mode the Worker returns `unsupported` for other text
+formats, so the broad-mode claim MUST NOT be certified until #359
+reconciles that gap with #311 owner.  Do not silently drop selected
+browser-accessible content or invent replacement body bytes.
+
 **Existing #311 implementation is NOT compatible as-is:** its uncorrelated
 `csc-comm-configured` response lacks schema and request ID.  Its
 `redaction_scope/redaction_key_generation` legacy fields conflict with
@@ -84,6 +91,7 @@ expiry must remain enforced by the #313 producer itself.
 | Safe default / confirmed opt-in | TEST WRITTEN; unexecuted | `tests/issue318-csc-control-plane.test.mjs` |
 | Storage reload and duplicate-tab | TEST WRITTEN; unexecuted | Synthetic GM adapter only; actual duplicate Chrome not tested |
 | Versioned Worker settings ack | INCOMPLETE | Existing #311 ack uncorrelated; #359 must reconcile |
+| Full-fidelity everything-mode selector | INCOMPLETE | #311 rejects other text formats as unsupported; #359 owns reconciliation |
 | Physical GEN/COMM headers, events, durable cycle | INCOMPLETE | #359 source assembly then #319 independent readback |
 | Real Chrome popup, keyboard/screenshot, worker restart | INCOMPLETE | Built exact integrated userscript and installed Chrome |
 | Exact built artifact + executable CI | INCOMPLETE | PR #362 policy job FAIL; prepare/validate skipped |
