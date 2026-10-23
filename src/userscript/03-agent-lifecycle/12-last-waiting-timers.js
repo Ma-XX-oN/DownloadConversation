@@ -160,9 +160,13 @@
     agentTimingActivityState = snapshot;
     const atMs = performance.now();
     agentTimingPublish('last-activity-snapshot', atMs);
-    agentStopwatchRender(atMs);
-    // Do not start an idle repaint interval before a stopwatch is mounted.
-    if (next !== null && agentStopwatchState) agentStopwatchStartTimer();
+    // Coalesce high-frequency updates into the existing 250ms repaint tick.
+    // A first timestamp starts the stopped timer with one immediate paint.
+    if (next !== null && agentStopwatchState) {
+      const firstPaint = agentStopwatchTimer === null;
+      agentStopwatchStartTimer();
+      if (firstPaint) agentStopwatchRender(atMs);
+    }
     return true;
   }
 
