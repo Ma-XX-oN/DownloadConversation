@@ -349,3 +349,51 @@ test('assembled #313 producer factory is registered explicitly before startup', 
   assert.throws(()=>context.bridge.register(()=>{}),/csc-hmac-factory-invalid-or-late/);
   control.dispose();
 });
+
+test('unrecorded historical HMAC scope is never re-created after newer scope', async () => {
+  const f = fixture();
+  await f.control.init();
+  f.control.bindSinks({ gen: f.gen, comm: f.comm });
+  await f.control.bindWorker(f.worker);
+  const older = '2026-10-23T10:00:00.000Z';
+  f.keys.journal.unshift({ type: 'hmac-key-cycle', id: 'hmac-key-cycle:' + older,
+    key_restart: older, epoch: 0, occurred_at_ms: Date.parse(older),
+    reason: 'initial' });
+  await assert.rejects(f.control.reconcileCycles(),
+    /csc-cycle-history-not-durable/);
+  assert.equal(f.calls.genHeaders.length, 0);
+  assert.equal(f.calls.commHeaders.length, 0);
+});
+
+test('old durable cycle events can be verified without replay to newer epoch', async () => {
+  const f = fixture();
+  await f.control.init();
+  f.control.bindSinks({ gen: f.gen, comm: f.comm });
+  await f.control.bindWorker(f.worker);
+  const older = '2026-10-23T10:00:00.000Z';
+  const id = 'hmac-key-cycle:' + older;
+  f.keys.journal.unshift({ type: 'hmac-key-cycle', id,
+    key_restart: older, epoch: 0, occurred_at_ms: Date.parse(older),
+    reason: 'initial' });
+  f.committed.gen.add(id);
+  f.committed.comm.add(id);
+  await f.control.reconcileCycles();
+  assert.equal(f.calls.genHeaders.length, 1);
+  assert.equal(f.calls.genHeaders[0].key_restart, f.keys.current);
+});
+
+test('half recorded historical HMAC cycle rejects without regenerating old segments', async () => {
+  const f = fixture();
+  await f.control.init();
+  f.control.bindSinks({ gen: f.gen, comm: f.comm });
+  await f.control.bindWorker(f.worker);
+  const older = '2026-10-23T10:00:00.000Z';
+  const id = 'hmac-key-cycle:' + older;
+  f.keys.journal.unshift({ type: 'hmac-key-cycle', id,
+    key_restart: older, epoch: 0, occurred_at_ms: Date.parse(older),
+    reason: 'initial' });
+  f.committed.gen.add(id);
+  await assert.rejects(f.control.reconcileCycles(),
+    /csc-cycle-recovery-requires-parent/);
+  assert.equal(f.calls.genHeaders.length, 0);
+});
