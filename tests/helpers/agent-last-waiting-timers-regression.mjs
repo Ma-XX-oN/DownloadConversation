@@ -196,6 +196,7 @@ function timingHarness() {
           { now: () => epochNow });
       },
       unbind() { agentTimingUnbindActivityObserver(); },
+      hideStopwatch() { agentStopwatchState = null; },
       bindExternal(registry, agent, nowFn) {
         return agentTimingBindActivityObserver(registry, agent, { now: nowFn });
       },
@@ -459,4 +460,27 @@ test('two public AICC agent instances interchange without changing view source',
   h.unbind();
   registry.disposeActivity(first);
   registry.disposeActivity(second);
+});
+
+
+test('late AICC subscription immediately replays retained activity, without new ingress', () => {
+  const h = timingHarness();
+  h.setNow(1000);
+  assert.equal(h.incoming(), true);
+  assert.equal(h.bind(), true);
+  assert.equal(h.render(6000), 'Last: 0 m 5 s\nTotal: 0 m 6 s');
+  h.unbind();
+  h.unbind();
+  assert.equal(h.coreOne.observers(), 0);
+});
+
+test('incoming updates without an installed stopwatch do not start idle polling', () => {
+  const h = timingHarness();
+  h.hideStopwatch();
+  h.bind();
+  h.setNow(1000);
+  assert.equal(h.incoming(), true);
+  assert.equal(h.timerActive(), false);
+  h.unbind();
+  assert.equal(h.timerActive(), false);
 });
