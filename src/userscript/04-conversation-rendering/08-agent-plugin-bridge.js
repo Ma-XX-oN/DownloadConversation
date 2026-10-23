@@ -203,6 +203,8 @@
     if (typeof loaded?.registry?.activityState === 'function' &&
         typeof loaded?.registry?.observeActivity === 'function') {
       agentTimingBindActivityObserver(loaded.registry, chatGPTAgent);
+      // Retire only the DC subscription; Core owns agent disposal.
+      window.addEventListener('pagehide', agentTimingUnbindActivityObserver, { once: true });
     } else {
       logDiagnostic('warnings', 'aicc-last-activity-v1-unavailable', {
         core_version: CORE_VERSION
