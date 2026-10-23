@@ -29,6 +29,15 @@ jobs:
         run: node --test tests/issue318-csc-control-plane.test.mjs
       - name: Run real Chromium popup interaction and contrast checks
         run: node --test tests/issue318-csc-popup-chromium.test.mjs
+      - name: Run adjacent recorder and CI inventory regressions
+        run: |
+          node --test tests/recording-panel-modes.test.mjs \
+            tests/recording-panel-chromium-layout.test.mjs \
+            tests/recording-group-tab-identity.test.mjs \
+            tests/issue347-log-category-settings.test.mjs \
+            tests/issue347-startup-order.test.mjs \
+            tests/ci-test-inventory.test.mjs \
+            tests/recorder-panel-ui.test.mjs
       - name: Validate development version identity
         run: node scripts/check-development-version.mjs --branch issue-318-csc-controls
       - name: Validate manifest and documentation contracts
