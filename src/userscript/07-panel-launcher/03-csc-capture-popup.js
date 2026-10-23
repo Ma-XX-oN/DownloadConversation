@@ -54,7 +54,7 @@
       '<label><input type="checkbox" data-csc-flag="all">',
       ' All of the above</label>',
       '</fieldset>',
-      '<p class="tm-csc-warning">Privacy warning: expanded capture can',
+      '<p id="tm-csc-privacy-warning" class="tm-csc-warning">Privacy warning: expanded capture can',
       ' retain credentials, private messages and sensitive network data.',
       ' Browser-inaccessible opaque responses remain unavailable.',
       ' HMAC processing never authorizes raw key export.</p>',
@@ -66,6 +66,7 @@
       '<div class="tm-csc-actions"><button type="button" data-csc-apply>',
       ' Apply capture settings</button></div>'
     ].join('');
+    dialog.setAttribute('aria-describedby', 'tm-csc-privacy-warning');
     const section = panel.querySelector('.tm-recording-section');
     section.append(dialog);
     if (!document.getElementById('tm-csc-capture-style')) {
@@ -117,7 +118,7 @@
      */
     function render(model) {
       const { settings, settings_state, key_state, key_restart,
-        expires_at_ms, error } = model;
+        expires_at_ms, error, can_randomize } = model;
       for (const input of modes) input.checked = input.dataset.cscMode === settings.mode;
       for (const input of flags) input.checked = settings[input.dataset.cscFlag];
       status.textContent = 'Worker configuration: ' + settings_state +
@@ -127,8 +128,7 @@
       due.textContent = 'Status: ' + key_state + '; next due: ' +
         (Number.isFinite(expires_at_ms) ?
           new Date(expires_at_ms).toLocaleString() : 'unavailable');
-      randomize.disabled = key_state === 'failed' || key_state === 'unavailable' ||
-        key_state === 'draining' || key_state === 'DRAINING';
+      randomize.disabled = !can_randomize;
     }
     /**
      * Dismiss the popup and optionally restore keyboard focus.
