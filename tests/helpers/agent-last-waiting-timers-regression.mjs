@@ -15,6 +15,7 @@ function timingHarness() {
     let now = 0;
     let epochNow = 100000;
     let intervalCallback = null;
+    let paintCount = 0;
     const control = { textContent: '' };
     let agentStopwatchTimer = null;
     let agentStopwatchState = {
@@ -54,6 +55,7 @@ function timingHarness() {
 
     function agentStopwatchRender(nowMs = performance.now()) {
       if (!agentStopwatchState) return;
+      paintCount += 1;
       const totalMs = agentStopwatchState.active
         ? nowMs - agentStopwatchState.started_at_ms
         : agentStopwatchState.total_ms;
@@ -215,6 +217,7 @@ function timingHarness() {
       text() { return control.textContent; },
       tick() { intervalCallback?.(); },
       timerActive() { return agentStopwatchTimer !== null; },
+      paints() { return paintCount; },
       snapshot(atMs) { return agentTimingSnapshot(atMs); },
       subscribe(listener) { return agentTimingSubscribe(listener); },
       recovery(recovery, wallNowMs, monotonicNowMs) {
@@ -345,10 +348,12 @@ test('fast Core updates do not install more listeners or parse network data', ()
   const h = timingHarness();
   h.bind();
   h.setNow(30000);
+  const paintsBefore = h.paints();
   for (let stamp = 100001; stamp <= 120000; stamp++) {
     assert.equal(h.incoming(stamp), true);
   }
   assert.equal(h.coreOne.observers(), 1);
+  assert.ok(h.paints() - paintsBefore <= 1, 'activity must reuse the 250ms paint timer');
   assert.equal(h.snapshot(30000).latest_incoming_at_ms, 120000);
   h.unbind();
   assert.equal(h.coreOne.observers(), 0);
