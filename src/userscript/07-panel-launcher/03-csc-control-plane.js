@@ -421,6 +421,8 @@
       return schedule(async () => {
         try {
           await pause();
+          // Persist the old key's journal BEFORE a new key can commit.
+          await reconcileCycles();
           const drained = await comm.drain();
           if (drained?.durable !== true) throw new Error('csc-drain-not-durable');
           const result = await service.randomize(true);
