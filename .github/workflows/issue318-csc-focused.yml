@@ -17,6 +17,7 @@ jobs:
         uses: actions/checkout@v4
         with:
           persist-credentials: false
+          fetch-depth: 0
       - name: Node 22
         uses: actions/setup-node@v4
         with:
@@ -42,6 +43,8 @@ jobs:
         run: node scripts/check-development-version.mjs --branch issue-318-csc-controls
       - name: Validate manifest and documentation contracts
         run: node scripts/check-jsdoc.mjs
+      - name: TypeScript assembled source and negative-control regression
+        run: node scripts/check-userscript-types.mjs
       - name: Build exact candidate to temporary artifact
         run: |
           node scripts/build-userscript.mjs --output "$RUNNER_TEMP/dc318.user.js"
