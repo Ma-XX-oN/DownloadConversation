@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         ChatGPT Conversation Markdown Recorder
 // @namespace    https://chatgpt.com/
-// @version      1.11.14-issue.298.2
+// @version      1.11.14-issue.298.3
 // @description  Exports the current ChatGPT conversation directly from the Conversation API as Markdown or JSONL.
 // @match        https://chatgpt.com/*
 // @match        https://chat.openai.com/*
@@ -11785,6 +11785,7 @@ return Object.freeze({renderFaviconPulseSequence});
   let agentTimingActivityState = null;
   /** Registry and instance owning the current AICC observer subscription. */
   let agentTimingActivityRegistry = null;
+  /** Registered Core agent instance whose retained activity is observed. */
   let agentTimingActivityAgent = null;
   /** Independent idempotent unsubscribe from the current AICC subscription. */
   let agentTimingActivityUnsubscribe = null;
