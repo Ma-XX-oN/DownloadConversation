@@ -92,13 +92,14 @@ expiry must remain enforced by the #313 producer itself.
 | Criterion | Status | Evidence or remaining action |
 | --- | --- | --- |
 | Owner and true child Git parent | PASS | #318 claim 6364205193; first child commit with RWF parent trailers |
-| Isolated UI and public ports authored | IMPLEMENTED; unverified | #362; no real assembled Worker |
-| Safe default / confirmed opt-in | TEST WRITTEN; unexecuted | `tests/issue318-csc-control-plane.test.mjs` |
-| Storage reload and duplicate-tab | TEST WRITTEN; unexecuted | Synthetic GM adapter only; actual duplicate Chrome not tested |
+| Isolated UI and public ports authored | PASS (isolated) | #362, headless Chromium and source contracts; no assembled Worker |
+| Safe default / confirmed opt-in | PASS (isolated) | Hosted 19 control tests and 3 Chromium interaction tests |
+| Shared-settings propagation | PASS (synthetic); INCOMPLETE (Tampermonkey) | GM adapter tests pass, signed-in duplicate-tab persistence remains |
 | Versioned Worker settings ack | INCOMPLETE | Existing #311 ack uncorrelated; #359 must reconcile |
 | Full-fidelity everything-mode selector | INCOMPLETE | #311 rejects other text formats as unsupported; #359 owns reconciliation |
 | Physical GEN/COMM headers, events, durable cycle | INCOMPLETE | #359 source assembly then #319 independent readback |
-| Real Chrome popup, keyboard/screenshot, worker restart | INCOMPLETE | Built exact integrated userscript and installed Chrome |
+| Actual headless Chrome popup, focus, themes, screenshot | PASS (synthetic page) | Three screenshots artifact #12501494196; 3/3 Chromium tests |
+| Installed Tampermonkey and real Worker restart | INCOMPLETE | Requires #359 assembled candidate and operator Chrome test |
 | Exact built isolated artifact + executable targeted CI | PASS | DC #318 focused GitHub workflow after final test run; not #359 assembled code |
 | Ordinary PR CI / policy | FAIL | PR #362 policy rejects parent target; prepare/validate skipped |
 | Main and production untouched | PASS | Draft child PR; no source imported to parent |
@@ -111,11 +112,15 @@ existing recorder and category regressions, manifest/JSDoc checks, source
 version check, TypeScript no-unresolved-reference check, and exact
 userscript build/byte verification with a retained non-production artifact.
 
-Earlier verified source commit `ae2fa64f0bfebcc4efb182cd14d323b639e43262`
-passed 18/18 control tests, 3/3 real headless Chromium popup tests,
-34/34 adjacent recorder tests and a byte-verified assembled-source
-userscript.  Later checks run on changing #318 source; DO NOT reuse
-older PASS evidence without exact HEAD reruns.
+Latest completed isolated source candidate `bc822313cdda5a51111c0df9e6d4880fc1a4809c`
+passed 19/19 control tests, 3/3 real headless Chromium popup tests,
+34/34 adjacent recorder tests, TypeScript 7.0.2, and exact isolated
+userscript build/readback in workflow run #39954981350.  Artifact
+#12501454265 (1,280,772 bytes) SHA-256:
+`4bd960eb58ab1891794d4a68553494acd65e0fb7e88584d1dede7272c3f80800`.
+Three light/dark screenshot artifact #12501494196.  These attest
+standalone source, not integrated execution.  All new commits need
+fresh exact-HEAD reruns.
 
 The #318 standalone workflow does not modify repository CI policy,
 the parent branch, or main.  Its PASS does NOT imply functional
