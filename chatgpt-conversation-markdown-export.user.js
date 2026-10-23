@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         ChatGPT Conversation Markdown Recorder
 // @namespace    https://chatgpt.com/
-// @version      1.11.14-issue.298.7
+// @version      1.11.14-issue.298.8
 // @description  Exports the current ChatGPT conversation directly from the Conversation API as Markdown or JSONL.
 // @match        https://chatgpt.com/*
 // @match        https://chat.openai.com/*
@@ -6774,6 +6774,8 @@ async function loadAgent(id, { loadModule, context = {} } = {}) {
     if (typeof loaded?.registry?.activityState === 'function' &&
         typeof loaded?.registry?.observeActivity === 'function') {
       agentTimingBindActivityObserver(loaded.registry, chatGPTAgent);
+      // Retire only the DC subscription; Core owns agent disposal.
+      window.addEventListener('pagehide', agentTimingUnbindActivityObserver, { once: true });
     } else {
       logDiagnostic('warnings', 'aicc-last-activity-v1-unavailable', {
         core_version: CORE_VERSION
