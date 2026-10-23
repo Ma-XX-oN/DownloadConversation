@@ -108,6 +108,11 @@ test('GitHub runner projection and branch ancestry are repository facts', async 
         parent: 'issue-162-ci-request-gating',
         allowedDependencies: [],
         integrationTarget: 'main'
+      },
+      'issue-298-last-aicc-render': {
+        parent: 'issue-360-last-integration',
+        allowedDependencies: [],
+        integrationTarget: 'issue-360-last-integration'
       }
     },
     patterns: [{
