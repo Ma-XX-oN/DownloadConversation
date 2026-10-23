@@ -260,9 +260,9 @@
      */
     function bindSinks(ports) {
       if (!ports || !ports.gen || !ports.comm ||
-          !['beginSegment', 'writeCycle'].every(key =>
+          !['beginSegment', 'writeCycle', 'hasCycle'].every(key =>
             typeof ports.gen[key] === 'function') ||
-          !['drain', 'beginKeyBoundary', 'writeCycle'].every(key =>
+          !['drain', 'beginKeyBoundary', 'writeCycle', 'hasCycle'].every(key =>
             typeof ports.comm[key] === 'function')) {
         throw new Error('csc-sinks-invalid');
       }
@@ -312,6 +312,13 @@
             !Number.isSafeInteger(event.epoch) ||
             Date.parse(event.key_restart) !== event.occurred_at_ms) {
           throw new Error('csc-cycle-invalid');
+        }
+        // Historical cycles are not replayed into a newer immutable fragment.
+        const commExists = await comm.hasCycle(event.id);
+        const genExists = await gen.hasCycle(event.id);
+        if (commExists === true && genExists === true) continue;
+        if (commExists !== false || genExists !== false) {
+          throw new Error('csc-cycle-recovery-requires-parent');
         }
         const header = Object.freeze({
           version, key_restart: event.key_restart
