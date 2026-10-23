@@ -48,6 +48,7 @@ const ordinaryStages = [
     'tests/issue347-favicon-source-preview.test.mjs']],
   ['DC #318 CSC controls and key-cycle regression', nodeCommand, ['--test',
     'tests/issue318-csc-control-plane.test.mjs',
+    'tests/issue318-csc-gm-cross-tab.test.mjs',
     'tests/issue318-csc-popup-chromium.test.mjs']],
   ['CI test inventory regression', nodeCommand, ['--test', 'tests/ci-test-inventory.test.mjs']],
   ['Actions policy regression', nodeCommand, ['--test', 'tests/actions-policy.test.mjs']],
