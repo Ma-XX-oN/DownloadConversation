@@ -14,7 +14,20 @@ test('DC canonical agent bridge binds exact AICC browser loader registry through
   const observed = [];
   const diagnostics = [];
   let providerCreation = null;
+  let onPagehide = null;
+  let retiredSubscriptions = 0;
   const context = vm.createContext({
+    window: {
+      addEventListener(type, listener, options) {
+        assert.equal(type, 'pagehide');
+        assert.equal(options.once, true);
+        assert.equal(onPagehide, null);
+        onPagehide = listener;
+      }
+    },
+    agentTimingUnbindActivityObserver() {
+      retiredSubscriptions += 1;
+    },
     core,
     CORE_VERSION: core.getVersion(),
     assert(condition, message) {
@@ -82,4 +95,7 @@ test('DC canonical agent bridge binds exact AICC browser loader registry through
   assert.equal(observed.length, 1, 'repeat ensure must not duplicate subscription');
   assert.ok(diagnostics.some(item => item.event === 'agent-plugin-ready'));
   assert.equal(diagnostics.some(item => item.event === 'aicc-last-activity-v1-unavailable'), false);
+  assert.equal(typeof onPagehide, 'function');
+  onPagehide();
+  assert.equal(retiredSubscriptions, 1, 'DC must unsubscribe at page teardown');
 });
