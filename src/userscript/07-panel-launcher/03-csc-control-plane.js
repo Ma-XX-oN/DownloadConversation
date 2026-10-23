@@ -98,7 +98,8 @@
       return Object.freeze({
         settings, settings_state: state, settings_applied: applied,
         key_state: keyState, key_restart: publicKey, expires_at_ms: expiry,
-        epoch, error: lastError
+        epoch, error: lastError,
+        can_randomize: applied && keyState === 'open' && Boolean(worker && gen && comm)
       });
     }
     /**
@@ -235,7 +236,8 @@
       }
       return schedule(async () => {
         await init();
-        await pause();
+        try { await pause(); }
+        catch { return reject('csc-settings-pause-failed'); }
         try {
           await store.write(options);
         } catch {
@@ -278,6 +280,7 @@
       }
       gen = ports.gen;
       comm = ports.comm;
+      notify();
     }
     /** Obtain only the authoritative nonsecret producer identity. */
     /**
@@ -379,8 +382,9 @@
         }
         return admission;
       } catch (error) {
-        await service.complete(admission.token);
-        await pause().catch(() => {});
+        try { await service.complete(admission.token); }
+        catch { return reject('csc-admission-release-failed'); }
+        finally { await pause().catch(() => {}); }
         throw error;
       }
     }
@@ -411,7 +415,7 @@
      */
     async function randomize(confirmed) {
       if (confirmed !== true) throw new Error('csc-randomize-unconfirmed');
-      if (!service || !worker || !gen || !comm) {
+      if (!service || !worker || !gen || !comm || !applied) {
         throw new Error('csc-randomize-ports-not-ready');
       }
       return schedule(async () => {
