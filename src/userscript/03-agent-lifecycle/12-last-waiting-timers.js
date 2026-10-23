@@ -51,6 +51,7 @@
   let agentTimingActivityState = null;
   /** Registry and instance owning the current AICC observer subscription. */
   let agentTimingActivityRegistry = null;
+  /** Registered Core agent instance whose retained activity is observed. */
   let agentTimingActivityAgent = null;
   /** Independent idempotent unsubscribe from the current AICC subscription. */
   let agentTimingActivityUnsubscribe = null;
