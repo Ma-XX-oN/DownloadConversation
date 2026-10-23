@@ -95,7 +95,7 @@ function fixture(raw = null) {
   });
   return { control, store, worker, gen, comm, keys, calls, writes,
     committed, get saved() { return saved; },
-    deliver: next => subscribed(next),
+    deliver: next => { saved = next; subscribed(next); },
     exports: context.testExports };
 }
 function fullOptions() {
