@@ -33,3 +33,17 @@ jobs:
         run: node scripts/check-development-version.mjs --branch issue-318-csc-controls
       - name: Validate manifest and documentation contracts
         run: node scripts/check-jsdoc.mjs
+      - name: Build exact candidate to temporary artifact
+        run: |
+          node scripts/build-userscript.mjs --output "$RUNNER_TEMP/dc318.user.js"
+          node scripts/verify-userscript-artifact.mjs "$RUNNER_TEMP/dc318.user.js"
+          node --check "$RUNNER_TEMP/dc318.user.js"
+          sha256sum "$RUNNER_TEMP/dc318.user.js"
+      - name: Retain verified isolated candidate
+        uses: actions/upload-artifact@v4
+        with:
+          name: dc318-isolated-userscript
+          path: ${{ runner.temp }}/dc318.user.js
+          if-no-files-found: error
+          retention-days: 3
+
