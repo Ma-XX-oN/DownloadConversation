@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
-import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { mkdtempSync, readFileSync, rmSync, statSync, writeFileSync } from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
@@ -110,6 +110,19 @@ function run(width, theme) {
     assert.equal(chrome.status,0,String(chrome.stderr).slice(-2000));
     const match=chrome.stdout.match(/<pre id="result">([^<]+)<\/pre>/);
     assert.ok(match&&match[1]!=='PENDING','Actual Chromium script did not complete');
+    if(process.env.GITHUB_WORKSPACE){
+      const destination=path.join(process.env.GITHUB_WORKSPACE,
+        'dc318-popup-'+theme+'-'+width+'.png');
+      const shot=spawnSync(binary,[
+        '--headless=new','--no-sandbox','--disable-gpu',
+        '--disable-dev-shm-usage','--no-first-run',
+        '--virtual-time-budget=4000','--window-size='+width+',800',
+        '--user-data-dir='+path.join(dir,'screenshot-profile'),
+        '--screenshot='+destination,'file://'+file
+      ],{encoding:'utf8',timeout:25000,maxBuffer:4*1024*1024});
+      assert.equal(shot.status,0,String(shot.stderr).slice(-1200));
+      assert.ok(statSync(destination).size>1024,'Chromium visual evidence missing');
+    }
     return JSON.parse(match[1].replace(/&quot;/g,'"').replace(/&amp;/g,'&'));
   } finally {
     rmSync(dir,{recursive:true,force:true});
