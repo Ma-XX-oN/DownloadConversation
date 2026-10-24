@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         ChatGPT Conversation Markdown Recorder
 // @namespace    https://chatgpt.com/
-// @version      1.11.7-issue.127.22
+// @version      1.11.7-issue.127.24
 // @description  Exports the current ChatGPT conversation directly from the Conversation API as Markdown or JSONL.
 // @match        https://chatgpt.com/*
 // @match        https://chat.openai.com/*
@@ -11578,6 +11578,89 @@ globalThis.__dcCompressor = {
     cscFanOut(stamp, metadata, null, data);
   }
   // END #309 canonical CSC ingress.
+  // DC #297 test-only witness: keep only scalar capture provenance.
+  /** #297-only aicc127EarlyEvents state; no private payload is persisted. */
+  const aicc127EarlyEvents = [];
+  /** #297-only aicc127EarlyRequests state; no private payload is persisted. */
+  const aicc127EarlyRequests = new Map();
+  /** #297-only aicc127WitnessSink state; no private payload is persisted. */
+  let aicc127WitnessSink = null;
+  /** #297-only aicc127EarlyRoute state; no private payload is persisted. */
+  let aicc127EarlyRoute = null;
+
+  /**
+   * aicc127Route Identity for the #297 test-only observer.
+   * @param {string} url - Input to this read-only witness operation.
+   * @returns {string|null} Observer operation result.
+   */
+  function aicc127RouteIdentity(url) {
+    try {
+      const parsed = new URL(url, location.href);
+      if (parsed.origin !== location.origin) return null;
+      const parts = parsed.pathname.split('/').filter(Boolean);
+      const c = parts.lastIndexOf('c');
+      return c >= 0 && typeof parts[c + 1] === 'string'
+        ? parts[c + 1] : null;
+    } catch { return null; }
+  }
+
+  /**
+   * aicc127Endpoint Kind for the #297 test-only observer.
+   * @param {string} url - Input to this read-only witness operation.
+   * @param {string} method - Input to this read-only witness operation.
+   * @returns {string|null} Observer operation result.
+   */
+  function aicc127EndpointKind(url, method) {
+    if (method !== 'GET') return null;
+    try {
+      const parsed = new URL(url, location.href);
+      if (parsed.origin !== location.origin) return null;
+      if (/^\/backend-api\/conversations?\/[^/]+\/?$/.test(parsed.pathname))
+        return 'conversation';
+      if (/^\/backend-api\/gizmos\/g-p-[^/]+\/?$/.test(parsed.pathname))
+        return 'project';
+    } catch {}
+    return null;
+  }
+
+  /**
+   * aicc127Witness Captured for the #297 test-only observer.
+   * @param {Object} envelope - Input to this read-only witness operation.
+   * @returns {void} Observer operation result.
+   */
+  function aicc127WitnessCaptured(envelope) {
+    const navigation = envelope.transport === 'navigation';
+    if (navigation) aicc127EarlyRoute = aicc127RouteIdentity(envelope.url);
+    let request = null;
+    let kind = null;
+    if (!navigation && envelope.direction === 'request') {
+      kind = aicc127EndpointKind(envelope.request_url ?? envelope.url, envelope.method ?? 'GET');
+      if (kind) aicc127EarlyRequests.set(envelope.connection_id, {
+        kind, route: aicc127EarlyRoute, sequence: envelope.network_sequence
+      });
+    } else if (!navigation && envelope.direction === 'response') {
+      request = aicc127EarlyRequests.get(envelope.connection_id);
+      kind = request?.kind ?? null;
+    }
+    if (!navigation && !kind) return;
+    const record = Object.freeze({
+      direction: navigation ? 'navigation' : envelope.direction,
+      kind: navigation ? 'navigation' : kind,
+      route: navigation ? aicc127EarlyRoute : request?.route ?? aicc127EarlyRoute,
+      network_sequence: envelope.network_sequence,
+      request_sequence: request?.sequence ?? null,
+      connection_id: envelope.connection_id,
+      capture_order: envelope.capture_order,
+      captured_at_epoch_ms: envelope.captured_at_epoch_ms,
+      captured_at_mono_ms: envelope.captured_at_mono_ms,
+      page_instance_id: envelope.page_instance_id
+    });
+    aicc127EarlyEvents.push(record);
+    if (aicc127EarlyEvents.length > 300) aicc127EarlyEvents.shift();
+    aicc127WitnessSink?.(record);
+    if (!navigation && envelope.direction === 'response')
+      aicc127EarlyRequests.delete(envelope.connection_id);
+  }
   // BEGIN #310 independent same-page plugin backlog.
   /** Original plugin-owned events, never derived from sanitized COMM records. */
   const cscPluginBacklog = [];
@@ -11631,7 +11714,7 @@ globalThis.__dcCompressor = {
       return;
     }
     cscPluginLastEnqueuedOrder = order;
-    try { aicc127WitnessCaptured(event.envelope); } catch (error) {
+    try { if (typeof aicc127WitnessCaptured === 'function') aicc127WitnessCaptured(event.envelope); } catch (error) {
       logDiagnostic('warnings', 'aicc127-witness-capture-failed', { stage: 'capture' });
     }
     cscPluginBacklog.push({ event, parsed: false, body: null });
@@ -11695,7 +11778,7 @@ globalThis.__dcCompressor = {
   async function cscPluginQueueDispatch(item, host, generation) {
     const { envelope: e, source_incomplete: incomplete } = item.event;
     if (e.transport === 'navigation') {
-      try { aicc127WitnessNavigationDispatch(e); } catch (error) {
+      try { if (typeof aicc127WitnessNavigationDispatch === 'function') aicc127WitnessNavigationDispatch(e); } catch (error) {
         logDiagnostic('warnings', 'aicc127-witness-navigation-failed', { stage: 'navigation' });
       }
       return host.navigation({ url: e.url }) ? 'accepted' : 'rejected';
@@ -11737,7 +11820,7 @@ globalThis.__dcCompressor = {
       }
       // #306 host.response is void on successful delivery. An exception is a
       // retryable failure; explicit false is rejection, undefined is an ACK.
-      try { aicc127WitnessParsed(request.envelope, e, body); } catch (error) {
+      try { if (typeof aicc127WitnessParsed === 'function') aicc127WitnessParsed(request.envelope, e, body); } catch (error) {
         logDiagnostic('warnings', 'aicc127-witness-parsed-failed', { stage: 'response' });
       }
       const result = host.response({
@@ -11892,69 +11975,6 @@ globalThis.__dcCompressor = {
   // Runs before network interception at document-start; no page COMM queue.
   cscBindPluginIngress(cscPluginQueuePublish);
   // END #310 independent same-page plugin backlog.
-  // DC #297 test-only witness: keep only scalar capture provenance.
-  const aicc127EarlyEvents = [];
-  const aicc127EarlyRequests = new Map();
-  let aicc127WitnessSink = null;
-  let aicc127EarlyRoute = null;
-
-  function aicc127RouteIdentity(url) {
-    try {
-      const parsed = new URL(url, location.href);
-      if (parsed.origin !== location.origin) return null;
-      const parts = parsed.pathname.split('/').filter(Boolean);
-      const c = parts.lastIndexOf('c');
-      return c >= 0 && typeof parts[c + 1] === 'string'
-        ? parts[c + 1] : null;
-    } catch { return null; }
-  }
-
-  function aicc127EndpointKind(url, method) {
-    if (method !== 'GET') return null;
-    try {
-      const parsed = new URL(url, location.href);
-      if (parsed.origin !== location.origin) return null;
-      if (/^\/backend-api\/conversations?\/[^/]+\/?$/.test(parsed.pathname))
-        return 'conversation';
-      if (/^\/backend-api\/gizmos\/g-p-[^/]+\/?$/.test(parsed.pathname))
-        return 'project';
-    } catch {}
-    return null;
-  }
-
-  function aicc127WitnessCaptured(envelope) {
-    const navigation = envelope.transport === 'navigation';
-    if (navigation) aicc127EarlyRoute = aicc127RouteIdentity(envelope.url);
-    let request = null;
-    let kind = null;
-    if (!navigation && envelope.direction === 'request') {
-      kind = aicc127EndpointKind(envelope.request_url ?? envelope.url, envelope.method ?? 'GET');
-      if (kind) aicc127EarlyRequests.set(envelope.connection_id, {
-        kind, route: aicc127EarlyRoute, sequence: envelope.network_sequence
-      });
-    } else if (!navigation && envelope.direction === 'response') {
-      request = aicc127EarlyRequests.get(envelope.connection_id);
-      kind = request?.kind ?? null;
-    }
-    if (!navigation && !kind) return;
-    const record = Object.freeze({
-      direction: navigation ? 'navigation' : envelope.direction,
-      kind: navigation ? 'navigation' : kind,
-      route: navigation ? aicc127EarlyRoute : request?.route ?? aicc127EarlyRoute,
-      network_sequence: envelope.network_sequence,
-      request_sequence: request?.sequence ?? null,
-      connection_id: envelope.connection_id,
-      capture_order: envelope.capture_order,
-      captured_at_epoch_ms: envelope.captured_at_epoch_ms,
-      captured_at_mono_ms: envelope.captured_at_mono_ms,
-      page_instance_id: envelope.page_instance_id
-    });
-    aicc127EarlyEvents.push(record);
-    if (aicc127EarlyEvents.length > 300) aicc127EarlyEvents.shift();
-    aicc127WitnessSink?.(record);
-    if (!navigation && envelope.direction === 'response')
-      aicc127EarlyRequests.delete(envelope.connection_id);
-  }
 
   /** Current document's early provider-neutral URL observer; queue outlives host. */
   let cscEarlyNavigationDisconnect = null;
@@ -21391,16 +21411,31 @@ Image elapsed: ${formatDuration(imageElapsed)} — Completed: ${imageCompleted}/
     throw new Error('CSC dual-clone witness FAIL: ' + failures.join(' | '));
   }
   // #297 TEST-ONLY. The #309/#310 host and queue remain sole owners.
+  /** #297-only AICC127_ARMED_KEY state; no private payload is persisted. */
   const AICC127_ARMED_KEY = 'dc-issue127-live-armed';
+  /** #297-only AICC127_EVIDENCE_KEY state; no private payload is persisted. */
   const AICC127_EVIDENCE_KEY = 'dc-issue127-live-observations-v2';
+  /** #297-only AICC127_NAV_KEY state; no private payload is persisted. */
   const AICC127_NAV_KEY = 'dc-issue127-live-nav-v2';
+  /** #297-only AICC127_PROVIDER_SHA state; no private payload is persisted. */
   const AICC127_PROVIDER_SHA = 'db7e3450aac94eb2990fba0de54d090e377dafa3';
+  /** #297-only AICC127_PROVIDER_BLOB state; no private payload is persisted. */
   const AICC127_PROVIDER_BLOB = 'c731721005aefbc14a61bfc97270d7270aa80ea0';
+  /** #297-only AICC127_CORE_SHA state; no private payload is persisted. */
   const AICC127_CORE_SHA = '80b3e1354005e381c4fc1a81a26be3c45b45dd30';
+  /** #297-only AICC127_SOURCE_SHA state; no private payload is persisted. */
   const AICC127_SOURCE_SHA = 'bff52f9996365e996e3dbe1a56b0c5fcb7a231b2';
+  /** #297-only aicc127Runtime state; no private payload is persisted. */
   let aicc127Runtime = null;
+  /** #297-only aicc127StartPending state; no private payload is persisted. */
   let aicc127StartPending = null;
 
+  /**
+   * aicc127Fingerprint for the #297 test-only observer.
+   * @param {string} value - Input to this read-only witness operation.
+   * @param {string} salt - Input to this read-only witness operation.
+   * @returns {string} Observer operation result.
+   */
   function aicc127Fingerprint(value, salt) {
     let hash = 2166136261;
     for (const char of salt + String(value ?? ''))
@@ -21408,6 +21443,10 @@ Image elapsed: ${formatDuration(imageElapsed)} — Completed: ${imageCompleted}/
     return (hash >>> 0).toString(16);
   }
 
+  /**
+   * aicc127Checkpoint for the #297 test-only observer.
+   * @returns {Object} Observer operation result.
+   */
   function aicc127Checkpoint() {
     try {
       const prior = JSON.parse(sessionStorage.getItem(AICC127_NAV_KEY) || 'null');
@@ -21419,11 +21458,19 @@ Image elapsed: ${formatDuration(imageElapsed)} — Completed: ${imageCompleted}/
       steps: [], reload_count: 0, page: null };
   }
 
+  /**
+   * aicc127Public Step for the #297 test-only observer.
+   * @param {Object} step - Input to this read-only witness operation.
+   * @returns {Object} Observer operation result.
+   */
   function aicc127PublicStep(step) {
     return {
       slot: step.slot, first_capture_order: step.first_capture_order,
       first_capture_epoch_ms: step.first_capture_epoch_ms,
+      first_capture_mono_ms: step.first_capture_mono_ms,
       last_capture_order: step.last_capture_order,
+      last_capture_epoch_ms: step.last_capture_epoch_ms,
+      last_capture_mono_ms: step.last_capture_mono_ms,
       conversation_requests: step.conversation_requests || 0,
       conversation_responses: step.conversation_responses || 0,
       observer_updates: step.observer_updates || 0,
@@ -21443,6 +21490,10 @@ Image elapsed: ${formatDuration(imageElapsed)} — Completed: ${imageCompleted}/
     };
   }
 
+  /**
+   * aicc127Save for the #297 test-only observer.
+   * @returns {void} Observer operation result.
+   */
   function aicc127Save() {
     const s = aicc127Runtime;
     if (!s) return;
@@ -21455,6 +21506,11 @@ Image elapsed: ${formatDuration(imageElapsed)} — Completed: ${imageCompleted}/
     } catch {}
   }
 
+  /**
+   * aicc127Group One for the #297 test-only observer.
+   * @param {Object} step - Input to this read-only witness operation.
+   * @returns {void} Observer operation result.
+   */
   function aicc127GroupOne(step) {
     if (typeof recordingGroupState !== 'function') return;
     const group = recordingGroupState();
@@ -21462,12 +21518,18 @@ Image elapsed: ${formatDuration(imageElapsed)} — Completed: ${imageCompleted}/
     step.group_one_ready = group.ready === true;
     if (group.enabled && typeof group.uuid === 'string') {
       const key = aicc127Fingerprint(group.uuid, aicc127Runtime.nav.salt);
-      if (aicc127Runtime.groupKey)
-        step.group_one_same = aicc127Runtime.groupKey === key;
-      aicc127Runtime.groupKey = key;
+      if (aicc127Runtime.nav.group_key)
+        step.group_one_same = aicc127Runtime.nav.group_key === key;
+      aicc127Runtime.nav.group_key = key;
     }
   }
 
+  /**
+   * aicc127Visit for the #297 test-only observer.
+   * @param {string} route - Input to this read-only witness operation.
+   * @param {Object} event - Input to this read-only witness operation.
+   * @returns {Object|null} Observer operation result.
+   */
   function aicc127Visit(route, event) {
     if (!route || !aicc127Runtime) return null;
     const s = aicc127Runtime, nav = s.nav;
@@ -21479,7 +21541,10 @@ Image elapsed: ${formatDuration(imageElapsed)} — Completed: ${imageCompleted}/
         : key === nav.steps[0].key ? 'A-return' : 'other';
     const step = { key, slot, first_capture_order: event.capture_order,
       first_capture_epoch_ms: event.captured_at_epoch_ms,
-      last_capture_order: event.capture_order, conversation_requests: 0,
+      first_capture_mono_ms: event.captured_at_mono_ms,
+      last_capture_order: event.capture_order,
+      last_capture_epoch_ms: event.captured_at_epoch_ms,
+      last_capture_mono_ms: event.captured_at_mono_ms, conversation_requests: 0,
       conversation_responses: 0, observer_updates: 0,
       navigation_dispatched: false, backend_observed: false,
       observer_matches_backend: false, visible_conversation_match: null,
@@ -21491,6 +21556,11 @@ Image elapsed: ${formatDuration(imageElapsed)} — Completed: ${imageCompleted}/
     return step;
   }
 
+  /**
+   * aicc127On Ingress for the #297 test-only observer.
+   * @param {Object} event - Input to this read-only witness operation.
+   * @returns {void} Observer operation result.
+   */
   function aicc127OnIngress(event) {
     const s = aicc127Runtime;
     if (!s) return;
@@ -21507,6 +21577,8 @@ Image elapsed: ${formatDuration(imageElapsed)} — Completed: ${imageCompleted}/
       && entry.first_capture_order <= event.capture_order).at(-1) ?? step;
     if (!selected) return;
     selected.last_capture_order = event.capture_order;
+    selected.last_capture_epoch_ms = event.captured_at_epoch_ms;
+    selected.last_capture_mono_ms = event.captured_at_mono_ms;
     if (event.direction === 'request') {
       s.requests.set(event.connection_id, { step: selected, kind: event.kind });
       if (event.kind === 'conversation') selected.conversation_requests++;
@@ -21520,6 +21592,11 @@ Image elapsed: ${formatDuration(imageElapsed)} — Completed: ${imageCompleted}/
     aicc127Save();
   }
 
+  /**
+   * aicc127Visible for the #297 test-only observer.
+   * @param {Object} subject - Input to this read-only witness operation.
+   * @returns {Object} Observer operation result.
+   */
   function aicc127Visible(subject) {
     if (typeof document === 'undefined') return { conversation: null, project: null };
     const id = aicc127EarlyRoute;
@@ -21529,6 +21606,11 @@ Image elapsed: ${formatDuration(imageElapsed)} — Completed: ${imageCompleted}/
           && anchor.getAttribute('aria-current') === 'page';
       } catch { return false; }
     });
+    /**
+     * Normalizes labels for visual comparison only.
+     * @param {unknown} value - A visible DOM label.
+     * @returns {string} Normalized label.
+     */
     const normal = value => String(value || '').trim().toLocaleLowerCase();
     const title = normal(document.title);
     const sidebarTitle = normal(sidebar?.textContent);
@@ -21547,6 +21629,10 @@ Image elapsed: ${formatDuration(imageElapsed)} — Completed: ${imageCompleted}/
       ? !project : !project || !observedProject ? null : project === observedProject };
   }
 
+  /**
+   * aicc127Refresh for the #297 test-only observer.
+   * @returns {void} Observer operation result.
+   */
   function aicc127Refresh() {
     const s = aicc127Runtime, step = s?.nav.steps.at(-1);
     if (!step || !s.observed) return;
@@ -21582,6 +21668,11 @@ Image elapsed: ${formatDuration(imageElapsed)} — Completed: ${imageCompleted}/
     aicc127Save();
   }
 
+  /**
+   * aicc127Attach Agent Early for the #297 test-only observer.
+   * @param {Object} agent - Input to this read-only witness operation.
+   * @returns {void} Observer operation result.
+   */
   function aicc127AttachAgentEarly(agent) {
     if (sessionStorage.getItem(AICC127_ARMED_KEY) !== 'true') return;
     const s = aicc127Prepare();
@@ -21598,11 +21689,18 @@ Image elapsed: ${formatDuration(imageElapsed)} — Completed: ${imageCompleted}/
     }, 'subject-identification');
   }
 
+  /**
+   * aicc127Prepare for the #297 test-only observer.
+   * @returns {Object} Observer operation result.
+   */
   function aicc127Prepare() {
     if (aicc127Runtime) return aicc127Runtime;
     const nav = aicc127Checkpoint();
     const resumed = nav.page && nav.page !== cscPageInstanceId;
-    if (resumed) nav.reload_count++;
+    if (resumed) {
+      nav.reload_count++;
+      if (nav.steps.length) nav.steps.at(-1).navigation_dispatched = false;
+    }
     nav.page = cscPageInstanceId;
     let evidence = null;
     try {
@@ -21623,6 +21721,10 @@ Image elapsed: ${formatDuration(imageElapsed)} — Completed: ${imageCompleted}/
     return s;
   }
 
+  /**
+   * aicc127Start for the #297 test-only observer.
+   * @returns {Promise<Object>} Observer operation result.
+   */
   async function aicc127Start() {
     sessionStorage.setItem(AICC127_ARMED_KEY, 'true');
     aicc127Prepare();
@@ -21645,6 +21747,11 @@ Image elapsed: ${formatDuration(imageElapsed)} — Completed: ${imageCompleted}/
     finally { aicc127StartPending = null; }
   }
 
+  /**
+   * aicc127Witness Navigation Dispatch for the #297 test-only observer.
+   * @param {Object} event - Input to this read-only witness operation.
+   * @returns {void} Observer operation result.
+   */
   function aicc127WitnessNavigationDispatch(event) {
     const s = aicc127Runtime;
     if (!s) return;
@@ -21657,6 +21764,13 @@ Image elapsed: ${formatDuration(imageElapsed)} — Completed: ${imageCompleted}/
     aicc127Save();
   }
 
+  /**
+   * aicc127Witness Parsed for the #297 test-only observer.
+   * @param {Object} request - Input to this read-only witness operation.
+   * @param {Object} response - Input to this read-only witness operation.
+   * @param {Object} body - Input to this read-only witness operation.
+   * @returns {void} Observer operation result.
+   */
   function aicc127WitnessParsed(request, response, body) {
     const s = aicc127Runtime;
     if (!s || !body || typeof body !== 'object' || Array.isArray(body)) return;
@@ -21691,8 +21805,21 @@ Image elapsed: ${formatDuration(imageElapsed)} — Completed: ${imageCompleted}/
     aicc127Save();
   }
 
+  /**
+   * aicc127Incomplete for the #297 test-only observer.
+   * @param {string} detail - Input to this read-only witness operation.
+   * @returns {Object} Observer operation result.
+   */
   function aicc127Incomplete(detail) { return { status: 'INCOMPLETE', detail }; }
+  /**
+   * test Aicc127Staged Artifact for the #297 test-only observer.
+   * @returns {Promise<void>} Observer operation result.
+   */
   async function testAicc127StagedArtifact() { await aicc127Start(); }
+  /**
+   * test Aicc127Live Project for the #297 test-only observer.
+   * @returns {Promise<Object|undefined>} Observer operation result.
+   */
   async function testAicc127LiveProject() {
     const s = await aicc127Start();
     return s.nav.steps.some(step => step.backend_observed &&
@@ -21700,6 +21827,10 @@ Image elapsed: ${formatDuration(imageElapsed)} — Completed: ${imageCompleted}/
       step.visible_project_match === true) ? undefined :
       aicc127Incomplete('Await genuine project backend, actual Core publication and matching breadcrumb.');
   }
+  /**
+   * test Aicc127Live Standalone for the #297 test-only observer.
+   * @returns {Promise<Object|undefined>} Observer operation result.
+   */
   async function testAicc127LiveStandalone() {
     const s = await aicc127Start();
     return s.nav.steps.some(step => step.backend_observed &&
@@ -21707,6 +21838,10 @@ Image elapsed: ${formatDuration(imageElapsed)} — Completed: ${imageCompleted}/
       step.visible_project_match === true) ? undefined :
       aicc127Incomplete('Await backend explicit gizmo_id:null and Core project.status=none.');
   }
+  /**
+   * test Aicc127Navigation for the #297 test-only observer.
+   * @returns {Promise<Object|undefined>} Observer operation result.
+   */
   async function testAicc127Navigation() {
     const s = await aicc127Start(), steps = s.nav.steps;
     const [a, b, restored] = steps;
@@ -21723,27 +21858,43 @@ Image elapsed: ${formatDuration(imageElapsed)} — Completed: ${imageCompleted}/
     return valid && initialAndB && cacheOnly && observer ? undefined :
       aicc127Incomplete('Navigate backend-verified A -> distinct B -> A; A return must have zero conversation traffic and a real observer callback.');
   }
+  /**
+   * test Aicc127Stale Response for the #297 test-only observer.
+   * @returns {Promise<Object|undefined>} Observer operation result.
+   */
   async function testAicc127StaleResponse() {
     const s = await aicc127Start();
     return s.nav.steps.some(step => step.stale_responses > 0) &&
       s.nav.steps.at(-1)?.observer_matches_backend ? undefined :
       aicc127Incomplete('Await actual late prior-route response and unaffected current Core identity.');
   }
+  /**
+   * test Aicc127Reload Rebind for the #297 test-only observer.
+   * @returns {Promise<Object|undefined>} Observer operation result.
+   */
   async function testAicc127ReloadRebind() {
     const s = await aicc127Start();
     return s.nav.reload_count > 0 && s.callbacks > 0 && s.unsubscribe &&
       chatGPTSubjectHost ? undefined :
       aicc127Incomplete('Arm Test, reload same tab, confirm the shared host and actual observer callback.');
   }
+  /**
+   * test Aicc127Group One for the #297 test-only observer.
+   * @returns {Promise<Object|undefined>} Observer operation result.
+   */
   async function testAicc127GroupOne() {
     const s = await aicc127Start();
     const step = s.nav.steps.at(-1);
     aicc127GroupOne(step || {});
     aicc127Save();
     return step?.group_one_enabled && step.group_one_ready &&
-      step.group_one_same !== false ? undefined :
+      (s.nav.reload_count === 0 || step.group_one_same === true) ? undefined :
       aicc127Incomplete('Enable the 1 checkbox, await recording-group ownership and rerun.');
   }
+  /**
+   * aicc127Export Evidence for the #297 test-only observer.
+   * @returns {void} Observer operation result.
+   */
   function aicc127ExportEvidence() {
     const s = aicc127Runtime;
     if (!s) return;
