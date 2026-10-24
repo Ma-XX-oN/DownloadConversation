@@ -51,7 +51,7 @@
       return;
     }
     cscPluginLastEnqueuedOrder = order;
-    try { aicc127WitnessCaptured(event.envelope); } catch (error) {
+    try { if (typeof aicc127WitnessCaptured === 'function') aicc127WitnessCaptured(event.envelope); } catch (error) {
       logDiagnostic('warnings', 'aicc127-witness-capture-failed', { stage: 'capture' });
     }
     cscPluginBacklog.push({ event, parsed: false, body: null });
@@ -115,7 +115,7 @@
   async function cscPluginQueueDispatch(item, host, generation) {
     const { envelope: e, source_incomplete: incomplete } = item.event;
     if (e.transport === 'navigation') {
-      try { aicc127WitnessNavigationDispatch(e); } catch (error) {
+      try { if (typeof aicc127WitnessNavigationDispatch === 'function') aicc127WitnessNavigationDispatch(e); } catch (error) {
         logDiagnostic('warnings', 'aicc127-witness-navigation-failed', { stage: 'navigation' });
       }
       return host.navigation({ url: e.url }) ? 'accepted' : 'rejected';
@@ -157,7 +157,7 @@
       }
       // #306 host.response is void on successful delivery. An exception is a
       // retryable failure; explicit false is rejection, undefined is an ACK.
-      try { aicc127WitnessParsed(request.envelope, e, body); } catch (error) {
+      try { if (typeof aicc127WitnessParsed === 'function') aicc127WitnessParsed(request.envelope, e, body); } catch (error) {
         logDiagnostic('warnings', 'aicc127-witness-parsed-failed', { stage: 'response' });
       }
       const result = host.response({

@@ -1,14 +1,29 @@
   // #297 TEST-ONLY. The #309/#310 host and queue remain sole owners.
+  /** #297-only AICC127_ARMED_KEY state; no private payload is persisted. */
   const AICC127_ARMED_KEY = 'dc-issue127-live-armed';
+  /** #297-only AICC127_EVIDENCE_KEY state; no private payload is persisted. */
   const AICC127_EVIDENCE_KEY = 'dc-issue127-live-observations-v2';
+  /** #297-only AICC127_NAV_KEY state; no private payload is persisted. */
   const AICC127_NAV_KEY = 'dc-issue127-live-nav-v2';
+  /** #297-only AICC127_PROVIDER_SHA state; no private payload is persisted. */
   const AICC127_PROVIDER_SHA = 'db7e3450aac94eb2990fba0de54d090e377dafa3';
+  /** #297-only AICC127_PROVIDER_BLOB state; no private payload is persisted. */
   const AICC127_PROVIDER_BLOB = 'c731721005aefbc14a61bfc97270d7270aa80ea0';
+  /** #297-only AICC127_CORE_SHA state; no private payload is persisted. */
   const AICC127_CORE_SHA = '80b3e1354005e381c4fc1a81a26be3c45b45dd30';
+  /** #297-only AICC127_SOURCE_SHA state; no private payload is persisted. */
   const AICC127_SOURCE_SHA = 'bff52f9996365e996e3dbe1a56b0c5fcb7a231b2';
+  /** #297-only aicc127Runtime state; no private payload is persisted. */
   let aicc127Runtime = null;
+  /** #297-only aicc127StartPending state; no private payload is persisted. */
   let aicc127StartPending = null;
 
+  /**
+   * aicc127Fingerprint for the #297 test-only observer.
+   * @param {string} value - Input to this read-only witness operation.
+   * @param {string} salt - Input to this read-only witness operation.
+   * @returns {string} Observer operation result.
+   */
   function aicc127Fingerprint(value, salt) {
     let hash = 2166136261;
     for (const char of salt + String(value ?? ''))
@@ -16,6 +31,10 @@
     return (hash >>> 0).toString(16);
   }
 
+  /**
+   * aicc127Checkpoint for the #297 test-only observer.
+   * @returns {Object} Observer operation result.
+   */
   function aicc127Checkpoint() {
     try {
       const prior = JSON.parse(sessionStorage.getItem(AICC127_NAV_KEY) || 'null');
@@ -27,6 +46,11 @@
       steps: [], reload_count: 0, page: null };
   }
 
+  /**
+   * aicc127Public Step for the #297 test-only observer.
+   * @param {Object} step - Input to this read-only witness operation.
+   * @returns {Object} Observer operation result.
+   */
   function aicc127PublicStep(step) {
     return {
       slot: step.slot, first_capture_order: step.first_capture_order,
@@ -51,6 +75,10 @@
     };
   }
 
+  /**
+   * aicc127Save for the #297 test-only observer.
+   * @returns {void} Observer operation result.
+   */
   function aicc127Save() {
     const s = aicc127Runtime;
     if (!s) return;
@@ -63,6 +91,11 @@
     } catch {}
   }
 
+  /**
+   * aicc127Group One for the #297 test-only observer.
+   * @param {Object} step - Input to this read-only witness operation.
+   * @returns {void} Observer operation result.
+   */
   function aicc127GroupOne(step) {
     if (typeof recordingGroupState !== 'function') return;
     const group = recordingGroupState();
@@ -70,12 +103,18 @@
     step.group_one_ready = group.ready === true;
     if (group.enabled && typeof group.uuid === 'string') {
       const key = aicc127Fingerprint(group.uuid, aicc127Runtime.nav.salt);
-      if (aicc127Runtime.groupKey)
-        step.group_one_same = aicc127Runtime.groupKey === key;
-      aicc127Runtime.groupKey = key;
+      if (aicc127Runtime.nav.group_key)
+        step.group_one_same = aicc127Runtime.nav.group_key === key;
+      aicc127Runtime.nav.group_key = key;
     }
   }
 
+  /**
+   * aicc127Visit for the #297 test-only observer.
+   * @param {string} route - Input to this read-only witness operation.
+   * @param {Object} event - Input to this read-only witness operation.
+   * @returns {Object|null} Observer operation result.
+   */
   function aicc127Visit(route, event) {
     if (!route || !aicc127Runtime) return null;
     const s = aicc127Runtime, nav = s.nav;
@@ -99,6 +138,11 @@
     return step;
   }
 
+  /**
+   * aicc127On Ingress for the #297 test-only observer.
+   * @param {Object} event - Input to this read-only witness operation.
+   * @returns {void} Observer operation result.
+   */
   function aicc127OnIngress(event) {
     const s = aicc127Runtime;
     if (!s) return;
@@ -128,6 +172,11 @@
     aicc127Save();
   }
 
+  /**
+   * aicc127Visible for the #297 test-only observer.
+   * @param {Object} subject - Input to this read-only witness operation.
+   * @returns {Object} Observer operation result.
+   */
   function aicc127Visible(subject) {
     if (typeof document === 'undefined') return { conversation: null, project: null };
     const id = aicc127EarlyRoute;
@@ -137,6 +186,11 @@
           && anchor.getAttribute('aria-current') === 'page';
       } catch { return false; }
     });
+    /**
+     * Normalizes labels for visual comparison only.
+     * @param {unknown} value - A visible DOM label.
+     * @returns {string} Normalized label.
+     */
     const normal = value => String(value || '').trim().toLocaleLowerCase();
     const title = normal(document.title);
     const sidebarTitle = normal(sidebar?.textContent);
@@ -155,6 +209,10 @@
       ? !project : !project || !observedProject ? null : project === observedProject };
   }
 
+  /**
+   * aicc127Refresh for the #297 test-only observer.
+   * @returns {void} Observer operation result.
+   */
   function aicc127Refresh() {
     const s = aicc127Runtime, step = s?.nav.steps.at(-1);
     if (!step || !s.observed) return;
@@ -190,189 +248,3 @@
     aicc127Save();
   }
 
-  function aicc127AttachAgentEarly(agent) {
-    if (sessionStorage.getItem(AICC127_ARMED_KEY) !== 'true') return;
-    const s = aicc127Prepare();
-    if (s.agent === agent && s.unsubscribe) return;
-    s.unsubscribe?.();
-    s.agent = agent;
-    s.unsubscribe = agent.observeState(snapshot => {
-      s.callbacks++;
-      s.observed = snapshot;
-      const step = s.nav.steps.at(-1);
-      // An initial replay before navigation dispatch does not prove restoration.
-      if (step?.navigation_dispatched) step.observer_updates++;
-      aicc127Refresh();
-    }, 'subject-identification');
-  }
-
-  function aicc127Prepare() {
-    if (aicc127Runtime) return aicc127Runtime;
-    const nav = aicc127Checkpoint();
-    const resumed = nav.page && nav.page !== cscPageInstanceId;
-    if (resumed) nav.reload_count++;
-    nav.page = cscPageInstanceId;
-    let evidence = null;
-    try {
-      evidence = JSON.parse(sessionStorage.getItem(AICC127_EVIDENCE_KEY) || 'null');
-      if (evidence?.schema !== 'aicc127-queued-witness-v2') evidence = null;
-    } catch {}
-    evidence ??= { schema: 'aicc127-queued-witness-v2',
-      source_sha: AICC127_SOURCE_SHA, core_sha: AICC127_CORE_SHA,
-      provider_sha: AICC127_PROVIDER_SHA, provider_blob_sha1: AICC127_PROVIDER_BLOB,
-      started_at: new Date().toISOString(), navigation_steps: [],
-      notes: 'No names, IDs, URLs, headers, credentials or messages exported' };
-    const s = { evidence, nav, agent: null, unsubscribe: null, callbacks: 0,
-      observed: null, requests: new Map(), groupKey: null };
-    aicc127Runtime = s;
-    aicc127WitnessSink = aicc127OnIngress;
-    for (const event of aicc127EarlyEvents) aicc127OnIngress(event);
-    aicc127Save();
-    return s;
-  }
-
-  async function aicc127Start() {
-    sessionStorage.setItem(AICC127_ARMED_KEY, 'true');
-    aicc127Prepare();
-    if (!aicc127StartPending) aicc127StartPending = (async () => {
-      const core = canonicalCore();
-      assert(core.getVersion() === '1.1.0-issue.127.22',
-        'AICC Core .127.22 is required.');
-      const descriptor = core.getAgentPluginArtifact('chatgpt-web');
-      assert(descriptor.commit === AICC127_PROVIDER_SHA &&
-        descriptor.gitBlobSha1 === AICC127_PROVIDER_BLOB,
-      'Core catalogue must pin the exact private provider artifact.');
-      const agent = await ensureChatGPTCanonicalAgent();
-      aicc127AttachAgentEarly(agent);
-      assert(agent.version().version === '0.1.0-issue.1.29',
-        'Private provider version mismatch.');
-      assert(chatGPTSubjectHost, 'No shared canonical provider host.');
-      return aicc127Runtime;
-    })();
-    try { return await aicc127StartPending; }
-    finally { aicc127StartPending = null; }
-  }
-
-  function aicc127WitnessNavigationDispatch(event) {
-    const s = aicc127Runtime;
-    if (!s) return;
-    const route = aicc127RouteIdentity(event.url);
-    const key = aicc127Fingerprint(route, s.nav.salt);
-    const step = s.nav.steps.filter(item =>
-      item.key === key && item.first_capture_order <= event.capture_order).at(-1);
-    if (!step) return;
-    step.navigation_dispatched = true;
-    aicc127Save();
-  }
-
-  function aicc127WitnessParsed(request, response, body) {
-    const s = aicc127Runtime;
-    if (!s || !body || typeof body !== 'object' || Array.isArray(body)) return;
-    const correlation = s.requests.get(request.connection_id);
-    if (!correlation || response.status !== 200) return;
-    s.requests.delete(request.connection_id);
-    const step = correlation.step, current = s.nav.steps.at(-1);
-    if (step !== current) {
-      if (current) { current.stale_responses++; aicc127Save(); }
-      return;
-    }
-    const salt = s.nav.salt;
-    if (correlation.kind === 'conversation') {
-      if (typeof body.conversation_id !== 'string' ||
-          typeof body.title !== 'string' || !Object.hasOwn(body, 'gizmo_id')) return;
-      if (aicc127Fingerprint(body.conversation_id, salt) !== step.key) return;
-      step.backend_observed = true;
-      step.reused_verified_backend = false;
-      step.backend_conversation_key = aicc127Fingerprint(body.conversation_id, salt);
-      step.backend_title_key = aicc127Fingerprint(body.title, salt);
-      step.backend_project_key = aicc127Fingerprint(body.gizmo_id, salt);
-      step.backend_explicit_gizmo_null = body.gizmo_id === null;
-      step.backend_project_membership = typeof body.gizmo_id === 'string' &&
-        body.gizmo_id.startsWith('g-p-');
-    } else if (correlation.kind === 'project'
-      && typeof body.gizmo?.id === 'string'
-      && typeof body.gizmo?.display?.name === 'string') {
-      if (aicc127Fingerprint(body.gizmo.id, salt) === step.backend_project_key)
-        step.backend_project_name_key = aicc127Fingerprint(body.gizmo.display.name, salt);
-    }
-    aicc127Refresh();
-    aicc127Save();
-  }
-
-  function aicc127Incomplete(detail) { return { status: 'INCOMPLETE', detail }; }
-  async function testAicc127StagedArtifact() { await aicc127Start(); }
-  async function testAicc127LiveProject() {
-    const s = await aicc127Start();
-    return s.nav.steps.some(step => step.backend_observed &&
-      step.backend_project_membership && step.observer_matches_backend &&
-      step.visible_project_match === true) ? undefined :
-      aicc127Incomplete('Await genuine project backend, actual Core publication and matching breadcrumb.');
-  }
-  async function testAicc127LiveStandalone() {
-    const s = await aicc127Start();
-    return s.nav.steps.some(step => step.backend_observed &&
-      step.backend_explicit_gizmo_null && step.observer_matches_backend &&
-      step.visible_project_match === true) ? undefined :
-      aicc127Incomplete('Await backend explicit gizmo_id:null and Core project.status=none.');
-  }
-  async function testAicc127Navigation() {
-    const s = await aicc127Start(), steps = s.nav.steps;
-    const [a, b, restored] = steps;
-    const valid = a?.slot === 'A' && b?.slot === 'B' &&
-      restored?.slot === 'A-return';
-    const initialAndB = a?.backend_observed && a?.observer_matches_backend &&
-      b?.backend_observed && b?.observer_matches_backend;
-    const cacheOnly = restored?.reused_verified_backend &&
-      restored.conversation_requests === 0 && restored.conversation_responses === 0;
-    const observer = restored?.navigation_dispatched && restored.observer_updates > 0 &&
-      restored.observer_matches_backend &&
-      restored.visible_conversation_match === true &&
-      restored.visible_project_match === true;
-    return valid && initialAndB && cacheOnly && observer ? undefined :
-      aicc127Incomplete('Navigate backend-verified A -> distinct B -> A; A return must have zero conversation traffic and a real observer callback.');
-  }
-  async function testAicc127StaleResponse() {
-    const s = await aicc127Start();
-    return s.nav.steps.some(step => step.stale_responses > 0) &&
-      s.nav.steps.at(-1)?.observer_matches_backend ? undefined :
-      aicc127Incomplete('Await actual late prior-route response and unaffected current Core identity.');
-  }
-  async function testAicc127ReloadRebind() {
-    const s = await aicc127Start();
-    return s.nav.reload_count > 0 && s.callbacks > 0 && s.unsubscribe &&
-      chatGPTSubjectHost ? undefined :
-      aicc127Incomplete('Arm Test, reload same tab, confirm the shared host and actual observer callback.');
-  }
-  async function testAicc127GroupOne() {
-    const s = await aicc127Start();
-    const step = s.nav.steps.at(-1);
-    aicc127GroupOne(step || {});
-    aicc127Save();
-    return step?.group_one_enabled && step.group_one_ready &&
-      step.group_one_same !== false ? undefined :
-      aicc127Incomplete('Enable the 1 checkbox, await recording-group ownership and rerun.');
-  }
-  function aicc127ExportEvidence() {
-    const s = aicc127Runtime;
-    if (!s) return;
-    aicc127Save();
-    const blob = new Blob([JSON.stringify(s.evidence, null, 2) + '\n'],
-      { type: 'application/json' });
-    const url = URL.createObjectURL(blob);
-    const a = document.createElement('a');
-    a.href = url; a.download = 'aicc127-queued-evidence.json';
-    document.body.appendChild(a); a.click(); a.remove();
-    setTimeout(() => URL.revokeObjectURL(url), 1000);
-    sessionStorage.removeItem(AICC127_ARMED_KEY);
-    s.unsubscribe?.();
-    aicc127WitnessSink = null;
-    aicc127Runtime = null;
-  }
-
-  // Reload rearm before the asynchronous host connects and #310 drains.
-  if (sessionStorage.getItem(AICC127_ARMED_KEY) === 'true') {
-    aicc127Prepare();
-    Promise.resolve().then(() => aicc127Start()).catch(error =>
-      logDiagnostic('warnings', 'aicc127-witness-rearm-failed',
-        { message: boundedDiagnosticText(errorMessage(error), 200) }));
-  }

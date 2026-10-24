@@ -1,9 +1,18 @@
   // DC #297 test-only witness: keep only scalar capture provenance.
+  /** #297-only aicc127EarlyEvents state; no private payload is persisted. */
   const aicc127EarlyEvents = [];
+  /** #297-only aicc127EarlyRequests state; no private payload is persisted. */
   const aicc127EarlyRequests = new Map();
+  /** #297-only aicc127WitnessSink state; no private payload is persisted. */
   let aicc127WitnessSink = null;
+  /** #297-only aicc127EarlyRoute state; no private payload is persisted. */
   let aicc127EarlyRoute = null;
 
+  /**
+   * aicc127Route Identity for the #297 test-only observer.
+   * @param {string} url - Input to this read-only witness operation.
+   * @returns {string|null} Observer operation result.
+   */
   function aicc127RouteIdentity(url) {
     try {
       const parsed = new URL(url, location.href);
@@ -15,6 +24,12 @@
     } catch { return null; }
   }
 
+  /**
+   * aicc127Endpoint Kind for the #297 test-only observer.
+   * @param {string} url - Input to this read-only witness operation.
+   * @param {string} method - Input to this read-only witness operation.
+   * @returns {string|null} Observer operation result.
+   */
   function aicc127EndpointKind(url, method) {
     if (method !== 'GET') return null;
     try {
@@ -28,6 +43,11 @@
     return null;
   }
 
+  /**
+   * aicc127Witness Captured for the #297 test-only observer.
+   * @param {Object} envelope - Input to this read-only witness operation.
+   * @returns {void} Observer operation result.
+   */
   function aicc127WitnessCaptured(envelope) {
     const navigation = envelope.transport === 'navigation';
     if (navigation) aicc127EarlyRoute = aicc127RouteIdentity(envelope.url);

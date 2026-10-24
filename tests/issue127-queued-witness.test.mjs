@@ -9,7 +9,8 @@ const load = path => readFileSync(new URL(root + path, import.meta.url), 'utf8')
 const source = [
   load('02-network-communication/03-csc-plugin-backlog.js'),
   load('02-network-communication/03-csc-issue127-witness-ingress.js'),
-  load('06-image-export-tests/07-issue127-queued-witness.js')
+  load('06-image-export-tests/07-issue127-queued-witness.js'),
+  load('06-image-export-tests/07a-issue127-queued-witness.js')
 ].join('\n');
 const tick = () => new Promise(resolve => setImmediate(resolve));
 
@@ -108,7 +109,7 @@ function harness(storage = new Map(), page = 'page-1') {
     assert(condition, message) { assert.ok(condition, message); },
     setTimeout, clearTimeout,
     async ensureChatGPTCanonicalAgent() {
-      context.c.aicc127AttachAgentEarly(agent);
+      context.c.attach(agent);
       if (!host) {
         host = makeHost();
         context.c.connect(host);

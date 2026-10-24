@@ -43,8 +43,8 @@
         "src/userscript/02-network-communication/07-communication-streams.js",
         "src/userscript/02-network-communication/08-communication-xhr.js",
         "src/userscript/02-network-communication/03-csc-canonical-ingress.js",
-        "src/userscript/02-network-communication/03-csc-plugin-backlog.js",
         "src/userscript/02-network-communication/03-csc-issue127-witness-ingress.js",
+        "src/userscript/02-network-communication/03-csc-plugin-backlog.js",
         "src/userscript/02-network-communication/03-csc-provider-navigation-ingress.js"
       ]
     },
@@ -103,7 +103,8 @@
         "src/userscript/06-image-export-tests/07-worker-zstd-csp-probe.js",
         "src/userscript/06-image-export-tests/08-csc-worker-boundary-probe.js",
         "src/userscript/06-image-export-tests/09-csc-dual-body-clone-probe.js",
-        "src/userscript/06-image-export-tests/07-issue127-queued-witness.js"
+        "src/userscript/06-image-export-tests/07-issue127-queued-witness.js",
+        "src/userscript/06-image-export-tests/07a-issue127-queued-witness.js"
       ]
     },
     {
@@ -136,6 +137,7 @@
         "src/userscript/07-panel-launcher/04-launcher-removal-part2.js",
         "src/userscript/07-panel-launcher/05-bootstrap.js",
         "src/userscript/07-panel-launcher/04-startup-dark-theme-guard.js",
+        "src/userscript/04-conversation-rendering/08-agent-plugin-bridge.js",
         "src/userscript/07-panel-launcher/05-bootstrap-part2.js"
       ]
     }
