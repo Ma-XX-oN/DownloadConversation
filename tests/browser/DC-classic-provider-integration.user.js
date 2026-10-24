@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         DC CSP Two-Script Integration Test
 // @namespace    https://chatgpt.com/
-// @version      1.11.14-issue.156.3
+// @version      1.11.14-issue.156.4
 // @description  Exports the current ChatGPT conversation directly from the Conversation API as Markdown or JSONL.
 // @match        https://chatgpt.com/*
 // @match        https://chat.openai.com/*
@@ -20843,8 +20843,8 @@ Image elapsed: ${formatDuration(imageElapsed)} — Completed: ${imageCompleted}/
     agent.commTraffic({type:'submission_committed',
       exchange_id:'fixture-y', activate:true});
     assert(agent.currentState().exchange.id === 'fixture-y' &&
-      agent.currentState().exchange.status === 'UNKNOWN',
-    'Subsequent fixture exchange retained previous exchange state.');
+      agent.currentState().exchange.status === 'IN_PROGRESS',
+    'Subsequent fixture exchange did not start in progress.');
   }
 
   async function testCGP2DirectLoaderIdentity() {
