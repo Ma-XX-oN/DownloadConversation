@@ -185,8 +185,11 @@ function harness(storage = new Map(), page = 'page-1') {
 
 test('Test-button wrappers arm the real observer before any host readiness', () => {
   const readiness = load('06-image-export-tests/06-agent-plugin-readiness.js');
-  assert.match(readiness, /name\\.startsWith\\('AICC #127'\\)\\) return runOneTestWithCanonicalAgent/);
-  assert.match(readiness, /aicc127Prepare\\(\\);\\s*await ensureChatGPTCanonicalAgent\\(\\)/);
+  assert.ok(readiness.includes("if (name.startsWith('AICC #127')) return runOneTestWithCanonicalAgent"), 'Individual Test must bypass preloading.');
+  const runAll = readiness.slice(readiness.indexOf('runTestsAfterChatGPTPluginReady'));
+  assert.ok(runAll.includes('aicc127Prepare();') &&
+    runAll.indexOf('aicc127Prepare();') < runAll.indexOf('await ensureChatGPTCanonicalAgent();'),
+  'Run All must arm before host readiness.');
   const bridge = load('04-conversation-rendering/08-agent-plugin-bridge.js');
   const subscribe = bridge.indexOf('aicc127AttachAgentEarly(agent)');
   const connect = bridge.indexOf('reconnectChatGPTSubjectHost();', subscribe);
