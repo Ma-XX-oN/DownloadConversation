@@ -405,3 +405,75 @@ disable sanitization to force raw output.
 The currently accepted leaf code, #318 public control ports,
 #317 durability guarantees, existing recording group `1`,
 and all user-approved original-source boundaries remain unchanged.
+## 10. Continuation: refreshed #318 and source-delta map
+
+Coordinator V3 resumed 2026-10-23 22:20 EDT, original claim
+`dc-csc-359-v3-20261023T115716Z` (#6364342545), unchanged.
+The current #308 graph remains authoritative; #318 is STARTED,
+not DONE, and is #359's genuine incoming completion prerequisite.
+
+### #318 exact isolated source evidence
+
+New #318 PR #362 HEAD is
+`bde7e9ef137281ae914803b56c5104ad7f38f3ec`.
+Its dedicated *push* run [39971645269](https://github.com/Ma-XX-oN/DownloadConversation/actions/runs/39971645269)
+has one real hosted `focused-controls` job, completed SUCCESS;
+#318's owner's test artifact reports 27/27 controller+GM,
+4/4 native headless Chromium and 34/34 adjacent regressions,
+65/65 combined. The compiled isolated userscript artifact is
+#12509870623 (1,280,676 bytes; SHA-256
+`c043a9dda9a524d5ec44bde0d231dc21e24d1a4d8ff8acfbdbdc7cb3726ef0b5`).
+This is *isolated #318 evidence*, not the routine PR matrix,
+signed-in Tampermonkey, real Worker/writer or #359 assembly.
+
+Pinned #318 source in `03-csc-control-plane.js` implements
+`cscControlsRegisterHmacFactory(factory)` and locks registration
+after the singleton has been constructed. The #318
+`05-bootstrap-part2.js` invokes `cscControlsCurrent().init()`.
+Therefore #359's real assembly must register the authoritative
+#313 factory **before first controller construction** and then
+supply actual Worker, GEN and COMM ports. This chronology was
+inspected directly in the exact #318 code, not inferred from CI.
+
+Current `.ci/branch-policy.json` blob
+`0737b8f141c74b2a29642bcf18d8bd8542db1e05`
+still maps pattern `issue-*` to parent `main`. Current
+`.ci/repoworkflow.json` blob
+`244742ec7cb9fce1dbdb61a72c89daedd6cb9fc3`
+declares repository integration branch `main`. The ordinary
+PR #362 branch-policy FAIL is an actual contract mismatch.
+A scoped, owner-approved rule for the true #318 parent is
+required, **not** a PR retarget or wholesale disabling of policy.
+
+### Reviewed immutable delta precedence (NO source imported)
+
+Live source compares, independent of cumulative PR file counts:
+
+| Verified SHA range | Distinct source delta |
+| --- | --- |
+| #309 -> #310 | Plugin backlog; manifest/build metadata |
+| #310 -> #306 | Early navigation/host bridge; manifest/bootstrap |
+| #309 -> #311 | Worker processing and processor test seam |
+| #311 -> #317 | Worker disk writer/bridge and Test probe |
+| #359 -> #318 | UI popup/control, bootstrap and settings |
+
+All five GitHub source comparisons succeeded. The #318
+source comparison currently diverges because #359 acquired
+additional **documentation-only** ledger commits after its
+correct empty child marker. Do not rewrite the child marker.
+#313 is a separate historical #312-derived branch; review
+its canonical current producer modules without reintroducing
+the retired experimental scope as an active data contract.
+
+Every stream changes the same manifest/version/build surfaces;
+cumulative cherry-picks or overlapping generated artifacts
+would be invalid without content-level review and new tests.
+No source import authorization has been granted in #359/#308,
+and no leaf is merged by this continued source audit.
+
+### Pending final gate
+
+#359 still needs explicit owner/operator source-import approval,
+completed #318 source/UI acceptance, review of #311/#313/#317
+contract changes, real GEN+COMM ports/headers and actual
+combined candidate testing. #232 and #319 remain independent.
