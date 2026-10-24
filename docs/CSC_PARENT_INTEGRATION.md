@@ -477,3 +477,10 @@ and no leaf is merged by this continued source audit.
 completed #318 source/UI acceptance, review of #311/#313/#317
 contract changes, real GEN+COMM ports/headers and actual
 combined candidate testing. #232 and #319 remain independent.
+
+## 11. Follow-up source/CI diagnostic matrix
+
+See [DC #359 source contract diagnostics](CSC_359_INTERFACE_NEGATIVE_MATRIX.md)
+for the pinned #311/#313/#317/#318 contract checks (28/28 structural),
+16/16 isolated Node fixture checks and RWF exact-rule policy analysis.
+These are NOT assembled-source PASS, source-import authorization or release.
