@@ -60,9 +60,9 @@ Guarded target:
 
 #313's exact nonsecret event:
 {type,id,key_restart,epoch,occurred_at_ms,reason}
-with id = hmac-key-cycle:<key_restart> and UTC timestamp identity.
+with id = `hmac-key-cycle:<key_restart>` and UTC timestamp identity.
 #311 validCycle() requires generation 32-hex and the retired
-hmac-key-cycle:<epoch>:<generation> ID.  Its positive Worker status
+`hmac-key-cycle:<epoch>:<generation>` ID.  Its positive Worker status
 explicitly says durable:false.  This is NOT disk persistence.
 
 Guarded target:
@@ -199,3 +199,33 @@ The fixture does NOT certify any of the RED application interfaces.
 
 No leaf branch, git marker, parent source, main or production state
 is changed by this document.
+
+## Additional policy-rule fixture verification
+
+Python 3.13 standalone policy-rule fixture: 10/10 PASS.
+Tests covered baseline PR #362 mismatch; exact #318 override; wrong
+PR target main rejection; generic unrelated issue-to-main fallback;
+unrelated issue-to-parent rejection; #359 original main parent;
+global integrationBranch unchanged; exact rule precedence;
+unknown branch rejection; historical explicit-rule preservation.
+Fixture script SHA-256:
+76b910a1c0c2a82792fac2f47623f54a819e3180e568cd7d4f12e2bde14931f9.
+Output SHA-256:
+1fd2670b71a30820b64e205330b4115797d42d0f790082dff01cc7f382d61e0f.
+This exercised a manually transcribed pinned-RWF rule/PR-target
+subset, NOT the exact engine against a live Git checkout.
+Remote ancestry, ordinary PR hosted CI and rule ownership remain
+INCOMPLETE; no policy change was committed.
+
+## Review requests posted (all PENDING)
+
+- Operator: #359 comment 6378798756, asks source staging and
+  scoped policy approval separately.
+- #306: comment 6378804446.
+- #309: comment 6378804918.
+- #310: comment 6378805367.
+- #311: comment 6378799448.
+- #313: comment 6378805795.
+- #317: comment 6378799788.
+- #318: comment 6378799137.
+None of these requests is approval.  No source has been imported.
