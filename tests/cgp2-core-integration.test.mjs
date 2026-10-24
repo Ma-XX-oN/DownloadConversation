@@ -162,29 +162,13 @@ test('DC production bridge delegates agent orchestration to AICC with no direct 
   assert.match(readinessSource, /return runTestsWithCanonicalAgent\(\)/);
 });
 
-test('cache miss uses direct GitHub raw retrieval and failures remain visible', () => {
-  const loadStart = bridgeSource.indexOf('  async function loadAgentPlugin(descriptor) {');
-  const loadEnd = bridgeSource.indexOf('\n  /**\n   * Imports one AICC-selected ESM artifact', loadStart);
-  assert.ok(loadStart >= 0 && loadEnd > loadStart,
-    'Could not isolate the production plugin loading function.');
-  const loadSource = bridgeSource.slice(loadStart, loadEnd);
-  const cacheReadAt = loadSource.indexOf('const cachedSource = cachedAgentPluginSource(descriptor);');
-  assert.ok(cacheReadAt >= 0, 'Production loader must read the cache first.');
-  assert.ok(loadSource.includes('await requestAgentPluginFromGitHub(descriptor)'),
-    'Cache misses must use background retrieval.');
-  assert.ok(!loadSource.includes('window.open') && !loadSource.includes('brokerSourcePromise'),
-    'A cache miss must not open GitHub.');
-  assert.ok(bridgeSource.includes('GM_xmlhttpRequest({'),
-    'Background transport must use the Tampermonkey request API.');
-  assert.ok(bridgeSource.includes('/raw/'),
-    'The authenticated GitHub-origin raw endpoint must be used.');
-  assert.ok(bridgeSource.includes('verifyAgentPluginSource(descriptor, source)'),
-    'Downloaded source must be verified before being cached.');
-
-  assert.match(bridgeSource, /chatGPTPluginModulePromise = null;\n      throw error;/,
-    'A failed first load must be retryable without reloading the ChatGPT page.');
-  assert.match(readinessSource, /agent-plugin-readiness-failure/,
-    'Plugin readiness failures must be recorded in diagnostics.');
-  assert.match(readinessSource, /setStatus\(`Export setup failed: \$\{message\}`\)/,
-    'Plugin readiness failures must be visible in the recorder status UI.');
+test('DC shared-world loader exposes the selected plugin object and visible failure', () => {
+  assert.match(bridgeSource, /globalThis\.ChatGPTWebAgentPlugin/);
+  assert.match(bridgeSource, /plugin\.id === descriptor\.id/);
+  assert.match(bridgeSource, /check\.version === descriptor\.version/);
+  assert.match(bridgeSource, /return \{ default: plugin \}/);
+  assert.doesNotMatch(bridgeSource, /GM_xmlhttpRequest|import\(blobUrl\)/);
+  assert.match(bridgeSource, /chatGPTPluginModulePromise = null;\s*throw error;/);
+  assert.match(readinessSource, /agent-plugin-readiness-failure/);
+  assert.match(readinessSource, /Export setup failed:/);
 });
