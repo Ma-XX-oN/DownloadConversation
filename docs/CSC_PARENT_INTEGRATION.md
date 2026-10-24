@@ -416,7 +416,7 @@ not DONE, and is #359's genuine incoming completion prerequisite.
 
 New #318 PR #362 HEAD is
 `bde7e9ef137281ae914803b56c5104ad7f38f3ec`.
-Its dedicated *push* run [39971645269](https://github.com/Ma-XX-oN/DownloadConversation/actions/runs/39971645269)
+Its dedicated *push* run `39971645269`
 has one real hosted `focused-controls` job, completed SUCCESS;
 #318's owner's test artifact reports 27/27 controller+GM,
 4/4 native headless Chromium and 34/34 adjacent regressions,
