@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         DC CSP Two-Script Integration Test
 // @namespace    https://chatgpt.com/
-// @version      1.11.14-issue.156.2
+// @version      1.11.14-issue.156.3
 // @description  Exports the current ChatGPT conversation directly from the Conversation API as Markdown or JSONL.
 // @match        https://chatgpt.com/*
 // @match        https://chat.openai.com/*
@@ -20800,6 +20800,63 @@ Image elapsed: ${formatDuration(imageElapsed)} — Completed: ${imageCompleted}/
     assert(rejected, 'AICC accepted a missing provider module.');
   }
 
+  function testCGP2CanonicalFixtureParity() {
+    const plugin = globalThis.ChatGPTWebAgentPlugin;
+    assert(plugin?.create, 'Private CGP2 plugin unavailable.');
+    const fixture = [
+      {id: 'cg-fixture-user', author: {role: 'user'},
+        content: {content_type: 'text', parts: ['Fixture question']}, metadata: {}},
+      {id: 'cg-fixture-assistant', author: {role: 'assistant'},
+        content: {content_type: 'text', parts: ['Fixture answer']}, metadata: {}}
+    ];
+    const produced = [];
+    const agent = plugin.create({
+      ref: 'test-only',
+      core: {publishEvents: events => produced.push(events)}
+    });
+    agent.commTraffic({type: 'persisted_records', records: fixture});
+    assert(produced.length === 1, 'CGP2 did not publish canonical records.');
+    const messages = produced[0].filter(item =>
+      item.kind === 'message' && item.visibility === 'visible');
+    assert(messages.length === 2, 'Expected exactly two canonical messages.');
+    assert(messages[0].source_record_id === fixture[0].id &&
+      messages[1].source_record_id === fixture[1].id,
+    'CGP2 changed ordered source message identities.');
+    agent.commTraffic({type: 'persisted_records', records: fixture});
+    assert(produced.length === 2 &&
+      JSON.stringify(produced[0]) === JSON.stringify(produced[1]),
+    'Repeated inventory changed canonical interpretation.');
+  }
+
+  function testCGP2IndependentExchangeOrdering() {
+    const plugin = globalThis.ChatGPTWebAgentPlugin;
+    assert(plugin?.create, 'Private CGP2 plugin unavailable.');
+    const agent = plugin.create({ref: 'test-only'});
+    agent.commTraffic({type:'turn_exchange_complete',
+      exchange_id:'fixture-x', result:'success', sequence:20});
+    assert(agent.currentState().exchange.status === 'COMPLETED',
+      'Completed fixture exchange was not recognised.');
+    agent.commTraffic({type:'turn_exchange_complete',
+      exchange_id:'fixture-x', result:'error', sequence:19});
+    assert(agent.currentState().exchange.status === 'COMPLETED',
+      'Older fixture observation corrupted the accepted outcome.');
+    agent.commTraffic({type:'submission_committed',
+      exchange_id:'fixture-y', activate:true});
+    assert(agent.currentState().exchange.id === 'fixture-y' &&
+      agent.currentState().exchange.status === 'UNKNOWN',
+    'Subsequent fixture exchange retained previous exchange state.');
+  }
+
+  async function testCGP2DirectLoaderIdentity() {
+    const descriptor = canonicalCore().getAgentPluginArtifact('chatgpt-web');
+    const loaded = await importAgentPluginModule(descriptor);
+    assert(loaded.default === globalThis.ChatGPTWebAgentPlugin,
+      'DC loader did not return the exact shared CGP2 object.');
+    const again = await importAgentPluginModule(descriptor);
+    assert(again.default === loaded.default,
+      'Repeated DC loader call returned a different plugin object.');
+  }
+
   /**
    * Handles built in tests.
    *
@@ -20808,6 +20865,9 @@ Image elapsed: ${formatDuration(imageElapsed)} — Completed: ${imageCompleted}/
   function builtInTests() {
     return [
       ['CGP2 installed interface and AICC identity', testCGP2InstalledInterface],
+      ['CGP2 direct loader identity', testCGP2DirectLoaderIdentity],
+      ['CGP2 canonical fixture and repeat parity', testCGP2CanonicalFixtureParity],
+      ['CGP2 ordered exchange isolation', testCGP2IndependentExchangeOrdering],
       ['CGP2 isolated lifecycle and observers', testCGP2IsolatedLifecycle],
       ['CGP2 rejects mismatched plugin API', testCGP2RejectsWrongVersion],
       ['CGP2 rejects missing provider', testCGP2MissingProvider],
