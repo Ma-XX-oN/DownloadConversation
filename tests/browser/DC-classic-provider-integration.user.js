@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         DC CSP Two-Script Integration Test
 // @namespace    https://chatgpt.com/
-// @version      1.11.14-issue.156.1
+// @version      1.11.14-issue.156.2
 // @description  Exports the current ChatGPT conversation directly from the Conversation API as Markdown or JSONL.
 // @match        https://chatgpt.com/*
 // @match        https://chat.openai.com/*
@@ -20734,12 +20734,83 @@ Image elapsed: ${formatDuration(imageElapsed)} — Completed: ${imageCompleted}/
   let testMatrixCurrentResults = new Map();
 
   /**
+   * CGP2 browser integration checks run against the actual installed classic
+   * plugin while keeping synthetic mutations isolated from the live session.
+   */
+  function testCGP2InstalledInterface() {
+    const plugin = globalThis.ChatGPTWebAgentPlugin;
+    assert(plugin?.id === 'chatgpt-web' && plugin.apiVersion === 1,
+      'Private CGP2 classic plugin is missing or has the wrong API.');
+    assert(typeof plugin.create === 'function' && typeof plugin.recognize === 'function',
+      'CGP2 factory or recognizer unavailable.');
+    assert(plugin.recognize({provider: 'chatgpt'}) === true,
+      'CGP2 did not recognize its provider.');
+    assert(plugin.recognize({provider: 'unrelated', url: 'https://example.com/'}) === false,
+      'CGP2 incorrectly recognized another provider.');
+    assert(chatGPTAgent && chatGPTCanonicalSession,
+      'AICC did not create the live canonical agent and session.');
+    const selected = canonicalCore().getAgentPluginArtifact('chatgpt-web');
+    const actual = chatGPTAgent.version();
+    assert(actual.plugin === selected.id && actual.version === selected.version &&
+      actual.ref === selected.ref && actual.apiVersion === selected.apiVersion,
+    'Live agent identity does not match AICC catalogue.');
+  }
+
+  function testCGP2IsolatedLifecycle() {
+    const plugin = globalThis.ChatGPTWebAgentPlugin;
+    assert(plugin?.create, 'Private CGP2 plugin is unavailable.');
+    const agent = plugin.create({ref: 'test-only'});
+    const other = plugin.create({ref: 'test-only'});
+    const states = [];
+    const unsubscribe = agent.observeState(state => states.push(state));
+    assert(states.length === 1 && states[0].exchange.status === 'UNKNOWN',
+      'Initial state observer did not deliver its snapshot.');
+    agent.commTraffic({type:'submission_committed', exchange_id:'fixture-exchange', activate:true});
+    assert(agent.currentState().exchange.id === 'fixture-exchange',
+      'Synthetic exchange did not activate.');
+    assert(other.currentState().exchange.id === null,
+      'Agent state leaked into another instance.');
+    const observed = states.length;
+    unsubscribe();
+    agent.commTraffic({type:'submission_committed', exchange_id:'fixture-next', activate:true});
+    assert(states.length === observed, 'Unsubscribed observer was notified.');
+  }
+
+  async function testCGP2RejectsWrongVersion() {
+    const plugin = globalThis.ChatGPTWebAgentPlugin;
+    assert(plugin?.create, 'Private CGP2 plugin is unavailable.');
+    const core = canonicalCore();
+    let rejected = false;
+    try {
+      await core.loadAgent('chatgpt-web', {
+        loadModule: async () => ({default: {...plugin, apiVersion: plugin.apiVersion + 1}})
+      });
+    } catch { rejected = true; }
+    assert(rejected, 'AICC accepted a plugin descriptor with a mismatched API version.');
+  }
+
+  async function testCGP2MissingProvider() {
+    const core = canonicalCore();
+    let rejected = false;
+    try {
+      await core.loadAgent('chatgpt-web', {
+        loadModule: async () => ({default: null})
+      });
+    } catch { rejected = true; }
+    assert(rejected, 'AICC accepted a missing provider module.');
+  }
+
+  /**
    * Handles built in tests.
    *
    * @returns {Array<unknown>} The ordered values produced by `builtInTests`.
    */
   function builtInTests() {
     return [
+      ['CGP2 installed interface and AICC identity', testCGP2InstalledInterface],
+      ['CGP2 isolated lifecycle and observers', testCGP2IsolatedLifecycle],
+      ['CGP2 rejects mismatched plugin API', testCGP2RejectsWrongVersion],
+      ['CGP2 rejects missing provider', testCGP2MissingProvider],
       ['API pagination', testApiPaginationLogic],
       ['Stable API message IDs', testStableMessageIds],
       ['Multimodal User + chronological order', testMultimodalUserAndChronologicalOrder],
