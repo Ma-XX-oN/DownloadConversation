@@ -148,22 +148,32 @@
   }
 
   /**
-   * Imports one AICC-selected ESM artifact through DownloadConversation's generic
-   * authenticated browser transport.
-   *
-   * @param {Object} descriptor - Core-owned artifact descriptor.
-   * @returns {Promise<Object>} Imported module namespace.
+   * Waits for the independently installed private CGP2 classic userscript.
+   * The userscript is a separately installed Tampermonkey dependency, so no
+   * Blob import or cross-world message copying is required.
    */
   async function importAgentPluginModule(descriptor) {
     if (!chatGPTPluginModulePromise) {
       chatGPTPluginModulePromise = (async () => {
-        const bytes = await loadAgentPlugin(descriptor);
-        const blobUrl = URL.createObjectURL(new Blob([bytes], { type: 'text/javascript' }));
-        try {
-          return await import(blobUrl);
-        } finally {
-          URL.revokeObjectURL(blobUrl);
+        const deadline = Date.now() + 30000;
+        while (Date.now() < deadline) {
+          const plugin = globalThis.ChatGPTWebAgentPlugin;
+          if (plugin) {
+            assert(plugin.id === descriptor.id,
+              'Loaded CGP2 plugin ID does not match the AICC descriptor.');
+            assert(plugin.apiVersion === descriptor.apiVersion,
+              'Loaded CGP2 plugin API does not match the AICC descriptor.');
+            assert(typeof plugin.create === 'function'
+              && typeof plugin.recognize === 'function',
+              'Loaded CGP2 plugin interface is incomplete.');
+            const check = plugin.create({ ref: descriptor.ref }).version();
+            assert(check.version === descriptor.version,
+              'Loaded CGP2 plugin version does not match the AICC descriptor.');
+            return { default: plugin };
+          }
+          await new Promise(resolve => setTimeout(resolve, 100));
         }
+        throw new Error('CGP2 Tampermonkey loader is unavailable after 30 seconds.');
       })();
     }
     try {
