@@ -2,6 +2,10 @@
    * CGP2 browser integration checks run against the actual installed classic
    * plugin while keeping synthetic mutations isolated from the live session.
    */
+  /**
+   * Verifies the isolated testCGP2InstalledInterface CGP2 browser integration contract.
+   * @returns {void} Completes after fixture verification.
+   */
   function testCGP2InstalledInterface() {
     const plugin = globalThis.ChatGPTWebAgentPlugin;
     assert(plugin?.id === 'chatgpt-web' && plugin.apiVersion === 1,
@@ -21,6 +25,10 @@
     'Live agent identity does not match AICC catalogue.');
   }
 
+  /**
+   * Verifies the isolated testCGP2IsolatedLifecycle CGP2 browser integration contract.
+   * @returns {void} Completes after fixture verification.
+   */
   function testCGP2IsolatedLifecycle() {
     const plugin = globalThis.ChatGPTWebAgentPlugin;
     assert(plugin?.create, 'Private CGP2 plugin is unavailable.');
@@ -41,6 +49,10 @@
     assert(states.length === observed, 'Unsubscribed observer was notified.');
   }
 
+  /**
+   * Verifies the isolated testCGP2RejectsWrongVersion CGP2 browser integration contract.
+   * @returns {Promise<void>} Completes after fixture verification.
+   */
   async function testCGP2RejectsWrongVersion() {
     const plugin = globalThis.ChatGPTWebAgentPlugin;
     assert(plugin?.create, 'Private CGP2 plugin is unavailable.');
@@ -54,6 +66,10 @@
     assert(rejected, 'AICC accepted a plugin descriptor with a mismatched API version.');
   }
 
+  /**
+   * Verifies the isolated testCGP2MissingProvider CGP2 browser integration contract.
+   * @returns {Promise<void>} Completes after fixture verification.
+   */
   async function testCGP2MissingProvider() {
     const core = canonicalCore();
     let rejected = false;
@@ -65,6 +81,10 @@
     assert(rejected, 'AICC accepted a missing provider module.');
   }
 
+  /**
+   * Verifies the isolated testCGP2CanonicalFixtureParity CGP2 browser integration contract.
+   * @returns {void} Completes after fixture verification.
+   */
   function testCGP2CanonicalFixtureParity() {
     const plugin = globalThis.ChatGPTWebAgentPlugin;
     assert(plugin?.create, 'Private CGP2 plugin unavailable.');
@@ -93,6 +113,10 @@
     'Repeated inventory changed canonical interpretation.');
   }
 
+  /**
+   * Verifies the isolated testCGP2IndependentExchangeOrdering CGP2 browser integration contract.
+   * @returns {void} Completes after fixture verification.
+   */
   function testCGP2IndependentExchangeOrdering() {
     const plugin = globalThis.ChatGPTWebAgentPlugin;
     assert(plugin?.create, 'Private CGP2 plugin unavailable.');
@@ -112,6 +136,10 @@
     'Subsequent fixture exchange did not start in progress.');
   }
 
+  /**
+   * Verifies the isolated testCGP2DirectLoaderIdentity CGP2 browser integration contract.
+   * @returns {Promise<void>} Completes after fixture verification.
+   */
   async function testCGP2DirectLoaderIdentity() {
     const descriptor = canonicalCore().getAgentPluginArtifact('chatgpt-web');
     const loaded = await importAgentPluginModule(descriptor);
