@@ -1,8 +1,8 @@
 // ==UserScript==
 // @name         DC Browser Storage Replacement Tests
 // @namespace    https://chatgpt.com/downloadconversation/tests/
-// @version      0.1.0
-// @description  Tests standard browser storage and cross-tab notifications as replacements for GM value APIs.
+// @version      0.2.0
+// @description  Automatically verifies browser persistence and bidirectional cross-tab events.
 // @match        https://chatgpt.com/*
 // @run-at       document-start
 // @sandbox      raw
@@ -11,52 +11,63 @@
 
 (() => {
   'use strict';
-  const PREFIX = '__dc_browser_storage_probe_v1__';
-  const channelName = PREFIX + 'channel';
-  const resultId = PREFIX + 'result';
+  const PREFIX = '__dc_browser_storage_probe_v2__';
   const tabId = crypto.randomUUID();
   const key = PREFIX + 'value';
-  const results = [];
-  function show() {
+  const crossTabPrefix = PREFIX + 'tab:';
+  const resultId = PREFIX + 'result';
+  const statuses = new Map();
+  const setStatus = (label, value, detail = '') => {
+    const prior = statuses.get(label);
+    const current = value + (detail ? ': ' + detail : '');
+    if (prior === current) return;
+    statuses.set(label, current);
+    console.info('[DC STORAGE TEST]', value, label, detail);
+    render();
+  };
+  function render() {
     if (!document.body) return;
-    let element = document.getElementById(resultId);
-    if (!element) {
-      element = document.createElement('pre');
-      element.id = resultId;
-      Object.assign(element.style, {
-        position: 'fixed', right: '12px', bottom: '12px', zIndex: '2147483647',
-        maxWidth: '75vw', maxHeight: '45vh', overflow: 'auto',
-        background: '#172554', color: 'white', padding: '12px',
-        borderRadius: '8px', font: '12px monospace', whiteSpace: 'pre-wrap'
+    let node = document.getElementById(resultId);
+    if (!node) {
+      node = document.createElement('pre');
+      node.id = resultId;
+      Object.assign(node.style, {
+        position: 'fixed', right: '12px', bottom: '12px',
+        zIndex: '2147483647', maxWidth: '75vw', maxHeight: '48vh',
+        overflow: 'auto', background: '#172554', color: 'white',
+        padding: '12px', borderRadius: '8px', font: '12px monospace',
+        whiteSpace: 'pre-wrap'
       });
-      document.body.appendChild(element);
+      document.body.appendChild(node);
     }
-    element.textContent = ['DC browser storage tests (no GM grants)', ...results].join('\n');
+    node.textContent = [
+      'DC browser storage replacement test v0.2.0',
+      'Open two chatgpt.com tabs. No clicking required.',
+      ...[...statuses].map(([name, status]) => status + ' ' + name)
+    ].join('\n');
   }
-  function report(name, pass, detail = '') {
-    const line = (pass ? 'PASS' : 'FAIL') + ' ' + name + (detail ? ': ' + detail : '');
-    results.push(line);
-    console[pass ? 'info' : 'error']('[DC BROWSER STORAGE]', line);
-    show();
+  if (!document.body) {
+    document.addEventListener('DOMContentLoaded', render, { once: true });
   }
-  if (!document.body) document.addEventListener('DOMContentLoaded', show, { once: true });
-  const run = async () => {
-    // localStorage: immediate read/write, JSON round trip, and reload persistence.
+
+  async function checkPersistence() {
     try {
       const previous = localStorage.getItem(key);
-      if (previous !== null) {
-        const prior = JSON.parse(previous);
-        report('localStorage reload retention', prior?.marker === PREFIX);
+      if (previous === null) {
+        setStatus('localStorage reload retention', 'PENDING', 'refresh either tab once');
       } else {
-        report('localStorage first-run baseline', true, 'reload to test retention');
+        const parsed = JSON.parse(previous);
+        setStatus('localStorage reload retention',
+          parsed.marker === PREFIX ? 'PASS' : 'FAIL');
       }
-      const value = { marker: PREFIX, tabId, nested: { value: 7 } };
-      localStorage.setItem(key, JSON.stringify(value));
-      const roundtrip = JSON.parse(localStorage.getItem(key));
-      report('localStorage JSON set/get', roundtrip.nested.value === 7);
-    } catch (e) { report('localStorage', false, e.message); }
-
-    // IndexedDB: structured values and transaction persistence.
+      localStorage.setItem(key, JSON.stringify({
+        marker: PREFIX, nested: { value: 7 }
+      }));
+      setStatus('localStorage JSON set/get',
+        JSON.parse(localStorage.getItem(key)).nested.value === 7 ? 'PASS' : 'FAIL');
+    } catch (error) {
+      setStatus('localStorage', 'FAIL', String(error));
+    }
     try {
       const db = await new Promise((resolve, reject) => {
         const request = indexedDB.open(PREFIX + 'db', 1);
@@ -64,59 +75,96 @@
         request.onsuccess = () => resolve(request.result);
         request.onerror = () => reject(request.error);
       });
-      const transact = (mode, action) => new Promise((resolve, reject) => {
+      const transaction = (mode, action) => new Promise((resolve, reject) => {
         const tx = db.transaction('values', mode);
         const req = action(tx.objectStore('values'));
         req.onsuccess = () => resolve(req.result);
         req.onerror = () => reject(req.error);
       });
-      const sample = { marker: PREFIX, nested: { n: 4 } };
-      await transact('readwrite', store => store.put(sample, 'sample'));
-      const actual = await transact('readonly', store => store.get('sample'));
-      report('IndexedDB put/get', actual?.nested?.n === 4);
+      await transaction('readwrite',
+        store => store.put({ nested: { n: 4 } }, 'sample'));
+      const actual = await transaction('readonly', store => store.get('sample'));
+      setStatus('IndexedDB put/get', actual?.nested?.n === 4 ? 'PASS' : 'FAIL');
       db.close();
-    } catch (e) { report('IndexedDB', false, e.message); }
+    } catch (error) {
+      setStatus('IndexedDB put/get', 'FAIL', String(error));
+    }
+  }
 
-    // Cross-tab: open this exact page in a second tab, press Run in both tabs.
-    let channel = null;
-    let peerSeen = false;
-    let storageSeen = false;
+  function checkCrossTab() {
+    let channel;
     try {
-      channel = new BroadcastChannel(channelName);
-      channel.onmessage = event => {
-        if (event.data?.from === tabId) return;
-        if (event.data?.type === 'PING') {
-          peerSeen = true;
-          channel.postMessage({ type: 'PONG', from: tabId });
-        }
-        if (event.data?.type === 'PONG') peerSeen = true;
-      };
-      window.addEventListener('storage', event => {
-        if (event.key === PREFIX + 'cross-tab' && event.newValue?.includes('sender')) {
-          storageSeen = true;
-        }
-      });
-      const runButton = document.createElement('button');
-      runButton.textContent = 'Run cross-tab checks (click in both tabs)';
-      Object.assign(runButton.style, {position:'fixed',bottom:'180px',right:'12px',
-        zIndex:'2147483647',padding:'8px',background:'#fef08a',color:'#111827'});
-      const insert = () => { if (document.body) document.body.appendChild(runButton); };
-      if (document.body) insert();
-      else document.addEventListener('DOMContentLoaded', insert, {once:true});
-      runButton.onclick = () => {
-        peerSeen = false;
-        storageSeen = false;
-        channel.postMessage({ type: 'PING', from: tabId });
-        localStorage.setItem(PREFIX + 'cross-tab', JSON.stringify({ sender: tabId, at: Date.now() }));
-        setTimeout(() => {
-          report('BroadcastChannel two-tab messaging', peerSeen,
-            peerSeen ? '' : 'no responding peer; run in another tab');
-          report('localStorage cross-tab change event', storageSeen,
-            storageSeen ? '' : 'no event from another tab; run in another tab');
-        }, 1500);
-      };
-      report('BroadcastChannel creation', true, 'two-tab checks require two tabs');
-    } catch (e) { report('BroadcastChannel', false, e.message); }
-  };
-  run();
+      channel = new BroadcastChannel(PREFIX + 'channel');
+    } catch (error) {
+      setStatus('BroadcastChannel', 'FAIL', String(error));
+      return;
+    }
+    let receivedBroadcast = false;
+    let receivedStorage = false;
+    const peerIds = new Set();
+    const update = () => {
+      if (receivedBroadcast) setStatus('BroadcastChannel two-tab messaging', 'PASS');
+      if (receivedStorage) setStatus('localStorage cross-tab change event', 'PASS');
+    };
+    const writeProbe = () => {
+      try {
+        localStorage.setItem(crossTabPrefix + tabId, JSON.stringify({
+          from: tabId, nonce: crypto.randomUUID()
+        }));
+      } catch (error) {
+        setStatus('localStorage cross-tab change event', 'FAIL', String(error));
+      }
+    };
+    channel.onmessage = event => {
+      const data = event.data;
+      if (!data || data.from === tabId || data.kind !== 'HELLO') return;
+      receivedBroadcast = true;
+      peerIds.add(data.from);
+      update();
+      // The receiver writes its own unique key to guarantee a storage event
+      // in the sender, regardless of timing of tab creation.
+      writeProbe();
+      if (data.reply !== true) {
+        channel.postMessage({ kind: 'HELLO', from: tabId, reply: true });
+      }
+    };
+    window.addEventListener('storage', event => {
+      if (event.storageArea !== localStorage ||
+          !event.key?.startsWith(crossTabPrefix) || !event.newValue) return;
+      try {
+        const data = JSON.parse(event.newValue);
+        if (data.from === tabId || event.key !== crossTabPrefix + data.from) return;
+        receivedStorage = true;
+        update();
+      } catch (error) {
+        setStatus('localStorage cross-tab change event', 'FAIL', String(error));
+      }
+    });
+    setStatus('BroadcastChannel two-tab messaging', 'PENDING', 'waiting for second tab');
+    setStatus('localStorage cross-tab change event', 'PENDING', 'waiting for second tab');
+    const announce = () => {
+      if (receivedBroadcast && receivedStorage) {
+        clearInterval(interval);
+        return;
+      }
+      channel.postMessage({ kind: 'HELLO', from: tabId, reply: false });
+      // Writing after discovery guarantees bidirectional notification.
+      if (peerIds.size) writeProbe();
+    };
+    const interval = setInterval(announce, 1000);
+    announce();
+    setTimeout(() => {
+      if (!receivedBroadcast) setStatus('BroadcastChannel two-tab messaging',
+        'FAIL', 'no second tab seen within 20 seconds');
+      if (!receivedStorage) setStatus('localStorage cross-tab change event',
+        'FAIL', 'no cross-tab storage event within 20 seconds');
+      // Remain listening; a newly opened second tab can still turn FAIL to PASS.
+    }, 20000);
+    window.addEventListener('pagehide', () => {
+      clearInterval(interval);
+      channel.close();
+    }, { once: true });
+  }
+  checkPersistence();
+  checkCrossTab();
 })();
