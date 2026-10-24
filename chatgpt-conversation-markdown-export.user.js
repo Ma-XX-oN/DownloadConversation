@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         ChatGPT Conversation Markdown Recorder
 // @namespace    https://chatgpt.com/
-// @version      1.11.14-issue.156.5
+// @version      1.11.14-issue.156.6
 // @description  Exports the current ChatGPT conversation directly from the Conversation API as Markdown or JSONL.
 // @match        https://chatgpt.com/*
 // @match        https://chat.openai.com/*
@@ -20662,77 +20662,6 @@ Image elapsed: ${formatDuration(imageElapsed)} — Completed: ${imageCompleted}/
       { ordinal: 5, message_id: 'a3', role: 'assistant' }
     ];
     const spine = { records };
-    const cases = [
-      ['0', 0, 'user', 'u1'],
-      ['1', 1, 'user', 'u2'],
-      ['-1', 2, 'user', 'u3'],
-      ['-2', 1, 'user', 'u2'],
-      ['u2', 1, 'user', 'u2'],
-      ['a2', 1, 'assistant', 'a2']
-    ];
-    for (const [input, index, role, id] of cases) {
-      const resolved = resolveJumpIdentifier(spine, input);
-      assert(resolved.uap_index === index && resolved.role === role && resolved.message_id === id,
-        `Jump resolver failed for ${input}: ${JSON.stringify(resolved)}.`);
-    }
-    for (const input of ['3', '-4']) {
-      let rejected = false;
-      try { resolveJumpIdentifier(spine, input); } catch { rejected = true; }
-      assert(rejected, `Jump resolver did not reject out-of-range index ${input}.`);
-    }
-  }
-
-  /**
-   * Tests generated sandbox download link.
-   *
-   * @returns {void} No value is returned.
-   */
-  function testGeneratedSandboxDownloadLink() {
-    const conversationId = currentConversationId();
-    assert(conversationId, 'Sandbox-link test requires a ChatGPT conversation page.');
-    const record = { id: 'assistant-test-id', author: { role: 'assistant' } };
-    const source = 'sandbox:/mnt/data/work107/chatgpt-conversation-markdown-export.user.js';
-    const url = cgGeneratedSandboxDownloadUrl(source, record);
-    assert(url && url.includes(`/backend-api/conversation/${encodeURIComponent(conversationId)}/interpreter/download?`),
-      'sandbox file link did not use the observed interpreter/download route.');
-    assert(url.includes('message_id=assistant-test-id'), 'sandbox file link omitted Assistant message_id.');
-    assert(url.includes('sandbox_path=%2Fmnt%2Fdata%2Fwork107%2Fchatgpt-conversation-markdown-export.user.js'),
-      'sandbox file link did not preserve/encode sandbox_path.');
-    assert(url.endsWith('&download_intent=true'), 'sandbox file link did not force download_intent=true.');
-    const markdown = cgRewriteGeneratedSandboxLinks(`[Download userscript](${source})`, record);
-    assert(markdown === `[Download userscript](${url})`, 'sandbox Markdown link rewrite changed label or URL unexpectedly.');
-    const parenthesizedSource = 'sandbox:/mnt/data/work/fixture(phase2).txt';
-    const parenthesizedUrl = cgGeneratedSandboxDownloadUrl(parenthesizedSource, record);
-    const parenthesizedMarkdown = cgRewriteGeneratedSandboxLinks(
-      `[Download fixture](${parenthesizedSource})`, record
-    );
-    assert(parenthesizedMarkdown === `[Download fixture](${parenthesizedUrl})`,
-      'sandbox Markdown link rewrite truncated a filename containing parentheses.');
-    const nestedSource = 'sandbox:/mnt/data/work/fixture((phase2)).txt';
-    const nestedUrl = cgGeneratedSandboxDownloadUrl(nestedSource, record);
-    assert(cgRewriteGeneratedSandboxLinks(`[Nested](${nestedSource})`, record) === `[Nested](${nestedUrl})`,
-      'sandbox Markdown link rewrite did not preserve nested parentheses.');
-    const twoLinks = cgRewriteGeneratedSandboxLinks(
-      `[One](${parenthesizedSource}) and [Two](${source})`, record
-    );
-    assert(twoLinks === `[One](${parenthesizedUrl}) and [Two](${url})`,
-      'sandbox Markdown link rewrite did not preserve multiple links.');
-    const userRecord = { id: 'user-test-id', author: { role: 'user' } };
-    assert(cgRewriteGeneratedSandboxLinks(`[x](${source})`, userRecord) === `[x](${source})`,
-      'sandbox link rewrite should not apply to User records.');
-    assert(cgRewriteGeneratedSandboxLinks('[x](sediment://file_123)', record) === '[x](sediment://file_123)',
-      'sandbox link rewrite must not rewrite sediment pointers.');
-  }
-
-  /** DOM id of the built-in test matrix overlay. */
-  const TEST_MATRIX_ID = `${PANEL_ID}-test-matrix`;
-  /** Local-storage key for the previous built-in test outcomes. */
-  const TEST_RESULT_HISTORY_KEY = 'tm-conversation-recorder-test-result-history';
-  /** Last persisted PASS/FAIL result for each built-in test. */
-  let testMatrixPreviousResults = new Map();
-  /** Results produced during the current built-in test session. */
-  let testMatrixCurrentResults = new Map();
-
   /**
    * CGP2 browser integration checks run against the actual installed classic
    * plugin while keeping synthetic mutations isolated from the live session.
@@ -20856,6 +20785,77 @@ Image elapsed: ${formatDuration(imageElapsed)} — Completed: ${imageCompleted}/
     assert(again.default === loaded.default,
       'Repeated DC loader call returned a different plugin object.');
   }
+
+    const cases = [
+      ['0', 0, 'user', 'u1'],
+      ['1', 1, 'user', 'u2'],
+      ['-1', 2, 'user', 'u3'],
+      ['-2', 1, 'user', 'u2'],
+      ['u2', 1, 'user', 'u2'],
+      ['a2', 1, 'assistant', 'a2']
+    ];
+    for (const [input, index, role, id] of cases) {
+      const resolved = resolveJumpIdentifier(spine, input);
+      assert(resolved.uap_index === index && resolved.role === role && resolved.message_id === id,
+        `Jump resolver failed for ${input}: ${JSON.stringify(resolved)}.`);
+    }
+    for (const input of ['3', '-4']) {
+      let rejected = false;
+      try { resolveJumpIdentifier(spine, input); } catch { rejected = true; }
+      assert(rejected, `Jump resolver did not reject out-of-range index ${input}.`);
+    }
+  }
+
+  /**
+   * Tests generated sandbox download link.
+   *
+   * @returns {void} No value is returned.
+   */
+  function testGeneratedSandboxDownloadLink() {
+    const conversationId = currentConversationId();
+    assert(conversationId, 'Sandbox-link test requires a ChatGPT conversation page.');
+    const record = { id: 'assistant-test-id', author: { role: 'assistant' } };
+    const source = 'sandbox:/mnt/data/work107/chatgpt-conversation-markdown-export.user.js';
+    const url = cgGeneratedSandboxDownloadUrl(source, record);
+    assert(url && url.includes(`/backend-api/conversation/${encodeURIComponent(conversationId)}/interpreter/download?`),
+      'sandbox file link did not use the observed interpreter/download route.');
+    assert(url.includes('message_id=assistant-test-id'), 'sandbox file link omitted Assistant message_id.');
+    assert(url.includes('sandbox_path=%2Fmnt%2Fdata%2Fwork107%2Fchatgpt-conversation-markdown-export.user.js'),
+      'sandbox file link did not preserve/encode sandbox_path.');
+    assert(url.endsWith('&download_intent=true'), 'sandbox file link did not force download_intent=true.');
+    const markdown = cgRewriteGeneratedSandboxLinks(`[Download userscript](${source})`, record);
+    assert(markdown === `[Download userscript](${url})`, 'sandbox Markdown link rewrite changed label or URL unexpectedly.');
+    const parenthesizedSource = 'sandbox:/mnt/data/work/fixture(phase2).txt';
+    const parenthesizedUrl = cgGeneratedSandboxDownloadUrl(parenthesizedSource, record);
+    const parenthesizedMarkdown = cgRewriteGeneratedSandboxLinks(
+      `[Download fixture](${parenthesizedSource})`, record
+    );
+    assert(parenthesizedMarkdown === `[Download fixture](${parenthesizedUrl})`,
+      'sandbox Markdown link rewrite truncated a filename containing parentheses.');
+    const nestedSource = 'sandbox:/mnt/data/work/fixture((phase2)).txt';
+    const nestedUrl = cgGeneratedSandboxDownloadUrl(nestedSource, record);
+    assert(cgRewriteGeneratedSandboxLinks(`[Nested](${nestedSource})`, record) === `[Nested](${nestedUrl})`,
+      'sandbox Markdown link rewrite did not preserve nested parentheses.');
+    const twoLinks = cgRewriteGeneratedSandboxLinks(
+      `[One](${parenthesizedSource}) and [Two](${source})`, record
+    );
+    assert(twoLinks === `[One](${parenthesizedUrl}) and [Two](${url})`,
+      'sandbox Markdown link rewrite did not preserve multiple links.');
+    const userRecord = { id: 'user-test-id', author: { role: 'user' } };
+    assert(cgRewriteGeneratedSandboxLinks(`[x](${source})`, userRecord) === `[x](${source})`,
+      'sandbox link rewrite should not apply to User records.');
+    assert(cgRewriteGeneratedSandboxLinks('[x](sediment://file_123)', record) === '[x](sediment://file_123)',
+      'sandbox link rewrite must not rewrite sediment pointers.');
+  }
+
+  /** DOM id of the built-in test matrix overlay. */
+  const TEST_MATRIX_ID = `${PANEL_ID}-test-matrix`;
+  /** Local-storage key for the previous built-in test outcomes. */
+  const TEST_RESULT_HISTORY_KEY = 'tm-conversation-recorder-test-result-history';
+  /** Last persisted PASS/FAIL result for each built-in test. */
+  let testMatrixPreviousResults = new Map();
+  /** Results produced during the current built-in test session. */
+  let testMatrixCurrentResults = new Map();
 
   /**
    * Handles built in tests.
