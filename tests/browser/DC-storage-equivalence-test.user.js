@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         DC Storage Equivalence Tests
 // @namespace    https://chatgpt.com/downloadconversation/tests/
-// @version      0.1.0
+// @version      0.2.0
 // @description  Tests no-grant browser storage migration, transactions, and two-tab notifications.
 // @match        https://chatgpt.com/*
 // @run-at       document-start
@@ -45,7 +45,7 @@
       });
       document.body.appendChild(box);
     }
-    box.textContent = ['DC storage equivalence v0.1.0',
+    box.textContent = ['DC storage equivalence v0.2.0',
       'Open two ChatGPT tabs. No buttons or synchronized clicks.',
       ...[...lines].map(([name, result]) => result + ' ' + name)].join('\n');
   }
@@ -140,19 +140,36 @@
     if (seen.remove) status('cross-tab delete notification', 'PASS');
     if (seen.transaction) status('concurrent IndexedDB transaction', 'PASS');
   }
+  let activePair = null;
+  let localDone = false;
+  let peerDone = false;
+  let verifying = false;
+  async function verifyPair() {
+    if (!localDone || !peerDone || !activePair || verifying || seen.transaction) return;
+    verifying = true;
+    try {
+      const value = await txRead('counter:' + activePair);
+      status('concurrent IndexedDB transaction', value === 40 ? 'PASS' : 'FAIL',
+        value === 40 ? 'both tabs committed 20 increments' : 'expected 40; received ' + value);
+      if (value === 40) seen.transaction = true;
+    } catch (error) {
+      status('concurrent IndexedDB transaction', 'FAIL', String(error));
+    } finally {
+      verifying = false;
+    }
+  }
   async function pairTest(peer) {
     if (running || !db) return;
     running = true;
     paired = true;
+    activePair = [tab, peer].sort().join(':');
     try {
-      // Both participants increment the same key 20 times. IndexedDB
-      // readwrite transactions serialize the read-modify-write operations.
-      const pair = [tab, peer].sort().join(':');
-      const countKey = 'counter:' + pair;
+      const countKey = 'counter:' + activePair;
       for (let i = 0; i < 20; i++) await txIncrement(countKey);
-      channel.postMessage({kind: 'DONE', from: tab, to: peer, pair});
-      status('concurrent IndexedDB transaction', 'PENDING',
-        'waiting for peer completion');
+      localDone = true;
+      channel.postMessage({kind: 'DONE', from: tab, to: peer, pair: activePair});
+      status('concurrent IndexedDB transaction', 'PENDING', 'waiting for peer completion');
+      await verifyPair();
     } catch (error) {
       status('concurrent IndexedDB transaction', 'FAIL', String(error));
     }
@@ -167,22 +184,9 @@
       if (!paired && db) void pairTest(d.from);
       if (!d.reply) channel.postMessage({kind: 'HELLO', from: tab, reply: true});
     }
-    if (d.kind === 'DONE' && d.to === tab && db) {
-      const value = await txRead('counter:' + d.pair);
-      // A receiving tab may not have finished its own 20 transactions yet.
-      const retry = async () => {
-        if (running) {
-          const latest = await txRead('counter:' + d.pair);
-          if (latest === 40) {
-            seen.transaction = true;
-            evaluate();
-          } else setTimeout(retry, 100);
-        }
-      };
-      if (value === 40) {
-        seen.transaction = true;
-        evaluate();
-      } else setTimeout(retry, 100);
+    if (d.kind === 'DONE' && d.to === tab && d.pair === activePair) {
+      peerDone = true;
+      await verifyPair();
     }
   };
   function sendStorageProbe() {
