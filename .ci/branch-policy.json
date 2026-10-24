@@ -16,6 +16,11 @@
       "parent": "issue-156-two-userscript-classic-provider-20261024",
       "allowedDependencies": [],
       "integrationTarget": "main"
+    },
+    "issue-367-v3-20261024T231111Z": {
+      "parent": "issue-366-v3-20261024T225646Z",
+      "allowedDependencies": [],
+      "integrationTarget": "main"
     }
   },
   "patterns": [
