@@ -42,3 +42,15 @@ test('factory failure leaves readiness retryable; incomplete association is neve
 test('production has no provider global, catalogue, Blob import or retry timer', () => {
   assert.doesNotMatch(bridge, /ChatGPTWebAgentPlugin|loadAgent|getAgentPluginArtifact|importAgentPluginModule|setTimeout|30000|new Blob/);
 });
+
+test('a throwing factory does not poison later readiness', async () => {
+  let broken = true;
+  const agent = {version: () => ({plugin: 'retry', apiVersion: 1})};
+  const h = harness({recognizeAgentPlugin: () => ({id: 'retry'}), createAgent() {
+    if (broken) throw new Error('factory failed');
+    return {agent, session: {events: []}};
+  }});
+  await assert.rejects(h.ready(), /factory failed/);
+  broken = false;
+  assert.equal(await h.ready(), agent);
+});

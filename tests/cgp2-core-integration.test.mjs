@@ -152,3 +152,27 @@ test('registration failures remain visible and no obsolete loader survives', () 
   assert.match(readinessSource, /agent-plugin-readiness-failure/);
   assert.match(readinessSource, /Export setup failed:/);
 });
+
+test('production bridge publishes through the real registered Core session and preserves source/image identity', async () => {
+  const host = {
+    canonicalCore: () => core,
+    assert: (ok, message) => assert.ok(ok, message),
+    currentConversationId: () => null,
+    logDiagnostic() {},
+    canonicalEnrichRecoveredImages: event => event
+  };
+  vm.runInNewContext(bridgeSource + `
+    this.ready = ensureChatGPTCanonicalAgent;
+    this.events = canonicalEventsFromChatGPTAgent;
+    this.byRecord = canonicalEventsBySourceRecord;
+    this.images = canonicalImageResourcesByRecordAndPart;
+  `, host);
+  await host.ready();
+  const records = [textRecord('bridge-u', 'user', 'Question'),
+    textRecord('bridge-a', 'assistant', 'Answer')];
+  assert.deepEqual([...host.byRecord(records).keys()], ['bridge-u', 'bridge-a']);
+  assert.deepEqual(plain(host.events(records)), plain(records.map(contractEvent)));
+  assert.equal(host.images(records).size, 0);
+  assert.deepEqual(plain(host.events([records[1]]).map(event => event.source_record_id)),
+    ['bridge-a'], 'Prior inventory must not survive production bridge replacement.');
+});
