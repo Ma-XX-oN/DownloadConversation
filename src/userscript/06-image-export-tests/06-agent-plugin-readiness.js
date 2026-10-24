@@ -37,6 +37,8 @@
    * @returns {Promise<void>} Resolves after the original runner completes.
    */
   runOneTest = async function runOneTestAfterChatGPTPluginReady(name, fn) {
+    // #297 Test cases arm their own observer before #310 host connection.
+    if (name.startsWith('AICC #127')) return runOneTestWithCanonicalAgent(name, fn);
     if (name !== 'Worker + Zstd/CSP'
       && name !== 'CSC Worker stream + directory'
       && name !== 'CSC dual clone + Worker') {
@@ -51,6 +53,9 @@
    * @returns {Promise<void>} Resolves after the original matrix runner completes.
    */
   runTests = async function runTestsAfterChatGPTPluginReady() {
+    // Arm the witness before provider loading or the first queue drain.
+    sessionStorage.setItem(AICC127_ARMED_KEY, 'true');
+    aicc127Prepare();
     await ensureChatGPTCanonicalAgent();
     return runTestsWithCanonicalAgent();
   };

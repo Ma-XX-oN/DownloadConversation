@@ -183,6 +183,17 @@ function harness(storage = new Map(), page = 'page-1') {
     get evidence() { return context.c.evidence(); } };
 }
 
+test('Test-button wrappers arm the real observer before any host readiness', () => {
+  const readiness = load('06-image-export-tests/06-agent-plugin-readiness.js');
+  assert.match(readiness, /name\\.startsWith\\('AICC #127'\\)\\) return runOneTestWithCanonicalAgent/);
+  assert.match(readiness, /aicc127Prepare\\(\\);\\s*await ensureChatGPTCanonicalAgent\\(\\)/);
+  const bridge = load('04-conversation-rendering/08-agent-plugin-bridge.js');
+  const subscribe = bridge.indexOf('aicc127AttachAgentEarly(agent)');
+  const connect = bridge.indexOf('reconnectChatGPTSubjectHost();', subscribe);
+  assert.ok(subscribe >= 0 && connect > subscribe,
+    'Real subject observer must subscribe before host connection/drain.');
+});
+
 test('RED boundary: old #351 source contains no live Test-button instrumentation', () => {
   const manifest = readFileSync(new URL('../src/userscript-manifest.json',
     import.meta.url), 'utf8');
