@@ -4,8 +4,8 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 import vm from 'node:vm';
 
-assert.equal(coreDependency.commit, '9e18441a1f68a1cac5ebb6e20dead945dd36d7dd');
-assert.equal(coreDependency.git_blob_sha1, '47efb4f379f5bb27ae710a53d1cb84388aeeb1a2');
+assert.equal(coreDependency.commit, '4d8a596bf53de8e92c221a34bdbe9c6cb47b5db4');
+assert.equal(coreDependency.git_blob_sha1, '5d1f9be2f1fd2c2e0733e707f07bb7f9835577b3');
 assert.doesNotMatch(userscript, /^\/\/ @require\s+/m,
   'Generated userscript must not use runtime @require for AIConversationCore.');
 
@@ -14,7 +14,8 @@ assert.equal(response.status, 200, `Could not load pinned AIConversationCore bun
 const bundle = await response.text();
 const coreContext = {};
 coreContext.globalThis = coreContext;
-vm.runInNewContext(bundle, coreContext, { filename: 'aiconversationcore.chatgpt.browser.js' });
+Object.assign(coreContext, {setTimeout, clearTimeout});
+  vm.runInNewContext(bundle, coreContext, { filename: 'aiconversationcore.chatgpt.browser.js' });
 
 class TestFileReader {
   async readAsDataURL(blob) {

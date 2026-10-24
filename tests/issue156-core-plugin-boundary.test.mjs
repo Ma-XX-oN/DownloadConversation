@@ -32,7 +32,7 @@ test('DC build does not manufacture provider-plugin descriptors', () => {
 });
 
 test('DC delegates plugin selection, registration and agent creation to AICC', () => {
-  assert.match(bridge, /core\.loadAgent\(/);
+  assert.match(bridge, /core\.createAgent\(/);
   assert.doesNotMatch(bridge, /new core\.AgentPluginRegistry/);
   assert.doesNotMatch(bridge, /\.registerModule\(/);
   assert.doesNotMatch(bridge, /DC_AGENT_PLUGIN_DESCRIPTORS/);

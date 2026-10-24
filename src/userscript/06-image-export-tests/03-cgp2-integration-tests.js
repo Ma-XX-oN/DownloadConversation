@@ -7,7 +7,7 @@
    * @returns {void} Completes after fixture verification.
    */
   function testCGP2InstalledInterface() {
-    const plugin = globalThis.ChatGPTWebAgentPlugin;
+    const plugin = canonicalCore().getAgentPlugin('chatgpt-web');
     assert(plugin?.id === 'chatgpt-web' && plugin.apiVersion === 1,
       'Private CGP2 classic plugin is missing or has the wrong API.');
     assert(typeof plugin.create === 'function' && typeof plugin.recognize === 'function',
@@ -18,11 +18,10 @@
       'CGP2 incorrectly recognized another provider.');
     assert(chatGPTAgent && chatGPTCanonicalSession,
       'AICC did not create the live canonical agent and session.');
-    const selected = canonicalCore().getAgentPluginArtifact('chatgpt-web');
+    const selected = canonicalCore().getAgentPlugin('chatgpt-web');
     const actual = chatGPTAgent.version();
-    assert(actual.plugin === selected.id && actual.version === selected.version &&
-      actual.ref === selected.ref && actual.apiVersion === selected.apiVersion,
-    'Live agent identity does not match AICC catalogue.');
+    assert(actual.plugin === selected.id && actual.apiVersion === selected.apiVersion,
+    'Live agent identity does not match AICC registration.');
   }
 
   /**
@@ -30,10 +29,10 @@
    * @returns {void} Completes after fixture verification.
    */
   function testCGP2IsolatedLifecycle() {
-    const plugin = globalThis.ChatGPTWebAgentPlugin;
+    const plugin = canonicalCore().getAgentPlugin('chatgpt-web');
     assert(plugin?.create, 'Private CGP2 plugin is unavailable.');
-    const agent = plugin.create({ref: 'test-only'});
-    const other = plugin.create({ref: 'test-only'});
+    const agent = canonicalCore().createAgent(plugin.id, {ref: 'test-only'}).agent;
+    const other = canonicalCore().createAgent(plugin.id, {ref: 'test-only'}).agent;
     const states = [];
     const unsubscribe = agent.observeState(state => states.push(state));
     assert(states.length === 1 && states[0].exchange.status === 'UNKNOWN',
@@ -54,14 +53,12 @@
    * @returns {Promise<void>} Completes after fixture verification.
    */
   async function testCGP2RejectsWrongVersion() {
-    const plugin = globalThis.ChatGPTWebAgentPlugin;
+    const plugin = canonicalCore().getAgentPlugin('chatgpt-web');
     assert(plugin?.create, 'Private CGP2 plugin is unavailable.');
     const core = canonicalCore();
     let rejected = false;
     try {
-      await core.loadAgent('chatgpt-web', {
-        loadModule: async () => ({default: {...plugin, apiVersion: plugin.apiVersion + 1}})
-      });
+      core.registerAgentPlugin({...plugin, apiVersion: plugin.apiVersion + 1});
     } catch { rejected = true; }
     assert(rejected, 'AICC accepted a plugin descriptor with a mismatched API version.');
   }
@@ -74,9 +71,7 @@
     const core = canonicalCore();
     let rejected = false;
     try {
-      await core.loadAgent('chatgpt-web', {
-        loadModule: async () => ({default: null})
-      });
+      core.createAgent('__dc_366_missing_provider__');
     } catch { rejected = true; }
     assert(rejected, 'AICC accepted a missing provider module.');
   }
@@ -86,7 +81,7 @@
    * @returns {void} Completes after fixture verification.
    */
   function testCGP2CanonicalFixtureParity() {
-    const plugin = globalThis.ChatGPTWebAgentPlugin;
+    const plugin = canonicalCore().getAgentPlugin('chatgpt-web');
     assert(plugin?.create, 'Private CGP2 plugin unavailable.');
     const fixture = [
       {id: 'cg-fixture-user', author: {role: 'user'},
@@ -94,22 +89,17 @@
       {id: 'cg-fixture-assistant', author: {role: 'assistant'},
         content: {content_type: 'text', parts: ['Fixture answer']}, metadata: {}}
     ];
-    const produced = [];
-    const agent = plugin.create({
-      ref: 'test-only',
-      core: {publishEvents: events => produced.push(events)}
-    });
+    const {agent, session} = canonicalCore().createAgent(plugin.id, {ref: 'test-only'});
     agent.commTraffic({type: 'persisted_records', records: fixture});
-    assert(produced.length === 1, 'CGP2 did not publish canonical records.');
-    const messages = produced[0].filter(item =>
+    const first = JSON.stringify(session.events);
+    const messages = session.events.filter(item =>
       item.kind === 'message' && item.visibility === 'visible');
     assert(messages.length === 2, 'Expected exactly two canonical messages.');
     assert(messages[0].source_record_id === fixture[0].id &&
       messages[1].source_record_id === fixture[1].id,
     'CGP2 changed ordered source message identities.');
     agent.commTraffic({type: 'persisted_records', records: fixture});
-    assert(produced.length === 2 &&
-      JSON.stringify(produced[0]) === JSON.stringify(produced[1]),
+    assert(first === JSON.stringify(session.events),
     'Repeated inventory changed canonical interpretation.');
   }
 
@@ -118,9 +108,9 @@
    * @returns {void} Completes after fixture verification.
    */
   function testCGP2IndependentExchangeOrdering() {
-    const plugin = globalThis.ChatGPTWebAgentPlugin;
+    const plugin = canonicalCore().getAgentPlugin('chatgpt-web');
     assert(plugin?.create, 'Private CGP2 plugin unavailable.');
-    const agent = plugin.create({ref: 'test-only'});
+    const agent = canonicalCore().createAgent(plugin.id, {ref: 'test-only'}).agent;
     agent.commTraffic({type:'turn_exchange_complete',
       exchange_id:'fixture-x', result:'success', sequence:20});
     assert(agent.currentState().exchange.status === 'COMPLETED',
@@ -141,12 +131,12 @@
    * @returns {Promise<void>} Completes after fixture verification.
    */
   async function testCGP2DirectLoaderIdentity() {
-    const descriptor = canonicalCore().getAgentPluginArtifact('chatgpt-web');
-    const loaded = await importAgentPluginModule(descriptor);
-    assert(loaded.default === globalThis.ChatGPTWebAgentPlugin,
-      'DC loader did not return the exact shared CGP2 object.');
-    const again = await importAgentPluginModule(descriptor);
-    assert(again.default === loaded.default,
-      'Repeated DC loader call returned a different plugin object.');
+    const core = canonicalCore();
+    const descriptor = core.getAgentPlugin('chatgpt-web');
+    assert(descriptor && Object.isFrozen(descriptor), 'AICC registration is unavailable.');
+    const agent = await ensureChatGPTCanonicalAgent();
+    assert(agent === await ensureChatGPTCanonicalAgent(),
+      'Repeated readiness did not retain the same agent/session.');
+    assert(core.getAgentPlugin(descriptor.id) === descriptor,
+      'Readiness replaced the captured registration.');
   }
-

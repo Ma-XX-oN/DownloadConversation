@@ -11,6 +11,11 @@
       "parent": "main",
       "allowedDependencies": [],
       "integrationTarget": "main"
+    },
+    "issue-366-v3-20261024T225646Z": {
+      "parent": "issue-156-two-userscript-classic-provider-20261024",
+      "allowedDependencies": [],
+      "integrationTarget": "main"
     }
   },
   "patterns": [

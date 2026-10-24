@@ -1,71 +1,33 @@
-  /** Promise for the one AICC-selected provider descriptor in this page realm. */
-  let chatGPTPluginModulePromise = null;
-  /** Provider-owned agent instance registered through AICC. */
+  /** Provider agent obtained from the authoritative AICC registration inventory. */
   let chatGPTAgent = null;
-  /** AICC-owned canonical session associated with that agent. */
+  /** Core-owned canonical session associated with the selected agent. */
   let chatGPTCanonicalSession = null;
 
   /**
-   * Waits for the independently installed private CGP2 classic userscript.
-   * The userscript is a separately installed Tampermonkey dependency, so no
-   * Blob import or cross-world message copying is required.
-   */
-  async function importAgentPluginModule(descriptor) {
-    if (!chatGPTPluginModulePromise) {
-      chatGPTPluginModulePromise = (async () => {
-        const deadline = Date.now() + 30000;
-        while (Date.now() < deadline) {
-          const plugin = globalThis.ChatGPTWebAgentPlugin;
-          if (plugin) {
-            assert(plugin.id === descriptor.id,
-              'Loaded CGP2 plugin ID does not match the AICC descriptor.');
-            assert(plugin.apiVersion === descriptor.apiVersion,
-              'Loaded CGP2 plugin API does not match the AICC descriptor.');
-            assert(typeof plugin.create === 'function'
-              && typeof plugin.recognize === 'function',
-              'Loaded CGP2 plugin interface is incomplete.');
-            const check = plugin.create({ ref: descriptor.ref }).version();
-            assert(check.version === descriptor.version,
-              'Loaded CGP2 plugin version does not match the AICC descriptor.');
-            return { default: plugin };
-          }
-          await new Promise(resolve => setTimeout(resolve, 100));
-        }
-        throw new Error('CGP2 Tampermonkey loader is unavailable after 30 seconds.');
-      })();
-    }
-    try {
-      return await chatGPTPluginModulePromise;
-    } catch (error) {
-      chatGPTPluginModulePromise = null;
-      throw error;
-    }
-  }
-
-  /**
-   * Asks AICC to select, load, register and create the ChatGPT agent. DC supplies
-   * only the generic browser artifact-transport callback.
-   *
-   * @returns {Promise<Object>} The validated ChatGPT agent instance.
+   * Recognizes the current source through AICC and creates its registered agent.
+   * Missing registration fails immediately; a later operation can retry normally.
+   * @returns {Promise<Object>} Validated agent with its Core-owned session retained.
    */
   async function ensureChatGPTCanonicalAgent() {
     if (chatGPTAgent) return chatGPTAgent;
     const core = canonicalCore();
-    assert(typeof core.loadAgent === 'function',
-      'AIConversationCore agent loader is unavailable.');
-    const loaded = await core.loadAgent('chatgpt-web', {
-      loadModule: importAgentPluginModule,
-      context: {
-        conversationId: typeof currentConversationId === 'function'
-          ? currentConversationId()
-          : null
-      }
+    assert(typeof core.recognizeAgentPlugin === 'function'
+      && typeof core.createAgent === 'function',
+    'AIConversationCore registration API is unavailable.');
+    const descriptor = core.recognizeAgentPlugin({
+      provider: 'chatgpt',
+      url: typeof location === 'object' ? location.href : ''
     });
-    chatGPTAgent = loaded?.agent ?? null;
-    chatGPTCanonicalSession = loaded?.session ?? null;
-    assert(chatGPTAgent && chatGPTCanonicalSession,
-      'AIConversationCore did not create the ChatGPT agent and canonical session.');
-    const identity = chatGPTAgent.version();
+    assert(descriptor, 'No AICC-registered provider recognizes this conversation.');
+    const loaded = core.createAgent(descriptor.id, {
+      conversationId: typeof currentConversationId === 'function'
+        ? currentConversationId() : null
+    });
+    assert(loaded?.agent && loaded?.session,
+      'AIConversationCore did not create the provider agent and canonical session.');
+    const identity = loaded.agent.version();
+    chatGPTAgent = loaded.agent;
+    chatGPTCanonicalSession = loaded.session;
     logDiagnostic('debug', 'agent-plugin-ready', {
       plugin_id: identity?.plugin ?? 'unknown',
       ref: identity?.ref ?? 'unknown',

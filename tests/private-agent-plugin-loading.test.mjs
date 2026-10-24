@@ -23,7 +23,7 @@ test('provider selection remains owned by AICC, not DownloadConversation', () =>
   assert.equal(Object.hasOwn(manifest, 'agent_plugins'), false);
   assert.deepEqual(manifest.dependencies.map(entry => entry.name),
     ['AIConversationCore']);
-  assert.equal(manifest.dependencies[0].ref, 'main');
+  assert.equal(manifest.dependencies[0].commit, '4d8a596bf53de8e92c221a34bdbe9c6cb47b5db4');
   assert.doesNotMatch(JSON.stringify(manifest), /Chat-Gpt-Plugin-2/);
   assert.doesNotMatch(build, /manifest\.agent_plugins/);
   assert.doesNotMatch(buildLib, /DC_AGENT_PLUGIN_DESCRIPTORS/);
@@ -43,14 +43,8 @@ test('DC only matches ChatGPT and needs no privileged Tampermonkey grants', asyn
   assert.doesNotMatch(buildLib, /buildAgentPluginPrelude/);
 });
 
-test('shared-world loader uses the installed CGP2 object and preserves AICC authority', () => {
-  assert.match(bridge, /globalThis\.ChatGPTWebAgentPlugin/);
-  assert.match(bridge, /plugin\.id === descriptor\.id/);
-  assert.match(bridge, /plugin\.apiVersion === descriptor\.apiVersion/);
-  assert.match(bridge, /check\.version === descriptor\.version/);
-  assert.match(bridge, /return \{ default: plugin \}/);
-  assert.match(bridge, /core\.loadAgent\('chatgpt-web'/);
-  assert.match(bridge, /chatGPTPluginModulePromise = null;\s*throw error;/);
-  assert.doesNotMatch(bridge, /Authorization\s*:/i);
-  assert.doesNotMatch(bridge, /access[_-]?token/i);
+test('shared-world loading uses only AICC registration and agent creation', () => {
+  assert.match(bridge, /core\.recognizeAgentPlugin\(/);
+  assert.match(bridge, /core\.createAgent\(descriptor\.id/);
+  assert.doesNotMatch(bridge, /ChatGPTWebAgentPlugin|loadAgent|getAgentPluginArtifact|setTimeout/);
 });

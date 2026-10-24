@@ -3,7 +3,7 @@ import vm from 'node:vm';
 
 import { coreBundle } from './core-pin.mjs';
 
-const context = vm.createContext({ URL });
+const context = vm.createContext({ URL, setTimeout, clearTimeout });
 vm.runInContext(coreBundle, context, { filename: 'aiconversationcore.browser.js' });
 
 const core = context.AIConversationCore;

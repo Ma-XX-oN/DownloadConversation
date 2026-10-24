@@ -77,7 +77,7 @@
   function builtInTests() {
     return [
       ['CGP2 installed interface and AICC identity', testCGP2InstalledInterface],
-      ['CGP2 direct loader identity', testCGP2DirectLoaderIdentity],
+      ['AICC registration and retained agent identity', testCGP2DirectLoaderIdentity],
       ['CGP2 canonical fixture and repeat parity', testCGP2CanonicalFixtureParity],
       ['CGP2 ordered exchange isolation', testCGP2IndependentExchangeOrdering],
       ['CGP2 isolated lifecycle and observers', testCGP2IsolatedLifecycle],
