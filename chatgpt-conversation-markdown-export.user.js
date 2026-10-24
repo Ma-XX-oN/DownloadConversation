@@ -1,17 +1,12 @@
 // ==UserScript==
 // @name         ChatGPT Conversation Markdown Recorder
 // @namespace    https://chatgpt.com/
-// @version      1.11.14
+// @version      1.11.14-issue.156.5
 // @description  Exports the current ChatGPT conversation directly from the Conversation API as Markdown or JSONL.
 // @match        https://chatgpt.com/*
 // @match        https://chat.openai.com/*
-// @connect      github.com
-// @connect      raw.githubusercontent.com
-// @grant        GM_xmlhttpRequest
-// @grant        GM_getValue
-// @grant        GM_setValue
-// @grant        GM_addValueChangeListener
-// @grant        GM_removeValueChangeListener
+// @sandbox      raw
+// @grant        none
 // @run-at       document-start
 // ==/UserScript==
 // source https://raw.githubusercontent.com/Ma-XX-oN/AIConversationCore/9e18441a1f68a1cac5ebb6e20dead945dd36d7dd/dist/aiconversationcore.chatgpt.browser.js
@@ -6395,172 +6390,40 @@ async function loadAgent(id, { loadModule, context = {} } = {}) {
 // END bundled AIConversationCore
 
 (() => {
-  /** Shared cache prefix for verified direct-download artifacts. */
-  const AGENT_PLUGIN_CACHE_PREFIX = 'downloadconversation:agent-plugin-cache:';
-  /** Direct GitHub-origin retrieval timeout in milliseconds. */
-  const AGENT_PLUGIN_DOWNLOAD_TIMEOUT_MS = 2 * 60 * 1000;
-
-  /** Promise for the one AICC-selected ChatGPT plugin module import in this page realm. */
+  /** Promise for the one AICC-selected provider descriptor in this page realm. */
   let chatGPTPluginModulePromise = null;
-  /** Provider-owned ChatGPT agent instance created through AICC. */
+  /** Provider-owned agent instance registered through AICC. */
   let chatGPTAgent = null;
-  /** Core-owned canonical session associated with `chatGPTAgent`. */
+  /** AICC-owned canonical session associated with that agent. */
   let chatGPTCanonicalSession = null;
 
   /**
-   * Converts bytes to lowercase hexadecimal text.
-   *
-   * @param {Uint8Array} bytes - Bytes to format.
-   * @returns {string} Lowercase hexadecimal text.
-   */
-  function agentPluginHex(bytes) {
-    return Array.from(bytes, byte => byte.toString(16).padStart(2, '0')).join('');
-  }
-
-  /**
-   * Verifies artifact source against AICC-owned Git object identity.
-   *
-   * @param {Object} descriptor - Core-owned artifact selector and integrity metadata.
-   * @param {string} source - Retrieved self-contained ESM source.
-   * @returns {Promise<Uint8Array>} Exact verified UTF-8 source bytes.
-   */
-  async function verifyAgentPluginSource(descriptor, source) {
-    const bytes = new TextEncoder().encode(source);
-    assert(bytes.byteLength === descriptor.byteLength,
-      `Plugin byte length ${bytes.byteLength} differs from configured ${descriptor.byteLength}.`);
-    const header = new TextEncoder().encode(`blob ${bytes.byteLength}\0`);
-    const gitObject = new Uint8Array(header.byteLength + bytes.byteLength);
-    gitObject.set(header, 0);
-    gitObject.set(bytes, header.byteLength);
-    const digest = new Uint8Array(await crypto.subtle.digest('SHA-1', gitObject));
-    assert(agentPluginHex(digest) === descriptor.gitBlobSha1,
-      'Plugin Git blob integrity check failed.');
-    return bytes;
-  }
-
-  /**
-   * Returns the shared cache key for one exact AICC-selected artifact.
-   *
-   * @param {Object} descriptor - Core-owned artifact descriptor.
-   * @returns {string} Shared userscript-storage key.
-   */
-  function agentPluginCacheKey(descriptor) {
-    return `${AGENT_PLUGIN_CACHE_PREFIX}${descriptor.id}:${descriptor.gitBlobSha1}`;
-  }
-
-  /**
-   * Reads a previously verified artifact candidate from shared userscript storage.
-   * Integrity is rechecked asynchronously before execution.
-   *
-   * @param {Object} descriptor - Core-owned artifact descriptor.
-   * @returns {string|null} Cached ESM source candidate, or null when unavailable.
-   */
-  function cachedAgentPluginSource(descriptor) {
-    const cached = GM_getValue(agentPluginCacheKey(descriptor), null);
-    if (!cached || cached.ref !== descriptor.ref || cached.version !== descriptor.version
-        || typeof cached.source !== 'string') return null;
-    return cached.source;
-  }
-
-  /**
-   * Fetches the Core-selected private artifact through authenticated GitHub raw.
-   * The GitHub-origin request uses the user's browser session; GitHub may redirect
-   * to the raw CDN after checking access. The caller verifies exact Git identity.
-   *
-   * @param {Object} descriptor - Core-owned artifact descriptor.
-   * @returns {Promise<string>} Unmodified UTF-8 source for integrity validation.
-   */
-  function requestAgentPluginFromGitHub(descriptor) {
-    const [owner, repository] = String(descriptor.repository).split('/');
-    assert(owner && repository, 'Invalid plugin repository.');
-    const encodePath = value => String(value).split('/').map(encodeURIComponent).join('/');
-    const url = `https://github.com/${encodeURIComponent(owner)}/${encodeURIComponent(repository)}`
-      + `/raw/${encodeURIComponent(descriptor.ref)}/${encodePath(descriptor.path)}`;
-    return new Promise((resolve, reject) => {
-      GM_xmlhttpRequest({
-        method: 'GET',
-        url,
-        timeout: AGENT_PLUGIN_DOWNLOAD_TIMEOUT_MS,
-        onload(response) {
-          if (response.status !== 200) {
-            reject(new Error(`Private plugin download returned HTTP ${response.status}.`));
-            return;
-          }
-          const source = response.responseText;
-          if (typeof source !== 'string') {
-            reject(new Error('Private plugin download returned no UTF-8 source.'));
-            return;
-          }
-          resolve(source);
-        },
-        onerror() {
-          reject(new Error('Private plugin download failed.'));
-        },
-        ontimeout() {
-          reject(new Error('Private plugin download timed out.'));
-        }
-      });
-    });
-  }
-
-  /**
-   * Retrieves, verifies and caches one AICC-selected plugin artifact.
-   *
-   * @param {Object} descriptor - Core-owned artifact descriptor.
-   * @returns {Promise<Uint8Array>} Verified module bytes.
-   */
-  async function loadAgentPlugin(descriptor) {
-    const cachedSource = cachedAgentPluginSource(descriptor);
-    if (cachedSource) {
-      try {
-        const bytes = await verifyAgentPluginSource(descriptor, cachedSource);
-        logDiagnostic('debug', 'agent-plugin-cache-hit', {
-          plugin_id: descriptor.id,
-          ref: descriptor.ref,
-          version: descriptor.version
-        });
-        return bytes;
-      } catch (error) {
-        GM_setValue(agentPluginCacheKey(descriptor), null);
-        throw new Error(
-          `Cached agent plugin failed integrity verification; retry Extract to reacquire it. ${errorMessage(error)}`
-        );
-      }
-    }
-
-    const source = await requestAgentPluginFromGitHub(descriptor);
-    const bytes = await verifyAgentPluginSource(descriptor, source);
-    GM_setValue(agentPluginCacheKey(descriptor), {
-      ref: descriptor.ref,
-      version: descriptor.version,
-      source,
-      verified_at: Date.now()
-    });
-    logDiagnostic('debug', 'agent-plugin-cache-stored', {
-      plugin_id: descriptor.id,
-      ref: descriptor.ref,
-      version: descriptor.version
-    });
-    return bytes;
-  }
-
-  /**
-   * Imports one AICC-selected ESM artifact through DownloadConversation's generic
-   * authenticated browser transport.
-   *
-   * @param {Object} descriptor - Core-owned artifact descriptor.
-   * @returns {Promise<Object>} Imported module namespace.
+   * Waits for the independently installed private CGP2 classic userscript.
+   * The userscript is a separately installed Tampermonkey dependency, so no
+   * Blob import or cross-world message copying is required.
    */
   async function importAgentPluginModule(descriptor) {
     if (!chatGPTPluginModulePromise) {
       chatGPTPluginModulePromise = (async () => {
-        const bytes = await loadAgentPlugin(descriptor);
-        const blobUrl = URL.createObjectURL(new Blob([bytes], { type: 'text/javascript' }));
-        try {
-          return await import(blobUrl);
-        } finally {
-          URL.revokeObjectURL(blobUrl);
+        const deadline = Date.now() + 30000;
+        while (Date.now() < deadline) {
+          const plugin = globalThis.ChatGPTWebAgentPlugin;
+          if (plugin) {
+            assert(plugin.id === descriptor.id,
+              'Loaded CGP2 plugin ID does not match the AICC descriptor.');
+            assert(plugin.apiVersion === descriptor.apiVersion,
+              'Loaded CGP2 plugin API does not match the AICC descriptor.');
+            assert(typeof plugin.create === 'function'
+              && typeof plugin.recognize === 'function',
+              'Loaded CGP2 plugin interface is incomplete.');
+            const check = plugin.create({ ref: descriptor.ref }).version();
+            assert(check.version === descriptor.version,
+              'Loaded CGP2 plugin version does not match the AICC descriptor.');
+            return { default: plugin };
+          }
+          await new Promise(resolve => setTimeout(resolve, 100));
         }
+        throw new Error('CGP2 Tampermonkey loader is unavailable after 30 seconds.');
       })();
     }
     try {
@@ -20871,12 +20734,143 @@ Image elapsed: ${formatDuration(imageElapsed)} — Completed: ${imageCompleted}/
   let testMatrixCurrentResults = new Map();
 
   /**
+   * CGP2 browser integration checks run against the actual installed classic
+   * plugin while keeping synthetic mutations isolated from the live session.
+   */
+  function testCGP2InstalledInterface() {
+    const plugin = globalThis.ChatGPTWebAgentPlugin;
+    assert(plugin?.id === 'chatgpt-web' && plugin.apiVersion === 1,
+      'Private CGP2 classic plugin is missing or has the wrong API.');
+    assert(typeof plugin.create === 'function' && typeof plugin.recognize === 'function',
+      'CGP2 factory or recognizer unavailable.');
+    assert(plugin.recognize({provider: 'chatgpt'}) === true,
+      'CGP2 did not recognize its provider.');
+    assert(plugin.recognize({provider: 'unrelated', url: 'https://example.com/'}) === false,
+      'CGP2 incorrectly recognized another provider.');
+    assert(chatGPTAgent && chatGPTCanonicalSession,
+      'AICC did not create the live canonical agent and session.');
+    const selected = canonicalCore().getAgentPluginArtifact('chatgpt-web');
+    const actual = chatGPTAgent.version();
+    assert(actual.plugin === selected.id && actual.version === selected.version &&
+      actual.ref === selected.ref && actual.apiVersion === selected.apiVersion,
+    'Live agent identity does not match AICC catalogue.');
+  }
+
+  function testCGP2IsolatedLifecycle() {
+    const plugin = globalThis.ChatGPTWebAgentPlugin;
+    assert(plugin?.create, 'Private CGP2 plugin is unavailable.');
+    const agent = plugin.create({ref: 'test-only'});
+    const other = plugin.create({ref: 'test-only'});
+    const states = [];
+    const unsubscribe = agent.observeState(state => states.push(state));
+    assert(states.length === 1 && states[0].exchange.status === 'UNKNOWN',
+      'Initial state observer did not deliver its snapshot.');
+    agent.commTraffic({type:'submission_committed', exchange_id:'fixture-exchange', activate:true});
+    assert(agent.currentState().exchange.id === 'fixture-exchange',
+      'Synthetic exchange did not activate.');
+    assert(other.currentState().exchange.id === null,
+      'Agent state leaked into another instance.');
+    const observed = states.length;
+    unsubscribe();
+    agent.commTraffic({type:'submission_committed', exchange_id:'fixture-next', activate:true});
+    assert(states.length === observed, 'Unsubscribed observer was notified.');
+  }
+
+  async function testCGP2RejectsWrongVersion() {
+    const plugin = globalThis.ChatGPTWebAgentPlugin;
+    assert(plugin?.create, 'Private CGP2 plugin is unavailable.');
+    const core = canonicalCore();
+    let rejected = false;
+    try {
+      await core.loadAgent('chatgpt-web', {
+        loadModule: async () => ({default: {...plugin, apiVersion: plugin.apiVersion + 1}})
+      });
+    } catch { rejected = true; }
+    assert(rejected, 'AICC accepted a plugin descriptor with a mismatched API version.');
+  }
+
+  async function testCGP2MissingProvider() {
+    const core = canonicalCore();
+    let rejected = false;
+    try {
+      await core.loadAgent('chatgpt-web', {
+        loadModule: async () => ({default: null})
+      });
+    } catch { rejected = true; }
+    assert(rejected, 'AICC accepted a missing provider module.');
+  }
+
+  function testCGP2CanonicalFixtureParity() {
+    const plugin = globalThis.ChatGPTWebAgentPlugin;
+    assert(plugin?.create, 'Private CGP2 plugin unavailable.');
+    const fixture = [
+      {id: 'cg-fixture-user', author: {role: 'user'},
+        content: {content_type: 'text', parts: ['Fixture question']}, metadata: {}},
+      {id: 'cg-fixture-assistant', author: {role: 'assistant'},
+        content: {content_type: 'text', parts: ['Fixture answer']}, metadata: {}}
+    ];
+    const produced = [];
+    const agent = plugin.create({
+      ref: 'test-only',
+      core: {publishEvents: events => produced.push(events)}
+    });
+    agent.commTraffic({type: 'persisted_records', records: fixture});
+    assert(produced.length === 1, 'CGP2 did not publish canonical records.');
+    const messages = produced[0].filter(item =>
+      item.kind === 'message' && item.visibility === 'visible');
+    assert(messages.length === 2, 'Expected exactly two canonical messages.');
+    assert(messages[0].source_record_id === fixture[0].id &&
+      messages[1].source_record_id === fixture[1].id,
+    'CGP2 changed ordered source message identities.');
+    agent.commTraffic({type: 'persisted_records', records: fixture});
+    assert(produced.length === 2 &&
+      JSON.stringify(produced[0]) === JSON.stringify(produced[1]),
+    'Repeated inventory changed canonical interpretation.');
+  }
+
+  function testCGP2IndependentExchangeOrdering() {
+    const plugin = globalThis.ChatGPTWebAgentPlugin;
+    assert(plugin?.create, 'Private CGP2 plugin unavailable.');
+    const agent = plugin.create({ref: 'test-only'});
+    agent.commTraffic({type:'turn_exchange_complete',
+      exchange_id:'fixture-x', result:'success', sequence:20});
+    assert(agent.currentState().exchange.status === 'COMPLETED',
+      'Completed fixture exchange was not recognised.');
+    agent.commTraffic({type:'turn_exchange_complete',
+      exchange_id:'fixture-x', result:'error', sequence:19});
+    assert(agent.currentState().exchange.status === 'COMPLETED',
+      'Older fixture observation corrupted the accepted outcome.');
+    agent.commTraffic({type:'submission_committed',
+      exchange_id:'fixture-y', activate:true});
+    assert(agent.currentState().exchange.id === 'fixture-y' &&
+      agent.currentState().exchange.status === 'IN_PROGRESS',
+    'Subsequent fixture exchange did not start in progress.');
+  }
+
+  async function testCGP2DirectLoaderIdentity() {
+    const descriptor = canonicalCore().getAgentPluginArtifact('chatgpt-web');
+    const loaded = await importAgentPluginModule(descriptor);
+    assert(loaded.default === globalThis.ChatGPTWebAgentPlugin,
+      'DC loader did not return the exact shared CGP2 object.');
+    const again = await importAgentPluginModule(descriptor);
+    assert(again.default === loaded.default,
+      'Repeated DC loader call returned a different plugin object.');
+  }
+
+  /**
    * Handles built in tests.
    *
    * @returns {Array<unknown>} The ordered values produced by `builtInTests`.
    */
   function builtInTests() {
     return [
+      ['CGP2 installed interface and AICC identity', testCGP2InstalledInterface],
+      ['CGP2 direct loader identity', testCGP2DirectLoaderIdentity],
+      ['CGP2 canonical fixture and repeat parity', testCGP2CanonicalFixtureParity],
+      ['CGP2 ordered exchange isolation', testCGP2IndependentExchangeOrdering],
+      ['CGP2 isolated lifecycle and observers', testCGP2IsolatedLifecycle],
+      ['CGP2 rejects mismatched plugin API', testCGP2RejectsWrongVersion],
+      ['CGP2 rejects missing provider', testCGP2MissingProvider],
       ['API pagination', testApiPaginationLogic],
       ['Stable API message IDs', testStableMessageIds],
       ['Multimodal User + chronological order', testMultimodalUserAndChronologicalOrder],
