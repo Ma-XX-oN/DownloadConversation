@@ -137,7 +137,6 @@
         "src/userscript/07-panel-launcher/04-launcher-removal-part2.js",
         "src/userscript/07-panel-launcher/05-bootstrap.js",
         "src/userscript/07-panel-launcher/04-startup-dark-theme-guard.js",
-        "src/userscript/04-conversation-rendering/08-agent-plugin-bridge.js",
         "src/userscript/07-panel-launcher/05-bootstrap-part2.js"
       ]
     }

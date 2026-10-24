@@ -55,7 +55,10 @@
     return {
       slot: step.slot, first_capture_order: step.first_capture_order,
       first_capture_epoch_ms: step.first_capture_epoch_ms,
+      first_capture_mono_ms: step.first_capture_mono_ms,
       last_capture_order: step.last_capture_order,
+      last_capture_epoch_ms: step.last_capture_epoch_ms,
+      last_capture_mono_ms: step.last_capture_mono_ms,
       conversation_requests: step.conversation_requests || 0,
       conversation_responses: step.conversation_responses || 0,
       observer_updates: step.observer_updates || 0,
@@ -126,7 +129,10 @@
         : key === nav.steps[0].key ? 'A-return' : 'other';
     const step = { key, slot, first_capture_order: event.capture_order,
       first_capture_epoch_ms: event.captured_at_epoch_ms,
-      last_capture_order: event.capture_order, conversation_requests: 0,
+      first_capture_mono_ms: event.captured_at_mono_ms,
+      last_capture_order: event.capture_order,
+      last_capture_epoch_ms: event.captured_at_epoch_ms,
+      last_capture_mono_ms: event.captured_at_mono_ms, conversation_requests: 0,
       conversation_responses: 0, observer_updates: 0,
       navigation_dispatched: false, backend_observed: false,
       observer_matches_backend: false, visible_conversation_match: null,
@@ -159,6 +165,8 @@
       && entry.first_capture_order <= event.capture_order).at(-1) ?? step;
     if (!selected) return;
     selected.last_capture_order = event.capture_order;
+    selected.last_capture_epoch_ms = event.captured_at_epoch_ms;
+    selected.last_capture_mono_ms = event.captured_at_mono_ms;
     if (event.direction === 'request') {
       s.requests.set(event.connection_id, { step: selected, kind: event.kind });
       if (event.kind === 'conversation') selected.conversation_requests++;

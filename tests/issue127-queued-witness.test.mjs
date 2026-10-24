@@ -208,12 +208,35 @@ test('pre-host request/response buffered with original timestamps and one host',
   assert.equal(step.conversation_requests, 1);
   assert.equal(step.conversation_responses, 1);
   assert.equal(step.first_capture_epoch_ms, 10001);
+  assert.equal(step.first_capture_mono_ms, 11);
+  assert.equal(step.last_capture_epoch_ms, 10003);
   assert.equal(step.observer_matches_backend, true);
   assert.equal(h.hostConnections, 1);
   assert.equal(h.hostResponses, 1);
   assert.equal(h.cloneCount, 0);
   assert.equal(h.extraHttp, 0);
   assert.doesNotMatch(JSON.stringify(h.evidence), /secret conversation content|Conversation A|Project A|g-p-A/);
+});
+
+test('two buffered concurrent responses complete out of order without loss', async () => {
+  const h = harness();
+  h.navigation('A', 'Conversation A', 'Project A');
+  h.request('conversation', 'A', 'fast-c1');
+  h.request('conversation', 'A', 'slow-c2');
+  h.response('conversation', 'A', 'slow-c2',
+    { conversation_id: 'A', title: 'Conversation A', gizmo_id: 'g-p-A' });
+  h.response('conversation', 'A', 'fast-c1',
+    { conversation_id: 'A', title: 'Conversation A', gizmo_id: 'g-p-A' });
+  await h.context.c.start();
+  await tick(); await tick();
+  const step = h.evidence.navigation_steps[0];
+  assert.equal(step.conversation_requests, 2);
+  assert.equal(step.conversation_responses, 2);
+  assert.equal(step.observer_matches_backend, true);
+  assert.equal(h.hostResponses, 2);
+  assert.equal(h.cloneCount, 0);
+  assert.equal(step.first_capture_mono_ms, 11);
+  assert.equal(step.last_capture_mono_ms, 15);
 });
 
 test('A-B-A reuses verified backend identity with zero conversation traffic', async () => {
