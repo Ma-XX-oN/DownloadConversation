@@ -179,8 +179,8 @@
     agent.commTraffic({type:'submission_committed',
       exchange_id:'fixture-y', activate:true});
     assert(agent.currentState().exchange.id === 'fixture-y' &&
-      agent.currentState().exchange.status === 'UNKNOWN',
-    'Subsequent fixture exchange retained previous exchange state.');
+      agent.currentState().exchange.status === 'IN_PROGRESS',
+    'Subsequent fixture exchange did not start in progress.');
   }
 
   async function testCGP2DirectLoaderIdentity() {
