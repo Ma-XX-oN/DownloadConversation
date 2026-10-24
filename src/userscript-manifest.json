@@ -101,11 +101,11 @@
         "src/userscript/06-image-export-tests/01-image-fetch.js",
         "src/userscript/06-image-export-tests/02-image-recovery.js",
         "src/userscript/06-image-export-tests/03-export-tests-transition.js",
-        "src/userscript/06-image-export-tests/03-cgp2-integration-tests.js",
         "src/userscript/06-image-export-tests/04-tests-modal-transition.js",
         "src/userscript/06-image-export-tests/05-modal-contract.js",
         "src/userscript/06-image-export-tests/03-favicon-source-preview.js",
-        "src/userscript/06-image-export-tests/06-agent-plugin-readiness.js"
+        "src/userscript/06-image-export-tests/06-agent-plugin-readiness.js",
+        "src/userscript/06-image-export-tests/03-cgp2-integration-tests.js"
       ]
     },
     {
