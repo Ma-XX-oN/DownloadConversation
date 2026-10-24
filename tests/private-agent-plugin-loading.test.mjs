@@ -30,41 +30,27 @@ test('provider selection remains owned by AICC, not DownloadConversation', () =>
   assert.doesNotMatch(buildLib, /validateAgentPluginDescriptor/);
 });
 
-test('GitHub page match and broker implementation are absent from source and output', async () => {
-  const broker = new URL(
-    '../src/userscript/01-runtime/02-github-agent-plugin-broker.js',
-    import.meta.url
-  );
-  await assert.rejects(access(broker), { code: 'ENOENT' });
+test('DC only matches ChatGPT and needs no privileged Tampermonkey grants', async () => {
   for (const source of [header, userscript]) {
     assert.doesNotMatch(source, /^\/\/ @match\s+https:\/\/github\.com\/\*$/m);
     assert.match(source, /^\/\/ @match\s+https:\/\/chatgpt\.com\/\*$/m);
-    assert.match(source, /^\/\/ @connect\s+github\.com$/m);
-    assert.match(source, /^\/\/ @connect\s+raw\.githubusercontent\.com$/m);
+    assert.match(source, /^\/\/ @sandbox\s+raw$/m);
+    assert.match(source, /^\/\/ @grant\s+none$/m);
+    assert.doesNotMatch(source, /^\/\/ @connect\s+/m);
   }
-  assert.doesNotMatch(userscript,
-    /installGitHubAgentPluginBroker|publishGitHubAgentPluginTrace|githubAgentPluginBlobUrl/);
+  assert.doesNotMatch(bridge, /GM_xmlhttpRequest|import\(blobUrl\)/);
   assert.doesNotMatch(build, /github-agent-plugin-broker\.js|buildAgentPluginPrelude/);
   assert.doesNotMatch(buildLib, /buildAgentPluginPrelude/);
 });
 
-test('direct authenticated raw transport and exact integrity checks survive removal', () => {
-  for (const grant of ['GM_xmlhttpRequest', 'GM_getValue', 'GM_setValue']) {
-    assert.match(header, new RegExp('^// @grant\\s+' + grant + '$', 'm'));
-  }
-  assert.match(bridge, /requestAgentPluginFromGitHub\(descriptor\)/);
-  assert.match(bridge, /GM_xmlhttpRequest\(\{/);
-  assert.match(bridge, /\/raw\//);
-  assert.match(bridge, /verifyAgentPluginSource\(descriptor, source\)/);
-  assert.match(bridge, /crypto\.subtle\.digest\('SHA-1'/);
-  assert.match(bridge, /gitBlobSha1/);
-  assert.match(bridge, /byteLength/);
-  assert.match(bridge, /new Blob\(\[bytes\]/);
-  assert.match(bridge, /import\(blobUrl\)/);
+test('shared-world loader uses the installed CGP2 object and preserves AICC authority', () => {
+  assert.match(bridge, /globalThis\.ChatGPTWebAgentPlugin/);
+  assert.match(bridge, /plugin\.id === descriptor\.id/);
+  assert.match(bridge, /plugin\.apiVersion === descriptor\.apiVersion/);
+  assert.match(bridge, /check\.version === descriptor\.version/);
+  assert.match(bridge, /return \{ default: plugin \}/);
   assert.match(bridge, /core\.loadAgent\('chatgpt-web'/);
-  assert.match(bridge, /const AGENT_PLUGIN_CACHE_PREFIX = /);
-  assert.match(bridge, /const AGENT_PLUGIN_DOWNLOAD_TIMEOUT_MS = /);
-  assert.doesNotMatch(bridge, /AGENT_PLUGIN_BROKER_TIMEOUT_MS/);
+  assert.match(bridge, /chatGPTPluginModulePromise = null;\s*throw error;/);
   assert.doesNotMatch(bridge, /Authorization\s*:/i);
   assert.doesNotMatch(bridge, /access[_-]?token/i);
 });
