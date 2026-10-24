@@ -41,7 +41,11 @@
         "src/userscript/02-network-communication/05-communication-recovery.js",
         "src/userscript/02-network-communication/06-communication-files.js",
         "src/userscript/02-network-communication/07-communication-streams.js",
-        "src/userscript/02-network-communication/08-communication-xhr.js"
+        "src/userscript/02-network-communication/08-communication-xhr.js",
+        "src/userscript/02-network-communication/03-csc-canonical-ingress.js",
+        "src/userscript/02-network-communication/03-csc-plugin-backlog.js",
+        "src/userscript/02-network-communication/03-csc-issue127-witness-ingress.js",
+        "src/userscript/02-network-communication/03-csc-provider-navigation-ingress.js"
       ]
     },
     {
@@ -96,8 +100,10 @@
         "src/userscript/06-image-export-tests/04-tests-modal-transition.js",
         "src/userscript/06-image-export-tests/05-modal-contract.js",
         "src/userscript/06-image-export-tests/06-agent-plugin-readiness.js",
-        "src/userscript/06-image-export-tests/07-issue127-live-test.js",
-        "src/userscript/06-image-export-tests/07a-issue127-navigation.js"
+        "src/userscript/06-image-export-tests/07-worker-zstd-csp-probe.js",
+        "src/userscript/06-image-export-tests/08-csc-worker-boundary-probe.js",
+        "src/userscript/06-image-export-tests/09-csc-dual-body-clone-probe.js",
+        "src/userscript/06-image-export-tests/07-issue127-queued-witness.js"
       ]
     },
     {

@@ -48,6 +48,11 @@ function baseContext(pageWindow, originalResponse) {
     Request: FakeRequest,
     performance: { now: () => 1000 },
     originalFetch: async () => originalResponse,
+    cscCommWorker: null,
+    cscCaptureNow: () => ({ connection_id: 'legacy-fixture', capture_id: 'test' }),
+    cscPublishFetch() {},
+    cscPublishValue() {},
+    cscDispatchObservedFetch: (fetch, receiver, args) => fetch.apply(receiver, args),
     stockNetworkTraceFetchStart: (_request, url) => ({
       sequence: 1,
       method: 'POST',
@@ -66,8 +71,6 @@ function baseContext(pageWindow, originalResponse) {
     agentStopwatchObserveSteerTurn() {},
     agentStopwatchObserveConversationResponse: async () => {},
     stockNetworkTraceFetchResponse() {},
-    agentPluginObserveNetworkRequest: () => null,
-    agentPluginObserveFetchResponse: async () => {},
     communicationLogFetchResponse: async () => {},
     cloneSafely(value) {
       try { return value.clone(); } catch { return null; }

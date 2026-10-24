@@ -24,7 +24,7 @@
       /(?:json|text|event-stream|x-component|javascript)/i.test(contentType) ||
       /\/backend-api\/(?:conversation|conversations|f\/conversation)(?:\/|\?|$)/.test(trace.url)
     );
-    if (!inspectable) return;
+    if (!inspectable || cscCommWorker) return;
     const cloned = cloneSafely(response);
     if (cloned) void stockNetworkInspectFetchBody(cloned, trace);
   }
@@ -34,13 +34,14 @@
    *
    * @param {XMLHttpRequest} xhr - Page XHR instance.
    * @param {Object} info - Captured XHR method/URL/header metadata.
+   * @param {Object|null} captured - Earliest canonical network event.
    * @returns {Object} Correlation state for loadend.
    */
-  function stockNetworkTraceXhrStart(xhr, info) {
-    const sequence = ++stockNetworkSequence;
+  function stockNetworkTraceXhrStart(xhr, info, captured = null) {
+    const sequence = captured?.network_sequence ?? ++stockNetworkSequence;
     const trace = {
       sequence,
-      started_at: performance.now(),
+      started_at: captured?.captured_at_mono_ms ?? performance.now(),
       method: String(info?.method ?? 'GET').toUpperCase(),
       url: stockNetworkSafeUrl(info?.url ?? '')
     };
@@ -51,7 +52,6 @@
       response_type: xhr?.responseType || null,
       headers: stockNetworkRequestHeaderSummary(info?.headers)
     });
-    aicc127LiveOnRequest(trace);
     return trace;
   }
 
@@ -81,7 +81,6 @@
    * @returns {void} No value is returned.
    */
   function stockNetworkTraceXhrResponse(xhr, trace) {
-    aicc127LiveOnXhrResponse(xhr, trace);
     const headerLookup = stockNetworkXhrHeaderLookup(xhr);
     const contentType = headerLookup.get('content-type') ?? '';
     let bodyIdentity = null;

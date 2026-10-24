@@ -83,10 +83,16 @@
       ['Generated sandbox download link', testGeneratedSandboxDownloadLink],
       ['Jump identifier resolution', testJumpIdentifierResolution],
       ['Conversation API access/schema', testConversationApiAccessAndSchema],
+      ['Worker + Zstd/CSP', testWorkerZstdCsp],
+      ['CSC Worker stream + directory', testCscWorkerBoundary],
+      ['CSC dual clone + Worker', testCscDualCloneOwnership],
       ['AICC #127 staged artifact', testAicc127StagedArtifact],
       ['AICC #127 live project identity', testAicc127LiveProject],
       ['AICC #127 live standalone', testAicc127LiveStandalone],
-      ['AICC #127 navigation A-B-A', testAicc127Navigation]
+      ['AICC #127 navigation A-B-A', testAicc127Navigation],
+      ['AICC #127 stale response', testAicc127StaleResponse],
+      ['AICC #127 reload/rebind', testAicc127ReloadRebind],
+      ['AICC #127 group 1', testAicc127GroupOne]
     ];
   }
 
@@ -125,7 +131,7 @@
    * @returns {string} The string produced by `testMatrixResultText`.
    */
   function testMatrixResultText(result) {
-    return result?.status || '—';
+    return result ? result.status + (result.detail ? ': ' + result.detail : '') : '—';
   }
 
   /**
@@ -158,10 +164,12 @@
    */
   async function executeBuiltInTest(name, fn) {
     try {
-      const result = await fn();
-      const status = result?.status === 'INCOMPLETE' ? 'INCOMPLETE' : 'PASS';
-      testMatrixCurrentResults.set(name, { status, detail: result?.detail || '' });
-      return `${testMatrixCurrentResults.get(name).status === 'PASS' ? '✅' : '⏳'} ${name}`;
+      const detail = await fn();
+      const status = detail?.status === 'INCOMPLETE' ? 'INCOMPLETE' : 'PASS';
+      testMatrixCurrentResults.set(name, {
+        status, detail: typeof detail === 'string' ? detail : detail?.detail || ''
+      });
+      return `${status === 'PASS' ? '✅' : '⏳'} ${name}`;
     } catch (error) {
       const detail = errorMessage(error);
       testMatrixCurrentResults.set(name, { status: 'FAIL', detail });
@@ -182,7 +190,11 @@
       .filter(([name]) => testMatrixCurrentResults.has(name))
       .map(([name]) => {
         const result = testMatrixCurrentResults.get(name);
-        return result.status === 'PASS' ? `✅ ${name}` : result.status === 'INCOMPLETE' ? `⏳ ${name}: ${result.detail}` : `❌ ${name}: ${result.detail}`;
+        return result.status === 'PASS'
+          ? `✅ ${name}${result.detail ? ': ' + result.detail : ''}`
+          : result.status === 'INCOMPLETE'
+            ? `⏳ ${name}: ${result.detail}`
+            : `❌ ${name}: ${result.detail}`;
       });
   }
 
@@ -219,6 +231,8 @@
     refreshTestMatrix();
     try {
       for (const [name, fn] of builtInTests()) {
+        // Directory selection requires an explicit, individual Run gesture.
+        if (name === 'CSC Worker stream + directory') continue;
         await executeBuiltInTest(name, fn);
       }
     } finally {

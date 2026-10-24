@@ -145,11 +145,12 @@
    *
    * @param {Request|null} request - Page Request when construction succeeded.
    * @param {string} requestUrl - Effective request URL.
+   * @param {Object|null} captured - Earliest canonical network event.
    * @returns {Object} Correlation state for the response.
    */
-  function stockNetworkTraceFetchStart(request, requestUrl) {
-    const sequence = ++stockNetworkSequence;
-    const startedAt = performance.now();
+  function stockNetworkTraceFetchStart(request, requestUrl, captured = null) {
+    const sequence = captured?.network_sequence ?? ++stockNetworkSequence;
+    const startedAt = captured?.captured_at_mono_ms ?? performance.now();
     let sameOrigin = false;
     try { sameOrigin = new URL(requestUrl, location.href).origin === location.origin; } catch {}
     const trace = {
@@ -170,7 +171,6 @@
       redirect: request?.redirect ?? null,
       headers: stockNetworkRequestHeaderSummary(request?.headers)
     });
-    aicc127LiveOnRequest(trace);
     return trace;
   }
 
@@ -223,17 +223,8 @@
    */
   async function stockNetworkInspectFetchBody(response, trace) {
     try {
-      // The diagnostic reader is intentionally capped. The staged #127
-      // witness needs the complete original JSON for identity projection.
-      const fullClone = aicc127LiveWantsFullFetchResponse(trace)
-        ? cloneSafely(response) : null;
-      const identityDelivery = fullClone
-        ? aicc127LiveOnFullFetchResponse(trace, fullClone) : null;
       const bounded = await stockNetworkReadBoundedText(response);
       const contentType = response.headers?.get?.('content-type') ?? '';
-      if (!identityDelivery || !(await identityDelivery)) {
-        aicc127LiveOnFetchResponse(trace, response.status, bounded);
-      }
       const identity = stockNetworkBodyIdentity(bounded.text, contentType);
       logDiagnostic('debug', 'stock-network-fetch-body-summary', {
         network_sequence: trace.sequence,

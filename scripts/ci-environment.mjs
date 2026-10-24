@@ -17,8 +17,6 @@ const npmArguments = process.platform === 'win32'
 const pythonCommand = process.env.PYTHON ?? 'python';
 
 const ordinaryStages = [
-  ['#306 generic browser navigation fixtures', nodeCommand, ['--test', 'tests/issue306-generic-browser-navigation.test.mjs']],
-  ['#306 provider host bridge integration', nodeCommand, ['--test', 'tests/issue306-provider-host-integration.test.mjs']],
   ['Modular userscript build regression', nodeCommand, ['--test', 'tests/modular-userscript-build.test.mjs', 'tests/development-version-source.test.mjs']],
   ['Agent plugin authenticated background fetch regression', nodeCommand, ['--test', 'tests/agent-plugin-background-fetch.test.mjs']],
   ['#243 provenance and #274 lifecycle regressions', nodeCommand, ['--test',
@@ -43,9 +41,6 @@ const ordinaryStages = [
     'tests/recording-panel-modes.test.mjs',
     'tests/agent-stopwatch-v1-identity.test.mjs'
   ]],
-  ['#127 live test matrix contract and evidence replay', nodeCommand, ['--test', 'tests/issue127-live-test-matrix.test.mjs',
-    'tests/issue127-live-witness-runtime.test.mjs',
-    'tests/issue127-navigation-checkpoint.test.mjs']],
   ['CI test inventory regression', nodeCommand, ['--test', 'tests/ci-test-inventory.test.mjs']],
   ['Actions policy regression', nodeCommand, ['--test', 'tests/actions-policy.test.mjs']],
   ['RepoWorkflow adoption contract', nodeCommand, ['--test', 'tests/repoworkflow-adoption.test.mjs']],
@@ -85,6 +80,13 @@ const ordinaryStages = [
   ['Console lifecycle and provenance controls', nodeCommand, ['--test', 'tests/console-diagnostics.test.mjs']],
   ['CGP2 provider/Core integration', nodeCommand, ['--test', 'tests/cgp2-core-integration.test.mjs', 'tests/issue156-core-plugin-boundary.test.mjs', 'tests/private-agent-plugin-loading.test.mjs']],
   ['Canonical final-render regressions', nodeCommand, ['--test', 'tests/core-integration.test.mjs', 'tests/phase5-rich-core-integration.test.mjs', 'tests/fallback-adaptive-fence.test.mjs', 'tests/tool-language-diagnostics.test.mjs', 'tests/sediment-resolver.test.mjs']],
+  ['Worker + Zstd/CSP probe regression', nodeCommand, ['--test', 'tests/issue314-worker-zstd-csp-probe.test.mjs']],
+  ['CSC Worker stream/directory preflight regression', nodeCommand, ['--test', 'tests/issue316-worker-stream-directory.test.mjs']],
+  ['DC #306 generic browser navigation integration', nodeCommand, ['--test', 'tests/issue306-generic-browser-navigation.test.mjs', 'tests/issue306-csc-queue-host-integration.test.mjs']],
+  ['CSC canonical ingress regression', nodeCommand, ['--test', 'tests/issue309-csc-canonical-ingress.test.mjs', 'tests/issue309-interception-lifecycle.test.mjs', 'tests/issue309-stream-pressure.test.mjs', 'tests/issue309-plugin-body-ownership-red.test.mjs', 'tests/issue309-browser-dual-body-probe.test.mjs']],
+  ['CSC plugin backlog and native ingress regression', nodeCommand, ['--test',
+    'tests/issue310-plugin-backlog.test.mjs',
+    'tests/issue310-native-ingress-integration.test.mjs']],
   ['Built-in test list UI regression', nodeCommand, ['--test', 'tests/test-list-ui.test.mjs']],
   ['Recorder panel UI regression', nodeCommand, ['--test', 'tests/recorder-panel-ui.test.mjs', 'tests/modal-focus-retention.test.mjs', 'tests/heading-metadata-controls.test.mjs']]
 ];

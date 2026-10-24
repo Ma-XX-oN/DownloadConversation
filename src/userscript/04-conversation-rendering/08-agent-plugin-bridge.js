@@ -14,7 +14,6 @@
   /** Current provider-owned navigation and network identity host. */
   let chatGPTSubjectHost = null;
   /** Disconnects the active generic navigation observer. */
-  let disconnectChatGPTNavigation = null;
   /** Current in-flight canonical agent construction, shared by concurrent callers. */
   let chatGPTAgentPromise = null;
   /** Browser page realm used by the provider-neutral navigation listener. */
@@ -213,6 +212,10 @@
         'AIConversationCore did not create the ChatGPT agent and canonical session.');
       chatGPTAgent = agent;
       chatGPTCanonicalSession = session;
+      // #297 observer must subscribe before #310 can drain this host.
+      try { aicc127AttachAgentEarly(agent); } catch (error) {
+        logDiagnostic('warnings', 'aicc127-witness-observer-failed', { stage: 'subscribe' });
+      }
       try {
         reconnectChatGPTSubjectHost();
       } catch (error) {
@@ -263,119 +266,15 @@
       });
       return;
     }
-    let disconnect = null;
     try {
-      disconnect = observeGenericBrowserNavigation(agentPluginPageWindow,
-        event => {
-          try {
-            // Start the witness navigation step before the provider publishes
-            // the destination identity, avoiding an A/B epoch mismatch.
-            if (typeof aicc127Runtime !== 'undefined' && aicc127Runtime)
-              aicc127NavigationChanged();
-            const accepted = host.navigation(event);
-            // Diagnostic-only: report route acceptance and safe status fields.
-            if (typeof aicc127NavigationTransportObserved === 'function')
-              aicc127NavigationTransportObserved(accepted, host.snapshot);
-          } catch (error) {
-            logDiagnostic('warnings', 'agent-plugin-navigation-publish-failed', {
-              error: boundedDiagnosticText(errorMessage(error), 200)
-            });
-          }
-        });
-      assert(typeof disconnect === 'function',
-        'Generic navigation observer returned no teardown.');
+      cscEnsureEarlyNavigationIngress();
+      cscPluginQueueConnect(host);
     } catch (error) {
-      disconnect?.();
+      cscPluginQueueDisconnect(host);
       host.dispose();
       throw error;
     }
     chatGPTSubjectHost = host;
-    disconnectChatGPTNavigation = disconnect;
-  }
-
-  /**
-   * Forwards only a provider-accepted, already observed network request.
-   * The stock network sequence is shared across fetch and XHR and never resets
-   * during one page/host connection, including A-B-A navigation.
-   *
-   * @param {Object} trace - Existing stock request sequence, method and URL.
-   * @returns {Object|null} Accepting provider host or null.
-   */
-  function agentPluginObserveNetworkRequest(trace) {
-    const host = chatGPTSubjectHost;
-    if (!host || !Number.isSafeInteger(trace?.sequence)) return null;
-    try {
-      return host.request({
-        network_sequence: trace.sequence,
-        method: trace.method,
-        request_url: trace.url
-      }) ? host : null;
-    } catch (error) {
-      logDiagnostic('warnings', 'agent-plugin-subject-request-failed', {
-        network_sequence: trace.sequence,
-        error: boundedDiagnosticText(errorMessage(error), 200)
-      });
-      return null;
-    }
-  }
-
-  /**
-   * Offers only an accepted cloned JSON response to the provider host.
-   * No additional request or response stream is initiated by this adapter.
-   *
-   * @param {Response} response - Existing stock fetch response.
-   * @param {Object} trace - Previously accepted request correlation.
-   * @param {Object|null} accepted - Exact accepting provider host from request start.
-   * @returns {Promise<void>} Resolves after private provider response handling.
-   */
-  async function agentPluginObserveFetchResponse(response, trace, accepted) {
-    if (!accepted || accepted !== chatGPTSubjectHost) return;
-    const host = accepted;
-    if (!response || response.status !== 200) return;
-    const clone = cloneSafely(response);
-    if (!clone) return;
-    try {
-      const body = await clone.json();
-      host.response({ network_sequence: trace.sequence, status: response.status, body });
-    } catch (error) {
-      logDiagnostic('debug', 'agent-plugin-subject-fetch-response-unavailable', {
-        network_sequence: trace.sequence,
-        error: boundedDiagnosticText(errorMessage(error), 200)
-      });
-    }
-  }
-
-  /**
-   * Offers a completed existing XHR JSON response to the provider host.
-   *
-   * @param {XMLHttpRequest} xhr - Completed page-owned XHR.
-   * @param {Object} trace - Previously accepted request correlation.
-   * @param {boolean} accepted - Provider request acceptance from send().
-   * @returns {void} No value is returned.
-   */
-  function agentPluginObserveXhrResponse(xhr, trace, accepted) {
-    if (!accepted || accepted !== chatGPTSubjectHost || xhr?.status !== 200) return;
-    let body = null;
-    try {
-      if (xhr.responseType === 'json') body = xhr.response;
-      else if (!xhr.responseType || xhr.responseType === 'text') {
-        body = JSON.parse(xhr.responseText);
-      }
-    } catch {}
-    if (body && typeof body === 'object' && !Array.isArray(body)) {
-      try {
-        accepted.response({
-          network_sequence: trace.sequence,
-          status: xhr.status,
-          body
-        });
-      } catch (error) {
-        logDiagnostic('warnings', 'agent-plugin-subject-xhr-response-failed', {
-          network_sequence: trace.sequence,
-          error: boundedDiagnosticText(errorMessage(error), 200)
-        });
-      }
-    }
   }
 
   /**
@@ -383,9 +282,11 @@
    * @returns {void} No value is returned.
    */
   function disconnectChatGPTSubjectHost() {
-    disconnectChatGPTNavigation?.();
-    disconnectChatGPTNavigation = null;
-    chatGPTSubjectHost?.dispose();
+    cscDisposeEarlyNavigationIngress();
+    if (chatGPTSubjectHost) {
+      cscPluginQueueDisconnect(chatGPTSubjectHost);
+      chatGPTSubjectHost.dispose();
+    }
     chatGPTSubjectHost = null;
   }
 

@@ -13,6 +13,13 @@
           }
           return response;
         }, error => {
+          const failureStamp = cscCaptureNow('fetch', 'error',
+            requestStamp.connection_id, requestStamp);
+          cscPublishValue(failureStamp, {
+            method: stockTrace.method, request_url: requestUrl,
+            error_name: String(error?.name ?? 'Error'),
+            body_available: false, complete: false
+          });
           logDiagnostic('debug', 'stock-network-fetch-failed', {
             network_sequence: stockTrace.sequence,
             method: stockTrace.method,
@@ -44,16 +51,57 @@
         return originalSetRequestHeader.call(this, name, value);
       };
       XHR.prototype.send = function(body) {
+        const requestStamp = cscCaptureNow('xhr', 'request');
         const info = this.__tmApiRequest || { method: 'GET', url: '', headers: {} };
-        const stockTrace = stockNetworkTraceXhrStart(this, info);
-        const providerIdentityRequestAccepted = agentPluginObserveNetworkRequest(stockTrace);
-        void communicationLogXhrRequest(info, body, stockTrace)
-          .catch(communicationError => communicationLogReportFailure('xhr-request', communicationError));
+        const stockTrace = stockNetworkTraceXhrStart(this, info, requestStamp);
+        cscPublishValue(requestStamp, {
+          method: info.method, url: info.url,
+          headers: cscRawHeaderEntries(info.headers),
+          body_type: typeof body,
+          body_available: body !== null && body !== undefined
+        }, body ?? null);
+        if (!cscCommWorker) {
+          void communicationLogXhrRequest(info, body, stockTrace)
+            .catch(communicationError => communicationLogReportFailure('xhr-request', communicationError));
+        }
+        let cscXhrTerminatedWithError = false;
+        for (const name of ['abort', 'error', 'timeout']) {
+          this.addEventListener(name, () => {
+            cscXhrTerminatedWithError = true;
+            const failureStamp = cscCaptureNow('xhr', 'error',
+              requestStamp.connection_id, requestStamp);
+            cscPublishValue(failureStamp, {
+              method: info.method, request_url: info.url,
+              event: name, body_available: false, complete: false
+            });
+          }, { once: true });
+        }
         this.addEventListener('loadend', () => {
+          const responseStamp = cscCaptureNow('xhr',
+            cscXhrTerminatedWithError ? 'event' : 'response',
+            requestStamp.connection_id, requestStamp);
           stockNetworkTraceXhrResponse(this, stockTrace);
-          agentPluginObserveXhrResponse(this, stockTrace, providerIdentityRequestAccepted);
-          void communicationLogXhrResponse(this, stockTrace)
-            .catch(communicationError => communicationLogReportFailure('xhr-response', communicationError));
+          if (cscXhrTerminatedWithError) {
+            cscPublishValue(responseStamp, {
+              event: 'loadend', request_url: info.url,
+              body_available: false, complete: false
+            });
+          } else {
+            const body = cscXhrBodySnapshot(this);
+            cscPublishValue(responseStamp, {
+              method: info.method, request_url: info.url,
+              response_url: this.responseURL ?? info.url,
+              status: Number.isFinite(this.status) ? this.status : null,
+              response_type: this.responseType || 'text',
+              headers: String(this.getAllResponseHeaders?.() ?? ''),
+              body_type: body.body_type,
+              body_available: body.body_available
+            }, body.value);
+          }
+          if (!cscCommWorker) {
+            void communicationLogXhrResponse(this, stockTrace)
+              .catch(communicationError => communicationLogReportFailure('xhr-response', communicationError));
+          }
         }, { once: true });
         rememberApiRequestContext(info.url, info.headers);
         recordClickDiagnosticNetworkRequest(info.url, 'xmlhttprequest');
@@ -65,31 +113,72 @@
       const NativeWebSocket = pageWindow.WebSocket;
       pageWindow.WebSocket = new Proxy(NativeWebSocket, {
         construct(target, args) {
-          const socket = Reflect.construct(target, args, target);
+          const connectionStamp = cscCaptureNow('websocket', 'event');
+          let socket;
+          try {
+            socket = Reflect.construct(target, args, target);
+          } catch (error) {
+            cscPublishValue(connectionStamp, {
+              url: String(args[0] ?? ''), event: 'construct-failed',
+              error_name: String(error?.name ?? 'Error'),
+              body_available: false, complete: false
+            });
+            throw error;
+          }
           const socketUrl = String(args[0] ?? '');
           const nativeSend = socket.send;
           socket.send = function(data) {
-            void communicationLogWebSocketSend(socketUrl, data)
-              .catch(communicationError => communicationLogReportFailure('websocket-send', communicationError));
-            return nativeSend.call(this, data);
+            const stamp = cscCaptureNow('websocket', 'outgoing',
+              connectionStamp.connection_id, connectionStamp);
+            cscPublishValue(stamp, {
+              url: socketUrl, body_type: typeof data,
+              body_available: data !== null && data !== undefined
+            }, data);
+            return cscDispatchSocketSend(nativeSend, this, data, connectionStamp, stamp, socketUrl);
           };
           socket.addEventListener('open', () => {
-            void communicationLogRecord('communication_websocket_open', { url: stockNetworkSafeUrl(socketUrl) });
+            const stamp = cscCaptureNow('websocket', 'event',
+              connectionStamp.connection_id, connectionStamp);
+            cscPublishValue(stamp, { url: socketUrl, event: 'open' });
+            if (!cscCommWorker) {
+              void communicationLogRecord('communication_websocket_open', { url: stockNetworkSafeUrl(socketUrl) });
+            }
           });
           socket.addEventListener('message', event => {
+            const stamp = cscCaptureNow('websocket', 'incoming',
+              connectionStamp.connection_id, connectionStamp);
+            cscPublishValue(stamp, {
+              url: socketUrl, body_type: typeof event.data,
+              body_available: event.data !== null && event.data !== undefined
+            }, event.data);
             captureGenerationWebSocketFrame(event.data);
-            void communicationLogWebSocketMessage(socketUrl, event.data)
-              .catch(communicationError => communicationLogReportFailure('websocket-message', communicationError));
+            if (!cscCommWorker) {
+              void communicationLogWebSocketMessage(socketUrl, event.data)
+                .catch(communicationError => communicationLogReportFailure('websocket-message', communicationError));
+            }
           });
           socket.addEventListener('close', event => {
-            void communicationLogRecord('communication_websocket_close', {
-              url: stockNetworkSafeUrl(socketUrl),
-              code: event.code,
+            const stamp = cscCaptureNow('websocket', 'event',
+              connectionStamp.connection_id, connectionStamp);
+            cscPublishValue(stamp, {
+              url: socketUrl, event: 'close', code: event.code,
               was_clean: event.wasClean === true
             });
+            if (!cscCommWorker) {
+              void communicationLogRecord('communication_websocket_close', {
+                url: stockNetworkSafeUrl(socketUrl),
+                code: event.code,
+                was_clean: event.wasClean === true
+              });
+            }
           });
           socket.addEventListener('error', () => {
-            void communicationLogRecord('communication_websocket_error', { url: stockNetworkSafeUrl(socketUrl) });
+            const stamp = cscCaptureNow('websocket', 'event',
+              connectionStamp.connection_id, connectionStamp);
+            cscPublishValue(stamp, { url: socketUrl, event: 'error' });
+            if (!cscCommWorker) {
+              void communicationLogRecord('communication_websocket_error', { url: stockNetworkSafeUrl(socketUrl) });
+            }
           });
           return socket;
         }

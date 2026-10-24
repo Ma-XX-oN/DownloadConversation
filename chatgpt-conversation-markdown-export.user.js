@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         ChatGPT Conversation Markdown Recorder
 // @namespace    https://chatgpt.com/
-// @version      1.11.7-issue.127.21
+// @version      1.11.7-issue.306.14
 // @description  Exports the current ChatGPT conversation directly from the Conversation API as Markdown or JSONL.
 // @match        https://chatgpt.com/*
 // @match        https://chat.openai.com/*
@@ -6411,7 +6411,6 @@ async function loadAgent(id, { loadModule, context = {} } = {}) {
   /** Current provider-owned navigation and network identity host. */
   let chatGPTSubjectHost = null;
   /** Disconnects the active generic navigation observer. */
-  let disconnectChatGPTNavigation = null;
   /** Current in-flight canonical agent construction, shared by concurrent callers. */
   let chatGPTAgentPromise = null;
   /** Browser page realm used by the provider-neutral navigation listener. */
@@ -6660,119 +6659,15 @@ async function loadAgent(id, { loadModule, context = {} } = {}) {
       });
       return;
     }
-    let disconnect = null;
     try {
-      disconnect = observeGenericBrowserNavigation(agentPluginPageWindow,
-        event => {
-          try {
-            // Start the witness navigation step before the provider publishes
-            // the destination identity, avoiding an A/B epoch mismatch.
-            if (typeof aicc127Runtime !== 'undefined' && aicc127Runtime)
-              aicc127NavigationChanged();
-            const accepted = host.navigation(event);
-            // Diagnostic-only: report route acceptance and safe status fields.
-            if (typeof aicc127NavigationTransportObserved === 'function')
-              aicc127NavigationTransportObserved(accepted, host.snapshot);
-          } catch (error) {
-            logDiagnostic('warnings', 'agent-plugin-navigation-publish-failed', {
-              error: boundedDiagnosticText(errorMessage(error), 200)
-            });
-          }
-        });
-      assert(typeof disconnect === 'function',
-        'Generic navigation observer returned no teardown.');
+      cscEnsureEarlyNavigationIngress();
+      cscPluginQueueConnect(host);
     } catch (error) {
-      disconnect?.();
+      cscPluginQueueDisconnect(host);
       host.dispose();
       throw error;
     }
     chatGPTSubjectHost = host;
-    disconnectChatGPTNavigation = disconnect;
-  }
-
-  /**
-   * Forwards only a provider-accepted, already observed network request.
-   * The stock network sequence is shared across fetch and XHR and never resets
-   * during one page/host connection, including A-B-A navigation.
-   *
-   * @param {Object} trace - Existing stock request sequence, method and URL.
-   * @returns {Object|null} Accepting provider host or null.
-   */
-  function agentPluginObserveNetworkRequest(trace) {
-    const host = chatGPTSubjectHost;
-    if (!host || !Number.isSafeInteger(trace?.sequence)) return null;
-    try {
-      return host.request({
-        network_sequence: trace.sequence,
-        method: trace.method,
-        request_url: trace.url
-      }) ? host : null;
-    } catch (error) {
-      logDiagnostic('warnings', 'agent-plugin-subject-request-failed', {
-        network_sequence: trace.sequence,
-        error: boundedDiagnosticText(errorMessage(error), 200)
-      });
-      return null;
-    }
-  }
-
-  /**
-   * Offers only an accepted cloned JSON response to the provider host.
-   * No additional request or response stream is initiated by this adapter.
-   *
-   * @param {Response} response - Existing stock fetch response.
-   * @param {Object} trace - Previously accepted request correlation.
-   * @param {Object|null} accepted - Exact accepting provider host from request start.
-   * @returns {Promise<void>} Resolves after private provider response handling.
-   */
-  async function agentPluginObserveFetchResponse(response, trace, accepted) {
-    if (!accepted || accepted !== chatGPTSubjectHost) return;
-    const host = accepted;
-    if (!response || response.status !== 200) return;
-    const clone = cloneSafely(response);
-    if (!clone) return;
-    try {
-      const body = await clone.json();
-      host.response({ network_sequence: trace.sequence, status: response.status, body });
-    } catch (error) {
-      logDiagnostic('debug', 'agent-plugin-subject-fetch-response-unavailable', {
-        network_sequence: trace.sequence,
-        error: boundedDiagnosticText(errorMessage(error), 200)
-      });
-    }
-  }
-
-  /**
-   * Offers a completed existing XHR JSON response to the provider host.
-   *
-   * @param {XMLHttpRequest} xhr - Completed page-owned XHR.
-   * @param {Object} trace - Previously accepted request correlation.
-   * @param {boolean} accepted - Provider request acceptance from send().
-   * @returns {void} No value is returned.
-   */
-  function agentPluginObserveXhrResponse(xhr, trace, accepted) {
-    if (!accepted || accepted !== chatGPTSubjectHost || xhr?.status !== 200) return;
-    let body = null;
-    try {
-      if (xhr.responseType === 'json') body = xhr.response;
-      else if (!xhr.responseType || xhr.responseType === 'text') {
-        body = JSON.parse(xhr.responseText);
-      }
-    } catch {}
-    if (body && typeof body === 'object' && !Array.isArray(body)) {
-      try {
-        accepted.response({
-          network_sequence: trace.sequence,
-          status: xhr.status,
-          body
-        });
-      } catch (error) {
-        logDiagnostic('warnings', 'agent-plugin-subject-xhr-response-failed', {
-          network_sequence: trace.sequence,
-          error: boundedDiagnosticText(errorMessage(error), 200)
-        });
-      }
-    }
   }
 
   /**
@@ -6780,9 +6675,11 @@ async function loadAgent(id, { loadModule, context = {} } = {}) {
    * @returns {void} No value is returned.
    */
   function disconnectChatGPTSubjectHost() {
-    disconnectChatGPTNavigation?.();
-    disconnectChatGPTNavigation = null;
-    chatGPTSubjectHost?.dispose();
+    cscDisposeEarlyNavigationIngress();
+    if (chatGPTSubjectHost) {
+      cscPluginQueueDisconnect(chatGPTSubjectHost);
+      chatGPTSubjectHost.dispose();
+    }
     chatGPTSubjectHost = null;
   }
 
@@ -7812,11 +7709,12 @@ globalThis.__dcCompressor = {
    *
    * @param {Request|null} request - Page Request when construction succeeded.
    * @param {string} requestUrl - Effective request URL.
+   * @param {Object|null} captured - Earliest canonical network event.
    * @returns {Object} Correlation state for the response.
    */
-  function stockNetworkTraceFetchStart(request, requestUrl) {
-    const sequence = ++stockNetworkSequence;
-    const startedAt = performance.now();
+  function stockNetworkTraceFetchStart(request, requestUrl, captured = null) {
+    const sequence = captured?.network_sequence ?? ++stockNetworkSequence;
+    const startedAt = captured?.captured_at_mono_ms ?? performance.now();
     let sameOrigin = false;
     try { sameOrigin = new URL(requestUrl, location.href).origin === location.origin; } catch {}
     const trace = {
@@ -7837,7 +7735,6 @@ globalThis.__dcCompressor = {
       redirect: request?.redirect ?? null,
       headers: stockNetworkRequestHeaderSummary(request?.headers)
     });
-    aicc127LiveOnRequest(trace);
     return trace;
   }
 
@@ -7890,17 +7787,8 @@ globalThis.__dcCompressor = {
    */
   async function stockNetworkInspectFetchBody(response, trace) {
     try {
-      // The diagnostic reader is intentionally capped. The staged #127
-      // witness needs the complete original JSON for identity projection.
-      const fullClone = aicc127LiveWantsFullFetchResponse(trace)
-        ? cloneSafely(response) : null;
-      const identityDelivery = fullClone
-        ? aicc127LiveOnFullFetchResponse(trace, fullClone) : null;
       const bounded = await stockNetworkReadBoundedText(response);
       const contentType = response.headers?.get?.('content-type') ?? '';
-      if (!identityDelivery || !(await identityDelivery)) {
-        aicc127LiveOnFetchResponse(trace, response.status, bounded);
-      }
       const identity = stockNetworkBodyIdentity(bounded.text, contentType);
       logDiagnostic('debug', 'stock-network-fetch-body-summary', {
         network_sequence: trace.sequence,
@@ -7946,7 +7834,7 @@ globalThis.__dcCompressor = {
       /(?:json|text|event-stream|x-component|javascript)/i.test(contentType) ||
       /\/backend-api\/(?:conversation|conversations|f\/conversation)(?:\/|\?|$)/.test(trace.url)
     );
-    if (!inspectable) return;
+    if (!inspectable || cscCommWorker) return;
     const cloned = cloneSafely(response);
     if (cloned) void stockNetworkInspectFetchBody(cloned, trace);
   }
@@ -7956,13 +7844,14 @@ globalThis.__dcCompressor = {
    *
    * @param {XMLHttpRequest} xhr - Page XHR instance.
    * @param {Object} info - Captured XHR method/URL/header metadata.
+   * @param {Object|null} captured - Earliest canonical network event.
    * @returns {Object} Correlation state for loadend.
    */
-  function stockNetworkTraceXhrStart(xhr, info) {
-    const sequence = ++stockNetworkSequence;
+  function stockNetworkTraceXhrStart(xhr, info, captured = null) {
+    const sequence = captured?.network_sequence ?? ++stockNetworkSequence;
     const trace = {
       sequence,
-      started_at: performance.now(),
+      started_at: captured?.captured_at_mono_ms ?? performance.now(),
       method: String(info?.method ?? 'GET').toUpperCase(),
       url: stockNetworkSafeUrl(info?.url ?? '')
     };
@@ -7973,7 +7862,6 @@ globalThis.__dcCompressor = {
       response_type: xhr?.responseType || null,
       headers: stockNetworkRequestHeaderSummary(info?.headers)
     });
-    aicc127LiveOnRequest(trace);
     return trace;
   }
 
@@ -8003,7 +7891,6 @@ globalThis.__dcCompressor = {
    * @returns {void} No value is returned.
    */
   function stockNetworkTraceXhrResponse(xhr, trace) {
-    aicc127LiveOnXhrResponse(xhr, trace);
     const headerLookup = stockNetworkXhrHeaderLookup(xhr);
     const contentType = headerLookup.get('content-type') ?? '';
     let bodyIdentity = null;
@@ -11403,6 +11290,625 @@ globalThis.__dcCompressor = {
       ...item
     });
   }
+// BEGIN #309 canonical CSC ingress. The COMM Worker is registered by #311.
+  /** Identity of the current page/clock domain, never reused after reload. */
+  const cscPageInstanceId = crypto.randomUUID();
+  /** Order of network interceptions, independent of delivery completion. */
+  let cscCaptureOrder = 0;
+  /** COMM Worker receiver, or null until the downstream Worker is ready. */
+  let cscCommWorker = null;
+  /** Main-thread plugin-queue ingress supplied by #310, not a COMM queue. */
+  let cscPluginIngress = null;
+
+  /**
+   * Attaches the dedicated COMM Worker without changing the main-thread plugin.
+   *
+   * @param {Worker|null} worker - Worker owning the receiving COMM queue.
+   * @returns {void} No value is returned.
+   */
+  function cscBindCommWorker(worker) {
+    assert(worker === null || typeof worker?.postMessage === 'function',
+      'CSC COMM receiver must implement Worker.postMessage.');
+    cscCommWorker = worker;
+  }
+
+  /**
+   * Registers synchronous delivery to the independently owned plugin queue.
+   *
+   * @param {Function|null} publish - Plugin ingress or null on disposal.
+   * @returns {void} No value is returned.
+   */
+  function cscBindPluginIngress(publish) {
+    assert(publish === null || typeof publish === 'function',
+      'CSC plugin ingress must be a function.');
+    cscPluginIngress = publish;
+  }
+
+  /**
+   * Capture clocks before any asynchronous work, body clone or queueing.
+   * network_sequence is shared with existing provider-host network correlation.
+   *
+   * @param {string} transport - fetch, xhr or websocket.
+   * @param {string} direction - request, response, incoming, outgoing or event.
+   * @param {string|null} connectionId - Stable connection/request identifier.
+   * @param {Object|null} parent - Earlier event for the same exchange.
+   * @returns {Object} Frozen original-time event identity.
+   */
+  function cscCaptureNow(transport, direction, connectionId = null, parent = null) {
+    const captured_at_epoch_ms = Date.now();
+    const captured_at_mono_ms = performance.now();
+    const network_sequence = ++stockNetworkSequence;
+    const capture_order = ++cscCaptureOrder;
+    return Object.freeze({
+      page_instance_id: cscPageInstanceId,
+      clock_domain: cscPageInstanceId,
+      connection_id: connectionId ?? crypto.randomUUID(),
+      capture_id: cscPageInstanceId + ':' + network_sequence,
+      parent_capture_id: parent?.capture_id ?? null,
+      request_capture_id: parent?.request_capture_id ?? parent?.capture_id ?? null,
+      network_sequence,
+      capture_order,
+      captured_at_epoch_ms,
+      captured_at_mono_ms,
+      transport,
+      direction
+    });
+  }
+
+  /**
+   * Convert headers to an unsanitized, structured-cloneable snapshot.
+   * Redaction belongs exclusively to the Worker, never to the plugin branch.
+   *
+   * @param {Object|null} headers - Native Headers or XHR header map.
+   * @returns {Array} Raw name/value pairs without a native Headers instance.
+   */
+  function cscRawHeaderEntries(headers) {
+    if (!headers) return [];
+    if (typeof headers.entries === 'function') {
+      try { return Array.from(headers.entries(), ([key, value]) => [key, value]); }
+      catch { return []; }
+    }
+    return Object.entries(headers).map(([key, value]) => [key, String(value)]);
+  }
+
+  /**
+   * Report a transport failure without logging body, credential or raw headers.
+   *
+   * @param {Object} stamp - Original event identity.
+   * @param {string} stage - Failed stage.
+   * @param {unknown} error - Failure cause.
+   * @returns {void} No value is returned.
+   */
+  function cscIngressFailure(stamp, stage, error) {
+    logDiagnostic('warnings', 'csc-ingress-incomplete', {
+      capture_id: stamp.capture_id,
+      network_sequence: stamp.network_sequence,
+      stage,
+      error: boundedDiagnosticText(errorMessage(error), 500)
+    });
+  }
+
+  /**
+   * Publish one captured event to two independently owned body branches.
+   * The plugin owns one native clone; the COMM Worker owns another native
+   * clone whose stream is transferred, not cloned again at postMessage().
+   * Neither consumer can read or mutate the stock page-owned Request/Response.
+   *
+   * @param {Object} stamp - Captured event identity.
+   * @param {Object} meta - Cloneable transport metadata.
+   * @param {Object|null} nativeBodyOwner - Stock Request/Response, never shared.
+   * @param {unknown} availableValue - Already available XHR/WS body, if any.
+   * @returns {void} No value is returned.
+   */
+  function cscFanOut(stamp, meta, nativeBodyOwner = null, availableValue = null) {
+    const envelope = Object.freeze({ ...stamp, ...meta });
+    if (cscCommWorker) {
+      let cloned = null;
+      try {
+        if (nativeBodyOwner) {
+          cloned = cloneSafely(nativeBodyOwner);
+          if (!cloned) throw new Error('Native Request/Response clone unavailable.');
+        }
+        const body = cloned?.body ?? null;
+        const body_state = nativeBodyOwner
+          ? (body ? 'stream-transferred' : 'unavailable')
+          : (availableValue === null ? 'none-or-unavailable' : 'cloneable-value');
+        // Never transfer a page-owned ArrayBuffer. postMessage clones XHR/WS data.
+        cscCommWorker.postMessage({
+          type: 'csc-comm-capture',
+          envelope: { ...envelope, body_state, body, value: availableValue }
+        }, body ? [body] : []);
+      } catch (error) {
+        cscIngressFailure(stamp, 'worker-transfer', error);
+        if (cloned?.body && !cloned.body.locked) {
+          void cancelReadableBodyQuietly(cloned.body);
+        }
+      }
+    }
+    if (cscPluginIngress) {
+      let source = null;
+      let sourceAvailable = false;
+      let sourceIncomplete = false;
+      try {
+        if (nativeBodyOwner) {
+          // This is the plugin-owned native clone, independent of COMM.
+          // Never expose the original one-shot page-owned body to #310.
+          source = cloneSafely(nativeBodyOwner);
+          if (!source) throw new Error('Plugin Request/Response clone unavailable.');
+        } else if (availableValue && typeof availableValue === 'object') {
+          // XHR/WS page-owned mutable bytes must never alias the plugin.
+          source = structuredClone(availableValue);
+        } else {
+          source = availableValue;
+        }
+        sourceAvailable = source !== null;
+      } catch (error) {
+        sourceIncomplete = true;
+        cscIngressFailure(stamp, 'plugin-payload-clone', error);
+      }
+      try {
+        cscPluginIngress(Object.freeze({
+          envelope, source, source_available: sourceAvailable,
+          source_incomplete: sourceIncomplete
+        }));
+      } catch (error) {
+        cscIngressFailure(stamp, 'plugin-delivery', error);
+      }
+    }
+  }
+
+  /**
+   * Call stock fetch unchanged while recording synchronous dispatch failures.
+   *
+   * @param {Function} nativeFetch - Original page fetch implementation.
+   * @param {Object} receiver - Original this value.
+   * @param {Array} args - Original fetch arguments.
+   * @param {Object} requestStamp - Earliest request capture.
+   * @param {Object} trace - Shared stock-network correlation.
+   * @param {string} url - Original request URL.
+   * @returns {Promise<Response>} Unmodified native fetch result.
+   */
+  function cscDispatchObservedFetch(nativeFetch, receiver, args, requestStamp, trace, url) {
+    try {
+      return nativeFetch.apply(receiver, args);
+    } catch (error) {
+      const stamp = cscCaptureNow('fetch', 'error',
+        requestStamp.connection_id, requestStamp);
+      cscPublishValue(stamp, {
+        method: trace.method, request_url: url,
+        error_name: String(error?.name ?? 'Error'),
+        body_available: false, complete: false
+      });
+      throw error;
+    }
+  }
+
+  /**
+   * Preserve native WebSocket send/throw semantics and report rejected attempts.
+   *
+   * @param {Function} nativeSend - Original WebSocket send.
+   * @param {WebSocket} socket - Stock page socket.
+   * @param {unknown} data - Original frame bytes or text.
+   * @param {Object} connection - WebSocket connection capture.
+   * @param {Object} attempt - Original send-attempt capture.
+   * @param {string} url - WebSocket endpoint.
+   * @returns {unknown} Original native send return value.
+   */
+  function cscDispatchSocketSend(nativeSend, socket, data, connection, attempt, url) {
+    let result;
+    try {
+      result = nativeSend.call(socket, data);
+    } catch (error) {
+      const failure = cscCaptureNow('websocket', 'error',
+        connection.connection_id, attempt);
+      cscPublishValue(failure, {
+        url, event: 'send-rejected',
+        error_name: String(error?.name ?? 'Error'),
+        body_available: false, complete: false
+      });
+      throw error;
+    }
+    if (!cscCommWorker) {
+      void communicationLogWebSocketSend(url, data)
+        .catch(error => communicationLogReportFailure('websocket-send', error));
+    }
+    return result;
+  }
+
+  /**
+   * Snapshot an XHR body without reading a stream or altering page-owned bytes.
+   *
+   * @param {XMLHttpRequest} xhr - Observed XHR.
+   * @returns {Object} Available value and explicit body availability.
+   */
+  function cscXhrBodySnapshot(xhr) {
+    try {
+      const type = xhr.responseType || 'text';
+      if (type === 'text') {
+        return { value: xhr.responseText, body_type: 'text', body_available: true };
+      }
+      if (type === 'json') {
+        return { value: xhr.response, body_type: 'json', body_available: true };
+      }
+      if (type === 'arraybuffer' && xhr.response &&
+          Object.prototype.toString.call(xhr.response) === '[object ArrayBuffer]') {
+        return { value: xhr.response, body_type: 'binary', body_available: true };
+      }
+      if (type === 'blob' && xhr.response &&
+          Object.prototype.toString.call(xhr.response) === '[object Blob]') {
+        return { value: xhr.response, body_type: 'blob', body_available: true };
+      }
+      return { value: null, body_type: type, body_available: false };
+    } catch {
+      return { value: null, body_type: 'unavailable', body_available: false };
+    }
+  }
+
+  /**
+   * Publish a fetch request/response through the canonical ingress.
+   *
+   * @param {Object} stamp - Event identity from the earliest observation.
+   * @param {Request|Response|null} value - Unmodified stock network object.
+   * @param {Object} metadata - Method, URL, status and other raw metadata.
+   * @returns {void} No value is returned.
+   */
+  function cscPublishFetch(stamp, value, metadata) {
+    cscFanOut(stamp, {
+      ...metadata,
+      headers: cscRawHeaderEntries(value?.headers),
+      body_type: value?.headers?.get?.('content-type') ?? null,
+      body_available: Boolean(value?.body),
+      response_type: value?.type ?? null
+    }, value);
+  }
+
+  /**
+   * Publish already available XHR/WS data by structured clone, never transfer.
+   *
+   * @param {Object} stamp - Earliest synchronous observation.
+   * @param {Object} metadata - Transport event metadata.
+   * @param {unknown} data - Page-owned data or explicitly unavailable null.
+   * @returns {void} No value is returned.
+   */
+  function cscPublishValue(stamp, metadata, data = null) {
+    cscFanOut(stamp, metadata, null, data);
+  }
+  // END #309 canonical CSC ingress.
+  // BEGIN #310 independent same-page plugin backlog.
+  /** Original plugin-owned events, never derived from sanitized COMM records. */
+  const cscPluginBacklog = [];
+  /** Accepted request identities while awaiting their correlated response. */
+  const cscPluginRequests = new Map();
+  /** Exclusively attached provider host from #306, or null before readiness. */
+  let cscPluginHost = null;
+  /** Invalidates async completions when their host is disconnected. */
+  let cscPluginGeneration = 0;
+  /** Exactly one asynchronous drain per page execution context. */
+  let cscPluginDraining = false;
+  /** Successful host acknowledgements. */
+  let cscPluginAccepted = 0;
+  /** Unsupported or explicitly rejected events. */
+  let cscPluginRejected = 0;
+  /** Retriable delivery exceptions. */
+  let cscPluginFailures = 0;
+  /** Highest acknowledged or queued canonical capture order in this page. */
+  let cscPluginLastEnqueuedOrder = 0;
+  /** Duplicate or stale ingress notifications discarded without redelivery. */
+  let cscPluginIgnoredStale = 0;
+  /** Consecutive delivery failures used only for bounded retry pacing. */
+  let cscPluginRetryFailuresInRow = 0;
+  /** Exactly one outstanding retry timer per queue generation. */
+  let cscPluginRetryTimer = null;
+
+  /**
+   * Retain the #309 plugin-owned native clone and earliest capture envelope.
+   * @param {Object} event - Canonical capture identity and plugin-owned source.
+   * @returns {void} No value is returned.
+   */
+  function cscPluginQueuePublish(event) {
+    assert(Number.isSafeInteger(event?.envelope?.network_sequence),
+      'CSC plugin event needs canonical network_sequence.');
+    assert(typeof event?.envelope?.capture_id === 'string',
+      'CSC plugin event needs original capture identity.');
+    const order = event.envelope.capture_order;
+    assert(Number.isSafeInteger(order) && order > 0,
+      'CSC plugin event needs positive capture_order.');
+    if (order <= cscPluginLastEnqueuedOrder) {
+      cscPluginIgnoredStale++;
+      logDiagnostic('warnings', 'csc-plugin-duplicate-or-stale', {
+        capture_id: event.envelope.capture_id,
+        capture_order: order
+      });
+      // Do not cancel an alias still owned by an outstanding queue item.
+      if (event.source && !cscPluginBacklog.some(item =>
+        item.event.source === event.source)) {
+        cscPluginQueueReleaseItem({ event, body: null });
+      }
+      return;
+    }
+    cscPluginLastEnqueuedOrder = order;
+    cscPluginBacklog.push({ event, parsed: false, body: null });
+    if (cscPluginHost) void cscPluginQueueDrain();
+  }
+
+  /**
+   * Accept generic navigation from #306's page observer without route inference.
+   * @param {string} url - Absolute page URL.
+   * @returns {void} No value is returned.
+   */
+  function cscPluginQueueNavigation(url) {
+    const stamp = cscCaptureNow('navigation', 'event');
+    cscPluginQueuePublish({
+      envelope: Object.freeze({ ...stamp, url }),
+      source: null, source_available: false, source_incomplete: false
+    });
+  }
+
+  /**
+   * Release only the plugin branch. Never touch stock or COMM-owned bodies.
+   * @param {Object} item - Terminal queue item.
+   * @returns {void} No value is returned.
+   */
+  function cscPluginQueueReleaseItem(item) {
+    const body = item.event?.source?.body;
+    if (body && !body.locked) void cancelReadableBodyQuietly(body);
+    item.event = null;
+    item.body = null;
+  }
+
+  /**
+   * Parse the independent plugin body once and retain it across host turnover.
+   * @param {Object} item - Correlated response item.
+   * @returns {Promise<Object|null>} JSON body if one is accessible.
+   */
+  async function cscPluginQueueJson(item) {
+    if (item.parsed) return item.body;
+    const source = item.event.source;
+    let body = null;
+    if (source && typeof source.json === 'function') {
+      try { body = await source.json(); } catch { body = null; }
+    } else if (source && typeof source === 'object'
+        && Object.prototype.toString.call(source) === '[object Object]') {
+      body = source;
+    } else if (typeof source === 'string') {
+      try { body = JSON.parse(source); } catch { body = null; }
+    }
+    item.parsed = true;
+    item.body = body;
+    return body;
+  }
+
+  /**
+   * Dispatch via the existing provider-owned host, never directly to AICC.
+   * @param {Object} item - Oldest queued event.
+   * @param {Object} host - Active provider host.
+   * @param {number} generation - Lease invalidation generation.
+   * @returns {Promise<string>} accepted, rejected or awaiting.
+   */
+  async function cscPluginQueueDispatch(item, host, generation) {
+    const { envelope: e, source_incomplete: incomplete } = item.event;
+    if (e.transport === 'navigation') {
+      return host.navigation({ url: e.url }) ? 'accepted' : 'rejected';
+    }
+    if ((e.transport === 'fetch' || e.transport === 'xhr')
+        && e.direction === 'request') {
+      const result = host.request({
+        network_sequence: e.network_sequence,
+        method: e.method ?? 'GET',
+        request_url: e.request_url ?? e.url
+      });
+      if (result) {
+        cscPluginRequests.set(e.connection_id, {
+          network_sequence: e.network_sequence,
+          method: e.method ?? 'GET',
+          request_url: e.request_url ?? e.url,
+          connection_id: e.connection_id,
+          envelope: e,
+          generation
+        });
+      }
+      return result ? 'accepted' : 'rejected';
+    }
+    if ((e.transport === 'fetch' || e.transport === 'xhr')
+        && e.direction === 'response') {
+      const request = cscPluginRequests.get(e.connection_id);
+      if (!request || request.generation !== generation) return 'rejected';
+      if (incomplete || !item.event.source_available || e.status !== 200) {
+        cscPluginRequests.delete(e.connection_id);
+        return 'rejected';
+      }
+      const body = await cscPluginQueueJson(item);
+      if (generation !== cscPluginGeneration || host !== cscPluginHost) {
+        return 'awaiting';
+      }
+      if (!body || typeof body !== 'object' || Array.isArray(body)) {
+        cscPluginRequests.delete(e.connection_id);
+        return 'rejected';
+      }
+      // #306 host.response is void on successful delivery. An exception is a
+      // retryable failure; explicit false is rejection, undefined is an ACK.
+      const result = host.response({
+        network_sequence: request.network_sequence, status: e.status, body
+      });
+      cscPluginRequests.delete(e.connection_id);
+      return result === false ? 'rejected' : 'accepted';
+    }
+    if (e.direction === 'error' || e.event === 'abort' || e.event === 'close') {
+      cscPluginRequests.delete(e.connection_id);
+    }
+    // No invented WebSocket host method: unsupported frames are explicit.
+    return 'rejected';
+  }
+
+  /**
+   * Schedule one finite-delay retry; repeated faults back off without
+   * consuming the queue, sending network requests or blocking the page.
+   * @returns {void} No value is returned.
+   */
+  function cscPluginQueueScheduleRetry() {
+    if (cscPluginRetryTimer !== null || !cscPluginHost) return;
+    const delay = Math.min(30000,
+      100 * 2 ** Math.min(10, Math.max(0, cscPluginRetryFailuresInRow - 1)));
+    cscPluginRetryTimer = setTimeout(() => {
+      cscPluginRetryTimer = null;
+      if (cscPluginHost) void cscPluginQueueDrain();
+    }, delay);
+  }
+
+  /**
+   * Acknowledge only successful host calls; keep the entire tail on exception.
+   * @returns {Promise<void>} Resolves after this ordered processing pass.
+   */
+  async function cscPluginQueueDrain() {
+    if (cscPluginDraining || !cscPluginHost || cscPluginRetryTimer !== null) return;
+    cscPluginDraining = true;
+    const host = cscPluginHost;
+    const generation = cscPluginGeneration;
+    try {
+      while (cscPluginBacklog.length && host === cscPluginHost
+          && generation === cscPluginGeneration) {
+        const item = cscPluginBacklog[0];
+        let result;
+        try {
+          result = await cscPluginQueueDispatch(item, host, generation);
+        } catch (error) {
+          cscPluginFailures++;
+          cscPluginRetryFailuresInRow++;
+          logDiagnostic('warnings', 'csc-plugin-delivery-failed', {
+            capture_id: item.event.envelope.capture_id,
+            network_sequence: item.event.envelope.network_sequence,
+            failure_kind: 'provider-handler-exception'
+          });
+          if (generation === cscPluginGeneration && host === cscPluginHost) {
+            cscPluginQueueScheduleRetry();
+          }
+          break;
+        }
+        if (generation !== cscPluginGeneration || host !== cscPluginHost
+            || result === 'awaiting') break;
+        if (result === 'accepted') cscPluginAccepted++;
+        else cscPluginRejected++;
+        cscPluginRetryFailuresInRow = 0;
+        cscPluginBacklog.shift();
+        cscPluginQueueReleaseItem(item);
+      }
+    } finally {
+      cscPluginDraining = false;
+      if (cscPluginHost && cscPluginHost !== host && cscPluginBacklog.length) {
+        void cscPluginQueueDrain();
+      }
+    }
+  }
+
+  /**
+   * Bind one existing #306 host; queue never owns provider disposal.
+   * @param {Object} host - Provider navigation/request/response host.
+   * @returns {void} No value is returned.
+   */
+  function cscPluginQueueConnect(host) {
+    assert(host && typeof host.request === 'function'
+      && typeof host.response === 'function'
+      && typeof host.navigation === 'function',
+    'CSC plugin requires the existing provider navigation/request/response interface.');
+    assert(!cscPluginHost || cscPluginHost === host,
+      'CSC plugin queue already has an active consumer.');
+    if (cscPluginHost === host) return;
+    cscPluginHost = host;
+    cscPluginGeneration++;
+    // Re-establish in-flight correlation before newer requests on a new host.
+    const pending = [...cscPluginRequests.values()]
+      .sort((a, b) => a.network_sequence - b.network_sequence);
+    cscPluginRequests.clear();
+    for (let i = pending.length - 1; i >= 0; i--) {
+      const req = pending[i];
+      cscPluginBacklog.unshift({
+        event: {
+          // Reuse the original immutable capture stamp, including transport,
+          // clock domain, wall/monotonic time and canonical capture ID.
+          envelope: req.envelope,
+          source: null, source_available: false, source_incomplete: false
+        },
+        parsed: false, body: null
+      });
+    }
+    void cscPluginQueueDrain();
+  }
+
+  /**
+   * Invalidate a disposed host without touching its provider-owned resources.
+   * @param {Object} host - Host ending its current lease.
+   * @returns {void} No value is returned.
+   */
+  function cscPluginQueueDisconnect(host) {
+    if (cscPluginHost !== host) return;
+    cscPluginHost = null;
+    cscPluginGeneration++;
+    cscPluginRetryFailuresInRow = 0;
+    if (cscPluginRetryTimer !== null) clearTimeout(cscPluginRetryTimer);
+    cscPluginRetryTimer = null;
+  }
+
+  /**
+   * Retry a temporarily failing head; never discard events to make progress.
+   * @returns {void} No value is returned.
+   */
+  function cscPluginQueueRetry() {
+    if (cscPluginRetryTimer !== null) clearTimeout(cscPluginRetryTimer);
+    cscPluginRetryTimer = null;
+    if (cscPluginHost) void cscPluginQueueDrain();
+  }
+
+  /**
+   * Return only counts and lag timestamps, never raw queued secret content.
+   * @returns {Object} Immutable queue-health snapshot.
+   */
+  function cscPluginQueueSnapshot() {
+    return Object.freeze({
+      generation: cscPluginGeneration,
+      connected: Boolean(cscPluginHost),
+      queued: cscPluginBacklog.length,
+      accepted: cscPluginAccepted,
+      rejected: cscPluginRejected,
+      failures: cscPluginFailures,
+      duplicates: cscPluginIgnoredStale,
+      oldest_capture_at_epoch_ms:
+        cscPluginBacklog[0]?.event?.envelope?.captured_at_epoch_ms ?? null
+    });
+  }
+
+  // Runs before network interception at document-start; no page COMM queue.
+  cscBindPluginIngress(cscPluginQueuePublish);
+  // END #310 independent same-page plugin backlog.
+
+  /** Current document's early provider-neutral URL observer; queue outlives host. */
+  let cscEarlyNavigationDisconnect = null;
+
+  /**
+   * Capture initial route before asynchronous Core/plugin readiness and
+   * preserve subsequent SPA transitions while the provider is disconnected.
+   * The #310 backlog owns ordering and delivers each captured URL once.
+   * @returns {void} No value is returned.
+   */
+  function cscEnsureEarlyNavigationIngress() {
+    if (cscEarlyNavigationDisconnect) return;
+    const page = typeof unsafeWindow !== 'undefined' ? unsafeWindow : window;
+    cscEarlyNavigationDisconnect = observeGenericBrowserNavigation(page,
+      event => cscPluginQueueNavigation(event.url));
+  }
+
+  /**
+   * Release browser hooks on pagehide without touching queued captures.
+   * @returns {void} No value is returned.
+   */
+  function cscDisposeEarlyNavigationIngress() {
+    const dispose = cscEarlyNavigationDisconnect;
+    cscEarlyNavigationDisconnect = null;
+    dispose?.();
+  }
+
+  // Document-start and before the plugin host is acquired. Unlike the old
+  // provider-ready observer, this records A/B/A during late host readiness.
+  cscEnsureEarlyNavigationIngress();
 
   /** Current authoritative Agent lifecycle state, distinct from timing state. */
   let agentLifecycleState = 'unknown';
@@ -14338,13 +14844,14 @@ globalThis.__dcCompressor = {
    */
   function installNetworkCapture() {
     if (captureInstalled) return;
-    // Use the page realm rather than the userscript sandbox when intercepting page networking.
+    // Intercept in the page realm.
     const pageWindow = typeof unsafeWindow !== 'undefined' ? unsafeWindow : window;
 
     if (typeof pageWindow.fetch === 'function') {
       const originalFetch = pageWindow.fetch;
       originalPageFetch = originalFetch;
       pageWindow.fetch = function(...args) {
+        const requestStamp = cscCaptureNow('fetch', 'request');
         const input = args[0];
         const init = args[1] || {};
         let request = null;
@@ -14353,10 +14860,15 @@ globalThis.__dcCompressor = {
           request = input instanceof PageRequest ? input : new PageRequest(input, init);
         } catch {}
         const requestUrl = request?.url ?? String(input);
-        const stockTrace = stockNetworkTraceFetchStart(request, requestUrl);
-        const providerIdentityRequestAccepted = agentPluginObserveNetworkRequest(stockTrace);
-        void communicationLogFetchRequest(request, stockTrace)
-          .catch(communicationError => communicationLogReportFailure('fetch-request', communicationError));
+        const stockTrace = stockNetworkTraceFetchStart(request, requestUrl, requestStamp);
+        cscPublishFetch(requestStamp, request, {
+          method: String(request?.method ?? init.method ?? 'GET').toUpperCase(),
+          request_url: requestUrl
+        });
+        if (!cscCommWorker) {
+          void communicationLogFetchRequest(request, stockTrace)
+            .catch(communicationError => communicationLogReportFailure('fetch-request', communicationError));
+        }
         rememberApiRequestContext(requestUrl, request?.headers, init.headers);
         recordClickDiagnosticNetworkRequest(requestUrl, 'fetch');
         const requestMethod = String(request?.method ?? init.method ?? 'GET').toUpperCase();
@@ -14373,17 +14885,29 @@ globalThis.__dcCompressor = {
           ? captureGenerationStreamRequest(request, generationSubmittedAtMs)
           : null;
         const resumeRequestClone = resumeRequest && request ? cloneSafely(request) : null;
-        const responsePromise = originalFetch.apply(this, args);
+        const responsePromise = cscDispatchObservedFetch(
+          originalFetch, this, args, requestStamp, stockTrace, requestUrl);
         return responsePromise.then(response => {
+          const responseStamp = cscCaptureNow('fetch', 'response',
+            requestStamp.connection_id, requestStamp);
           const generationResponse = capturePromise ? cloneSafely(response) : null;
           const resumeResponse = resumeRequest ? cloneSafely(response) : null;
           const stopwatchConversationResponse = stopwatchConversationRequest
             ? cloneSafely(response)
             : null;
           stockNetworkTraceFetchResponse(response, stockTrace);
-          void agentPluginObserveFetchResponse(response, stockTrace, providerIdentityRequestAccepted);
-          void communicationLogFetchResponse(response, stockTrace)
-            .catch(communicationError => communicationLogReportFailure('fetch-response', communicationError));
+          cscPublishFetch(responseStamp, response, {
+            method: stockTrace.method,
+            request_url: requestUrl,
+            response_url: response.url,
+            status: response.status,
+            redirected: response.redirected,
+            ok: response.ok
+          });
+          if (!cscCommWorker) {
+            void communicationLogFetchResponse(response, stockTrace)
+              .catch(communicationError => communicationLogReportFailure('fetch-response', communicationError));
+          }
           if (stopwatchConversationRequest && !stopwatchConversationResponse) {
             logDiagnostic('warnings', 'agent-stopwatch-recovery-response-clone-failure', {
               url: boundedDiagnosticText(response?.url ?? requestUrl, 320)
@@ -14426,6 +14950,13 @@ globalThis.__dcCompressor = {
           }
           return response;
         }, error => {
+          const failureStamp = cscCaptureNow('fetch', 'error',
+            requestStamp.connection_id, requestStamp);
+          cscPublishValue(failureStamp, {
+            method: stockTrace.method, request_url: requestUrl,
+            error_name: String(error?.name ?? 'Error'),
+            body_available: false, complete: false
+          });
           logDiagnostic('debug', 'stock-network-fetch-failed', {
             network_sequence: stockTrace.sequence,
             method: stockTrace.method,
@@ -14457,16 +14988,57 @@ globalThis.__dcCompressor = {
         return originalSetRequestHeader.call(this, name, value);
       };
       XHR.prototype.send = function(body) {
+        const requestStamp = cscCaptureNow('xhr', 'request');
         const info = this.__tmApiRequest || { method: 'GET', url: '', headers: {} };
-        const stockTrace = stockNetworkTraceXhrStart(this, info);
-        const providerIdentityRequestAccepted = agentPluginObserveNetworkRequest(stockTrace);
-        void communicationLogXhrRequest(info, body, stockTrace)
-          .catch(communicationError => communicationLogReportFailure('xhr-request', communicationError));
+        const stockTrace = stockNetworkTraceXhrStart(this, info, requestStamp);
+        cscPublishValue(requestStamp, {
+          method: info.method, url: info.url,
+          headers: cscRawHeaderEntries(info.headers),
+          body_type: typeof body,
+          body_available: body !== null && body !== undefined
+        }, body ?? null);
+        if (!cscCommWorker) {
+          void communicationLogXhrRequest(info, body, stockTrace)
+            .catch(communicationError => communicationLogReportFailure('xhr-request', communicationError));
+        }
+        let cscXhrTerminatedWithError = false;
+        for (const name of ['abort', 'error', 'timeout']) {
+          this.addEventListener(name, () => {
+            cscXhrTerminatedWithError = true;
+            const failureStamp = cscCaptureNow('xhr', 'error',
+              requestStamp.connection_id, requestStamp);
+            cscPublishValue(failureStamp, {
+              method: info.method, request_url: info.url,
+              event: name, body_available: false, complete: false
+            });
+          }, { once: true });
+        }
         this.addEventListener('loadend', () => {
+          const responseStamp = cscCaptureNow('xhr',
+            cscXhrTerminatedWithError ? 'event' : 'response',
+            requestStamp.connection_id, requestStamp);
           stockNetworkTraceXhrResponse(this, stockTrace);
-          agentPluginObserveXhrResponse(this, stockTrace, providerIdentityRequestAccepted);
-          void communicationLogXhrResponse(this, stockTrace)
-            .catch(communicationError => communicationLogReportFailure('xhr-response', communicationError));
+          if (cscXhrTerminatedWithError) {
+            cscPublishValue(responseStamp, {
+              event: 'loadend', request_url: info.url,
+              body_available: false, complete: false
+            });
+          } else {
+            const body = cscXhrBodySnapshot(this);
+            cscPublishValue(responseStamp, {
+              method: info.method, request_url: info.url,
+              response_url: this.responseURL ?? info.url,
+              status: Number.isFinite(this.status) ? this.status : null,
+              response_type: this.responseType || 'text',
+              headers: String(this.getAllResponseHeaders?.() ?? ''),
+              body_type: body.body_type,
+              body_available: body.body_available
+            }, body.value);
+          }
+          if (!cscCommWorker) {
+            void communicationLogXhrResponse(this, stockTrace)
+              .catch(communicationError => communicationLogReportFailure('xhr-response', communicationError));
+          }
         }, { once: true });
         rememberApiRequestContext(info.url, info.headers);
         recordClickDiagnosticNetworkRequest(info.url, 'xmlhttprequest');
@@ -14478,31 +15050,72 @@ globalThis.__dcCompressor = {
       const NativeWebSocket = pageWindow.WebSocket;
       pageWindow.WebSocket = new Proxy(NativeWebSocket, {
         construct(target, args) {
-          const socket = Reflect.construct(target, args, target);
+          const connectionStamp = cscCaptureNow('websocket', 'event');
+          let socket;
+          try {
+            socket = Reflect.construct(target, args, target);
+          } catch (error) {
+            cscPublishValue(connectionStamp, {
+              url: String(args[0] ?? ''), event: 'construct-failed',
+              error_name: String(error?.name ?? 'Error'),
+              body_available: false, complete: false
+            });
+            throw error;
+          }
           const socketUrl = String(args[0] ?? '');
           const nativeSend = socket.send;
           socket.send = function(data) {
-            void communicationLogWebSocketSend(socketUrl, data)
-              .catch(communicationError => communicationLogReportFailure('websocket-send', communicationError));
-            return nativeSend.call(this, data);
+            const stamp = cscCaptureNow('websocket', 'outgoing',
+              connectionStamp.connection_id, connectionStamp);
+            cscPublishValue(stamp, {
+              url: socketUrl, body_type: typeof data,
+              body_available: data !== null && data !== undefined
+            }, data);
+            return cscDispatchSocketSend(nativeSend, this, data, connectionStamp, stamp, socketUrl);
           };
           socket.addEventListener('open', () => {
-            void communicationLogRecord('communication_websocket_open', { url: stockNetworkSafeUrl(socketUrl) });
+            const stamp = cscCaptureNow('websocket', 'event',
+              connectionStamp.connection_id, connectionStamp);
+            cscPublishValue(stamp, { url: socketUrl, event: 'open' });
+            if (!cscCommWorker) {
+              void communicationLogRecord('communication_websocket_open', { url: stockNetworkSafeUrl(socketUrl) });
+            }
           });
           socket.addEventListener('message', event => {
+            const stamp = cscCaptureNow('websocket', 'incoming',
+              connectionStamp.connection_id, connectionStamp);
+            cscPublishValue(stamp, {
+              url: socketUrl, body_type: typeof event.data,
+              body_available: event.data !== null && event.data !== undefined
+            }, event.data);
             captureGenerationWebSocketFrame(event.data);
-            void communicationLogWebSocketMessage(socketUrl, event.data)
-              .catch(communicationError => communicationLogReportFailure('websocket-message', communicationError));
+            if (!cscCommWorker) {
+              void communicationLogWebSocketMessage(socketUrl, event.data)
+                .catch(communicationError => communicationLogReportFailure('websocket-message', communicationError));
+            }
           });
           socket.addEventListener('close', event => {
-            void communicationLogRecord('communication_websocket_close', {
-              url: stockNetworkSafeUrl(socketUrl),
-              code: event.code,
+            const stamp = cscCaptureNow('websocket', 'event',
+              connectionStamp.connection_id, connectionStamp);
+            cscPublishValue(stamp, {
+              url: socketUrl, event: 'close', code: event.code,
               was_clean: event.wasClean === true
             });
+            if (!cscCommWorker) {
+              void communicationLogRecord('communication_websocket_close', {
+                url: stockNetworkSafeUrl(socketUrl),
+                code: event.code,
+                was_clean: event.wasClean === true
+              });
+            }
           });
           socket.addEventListener('error', () => {
-            void communicationLogRecord('communication_websocket_error', { url: stockNetworkSafeUrl(socketUrl) });
+            const stamp = cscCaptureNow('websocket', 'event',
+              connectionStamp.connection_id, connectionStamp);
+            cscPublishValue(stamp, { url: socketUrl, event: 'error' });
+            if (!cscCommWorker) {
+              void communicationLogRecord('communication_websocket_error', { url: stockNetworkSafeUrl(socketUrl) });
+            }
           });
           return socket;
         }
@@ -19482,10 +20095,9 @@ Image elapsed: ${formatDuration(imageElapsed)} — Completed: ${imageCompleted}/
       ['Generated sandbox download link', testGeneratedSandboxDownloadLink],
       ['Jump identifier resolution', testJumpIdentifierResolution],
       ['Conversation API access/schema', testConversationApiAccessAndSchema],
-      ['AICC #127 staged artifact', testAicc127StagedArtifact],
-      ['AICC #127 live project identity', testAicc127LiveProject],
-      ['AICC #127 live standalone', testAicc127LiveStandalone],
-      ['AICC #127 navigation A-B-A', testAicc127Navigation]
+      ['Worker + Zstd/CSP', testWorkerZstdCsp],
+      ['CSC Worker stream + directory', testCscWorkerBoundary],
+      ['CSC dual clone + Worker', testCscDualCloneOwnership]
     ];
   }
 
@@ -19498,7 +20110,7 @@ Image elapsed: ${formatDuration(imageElapsed)} — Completed: ${imageCompleted}/
     try {
       const parsed = JSON.parse(localStorage.getItem(TEST_RESULT_HISTORY_KEY) || '{}');
       if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) return new Map();
-      return new Map(Object.entries(parsed).filter(([, value]) => value === 'PASS' || value === 'FAIL' || value === 'INCOMPLETE'));
+      return new Map(Object.entries(parsed).filter(([, value]) => value === 'PASS' || value === 'FAIL'));
     } catch {
       return new Map();
     }
@@ -19524,7 +20136,7 @@ Image elapsed: ${formatDuration(imageElapsed)} — Completed: ${imageCompleted}/
    * @returns {string} The string produced by `testMatrixResultText`.
    */
   function testMatrixResultText(result) {
-    return result?.status || '—';
+    return result ? result.status + (result.detail ? ': ' + result.detail : '') : '—';
   }
 
   /**
@@ -19557,10 +20169,11 @@ Image elapsed: ${formatDuration(imageElapsed)} — Completed: ${imageCompleted}/
    */
   async function executeBuiltInTest(name, fn) {
     try {
-      const result = await fn();
-      const status = result?.status === 'INCOMPLETE' ? 'INCOMPLETE' : 'PASS';
-      testMatrixCurrentResults.set(name, { status, detail: result?.detail || '' });
-      return `${testMatrixCurrentResults.get(name).status === 'PASS' ? '✅' : '⏳'} ${name}`;
+      const detail = await fn();
+      testMatrixCurrentResults.set(name, {
+        status: 'PASS', detail: typeof detail === 'string' ? detail : ''
+      });
+      return `✅ ${name}`;
     } catch (error) {
       const detail = errorMessage(error);
       testMatrixCurrentResults.set(name, { status: 'FAIL', detail });
@@ -19581,7 +20194,9 @@ Image elapsed: ${formatDuration(imageElapsed)} — Completed: ${imageCompleted}/
       .filter(([name]) => testMatrixCurrentResults.has(name))
       .map(([name]) => {
         const result = testMatrixCurrentResults.get(name);
-        return result.status === 'PASS' ? `✅ ${name}` : result.status === 'INCOMPLETE' ? `⏳ ${name}: ${result.detail}` : `❌ ${name}: ${result.detail}`;
+        return result.status === 'PASS'
+          ? `✅ ${name}${result.detail ? ': ' + result.detail : ''}`
+          : `❌ ${name}: ${result.detail}`;
       });
   }
 
@@ -19618,6 +20233,8 @@ Image elapsed: ${formatDuration(imageElapsed)} — Completed: ${imageCompleted}/
     refreshTestMatrix();
     try {
       for (const [name, fn] of builtInTests()) {
+        // Directory selection requires an explicit, individual Run gesture.
+        if (name === 'CSC Worker stream + directory') continue;
         await executeBuiltInTest(name, fn);
       }
     } finally {
@@ -19762,7 +20379,7 @@ Image elapsed: ${formatDuration(imageElapsed)} — Completed: ${imageCompleted}/
               ${tests.map(([name]) => `
                 <tr data-test-name="${escapeHtmlAttribute(name)}">
                   <td>${escapeHtmlText(name)}</td>
-                  <td>${name.startsWith('AICC #127') ? 'Live' : 'Automatic'}</td>
+                  <td>Automatic</td>
                   <td data-role="previous-result">—</td>
                   <td data-role="current-result">—</td>
                   <td><button type="button" data-role="run-test">Run</button></td>
@@ -19771,7 +20388,6 @@ Image elapsed: ${formatDuration(imageElapsed)} — Completed: ${imageCompleted}/
           </table>
         </div>
         <div class="tm-test-actions">
-          <button type="button" data-role="export-aicc127-evidence">Export #127 evidence</button>
           <button type="button" data-role="run-all-tests">Run All</button>
           <button type="button" data-role="close-test-matrix">Close</button>
         </div>
@@ -19793,7 +20409,6 @@ Image elapsed: ${formatDuration(imageElapsed)} — Completed: ${imageCompleted}/
         if (test) void runOneTest(test[0], test[1]);
         return;
       }
-      if (target.closest('[data-role="export-aicc127-evidence"]')) { aicc127ExportEvidence(); return; }
       if (target.closest('[data-role="run-all-tests"]')) void runTests();
     });
     document.body.append(overlay);
@@ -19977,7 +20592,11 @@ Image elapsed: ${formatDuration(imageElapsed)} — Completed: ${imageCompleted}/
    * @returns {Promise<void>} Resolves after the original runner completes.
    */
   runOneTest = async function runOneTestAfterChatGPTPluginReady(name, fn) {
-    await ensureChatGPTCanonicalAgent();
+    if (name !== 'Worker + Zstd/CSP'
+      && name !== 'CSC Worker stream + directory'
+      && name !== 'CSC dual clone + Worker') {
+      await ensureChatGPTCanonicalAgent();
+    }
     return runOneTestWithCanonicalAgent(name, fn);
   };
 
@@ -19990,687 +20609,696 @@ Image elapsed: ${formatDuration(imageElapsed)} — Completed: ${imageCompleted}/
     await ensureChatGPTCanonicalAgent();
     return runTestsWithCanonicalAgent();
   };
-  // #127 staging-only browser verification. No production identity or filenames.
-  // The source is the page's EXISTING observed fetch/XHR, not new API requests.
-  /** Session-scoped redacted evidence storage key. */
-  const AICC127_EVIDENCE_KEY = 'dc-issue127-live-observations';
-  /** Exact immutable provider commit required by the #127 witness. */
-  const AICC127_PROVIDER_SHA = 'db7e3450aac94eb2990fba0de54d090e377dafa3';
-  /** Exact immutable staged Core commit required by the #127 witness. */
-  const AICC127_CORE_SHA = '80b3e1354005e381c4fc1a81a26be3c45b45dd30';
-  /** Expected Git blob of the certified private provider artifact. */
-  const AICC127_BLOB_SHA = 'c731721005aefbc14a61bfc97270d7270aa80ea0';
-  /** Memory-only observer and host bridge enabled explicitly by the test button. */
-  let aicc127Runtime = null;
-  /** Prevents concurrent manual and reload rearming of one agent. */
-  let aicc127StartPending = null;
-  /** Tab-scoped explicit opt-in retained across ChatGPT page reloads. */
-  const AICC127_ARMED_KEY = 'dc-issue127-live-armed';
+
   /**
-   * Constructs the redacted per-tab witness record without names or IDs.
+   * Worker-side synthetic verification using the same vendored compressor bridge.
+   * Only the generated test bytes enter the Worker; no page network data is read.
    *
-   * @returns {Object} Returns the aicc127MinimalEvidence result.
+   * @returns {void} Installs the one-shot Worker message handler.
    */
-  function aicc127MinimalEvidence() {
-    try {
-      const item = JSON.parse(sessionStorage.getItem(AICC127_EVIDENCE_KEY) || 'null');
-      if (item?.schema === 'aicc127-live-browser-v1' &&
-          item.core_sha === AICC127_CORE_SHA &&
-          item.provider_sha === AICC127_PROVIDER_SHA) return item;
-    } catch {}
-    return {
-      schema: 'aicc127-live-browser-v1', core_sha: AICC127_CORE_SHA,
-      provider_sha: AICC127_PROVIDER_SHA, provider_blob_sha1: AICC127_BLOB_SHA,
-      origin: location.origin, started_at: new Date().toISOString(),
-      project_backend_and_observer: false, standalone_backend_and_observer: false,
-      captures: [], navigation_count: 0, notes: 'Existing page traffic only; names, IDs, messages and credentials omitted'
+  function workerCompressorProbeEntrypoint() {
+    self.onmessage = async event => {
+      const started = performance.now();
+      try {
+        const b64 = event.data.wasm_gzip_base64;
+        const compressed = Uint8Array.from(atob(b64), ch => ch.charCodeAt(0));
+        const stream = new Blob([compressed]).stream()
+          .pipeThrough(new DecompressionStream('gzip'));
+        const wasm = new Uint8Array(await new Response(stream).arrayBuffer());
+        const engine = self['__dcWorkerCompressorBridge'];
+        await engine.init(wasm);
+
+        const bytes = new Uint8Array(10 * 1024 * 1024);
+        for (let i = 0; i < bytes.length; i += 1) {
+          bytes[i] = (Math.imul(i, 37) ^ (i >>> 9)) & 255;
+        }
+        const chunks = [];
+        let length = 0;
+        const writer = new engine.Encoder(event.data.level);
+        try {
+          for (let pos = 0; pos < bytes.length; pos += 512 * 1024) {
+            const part = writer.write(bytes.subarray(pos, pos + 512 * 1024));
+            if (part.length) { chunks.push(part); length += part.length; }
+          }
+          const tail = writer.finish();
+          if (tail.length) { chunks.push(tail); length += tail.length; }
+        } finally {
+          writer.free();
+        }
+        const archive = new Uint8Array(length);
+        let written = 0;
+        for (const part of chunks) {
+          archive.set(part, written);
+          written += part.length;
+        }
+        const restored = engine.decompress(archive);
+        if (restored.length !== bytes.length) {
+          throw new Error('Zstd round-trip length mismatch.');
+        }
+        for (let i = 0; i < bytes.length; i += 1) {
+          if (restored[i] !== bytes[i]) {
+            throw new Error('Zstd round-trip byte mismatch at ' + i + '.');
+          }
+        }
+        // Force measurable Worker CPU work while the page's timers continue.
+        const until = performance.now() + 250;
+        let iterations = 0;
+        while (performance.now() < until) iterations += 1;
+        self.postMessage({
+          ok: true,
+          bytes: bytes.length,
+          archive_bytes: archive.length,
+          elapsed_ms: Math.round(performance.now() - started),
+          worker_cross_origin_isolated: self.crossOriginIsolated === true,
+          iterations
+        });
+      } catch (error) {
+        self.postMessage({
+          ok: false,
+          message: String(error?.message ?? error).slice(0, 350)
+        });
+      }
     };
   }
-  /**
-   * Persists the bounded privacy-minimized witness across test invocations.
-   *
-   * @returns {void} No value is returned.
-   */
-  function aicc127SaveEvidence() {
-    if (!aicc127Runtime) return;
-    try {
-      sessionStorage.setItem(AICC127_EVIDENCE_KEY,
-        JSON.stringify(aicc127Runtime.evidence));
-    } catch {}
-  }
-  /**
-   * Connects the staged Core-owned agent to a test-only subject observer.
-   *
-   * @returns {Promise<Object>} Returns the aicc127Start result.
-   */
-  async function aicc127Start() {
-    if (!aicc127StartPending) aicc127StartPending = aicc127StartImpl();
-    try { return await aicc127StartPending; }
-    finally { aicc127StartPending = null; }
-  }
-  /**
-   * Builds the single staged observer and host bridge.
-   * @returns {Promise<Object>} Runtime state.
-   */
-  async function aicc127StartImpl() {
-    if (aicc127Runtime) return aicc127Runtime;
-    const core = canonicalCore();
-    assert(core.getVersion() === '1.1.0-issue.127.22',
-      'AICC #127 test branch must load Core .127.22');
-    const descriptor = core.getAgentPluginArtifact('chatgpt-web');
-    assert(descriptor.commit === AICC127_PROVIDER_SHA &&
-      descriptor.gitBlobSha1 === AICC127_BLOB_SHA,
-    'AICC catalogue does not pin the certified private provider');
-    const agent = await ensureChatGPTCanonicalAgent();
-    assert(agent.version().version === '0.1.0-issue.1.29',
-      'Wrong provider version loaded');
-    const module = await importAgentPluginModule(descriptor);
-    assert(typeof module.connectChatGPTSubjectHost === 'function',
-      'Provider does not expose host traffic bridge');
-    const evidence = aicc127MinimalEvidence();
-    const navigation = aicc127NavigationCheckpoint();
-    if (sessionStorage.getItem(AICC127_ARMED_KEY) === 'true') navigation.reload_count++;
-    const sharedHost = typeof chatGPTSubjectHost !== 'undefined' &&
-      chatGPTSubjectHost !== null;
-    const state = { agent, evidence, navigation,
-      host: sharedHost ? chatGPTSubjectHost : null, sharedHost, conversationId: null,
-      observed: null, snapshots: 0, pending: new Set(), requestSteps: new Map(),
-      module, unsubscribe: null };
-    aicc127Runtime = state;
-    state.unsubscribe = agent.observeState(snapshot => {
-      state.observed = snapshot;
-      state.snapshots += 1;
-      const step = state.navigation.steps.at(-1);
-      if (step) step.observer_updates = (step.observer_updates || 0) + 1;
-      aicc127NavigationRefreshFromObserver();
-    }, 'subject-identification');
-    aicc127BeginForCurrentConversation();
-    if (typeof window !== 'undefined' && !state.sharedHost) {
-      const target = window.navigation?.addEventListener ? window.navigation : window;
-      state.navigationEvent = target === window ? 'popstate' : 'currententrychange';
-      target.addEventListener(state.navigationEvent, aicc127NavigationChanged);
-    }
-    sessionStorage.setItem(AICC127_ARMED_KEY, 'true');
-    aicc127SaveNavigation();
-    return state;
-  }
-  /**
-   * Rejects previous navigation epochs before correlated responses arrive.
-   *
-   * @returns {void} No value is returned.
-   */
-  function aicc127BeginForCurrentConversation() {
-    const state = aicc127Runtime;
-    if (!state) return;
-    const id = currentConversationId();
-    if (!id || id === state.conversationId) return;
-    state.conversationId = id;
-    aicc127NavigationVisit(id);
-    state.pending.clear();
-    state.requestSteps.clear();
-    if (state.sharedHost) {
-      // The #306 host owns navigation, backend traffic and identity cache.
-      // A second host would reset the canonical agent's published state.
-      state.host = chatGPTSubjectHost;
-    } else if (state.host) state.host.begin(id);
-    else state.host = state.module.connectChatGPTSubjectHost({
-      agent: state.agent, origin: location.origin, conversationId: id
-    });
-    state.evidence.navigation_count += 1;
-    aicc127SaveEvidence();
-  }
-  /**
-   * Classifies only allowed same-origin backend identity GET requests.
-   *
-   * @param {Object} trace - A network request observed by DC.
-   * @returns {string|null} Returns the aicc127LiveRequestKind result.
-   */
-  function aicc127LiveRequestKind(trace) {
-    if (trace?.method !== 'GET') return null;
-    try {
-      const url = new URL(trace.url, location.href);
-      if (url.origin !== location.origin) return null;
-      if (/^\/backend-api\/conversations\/[^/]+\/?$/.test(url.pathname))
-        return 'conversation';
-      if (/^\/backend-api\/gizmos\/g-p-[^/]+\/?$/.test(url.pathname))
-        return 'project';
-    } catch {}
-    return null;
-  }
-  /**
-   * Observes a request already captured by DownloadConversation.
-   *
-   * @param {Object} trace - A network request observed by DC.
-   * @returns {void} No value is returned.
-   */
-  function aicc127LiveOnRequest(trace) {
-    const state = aicc127Runtime;
-    if (!state) return;
-    aicc127BeginForCurrentConversation();
-    if (!state.host || !aicc127LiveRequestKind(trace)) return;
-    if (state.sharedHost || state.host.request({
-      network_sequence: trace.sequence, method: trace.method,
-      request_url: trace.url
-    })) {
-      state.pending.add(trace.sequence);
-      const step = state.navigation.steps.at(-1);
-      state.requestSteps.set(trace.sequence, step);
-      if (step && aicc127LiveRequestKind(trace) === 'conversation')
-        step.conversation_requests = (step.conversation_requests || 0) + 1;
-    }
-  }
-  /**
-   * Correlates genuine backend identity JSON with observer publication.
-   *
-   * @param {Object} trace - Correlated network request.
-   * @param {number} status - Actual HTTP status.
-   * @param {Object} bounded - Bounded existing response body.
-   * @returns {void} No value is returned.
-   */
-  function aicc127LiveAcceptResponse(trace, status, bounded) {
-    const state = aicc127Runtime;
-    if (!state || !state.pending.delete(trace.sequence)) return;
-    const requestStep = state.requestSteps.get(trace.sequence);
-    state.requestSteps.delete(trace.sequence);
-    if (!requestStep || requestStep !== state.navigation.steps.at(-1)) return;
-    // Never store raw body, IDs, names, headers, cookies or URL parameters.
-    if (status !== 200 || bounded.truncated || bounded.text.length > 1048576) return;
-    let body;
-    try { body = JSON.parse(bounded.text); } catch { return; }
-    if (!body || typeof body !== 'object' || Array.isArray(body)) return;
-    const kind = aicc127LiveRequestKind(trace);
-    const before = state.snapshots;
-    const accepted = state.sharedHost ? true : state.host.response({
-      network_sequence: trace.sequence, status, body
-    });
-    const after = state.observed;
-    aicc127NavigationObserved(kind, body, accepted,
-      state.sharedHost ? -1 : before);
-    if (kind === 'conversation') {
-      requestStep.conversation_responses = (requestStep.conversation_responses || 0) + 1;
-      requestStep.reused_verified_backend = false;
-      aicc127SaveNavigation();
-    }
-    const correlated = accepted && state.snapshots > before;
-    const record = {
-      kind, network_sequence: trace.sequence, status,
-      time: new Date().toISOString(), accepted: accepted === true,
-      observer_published: correlated,
-      observer_readiness: after?.readiness ?? null,
-      observer_project_status: after?.project?.status ?? null,
-      observer_has_conversation_name: Boolean(after?.conversation?.name),
-      observer_has_project_name: Boolean(after?.project?.name),
-      backend_explicit_gizmo_null: kind === 'conversation' &&
-        Object.hasOwn(body, 'gizmo_id') && body.gizmo_id === null,
-      backend_project_membership: kind === 'conversation' &&
-        typeof body.gizmo_id === 'string' && body.gizmo_id.startsWith('g-p-')
-    };
-    state.evidence.captures.push(record);
-    if (state.evidence.captures.length > 100) state.evidence.captures.shift();
-    if (record.backend_explicit_gizmo_null &&
-        record.observer_published && record.observer_project_status === 'none')
-      state.evidence.standalone_backend_and_observer = true;
-    if (record.observer_published && record.observer_project_status === 'identified' &&
-        record.observer_has_conversation_name && record.observer_has_project_name)
-      state.evidence.project_backend_and_observer = true;
-    aicc127SaveEvidence();
-  }
-  /**
-   * Observes a cloned existing fetch response without new network requests.
-   *
-   * @param {Object} trace - Original request correlation.
-   * @param {number} status - Actual HTTP status.
-   * @param {Object} bounded - Existing cloned response body.
-   * @returns {void} No value is returned.
-   */
-  function aicc127LiveOnFetchResponse(trace, status, bounded) {
-    if (!aicc127Runtime?.pending.has(trace.sequence)) return;
-    aicc127LiveAcceptResponse(trace, status, bounded);
-  }
 
   /**
-   * Reports whether the staged witness is awaiting this fetch response.
-   * @param {Object} trace - Request correlation record.
-   * @returns {boolean} True for an armed and tracked identity response.
+   * Probes one Worker realm with timeout and unconditional cleanup.
+   *
+   * @param {Window} realm - Page window or userscript window.
+   * @param {string} script - Worker script from the pinned built compressor.
+   * @param {Object} descriptor - Vendored bridge descriptor.
+   * @returns {Promise<Object>} Synthetic Worker test result and page tick count.
    */
-  function aicc127LiveWantsFullFetchResponse(trace) {
-    return Boolean(aicc127Runtime?.pending.has(trace.sequence));
-  }
-
-
-  /**
-   * Reads an already-cloned authenticated response without the diagnostic
-   * truncation limit, then forwards only identity fields. No HTTP request.
-   * @param {Object} trace - Existing network correlation.
-   * @param {Response} response - Dedicated cloned response.
-   * @returns {Promise<boolean>} True if handled, including cached metadata.
-   */
-  async function aicc127LiveOnFullFetchResponse(trace, response) {
-    if (!aicc127LiveWantsFullFetchResponse(trace)) return false;
+  async function workerCompressorProbeRealm(realm, script, descriptor) {
+    assert(typeof realm.Worker === 'function', 'Worker constructor unavailable.');
+    const url = realm.URL.createObjectURL(new realm.Blob(
+      [script], { type: 'text/javascript' }
+    ));
+    let worker = null;
+    let heartbeat = null;
+    let timeout = null;
+    let ticks = 0;
     try {
-      const parsed = await response.json();
-      const identity = aicc127LiveIdentityProjection(trace, parsed);
-      if (!identity) return false;
-      aicc127LiveAcceptResponse(trace, response.status, {
-        text: JSON.stringify(identity), truncated: false
+      worker = new realm.Worker(url);
+      const result = await new Promise((resolve, reject) => {
+        /**
+         * Completes one Worker reply.
+         *
+         * @param {Object} value - Worker completion or failure.
+         * @returns {void} No value is returned.
+         */
+        const finish = value => {
+          if (value?.ok) resolve(value);
+          else reject(new Error(value?.message || 'Worker returned no result.'));
+        };
+        worker.addEventListener('message', event => finish(event.data), { once: true });
+        worker.addEventListener('error', event => {
+          reject(new Error(event.message || 'Worker startup or script error.'));
+        }, { once: true });
+        timeout = setTimeout(() => reject(new Error('Worker timed out (30s).')), 30000);
+        heartbeat = setInterval(() => { ticks += 1; }, 20);
+        worker.postMessage({
+          wasm_gzip_base64: descriptor.wasmGzipBase64,
+          level: descriptor._compression_level
+        });
       });
-      return true;
-    } catch {
-      return false;
+      return { ...result, page_ticks: ticks };
+    } finally {
+      if (timeout !== null) clearTimeout(timeout);
+      if (heartbeat !== null) clearInterval(heartbeat);
+      worker?.terminate();
+      realm.URL.revokeObjectURL(url);
     }
   }
 
   /**
-   * Observes a completed existing XHR without new network requests.
+   * Runs the real DC Zstd/WASM bridge in a classic dedicated Worker.
    *
-   * @param {Object} xhr - Completed page XHR instance.
-   * @param {Object} trace - Original request correlation.
-   * @returns {void} No value is returned.
+   * @returns {Promise<string>} Short, visible browser capability evidence.
    */
-  function aicc127LiveOnXhrResponse(xhr, trace) {
-    if (!aicc127Runtime?.pending.has(trace.sequence)) return;
-    try {
-      const body = xhr.responseType === 'json'
-        ? JSON.stringify(xhr.response)
-        : (!xhr.responseType || xhr.responseType === 'text' ?
-          String(xhr.responseText || '') : '');
-      aicc127LiveAcceptResponse(trace, xhr.status, {
-        text: body.slice(0, 1048576), truncated: body.length > 1048576
-      });
-    } catch {}
-  }
-
-  /**
-   * Verifies that the current test build matches exact Core and provider identities.
-   *
-   * @returns {Promise<void>} Returns the testAicc127StagedArtifact result.
-   */
-  async function testAicc127StagedArtifact() {
-    await aicc127Start();
-  }
-
-  /**
-   * Reports PASS only after backend project data reaches the observer.
-   *
-   * @returns {Promise<Object|undefined>} Returns the testAicc127LiveProject result.
-   */
-  async function testAicc127LiveProject() {
-    const state = await aicc127Start();
-    const verified = state.navigation.steps.some(step =>
-      step.backend_observed && !step.reused_verified_backend &&
-      !step.backend_standalone && step.observer_matches_backend &&
-      step.visible_project_match === true);
-    return state.evidence.project_backend_and_observer || verified ? undefined :
-      { status: 'INCOMPLETE', detail: 'Await authenticated project metadata and matching AICC observer. Navigate to a project conversation and rerun.' };
-  }
-
-  /**
-   * Reports PASS only after backend explicit null reaches the observer.
-   *
-   * @returns {Promise<Object|undefined>} Returns the testAicc127LiveStandalone result.
-   */
-  async function testAicc127LiveStandalone() {
-    const state = await aicc127Start();
-    const verified = state.navigation.steps.some(step =>
-      step.backend_observed && !step.reused_verified_backend &&
-      step.backend_standalone && step.observer_matches_backend &&
-      step.visible_project_match === true);
-    return state.evidence.standalone_backend_and_observer || verified ? undefined :
-      { status: 'INCOMPLETE', detail: 'Await actual backend gizmo_id:null and matching AICC observer. Navigate to standalone chat and rerun.' };
-  }
-
-  /**
-   * Exports the redacted local evidence on user click.
-   *
-   * @returns {void} No value is returned.
-   */
-  function aicc127ExportEvidence() {
-    const evidence = aicc127Runtime?.evidence || aicc127MinimalEvidence();
-    const blob = new Blob([JSON.stringify(evidence, null, 2) + '\n'],
-      { type: 'application/json' });
-    const url = URL.createObjectURL(blob);
-    const a = document.createElement('a');
-    a.href = url;
-    a.download = 'aicc127-live-evidence.json';
-    document.body.appendChild(a);
-    a.click();
-    a.remove();
-    setTimeout(() => URL.revokeObjectURL(url), 1000);
-    sessionStorage.removeItem(AICC127_ARMED_KEY);
-    aicc127Runtime?.unsubscribe?.();
-    if (aicc127Runtime?.navigationEvent && typeof window !== 'undefined') {
-      const listener = aicc127Runtime.navigationEvent === 'currententrychange'
-        ? window.navigation : window;
-      listener.removeEventListener(aicc127Runtime.navigationEvent, aicc127NavigationChanged);
-    }
-    sessionStorage.removeItem(AICC127_NAV_KEY);
-    aicc127Runtime = null;
-  }
-
-  // Only continue an already user-armed witness across a same-tab reload.
-  if (sessionStorage.getItem(AICC127_ARMED_KEY) === 'true') {
-    Promise.resolve().then(() => aicc127Start()).catch(error => {
-      logDiagnostic('warnings', 'aicc127-live-witness-rearm-failed', {
-        message: boundedDiagnosticText(errorMessage(error), 500)
-      });
-    });
-  }
-  /**
-   * Extracts only backend-authoritative subject fields from parsed JSON.
-   * The complete conversation is never stored in witness evidence.
-   * @param {Object} trace - Correlated request.
-   * @param {Object} value - Ephemeral parsed response.
-   * @returns {Object|null} Minimum provider input or null.
-   */
-  function aicc127LiveIdentityProjection(trace, value) {
-    if (!value || typeof value !== 'object' || Array.isArray(value)) return null;
-    const kind = aicc127LiveRequestKind(trace);
-    if (kind === 'conversation') {
-      if (typeof value.conversation_id !== 'string') return null;
-      const item = { conversation_id: value.conversation_id };
-      if (Object.hasOwn(value, 'title')) item.title = value.title;
-      if (Object.hasOwn(value, 'gizmo_id')) item.gizmo_id = value.gizmo_id;
-      return item;
-    }
-    if (kind === 'project' && value.gizmo &&
-        typeof value.gizmo.id === 'string') {
-      return { gizmo: {
-        id: value.gizmo.id, display: { name: value.gizmo.display?.name }
-      } };
-    }
-    return null;
-  }
-
-  /**
-   * Records only whether the private provider accepted a changed route and
-   * the status of its resulting subject snapshot. No URLs/IDs/names persist.
-   * @param {boolean} accepted - Result of provider navigation({url}).
-   * @param {Object|null} snapshot - Provider canonical identity state.
-   * @returns {void} No value is returned.
-   */
-  function aicc127NavigationTransportObserved(accepted, snapshot) {
-    const step = aicc127Runtime?.navigation?.steps?.at(-1);
-    if (!step) return;
-    step.navigation_events = (step.navigation_events || 0) + 1;
-    step.navigation_accepted = accepted === true;
-    const valid = new Set(['identified', 'unresolved', 'none']);
-    const conversation = snapshot?.conversation?.status;
-    const project = snapshot?.project?.status;
-    step.provider_conversation_status = valid.has(conversation)
-      ? conversation : 'unknown';
-    step.provider_project_status = valid.has(project)
-      ? project : 'unknown';
-    aicc127SaveNavigation();
-  }
-  /** Test-only checkpoint key; salt and fingerprints never export. */
-  const AICC127_NAV_KEY = 'dc-issue127-navigation-checkpoint';
-  /**
-   * Hashes a local label with a per-tab salt.
-   * @param {string} value - Identity or display label.
-   * @param {string} salt - Tab-scoped salt.
-   * @returns {string} Nonreversible local fingerprint.
-   */
-  function aicc127Fingerprint(value, salt) {
-    let hash = 2166136261;
-    for (const char of salt + String(value ?? '')) {
-      hash = Math.imul(hash ^ char.charCodeAt(0), 16777619);
-    }
-    return (hash >>> 0).toString(16);
-  }
-  /**
-   * Restores a bounded same-tab checkpoint after reload.
-   * @returns {Object} Existing checkpoint or new state.
-   */
-  function aicc127NavigationCheckpoint() {
-    try {
-      const prior = JSON.parse(sessionStorage.getItem(AICC127_NAV_KEY) || 'null');
-      if (prior?.schema === 'aicc127-navigation-v1' &&
-          Array.isArray(prior.steps) && prior.steps.length <= 20 &&
-          typeof prior.salt === 'string') return prior;
-    } catch {}
-    return { schema: 'aicc127-navigation-v1',
-      salt: Math.random().toString(36).slice(2) + Date.now().toString(36),
-      steps: [], reload_count: 0 };
-  }
-  /**
-   * Persists fingerprints apart from redacted export.
-   * @returns {void} No value.
-   */
-  function aicc127SaveNavigation() {
-    const state = aicc127Runtime;
-    if (!state?.navigation) return;
-    try {
-      sessionStorage.setItem(AICC127_NAV_KEY, JSON.stringify(state.navigation));
-    } catch {}
-    state.evidence.navigation_steps = state.navigation.steps.map(step => ({
-      slot: step.slot, backend_observed: step.backend_observed,
-      backend_source: (step.conversation_responses || 0) > 0 ? 'network-response'
-        : step.reused_verified_backend ? 'verified-session-cache'
-          : step.backend_observed ? 'network-response' : 'unresolved',
-      conversation_requests: step.conversation_requests || 0,
-      conversation_responses: step.conversation_responses || 0,
-      observer_updates: step.observer_updates || 0,
-      navigation_events: step.navigation_events || 0,
-      navigation_accepted: step.navigation_accepted === true,
-      provider_conversation_status: step.provider_conversation_status || 'unknown',
-      provider_project_status: step.provider_project_status || 'unknown',
-      project_visual_reason: step.project_visual_reason || 'unresolved',
-      observer_matches_backend: step.observer_matches_backend,
-      visible_conversation_match: step.visible_conversation_match,
-      visible_project_match: step.visible_project_match,
-      changed_from_previous: step.changed_from_previous,
-      resumed_after_reload: Boolean(step.resumed_after_reload)
-    }));
-    state.evidence.reload_count = state.navigation.reload_count;
-    aicc127SaveEvidence();
-  }
-  // Navigation API is the primary SPA signal; request ingress is the fallback.
-  /**
-   * Captures SPA navigation on route change.
-   * @returns {void} No value.
-   */
-  function aicc127NavigationChanged() {
-    aicc127BeginForCurrentConversation();
-  }
-  /**
-   * Records A, B and restored A slots.
-   * @param {string} id - Current conversation ID (local only).
-   * @returns {void} No value.
-   */
-  function aicc127NavigationVisit(id) {
-    const state = aicc127Runtime;
-    if (!state?.navigation) return;
-    const nav = state.navigation;
-    const key = aicc127Fingerprint(id, nav.salt);
-    const previous = nav.steps.at(-1);
-    if (previous?.key === key) return;
-    const slot = nav.steps.length === 0 ? 'A'
-      : nav.steps.length === 1 ? 'B'
-      : key === nav.steps[0].key ? 'A-return' : 'other';
-    nav.steps.push({ slot, key, backend_observed: false,
-      conversation_requests: 0, conversation_responses: 0, observer_updates: 0,
-      observer_matches_backend: false, visible_conversation_match: null,
-      visible_project_match: null, changed_from_previous: null });
-    if (nav.steps.length > 20) nav.steps.shift();
-    aicc127SaveNavigation();
-    aicc127NavigationRefreshFromObserver();
-    // The observer may publish before ChatGPT paints the new breadcrumb.
-    // Recheck visible labels only, never infer identity from those labels.
-    // Each callback is tied to this exact step to reject later navigation.
-    if (typeof setTimeout === 'function') {
-      const step = nav.steps.at(-1);
-      for (const delay of [350, 1100]) {
-        setTimeout(() => {
-          if (aicc127Runtime === state && nav.steps.at(-1) === step)
-            aicc127NavigationRefreshFromObserver();
-        }, delay);
+  async function testWorkerZstdCsp() {
+    const bridge = globalThis['__dcCompressor'];
+    assert(typeof bridge?.init === 'function'
+      && typeof bridge?.Encoder === 'function'
+      && typeof bridge?.decompress === 'function'
+      && typeof bridge?.wasmGzipBase64 === 'string',
+    'Exact bundled Zstd compressor bridge is unavailable.');
+    const source = [
+      "'use strict';",
+      'let __dcCompressorModule = null;',
+      'function __dcCompressorViews(module) {',
+      '  return { bytes: new Uint8Array(module.memory.buffer),',
+      '    words: new Uint32Array(module.memory.buffer) };',
+      '}',
+      bridge.init.toString(),
+      bridge.Encoder.toString(),
+      bridge.decompress.toString(),
+      "self['__dcWorkerCompressorBridge'] = {",
+      '  init: __dcCompressorInit, Encoder: CompressorEncoder,',
+      '  decompress: __dcCompressorDecompress',
+      '};',
+      '(' + workerCompressorProbeEntrypoint.toString() + ')();'
+    ].join('\n');
+    const page = typeof unsafeWindow !== 'undefined' ? unsafeWindow : window;
+    const contexts = [
+      ['page', page],
+      ['userscript', window]
+    ];
+    const failures = [];
+    for (const [label, realm] of contexts) {
+      if (label === 'userscript' && realm === page) continue;
+      try {
+        const result = await workerCompressorProbeRealm(realm, source, bridge);
+        assert(result.bytes === 10 * 1024 * 1024, 'Incorrect test payload size.');
+        const detail = [
+          label + ' Worker',
+          '10 MiB Zstd exact-byte PASS',
+          result.elapsed_ms + 'ms',
+          result.page_ticks + ' page ticks',
+          'isolated=' + (page.crossOriginIsolated === true)
+        ].join('; ');
+        logDiagnostic('lifecycle', 'worker-zstd-csp-test-pass', {
+          realm: label,
+          bytes: result.bytes,
+          archive_bytes: result.archive_bytes,
+          worker_ms: result.elapsed_ms,
+          page_ticks: result.page_ticks,
+          cross_origin_isolated: page.crossOriginIsolated === true
+        });
+        return detail;
+      } catch (error) {
+        failures.push(label + ': ' + errorMessage(error));
       }
     }
-  }
-  /**
-   * Compares observer values with visible labels.
-   * @param {Object} snapshot - Current observer state.
-   * @returns {Object} Comparison flags without private labels.
-   */
-  function aicc127VisibleComparison(snapshot) {
-    const conversation = snapshot?.conversation?.name;
-    const project = snapshot?.project?.name;
-    const currentId = aicc127Runtime?.conversationId;
-    if (typeof document === 'undefined') return {
-      conversationMatch: null, projectMatch: null
-    };
-    const visibleTitle = String(document.title || '').trim();
-    const sidebar = [...document.querySelectorAll('a[href]')].find(anchor => {
-      try {
-        const url = new URL(anchor.href, location.href);
-        return currentId && url.origin === location.origin &&
-          url.pathname.split('/').includes(currentId) &&
-          anchor.getAttribute('aria-current') === 'page';
-      } catch { return false; }
+    const reason = failures.join(' | ');
+    logDiagnostic('warnings', 'worker-zstd-csp-test-fail', {
+      cross_origin_isolated: page.crossOriginIsolated === true,
+      errors: reason.slice(0, 700)
     });
-    const visibleConversation = String(sidebar?.textContent || '').trim();
+    throw new Error(reason);
+  }
+
+  /**
+   * Synthetic-only classic Worker for CSC stream and directory capability tests.
+   * No intercepted traffic, credentials, or production archives enter this Worker.
+   *
+   * @returns {void} Installs the independent test task receiver.
+   */
+  function cscProbeWorkerEntrypoint() {
     /**
-     * Normalizes a transient visible label for comparison.
-     * @param {string} text - Display label.
-     * @returns {string} Normalized label.
+     * Synthetic fixture octet at one absolute offset.
+     *
+     * @param {number} offset - Byte position.
+     * @returns {number} The deterministic byte value.
      */
-    const normalized = text => String(text).trim().toLocaleLowerCase();
-    const visibleSidebarMatch = !visibleConversation ||
-      normalized(visibleConversation) === normalized(conversation);
-    const visibleTitleMatch = !visibleTitle ||
-      normalized(visibleTitle) === normalized(conversation) ||
-      normalized(visibleTitle).startsWith(normalized(conversation) + ' - ');
-    const conversationMatch = !conversation ? null :
-      !visibleConversation && !visibleTitle ? null :
-        visibleSidebarMatch && visibleTitleMatch;
-    const breadcrumb = [...document.querySelectorAll(
-      'nav[aria-label="Breadcrumb"] a[href]')].find(anchor => {
+    const expectedByte = offset => (Math.imul(offset, 29) + 7) & 255;
+
+    /**
+     * Verify a transferred stream or exercise explicit cancellation.
+     *
+     * @param {Object} task - Stream fixture options and ownership-transferred body.
+     * @returns {Promise<Object>} Exact count and stream lifecycle evidence.
+     */
+    async function readTransferred(task) {
+      const reader = task.body.getReader();
+      let position = 0;
+      let chunks = 0;
       try {
-        return new URL(anchor.href, location.href).pathname.includes('/project');
-      } catch { return false; }
-    });
-    const visibleProject = String(breadcrumb?.textContent || '').trim();
-    const projectMatch = snapshot?.project?.status === 'none'
-      ? (visibleProject ? false : true)
-      : !project || !visibleProject ? null :
-        normalized(project) === normalized(visibleProject);
-    return { conversationMatch, projectMatch,
-      projectReason: !visibleProject ? 'breadcrumb-absent'
-        : !project ? 'observer-project-name-absent'
-          : projectMatch ? 'match' : 'breadcrumb-name-mismatch' };
-  }
-  /**
-   * Correlates backend, observer and visible labels.
-   * @param {string} kind - Endpoint classification.
-   * @param {Object} body - Ephemeral identity payload.
-   * @param {boolean} accepted - Whether the provider accepted the event.
-   * @param {number} before - Previous snapshot count.
-   * @returns {void} No value.
-   */
-  function aicc127NavigationObserved(kind, body, accepted, before) {
-    const state = aicc127Runtime;
-    if (!state?.navigation) return;
-    const step = state.navigation.steps.at(-1);
-    if (!step) return;
-    const salt = state.navigation.salt;
-    if (kind === 'conversation' && accepted) {
-      step.backend_observed = true;
-      step.reused_verified_backend = false;
-      step.backend_conversation_key = aicc127Fingerprint(body.conversation_id, salt);
-      step.backend_title_key = aicc127Fingerprint(body.title, salt);
-      step.backend_project_key = aicc127Fingerprint(body.gizmo_id, salt);
-      step.backend_standalone = body.gizmo_id === null;
+        if (task.delay_ms) {
+          self.postMessage({ progress: 'delaying' });
+          await new Promise(resolve => setTimeout(resolve, task.delay_ms));
+        }
+        for (;;) {
+          const { done, value } = await reader.read();
+          if (done) break;
+          chunks += 1;
+          if (!(value instanceof Uint8Array)) {
+            throw new Error('Transferred body yielded a non-byte chunk.');
+          }
+          for (let i = 0; i < value.byteLength; i += 1) {
+            if (value[i] !== expectedByte(position + i)) {
+              throw new Error('Stream byte mismatch at ' + (position + i));
+            }
+          }
+          position += value.byteLength;
+          if (task.cancel_after_first) {
+            await reader.cancel('CSC synthetic abort probe');
+            return { bytes: position, chunks, cancelled: true };
+          }
+        }
+        if (position !== task.expected_bytes) {
+          throw new Error('Stream length mismatch: ' + position
+            + ' != ' + task.expected_bytes);
+        }
+        return { bytes: position, chunks, cancelled: false };
+      } finally {
+        reader.releaseLock();
+      }
     }
-    if (kind !== 'conversation' && kind !== 'project') return;
-    if (!step.backend_observed || state.snapshots <= before) return;
-    const subject = state.observed;
-    const matchedConversation = subject?.conversation?.status === 'identified' &&
-      aicc127Fingerprint(subject.conversation.id, salt) === step.backend_conversation_key &&
-      aicc127Fingerprint(subject.conversation.name, salt) === step.backend_title_key;
-    const matchedProject = step.backend_standalone
-      ? subject?.project?.status === 'none'
-      : subject?.project?.status === 'identified' &&
-        aicc127Fingerprint(subject.project.id, salt) === step.backend_project_key &&
-        typeof subject.project.name === 'string';
-    step.observer_matches_backend = Boolean(matchedConversation && matchedProject);
-    const visual = aicc127VisibleComparison(subject);
-    step.visible_conversation_match = visual.conversationMatch;
-    step.visible_project_match = visual.projectMatch;
-    step.project_visual_reason = visual.projectReason;
-    step.name_key = aicc127Fingerprint(subject?.conversation?.name, salt);
-    step.project_key = aicc127Fingerprint(subject?.project?.name, salt);
-    const prior = state.navigation.steps.at(-2);
-    if (prior?.name_key) step.changed_from_previous =
-      step.name_key !== prior.name_key && step.project_key !== prior.project_key;
-    aicc127SaveNavigation();
-    if (state.sharedHost) aicc127NavigationRefreshFromObserver();
-  }
-  /**
-   * Verifies actual Core observer publication against backend-verified A,
-   * including a cache-only return with no fresh request. Never invents data.
-   * @returns {void} No value.
-   */
-  function aicc127NavigationRefreshFromObserver() {
-    const state = aicc127Runtime;
-    if (!state?.navigation?.steps.length || !state.observed) return;
-    const step = state.navigation.steps.at(-1);
-    const initial = state.navigation.steps[0];
-    const salt = state.navigation.salt;
-    if (step.slot === 'A-return' && initial?.observer_matches_backend &&
-        initial.backend_observed && !step.backend_observed) {
-      step.backend_conversation_key = initial.backend_conversation_key;
-      step.backend_title_key = initial.backend_title_key;
-      step.backend_project_key = initial.backend_project_key;
-      step.backend_standalone = initial.backend_standalone;
-      step.backend_observed = true;
-      step.reused_verified_backend = true;
+
+    /**
+     * Prove a transferred directory handle supports Worker-side durable writes.
+     *
+     * @param {Object} task - User-authorized directory and unique temporary name.
+     * @returns {Promise<Object>} Verified file byte count and cleanup state.
+     */
+    async function verifyDirectory(task) {
+      const directory = task.directory;
+      if (!directory || typeof directory.getFileHandle !== 'function'
+        || typeof directory.removeEntry !== 'function') {
+        throw new Error('FileSystemDirectoryHandle unavailable in Worker.');
+      }
+      if (typeof directory.queryPermission === 'function') {
+        const permission = await directory.queryPermission({ mode: 'readwrite' });
+        if (permission !== 'granted') {
+          throw new Error('Worker directory readwrite permission: ' + permission);
+        }
+      }
+      let existing = false;
+      try {
+        await directory.getFileHandle(task.name);
+        existing = true;
+      } catch (error) {
+        if (error?.name !== 'NotFoundError') throw error;
+      }
+      if (existing) throw new Error('Temporary probe filename already exists.');
+      let created = false;
+      let writable = null;
+      let failure = null;
+      let complete = false;
+      const length = 257 * 1024 + 17;
+      try {
+        const fileHandle = await directory.getFileHandle(task.name, { create: true });
+        created = true;
+        writable = await fileHandle.createWritable();
+        for (let offset = 0; offset < length; offset += 16384) {
+          const n = Math.min(16384, length - offset);
+          const chunk = new Uint8Array(n);
+          for (let i = 0; i < n; i += 1) chunk[i] = expectedByte(offset + i);
+          await writable.write(chunk);
+        }
+        await writable.close();
+        writable = null;
+        const readBack = new Uint8Array(await (await fileHandle.getFile()).arrayBuffer());
+        if (readBack.byteLength !== length) throw new Error('File length mismatch.');
+        for (let i = 0; i < length; i += 1) {
+          if (readBack[i] !== expectedByte(i)) {
+            throw new Error('File byte mismatch at ' + i);
+          }
+        }
+        complete = true;
+      } catch (error) {
+        failure = error;
+      } finally {
+        if (writable) {
+          try { await writable.abort(); }
+          catch (error) { failure ??= error; }
+        }
+        if (created) {
+          try { await directory.removeEntry(task.name); }
+          catch (error) { failure ??= error; }
+        }
+      }
+      if (failure) throw failure;
+      if (!complete || !created) throw new Error('Worker write did not finish.');
+      try {
+        await directory.getFileHandle(task.name);
+        throw new Error('Temporary test file still exists after deletion.');
+      } catch (error) {
+        if (error?.name !== 'NotFoundError') throw error;
+      }
+      return { bytes: length, written: true, read_back_verified: true, deleted: true };
     }
-    if (!step.backend_observed || !step.observer_updates) return;
-    const subject = state.observed;
-    const matchesConversation = subject?.conversation?.status === 'identified' &&
-      aicc127Fingerprint(subject.conversation.id, salt) === step.backend_conversation_key &&
-      aicc127Fingerprint(subject.conversation.name, salt) === step.backend_title_key;
-    const matchesProject = step.backend_standalone
-      ? subject?.project?.status === 'none'
-      : subject?.project?.status === 'identified' &&
-        aicc127Fingerprint(subject.project.id, salt) === step.backend_project_key &&
-        typeof subject.project.name === 'string';
-    step.observer_matches_backend = Boolean(matchesConversation && matchesProject);
-    const visual = aicc127VisibleComparison(subject);
-    step.visible_conversation_match = visual.conversationMatch;
-    step.visible_project_match = visual.projectMatch;
-    step.project_visual_reason = visual.projectReason;
-    step.name_key = aicc127Fingerprint(subject?.conversation?.name, salt);
-    step.project_key = aicc127Fingerprint(subject?.project?.name, salt);
-    const prior = state.navigation.steps.at(-2);
-    if (prior?.name_key) step.changed_from_previous =
-      step.name_key !== prior.name_key && step.project_key !== prior.project_key;
-    aicc127SaveNavigation();
+
+    /** Worker-local event envelopes; the page never queues COMM probe work. */
+    const eventQueue = [];
+    /** True while the Worker drains its own queue in arrival order. */
+    let draining = false;
+
+    /**
+     * Serially execute queued synthetic stream/file event envelopes.
+     *
+     * @returns {Promise<void>} Resolves when this Worker queue is idle.
+     */
+    async function drainEventQueue() {
+      if (draining) return;
+      draining = true;
+      try {
+        while (eventQueue.length) {
+          const envelope = eventQueue.shift();
+          const task = envelope.task;
+          try {
+            const result = envelope.kind === 'stream'
+              ? await readTransferred(task)
+              : envelope.kind === 'directory' ? await verifyDirectory(task)
+                : (() => { throw new Error('Unknown CSC probe task.'); })();
+            self.postMessage({ ok: true, ...result });
+          } catch (error) {
+            self.postMessage({
+              ok: false,
+              name: String(error?.name || 'Error'),
+              message: String(error?.message ?? error).slice(0, 500)
+            });
+          }
+        }
+      } finally {
+        draining = false;
+      }
+    }
+
+    self.onmessage = event => {
+      const task = event.data;
+      eventQueue.push({
+        kind: task.kind,
+        metadata: task.metadata ?? null,
+        task
+      });
+      void drainEventQueue();
+    };
   }
+
   /**
-   * Checks the A to B to A navigation test.
-   * @returns {Promise<Object|undefined>} Incomplete detail or PASS.
+   * Create a fixed-pattern byte stream without materialising its entire body.
+   *
+   * @param {number} length - Total synthetic bytes.
+   * @returns {ReadableStream} New finite synthetic stream.
    */
-  async function testAicc127Navigation() {
-    await aicc127Start();
-    const steps = aicc127Runtime.navigation.steps;
-    const valid = steps.length >= 3 &&
-      steps[0].slot === 'A' && steps[1].slot === 'B' &&
-      steps[2].slot === 'A-return';
-    const all = valid && steps.slice(0, 3).every(step =>
-      step.backend_observed && step.observer_matches_backend &&
-      step.visible_conversation_match === true &&
-      step.visible_project_match === true);
-    const changed = valid && steps[1].changed_from_previous === true;
-    const restored = valid && steps[0].name_key === steps[2].name_key &&
-      steps[0].project_key === steps[2].project_key;
-    if (all && changed && restored) return undefined;
-    const reason = !valid ? 'Navigate A → B (another project or standalone) → A.'
-      : !all ? 'Await backend/observer and visible title/project agreement at all three stops.'
-        : !changed ? 'B must have different conversation AND project names.'
-          : 'A identity was not restored.';
-    return { status: 'INCOMPLETE', detail: reason +
-      ' This same-tab session also resumes after reload.' };
+  function cscProbeByteStream(length) {
+    let offset = 0;
+    return new ReadableStream({
+      pull(controller) {
+        if (offset === length) { controller.close(); return; }
+        const size = Math.min(16384, length - offset);
+        const chunk = new Uint8Array(size);
+        for (let i = 0; i < size; i += 1) {
+          chunk[i] = (Math.imul(offset + i, 29) + 7) & 255;
+        }
+        offset += size;
+        controller.enqueue(chunk);
+      }
+    }, { highWaterMark: 1 });
+  }
+
+  /**
+   * Execute one synthetic Worker task with ownership transfer and final cleanup.
+   *
+   * @param {Window} realm - Candidate Worker realm.
+   * @param {Object} task - Cloneable task envelope.
+   * @param {Array} transfer - Stream transfer list (never stock buffers).
+   * @returns {Promise<Object>} Worker-acknowledged result.
+   */
+  async function cscProbeWorkerTask(realm, task, transfer = []) {
+    assert(typeof realm?.Worker === 'function', 'Worker constructor unavailable.');
+    const url = realm.URL.createObjectURL(new realm.Blob(
+      [["'use strict';", '(' + cscProbeWorkerEntrypoint.toString() + ')();'].join('\n')],
+      { type: 'text/javascript' }
+    ));
+    let worker = null;
+    let timeout = null;
+    try {
+      worker = new realm.Worker(url);
+      return await new Promise((resolve, reject) => {
+        let finished = false;
+        /**
+         * Settle a Worker task exactly once.
+         *
+         * @param {Error|null} error - Terminal failure, if any.
+         * @param {Object} result - Worker result, if successful.
+         * @returns {void} Settles the task Promise.
+         */
+        const finish = (error, result) => {
+          if (finished) return;
+          finished = true;
+          if (error) reject(error);
+          else resolve(result);
+        };
+        worker.addEventListener('message', event => {
+          if (event.data?.progress) return;
+          if (event.data?.ok) finish(null, event.data);
+          else finish(new Error((event.data?.name || 'WorkerError') + ': '
+            + (event.data?.message || 'No Worker result.')));
+        });
+        worker.addEventListener('error', event => {
+          finish(new Error('Worker/CSP error: ' + (event.message || 'startup failure')));
+        });
+        worker.addEventListener('messageerror', () => {
+          finish(new Error('Worker message deserialization failed.'));
+        });
+        timeout = setTimeout(() => finish(new Error('Worker probe timeout (30s).')), 30000);
+        try { worker.postMessage(task, transfer); }
+        catch (error) { finish(new Error('postMessage transfer failed: ' + error)); }
+      });
+    } finally {
+      if (timeout !== null) clearTimeout(timeout);
+      worker?.terminate();
+      realm.URL.revokeObjectURL(url);
+    }
+  }
+
+  /**
+   * Verify synthetic Request/Response clone streams in the Worker and original.
+   *
+   * @param {Window} realm - Worker realm under test.
+   * @param {string} kind - request or response.
+   * @returns {Promise<string>} Verified transfer and stock-integrity evidence.
+   */
+  async function cscProbeClonedStream(realm, kind) {
+    const length = 512 * 1024 + 11;
+    const stream = cscProbeByteStream(length);
+    const original = kind === 'request'
+      ? new Request('https://example.invalid/csc-synthetic', {
+        method: 'POST', body: stream, duplex: 'half'
+      })
+      : new Response(stream, { status: 200 });
+    const clone = cloneSafely(original);
+    assert(clone?.body instanceof ReadableStream,
+      'One existing native clone did not yield a transferable body.');
+    const body = clone.body;
+    const transferred = cscProbeWorkerTask(realm, {
+      kind: 'stream', transport: kind,
+      metadata: { url: 'https://example.invalid/csc-synthetic', status: 200 },
+      body, expected_bytes: length, delay_ms: 120
+    }, [body]);
+    const lockedAfterTransfer = body.locked;
+    // Observe both promises at once: immediate Worker errors cannot leak.
+    const [workerOutcome, stockOutcome] = await Promise.allSettled([
+      transferred, original.arrayBuffer()
+    ]);
+    if (workerOutcome.status === 'rejected') throw workerOutcome.reason;
+    if (stockOutcome.status === 'rejected') throw stockOutcome.reason;
+    assert(lockedAfterTransfer, 'Stream was not locked on transfer.');
+    const originalBytes = new Uint8Array(stockOutcome.value);
+    assert(originalBytes.byteLength === length, 'Original ' + kind + ' lost bytes.');
+    for (let i = 0; i < originalBytes.length; i += 1) {
+      assert(originalBytes[i] === ((Math.imul(i, 29) + 7) & 255),
+        'Original ' + kind + ' changed at byte ' + i);
+    }
+    const result = workerOutcome.value;
+    assert(result.bytes === length && !result.cancelled,
+      'Worker did not confirm exact transferred stream.');
+    return result.bytes + ' bytes exact/stock intact';
+  }
+
+  /**
+   * One opt-in built-in Test row. Picker opens synchronously on the Run gesture.
+   * Each capability reports independently; no real ChatGPT request is issued.
+   *
+   * @returns {Promise<string>} All stream/filesystem results or explicit failures.
+   */
+  function testCscWorkerBoundary() {
+    const page = typeof unsafeWindow !== 'undefined' ? unsafeWindow : window;
+    const pickerRealm = typeof page.showDirectoryPicker === 'function'
+      ? page : window;
+    let directoryPromise;
+    try {
+      if (typeof pickerRealm.showDirectoryPicker !== 'function') {
+        throw new Error('showDirectoryPicker unavailable in this browser/realm.');
+      }
+      directoryPromise = Promise.resolve(
+        pickerRealm.showDirectoryPicker({ mode: 'readwrite' })
+      ).then(handle => ({ handle }), error => ({ error }));
+    } catch (error) {
+      directoryPromise = Promise.resolve({ error });
+    }
+    return (async () => {
+      const outcomes = [];
+      const failures = [];
+      const realms = [['page', page], ['userscript', window]];
+      let streamRealm = null;
+      for (const [label, realm] of realms) {
+        if (label === 'userscript' && realm === page) continue;
+        if (typeof realm.Worker !== 'function') {
+          failures.push(label + ' Worker constructor unavailable');
+          continue;
+        }
+        try {
+          outcomes.push('Response: ' + await cscProbeClonedStream(realm, 'response'));
+          outcomes.push('Request: ' + await cscProbeClonedStream(realm, 'request'));
+          streamRealm = realm;
+          outcomes.push('Stream realm: ' + label);
+          break;
+        } catch (error) {
+          failures.push(label + ': ' + errorMessage(error));
+          // A transferred body is spent; synthetic retry creates a new one.
+        }
+      }
+      if (!streamRealm) failures.push('stream transfer: FAIL');
+      else {
+        try {
+          const aborted = cscProbeByteStream(32768);
+          const cancelled = await cscProbeWorkerTask(streamRealm, {
+            kind: 'stream', body: aborted, expected_bytes: 32768,
+            cancel_after_first: true
+          }, [aborted]);
+          assert(cancelled.cancelled === true && cancelled.chunks === 1,
+            'Worker cancellation was not acknowledged.');
+          outcomes.push('Stream abort: PASS');
+        } catch (error) {
+          failures.push('Stream abort: ' + errorMessage(error));
+        }
+      }
+      const permission = await directoryPromise;
+      const directory = permission.handle;
+      if (permission.error) {
+        const error = permission.error;
+        failures.push('Directory picker/permission: '
+          + String(error?.name || 'Error') + ': ' + errorMessage(error));
+      }
+      if (directory) {
+        const name = '.dc-csc-probe-' + crypto.randomUUID() + '.tmp';
+        const workerRealm = streamRealm || page;
+        try {
+          const result = await cscProbeWorkerTask(workerRealm, {
+            kind: 'directory', directory, name
+          });
+          assert(result.deleted && result.written && result.read_back_verified,
+            'Worker directory write/read/delete was not confirmed.');
+          outcomes.push('Directory: ' + result.bytes + ' bytes write/read/delete PASS');
+        } catch (error) {
+          failures.push('Directory Worker: ' + errorMessage(error));
+          // Emergency cleanup is a failure path, not a Worker-side PASS.
+          try { await directory.removeEntry(name); }
+          catch (cleanupError) {
+            if (cleanupError?.name !== 'NotFoundError') {
+              failures.push('Cleanup: ' + errorMessage(cleanupError));
+            }
+          }
+        }
+      }
+      if (failures.length) {
+        throw new Error('PASS [' + outcomes.join('; ') + ']; FAIL ['
+          + failures.join(' | ') + ']');
+      }
+      return outcomes.join('; ');
+    })();
+  }
+
+  /**
+   * Verify the deterministic original/independent-clone payload byte pattern.
+   * This test never uses a real ChatGPT request or response.
+   *
+   * @param {Request|Response} owner - Synthetic page/plugin body owner.
+   * @param {number} length - Expected synthetic byte count.
+   * @returns {Promise<number>} Independently verified byte count.
+   */
+  async function cscProbeDualVerifyBody(owner, length) {
+    const bytes = new Uint8Array(await owner.arrayBuffer());
+    assert(bytes.byteLength === length,
+      'Synthetic body length mismatch: ' + bytes.byteLength + ' != ' + length);
+    for (let i = 0; i < length; i += 1) {
+      assert(bytes[i] === ((Math.imul(i, 29) + 7) & 255),
+        'Synthetic body byte mismatch at offset ' + i);
+    }
+    return bytes.byteLength;
+  }
+
+  /**
+   * Exercise two independent native body clones and a Worker stream transfer.
+   * The page original and plugin clone remain independently readable.
+   *
+   * @param {Window} realm - Worker creation realm.
+   * @param {string} kind - 'request' or 'response'.
+   * @param {string} readFirst - 'plugin' or 'stock'.
+   * @returns {Promise<string>} Exact synthetic outcome.
+   */
+  async function cscProbeDualBodyCase(realm, kind, readFirst) {
+    const length = 512 * 1024 + 11;
+    const originalStream = cscProbeByteStream(length);
+    const original = kind === 'request'
+      ? new Request('https://example.invalid/csc-dual-fixture', {
+        method: 'POST', body: originalStream, duplex: 'half'
+      })
+      : new Response(originalStream);
+    const plugin = cloneSafely(original);
+    const comm = cloneSafely(original);
+    assert(plugin && comm && plugin !== original && comm !== original
+      && plugin !== comm, 'Independent native Request/Response clones unavailable.');
+    assert(comm.body instanceof ReadableStream,
+      'Native COMM clone did not expose a transferable ReadableStream.');
+
+    // This transfers the second clone's body, not the stock or plugin body.
+    const transferred = comm.body;
+    const pendingWorker = cscProbeWorkerTask(realm, {
+      kind: 'stream', body: transferred,
+      expected_bytes: length, delay_ms: 120,
+      metadata: { route: 'synthetic', capture_order: 1 }
+    }, [transferred]);
+    const locked = transferred.locked;
+    const firstOwner = readFirst === 'plugin' ? plugin : original;
+    const secondOwner = readFirst === 'plugin' ? original : plugin;
+    // Observe every started promise to avoid an unhandled Worker rejection.
+    const outcomes = await Promise.allSettled([
+      pendingWorker,
+      (async () => {
+        const first = await cscProbeDualVerifyBody(firstOwner, length);
+        const second = await cscProbeDualVerifyBody(secondOwner, length);
+        return [first, second];
+      })()
+    ]);
+    for (const outcome of outcomes) {
+      if (outcome.status === 'rejected') throw outcome.reason;
+    }
+    const worker = outcomes[0].value;
+    const [first, second] = outcomes[1].value;
+    assert(locked, 'COMM clone stream was not locked after transfer.');
+    assert(worker.bytes === length && worker.cancelled === false,
+      'Worker did not verify every byte of transferred COMM clone.');
+    assert(first === length && second === length,
+      'Stock and plugin failed independent byte verification.');
+    return kind + '/' + readFirst + ': stock/plugin/Worker '
+      + length + ' bytes exact';
+  }
+
+  /**
+   * Opt-in real browser capability test, using only artificial body streams.
+   * Tests native Request/Response clone ownership without altering either
+   * active recorder queue, installing hooks or requesting a directory.
+   *
+   * @returns {Promise<string>} Independent browser Worker witness or error.
+   */
+  async function testCscDualCloneOwnership() {
+    const page = typeof unsafeWindow !== 'undefined' ? unsafeWindow : window;
+    const realms = [['page', page], ['userscript', window]];
+    const failures = [];
+    for (const [label, realm] of realms) {
+      if (label === 'userscript' && page === realm) continue;
+      if (typeof realm.Worker !== 'function') {
+        failures.push(label + ': Worker constructor unavailable');
+        continue;
+      }
+      try {
+        const results = [];
+        for (const kind of ['request', 'response']) {
+          for (const order of ['plugin', 'stock']) {
+            results.push(await cscProbeDualBodyCase(realm, kind, order));
+          }
+        }
+        return label + ' Worker; ' + results.join('; ');
+      } catch (error) {
+        failures.push(label + ': ' + errorMessage(error));
+      }
+    }
+    throw new Error('CSC dual-clone witness FAIL: ' + failures.join(' | '));
   }
   // BEGIN Issue #163 WorkStack continuation state
   /** DOM id of the floating WorkStack continuation control. */
