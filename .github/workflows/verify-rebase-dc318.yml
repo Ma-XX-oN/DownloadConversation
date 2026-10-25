@@ -1,59 +1,37 @@
-name: DC318 extended hosted rebase and durable result
+name: DC 318 independent rebase acceptance matrix
 on:
   push:
     branches:
       - verify-rebase-dc318-20261024
-    paths-ignore:
-      - 'verification-results/**'
 permissions:
-  contents: write
+  contents: read
 jobs:
-  all-checks:
+  test:
+    name: matrix-${{ matrix.label }}
     runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { label: controls, command: 'node --test tests/issue318-csc-control-plane.test.mjs tests/issue318-csc-gm-cross-tab.test.mjs' }
+          - { label: chromium, command: 'node --test tests/issue318-csc-popup-chromium.test.mjs' }
+          - { label: adjacent, command: 'node --test tests/recording-panel-modes.test.mjs tests/recording-panel-chromium-layout.test.mjs tests/recording-group-tab-identity.test.mjs tests/issue347-log-category-settings.test.mjs tests/issue347-startup-order.test.mjs tests/ci-test-inventory.test.mjs tests/recorder-panel-ui.test.mjs' }
+          - { label: typescript, command: 'node scripts/check-userscript-types.mjs' }
+          - { label: jsdoc, command: 'node scripts/check-jsdoc.mjs' }
+          - { label: bundle, command: 'node scripts/build-userscript.mjs --output /tmp/dc318-rebase.user.js && node scripts/verify-userscript-artifact.mjs /tmp/dc318-rebase.user.js' }
+          - { label: full, command: 'python scripts/repoworkflow-validate.py' }
     steps:
       - uses: actions/checkout@v4
         with:
           fetch-depth: 0
           submodules: recursive
-          persist-credentials: true
       - uses: actions/setup-node@v4
         with:
           node-version: '22'
       - uses: actions/setup-python@v5
         with:
           python-version: '3.13'
-      - name: Execute and persist all regression results
-        shell: bash
-        run: |
-          set -u
-          start_sha="$(git rev-parse HEAD)"
-          git merge-base --is-ancestor e6a083cd883e99e9d30e7ba440062bea6060b9be HEAD || exit 2
-          mkdir -p verification-results
-          report=verification-results/dc318-hosted-regression.txt
-          printf 'tested_sha=%s\nbase_sha=e6a083cd883e99e9d30e7ba440062bea6060b9be\n' "$start_sha" > "$report"
-          failed=0
-          run_case() {
-            label="$1"; cmd="$2"
-            printf '\n=== %s ===\n' "$label" >> "$report"
-            bash -c "$cmd" >> "$report" 2>&1
-            code="$?"
-            printf 'RESULT %s exit=%s\n' "$label" "$code" >> "$report"
-            if [ "$code" != 0 ]; then failed=1; fi
-          }
-          run_case 'controls core' 'node --test tests/issue318-csc-control-plane.test.mjs tests/issue318-csc-gm-cross-tab.test.mjs'
-          run_case 'native Chromium popup' 'node --test tests/issue318-csc-popup-chromium.test.mjs'
-          run_case 'adjacent UI and CI' 'node --test tests/recording-panel-modes.test.mjs tests/recording-panel-chromium-layout.test.mjs tests/recording-group-tab-identity.test.mjs tests/issue347-log-category-settings.test.mjs tests/issue347-startup-order.test.mjs tests/ci-test-inventory.test.mjs tests/recorder-panel-ui.test.mjs'
-          run_case 'full repository suite' 'python scripts/repoworkflow-validate.py'
-          run_case 'TypeScript source' 'node scripts/check-userscript-types.mjs'
-          run_case 'JSDoc' 'node scripts/check-jsdoc.mjs'
-          run_case 'candidate bundle' 'node scripts/build-userscript.mjs --output /tmp/rebased-dc318.user.js'
-          run_case 'candidate parity' 'node scripts/verify-userscript-artifact.mjs /tmp/rebased-dc318.user.js'
-          run_case 'candidate script syntax' 'node --check /tmp/rebased-dc318.user.js'
-          printf '\nOVERALL_FAIL=%s\n' "$failed" >> "$report"
-          cat "$report"
-          git config user.name 'github-actions[bot]'
-          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
-          git add "$report"
-          git commit -m 'test: record DC 318 full rebase validation [skip csc tests]'
-          git push origin "HEAD:verify-rebase-dc318-20261024"
-          exit "$failed"
+      - name: Establish ancestry
+        run: git merge-base --is-ancestor e6a083cd883e99e9d30e7ba440062bea6060b9be HEAD
+      - name: Run ${{ matrix.label }} acceptance
+        run: ${{ matrix.command }}
