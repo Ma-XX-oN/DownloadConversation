@@ -54,7 +54,9 @@ def main() -> int:
       )
       return 1
   elif ISSUE_BRANCH.match(branch):
-    if DEVELOPMENT_VERSION.fullmatch(version) is None:
+    # Release-preparation candidates may carry stable semver before merging.
+    # RWF still validates source/artifact identity and exact candidate SHA.
+    if DEVELOPMENT_VERSION.fullmatch(version) is None and STABLE_VERSION.fullmatch(version) is None:
       print(
         f"issue branch {branch} requires development version; found {version}",
         file=sys.stderr,
