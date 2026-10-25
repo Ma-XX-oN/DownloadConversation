@@ -28,6 +28,18 @@
     const identity = loaded.agent.version();
     chatGPTAgent = loaded.agent;
     chatGPTCanonicalSession = loaded.session;
+    // The new registered-agent API exposes activity directly on public Core.
+    if (typeof core.activityState === 'function' &&
+        typeof core.observeActivity === 'function') {
+      agentTimingBindActivityObserver(core, chatGPTAgent);
+      if (typeof window !== 'undefined' && typeof window.addEventListener === 'function') {
+        window.addEventListener('pagehide', agentTimingUnbindActivityObserver, { once: true });
+      }
+    } else {
+      logDiagnostic('warnings', 'aicc-last-activity-v1-unavailable', {
+        reason: 'registered Core retained activity API unavailable'
+      });
+    }
     logDiagnostic('debug', 'agent-plugin-ready', {
       plugin_id: identity?.plugin ?? 'unknown',
       ref: identity?.ref ?? 'unknown',
@@ -127,3 +139,14 @@
     }
     return byRecord;
   };
+
+  // Register a bounded bootstrap opportunity without a private polling loop.
+  if (typeof window !== 'undefined' && typeof window.addEventListener === 'function') {
+    window.addEventListener('DOMContentLoaded', () => {
+      void ensureChatGPTCanonicalAgent().catch(error => {
+        logDiagnostic('warnings', 'last-registration-startup-unavailable', {
+          reason: String(error?.message ?? error)
+        });
+      });
+    }, { once: true });
+  }
