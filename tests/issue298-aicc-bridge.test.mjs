@@ -6,7 +6,7 @@ import { functionSourceFrom } from './helpers/userscript-source.mjs';
 const bridge = await readFile(new URL('../src/userscript/04-conversation-rendering/08-agent-plugin-bridge.js', import.meta.url), 'utf8');
 
 test('registered Core last subscription uses no obsolete loader', async () => {
-  assert.doesNotMatch(bridge, /core\\.loadAgent\\(/);
+  assert.equal(bridge.includes('core.loadAgent('), false);
   const subscriptions = [];
   const listeners = [];
   const logs = [];
