@@ -6,12 +6,12 @@
     {
       "name": "AIConversationCore",
       "repository": "Ma-XX-oN/AIConversationCore",
-      "ref": "629c86284b7db5fb412bb083178eaee8c06f796c",
-      "commit": "629c86284b7db5fb412bb083178eaee8c06f796c",
+      "ref": "50ab9b9e27747d46cd81a1e6ecee7c658f5142bb",
+      "commit": "50ab9b9e27747d46cd81a1e6ecee7c658f5142bb",
       "path": "dist/aiconversationcore.chatgpt.browser.js",
-      "url": "https://raw.githubusercontent.com/Ma-XX-oN/AIConversationCore/629c86284b7db5fb412bb083178eaee8c06f796c/dist/aiconversationcore.chatgpt.browser.js",
-      "git_blob_sha1": "2279b31f7760222a1486f641636eaab74702de1f",
-      "byte_length": 291372
+      "url": "https://raw.githubusercontent.com/Ma-XX-oN/AIConversationCore/50ab9b9e27747d46cd81a1e6ecee7c658f5142bb/dist/aiconversationcore.chatgpt.browser.js",
+      "git_blob_sha1": "45c73587bfa4f6309508d59d8e3a2fb00ec417a9",
+      "byte_length": 299338
     }
   ],
   "modules": [

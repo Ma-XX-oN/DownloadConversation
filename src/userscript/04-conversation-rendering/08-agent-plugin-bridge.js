@@ -28,6 +28,15 @@
     const identity = loaded.agent.version();
     chatGPTAgent = loaded.agent;
     chatGPTCanonicalSession = loaded.session;
+    if (typeof core.activityState === 'function' &&
+        typeof core.observeActivity === 'function') {
+      agentTimingBindActivityObserver(core, chatGPTAgent);
+      window.addEventListener('pagehide', agentTimingUnbindActivityObserver, { once: true });
+    } else {
+      logDiagnostic('warnings', 'aicc-last-activity-v1-unavailable', {
+        core_version: CORE_VERSION
+      });
+    }
     logDiagnostic('debug', 'agent-plugin-ready', {
       plugin_id: identity?.plugin ?? 'unknown',
       ref: identity?.ref ?? 'unknown',
@@ -127,3 +136,40 @@
     }
     return byRecord;
   };
+
+  /**
+   * Binds Last on provider registration, including registrations preceding DC.
+   * This is event-driven; neither a catalogue loader nor a polling timer.
+   * @returns {void} Registers one Core-owned subscription for page lifetime.
+   */
+  function agentTimingInstallRegistrationBinding() {
+    try {
+      const core = canonicalCore();
+      if (typeof core.observeAgentPluginRegistration !== 'function') {
+        logDiagnostic('warnings', 'aicc-registration-observer-unavailable');
+        return;
+      }
+      const unsubscribe = core.observeAgentPluginRegistration(descriptor => {
+        if (chatGPTAgent) return;
+        const current = core.recognizeAgentPlugin({
+          provider: 'chatgpt',
+          url: typeof location === 'object' ? location.href : ''
+        });
+        if (!current || descriptor?.id !== current.id) return;
+        void ensureChatGPTCanonicalAgent().catch(error => {
+          logDiagnostic('warnings', 'last-agent-registration-bind-failed', {
+            message: String(error)
+          });
+        });
+      });
+      window.addEventListener('pagehide', unsubscribe, { once: true });
+    } catch (error) {
+      logDiagnostic('warnings', 'last-agent-registration-observer-failed', {
+        message: String(error)
+      });
+    }
+  }
+
+  if (typeof queueMicrotask === 'function') {
+    queueMicrotask(agentTimingInstallRegistrationBinding);
+  }

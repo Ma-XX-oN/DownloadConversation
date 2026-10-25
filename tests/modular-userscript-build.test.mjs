@@ -19,9 +19,9 @@ const root = path.resolve(
   '..'
 );
 const CORE_COMMIT =
-  '629c86284b7db5fb412bb083178eaee8c06f796c';
+  '50ab9b9e27747d46cd81a1e6ecee7c658f5142bb';
 const CORE_BLOB =
-  '2279b31f7760222a1486f641636eaab74702de1f';
+  '45c73587bfa4f6309508d59d8e3a2fb00ec417a9';
 const LEGACY_BLOB =
   '44a4ab373a6515caed5527aeb19cbdff7ce91e07';
 const MIGRATION_SNAPSHOT_COMMIT =
