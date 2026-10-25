@@ -1,0 +1,32 @@
+name: Isolated DC359 rebase baseline tests
+on:
+  push:
+    branches:
+      - verify-rebase-dc359-20261024
+permissions:
+  contents: read
+jobs:
+  full-validation:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          submodules: recursive
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.13'
+      - name: Exact-rebase-base confirmation
+        run: |
+          git rev-parse HEAD
+          git merge-base --is-ancestor e6a083cd883e99e9d30e7ba440062bea6060b9be HEAD
+      - name: Full DC repository validation on registered-plugin main baseline
+        run: python scripts/repoworkflow-validate.py
+      - name: Direct CSC-style integration negatives
+        run: |
+          node --test tests/agent-plugin-background-fetch.test.mjs
+          node --test tests/ci-test-inventory.test.mjs
+          node scripts/check-userscript-types.mjs
