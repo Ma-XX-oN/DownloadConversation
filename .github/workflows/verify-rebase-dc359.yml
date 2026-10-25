@@ -1,32 +1,54 @@
-name: Isolated DC359 rebase baseline tests
+name: DC 359 hosted rebase validation and durable result
 on:
   push:
     branches:
       - verify-rebase-dc359-20261024
+    paths-ignore:
+      - 'verification-results/**'
 permissions:
-  contents: read
+  contents: write
 jobs:
-  full-validation:
+  regression:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
         with:
           fetch-depth: 0
           submodules: recursive
+          persist-credentials: true
       - uses: actions/setup-node@v4
         with:
           node-version: '22'
       - uses: actions/setup-python@v5
         with:
           python-version: '3.13'
-      - name: Exact-rebase-base confirmation
+      - name: Run all independent checks and preserve exact output
+        shell: bash
         run: |
-          git rev-parse HEAD
-          git merge-base --is-ancestor e6a083cd883e99e9d30e7ba440062bea6060b9be HEAD
-      - name: Full DC repository validation on registered-plugin main baseline
-        run: python scripts/repoworkflow-validate.py
-      - name: Direct CSC-style integration negatives
-        run: |
-          node --test tests/agent-plugin-background-fetch.test.mjs
-          node --test tests/ci-test-inventory.test.mjs
-          node scripts/check-userscript-types.mjs
+          set -u
+          start_sha="$(git rev-parse HEAD)"
+          git merge-base --is-ancestor e6a083cd883e99e9d30e7ba440062bea6060b9be HEAD || exit 2
+          mkdir -p verification-results
+          report=verification-results/dc359-hosted-regression.txt
+          printf 'tested_sha=%s\nbase_sha=e6a083cd883e99e9d30e7ba440062bea6060b9be\n' "$start_sha" > "$report"
+          failed=0
+          run_case() {
+            label="$1"; cmd="$2"
+            printf '\n=== %s ===\n' "$label" >> "$report"
+            bash -c "$cmd" >> "$report" 2>&1
+            code="$?"
+            printf 'RESULT %s exit=%s\n' "$label" "$code" >> "$report"
+            if [ "$code" != 0 ]; then failed=1; fi
+          }
+          run_case 'full repository validation' 'python scripts/repoworkflow-validate.py'
+          run_case 'plugin regression' 'node --test tests/agent-plugin-background-fetch.test.mjs'
+          run_case 'CI inventory' 'node --test tests/ci-test-inventory.test.mjs'
+          run_case 'TypeScript source' 'node scripts/check-userscript-types.mjs'
+          printf '\nOVERALL_FAIL=%s\n' "$failed" >> "$report"
+          cat "$report"
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add "$report"
+          git commit -m 'test: record DC 359 hosted rebase output [skip csc tests]'
+          git push origin "HEAD:verify-rebase-dc359-20261024"
+          exit "$failed"
