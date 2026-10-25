@@ -12,7 +12,7 @@ const phase5Integration = await readFile(new URL('./phase5-rich-core-integration
 const sedimentResolver = await readFile(new URL('./sediment-resolver.test.mjs', import.meta.url), 'utf8');
 
 const OLD_CORE_COMMIT = 'd6d76b54db3d48baf3f5e3a76099be1732d32785';
-const CORE_COMMIT = '4d8a596bf53de8e92c221a34bdbe9c6cb47b5db4';
+const CORE_COMMIT = '629c86284b7db5fb412bb083178eaee8c06f796c';
 const CORE_BLOB_SHA1 = '5d1f9be2f1fd2c2e0733e707f07bb7f9835577b3';
 
 test('DownloadConversation keeps one caller-version authority in userscript metadata and shows it at the top of general status', () => {
@@ -51,14 +51,14 @@ test('build manifest is the Core pin authority and generated userscript embeds t
   }
 });
 
-test('the committed manifest-pinned browser bundle reports Core 1.1.0-issue.134.1', () => {
+test('the committed manifest-pinned browser bundle reports Core 1.1.1', () => {
   const bundle = coreBundle;
   const context = { URL };
   context.globalThis = context;
   Object.assign(context, {setTimeout, clearTimeout});
   vm.runInNewContext(bundle, context, { filename: 'aiconversationcore.chatgpt.browser.js' });
   assert.equal(typeof context.AIConversationCore?.getVersion, 'function');
-  assert.equal(context.AIConversationCore.getVersion(), '1.1.0-issue.134.1');
+  assert.equal(context.AIConversationCore.getVersion(), '1.1.1');
 });
 
 test('runtime diagnostics derive and report both caller and Core semantic versions', () => {
