@@ -1,0 +1,39 @@
+name: DC #298 isolated generated-artifact rebase builder
+on:
+  push:
+    branches:
+      - ci-298-rebase-builder-20261025
+permissions:
+  contents: write
+jobs:
+  build-rebase-candidate:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - name: Checkout authentic DC Last child
+        run: |
+          git fetch origin refs/heads/issue-298-registration-rebase-20261025:refs/remotes/origin/issue-298-registration-rebase-20261025
+          git checkout -B issue-298-registration-rebase-20261025 refs/remotes/origin/issue-298-registration-rebase-20261025
+      - name: Generate pinned full userscript
+        run: node scripts/build-userscript.mjs
+      - name: Verify script syntax and stage exact build
+        run: |
+          node --check chatgpt-conversation-markdown-export.user.js
+          git diff --check
+          git add chatgpt-conversation-markdown-export.user.js
+          git diff --cached --stat
+      - name: Commit generated candidate only
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          if git diff --cached --quiet; then
+            echo "Generated artifact already current."
+          else
+            git commit -m "build(#298): regenerate Last candidate against AICC registered activity"
+            git push origin HEAD:refs/heads/issue-298-registration-rebase-20261025
+          fi
