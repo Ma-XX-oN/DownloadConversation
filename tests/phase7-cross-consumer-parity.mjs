@@ -65,6 +65,7 @@ async function downloadConversationMarkdown() {
   );
   const context = { URL };
   context.globalThis = context;
+  Object.assign(context, {setTimeout, clearTimeout});
   vm.runInNewContext(bundle, context, { filename: 'aiconversationcore.chatgpt.browser.js' });
 
   Object.assign(context, {

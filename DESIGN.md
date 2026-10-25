@@ -724,3 +724,20 @@ SVG, dark SVG, 48×48 PNG), their source URLs and load status.  It prefers
 current stock asset URLs and clearly identifies a dated observed-log fallback
 when an asset is no longer available in the DOM.  The Visual test is excluded
 from automatic Run All; it never changes the current page favicon.
+
+## DC #366 registered-provider loading boundary
+
+The staged consumer preserves PR #363 as an explicit branch dependency and pins
+AICC #134 at 4d8a596bf53de8e92c221a34bdbe9c6cb47b5db4.  Independently
+installed providers self-register on the same MAIN_WORLD Core instance.  DC
+asks Core to recognize the ChatGPT source and calls createAgent with the captured
+descriptor ID.  The returned agent and Core-owned canonical session are retained
+for the existing persisted-record projection and image-resource paths.
+
+Missing registration fails immediately through the existing visible export
+readiness error.  A later Extract can retry after registration.  DC performs no
+provider-global lookup, catalogue load, Blob import, or provider polling.  Core
+owns its one-shot startup diagnostic; provider bootstrap owns its startup polling.
+Shared logger distribution and a selector remain deferred to DC #365.
+Installed-script certification across exact upstream revisions belongs to DC #367;
+fixture tests do not constitute signed-in browser acceptance.

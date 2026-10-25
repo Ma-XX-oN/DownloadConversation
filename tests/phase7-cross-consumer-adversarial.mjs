@@ -59,6 +59,7 @@ async function downloadConversationMarkdown() {
   const bundle = await readFile(path.join(coreRoot, 'dist', 'aiconversationcore.chatgpt.browser.js'), 'utf8');
   const context = { URL };
   context.globalThis = context;
+  Object.assign(context, {setTimeout, clearTimeout});
   vm.runInNewContext(bundle, context, { filename: 'aiconversationcore.chatgpt.browser.js' });
 
   Object.assign(context, {

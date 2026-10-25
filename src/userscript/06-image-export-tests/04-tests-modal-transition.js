@@ -76,6 +76,13 @@
    */
   function builtInTests() {
     return [
+      ['CGP2 installed interface and AICC identity', testCGP2InstalledInterface],
+      ['AICC registration and retained agent identity', testCGP2DirectLoaderIdentity],
+      ['CGP2 canonical fixture and repeat parity', testCGP2CanonicalFixtureParity],
+      ['CGP2 ordered exchange isolation', testCGP2IndependentExchangeOrdering],
+      ['CGP2 isolated lifecycle and observers', testCGP2IsolatedLifecycle],
+      ['CGP2 rejects mismatched plugin API', testCGP2RejectsWrongVersion],
+      ['CGP2 rejects missing provider', testCGP2MissingProvider],
       ['API pagination', testApiPaginationLogic],
       ['Stable API message IDs', testStableMessageIds],
       ['Multimodal User + chronological order', testMultimodalUserAndChronologicalOrder],

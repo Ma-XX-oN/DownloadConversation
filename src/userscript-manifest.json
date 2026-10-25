@@ -6,12 +6,12 @@
     {
       "name": "AIConversationCore",
       "repository": "Ma-XX-oN/AIConversationCore",
-      "ref": "main",
-      "commit": "9e18441a1f68a1cac5ebb6e20dead945dd36d7dd",
+      "ref": "629c86284b7db5fb412bb083178eaee8c06f796c",
+      "commit": "629c86284b7db5fb412bb083178eaee8c06f796c",
       "path": "dist/aiconversationcore.chatgpt.browser.js",
-      "url": "https://raw.githubusercontent.com/Ma-XX-oN/AIConversationCore/9e18441a1f68a1cac5ebb6e20dead945dd36d7dd/dist/aiconversationcore.chatgpt.browser.js",
-      "git_blob_sha1": "47efb4f379f5bb27ae710a53d1cb84388aeeb1a2",
-      "byte_length": 282178
+      "url": "https://raw.githubusercontent.com/Ma-XX-oN/AIConversationCore/629c86284b7db5fb412bb083178eaee8c06f796c/dist/aiconversationcore.chatgpt.browser.js",
+      "git_blob_sha1": "2279b31f7760222a1486f641636eaab74702de1f",
+      "byte_length": 291372
     }
   ],
   "modules": [
@@ -104,7 +104,8 @@
         "src/userscript/06-image-export-tests/04-tests-modal-transition.js",
         "src/userscript/06-image-export-tests/05-modal-contract.js",
         "src/userscript/06-image-export-tests/03-favicon-source-preview.js",
-        "src/userscript/06-image-export-tests/06-agent-plugin-readiness.js"
+        "src/userscript/06-image-export-tests/06-agent-plugin-readiness.js",
+        "src/userscript/06-image-export-tests/03-cgp2-integration-tests.js"
       ]
     },
     {

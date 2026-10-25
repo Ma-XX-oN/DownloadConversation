@@ -99,6 +99,14 @@ test('GitHub runner projection and branch ancestry are repository facts', async 
     schema: 1,
     integrationBranch: 'main',
     branches: {
+      'issue-367-v3-20261024T231111Z': {
+        parent: 'issue-366-v3-20261024T225646Z',
+        allowedDependencies: [], integrationTarget: 'main'
+      },
+      'issue-366-v3-20261024T225646Z': {
+        parent: 'issue-156-two-userscript-classic-provider-20261024',
+        allowedDependencies: [], integrationTarget: 'main'
+      },
       'integrate-156-provider-core-isolation': {
         parent: 'main',
         allowedDependencies: [],

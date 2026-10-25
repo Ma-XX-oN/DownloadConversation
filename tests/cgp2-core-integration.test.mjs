@@ -4,7 +4,7 @@ import test from 'node:test';
 import vm from 'node:vm';
 
 import { coreBundle } from './helpers/core-bundle.mjs';
-import { chatGPTPluginArtifact } from './helpers/agent-plugin-pin.mjs';
+
 
 const bridgeSource = await readFile(
   new URL('../src/userscript/04-conversation-rendering/08-agent-plugin-bridge.js', import.meta.url),
@@ -15,11 +15,11 @@ const readinessSource = await readFile(
   'utf8'
 );
 
-const coreContext = { URL };
+const coreContext = { URL, setTimeout, clearTimeout };
 coreContext.globalThis = coreContext;
 vm.runInNewContext(coreBundle, coreContext, { filename: 'aiconversationcore.chatgpt.browser.js' });
 const core = coreContext.AIConversationCore;
-assert.equal(typeof core?.loadAgent, 'function');
+assert.equal(typeof core?.createAgent, 'function');
 assert.equal(typeof core?.getAgentPluginArtifact, 'function');
 assert.equal(typeof core?.adaptChatGPTRecords, 'function');
 assert.equal(typeof core?.renderCanonicalMarkdown, 'function');
@@ -65,7 +65,8 @@ function contractEvent(record, sourceIndex) {
 const contractPluginModule = {
   default: {
     id: 'chatgpt-web',
-    apiVersion: 1,
+    apiVersion: 1, name: 'Independent fixture', iconUrl: 'https://example.com/icon.png',
+    recognize: input => input.provider === 'chatgpt',
     create(context = {}) {
       let records = [];
       return {
@@ -92,9 +93,9 @@ const contractPluginModule = {
         version() {
           return {
             plugin: 'chatgpt-web',
-            version: chatGPTPluginArtifact.version,
-            apiVersion: chatGPTPluginArtifact.apiVersion,
-            ref: chatGPTPluginArtifact.ref
+            version: 'fixture-366',
+            apiVersion: 1,
+            ref: 'fixture'
           };
         }
       };
@@ -102,25 +103,9 @@ const contractPluginModule = {
   }
 };
 
-test('AICC owns the complete artifact identity used by DC transport', () => {
-  assert.equal(chatGPTPluginArtifact.id, 'chatgpt-web');
-  assert.equal(chatGPTPluginArtifact.ref, 'main');
-  assert.match(chatGPTPluginArtifact.commit, /^[0-9a-f]{40}$/);
-  assert.match(chatGPTPluginArtifact.gitBlobSha1, /^[0-9a-f]{40}$/);
-  assert.ok(Number.isSafeInteger(chatGPTPluginArtifact.byteLength));
-  assert.equal(chatGPTPluginArtifact.apiVersion, 1);
-  assert.equal(Object.hasOwn(chatGPTPluginArtifact, 'source_base64'), false);
-});
-
-test('Core loadAgent owns registration and complete persisted-inventory replacement', async () => {
-  let transported = null;
-  const loaded = await core.loadAgent('chatgpt-web', {
-    async loadModule(artifact) {
-      transported = artifact;
-      return contractPluginModule;
-    }
-  });
-  assert.deepEqual(plain(transported), plain(chatGPTPluginArtifact));
+test('Core registration owns canonical session and persisted-inventory replacement', async () => {
+  core.registerAgentPlugin(contractPluginModule.default);
+  const loaded = core.createAgent('chatgpt-web');
   const { agent, session } = loaded;
   assert.ok(session, 'Core did not retain a canonical session for the loaded agent.');
 
@@ -146,7 +131,7 @@ test('Core loadAgent owns registration and complete persisted-inventory replacem
 test('DC production bridge delegates agent orchestration to AICC with no direct adapter fallback', () => {
   assert.doesNotMatch(bridgeSource, /adaptChatGPTRecords/,
     'Production bridge must not call the legacy Core ChatGPT adapter.');
-  assert.match(bridgeSource, /await core\.loadAgent\('chatgpt-web'/);
+  assert.match(bridgeSource, /core\.createAgent\(descriptor\.id/);
   assert.doesNotMatch(bridgeSource, /new core\.AgentPluginRegistry/);
   assert.doesNotMatch(bridgeSource, /\.registerModule\(/);
   assert.match(bridgeSource,
@@ -162,29 +147,32 @@ test('DC production bridge delegates agent orchestration to AICC with no direct 
   assert.match(readinessSource, /return runTestsWithCanonicalAgent\(\)/);
 });
 
-test('cache miss uses direct GitHub raw retrieval and failures remain visible', () => {
-  const loadStart = bridgeSource.indexOf('  async function loadAgentPlugin(descriptor) {');
-  const loadEnd = bridgeSource.indexOf('\n  /**\n   * Imports one AICC-selected ESM artifact', loadStart);
-  assert.ok(loadStart >= 0 && loadEnd > loadStart,
-    'Could not isolate the production plugin loading function.');
-  const loadSource = bridgeSource.slice(loadStart, loadEnd);
-  const cacheReadAt = loadSource.indexOf('const cachedSource = cachedAgentPluginSource(descriptor);');
-  assert.ok(cacheReadAt >= 0, 'Production loader must read the cache first.');
-  assert.ok(loadSource.includes('await requestAgentPluginFromGitHub(descriptor)'),
-    'Cache misses must use background retrieval.');
-  assert.ok(!loadSource.includes('window.open') && !loadSource.includes('brokerSourcePromise'),
-    'A cache miss must not open GitHub.');
-  assert.ok(bridgeSource.includes('GM_xmlhttpRequest({'),
-    'Background transport must use the Tampermonkey request API.');
-  assert.ok(bridgeSource.includes('/raw/'),
-    'The authenticated GitHub-origin raw endpoint must be used.');
-  assert.ok(bridgeSource.includes('verifyAgentPluginSource(descriptor, source)'),
-    'Downloaded source must be verified before being cached.');
+test('registration failures remain visible and no obsolete loader survives', () => {
+  assert.doesNotMatch(bridgeSource, /ChatGPTWebAgentPlugin|loadAgent|getAgentPluginArtifact|setTimeout/);
+  assert.match(readinessSource, /agent-plugin-readiness-failure/);
+  assert.match(readinessSource, /Export setup failed:/);
+});
 
-  assert.match(bridgeSource, /chatGPTPluginModulePromise = null;\n      throw error;/,
-    'A failed first load must be retryable without reloading the ChatGPT page.');
-  assert.match(readinessSource, /agent-plugin-readiness-failure/,
-    'Plugin readiness failures must be recorded in diagnostics.');
-  assert.match(readinessSource, /setStatus\(`Export setup failed: \$\{message\}`\)/,
-    'Plugin readiness failures must be visible in the recorder status UI.');
+test('production bridge publishes through the real registered Core session and preserves source/image identity', async () => {
+  const host = {
+    canonicalCore: () => core,
+    assert: (ok, message) => assert.ok(ok, message),
+    currentConversationId: () => null,
+    logDiagnostic() {},
+    canonicalEnrichRecoveredImages: event => event
+  };
+  vm.runInNewContext(bridgeSource + `
+    this.ready = ensureChatGPTCanonicalAgent;
+    this.events = canonicalEventsFromChatGPTAgent;
+    this.byRecord = canonicalEventsBySourceRecord;
+    this.images = canonicalImageResourcesByRecordAndPart;
+  `, host);
+  await host.ready();
+  const records = [textRecord('bridge-u', 'user', 'Question'),
+    textRecord('bridge-a', 'assistant', 'Answer')];
+  assert.deepEqual([...host.byRecord(records).keys()], ['bridge-u', 'bridge-a']);
+  assert.deepEqual(plain(host.events(records)), plain(records.map(contractEvent)));
+  assert.equal(host.images(records).size, 0);
+  assert.deepEqual(plain(host.events([records[1]]).map(event => event.source_record_id)),
+    ['bridge-a'], 'Prior inventory must not survive production bridge replacement.');
 });
