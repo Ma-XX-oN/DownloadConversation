@@ -360,59 +360,42 @@ test('fast Core updates do not install more listeners or parse network data', ()
 });
 
 
-test('pinned AICC browser loader drives identical Last consumer through public V1 API', async () => {
-  const coreContext = { URL };
+test('pinned AICC registered Core drives identical Last consumer through public V1 API', () => {
+  const coreContext = { URL, setTimeout, clearTimeout };
   coreContext.globalThis = coreContext;
   vm.runInNewContext(coreBundle, coreContext, {
     filename: 'aiconversationcore.chatgpt.browser.js'
   });
   const core = coreContext.AIConversationCore;
-  assert.equal(core.getVersion(), '1.1.0-issue.132.2');
-  assert.equal(typeof core.loadAgent, 'function');
-
+  assert.equal(core.getVersion(), '1.1.2-issue.132.2');
+  assert.equal(typeof core.createAgent, 'function');
   let publishActivity = null;
-  const loaded = await core.loadAgent('chatgpt-web', {
-    loadModule: async descriptor => ({
-      default: {
-        id: 'chatgpt-web',
-        apiVersion: descriptor.apiVersion,
-        create(context) {
-          publishActivity = context.core.publishActivityTimestamp;
-          return {
-            sendMessage() {},
-            getResponse() {},
-            getTurns() { return []; },
-            currentState() { return {}; },
-            observeState() { return () => {}; },
-            commTraffic() {},
-            version() {
-              return {
-                plugin: 'chatgpt-web',
-                apiVersion: descriptor.apiVersion,
-                version: descriptor.version,
-                ref: context.ref
-              };
-            }
-          };
-        }
-      }
-    })
+  core.registerAgentPlugin({
+    id: 'last', name: 'Last', iconUrl: 'https://example.org/last.png',
+    apiVersion: 1,
+    create(context) {
+      publishActivity = context.core.publishActivityTimestamp;
+      return {
+        sendMessage() {}, getResponse() {}, getTurns() { return []; },
+        currentState() { return {}; }, observeState() { return () => {}; },
+        commTraffic() {},
+        version() { return { plugin: 'last', apiVersion: 1 }; }
+      };
+    }
   });
-
+  const loaded = core.createAgent('last');
   assert.ok(loaded.agent);
   assert.ok(loaded.session);
-  assert.equal(typeof loaded.registry.activityState, 'function');
-  assert.equal(typeof loaded.registry.observeActivity, 'function');
+  assert.equal(typeof core.activityState, 'function');
+  assert.equal(typeof core.observeActivity, 'function');
   assert.equal(typeof publishActivity, 'function');
-
   const h = timingHarness();
   let epochNow = Date.now();
-  const unknown = loaded.registry.activityState(loaded.agent);
+  const unknown = core.activityState(loaded.agent);
   assert.equal(unknown.latestIncomingAtMs, null);
   assert.equal(Object.isFrozen(unknown), true);
-  assert.equal(h.bindExternal(loaded.registry, loaded.agent, () => epochNow), true);
+  assert.equal(h.bindExternal(core, loaded.agent, () => epochNow), true);
   assert.equal(h.render(5000), 'Last: —\nTotal: 0 m 5 s');
-
   const stampedAtReceipt = epochNow - 2500;
   assert.equal(publishActivity(stampedAtReceipt), true);
   assert.equal(h.render(5000), 'Last: 0 m 2 s\nTotal: 0 m 5 s');
@@ -422,16 +405,15 @@ test('pinned AICC browser loader drives identical Last consumer through public V
   epochNow += 10000;
   assert.equal(h.render(6000), 'Last: 0 m 12 s\nTotal: 0 m 6 s');
   assert.equal(h.snapshot(6000).latest_incoming_at_ms, stampedAtReceipt);
-
-  assert.equal(loaded.registry.disposeActivity(loaded.agent), true);
+  assert.equal(core.disposeActivity(loaded.agent), true);
   assert.equal(publishActivity(stampedAtReceipt + 500), false);
-  assert.equal(loaded.registry.activityState(loaded.agent), null);
+  assert.equal(core.activityState(loaded.agent), null);
   h.unbind();
   assert.equal(h.render(7000), 'Last: —\nTotal: 0 m 7 s');
 });
 
 test('two public AICC agent instances interchange without changing view source', () => {
-  const ctx = { URL };
+  const ctx = { URL, setTimeout, clearTimeout };
   ctx.globalThis = ctx;
   vm.runInNewContext(coreBundle, ctx);
   const registry = new ctx.AIConversationCore.AgentPluginRegistry();
