@@ -1,47 +1,57 @@
-name: Isolated DC297 registration rebase RED/GREEN
+name: DC 297 hosted rebase validation and durable result
 on:
   push:
     branches:
       - verify-rebase-dc297-20261024
+    paths-ignore:
+      - 'verification-results/**'
 permissions:
-  contents: read
+  contents: write
 jobs:
-  identity-witness:
+  regression:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
         with:
           fetch-depth: 0
           submodules: recursive
+          persist-credentials: true
       - uses: actions/setup-node@v4
         with:
           node-version: '22'
-      - name: Exact mainline ancestry and current provider bridge
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.13'
+      - name: Run all independent checks and preserve exact output
+        shell: bash
         run: |
-          git rev-parse HEAD
-          git merge-base --is-ancestor e6a083cd883e99e9d30e7ba440062bea6060b9be HEAD
-          grep -q 'core.createAgent' src/userscript/04-conversation-rendering/08-agent-plugin-bridge.js
-          if grep -q 'import(blobUrl)' src/userscript/04-conversation-rendering/08-agent-plugin-bridge.js; then exit 1; fi
-      - name: Rebased old witness RED/GREEN tests
-        run: |
-          node --test tests/issue127-queued-witness.test.mjs
-      - name: Canonical network and queue regression
-        if: always()
-        run: |
-          node --test tests/issue309-csc-canonical-ingress.test.mjs \
-            tests/issue310-plugin-backlog.test.mjs \
-            tests/issue306-csc-queue-host-integration.test.mjs
-      - name: New registered-agent path regression
-        if: always()
-        run: node --test tests/cgp2-core-integration.test.mjs tests/core-integration.test.mjs
-      - name: Rebased syntax/types
-        if: always()
-        run: |
-          node scripts/check-userscript-types.mjs
-          node scripts/check-jsdoc.mjs
-      - name: Assemble against stable merged AICC and validate generated source
-        if: always()
-        run: |
-          node scripts/build-userscript.mjs --output "$RUNNER_TEMP/rebased-dc297.user.js"
-          node scripts/verify-userscript-artifact.mjs "$RUNNER_TEMP/rebased-dc297.user.js"
-          node --check "$RUNNER_TEMP/rebased-dc297.user.js"
+          set -u
+          start_sha="$(git rev-parse HEAD)"
+          git merge-base --is-ancestor e6a083cd883e99e9d30e7ba440062bea6060b9be HEAD || exit 2
+          mkdir -p verification-results
+          report=verification-results/dc297-hosted-regression.txt
+          printf 'tested_sha=%s\nbase_sha=e6a083cd883e99e9d30e7ba440062bea6060b9be\n' "$start_sha" > "$report"
+          failed=0
+          run_case() {
+            label="$1"; cmd="$2"
+            printf '\n=== %s ===\n' "$label" >> "$report"
+            bash -c "$cmd" >> "$report" 2>&1
+            code="$?"
+            printf 'RESULT %s exit=%s\n' "$label" "$code" >> "$report"
+            if [ "$code" != 0 ]; then failed=1; fi
+          }
+          run_case 'subject witness' 'node --test tests/issue127-queued-witness.test.mjs'
+          run_case 'canonical queue' 'node --test tests/issue309-csc-canonical-ingress.test.mjs tests/issue310-plugin-backlog.test.mjs tests/issue306-csc-queue-host-integration.test.mjs'
+          run_case 'registration consumer' 'node --test tests/cgp2-core-integration.test.mjs tests/core-integration.test.mjs'
+          run_case 'TypeScript source' 'node scripts/check-userscript-types.mjs'
+          run_case 'JSDoc' 'node scripts/check-jsdoc.mjs'
+          run_case 'candidate bundle' 'node scripts/build-userscript.mjs --output /tmp/rebased-dc297.user.js'
+          run_case 'candidate parity' 'node scripts/verify-userscript-artifact.mjs /tmp/rebased-dc297.user.js'
+          printf '\nOVERALL_FAIL=%s\n' "$failed" >> "$report"
+          cat "$report"
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add "$report"
+          git commit -m 'test: record DC 297 hosted rebase output [skip csc tests]'
+          git push origin "HEAD:verify-rebase-dc297-20261024"
+          exit "$failed"
