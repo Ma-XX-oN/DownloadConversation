@@ -1,0 +1,30 @@
+name: DC360 parent rebase and source baseline
+on:
+  push:
+    branches:
+      - verify-rebase-dc360-20261024
+permissions:
+  contents: read
+jobs:
+  test:
+    name: matrix-${{ matrix.label }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { label: last, command: 'node --test tests/agent-stopwatch-v1-identity.test.mjs tests/agent-turn-stopwatch.test.mjs' }
+          - { label: source, command: 'node scripts/check-userscript-types.mjs' }
+          - { label: build, command: 'node scripts/build-userscript.mjs --check' }
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          submodules: recursive
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - name: Proven main parent
+        run: git merge-base --is-ancestor e6a083cd883e99e9d30e7ba440062bea6060b9be HEAD
+      - name: Execute ${{ matrix.label }}
+        run: ${{ matrix.command }}
