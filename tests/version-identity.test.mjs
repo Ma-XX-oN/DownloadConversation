@@ -13,7 +13,7 @@ const sedimentResolver = await readFile(new URL('./sediment-resolver.test.mjs', 
 
 const OLD_CORE_COMMIT = 'd6d76b54db3d48baf3f5e3a76099be1732d32785';
 const CORE_COMMIT = '629c86284b7db5fb412bb083178eaee8c06f796c';
-const CORE_BLOB_SHA1 = '5d1f9be2f1fd2c2e0733e707f07bb7f9835577b3';
+const CORE_BLOB_SHA1 = '2279b31f7760222a1486f641636eaab74702de1f';
 
 test('DownloadConversation keeps one caller-version authority in userscript metadata and shows it at the top of general status', () => {
   const metadataVersion = userscript.match(/^\/\/ @version\s+(\S+)$/m);
