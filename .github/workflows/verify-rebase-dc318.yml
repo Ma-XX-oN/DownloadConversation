@@ -1,0 +1,50 @@
+name: Isolated DC318 rebase regression
+on:
+  push:
+    branches:
+      - verify-rebase-dc318-20261024
+permissions:
+  contents: read
+jobs:
+  exact-source:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          submodules: recursive
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.13'
+      - name: Exact revision and base
+        run: |
+          git rev-parse HEAD
+          git merge-base --is-ancestor e6a083cd883e99e9d30e7ba440062bea6060b9be HEAD
+      - name: JS source syntax
+        run: |
+          node --check src/userscript/07-panel-launcher/03-csc-control-plane.js
+          node --check src/userscript/07-panel-launcher/03-csc-capture-popup.js
+      - name: Rebased controls and cross-tab regressions
+        run: node --test tests/issue318-csc-control-plane.test.mjs tests/issue318-csc-gm-cross-tab.test.mjs
+      - name: Native Chromium popup tests
+        run: node --test tests/issue318-csc-popup-chromium.test.mjs
+      - name: Adjacent recorder and inventory regression
+        run: |
+          node --test tests/recording-panel-modes.test.mjs tests/recording-panel-chromium-layout.test.mjs \
+            tests/recording-group-tab-identity.test.mjs tests/issue347-log-category-settings.test.mjs \
+            tests/issue347-startup-order.test.mjs tests/ci-test-inventory.test.mjs \
+            tests/recorder-panel-ui.test.mjs
+      - name: Types, documentation, and manifest contracts
+        run: |
+          node scripts/check-userscript-types.mjs
+          node scripts/check-jsdoc.mjs
+          node scripts/check-development-version.mjs --branch verify-rebase-dc318-20261024
+      - name: Build rebased candidate against exact merged AICC pin
+        run: |
+          node scripts/build-userscript.mjs --output "$RUNNER_TEMP/rebased-dc318.user.js"
+          node scripts/verify-userscript-artifact.mjs "$RUNNER_TEMP/rebased-dc318.user.js"
+          node --check "$RUNNER_TEMP/rebased-dc318.user.js"
+          sha256sum "$RUNNER_TEMP/rebased-dc318.user.js"
