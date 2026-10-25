@@ -1,50 +1,59 @@
-name: Isolated DC318 rebase regression
+name: DC318 extended hosted rebase and durable result
 on:
   push:
     branches:
       - verify-rebase-dc318-20261024
+    paths-ignore:
+      - 'verification-results/**'
 permissions:
-  contents: read
+  contents: write
 jobs:
-  exact-source:
+  all-checks:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
         with:
           fetch-depth: 0
           submodules: recursive
+          persist-credentials: true
       - uses: actions/setup-node@v4
         with:
           node-version: '22'
       - uses: actions/setup-python@v5
         with:
           python-version: '3.13'
-      - name: Exact revision and base
+      - name: Execute and persist all regression results
+        shell: bash
         run: |
-          git rev-parse HEAD
-          git merge-base --is-ancestor e6a083cd883e99e9d30e7ba440062bea6060b9be HEAD
-      - name: JS source syntax
-        run: |
-          node --check src/userscript/07-panel-launcher/03-csc-control-plane.js
-          node --check src/userscript/07-panel-launcher/03-csc-capture-popup.js
-      - name: Rebased controls and cross-tab regressions
-        run: node --test tests/issue318-csc-control-plane.test.mjs tests/issue318-csc-gm-cross-tab.test.mjs
-      - name: Native Chromium popup tests
-        run: node --test tests/issue318-csc-popup-chromium.test.mjs
-      - name: Adjacent recorder and inventory regression
-        run: |
-          node --test tests/recording-panel-modes.test.mjs tests/recording-panel-chromium-layout.test.mjs \
-            tests/recording-group-tab-identity.test.mjs tests/issue347-log-category-settings.test.mjs \
-            tests/issue347-startup-order.test.mjs tests/ci-test-inventory.test.mjs \
-            tests/recorder-panel-ui.test.mjs
-      - name: Types, documentation, and manifest contracts
-        run: |
-          node scripts/check-userscript-types.mjs
-          node scripts/check-jsdoc.mjs
-          node scripts/check-development-version.mjs --branch verify-rebase-dc318-20261024
-      - name: Build rebased candidate against exact merged AICC pin
-        run: |
-          node scripts/build-userscript.mjs --output "$RUNNER_TEMP/rebased-dc318.user.js"
-          node scripts/verify-userscript-artifact.mjs "$RUNNER_TEMP/rebased-dc318.user.js"
-          node --check "$RUNNER_TEMP/rebased-dc318.user.js"
-          sha256sum "$RUNNER_TEMP/rebased-dc318.user.js"
+          set -u
+          start_sha="$(git rev-parse HEAD)"
+          git merge-base --is-ancestor e6a083cd883e99e9d30e7ba440062bea6060b9be HEAD || exit 2
+          mkdir -p verification-results
+          report=verification-results/dc318-hosted-regression.txt
+          printf 'tested_sha=%s\nbase_sha=e6a083cd883e99e9d30e7ba440062bea6060b9be\n' "$start_sha" > "$report"
+          failed=0
+          run_case() {
+            label="$1"; cmd="$2"
+            printf '\n=== %s ===\n' "$label" >> "$report"
+            bash -c "$cmd" >> "$report" 2>&1
+            code="$?"
+            printf 'RESULT %s exit=%s\n' "$label" "$code" >> "$report"
+            if [ "$code" != 0 ]; then failed=1; fi
+          }
+          run_case 'controls core' 'node --test tests/issue318-csc-control-plane.test.mjs tests/issue318-csc-gm-cross-tab.test.mjs'
+          run_case 'native Chromium popup' 'node --test tests/issue318-csc-popup-chromium.test.mjs'
+          run_case 'adjacent UI and CI' 'node --test tests/recording-panel-modes.test.mjs tests/recording-panel-chromium-layout.test.mjs tests/recording-group-tab-identity.test.mjs tests/issue347-log-category-settings.test.mjs tests/issue347-startup-order.test.mjs tests/ci-test-inventory.test.mjs tests/recorder-panel-ui.test.mjs'
+          run_case 'full repository suite' 'python scripts/repoworkflow-validate.py'
+          run_case 'TypeScript source' 'node scripts/check-userscript-types.mjs'
+          run_case 'JSDoc' 'node scripts/check-jsdoc.mjs'
+          run_case 'candidate bundle' 'node scripts/build-userscript.mjs --output /tmp/rebased-dc318.user.js'
+          run_case 'candidate parity' 'node scripts/verify-userscript-artifact.mjs /tmp/rebased-dc318.user.js'
+          run_case 'candidate script syntax' 'node --check /tmp/rebased-dc318.user.js'
+          printf '\nOVERALL_FAIL=%s\n' "$failed" >> "$report"
+          cat "$report"
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add "$report"
+          git commit -m 'test: record DC 318 full rebase validation [skip csc tests]'
+          git push origin "HEAD:verify-rebase-dc318-20261024"
+          exit "$failed"
