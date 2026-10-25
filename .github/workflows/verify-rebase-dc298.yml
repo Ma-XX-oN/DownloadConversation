@@ -1,0 +1,41 @@
+name: Isolated DC298 last observer rebase regression
+on:
+  push:
+    branches:
+      - verify-rebase-dc298-20261024
+permissions:
+  contents: read
+jobs:
+  last-observer:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          submodules: recursive
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - name: Rebased baseline identity
+        run: |
+          git rev-parse HEAD
+          git merge-base --is-ancestor e6a083cd883e99e9d30e7ba440062bea6060b9be HEAD
+          grep -q 'core.createAgent' src/userscript/04-conversation-rendering/08-agent-plugin-bridge.js
+      - name: Real last-timer bridge test
+        run: node --test tests/issue298-aicc-bridge.test.mjs
+      - name: Adjacent Last/Waiting/Total tests
+        if: always()
+        run: |
+          node --test tests/agent-turn-stopwatch.test.mjs \
+            tests/agent-stopwatch-v1-identity.test.mjs \
+            tests/recording-panel-modes.test.mjs
+      - name: Full production semantics under new registration runtime
+        if: always()
+        run: |
+          node scripts/check-userscript-types.mjs
+          node scripts/check-jsdoc.mjs
+      - name: Verify build output against merged stable AICC
+        if: always()
+        run: |
+          node scripts/build-userscript.mjs --output "$RUNNER_TEMP/rebased-dc298.user.js"
+          node scripts/verify-userscript-artifact.mjs "$RUNNER_TEMP/rebased-dc298.user.js"

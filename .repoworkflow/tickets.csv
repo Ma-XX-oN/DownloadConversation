@@ -1,0 +1,5 @@
+issue,title,dependencies
+175,Add Last and Waiting timers to Agent timing display and hooks,299
+298,Render Last timer from AICC activity observer without network parsing,
+299,Certify Last heartbeat producer-Core-DC integration in live browser,360
+360,Last timer: parent integration branch and exact-source assembly,298

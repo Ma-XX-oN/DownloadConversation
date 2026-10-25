@@ -67,6 +67,7 @@ const ordinaryStages = [
   ['Agent turn stopwatch regression', nodeCommand, ['--test', 'tests/agent-turn-stopwatch.test.mjs']],
   ['Agent turn stopwatch stream integration', nodeCommand, ['--test', 'tests/agent-resume-metadata-patch.test.mjs', 'tests/agent-turn-stopwatch-stream.test.mjs']],
   ['Agent turn stopwatch live total', nodeCommand, ['--test', 'tests/agent-turn-stopwatch-live-total.test.mjs']],
+  ['DC #298 public AICC browser loader bridge', nodeCommand, ['--test', 'tests/issue298-aicc-bridge.test.mjs']],
   ['Agent turn stopwatch reload restoration', nodeCommand, ['--test', 'tests/agent-turn-stopwatch-reload.test.mjs']],
   ['DC #352 ACTIVE-only favicon heartbeat', nodeCommand, ['--test',
     'tests/issue352-active-favicon-heartbeat.test.mjs', 'tests/issue356-interm-subject-title.test.mjs']],

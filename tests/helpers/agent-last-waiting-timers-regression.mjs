@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import vm from 'node:vm';
+import { coreBundle } from './core-pin.mjs';
 import { readFile } from 'node:fs/promises';
 
 const timingSource = await readFile(
@@ -12,7 +13,9 @@ function timingHarness() {
   const context = vm.createContext({});
   const script = new vm.Script(`
     let now = 0;
+    let epochNow = 100000;
     let intervalCallback = null;
+    let paintCount = 0;
     const control = { textContent: '' };
     let agentStopwatchTimer = null;
     let agentStopwatchState = {
@@ -52,6 +55,7 @@ function timingHarness() {
 
     function agentStopwatchRender(nowMs = performance.now()) {
       if (!agentStopwatchState) return;
+      paintCount += 1;
       const totalMs = agentStopwatchState.active
         ? nowMs - agentStopwatchState.started_at_ms
         : agentStopwatchState.total_ms;
@@ -130,23 +134,90 @@ function timingHarness() {
       agentStopwatchRender(monotonicNowMs);
     }
 
+
+    function createFakeCore() {
+      const agent = Object.freeze({});
+      let snapshot = Object.freeze({
+        apiVersion: 1,
+        clockDomain: 'unix-epoch-ms',
+        latestIncomingAtMs: null
+      });
+      const callbacks = new Set();
+      let lastCallback = null;
+      let disposed = false;
+      const registry = {
+        activityState(subject) {
+          return !disposed && subject === agent ? snapshot : null;
+        },
+        observeActivity(subject, callback) {
+          if (disposed || subject !== agent) throw new Error('unregistered');
+          callbacks.add(callback);
+          lastCallback = callback;
+          callback(snapshot);
+          return () => callbacks.delete(callback);
+        }
+      };
+      return {
+        agent, registry,
+        publish(stamp) {
+          if (disposed || !Number.isSafeInteger(stamp) || stamp < 0 ||
+              stamp > epochNow || (snapshot.latestIncomingAtMs !== null &&
+              stamp <= snapshot.latestIncomingAtMs)) return false;
+          snapshot = Object.freeze({
+            apiVersion: 1,
+            clockDomain: 'unix-epoch-ms',
+            latestIncomingAtMs: stamp
+          });
+          for (const callback of [...callbacks]) callback(snapshot);
+          return true;
+        },
+        delayed(stamp) {
+          lastCallback?.(Object.freeze({
+            apiVersion: 1,
+            clockDomain: 'unix-epoch-ms',
+            latestIncomingAtMs: stamp
+          }));
+        },
+        dispose() {
+          disposed = true;
+          callbacks.clear();
+        },
+        observers() { return callbacks.size; }
+      };
+    }
+    const coreOne = createFakeCore();
+
     ${timingSource}
 
     globalThis.api = {
-      setNow(value) { now = value; },
-      network(event) { return agentStopwatchObserveStreamEvent({}, event); },
+      setNow(value) { now = value; epochNow = 100000 + value; },
+      makeCore() { return createFakeCore(); },
+      coreOne,
+      bind(core = coreOne) {
+        return agentTimingBindActivityObserver(core.registry, core.agent,
+          { now: () => epochNow });
+      },
+      unbind() { agentTimingUnbindActivityObserver(); },
+      hideStopwatch() { agentStopwatchState = null; },
+      bindExternal(registry, agent, nowFn) {
+        return agentTimingBindActivityObserver(registry, agent, { now: nowFn });
+      },
+      incoming(stamp = epochNow) { return coreOne.publish(stamp); },
       terminal(terminal) { return agentTerminalObserve({}, { terminal }); },
       submit(atMs) {
         return agentStopwatchObserveRequest({ stopwatch_submitted_at_ms: atMs });
       },
       steer(atMs) { return agentStopwatchObserveSteerTurn(atMs); },
       render(atMs) {
+        now = atMs;
+        epochNow = 100000 + atMs;
         agentStopwatchRender(atMs);
         return control.textContent;
       },
       text() { return control.textContent; },
       tick() { intervalCallback?.(); },
       timerActive() { return agentStopwatchTimer !== null; },
+      paints() { return paintCount; },
       snapshot(atMs) { return agentTimingSnapshot(atMs); },
       subscribe(listener) { return agentTimingSubscribe(listener); },
       recovery(recovery, wallNowMs, monotonicNowMs) {
@@ -159,101 +230,263 @@ function timingHarness() {
   return context.api;
 }
 
-test('Last uses the newest Assistant network receipt boundary', () => {
-  const harness = timingHarness();
-  harness.setNow(1000);
-  harness.network({ message: { id: 'a1', author: { role: 'assistant' } } });
-  assert.equal(harness.snapshot(1000).last_network_at_ms, 1000);
-  assert.equal(harness.render(4000), 'Last: 0 m 3 s\nTotal: 0 m 4 s');
-
-  harness.setNow(4500);
-  harness.network({ message: { id: 'a2', author: { role: 'assistant' } } });
-  assert.equal(harness.snapshot(4500).last_network_at_ms, 4500);
-  assert.equal(harness.render(6500), 'Last: 0 m 2 s\nTotal: 0 m 6 s');
-
-  harness.setNow(7000);
-  harness.network({ message: { id: 'u1', author: { role: 'user' } } });
-  assert.equal(harness.snapshot(7000).last_network_at_ms, 4500);
+test('initial AICC V1 unknown is visibly unresolved, with no fabricated reset', () => {
+  const h = timingHarness();
+  assert.equal(h.bind(), true);
+  assert.equal(h.render(4000), 'Last: —\nTotal: 0 m 4 s');
+  assert.equal(h.snapshot(4000).latest_incoming_at_ms, null);
+  assert.equal(h.bind(), false);
+  assert.equal(h.coreOne.observers(), 1);
 });
 
-test('Waiting starts from the shared successful terminal boundary without changing Total', () => {
-  const harness = timingHarness();
-  harness.setNow(5000);
-  harness.network({ message: { id: 'a1', author: { role: 'assistant' } } });
-
-  harness.setNow(8000);
-  harness.terminal({ kind: 'success', exchange_id: 'exchange-1', total_ms: 8000 });
-  assert.equal(harness.snapshot(8000).waiting_since_ms, 8000);
-  assert.equal(harness.text(), 'Last: 0 m 3 s\nTotal: 0 m 8 s\nWaiting: 0 m 0 s');
-  assert.equal(harness.timerActive(), true);
-
-  harness.setNow(12000);
-  harness.tick();
-  assert.equal(harness.text(), 'Last: 0 m 7 s\nTotal: 0 m 8 s\nWaiting: 0 m 4 s');
-  assert.equal(harness.state().total_ms, 8000);
+test('Last uses only retained Core timestamp; idle and outgoing do not reset', () => {
+  const h = timingHarness();
+  h.bind();
+  h.setNow(1000);
+  assert.equal(h.incoming(), true);
+  assert.equal(h.snapshot(1000).latest_incoming_at_ms, 101000);
+  assert.equal(h.render(4000), 'Last: 0 m 3 s\nTotal: 0 m 4 s');
+  h.setNow(4500);
+  assert.equal(h.incoming(), true);
+  assert.equal(h.render(6500), 'Last: 0 m 2 s\nTotal: 0 m 6 s');
+  // No public AICC subscription receives an outgoing event.
+  assert.equal(h.render(7000), 'Last: 0 m 2 s\nTotal: 0 m 7 s');
+  assert.equal(h.render(60000), 'Last: 0 m 55 s\nTotal: 1 m 0 s'.replace('1 m 0 s','0 m 60 s'));
 });
 
-test('next User submission resets Waiting while preserving Last', () => {
-  const harness = timingHarness();
-  harness.setNow(1000);
-  harness.network({ message: { id: 'a1', author: { role: 'assistant' } } });
-  harness.setNow(5000);
-  harness.terminal({ kind: 'success', exchange_id: 'exchange-1', total_ms: 5000 });
-  assert.equal(harness.render(7000), 'Last: 0 m 6 s\nTotal: 0 m 5 s\nWaiting: 0 m 2 s');
-
-  harness.submit(8000);
-  assert.equal(harness.snapshot(8000).waiting_since_ms, null);
-  assert.equal(harness.text(), 'Last: 0 m 7 s\nTotal: 0 m 0 s');
+test('AICC drops older, duplicate, invalid and future stamps', () => {
+  const h = timingHarness();
+  h.bind();
+  h.setNow(10000);
+  assert.equal(h.incoming(108000), true);
+  assert.equal(h.incoming(108000), false);
+  assert.equal(h.incoming(107999), false);
+  assert.equal(h.incoming(999999), false);
+  assert.equal(h.incoming(-1), false);
+  assert.equal(h.render(12000), 'Last: 0 m 4 s\nTotal: 0 m 12 s');
 });
 
-test('consecutive exchanges establish a fresh Waiting boundary', () => {
-  const harness = timingHarness();
-  harness.setNow(3000);
-  harness.terminal({ kind: 'success', exchange_id: 'exchange-1', total_ms: 3000 });
-  assert.equal(harness.snapshot(3000).waiting_since_ms, 3000);
-
-  harness.submit(5000);
-  harness.setNow(7000);
-  harness.network({ message: { id: 'a2', author: { role: 'assistant' } } });
-  harness.setNow(9000);
-  harness.terminal({ kind: 'success', exchange_id: null, total_ms: 4000 });
-  assert.equal(harness.snapshot(9000).waiting_since_ms, 9000);
-  assert.equal(harness.render(11000), 'Last: 0 m 4 s\nTotal: 0 m 4 s\nWaiting: 0 m 2 s');
+test('Waiting retains terminal lifecycle, Total freeze and Last order', () => {
+  const h = timingHarness();
+  h.bind();
+  h.setNow(5000);
+  h.incoming();
+  h.setNow(8000);
+  h.terminal({ kind: 'success', exchange_id: 'exchange-1', total_ms: 8000 });
+  assert.equal(h.snapshot(8000).waiting_since_ms, 8000);
+  assert.equal(h.text(), 'Last: 0 m 3 s\nTotal: 0 m 8 s\nWaiting: 0 m 0 s');
+  assert.equal(h.timerActive(), true);
+  h.setNow(12000);
+  h.tick();
+  assert.equal(h.text(), 'Last: 0 m 7 s\nTotal: 0 m 8 s\nWaiting: 0 m 4 s');
+  assert.equal(h.state().total_ms, 8000);
+  h.submit(13000);
+  assert.equal(h.snapshot(13000).waiting_since_ms, null);
+  assert.equal(h.render(13000), 'Last: 0 m 8 s\nTotal: 0 m 0 s');
 });
 
-test('reload recovery restores Waiting from the retained final-message timestamp', () => {
-  const harness = timingHarness();
-  const recovery = {
+test('consecutive exchanges and recovered Waiting remain independent of Last', () => {
+  const h = timingHarness();
+  h.bind();
+  h.setNow(3000);
+  h.terminal({ kind: 'success', exchange_id: 'exchange-1', total_ms: 3000 });
+  h.submit(5000);
+  h.setNow(9000);
+  h.terminal({ kind: 'success', exchange_id: null, total_ms: 4000 });
+  assert.equal(h.render(11000), 'Last: —\nTotal: 0 m 4 s\nWaiting: 0 m 2 s');
+
+  const fresh = timingHarness();
+  fresh.bind();
+  fresh.recovery({
     ready: true,
-    exchange_id: 'exchange-retained',
+    exchange_id: 'retained',
     user_messages: [{ create_time: 90 }],
     final_message: { create_time: 100 }
-  };
-
-  harness.recovery(recovery, 105000, 20000);
-  assert.equal(harness.snapshot(20000).waiting_since_ms, 15000);
-  assert.equal(harness.text(), 'Total: 0 m 10 s\nWaiting: 0 m 5 s');
-  assert.equal(harness.timerActive(), true);
+  }, 105000, 20000);
+  assert.equal(fresh.snapshot(20000).waiting_since_ms, 15000);
+  assert.equal(fresh.text(), 'Last: —\nTotal: 0 m 10 s\nWaiting: 0 m 5 s');
 });
 
-test('shared timing subscription publishes authoritative transition timestamps', () => {
-  const harness = timingHarness();
+test('agent replacement and delayed old callback cannot revive stale Last', () => {
+  const h = timingHarness();
+  h.bind();
+  h.setNow(9000);
+  h.incoming();
+  const second = h.makeCore();
+  assert.equal(h.bind(second), true);
+  assert.equal(h.coreOne.observers(), 0);
+  assert.equal(h.render(11000), 'Last: —\nTotal: 0 m 11 s');
+  h.coreOne.delayed(108000);
+  assert.equal(h.snapshot(11000).latest_incoming_at_ms, null);
+  second.publish(110000);
+  assert.equal(h.render(12000), 'Last: 0 m 2 s\nTotal: 0 m 12 s');
+  second.dispose();
+  h.unbind();
+  assert.equal(h.render(13000), 'Last: —\nTotal: 0 m 13 s');
+  second.delayed(110000);
+  assert.equal(h.snapshot(13000).latest_incoming_at_ms, null);
+});
+
+test('shared timing notifications report Core activity and Waiting only', () => {
+  const h = timingHarness();
   const events = [];
-  const unsubscribe = harness.subscribe(event => events.push(event));
+  const stop = h.subscribe(event => events.push(event));
+  h.bind();
+  h.setNow(2500);
+  h.incoming();
+  h.setNow(6000);
+  h.terminal({ kind: 'success', exchange_id: 'exchange-1', total_ms: 6000 });
+  h.submit(7500);
+  stop();
+  assert.deepEqual(events.map(event => event.type), [
+    'last-activity-snapshot', 'last-activity-snapshot',
+    'agent-finished', 'user-submitted'
+  ]);
+});
 
-  harness.setNow(2500);
-  harness.network({ message: { id: 'a1', author: { role: 'assistant' } } });
-  harness.setNow(6000);
-  harness.terminal({ kind: 'success', exchange_id: 'exchange-1', total_ms: 6000 });
-  harness.submit(7500);
-  unsubscribe();
+test('fast Core updates do not install more listeners or parse network data', () => {
+  const h = timingHarness();
+  h.bind();
+  h.setNow(30000);
+  const paintsBefore = h.paints();
+  for (let stamp = 100001; stamp <= 120000; stamp++) {
+    assert.equal(h.incoming(stamp), true);
+  }
+  assert.equal(h.coreOne.observers(), 1);
+  assert.ok(h.paints() - paintsBefore <= 1, 'activity must reuse the 250ms paint timer');
+  assert.equal(h.snapshot(30000).latest_incoming_at_ms, 120000);
+  h.unbind();
+  assert.equal(h.coreOne.observers(), 0);
+});
 
-  assert.deepEqual(
-    events.map(event => [event.type, event.at_ms]),
-    [
-      ['last-network-message', 2500],
-      ['agent-finished', 6000],
-      ['user-submitted', 7500]
-    ]
-  );
+
+test('pinned AICC browser loader drives identical Last consumer through public V1 API', async () => {
+  const coreContext = { URL };
+  coreContext.globalThis = coreContext;
+  vm.runInNewContext(coreBundle, coreContext, {
+    filename: 'aiconversationcore.chatgpt.browser.js'
+  });
+  const core = coreContext.AIConversationCore;
+  assert.equal(core.getVersion(), '1.1.0-issue.132.2');
+  assert.equal(typeof core.loadAgent, 'function');
+
+  let publishActivity = null;
+  const loaded = await core.loadAgent('chatgpt-web', {
+    loadModule: async descriptor => ({
+      default: {
+        id: 'chatgpt-web',
+        apiVersion: descriptor.apiVersion,
+        create(context) {
+          publishActivity = context.core.publishActivityTimestamp;
+          return {
+            sendMessage() {},
+            getResponse() {},
+            getTurns() { return []; },
+            currentState() { return {}; },
+            observeState() { return () => {}; },
+            commTraffic() {},
+            version() {
+              return {
+                plugin: 'chatgpt-web',
+                apiVersion: descriptor.apiVersion,
+                version: descriptor.version,
+                ref: context.ref
+              };
+            }
+          };
+        }
+      }
+    })
+  });
+
+  assert.ok(loaded.agent);
+  assert.ok(loaded.session);
+  assert.equal(typeof loaded.registry.activityState, 'function');
+  assert.equal(typeof loaded.registry.observeActivity, 'function');
+  assert.equal(typeof publishActivity, 'function');
+
+  const h = timingHarness();
+  let epochNow = Date.now();
+  const unknown = loaded.registry.activityState(loaded.agent);
+  assert.equal(unknown.latestIncomingAtMs, null);
+  assert.equal(Object.isFrozen(unknown), true);
+  assert.equal(h.bindExternal(loaded.registry, loaded.agent, () => epochNow), true);
+  assert.equal(h.render(5000), 'Last: —\nTotal: 0 m 5 s');
+
+  const stampedAtReceipt = epochNow - 2500;
+  assert.equal(publishActivity(stampedAtReceipt), true);
+  assert.equal(h.render(5000), 'Last: 0 m 2 s\nTotal: 0 m 5 s');
+  assert.equal(publishActivity(stampedAtReceipt), false);
+  assert.equal(publishActivity(stampedAtReceipt - 1000), false);
+  assert.equal(publishActivity(epochNow + 600000), false);
+  epochNow += 10000;
+  assert.equal(h.render(6000), 'Last: 0 m 12 s\nTotal: 0 m 6 s');
+  assert.equal(h.snapshot(6000).latest_incoming_at_ms, stampedAtReceipt);
+
+  assert.equal(loaded.registry.disposeActivity(loaded.agent), true);
+  assert.equal(publishActivity(stampedAtReceipt + 500), false);
+  assert.equal(loaded.registry.activityState(loaded.agent), null);
+  h.unbind();
+  assert.equal(h.render(7000), 'Last: —\nTotal: 0 m 7 s');
+});
+
+test('two public AICC agent instances interchange without changing view source', () => {
+  const ctx = { URL };
+  ctx.globalThis = ctx;
+  vm.runInNewContext(coreBundle, ctx);
+  const registry = new ctx.AIConversationCore.AgentPluginRegistry();
+  let send = null;
+  registry.register({
+    id: 'fixture',
+    apiVersion: 1,
+    create(context) {
+      send = context.core.publishActivityTimestamp;
+      return {
+        sendMessage() {}, getResponse() {}, getTurns() {},
+        currentState() {}, observeState() {},
+        commTraffic() {},
+        version() { return {plugin: 'fixture', apiVersion: 1}; }
+      };
+    }
+  });
+  const h = timingHarness();
+  const first = registry.create('fixture');
+  let epochNow = Date.now();
+  h.bindExternal(registry, first, () => epochNow);
+  assert.equal(send(epochNow - 1000), true);
+  assert.equal(h.render(3000), 'Last: 0 m 1 s\nTotal: 0 m 3 s');
+  const previousPublisher = send;
+  const second = registry.create('fixture');
+  assert.equal(h.bindExternal(registry, second, () => epochNow), true);
+  assert.equal(h.render(3000), 'Last: —\nTotal: 0 m 3 s');
+  assert.equal(previousPublisher(epochNow - 200), true);
+  assert.equal(h.render(3000), 'Last: —\nTotal: 0 m 3 s');
+  assert.equal(send(epochNow - 500), true);
+  assert.equal(h.render(3000), 'Last: 0 m 0 s\nTotal: 0 m 3 s');
+  h.unbind();
+  registry.disposeActivity(first);
+  registry.disposeActivity(second);
+});
+
+
+test('late AICC subscription immediately replays retained activity, without new ingress', () => {
+  const h = timingHarness();
+  h.setNow(1000);
+  assert.equal(h.incoming(), true);
+  assert.equal(h.bind(), true);
+  assert.equal(h.render(6000), 'Last: 0 m 5 s\nTotal: 0 m 6 s');
+  h.unbind();
+  h.unbind();
+  assert.equal(h.coreOne.observers(), 0);
+});
+
+test('incoming updates without an installed stopwatch do not start idle polling', () => {
+  const h = timingHarness();
+  h.hideStopwatch();
+  h.bind();
+  h.setNow(1000);
+  assert.equal(h.incoming(), true);
+  assert.equal(h.timerActive(), false);
+  h.unbind();
+  assert.equal(h.timerActive(), false);
 });
