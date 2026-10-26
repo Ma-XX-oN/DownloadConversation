@@ -116,6 +116,16 @@ function run(width, theme, failRotation = false) {
     const open=trigger.getAttribute('aria-expanded')==='true'&&!dialog.hidden;
     const initial=cscControlsCurrent().snapshot();
     const warning=dialog.querySelector('.tm-csc-warning').textContent;
+    const master=dialog.querySelector('[data-csc-flag="all"]');
+    const children=[...dialog.querySelectorAll('[data-csc-flag]')]
+      .filter(input=>input!==master);
+    master.click();
+    const masterSelected=master.checked&&children.every(input=>input.checked);
+    children[0].click();
+    const masterCleared=!master.checked&&!children[0].checked;
+    master.click();
+    master.click();
+    const masterReset=!master.checked&&children.every(input=>!input.checked);
     const full=dialog.querySelector('[data-csc-mode="everything"]');
     full.click();
     dialog.querySelector('[data-csc-apply]').click();
@@ -145,6 +155,7 @@ function run(width, theme, failRotation = false) {
     const rotationState=cscControlsCurrent().snapshot().settings_state;
     document.getElementById('result').textContent=JSON.stringify({
       after,onePreserved:one.checked,open,focused,
+      masterSelected,masterCleared,masterReset,
       defaultMode:initial.settings.mode,defaultAll:initial.settings.all,
       warning:warning.includes('credentials')&&warning.includes('opaque'),
       denied:blocked,confirmed:consentCount===2,
@@ -199,7 +210,8 @@ for (const [width,theme] of [[430,'light'],[430,'dark'],[900,'dark']]) {
       const result=run(width,theme);
       assert.equal(result.error,undefined,result.error);
       for(const key of ['after','onePreserved','open','focused','warning',
-        'denied','confirmed','escaped','outside','viewport']) {
+        'denied','confirmed','escaped','outside','viewport',
+        'masterSelected','masterCleared','masterReset']) {
         assert.equal(result[key],true,key+': '+JSON.stringify(result));
       }
       assert.equal(result.defaultMode,'replay-essentials');
