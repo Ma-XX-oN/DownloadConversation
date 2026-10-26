@@ -133,7 +133,7 @@
    * @returns {string} The string produced by `testMatrixResultText`.
    */
   function testMatrixResultText(result) {
-    return result?.status || '—';
+    return result ? result.status + (result.detail ? `: ${result.detail}` : '') : '—';
   }
 
   /**
@@ -166,8 +166,10 @@
    */
   async function executeBuiltInTest(name, fn) {
     try {
-      await fn();
-      testMatrixCurrentResults.set(name, { status: 'PASS', detail: '' });
+      const detail = await fn();
+      testMatrixCurrentResults.set(name, {
+        status: 'PASS', detail: typeof detail === 'string' ? detail : ''
+      });
       return `✅ ${name}`;
     } catch (error) {
       const detail = errorMessage(error);
