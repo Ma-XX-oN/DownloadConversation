@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         ChatGPT Conversation Markdown Recorder
 // @namespace    https://chatgpt.com/
-// @version      1.11.15-issue.318.31
+// @version      1.11.15-issue.318.32
 // @description  Exports the current ChatGPT conversation directly from the Conversation API as Markdown or JSONL.
 // @match        https://chatgpt.com/*
 // @match        https://chat.openai.com/*
@@ -24861,7 +24861,7 @@ Image elapsed: ${formatDuration(imageElapsed)} — Completed: ${imageCompleted}/
   }
   /**
    * Create CSC controls.
-   * @param {Object} deps - Injected persistence, HMAC factory, version and origin
+   * @param {Object} deps - Controller dependencies
    * @returns {Object} Create CSC controls.
    */
   function cscCaptureControlPlane(deps) {
@@ -24887,8 +24887,8 @@ Image elapsed: ${formatDuration(imageElapsed)} — Completed: ${imageCompleted}/
     let lastError = null;
     const listeners = new Set();
     /**
-     * Expose only nonsecret public state for the recorder panel.
-     * @returns {Object} Expose only nonsecret public state for the recorder panel.
+     * Public control status.
+     * @returns {Object} Public control status.
      */
     function snapshot() {
       return Object.freeze({
@@ -25062,7 +25062,7 @@ Image elapsed: ${formatDuration(imageElapsed)} — Completed: ${imageCompleted}/
     /**
      * Persist and apply settings.
      * @param {Object} next - Versioned user-selected capture options
-     * @param {boolean} confirmed - Explicit consent for expanded sensitive capture
+     * @param {boolean} confirmed - Sensitive-capture consent
      * @returns {Promise<boolean>} Persist and apply settings.
      */
     async function setOptions(next, confirmed) {
@@ -25092,7 +25092,7 @@ Image elapsed: ${formatDuration(imageElapsed)} — Completed: ${imageCompleted}/
     }
     /**
      * Bind Worker adapter.
-     * @param {Object} adapter - Correlated Worker settings and key provisioning adapter
+     * @param {Object} adapter - Worker adapter
      * @returns {Promise<boolean>} Bind Worker adapter.
      */
     async function bindWorker(adapter) {
@@ -25138,6 +25138,10 @@ Image elapsed: ${formatDuration(imageElapsed)} — Completed: ${imageCompleted}/
         const status = await service.status();
         keyState = status.state;
         publicKey = status.key_restart || null;
+        if (keyState === 'open' &&
+            (!publicKey || !Number.isFinite(Date.parse(publicKey)))) {
+          throw new Error('csc-key-restart-invalid');
+        }
         expiry = status.expires_at_ms ?? null;
         epoch = status.redaction_key_epoch ?? 0;
         if (keyState === 'draining' || keyState === 'DRAINING') await pause();
@@ -25301,9 +25305,9 @@ Image elapsed: ${formatDuration(imageElapsed)} — Completed: ${imageCompleted}/
       });
     }
     /**
-     * Subscribe to nonsecret control state changes.
+     * Subscribe to status.
      * @param {Function} listener - UI observer receiving snapshots
-     * @returns {Function} Subscribe to nonsecret control state changes.
+     * @returns {Function} Subscribe to status.
      */
     function onChange(listener) {
       listeners.add(listener);
