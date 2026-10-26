@@ -172,7 +172,9 @@ function run(width, theme, failRotation = false) {
     const match=chrome.stdout.match(/<pre id="result">([^<]+)<\/pre>/);
     assert.ok(match&&match[1]!=='PENDING','Actual Chromium script did not complete');
     if(process.env.GITHUB_WORKSPACE){
-      const destination=path.join(process.env.GITHUB_WORKSPACE,
+      // Keep screenshot acceptance inside the disposable browser fixture.
+      // RepoWorkflow requires its validation worktree to remain unchanged.
+      const destination=path.join(dir,
         'dc318-popup-'+theme+'-'+width+
         (failRotation?'-rotation-failure':'')+'.png');
       const shot=spawnSync(binary,[
