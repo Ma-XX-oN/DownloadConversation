@@ -49,7 +49,7 @@ function run(width, theme, failRotation = false) {
   <div id="tm-conversation-recorder" style="display:block">${markup}</div>
   <pre id="result">PENDING</pre>
   <script>
-  const VERSION='1.11.15-issue.318.10';
+  const VERSION='1.11.15-issue.318.11';
   const shared=new Map();
   let consentCount=0, consent=false;
   window.confirm=() => {consentCount++;return consent;};
