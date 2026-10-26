@@ -46,9 +46,9 @@
       for (const listener of listeners) listener(value);
     }
     /**
-     * Mark settings as unapplied and throw a deterministic failure.
+     * Fail closed.
      * @param {string} reason - Stable nonsecret failure identifier
-     * @returns {never} Mark settings as unapplied and throw a deterministic failure.
+     * @returns {never} Fail closed.
      */
     function reject(reason) {
       lastError = reason;
@@ -58,8 +58,8 @@
       throw new Error(reason);
     }
     /**
-     * Pause COMM admission before changing capture policy or key scope.
-     * @returns {Promise<void>} Pause COMM admission before changing capture policy or key scope.
+     * Pause capture.
+     * @returns {Promise<void>} Pause capture.
      */
     async function pause() {
       applied = false;
@@ -146,7 +146,7 @@
       return result;
     }
     /**
-     * Load shared preferences and initialize the HMAC service once.
+     * Initialize settings and HMAC.
      * @returns {Promise<Object>} Initial state.
      */
     async function init() {
@@ -240,9 +240,9 @@
       });
     }
     /**
-     * Bind durable GEN and COMM event/boundary adapters.
+     * Bind GEN/COMM sinks.
      * @param {Object} ports - Required GEN and COMM sink ports
-     * @returns {void} Bind durable GEN and COMM event/boundary adapters.
+     * @returns {void} Bind GEN/COMM sinks.
      */
     function bindSinks(ports) {
       if (!ports || !ports.gen || !ports.comm ||
@@ -409,12 +409,14 @@
         throw new Error('csc-randomize-ports-not-ready');
       }
       return schedule(async () => {
+        if (disposed) return reject('csc-controls-disposed');
         try {
           await pause();
           // Commit old journal before rotation.
           await reconcileCycles();
           const drained = await comm.drain();
           if (drained?.durable !== true) throw new Error('csc-drain-not-durable');
+          if (disposed) return reject('csc-controls-disposed');
           const result = await service.randomize(true);
           await refreshKey();
           if (result.state !== 'COMMITTED') {
