@@ -79,7 +79,11 @@
       if (!settingsStorageAvailable) {
         return reject('csc-settings-storage-unavailable');
       }
-      if (service) await refreshKey();
+      if (!service) {
+        await pause().catch(() => {});
+        return reject('csc-key-service-unavailable');
+      }
+      await refreshKey();
       const sensitive = settings.mode === 'everything' ||
         settings.binary || settings.cross_origin ||
         settings.auth_headers || settings.all;
