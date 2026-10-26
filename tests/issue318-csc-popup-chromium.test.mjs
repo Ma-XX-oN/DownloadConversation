@@ -4,13 +4,20 @@ import { mkdtempSync, readFileSync, rmSync, statSync, writeFileSync } from 'node
 import os from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
+const schemaSource = readFileSync(new URL(
+  '../src/userscript/07-panel-launcher/03-csc-schema.js',
+  import.meta.url), 'utf8');
+const singletonSource = readFileSync(new URL(
+  '../src/userscript/07-panel-launcher/03-csc-singleton.js',
+  import.meta.url), 'utf8');
+
 
 const sharedSource = readFileSync(new URL(
   '../src/userscript/07-panel-launcher/03-csc-shared-settings.js',
   import.meta.url), 'utf8');
-const control = readFileSync(new URL(
+const control = schemaSource + readFileSync(new URL(
   '../src/userscript/07-panel-launcher/03-csc-control-plane.js',
-  import.meta.url), 'utf8');
+  import.meta.url), 'utf8') + singletonSource;
 const popup = readFileSync(new URL(
   '../src/userscript/07-panel-launcher/03-csc-capture-popup.js',
   import.meta.url), 'utf8');
