@@ -121,7 +121,10 @@
           return reject('csc-settings-restart-denied');
         }
         await worker.resume();
-        if (disposed) return reject('csc-controls-disposed');
+        if (disposed) {
+          await pause();
+          return reject('csc-controls-disposed');
+        }
       } catch {
         return reject('csc-settings-apply-failed');
       }
