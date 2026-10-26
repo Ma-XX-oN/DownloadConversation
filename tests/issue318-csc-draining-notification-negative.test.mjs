@@ -192,3 +192,31 @@ test('late Worker resume completion after disposal is followed by final pause',
       'a late resume must be followed by a final Worker pause');
     assert.equal(f.controller.snapshot().settings_applied,false);
   });
+
+test('drain starting during asynchronous Worker.resume is immediately re-paused',
+  async () => {
+    const f = fixture();
+    await f.controller.init();
+    await f.controller.bindWorker(f.worker);
+    let releaseResume;
+    const events = [];
+    f.worker.pause = async () => { events.push('pause'); };
+    f.worker.resume = async () => new Promise(resolve => {
+      releaseResume = () => { events.push('resume'); resolve(); };
+    });
+    const settings = { schema:1, mode:'replay-essentials',
+      binary:false,cross_origin:false,auth_headers:false,all:false };
+    const change = f.controller.setOptions(settings,false);
+    for(let i=0;i<30 && !releaseResume;i++) {
+      await new Promise(resolve=>setImmediate(resolve));
+    }
+    assert.equal(typeof releaseResume,'function');
+    f.drain();
+    releaseResume();
+    await assert.rejects(change,/csc-settings-apply-failed|csc-settings-restart-denied/,
+      'a drain that begins while resume awaits cannot leave Worker running');
+    assert.equal(events.at(-1),'pause',
+      'draining after resume must cause final Worker pause');
+    assert.equal(f.controller.snapshot().settings_applied,false);
+    f.controller.dispose();
+  });
