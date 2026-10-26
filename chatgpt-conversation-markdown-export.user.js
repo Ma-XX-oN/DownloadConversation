@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         ChatGPT Conversation Markdown Recorder
 // @namespace    https://chatgpt.com/
-// @version      1.11.15-issue.318.5
+// @version      1.11.15-issue.318.6
 // @description  Exports the current ChatGPT conversation directly from the Conversation API as Markdown or JSONL.
 // @match        https://chatgpt.com/*
 // @match        https://chat.openai.com/*
@@ -25427,6 +25427,17 @@ Image elapsed: ${formatDuration(imageElapsed)} — Completed: ${imageCompleted}/
     }
     const modes = [...dialog.querySelectorAll('[data-csc-mode]')];
     const flags = [...dialog.querySelectorAll('[data-csc-flag]')];
+    const allFlags = flags.find(input => input.dataset.cscFlag === 'all');
+    allFlags.addEventListener('change', () => {
+      for (const input of flags) input.checked = allFlags.checked;
+    });
+    for (const input of flags) {
+      if (input === allFlags) continue;
+      input.addEventListener('change', () => {
+        allFlags.checked = flags.filter(flag => flag !== allFlags)
+          .every(flag => flag.checked);
+      });
+    }
     const status = dialog.querySelector('[data-csc-status]');
     const identity = dialog.querySelector('[data-csc-key]');
     const due = dialog.querySelector('[data-csc-expiry]');
@@ -25442,7 +25453,10 @@ Image elapsed: ${formatDuration(imageElapsed)} — Completed: ${imageCompleted}/
       const { settings, settings_state, key_state, key_restart,
         expires_at_ms, error, can_randomize } = model;
       for (const input of modes) input.checked = input.dataset.cscMode === settings.mode;
-      for (const input of flags) input.checked = settings[input.dataset.cscFlag];
+      for (const input of flags) {
+        input.checked = settings[input.dataset.cscFlag] ||
+          (settings.all && input !== allFlags);
+      }
       status.textContent = 'Worker configuration: ' + settings_state +
         (error ? ' (' + error + ')' : '');
       identity.textContent = 'Key restart: ' + (key_restart || 'not initialized');
