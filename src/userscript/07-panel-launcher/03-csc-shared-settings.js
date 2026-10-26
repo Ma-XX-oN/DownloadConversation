@@ -15,6 +15,7 @@
     const channel = typeof BroadcastChannel === 'function'
       ? new BroadcastChannel('dc-csc-settings-v1') : null;
     const subscribers = new Set();
+    /** Inform live controls that the authoritative durable value changed. */
     const notify = () => {
       for (const subscriber of subscribers) subscriber();
     };
@@ -26,9 +27,11 @@
       };
     }
 
+    /** Open exactly one native same-origin settings database connection. */
     const connect = () => {
       if (closed) return Promise.reject(Error('csc-settings-store-closed'));
-      if (!indexedDB || typeof indexedDB.open !== 'function') {
+      if (typeof indexedDB === 'undefined' ||
+          typeof indexedDB.open !== 'function') {
         return Promise.reject(Error('csc-settings-indexeddb-unavailable'));
       }
       if (opened) return opened;
@@ -53,6 +56,7 @@
       });
       return opened;
     };
+    /** Read the committed current scope without a storage fallback. */
     const read = async () => {
       const database = await connect();
       return new Promise((resolve, reject) => {
@@ -67,6 +71,7 @@
           transaction.error || Error('csc-settings-read-failed'));
       });
     };
+    /** Commit a full versioned scope and then broadcast invalidation. */
     const write = async value => {
       if (closed) throw Error('csc-settings-store-closed');
       const database = await connect();
@@ -85,12 +90,15 @@
           transaction.error || Error('csc-settings-write-failed'));
       });
     };
+    /** Subscribe to remote invalidation and foreground reconciliation. */
     const subscribe = callback => {
       if (closed) throw Error('csc-settings-store-closed');
       subscribers.add(callback);
+      /** Reconcile delayed notifications on document visibility. */
       const visible = () => {
         if (document.visibilityState === 'visible') callback();
       };
+      /** Reconcile delayed notifications after the tab regains focus. */
       const focus = () => callback();
       document.addEventListener('visibilitychange', visible);
       window.addEventListener('focus', focus);
@@ -100,6 +108,7 @@
         window.removeEventListener('focus', focus);
       };
     };
+    /** Close notifications and release native database handles. */
     const dispose = () => {
       closed = true;
       subscribers.clear();
