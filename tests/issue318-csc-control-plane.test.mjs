@@ -443,3 +443,25 @@ test('genuine #313 first-admission semantics initialize key before cycle boundar
   assert.equal(f.control.snapshot().key_restart, f.keys.current);
   await f.control.completeCapture(admission.token);
 });
+
+test('unconfirmed remote sensitive update pauses previously active broad Worker', async () => {
+  const f = fixture();
+  await f.control.init();
+  await f.control.bindWorker(f.worker);
+  await f.control.setOptions(fullOptions(), true);
+  assert.equal(f.control.snapshot().settings_applied, true);
+  const beforePause = f.calls.pause;
+  const beforeResume = f.calls.resume;
+  const beforeConfigure = f.calls.configure.length;
+  f.deliver({ ...fullOptions(), auth_headers: false });
+  for (let i = 0; i < 10; i++) {
+    await new Promise(resolve => setImmediate(resolve));
+  }
+  assert.equal(f.control.snapshot().settings_applied, false);
+  assert.equal(f.control.snapshot().settings_state, 'pending');
+  assert.ok(f.calls.pause > beforePause,
+    'old more-sensitive Worker must pause before waiting for new local consent');
+  assert.equal(f.calls.resume, beforeResume, 'unconfirmed Worker must not resume');
+  assert.equal(f.calls.configure.length, beforeConfigure,
+    'remote pending preferences must never be auto-applied');
+});
