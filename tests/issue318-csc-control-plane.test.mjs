@@ -465,3 +465,24 @@ test('unconfirmed remote sensitive update pauses previously active broad Worker'
   assert.equal(f.calls.configure.length, beforeConfigure,
     'remote pending preferences must never be auto-applied');
 });
+
+test('remote safe-then-sensitive cycle never reuses an old local consent', async () => {
+  const f = fixture();
+  await f.control.init();
+  await f.control.bindWorker(f.worker);
+  await f.control.setOptions(fullOptions(), true);
+  const safe = { schema: 1, mode: 'replay-essentials',
+    binary: false, cross_origin: false, auth_headers: false, all: false };
+  f.deliver(safe);
+  for (let i = 0; i < 10; i++) await new Promise(resolve => setImmediate(resolve));
+  assert.equal(f.control.snapshot().settings.mode, 'replay-essentials');
+  const beforeConfig = f.calls.configure.length;
+  f.deliver(fullOptions());
+  for (let i = 0; i < 10; i++) await new Promise(resolve => setImmediate(resolve));
+  assert.equal(f.control.snapshot().settings_applied, false);
+  assert.equal(f.control.snapshot().settings_state, 'pending');
+  assert.equal(f.calls.configure.length, beforeConfig,
+    'return to identical sensitive scope needs a fresh local confirmation');
+  await f.control.setOptions(fullOptions(), true);
+  assert.equal(f.control.snapshot().settings_applied, true);
+});
