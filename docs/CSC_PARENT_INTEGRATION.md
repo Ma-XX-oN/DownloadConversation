@@ -484,3 +484,10 @@ See [DC #359 source contract diagnostics](CSC_359_INTERFACE_NEGATIVE_MATRIX.md)
 for the pinned #311/#313/#317/#318 contract checks (28/28 structural),
 16/16 isolated Node fixture checks and RWF exact-rule policy analysis.
 These are NOT assembled-source PASS, source-import authorization or release.
+
+## 12. Released main 1.11.15 rebase CI diagnosis
+
+See [exact hosted failure analysis](CSC_359_11115_REBASE_CI_DIAGNOSIS.md).
+The #359 test-only matrix had 4 PASS / 1 FAIL jobs; #318 had
+6 PASS / 1 FAIL.  Old GM grants conflict with released raw/no-grant
+registration.  No source import or final candidate is authorised.
