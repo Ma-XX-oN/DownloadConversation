@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         ChatGPT Conversation Markdown Recorder
 // @namespace    https://chatgpt.com/
-// @version      1.11.15-issue.318.4
+// @version      1.11.15-issue.318.5
 // @description  Exports the current ChatGPT conversation directly from the Conversation API as Markdown or JSONL.
 // @match        https://chatgpt.com/*
 // @match        https://chat.openai.com/*
@@ -24942,6 +24942,9 @@ Image elapsed: ${formatDuration(imageElapsed)} — Completed: ${imageCompleted}/
         !confirmedSensitive ||
         JSON.stringify(confirmedSensitive) !== JSON.stringify(settings)
       )) {
+        // Already-active capture must stop before new consent is requested.
+        try { await pause(); }
+        catch { return reject('csc-settings-pause-failed'); }
         state = 'pending';
         applied = false;
         lastError = 'csc-sensitive-reconfirmation-required';
