@@ -93,3 +93,20 @@ test('focus or cross-tab notifications cannot resume Worker after failed HMAC st
     assert.equal(f.controller.snapshot().settings_applied, false);
     f.controller.dispose();
   });
+
+test('remote HMAC drain unseen by cached state blocks settings-triggered resume',
+  async () => {
+    const f = fixture();
+    await f.controller.init();
+    await f.controller.bindWorker(f.worker);
+    assert.equal(f.controller.snapshot().key_state, 'open');
+    const beforeResumes = f.calls.resumes;
+    // A different tab begins draining; this local controller is stale.
+    f.drain();
+    await f.signal();
+    assert.equal(f.controller.snapshot().key_state, 'draining');
+    assert.equal(f.controller.snapshot().settings_applied, false);
+    assert.equal(f.calls.resumes, beforeResumes,
+      'settings notifications must never resume using stale HMAC status');
+    f.controller.dispose();
+  });
