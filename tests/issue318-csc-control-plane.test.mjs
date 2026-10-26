@@ -356,7 +356,7 @@ test('assembled #313 producer factory is registered explicitly before startup', 
   const context=vm.createContext({
     crypto: { getRandomValues: array => array.fill(17) },
     location:{origin:'https://chatgpt.com'},
-    VERSION:'1.11.15-issue.318.10'
+    VERSION:'1.11.15-issue.318.11'
   });
   vm.runInContext(sharedSource+source+'\nthis.bridge={register:cscControlsRegisterHmacFactory,'+
     'current:cscControlsCurrent};',context);
