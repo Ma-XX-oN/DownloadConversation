@@ -140,13 +140,56 @@
     return byRecord;
   };
 
-  // Register a bounded bootstrap opportunity without a private polling loop.
-  if (typeof window !== 'undefined' && typeof window.addEventListener === 'function') {
-    window.addEventListener('DOMContentLoaded', () => {
-      void ensureChatGPTCanonicalAgent().catch(error => {
-        logDiagnostic('warnings', 'last-registration-startup-unavailable', {
-          reason: String(error?.message ?? error)
-        });
+  /** Unsubscribe from provider registration notifications at page retirement. */
+  let chatGPTRegistrationUnsubscribe = null;
+  /** Prevent stale event callbacks from reattaching after page disposal. */
+  let chatGPTStartupDisposed = false;
+
+  /**
+   * Starts a provider only after it recognises this page, without polling.
+   * The public AICC inventory observer handles registrations after DOM ready.
+   * @returns {void} Starts the asynchronous agent initialization, if ready.
+   */
+  function chatGPTTryBindRegisteredAgent() {
+    if (chatGPTStartupDisposed || chatGPTAgent) return;
+    const core = canonicalCore();
+    if (!core || typeof core.recognizeAgentPlugin !== 'function') return;
+    const descriptor = core.recognizeAgentPlugin({
+      provider: 'chatgpt', url: typeof location === 'object' ? location.href : ''
+    });
+    if (!descriptor) return;
+    void ensureChatGPTCanonicalAgent().catch(error => {
+      logDiagnostic('warnings', 'last-registration-startup-unavailable', {
+        reason: String(error?.message ?? error)
       });
-    }, { once: true });
+    });
+  }
+
+  /**
+   * Retires the Core registration subscription without changing provider state.
+   * @returns {void} Idempotent page-lifetime cleanup.
+   */
+  function chatGPTStopRegistrationObserver() {
+    chatGPTStartupDisposed = true;
+    chatGPTRegistrationUnsubscribe?.();
+    chatGPTRegistrationUnsubscribe = null;
+  }
+
+  // Public provider-neutral registration events close the late-install race.
+  // No DOM observer, private capture, 15-second wait or periodic polling.
+  if (typeof window !== 'undefined' && typeof window.addEventListener === 'function') {
+    const core = canonicalCore();
+    assert(typeof core.observeAgentPluginRegistrations === 'function',
+      'AIConversationCore registration observation API is unavailable.');
+    chatGPTRegistrationUnsubscribe = core.observeAgentPluginRegistrations(() => {
+      if (typeof document === 'object' && document.readyState !== 'loading') {
+        chatGPTTryBindRegisteredAgent();
+      }
+    });
+    window.addEventListener('pagehide', chatGPTStopRegistrationObserver, { once: true });
+    if (typeof document === 'object' && document.readyState === 'loading') {
+      window.addEventListener('DOMContentLoaded', chatGPTTryBindRegisteredAgent, { once: true });
+    } else if (typeof document === 'object') {
+      chatGPTTryBindRegisteredAgent();
+    }
   }
