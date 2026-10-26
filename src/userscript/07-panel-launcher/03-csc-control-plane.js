@@ -43,7 +43,10 @@
      */
     function notify() {
       const value = snapshot();
-      for (const listener of listeners) listener(value);
+      for (const listener of listeners) {
+        try { listener(value); }
+        catch { /* UI failure cannot disrupt Worker safety fences. */ }
+      }
     }
     /**
      * Fail closed.
