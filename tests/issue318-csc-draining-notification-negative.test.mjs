@@ -236,3 +236,22 @@ test('disposed controls cannot persist queued sensitive settings change',
       'queued broad policy cannot change shared durable state after disposal');
     assert.equal(f.controller.snapshot().settings_applied,false);
   });
+
+test('faulty popup observer cannot interrupt required Worker pause on HMAC drain',
+  async () => {
+    const f = fixture();
+    await f.controller.init();
+    await f.controller.bindWorker(f.worker);
+    const beforePauses=f.calls.pauses;
+    let broken=false;
+    f.controller.onChange(() => {
+      if(broken)throw Error('injected-popup-render-failure');
+    });
+    broken=true;
+    f.drain();
+    await f.controller.refreshKey();
+    assert.ok(f.calls.pauses>beforePauses,
+      'untrusted UI listener exceptions must not bypass Worker pause');
+    assert.equal(f.controller.snapshot().settings_applied,false);
+    f.controller.dispose();
+  });
