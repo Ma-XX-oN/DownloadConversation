@@ -1,7 +1,7 @@
   /**
-   * Create the fail-closed CSC control plane without owning a Worker.
+   * Create CSC controls.
    * @param {Object} deps - Injected persistence, HMAC factory, version and origin
-   * @returns {Object} Create the fail-closed CSC control plane without owning a Worker.
+   * @returns {Object} Create CSC controls.
    */
   function cscCaptureControlPlane(deps) {
     const { store, serviceFactory, version, origin } = deps;
@@ -11,6 +11,7 @@
     let comm = null;
     let gen = null;
     let applied = false;
+    let disposed = false;
     let state = 'pending';
     let keyState = 'unavailable';
     let publicKey = null;
@@ -71,6 +72,7 @@
      * @returns {Promise<boolean>} Worker ACK status.
      */
     async function apply() {
+      if (disposed) return reject('csc-controls-disposed');
       if (!settingsStorageAvailable) {
         return reject('csc-settings-storage-unavailable');
       }
@@ -114,7 +116,12 @@
         if (ack?.type !== 'csc-comm-configured' ||
             ack.schema !== CSC_CONTROL_SCHEMA ||
             ack.request_id !== requestId) return reject('csc-settings-ack-invalid');
+        if (service) await refreshKey();
+        if (disposed || ['draining', 'DRAINING', 'failed'].includes(keyState)) {
+          return reject('csc-settings-restart-denied');
+        }
         await worker.resume();
+        if (disposed) return reject('csc-controls-disposed');
       } catch {
         return reject('csc-settings-apply-failed');
       }
@@ -181,10 +188,10 @@
       return initPromise;
     }
     /**
-     * Persist confirmed options and request a Worker settings transition.
+     * Persist and apply settings.
      * @param {Object} next - Versioned user-selected capture options
      * @param {boolean} confirmed - Explicit consent for expanded sensitive capture
-     * @returns {Promise<boolean>} Persist confirmed options and request a Worker settings transition.
+     * @returns {Promise<boolean>} Persist and apply settings.
      */
     async function setOptions(next, confirmed) {
       const options = cscControlValidateOptions(next);
@@ -210,9 +217,9 @@
       });
     }
     /**
-     * Bind a concrete Worker control adapter and replay saved options.
+     * Bind Worker adapter.
      * @param {Object} adapter - Correlated Worker settings and key provisioning adapter
-     * @returns {Promise<boolean>} Bind a concrete Worker control adapter and replay saved options.
+     * @returns {Promise<boolean>} Bind Worker adapter.
      */
     async function bindWorker(adapter) {
       if (!adapter || !['pause', 'configure', 'resume', 'awaitKey']
@@ -271,8 +278,8 @@
       return snapshot();
     }
     /**
-     * Reconcile committed key-cycle journal entries across both sinks.
-     * @returns {Promise<number>} Reconcile committed key-cycle journal entries across both sinks.
+     * Reconcile durable key cycles.
+     * @returns {Promise<number>} Reconcile durable key cycles.
      */
     async function reconcileCycles() {
       if (!service || !gen || !comm || !worker) {
@@ -366,9 +373,9 @@
       }
     }
     /**
-     * Release one completed admission without discarding rotation fences.
+     * Release admission.
      * @param {string} token - Producer-issued active admission token
-     * @returns {Promise<void>} Release one completed admission without discarding rotation fences.
+     * @returns {Promise<void>} Release admission.
      */
     async function completeCapture(token) {
       if (!service) throw new Error('csc-key-service-unavailable');
@@ -386,9 +393,9 @@
       }
     }
     /**
-     * Rotate only after explicit consent and durable output drainage.
+     * Rotate after durable drain.
      * @param {boolean} confirmed - Explicit confirmation supplied by the UI
-     * @returns {Promise<Object>} Rotate only after explicit consent and durable output drainage.
+     * @returns {Promise<Object>} Rotate after durable drain.
      */
     async function randomize(confirmed) {
       if (confirmed !== true) throw new Error('csc-randomize-unconfirmed');
@@ -432,6 +439,8 @@
      * @returns {void} Detach shared settings listeners and clear in-memory key handles.
      */
     function dispose() {
+      disposed = true;
+      try { void worker?.pause()?.catch(() => {}); } catch {}
       unsubscribe?.();
       store.dispose?.();
       service?.dispose();
