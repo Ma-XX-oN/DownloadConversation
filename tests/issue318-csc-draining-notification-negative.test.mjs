@@ -17,12 +17,12 @@ function fixture() {
   let changed = null;
   let keyState = 'open';
   let statusError = false;
-  const calls = { pauses: 0, resumes: 0, configs: 0 };
+  const calls = { pauses: 0, resumes: 0, configs: 0, writes: 0 };
   const settings = { schema: 1, mode: 'replay-essentials',
     binary: false, cross_origin: false, auth_headers: false, all: false };
   const store = {
     read: async () => settings,
-    write: async () => {},
+    write: async () => { calls.writes++; },
     subscribe: fn => { changed = fn; return () => { changed = null; }; }
   };
   const service = {
@@ -219,4 +219,20 @@ test('drain starting during asynchronous Worker.resume is immediately re-paused'
       'draining after resume must cause final Worker pause');
     assert.equal(f.controller.snapshot().settings_applied,false);
     f.controller.dispose();
+  });
+
+test('disposed controls cannot persist queued sensitive settings change',
+  async () => {
+    const f = fixture();
+    await f.controller.init();
+    await f.controller.bindWorker(f.worker);
+    const before = f.calls.writes;
+    const sensitive = { schema:1, mode:'everything',
+      binary:true, cross_origin:true, auth_headers:false, all:false };
+    const queued = f.controller.setOptions(sensitive,true);
+    f.controller.dispose();
+    await assert.rejects(queued,/csc-controls-disposed|csc-settings-apply-failed/);
+    assert.equal(f.calls.writes,before,
+      'queued broad policy cannot change shared durable state after disposal');
+    assert.equal(f.controller.snapshot().settings_applied,false);
   });
