@@ -1,0 +1,60 @@
+name: DC 318 registered raw realm verification (isolated)
+on:
+  push:
+    branches: [issue-318-registered-settings-v1]
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  native-focused:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - name: Real two-tab Chrome plus UI and controller negatives
+        run: |
+          node --test tests/issue318-csc-control-plane.test.mjs \
+            tests/issue318-csc-popup-chromium.test.mjs \
+            tests/issue318-csc-native-two-tab.test.mjs
+      - name: Existing recorder panel and registration regressions
+        run: |
+          node --test tests/recording-panel-modes.test.mjs \
+            tests/recording-panel-chromium-layout.test.mjs \
+            tests/recording-group-tab-identity.test.mjs \
+            tests/ci-test-inventory.test.mjs
+      - name: Structural validation and current AICC bundle build parity
+        run: |
+          node scripts/check-development-version.mjs --branch issue-318-registered-settings-v1
+          node scripts/check-jsdoc.mjs
+          node --test tests/modular-userscript-build.test.mjs
+          node scripts/check-userscript-types.mjs
+          node scripts/build-userscript.mjs --output "$RUNNER_TEMP/dc318-registered.user.js"
+          node scripts/verify-userscript-artifact.mjs "$RUNNER_TEMP/dc318-registered.user.js"
+          node --check "$RUNNER_TEMP/dc318-registered.user.js"
+          sha256sum "$RUNNER_TEMP/dc318-registered.user.js"
+      - uses: actions/upload-artifact@v4
+        if: success()
+        with:
+          name: dc318-registered-exact-userscript
+          path: ${{ runner.temp }}/dc318-registered.user.js
+          retention-days: 7
+  full-hosted:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.13'
+      - name: Execute repository full test inventory (no policy bypass)
+        run: node scripts/ci-environment.mjs
