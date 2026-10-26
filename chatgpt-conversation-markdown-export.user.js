@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         ChatGPT Conversation Markdown Recorder
 // @namespace    https://chatgpt.com/
-// @version      1.11.16-issue.297.5
+// @version      1.11.16-issue.297.6
 // @description  Exports the current ChatGPT conversation directly from the Conversation API as Markdown or JSONL.
 // @match        https://chatgpt.com/*
 // @match        https://chat.openai.com/*
@@ -23393,13 +23393,13 @@ Image elapsed: ${formatDuration(imageElapsed)} — Completed: ${imageCompleted}/
   /** #297-only AICC127_ARMED_KEY state; no private payload is persisted. */
   const AICC127_ARMED_KEY = 'dc-issue127-live-armed';
   /** #297-only AICC127_EVIDENCE_KEY state; no private payload is persisted. */
-  const AICC127_EVIDENCE_KEY = 'dc-issue127-live-observations-v2';
+  const AICC127_EVIDENCE_KEY = 'dc-issue127-live-observations-v3';
   /** #297-only AICC127_NAV_KEY state; no private payload is persisted. */
-  const AICC127_NAV_KEY = 'dc-issue127-live-nav-v2';
+  const AICC127_NAV_KEY = 'dc-issue127-live-nav-v3';
   /** #297-only AICC127_PROVIDER_SHA state; no private payload is persisted. */
   const AICC127_PROVIDER_SHA = 'b9aa20df9d109b79022e5062e788758d2dbd3cc3';
   /** #297-only AICC127_PROVIDER_BLOB state; no private payload is persisted. */
-  const AICC127_PROVIDER_BLOB = 'ba2f0c2571a56cdf005f59da6e248496fa725925';
+  const AICC127_PROVIDER_BLOB = '77ab1a10399148afafd4e7096cebfc464ada6f73';
   /** #297-only AICC127_CORE_SHA state; no private payload is persisted. */
   const AICC127_CORE_SHA = '629c86284b7db5fb412bb083178eaee8c06f796c';
   /** #297-only AICC127_SOURCE_SHA state; no private payload is persisted. */
@@ -23429,11 +23429,11 @@ Image elapsed: ${formatDuration(imageElapsed)} — Completed: ${imageCompleted}/
   function aicc127Checkpoint() {
     try {
       const prior = JSON.parse(sessionStorage.getItem(AICC127_NAV_KEY) || 'null');
-      if (prior?.schema === 'aicc127-queued-nav-v2'
+      if (prior?.schema === 'aicc127-queued-nav-v3'
           && Array.isArray(prior.steps) && prior.steps.length <= 20
           && typeof prior.salt === 'string') return prior;
     } catch {}
-    return { schema: 'aicc127-queued-nav-v2', salt: crypto.randomUUID(),
+    return { schema: 'aicc127-queued-nav-v3', salt: crypto.randomUUID(),
       steps: [], reload_count: 0, page: null };
   }
 
@@ -23684,9 +23684,9 @@ Image elapsed: ${formatDuration(imageElapsed)} — Completed: ${imageCompleted}/
     let evidence = null;
     try {
       evidence = JSON.parse(sessionStorage.getItem(AICC127_EVIDENCE_KEY) || 'null');
-      if (evidence?.schema !== 'aicc127-queued-witness-v2') evidence = null;
+      if (evidence?.schema !== 'aicc127-queued-witness-v3') evidence = null;
     } catch {}
-    evidence ??= { schema: 'aicc127-queued-witness-v2',
+    evidence ??= { schema: 'aicc127-queued-witness-v3',
       source_sha: AICC127_SOURCE_SHA, source_version: VERSION,
       core_sha: AICC127_CORE_SHA,
       provider_sha: AICC127_PROVIDER_SHA, provider_blob_sha1: AICC127_PROVIDER_BLOB,
