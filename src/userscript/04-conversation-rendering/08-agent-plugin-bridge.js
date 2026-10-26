@@ -31,11 +31,12 @@
     });
     assert(loaded?.agent && loaded?.session,
       'AIConversationCore did not create the provider agent and canonical session.');
-    const identity = loaded.agent.version();
-    chatGPTAgent = loaded.agent;
+    const agent = loaded.agent;
+    const identity = agent.version();
+    chatGPTAgent = agent;
     chatGPTCanonicalSession = loaded.session;
     // #297's observer must be armed BEFORE the #310 backlog attaches/drains.
-    if (typeof aicc127AttachAgentEarly === 'function') aicc127AttachAgentEarly(chatGPTAgent);
+    if (typeof aicc127AttachAgentEarly === 'function') aicc127AttachAgentEarly(agent);
     reconnectChatGPTSubjectHost();
     logDiagnostic('debug', 'agent-plugin-ready', {
       plugin_id: identity?.plugin ?? 'unknown',
@@ -60,7 +61,7 @@
       return;
     }
     const host = chatGPTAgent.connectChatGPTSubjectHost({
-      origin: agentPluginPageWindow.location.origin,
+      origin: location.origin,
       conversationId: null
     });
     if (!host || ['navigation', 'request', 'response', 'dispose'].some(
