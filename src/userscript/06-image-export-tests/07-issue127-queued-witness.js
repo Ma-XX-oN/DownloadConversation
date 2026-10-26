@@ -2,13 +2,13 @@
   /** #297-only AICC127_ARMED_KEY state; no private payload is persisted. */
   const AICC127_ARMED_KEY = 'dc-issue127-live-armed';
   /** #297-only AICC127_EVIDENCE_KEY state; no private payload is persisted. */
-  const AICC127_EVIDENCE_KEY = 'dc-issue127-live-observations-v2';
+  const AICC127_EVIDENCE_KEY = 'dc-issue127-live-observations-v3';
   /** #297-only AICC127_NAV_KEY state; no private payload is persisted. */
-  const AICC127_NAV_KEY = 'dc-issue127-live-nav-v2';
+  const AICC127_NAV_KEY = 'dc-issue127-live-nav-v3';
   /** #297-only AICC127_PROVIDER_SHA state; no private payload is persisted. */
   const AICC127_PROVIDER_SHA = 'b9aa20df9d109b79022e5062e788758d2dbd3cc3';
   /** #297-only AICC127_PROVIDER_BLOB state; no private payload is persisted. */
-  const AICC127_PROVIDER_BLOB = 'ba2f0c2571a56cdf005f59da6e248496fa725925';
+  const AICC127_PROVIDER_BLOB = '77ab1a10399148afafd4e7096cebfc464ada6f73';
   /** #297-only AICC127_CORE_SHA state; no private payload is persisted. */
   const AICC127_CORE_SHA = '629c86284b7db5fb412bb083178eaee8c06f796c';
   /** #297-only AICC127_SOURCE_SHA state; no private payload is persisted. */
@@ -38,11 +38,11 @@
   function aicc127Checkpoint() {
     try {
       const prior = JSON.parse(sessionStorage.getItem(AICC127_NAV_KEY) || 'null');
-      if (prior?.schema === 'aicc127-queued-nav-v2'
+      if (prior?.schema === 'aicc127-queued-nav-v3'
           && Array.isArray(prior.steps) && prior.steps.length <= 20
           && typeof prior.salt === 'string') return prior;
     } catch {}
-    return { schema: 'aicc127-queued-nav-v2', salt: crypto.randomUUID(),
+    return { schema: 'aicc127-queued-nav-v3', salt: crypto.randomUUID(),
       steps: [], reload_count: 0, page: null };
   }
 
