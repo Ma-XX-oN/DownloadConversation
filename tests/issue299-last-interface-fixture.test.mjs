@@ -13,7 +13,7 @@ const CGP_MODULE_BLOB = '3dbd6861c551785b2b7d13aa7cc4e9af74827b98';
 function blobIdentity(source) {
   const bytes = Buffer.from(source, 'utf8');
   return createHash('sha1')
-    .update(Buffer.from(`blob ${bytes.byteLength}\\0`))
+    .update(Buffer.from('blob ' + bytes.byteLength + String.fromCharCode(0)))
     .update(bytes).digest('hex');
 }
 
