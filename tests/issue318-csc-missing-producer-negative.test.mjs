@@ -33,7 +33,8 @@ test('missing registered producer cannot report Worker capture settings applied'
       version:'1.11.15-issue.318.29'});
     await controller.init();
     assert.equal(controller.snapshot().key_state,'unavailable');
-    await controller.bindWorker(worker);
+    await assert.rejects(controller.bindWorker(worker),
+      /csc-key-service-unavailable/);
     assert.equal(controller.snapshot().settings_applied,false,
       'unregistered HMAC producer must not advertise active capture');
     assert.notEqual(controller.snapshot().settings_state,'applied');
