@@ -74,6 +74,7 @@ test('provider host connects once, initial and A-B-A navigation enqueue once and
   const context = {
     Reflect, URL, assert,
     agentPluginPageWindow: browser,
+    location: browser.location,
     unsafeWindow: browser,
     chatGPTAgent: {
       version: () => ({}),
@@ -214,6 +215,7 @@ test('real CSC queue and browser bridge deliver one backend identity then restor
     assert, Reflect, URL, JSON, Object, Promise, setTimeout, clearTimeout,
     logDiagnostic() {},
     agentPluginPageWindow: page,
+    location: page.location,
     unsafeWindow: page,
     chatGPTAgent: {
       version: () => ({}),
