@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         ChatGPT Conversation Markdown Recorder
 // @namespace    https://chatgpt.com/
-// @version      1.11.15-issue.318.6
+// @version      1.11.15-issue.318.7
 // @description  Exports the current ChatGPT conversation directly from the Conversation API as Markdown or JSONL.
 // @match        https://chatgpt.com/*
 // @match        https://chat.openai.com/*
@@ -24999,7 +24999,11 @@ Image elapsed: ${formatDuration(imageElapsed)} — Completed: ${imageCompleted}/
         unsubscribe = store.subscribe(() => {
           void schedule(async () => {
             try {
-              settings = cscControlValidateOptions(await store.read());
+              const latest = cscControlValidateOptions(await store.read());
+              if (JSON.stringify(latest) !== JSON.stringify(settings)) {
+                confirmedSensitive = null;
+              }
+              settings = latest;
               await apply();
             } catch {
               await pause().catch(() => {});
