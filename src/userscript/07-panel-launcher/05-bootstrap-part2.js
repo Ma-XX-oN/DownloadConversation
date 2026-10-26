@@ -6,7 +6,7 @@
 
   document.addEventListener('click', captureConversationClickDiagnostic, true);
   window.addEventListener('pageshow', event => {
-    if (event.persisted) void ensureChatGPTCanonicalAgent();
+    if (event.persisted) reconnectChatGPTSubjectHost();
   });
   window.addEventListener('pagehide', () => {
     disconnectChatGPTSubjectHost();
