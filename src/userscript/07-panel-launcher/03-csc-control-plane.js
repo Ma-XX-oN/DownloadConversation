@@ -206,9 +206,11 @@
         throw new Error('csc-sensitive-capture-not-confirmed');
       }
       return schedule(async () => {
+        if (disposed) return reject('csc-controls-disposed');
         await init();
         try { await pause(); }
         catch { return reject('csc-settings-pause-failed'); }
+        if (disposed) return reject('csc-controls-disposed');
         try {
           await store.write(options);
         } catch {
