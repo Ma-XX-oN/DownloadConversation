@@ -72,7 +72,12 @@ test('provider host connects once, initial and A-B-A navigation enqueue once and
     Reflect, URL, assert,
     agentPluginPageWindow: browser,
     unsafeWindow: browser,
-    chatGPTAgent: { version: () => ({}) },
+    chatGPTAgent: {
+      version: () => ({}),
+      connectChatGPTSubjectHost(...args) {
+        return context.chatGPTPluginModule.connectChatGPTSubjectHost(...args);
+      }
+    },
     chatGPTSubjectHost: null,
     disconnectChatGPTNavigation: null,
     chatGPTPluginModule: {
@@ -125,8 +130,8 @@ test('provider host connects once, initial and A-B-A navigation enqueue once and
 
 test('exact Core pin and no second network parsing in assembled CSC path', () => {
   const dep = manifest.dependencies.find(d => d.name === 'AIConversationCore');
-  assert.equal(dep.commit, '80b3e1354005e381c4fc1a81a26be3c45b45dd30');
-  assert.equal(dep.git_blob_sha1, '76dfc50ecaa0d7fdca9c110d97a61b3f74b13789');
+  assert.equal(dep.commit, '629c86284b7db5fb412bb083178eaee8c06f796c');
+  assert.equal(dep.git_blob_sha1, '2279b31f7760222a1486f641636eaab74702de1f');
   const compiled = readFileSync(new URL(
     '../chatgpt-conversation-markdown-export.user.js', import.meta.url
   ), 'utf8');
@@ -198,7 +203,12 @@ test('real CSC queue and browser bridge deliver one backend identity then restor
     logDiagnostic() {},
     agentPluginPageWindow: page,
     unsafeWindow: page,
-    chatGPTAgent: { version: () => ({}) },
+    chatGPTAgent: {
+      version: () => ({}),
+      connectChatGPTSubjectHost(...args) {
+        return ctx.chatGPTPluginModule.connectChatGPTSubjectHost(...args);
+      }
+    },
     chatGPTSubjectHost: null, disconnectChatGPTNavigation: null,
     chatGPTPluginModule: {
       connectChatGPTSubjectHost() { return host; }
