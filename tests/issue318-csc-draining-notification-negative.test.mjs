@@ -138,3 +138,31 @@ test('HMAC draining while Worker configure ACK is in flight prevents resume',
     assert.equal(f.controller.snapshot().settings_applied, false);
     f.controller.dispose();
   });
+
+test('dispose during in-flight Worker config cannot resume capture',
+  async () => {
+    const f = fixture();
+    await f.controller.init();
+    await f.controller.bindWorker(f.worker);
+    const beforeResumes = f.calls.resumes;
+    const beforePauses = f.calls.pauses;
+    let respond;
+    f.worker.configure = async request => new Promise(resolve => {
+      respond = () => resolve({type:'csc-comm-configured',
+        schema:request.schema,request_id:request.request_id});
+    });
+    const options = { schema:1, mode:'replay-essentials',
+      binary:false,cross_origin:false,auth_headers:false,all:false };
+    const change = f.controller.setOptions(options,false);
+    for(let i=0;i<30&&!respond;i++){
+      await new Promise(resolve=>setImmediate(resolve));
+    }
+    assert.equal(typeof respond,'function');
+    f.controller.dispose();
+    respond();
+    await assert.rejects(change,/csc-settings-apply-failed|csc-controls-disposed/);
+    assert.equal(f.calls.resumes,beforeResumes,
+      'disposed controller must never restart Worker capture');
+    assert.ok(f.calls.pauses>beforePauses);
+    assert.equal(f.controller.snapshot().settings_applied,false);
+  });
