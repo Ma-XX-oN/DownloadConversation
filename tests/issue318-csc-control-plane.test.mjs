@@ -178,8 +178,12 @@ test('remote duplicate-tab preference change re-applies only after Worker ack', 
     cross_origin: false, auth_headers: false, all: false });
   for (let i = 0; i < 5; i++) await new Promise(resolve => setImmediate(resolve));
   assert.equal(f.control.snapshot().settings.binary, true);
-  assert.equal(f.calls.configure.at(-1).options.binary, true);
+  assert.equal(f.control.snapshot().settings_applied, false);
+  assert.equal(f.control.snapshot().settings_state, 'pending');
+  assert.equal(f.calls.configure.at(-1).options.binary, false);
+  await f.control.setOptions(f.control.snapshot().settings, true);
   assert.equal(f.control.snapshot().settings_applied, true);
+  assert.equal(f.calls.configure.at(-1).options.binary, true);
   f.deliver({ schema: 999, mode: 'everything', all: true });
   for (let i = 0; i < 5; i++) await new Promise(resolve => setImmediate(resolve));
   assert.equal(f.control.snapshot().settings_applied, false);
@@ -268,7 +272,10 @@ test('Worker cannot apply defaults before persisted shared startup policy loads'
   resolveStorage(fullOptions());
   await boot;
   await binding;
-  assert.equal(earlyCount, 0, 'no Worker configuration before GM read resolves');
+  assert.equal(earlyCount, 0, 'no Worker configuration before IDB read resolves');
+  assert.equal(f.control.snapshot().settings.mode, 'everything');
+  assert.equal(f.control.snapshot().settings_applied, false);
+  await f.control.setOptions(fullOptions(), true);
   assert.equal(f.calls.configure.at(-1).options.mode, 'everything');
   assert.equal(f.control.snapshot().settings_applied, true);
 });
