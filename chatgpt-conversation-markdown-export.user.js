@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         ChatGPT Conversation Markdown Recorder
 // @namespace    https://chatgpt.com/
-// @version      1.11.15-issue.318.21
+// @version      1.11.15-issue.318.22
 // @description  Exports the current ChatGPT conversation directly from the Conversation API as Markdown or JSONL.
 // @match        https://chatgpt.com/*
 // @match        https://chat.openai.com/*
@@ -24899,8 +24899,8 @@ Image elapsed: ${formatDuration(imageElapsed)} — Completed: ${imageCompleted}/
       });
     }
     /**
-     * Publish nonsecret state changes to registered UI subscribers.
-     * @returns {void} Publish nonsecret state changes to registered UI subscribers.
+     * Notify observers.
+     * @returns {void} Notify observers.
      */
     function notify() {
       const value = snapshot();
@@ -24982,9 +24982,10 @@ Image elapsed: ${formatDuration(imageElapsed)} — Completed: ${imageCompleted}/
           return reject('csc-settings-restart-denied');
         }
         await worker.resume();
-        if (disposed) {
+        if (service) await refreshKey();
+        if (disposed || ['draining', 'DRAINING', 'failed'].includes(keyState)) {
           await pause();
-          return reject('csc-controls-disposed');
+          return reject('csc-settings-restart-denied');
         }
       } catch {
         return reject('csc-settings-apply-failed');
@@ -24996,9 +24997,9 @@ Image elapsed: ${formatDuration(imageElapsed)} — Completed: ${imageCompleted}/
       return true;
     }
     /**
-     * Serialize control mutations and recover the scheduling chain.
+     * Serialize mutations.
      * @param {Function} operation - Asynchronous control mutation to serialize
-     * @returns {Promise<unknown>} Serialize control mutations and recover the scheduling chain.
+     * @returns {Promise<unknown>} Serialize mutations.
      */
     function schedule(operation) {
       const result = chain.then(operation);
@@ -25299,8 +25300,8 @@ Image elapsed: ${formatDuration(imageElapsed)} — Completed: ${imageCompleted}/
       return () => listeners.delete(listener);
     }
     /**
-     * Detach shared settings listeners and clear in-memory key handles.
-     * @returns {void} Detach shared settings listeners and clear in-memory key handles.
+     * Release control resources.
+     * @returns {void} Release control resources.
      */
     function dispose() {
       disposed = true;
