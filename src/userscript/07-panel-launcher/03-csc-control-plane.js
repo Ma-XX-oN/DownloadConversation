@@ -138,7 +138,11 @@
         unsubscribe = store.subscribe(() => {
           void schedule(async () => {
             try {
-              settings = cscControlValidateOptions(await store.read());
+              const latest = cscControlValidateOptions(await store.read());
+              if (JSON.stringify(latest) !== JSON.stringify(settings)) {
+                confirmedSensitive = null;
+              }
+              settings = latest;
               await apply();
             } catch {
               await pause().catch(() => {});
