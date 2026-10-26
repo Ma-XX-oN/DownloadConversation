@@ -65,6 +65,14 @@ function run(width, theme, failRotation = false) {
   });
   ${popup}
   const failRotation = ${failRotation};
+  if (!failRotation) {
+    cscControlsRegisterHmacFactory(() => ({
+      status: async () => ({state:'open',
+        key_restart:'2026-10-26T14:00:00.000Z',
+        redaction_key_epoch:1}),
+      dispose: () => {}
+    }));
+  }
   if (failRotation) {
     cscControlsRegisterHmacFactory(() => ({
       status: async () => ({ state: 'open',
