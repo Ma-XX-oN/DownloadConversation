@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         ChatGPT Conversation Markdown Recorder
 // @namespace    https://chatgpt.com/
-// @version      1.11.15-issue.318.8
+// @version      1.11.15-issue.318.9
 // @description  Exports the current ChatGPT conversation directly from the Conversation API as Markdown or JSONL.
 // @match        https://chatgpt.com/*
 // @match        https://chat.openai.com/*
@@ -24942,7 +24942,7 @@ Image elapsed: ${formatDuration(imageElapsed)} — Completed: ${imageCompleted}/
         !confirmedSensitive ||
         JSON.stringify(confirmedSensitive) !== JSON.stringify(settings)
       )) {
-        // Already-active capture must stop before new consent is requested.
+        // Pause old capture pending consent.
         try { await pause(); }
         catch { return reject('csc-settings-pause-failed'); }
         state = 'pending';
@@ -24950,6 +24950,12 @@ Image elapsed: ${formatDuration(imageElapsed)} — Completed: ${imageCompleted}/
         lastError = 'csc-sensitive-reconfirmation-required';
         notify();
         return false;
+      }
+      if (keyState === 'draining' || keyState === 'DRAINING' ||
+          keyState === 'failed') {
+        try { await pause(); }
+        catch { return reject('csc-settings-pause-failed'); }
+        return keyState === 'failed' ? reject('csc-key-status-failed') : false;
       }
       if (!worker) {
         state = 'pending';
@@ -25124,7 +25130,6 @@ Image elapsed: ${formatDuration(imageElapsed)} — Completed: ${imageCompleted}/
       notify();
       return snapshot();
     }
-    /** Require each journal event to be durable in BOTH sinks before cursor. */
     /**
      * Reconcile committed key-cycle journal entries across both sinks.
      * @returns {Promise<number>} Reconcile committed key-cycle journal entries across both sinks.
@@ -25148,7 +25153,7 @@ Image elapsed: ${formatDuration(imageElapsed)} — Completed: ${imageCompleted}/
         if (commExists !== false || genExists !== false) {
           throw new Error('csc-cycle-recovery-requires-parent');
         }
-        // Never resurrect an old key's segment after a newer scope exists.
+        // Never recreate an older key segment.
         if (event.key_restart !== publicKey) {
           throw new Error('csc-cycle-history-not-durable');
         }
