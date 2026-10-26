@@ -1,5 +1,8 @@
 import assert from 'node:assert/strict';
-import { readFileSync } from 'node:fs';
+import { readFileSync, mkdtempSync, rmSync } from 'node:fs';
+import { execFileSync } from 'node:child_process';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import test from 'node:test';
 import vm from 'node:vm';
 
@@ -132,14 +135,23 @@ test('exact Core pin and no second network parsing in assembled CSC path', () =>
   const dep = manifest.dependencies.find(d => d.name === 'AIConversationCore');
   assert.equal(dep.commit, '629c86284b7db5fb412bb083178eaee8c06f796c');
   assert.equal(dep.git_blob_sha1, '2279b31f7760222a1486f641636eaab74702de1f');
-  const compiled = readFileSync(new URL(
-    '../chatgpt-conversation-markdown-export.user.js', import.meta.url
-  ), 'utf8');
-  assert.ok(compiled.includes(dep.commit));
-  assert.ok(compiled.includes('cscPluginQueueConnect'));
-  assert.ok(compiled.includes('cscPluginQueueNavigation'));
-  assert.ok(compiled.includes('connectChatGPTSubjectHost'));
-  assert.ok(compiled.includes('0.1.0-issue.1.29'));
+  // Do not test an obsolete committed main installer: rebuild this exact tree.
+  const work = mkdtempSync(join(tmpdir(), 'dc297-rebased-'));
+  try {
+    const output = join(work, 'registered-host.user.js');
+    execFileSync(process.execPath,
+      ['scripts/build-userscript.mjs', '--output', output],
+      { cwd: new URL('../', import.meta.url), stdio: 'pipe' });
+    const compiled = readFileSync(output, 'utf8');
+    assert.ok(compiled.includes(dep.commit));
+    assert.ok(compiled.includes('cscPluginQueueConnect'));
+    assert.ok(compiled.includes('cscPluginQueueNavigation'));
+    assert.ok(compiled.includes('connectChatGPTSubjectHost'));
+    assert.ok(compiled.includes('core.createAgent'));
+    assert.doesNotMatch(compiled, /import\\(blobUrl\\)/);
+  } finally {
+    rmSync(work, { recursive: true, force: true });
+  }
 });
 
 test('real CSC queue and browser bridge deliver one backend identity then restore A on A-B-A', async () => {
