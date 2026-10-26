@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         ChatGPT Conversation Markdown Recorder
 // @namespace    https://chatgpt.com/
-// @version      1.11.15-issue.318.18
+// @version      1.11.15-issue.318.19
 // @description  Exports the current ChatGPT conversation directly from the Conversation API as Markdown or JSONL.
 // @match        https://chatgpt.com/*
 // @match        https://chat.openai.com/*
@@ -25469,6 +25469,7 @@ Image elapsed: ${formatDuration(imageElapsed)} — Completed: ${imageCompleted}/
     const randomize = dialog.querySelector('[data-csc-randomize]');
     const apply = dialog.querySelector('[data-csc-apply]');
     const closeButton = dialog.querySelector('[data-csc-close]');
+    let renderedSettings = null;
     /**
      * Render saved options and only nonsecret HMAC state.
      * @param {Object} model - Current controller snapshot
@@ -25477,10 +25478,14 @@ Image elapsed: ${formatDuration(imageElapsed)} — Completed: ${imageCompleted}/
     function render(model) {
       const { settings, settings_state, key_state, key_restart,
         expires_at_ms, error, can_randomize } = model;
-      for (const input of modes) input.checked = input.dataset.cscMode === settings.mode;
-      for (const input of flags) {
-        input.checked = settings[input.dataset.cscFlag] ||
-          (settings.all && input !== allFlags);
+      const settingsKey = JSON.stringify(settings);
+      if (settingsKey !== renderedSettings) {
+        for (const input of modes) input.checked = input.dataset.cscMode === settings.mode;
+        for (const input of flags) {
+          input.checked = settings[input.dataset.cscFlag] ||
+            (settings.all && input !== allFlags);
+        }
+        renderedSettings = settingsKey;
       }
       status.textContent = 'Worker configuration: ' + settings_state +
         (error ? ' (' + error + ')' : '');
@@ -25534,6 +25539,7 @@ Image elapsed: ${formatDuration(imageElapsed)} — Completed: ${imageCompleted}/
         'Expanded COMM recording can retain credentials and private data. ' +
         'Do you explicitly authorize these capture options?');
       if (!confirmed) {
+        renderedSettings = null;
         render(controls.snapshot());
         return;
       }
