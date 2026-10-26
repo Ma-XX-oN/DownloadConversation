@@ -5,12 +5,19 @@ import { createServer } from 'node:http';
 import os from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
+const schemaSource = readFileSync(new URL(
+  '../src/userscript/07-panel-launcher/03-csc-schema.js',
+  import.meta.url), 'utf8');
+const singletonSource = readFileSync(new URL(
+  '../src/userscript/07-panel-launcher/03-csc-singleton.js',
+  import.meta.url), 'utf8');
+
 const shared=readFileSync(new URL(
   '../src/userscript/07-panel-launcher/03-csc-shared-settings.js',
   import.meta.url),'utf8');
-const control=readFileSync(new URL(
+const control=schemaSource+readFileSync(new URL(
   '../src/userscript/07-panel-launcher/03-csc-control-plane.js',
-  import.meta.url),'utf8');
+  import.meta.url),'utf8')+singletonSource;
 test('native Chromium: shared registered controls across two browser tabs',
   {timeout:55000},async()=>{
     const html=['<!doctype html><meta charset="utf-8">',
