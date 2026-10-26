@@ -40,6 +40,8 @@ test('missing registered producer cannot report Worker capture settings applied'
     assert.notEqual(controller.snapshot().settings_state,'applied');
     assert.equal(resumed,0,
       'unregistered producer must never resume an active Worker');
+    assert.equal(configured,0,
+      'unregistered producer must not configure sensitive Worker capture');
     assert.ok(paused>0);
     await assert.rejects(controller.prepareCapture(),/csc-capture-not-ready/);
     controller.dispose();
