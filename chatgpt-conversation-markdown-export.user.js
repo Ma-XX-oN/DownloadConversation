@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         ChatGPT Conversation Markdown Recorder
 // @namespace    https://chatgpt.com/
-// @version      1.11.15-issue.318.19
+// @version      1.11.15-issue.318.20
 // @description  Exports the current ChatGPT conversation directly from the Conversation API as Markdown or JSONL.
 // @match        https://chatgpt.com/*
 // @match        https://chat.openai.com/*
@@ -24982,7 +24982,10 @@ Image elapsed: ${formatDuration(imageElapsed)} — Completed: ${imageCompleted}/
           return reject('csc-settings-restart-denied');
         }
         await worker.resume();
-        if (disposed) return reject('csc-controls-disposed');
+        if (disposed) {
+          await pause();
+          return reject('csc-controls-disposed');
+        }
       } catch {
         return reject('csc-settings-apply-failed');
       }
