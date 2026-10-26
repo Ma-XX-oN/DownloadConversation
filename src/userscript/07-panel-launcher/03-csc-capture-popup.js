@@ -105,6 +105,17 @@
     }
     const modes = [...dialog.querySelectorAll('[data-csc-mode]')];
     const flags = [...dialog.querySelectorAll('[data-csc-flag]')];
+    const allFlags = flags.find(input => input.dataset.cscFlag === 'all');
+    allFlags.addEventListener('change', () => {
+      for (const input of flags) input.checked = allFlags.checked;
+    });
+    for (const input of flags) {
+      if (input === allFlags) continue;
+      input.addEventListener('change', () => {
+        allFlags.checked = flags.filter(flag => flag !== allFlags)
+          .every(flag => flag.checked);
+      });
+    }
     const status = dialog.querySelector('[data-csc-status]');
     const identity = dialog.querySelector('[data-csc-key]');
     const due = dialog.querySelector('[data-csc-expiry]');
@@ -120,7 +131,10 @@
       const { settings, settings_state, key_state, key_restart,
         expires_at_ms, error, can_randomize } = model;
       for (const input of modes) input.checked = input.dataset.cscMode === settings.mode;
-      for (const input of flags) input.checked = settings[input.dataset.cscFlag];
+      for (const input of flags) {
+        input.checked = settings[input.dataset.cscFlag] ||
+          (settings.all && input !== allFlags);
+      }
       status.textContent = 'Worker configuration: ' + settings_state +
         (error ? ' (' + error + ')' : '');
       identity.textContent = 'Key restart: ' + (key_restart || 'not initialized');
