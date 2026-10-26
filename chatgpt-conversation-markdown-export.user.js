@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         ChatGPT Conversation Markdown Recorder
 // @namespace    https://chatgpt.com/
-// @version      1.11.15-issue.318.9
+// @version      1.11.15-issue.318.10
 // @description  Exports the current ChatGPT conversation directly from the Conversation API as Markdown or JSONL.
 // @match        https://chatgpt.com/*
 // @match        https://chat.openai.com/*
@@ -24935,6 +24935,7 @@ Image elapsed: ${formatDuration(imageElapsed)} — Completed: ${imageCompleted}/
       if (!settingsStorageAvailable) {
         return reject('csc-settings-storage-unavailable');
       }
+      if (service) await refreshKey();
       const sensitive = settings.mode === 'everything' ||
         settings.binary || settings.cross_origin ||
         settings.auth_headers || settings.all;
@@ -25146,7 +25147,7 @@ Image elapsed: ${formatDuration(imageElapsed)} — Completed: ${imageCompleted}/
             Date.parse(event.key_restart) !== event.occurred_at_ms) {
           throw new Error('csc-cycle-invalid');
         }
-        // Historical cycles are not replayed into a newer immutable fragment.
+        // No replay into later fragments.
         const commExists = await comm.hasCycle(event.id);
         const genExists = await gen.hasCycle(event.id);
         if (commExists === true && genExists === true) continue;
@@ -25252,7 +25253,7 @@ Image elapsed: ${formatDuration(imageElapsed)} — Completed: ${imageCompleted}/
       return schedule(async () => {
         try {
           await pause();
-          // Persist the old key's journal BEFORE a new key can commit.
+          // Commit old journal before rotation.
           await reconcileCycles();
           const drained = await comm.drain();
           if (drained?.durable !== true) throw new Error('csc-drain-not-durable');
