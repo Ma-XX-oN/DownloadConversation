@@ -15,7 +15,10 @@
     const channel = typeof BroadcastChannel === 'function'
       ? new BroadcastChannel('dc-csc-settings-v1') : null;
     const subscribers = new Set();
-    /** Inform live controls that the authoritative durable value changed. */
+    /**
+     * Inform controls that the durable value changed.
+     * @returns {void} Finish notifying local listeners.
+     */
     const notify = () => {
       for (const subscriber of subscribers) subscriber();
     };
@@ -27,7 +30,10 @@
       };
     }
 
-    /** Open exactly one native same-origin settings database connection. */
+    /**
+     * Open the single native same-origin database connection.
+     * @returns {Promise<IDBDatabase>} Resolve the reusable IndexedDB connection.
+     */
     const connect = () => {
       if (closed) return Promise.reject(Error('csc-settings-store-closed'));
       if (typeof indexedDB === 'undefined' ||
@@ -56,7 +62,10 @@
       });
       return opened;
     };
-    /** Read the committed current scope without a storage fallback. */
+    /**
+     * Read the latest committed shared settings.
+     * @returns {Promise<Object|null>} Resolve saved options or null if uninitialized.
+     */
     const read = async () => {
       const database = await connect();
       return new Promise((resolve, reject) => {
@@ -71,7 +80,11 @@
           transaction.error || Error('csc-settings-read-failed'));
       });
     };
-    /** Commit a full versioned scope and then broadcast invalidation. */
+    /**
+     * Commit a complete scope before notifying other tabs.
+     * @param {Object} value - Versioned nonsecret capture policy to persist
+     * @returns {Promise<void>} Resolve after the durable transaction completes.
+     */
     const write = async value => {
       if (closed) throw Error('csc-settings-store-closed');
       const database = await connect();
@@ -90,15 +103,25 @@
           transaction.error || Error('csc-settings-write-failed'));
       });
     };
-    /** Subscribe to remote invalidation and foreground reconciliation. */
+    /**
+     * Register cross-tab and foreground reconciliation.
+     * @param {Function} callback - Reconciliation listener after invalidation
+     * @returns {Function} Return a listener cleanup callback.
+     */
     const subscribe = callback => {
       if (closed) throw Error('csc-settings-store-closed');
       subscribers.add(callback);
-      /** Reconcile delayed notifications on document visibility. */
+      /**
+       * Refresh state after the document becomes visible.
+       * @returns {void} Invoke the listener only when the tab is visible.
+       */
       const visible = () => {
         if (document.visibilityState === 'visible') callback();
       };
-      /** Reconcile delayed notifications after the tab regains focus. */
+      /**
+       * Refresh state after the tab regains focus.
+       * @returns {void} Invoke the listener for foreground reconciliation.
+       */
       const focus = () => callback();
       document.addEventListener('visibilitychange', visible);
       window.addEventListener('focus', focus);
@@ -108,7 +131,10 @@
         window.removeEventListener('focus', focus);
       };
     };
-    /** Close notifications and release native database handles. */
+    /**
+     * Close the store and notification listeners.
+     * @returns {void} Release notification and database resources.
+     */
     const dispose = () => {
       closed = true;
       subscribers.clear();
