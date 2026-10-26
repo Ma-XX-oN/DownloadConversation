@@ -128,6 +128,8 @@ function run(width, theme, failRotation = false) {
     const masterReset=!master.checked&&children.every(input=>!input.checked);
     const full=dialog.querySelector('[data-csc-mode="everything"]');
     full.click();
+    await cscControlsCurrent().refreshKey();
+    const pendingDraftPreserved=full.checked;
     dialog.querySelector('[data-csc-apply]').click();
     await new Promise(resolve=>setTimeout(resolve,30));
     const blocked=shared.size===0;
@@ -156,6 +158,7 @@ function run(width, theme, failRotation = false) {
     document.getElementById('result').textContent=JSON.stringify({
       after,onePreserved:one.checked,open,focused,
       masterSelected,masterCleared,masterReset,
+      pendingDraftPreserved,
       defaultMode:initial.settings.mode,defaultAll:initial.settings.all,
       warning:warning.includes('credentials')&&warning.includes('opaque'),
       denied:blocked,confirmed:consentCount===2,
@@ -211,7 +214,7 @@ for (const [width,theme] of [[430,'light'],[430,'dark'],[900,'dark']]) {
       assert.equal(result.error,undefined,result.error);
       for(const key of ['after','onePreserved','open','focused','warning',
         'denied','confirmed','escaped','outside','viewport',
-        'masterSelected','masterCleared','masterReset']) {
+        'masterSelected','masterCleared','masterReset','pendingDraftPreserved']) {
         assert.equal(result[key],true,key+': '+JSON.stringify(result));
       }
       assert.equal(result.defaultMode,'replay-essentials');
