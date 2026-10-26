@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         ChatGPT Conversation Markdown Recorder
 // @namespace    https://chatgpt.com/
-// @version      1.11.16-issue.297.2
+// @version      1.11.16-issue.297.3
 // @description  Exports the current ChatGPT conversation directly from the Conversation API as Markdown or JSONL.
 // @match        https://chatgpt.com/*
 // @match        https://chat.openai.com/*
@@ -21920,6 +21920,10 @@ Image elapsed: ${formatDuration(imageElapsed)} — Completed: ${imageCompleted}/
       ['Generated sandbox download link', testGeneratedSandboxDownloadLink],
       ['Jump identifier resolution', testJumpIdentifierResolution],
       ['Conversation API access/schema', testConversationApiAccessAndSchema],
+      // Opt-in browser capability probes. They must never run automatically.
+      ['CSC dual clone + Worker', testCscDualCloneOwnership],
+      ['Worker + Zstd/CSP', testWorkerZstdCsp],
+      ['CSC Worker stream + directory', testCscWorkerBoundary],
       ['Favicon source comparison', null, 'Visual']
     ];
   }
@@ -22052,6 +22056,9 @@ Image elapsed: ${formatDuration(imageElapsed)} — Completed: ${imageCompleted}/
     refreshTestMatrix();
     try {
       for (const [name, fn, type] of builtInTests()) {
+        if (name === 'CSC Worker stream + directory') continue;
+        if (name === 'CSC dual clone + Worker') continue;
+        if (name === 'Worker + Zstd/CSP') continue;
         if (type !== 'Visual') await executeBuiltInTest(name, fn);
       }
     } finally {
