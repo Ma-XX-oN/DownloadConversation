@@ -46,3 +46,39 @@ test('missing registered producer cannot report Worker capture settings applied'
     await assert.rejects(controller.prepareCapture(),/csc-capture-not-ready/);
     controller.dispose();
   });
+
+test('HMAC open state without valid key_restart cannot arm Worker capture',
+  async () => {
+    const context = vm.createContext({});
+    vm.runInContext(schema+control+'\nthis.create=cscCaptureControlPlane;',
+      context);
+    let resumed=0, configured=0;
+    const service = {
+      status:async()=>({state:'open',key_restart:'not-a-utc-date',
+        redaction_key_epoch:2}), dispose:()=>{}
+    };
+    const store = {read:async()=>null,write:async()=>{},
+      subscribe:()=>()=>{}};
+    const worker = {
+      pause:async()=>{},
+      resume:async()=>{resumed++;},
+      configure:async request=>{
+        configured++;
+        return {type:'csc-comm-configured',schema:request.schema,
+          request_id:request.request_id};
+      },
+      provisionTarget:{postMessage(){}},
+      awaitKey:async()=>({})
+    };
+    const controller = context.create({store,serviceFactory:()=>service,
+      origin:'https://chatgpt.com',version:'1.11.15-issue.318.31'});
+    await controller.init();
+    await assert.rejects(controller.bindWorker(worker),/csc-key-status-failed/,
+      'corrupt public HMAC scope must fail closed before Worker configuration');
+    const snapshot=controller.snapshot();
+    assert.equal(snapshot.settings_applied,false);
+    assert.equal(snapshot.key_state,'failed');
+    assert.equal(resumed,0);
+    assert.equal(configured,0);
+    controller.dispose();
+  });
