@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         ChatGPT Conversation Markdown Recorder
 // @namespace    https://chatgpt.com/
-// @version      1.11.15
+// @version      1.11.15-issue.318.1
 // @description  Exports the current ChatGPT conversation directly from the Conversation API as Markdown or JSONL.
 // @match        https://chatgpt.com/*
 // @match        https://chat.openai.com/*
@@ -24677,6 +24677,839 @@ Image elapsed: ${formatDuration(imageElapsed)} — Completed: ${imageCompleted}/
     recordingGroupUuid = sessionStorage.getItem(RECORDING_GROUP_UUID_KEY);
     void recordingGroupClaim();
   }
+  /**
+   * Same-realm, same-origin shared CSC preferences for registered plugins.
+   * IndexedDB is authoritative. BroadcastChannel is invalidation only.
+   * No GM grants, localStorage fallback, key bytes or page postMessage.
+   * @returns {Object} Asynchronous durable store and tab notifications.
+   */
+  function cscControlSharedStore() {
+    const dbName = 'dc-csc-shared-controls-v1';
+    const table = 'preferences';
+    const key = 'dc-csc-capture-options-v1';
+    let opened = null;
+    let closed = false;
+    const owner = Array.from(crypto.getRandomValues(new Uint8Array(16)),
+      byte => byte.toString(16).padStart(2, '0')).join('');
+    const channel = typeof BroadcastChannel === 'function'
+      ? new BroadcastChannel('dc-csc-settings-v1') : null;
+    const subscribers = new Set();
+    /**
+     * Inform controls that the durable value changed.
+     * @returns {void} Finish notifying local listeners.
+     */
+    const notify = () => {
+      for (const subscriber of subscribers) subscriber();
+    };
+    if (channel) {
+      channel.onmessage = event => {
+        const msg = event?.data;
+        if (msg?.type === 'settings-committed-v1' &&
+            msg.key === key && msg.owner !== owner) notify();
+      };
+    }
+
+    /**
+     * Open the single native same-origin database connection.
+     * @returns {Promise<IDBDatabase>} Resolve the reusable IndexedDB connection.
+     */
+    const connect = () => {
+      if (closed) return Promise.reject(Error('csc-settings-store-closed'));
+      if (typeof indexedDB === 'undefined' ||
+          typeof indexedDB.open !== 'function') {
+        return Promise.reject(Error('csc-settings-indexeddb-unavailable'));
+      }
+      if (opened) return opened;
+      opened = new Promise((resolve, reject) => {
+        const request = indexedDB.open(dbName, 1);
+        request.onupgradeneeded = () => {
+          if (!request.result.objectStoreNames.contains(table)) {
+            request.result.createObjectStore(table);
+          }
+        };
+        request.onerror = () => reject(
+          request.error || Error('csc-settings-open-failed'));
+        request.onblocked = () => reject(Error('csc-settings-open-blocked'));
+        request.onsuccess = () => {
+          const database = request.result;
+          database.onversionchange = () => database.close();
+          resolve(database);
+        };
+      }).catch(error => {
+        opened = null;
+        throw error;
+      });
+      return opened;
+    };
+    /**
+     * Read the latest committed shared settings.
+     * @returns {Promise<Object|null>} Resolve saved options or null if uninitialized.
+     */
+    const read = async () => {
+      const database = await connect();
+      return new Promise((resolve, reject) => {
+        const transaction = database.transaction(table, 'readonly');
+        const request = transaction.objectStore(table).get(key);
+        let value;
+        request.onsuccess = () => { value = request.result ?? null; };
+        transaction.oncomplete = () => resolve(value);
+        transaction.onabort = () => reject(
+          transaction.error || Error('csc-settings-read-aborted'));
+        transaction.onerror = () => reject(
+          transaction.error || Error('csc-settings-read-failed'));
+      });
+    };
+    /**
+     * Commit a complete scope before notifying other tabs.
+     * @param {Object} value - Versioned nonsecret capture policy to persist
+     * @returns {Promise<void>} Resolve after the durable transaction completes.
+     */
+    const write = async value => {
+      if (closed) throw Error('csc-settings-store-closed');
+      const database = await connect();
+      return new Promise((resolve, reject) => {
+        const transaction = database.transaction(table, 'readwrite');
+        transaction.objectStore(table).put(value, key);
+        transaction.oncomplete = () => {
+          channel?.postMessage({
+            type: 'settings-committed-v1', key, owner
+          });
+          resolve();
+        };
+        transaction.onabort = () => reject(
+          transaction.error || Error('csc-settings-write-aborted'));
+        transaction.onerror = () => reject(
+          transaction.error || Error('csc-settings-write-failed'));
+      });
+    };
+    /**
+     * Register cross-tab and foreground reconciliation.
+     * @param {Function} callback - Reconciliation listener after invalidation
+     * @returns {Function} Return a listener cleanup callback.
+     */
+    const subscribe = callback => {
+      if (closed) throw Error('csc-settings-store-closed');
+      subscribers.add(callback);
+      /**
+       * Refresh state after the document becomes visible.
+       * @returns {void} Invoke the listener only when the tab is visible.
+       */
+      const visible = () => {
+        if (document.visibilityState === 'visible') callback();
+      };
+      /**
+       * Refresh state after the tab regains focus.
+       * @returns {void} Invoke the listener for foreground reconciliation.
+       */
+      const focus = () => callback();
+      document.addEventListener('visibilitychange', visible);
+      window.addEventListener('focus', focus);
+      return () => {
+        subscribers.delete(callback);
+        document.removeEventListener('visibilitychange', visible);
+        window.removeEventListener('focus', focus);
+      };
+    };
+    /**
+     * Close the store and notification listeners.
+     * @returns {void} Release notification and database resources.
+     */
+    const dispose = () => {
+      closed = true;
+      subscribers.clear();
+      channel?.close();
+      if (opened) void opened.then(database => database.close(),
+        () => undefined);
+    };
+    return Object.freeze({ read, write, subscribe, dispose });
+  }
+
+  /** DC #318.  Versioned UI policy and HMAC orchestration; no Worker code. */
+  const CSC_CONTROL_SETTINGS_KEY = 'dc-csc-capture-options-v1';
+  /** Versioned capture settings schema used at the Worker boundary. */
+  const CSC_CONTROL_SCHEMA = 1;
+  /** Default minimal recording policy, with all sensitive options disabled. */
+  const CSC_CONTROL_DEFAULTS = Object.freeze({
+    schema: CSC_CONTROL_SCHEMA, mode: 'replay-essentials',
+    binary: false, cross_origin: false, auth_headers: false, all: false
+  });
+  /**
+   * Validate and freeze untrusted stored COMM capture options.
+   * @param {Object} input - Untrusted stored or proposed option object
+   * @returns {Object} Validate and freeze untrusted stored COMM capture options.
+   */
+  function cscControlValidateOptions(input) {
+    if (!input || typeof input !== 'object' || Array.isArray(input) ||
+        input.schema !== CSC_CONTROL_SCHEMA ||
+        !['replay-essentials', 'everything'].includes(input.mode)) {
+      throw new Error('csc-options-invalid');
+    }
+    const keys = ['binary', 'cross_origin', 'auth_headers', 'all'];
+    if (keys.some(key => typeof input[key] !== 'boolean')) {
+      throw new Error('csc-options-invalid');
+    }
+    return Object.freeze({
+      schema: CSC_CONTROL_SCHEMA, mode: input.mode,
+      binary: input.binary, cross_origin: input.cross_origin,
+      auth_headers: input.auth_headers, all: input.all
+    });
+  }
+  /**
+   * Create the fail-closed CSC control plane without owning a Worker.
+   * @param {Object} deps - Injected persistence, HMAC factory, version and origin
+   * @returns {Object} Create the fail-closed CSC control plane without owning a Worker.
+   */
+  function cscCaptureControlPlane(deps) {
+    const { store, serviceFactory, version, origin } = deps;
+    let settings = CSC_CONTROL_DEFAULTS;
+    let service = null;
+    let worker = null;
+    let comm = null;
+    let gen = null;
+    let applied = false;
+    let state = 'pending';
+    let keyState = 'unavailable';
+    let publicKey = null;
+    let expiry = null;
+    let epoch = 0;
+    let seq = 0;
+    let initPromise = null;
+    let settingsStorageAvailable = true;
+    let confirmedSensitive = null;
+    let unsubscribe = null;
+    let chain = Promise.resolve();
+    let lastError = null;
+    const listeners = new Set();
+    /**
+     * Expose only nonsecret public state for the recorder panel.
+     * @returns {Object} Expose only nonsecret public state for the recorder panel.
+     */
+    function snapshot() {
+      return Object.freeze({
+        settings, settings_state: state, settings_applied: applied,
+        key_state: keyState, key_restart: publicKey, expires_at_ms: expiry,
+        epoch, error: lastError,
+        can_randomize: applied && keyState === 'open' && Boolean(worker && gen && comm)
+      });
+    }
+    /**
+     * Publish nonsecret state changes to registered UI subscribers.
+     * @returns {void} Publish nonsecret state changes to registered UI subscribers.
+     */
+    function notify() {
+      const value = snapshot();
+      for (const listener of listeners) listener(value);
+    }
+    /**
+     * Mark settings as unapplied and throw a deterministic failure.
+     * @param {string} reason - Stable nonsecret failure identifier
+     * @returns {never} Mark settings as unapplied and throw a deterministic failure.
+     */
+    function reject(reason) {
+      lastError = reason;
+      applied = false;
+      state = 'failed';
+      notify();
+      throw new Error(reason);
+    }
+    /**
+     * Pause COMM admission before changing capture policy or key scope.
+     * @returns {Promise<void>} Pause COMM admission before changing capture policy or key scope.
+     */
+    async function pause() {
+      applied = false;
+      state = 'pending';
+      notify();
+      if (worker) await worker.pause();
+    }
+    /**
+     * Apply persisted options and verify a correlated Worker acknowledgement.
+     * @returns {Promise<boolean>} Apply persisted options and verify a correlated Worker acknowledgement.
+     */
+    async function apply() {
+      if (!settingsStorageAvailable) {
+        return reject('csc-settings-storage-unavailable');
+      }
+      const sensitive = settings.mode === 'everything' ||
+        settings.binary || settings.cross_origin ||
+        settings.auth_headers || settings.all;
+      if (sensitive && (
+        !confirmedSensitive ||
+        JSON.stringify(confirmedSensitive) !== JSON.stringify(settings)
+      )) {
+        state = 'pending';
+        applied = false;
+        lastError = 'csc-sensitive-reconfirmation-required';
+        notify();
+        return false;
+      }
+      if (!worker) {
+        state = 'pending';
+        applied = false;
+        notify();
+        return false;
+      }
+      try {
+        await pause();
+        const requestId = 'csc-options-' + ++seq;
+        const payload = {
+          type: 'csc-comm-configure', schema: CSC_CONTROL_SCHEMA,
+          request_id: requestId, options: { ...settings, origin }
+        };
+        const ack = await worker.configure(payload);
+        if (ack?.type !== 'csc-comm-configured' ||
+            ack.schema !== CSC_CONTROL_SCHEMA ||
+            ack.request_id !== requestId) return reject('csc-settings-ack-invalid');
+        await worker.resume();
+      } catch {
+        return reject('csc-settings-apply-failed');
+      }
+      applied = true;
+      state = 'applied';
+      lastError = null;
+      notify();
+      return true;
+    }
+    /**
+     * Serialize control mutations and recover the scheduling chain.
+     * @param {Function} operation - Asynchronous control mutation to serialize
+     * @returns {Promise<unknown>} Serialize control mutations and recover the scheduling chain.
+     */
+    function schedule(operation) {
+      const result = chain.then(operation);
+      chain = result.catch(() => undefined);
+      return result;
+    }
+    /**
+     * Load shared preferences and initialize the HMAC service once.
+     * @returns {Promise<Object>} Load shared preferences and initialize the HMAC service once.
+     */
+    async function init() {
+      if (initPromise) return initPromise;
+      initPromise = (async () => {
+      try {
+        unsubscribe = store.subscribe(() => {
+          void schedule(async () => {
+            try {
+              settings = cscControlValidateOptions(await store.read());
+              await apply();
+            } catch {
+              await pause().catch(() => {});
+              state = 'failed';
+              lastError = 'csc-remote-settings-invalid';
+              notify();
+            }
+          });
+        });
+        const raw = await store.read();
+        settings = raw == null ? CSC_CONTROL_DEFAULTS :
+          cscControlValidateOptions(raw);
+      } catch {
+        settings = CSC_CONTROL_DEFAULTS;
+        settingsStorageAvailable = false;
+        state = 'failed';
+        lastError = 'csc-settings-storage-unavailable';
+      }
+      try {
+        if (typeof serviceFactory === 'function') service = serviceFactory();
+        if (service) await refreshKey();
+      } catch {
+        keyState = 'failed';
+        lastError = 'csc-key-service-unavailable';
+      }
+      notify();
+      return snapshot();
+      })();
+      return initPromise;
+    }
+    /**
+     * Persist confirmed options and request a Worker settings transition.
+     * @param {Object} next - Versioned user-selected capture options
+     * @param {boolean} confirmed - Explicit consent for expanded sensitive capture
+     * @returns {Promise<boolean>} Persist confirmed options and request a Worker settings transition.
+     */
+    async function setOptions(next, confirmed) {
+      const options = cscControlValidateOptions(next);
+      const broadened = options.mode === 'everything' ||
+        options.all || options.binary || options.cross_origin ||
+        options.auth_headers;
+      if (broadened && confirmed !== true) {
+        throw new Error('csc-sensitive-capture-not-confirmed');
+      }
+      return schedule(async () => {
+        await init();
+        try { await pause(); }
+        catch { return reject('csc-settings-pause-failed'); }
+        try {
+          await store.write(options);
+        } catch {
+          return reject('csc-settings-persist-failed');
+        }
+        settingsStorageAvailable = true;
+        settings = options;
+        confirmedSensitive = confirmed === true ? options : null;
+        return apply();
+      });
+    }
+    /**
+     * Bind a concrete Worker control adapter and replay saved options.
+     * @param {Object} adapter - Correlated Worker settings and key provisioning adapter
+     * @returns {Promise<boolean>} Bind a concrete Worker control adapter and replay saved options.
+     */
+    async function bindWorker(adapter) {
+      if (!adapter || !['pause', 'configure', 'resume', 'awaitKey']
+        .every(name => typeof adapter[name] === 'function') ||
+        !adapter.provisionTarget || typeof adapter.provisionTarget.postMessage !== 'function') {
+        throw new Error('csc-worker-adapter-invalid');
+      }
+      return schedule(async () => {
+        await init();
+        worker = adapter;
+        return apply();
+      });
+    }
+    /**
+     * Bind durable GEN and COMM event/boundary adapters.
+     * @param {Object} ports - Required GEN and COMM sink ports
+     * @returns {void} Bind durable GEN and COMM event/boundary adapters.
+     */
+    function bindSinks(ports) {
+      if (!ports || !ports.gen || !ports.comm ||
+          !['beginSegment', 'writeCycle', 'hasCycle'].every(key =>
+            typeof ports.gen[key] === 'function') ||
+          !['drain', 'beginKeyBoundary', 'writeCycle', 'hasCycle'].every(key =>
+            typeof ports.comm[key] === 'function')) {
+        throw new Error('csc-sinks-invalid');
+      }
+      gen = ports.gen;
+      comm = ports.comm;
+      notify();
+    }
+    /**
+     * Read authoritative HMAC status without disclosing key bytes.
+     * @returns {Promise<Object>} Read authoritative HMAC status without disclosing key bytes.
+     */
+    async function refreshKey() {
+      if (!service) {
+        keyState = 'unavailable';
+        notify();
+        return snapshot();
+      }
+      try {
+        const status = await service.status();
+        keyState = status.state;
+        publicKey = status.key_restart || null;
+        expiry = status.expires_at_ms ?? null;
+        epoch = status.redaction_key_epoch ?? 0;
+        if (keyState === 'draining' || keyState === 'DRAINING') await pause();
+      } catch {
+        keyState = 'failed';
+        lastError = 'csc-key-status-failed';
+        publicKey = null;
+        expiry = null;
+        await pause().catch(() => {});
+      }
+      notify();
+      return snapshot();
+    }
+    /** Require each journal event to be durable in BOTH sinks before cursor. */
+    /**
+     * Reconcile committed key-cycle journal entries across both sinks.
+     * @returns {Promise<number>} Reconcile committed key-cycle journal entries across both sinks.
+     */
+    async function reconcileCycles() {
+      if (!service || !gen || !comm || !worker) {
+        throw new Error('csc-cycle-ports-not-ready');
+      }
+      const events = await service.cycleEvents(0);
+      for (const event of events) {
+        if (event.type !== 'hmac-key-cycle' ||
+            event.id !== 'hmac-key-cycle:' + event.key_restart ||
+            !Number.isSafeInteger(event.epoch) ||
+            Date.parse(event.key_restart) !== event.occurred_at_ms) {
+          throw new Error('csc-cycle-invalid');
+        }
+        // Historical cycles are not replayed into a newer immutable fragment.
+        const commExists = await comm.hasCycle(event.id);
+        const genExists = await gen.hasCycle(event.id);
+        if (commExists === true && genExists === true) continue;
+        if (commExists !== false || genExists !== false) {
+          throw new Error('csc-cycle-recovery-requires-parent');
+        }
+        // Never resurrect an old key's segment after a newer scope exists.
+        if (event.key_restart !== publicKey) {
+          throw new Error('csc-cycle-history-not-durable');
+        }
+        const header = Object.freeze({
+          version, key_restart: event.key_restart
+        });
+        const drained = await comm.drain();
+        if (drained?.durable !== true) throw new Error('csc-drain-not-durable');
+        const boundary = await comm.beginKeyBoundary(header);
+        if (boundary?.durable !== true ||
+            boundary.key_restart !== event.key_restart) {
+          throw new Error('csc-comm-boundary-unacknowledged');
+        }
+        const begin = await gen.beginSegment(header);
+        if (begin?.durable !== true ||
+            begin.key_restart !== event.key_restart) {
+          throw new Error('csc-gen-boundary-unacknowledged');
+        }
+        for (const sink of [comm, gen]) {
+          const ack = await sink.writeCycle(event);
+          if (ack?.durable !== true || ack.id !== event.id) {
+            throw new Error('csc-cycle-not-durable');
+          }
+        }
+      }
+      return events.length;
+    }
+    /**
+     * Admit one capture only after settings and HMAC provisioning.
+     * @returns {Promise<Object>} Admit one capture only after settings and HMAC provisioning.
+     */
+    async function prepareCapture() {
+      if (!applied || !service || !worker || !gen || !comm) {
+        throw new Error('csc-capture-not-ready');
+      }
+      await refreshKey();
+      if (!applied || keyState === 'failed' ||
+          keyState === 'draining' || keyState === 'DRAINING') {
+        throw new Error('csc-capture-not-ready');
+      }
+      const admission = await service.admit();
+      try {
+        await refreshKey();
+        if (!applied || keyState !== 'open' ||
+            publicKey !== admission.metadata.key_restart) {
+          throw new Error('csc-key-admission-scope-changed');
+        }
+        await reconcileCycles();
+        service.provision(admission.token, worker.provisionTarget);
+        const ack = await worker.awaitKey(admission.token);
+        if (ack?.type !== 'csc-comm-key-ready' ||
+            ack.token !== admission.token) {
+          throw new Error('csc-key-provision-unacknowledged');
+        }
+        return admission;
+      } catch (error) {
+        try { await service.complete(admission.token); }
+        catch {
+          await pause().catch(() => {});
+          return reject('csc-admission-release-failed');
+        }
+        await pause().catch(() => {});
+        throw error;
+      }
+    }
+    /**
+     * Release one completed admission without discarding rotation fences.
+     * @param {string} token - Producer-issued active admission token
+     * @returns {Promise<void>} Release one completed admission without discarding rotation fences.
+     */
+    async function completeCapture(token) {
+      if (!service) throw new Error('csc-key-service-unavailable');
+      try {
+        await service.complete(token);
+        await refreshKey();
+        if (keyState === 'open' && state === 'pending' &&
+            worker && comm && gen) {
+          await reconcileCycles();
+          await apply();
+        }
+      } catch {
+        await pause().catch(() => {});
+        return reject('csc-key-completion-failed');
+      }
+    }
+    /**
+     * Rotate only after explicit consent and durable output drainage.
+     * @param {boolean} confirmed - Explicit confirmation supplied by the UI
+     * @returns {Promise<Object>} Rotate only after explicit consent and durable output drainage.
+     */
+    async function randomize(confirmed) {
+      if (confirmed !== true) throw new Error('csc-randomize-unconfirmed');
+      if (!service || !worker || !gen || !comm || !applied) {
+        throw new Error('csc-randomize-ports-not-ready');
+      }
+      return schedule(async () => {
+        try {
+          await pause();
+          // Persist the old key's journal BEFORE a new key can commit.
+          await reconcileCycles();
+          const drained = await comm.drain();
+          if (drained?.durable !== true) throw new Error('csc-drain-not-durable');
+          const result = await service.randomize(true);
+          await refreshKey();
+          if (result.state !== 'COMMITTED') {
+            state = 'pending';
+            notify();
+            return result;
+          }
+          await reconcileCycles();
+          await apply();
+          return result;
+        } catch {
+          return reject('csc-randomize-failed');
+        }
+      });
+    }
+    /**
+     * Subscribe to nonsecret control state changes.
+     * @param {Function} listener - UI observer receiving snapshots
+     * @returns {Function} Subscribe to nonsecret control state changes.
+     */
+    function onChange(listener) {
+      listeners.add(listener);
+      listener(snapshot());
+      return () => listeners.delete(listener);
+    }
+    /**
+     * Detach shared settings listeners and clear in-memory key handles.
+     * @returns {void} Detach shared settings listeners and clear in-memory key handles.
+     */
+    function dispose() {
+      unsubscribe?.();
+      store.dispose?.();
+      service?.dispose();
+      applied = false;
+      state = 'pending';
+      listeners.clear();
+    }
+    return Object.freeze({
+      init, snapshot, onChange, setOptions, bindWorker, bindSinks,
+      refreshKey, reconcileCycles, prepareCapture, completeCapture,
+      randomize, dispose
+    });
+  }
+  /** Shared control owner retained for the lifetime of this document. */
+  let cscCaptureControls = null;
+  /** Factory registered by the authorised #359 assembled producer bridge. */
+  let cscRegisteredHmacFactory = null;
+  /**
+   * Register the #313 HMAC factory before any controller construction.
+   * @param {Function} factory - Factory supplied by the accepted producer.
+   * @returns {void} Installs only a callable unclaimed source dependency.
+   */
+  function cscControlsRegisterHmacFactory(factory) {
+    if (typeof factory !== 'function' || cscCaptureControls) {
+      throw new Error('csc-hmac-factory-invalid-or-late');
+    }
+    cscRegisteredHmacFactory = factory;
+  }
+  /**
+   * Return the singleton control port shared by startup and the UI.
+   * @returns {Object} Return the singleton control port shared by startup and the UI.
+   */
+  function cscControlsCurrent() {
+    if (!cscCaptureControls) {
+      cscCaptureControls = cscCaptureControlPlane({
+        store: cscControlSharedStore(),
+        serviceFactory: cscRegisteredHmacFactory,
+        version: VERSION,
+        origin: location.origin
+      });
+    }
+    return cscCaptureControls;
+  }
+
+  /** DC #318 popup, mounted immediately beside the existing '1' label. */
+  /**
+   * Mount the recorder control popup without changing recording-group semantics.
+   * @param {HTMLElement} panel - Existing recorder panel
+   * @returns {void} Mount the recorder control popup without changing recording-group semantics.
+   */
+  function bindCscCapturePopup(panel) {
+    const group = panel.querySelector('[data-role="record-one-group"]');
+    const groupLabel = group?.closest('label');
+    if (!groupLabel || panel.querySelector('[data-role="csc-popup-trigger"]')) return;
+    const controls = cscControlsCurrent();
+    const trigger = document.createElement('button');
+    trigger.type = 'button';
+    trigger.className = 'tm-icon-button tm-csc-gear';
+    trigger.dataset.role = 'csc-popup-trigger';
+    trigger.textContent = '⚙';
+    trigger.setAttribute('aria-label', 'COMM capture and HMAC settings');
+    trigger.setAttribute('aria-controls', 'tm-csc-capture-popup');
+    trigger.setAttribute('aria-haspopup', 'dialog');
+    trigger.setAttribute('aria-expanded', 'false');
+    groupLabel.after(trigger);
+
+    const dialog = document.createElement('section');
+    dialog.id = 'tm-csc-capture-popup';
+    dialog.className = 'tm-csc-settings-popup';
+    dialog.dataset.role = 'csc-popup';
+    dialog.setAttribute('role', 'dialog');
+    dialog.setAttribute('aria-label', 'COMM capture settings');
+    dialog.setAttribute('aria-modal', 'false');
+    dialog.hidden = true;
+    dialog.innerHTML = [
+      '<div class="tm-csc-head"><strong>COMM capture settings</strong>',
+      '<button type="button" data-csc-close aria-label="Close COMM settings">×</button></div>',
+      '<fieldset><legend>Capture scope</legend>',
+      '<label><input type="radio" name="tm-csc-mode" data-csc-mode="replay-essentials">',
+      ' Replay essentials</label>',
+      '<small>Same-origin JSON and SSE capture for replay, plus network',
+      ' provenance (method, URL, status, timing and sanitized headers).',
+      ' Binary bodies, cross-origin data and authentication-related headers',
+      ' are off by default. Unsupported or inaccessible content is recorded',
+      ' as omitted or incomplete, not silently discarded.</small>',
+      '<label><input type="radio" name="tm-csc-mode" data-csc-mode="everything">',
+      ' Record everything browser-accessible</label>',
+      '<small>Opt-in to all accessible request/response content, not an',
+      ' unlimited promise about browser-opaque or blocked bodies.</small>',
+      '</fieldset>',
+      '<fieldset><legend>Additional capture classes</legend>',
+      '<label><input type="checkbox" data-csc-flag="binary"> Binary payloads</label>',
+      '<label><input type="checkbox" data-csc-flag="cross_origin">',
+      ' Readable cross-origin response bodies</label>',
+      '<label><input type="checkbox" data-csc-flag="auth_headers">',
+      ' Authentication-related headers</label>',
+      '<label><input type="checkbox" data-csc-flag="all">',
+      ' All of the above</label>',
+      '</fieldset>',
+      '<p id="tm-csc-privacy-warning" class="tm-csc-warning">Privacy warning: expanded capture can',
+      ' retain credentials, private messages and sensitive network data.',
+      ' Browser-inaccessible opaque responses remain unavailable.',
+      ' HMAC processing never authorizes raw key export.</p>',
+      '<div class="tm-csc-status" role="status" aria-live="polite"',
+      ' data-csc-status></div>',
+      '<div class="tm-csc-key"><strong>Persistent HMAC</strong>',
+      '<div data-csc-key></div><div data-csc-expiry></div>',
+      '<button type="button" data-csc-randomize>Randomize…</button></div>',
+      '<div class="tm-csc-actions"><button type="button" data-csc-apply>',
+      ' Apply capture settings</button></div>'
+    ].join('');
+    dialog.setAttribute('aria-describedby', 'tm-csc-privacy-warning');
+    const section = panel.querySelector('.tm-recording-section');
+    section.append(dialog);
+    if (!document.getElementById('tm-csc-capture-style')) {
+      const style = document.createElement('style');
+      style.id = 'tm-csc-capture-style';
+      style.textContent = [
+        '#tm-conversation-recorder .tm-csc-gear{margin-left:2px;',
+        'width:23px;height:23px;min-width:23px;font-size:15px;',
+        'border:1px solid currentColor;border-radius:5px;background:transparent;',
+        'color:inherit;cursor:pointer}',
+        '#tm-conversation-recorder .tm-recording-section{position:relative}',
+        '#tm-conversation-recorder .tm-csc-settings-popup{position:absolute;',
+        'z-index:120;right:6px;top:68px;max-height:70vh;overflow-y:auto;',
+        'width:min(340px,calc(100vw - 35px));box-sizing:border-box;',
+        'padding:12px;background:var(--main-surface-primary,Canvas);',
+        'color:var(--text-primary,CanvasText);border:1px solid currentColor;',
+        'border-radius:8px;box-shadow:0 4px 16px #0005}',
+        '#tm-conversation-recorder .tm-csc-settings-popup[hidden]{display:none}',
+        '#tm-conversation-recorder .tm-csc-head{display:flex;',
+        'align-items:center;justify-content:space-between;gap:8px}',
+        '#tm-conversation-recorder .tm-csc-settings-popup fieldset{display:grid;',
+        'gap:7px;margin:8px 0;padding:7px;border:1px solid currentColor}',
+        '#tm-conversation-recorder .tm-csc-settings-popup label{display:block}',
+        '#tm-conversation-recorder .tm-csc-settings-popup small{display:block;',
+        'font-size:11px;line-height:1.35;opacity:.85}',
+        '#tm-conversation-recorder .tm-csc-warning{font-size:12px;',
+        'line-height:1.4;border-left:3px solid #c88700;padding-left:8px}',
+        '#tm-conversation-recorder .tm-csc-key{margin-top:8px}',
+        '#tm-conversation-recorder .tm-csc-key div{overflow-wrap:anywhere}',
+        '#tm-conversation-recorder .tm-csc-actions{margin-top:10px}',
+        '#tm-conversation-recorder .tm-csc-settings-popup button{',
+        'cursor:pointer;background:transparent;color:inherit;',
+        'border:1px solid currentColor;border-radius:4px;padding:4px 8px}'
+      ].join('');
+      document.head.append(style);
+    }
+    const modes = [...dialog.querySelectorAll('[data-csc-mode]')];
+    const flags = [...dialog.querySelectorAll('[data-csc-flag]')];
+    const status = dialog.querySelector('[data-csc-status]');
+    const identity = dialog.querySelector('[data-csc-key]');
+    const due = dialog.querySelector('[data-csc-expiry]');
+    const randomize = dialog.querySelector('[data-csc-randomize]');
+    const apply = dialog.querySelector('[data-csc-apply]');
+    const closeButton = dialog.querySelector('[data-csc-close]');
+    /**
+     * Render saved options and only nonsecret HMAC state.
+     * @param {Object} model - Current controller snapshot
+     * @returns {void} Render saved options and only nonsecret HMAC state.
+     */
+    function render(model) {
+      const { settings, settings_state, key_state, key_restart,
+        expires_at_ms, error, can_randomize } = model;
+      for (const input of modes) input.checked = input.dataset.cscMode === settings.mode;
+      for (const input of flags) input.checked = settings[input.dataset.cscFlag];
+      status.textContent = 'Worker configuration: ' + settings_state +
+        (error ? ' (' + error + ')' : '');
+      identity.textContent = 'Key restart: ' + (key_restart || 'not initialized');
+      identity.setAttribute('title', 'Nonsecret key-cycle timestamp, never key bytes');
+      due.textContent = 'Status: ' + key_state + '; next due: ' +
+        (Number.isFinite(expires_at_ms) ?
+          new Date(expires_at_ms).toLocaleString() : 'unavailable');
+      randomize.disabled = !can_randomize;
+    }
+    /**
+     * Dismiss the popup and optionally restore keyboard focus.
+     * @param {boolean} refocus - Restore focus to the triggering button
+     * @returns {void} Dismiss the popup and optionally restore keyboard focus.
+     */
+    function close(refocus = false) {
+      dialog.hidden = true;
+      trigger.setAttribute('aria-expanded', 'false');
+      if (refocus) trigger.focus();
+    }
+    trigger.addEventListener('click', event => {
+      event.stopPropagation();
+      const open = dialog.hidden;
+      dialog.hidden = !open;
+      trigger.setAttribute('aria-expanded', String(open));
+      if (open) {
+        modes[0].focus();
+        void controls.refreshKey().catch(() => {});
+      }
+    });
+    closeButton.addEventListener('click', () => close(true));
+    dialog.addEventListener('click', event => event.stopPropagation());
+    panel.addEventListener('keydown', event => {
+      if (event.key === 'Escape' && !dialog.hidden) {
+        close(true);
+        event.stopPropagation();
+      }
+    });
+    document.addEventListener('pointerdown', event => {
+      if (!dialog.hidden && !dialog.contains(event.target) &&
+          event.target !== trigger) close();
+    });
+    panel.querySelector('.tm-close')?.addEventListener('click', () => close());
+    apply.addEventListener('click', () => {
+      const next = { schema: CSC_CONTROL_SCHEMA,
+        mode: modes.find(item => item.checked)?.dataset.cscMode || 'replay-essentials' };
+      for (const input of flags) next[input.dataset.cscFlag] = input.checked;
+      const sensitive = next.mode === 'everything' ||
+        next.binary || next.cross_origin || next.auth_headers || next.all;
+      const confirmed = !sensitive || window.confirm(
+        'Expanded COMM recording can retain credentials and private data. ' +
+        'Do you explicitly authorize these capture options?');
+      if (!confirmed) {
+        render(controls.snapshot());
+        return;
+      }
+      apply.disabled = true;
+      void controls.setOptions(next, confirmed).catch(error => {
+        status.textContent = 'Settings rejected: ' + error.message;
+      }).finally(() => { apply.disabled = false; });
+    });
+    randomize.addEventListener('click', () => {
+      if (!window.confirm('Randomize the shared HMAC key? Active captures must ' +
+        'drain under the old key and GEN/COMM boundaries must be durable.')) return;
+      randomize.disabled = true;
+      void controls.randomize(true).catch(error => {
+        status.textContent = 'Randomize failed: ' + error.message;
+      }).finally(() => {
+        randomize.disabled = !controls.snapshot().can_randomize;
+      });
+    });
+    controls.onChange(render);
+    void controls.init().catch(error => {
+      status.textContent = 'CSC startup failed: ' + error.message;
+    });
+  }
 
   /**
    * Returns the AgentPanelSpeaker config-reset icon using its exact PNG bytes.
@@ -25661,6 +26494,7 @@ Image elapsed: ${formatDuration(imageElapsed)} — Completed: ${imageCompleted}/
       if (launcher) launcher.style.display = '';
     });
     bindDiagnosticCategoryPopup(panel);
+    bindCscCapturePopup(panel);
     const diagnostics = panel.querySelector('[data-role="diagnostics"]');
     diagnostics.value = diagnosticsLevel;
     diagnostics.addEventListener('change', () => {
@@ -26155,6 +26989,7 @@ Image elapsed: ${formatDuration(imageElapsed)} — Completed: ${imageCompleted}/
   // Record the current version once per page initialization, unfiltered.
   logDiagnostic('lifecycle', 'dc-version-transition', { version: VERSION });
   communicationLogInitializationPromise = initializeCommunicationDiskRecorder();
+  void cscControlsCurrent().init();
   installLiveTailTracking();
   /** Persisted scalar volume present when the userscript was initialized. */
   const initialSoundVolume = localStorage.getItem(AGENT_SOUND_VOLUME_STORAGE_KEY);
