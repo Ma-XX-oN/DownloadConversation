@@ -47,7 +47,7 @@ function fixture() {
   };
   const controller = ctx.make({
     store, serviceFactory: () => service,
-    version: '1.11.15-issue.318.9', origin: 'https://chatgpt.com'
+    version: '1.11.15-issue.318.10', origin: 'https://chatgpt.com'
   });
   return { controller, worker, calls,
     drain: () => { keyState = 'draining'; },
