@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         ChatGPT Conversation Markdown Recorder
 // @namespace    https://chatgpt.com/
-// @version      1.11.16-issue.297.4
+// @version      1.11.16-issue.297.5
 // @description  Exports the current ChatGPT conversation directly from the Conversation API as Markdown or JSONL.
 // @match        https://chatgpt.com/*
 // @match        https://chat.openai.com/*
@@ -21924,6 +21924,15 @@ Image elapsed: ${formatDuration(imageElapsed)} — Completed: ${imageCompleted}/
       ['CSC dual clone + Worker', testCscDualCloneOwnership],
       ['Worker + Zstd/CSP', testWorkerZstdCsp],
       ['CSC Worker stream + directory', testCscWorkerBoundary],
+      // Live observer rows are only evidence from the actual browser.
+      ['AICC #127 staged registered host', testAicc127StagedArtifact],
+      ['AICC #127 verified project identity', testAicc127LiveProject],
+      ['AICC #127 standalone gizmo null', testAicc127LiveStandalone],
+      ['AICC #127 zero-network A-B-A', testAicc127Navigation],
+      ['AICC #127 stale response safety', testAicc127StaleResponse],
+      ['AICC #127 reload and rebind', testAicc127ReloadRebind],
+      ['AICC #127 recording group 1', testAicc127GroupOne],
+      ['AICC #127 export evidence', aicc127ExportEvidence, 'Action'],
       ['Favicon source comparison', null, 'Visual']
     ];
   }
@@ -21937,7 +21946,7 @@ Image elapsed: ${formatDuration(imageElapsed)} — Completed: ${imageCompleted}/
     try {
       const parsed = JSON.parse(localStorage.getItem(TEST_RESULT_HISTORY_KEY) || '{}');
       if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) return new Map();
-      return new Map(Object.entries(parsed).filter(([, value]) => value === 'PASS' || value === 'FAIL'));
+      return new Map(Object.entries(parsed).filter(([, value]) => value === 'PASS' || value === 'FAIL' || value === 'INCOMPLETE'));
     } catch {
       return new Map();
     }
@@ -21996,11 +22005,17 @@ Image elapsed: ${formatDuration(imageElapsed)} — Completed: ${imageCompleted}/
    */
   async function executeBuiltInTest(name, fn) {
     try {
-      const detail = await fn();
-      testMatrixCurrentResults.set(name, {
-        status: 'PASS', detail: typeof detail === 'string' ? detail : ''
-      });
-      return `✅ ${name}`;
+      const outcome = await fn();
+      const status = outcome && typeof outcome === 'object' &&
+        typeof outcome.status === 'string' ? outcome.status : 'PASS';
+      if (!['PASS', 'FAIL', 'INCOMPLETE'].includes(status)) {
+        throw new TypeError('Invalid built-in test status');
+      }
+      const detail = typeof outcome === 'string' ? outcome :
+        typeof outcome?.detail === 'string' ? outcome.detail : '';
+      testMatrixCurrentResults.set(name, { status, detail });
+      return (status === 'PASS' ? '✅ ' :
+        status === 'INCOMPLETE' ? '⚠️ ' : '❌ ') + name;
     } catch (error) {
       const detail = errorMessage(error);
       testMatrixCurrentResults.set(name, { status: 'FAIL', detail });
@@ -22021,7 +22036,9 @@ Image elapsed: ${formatDuration(imageElapsed)} — Completed: ${imageCompleted}/
       .filter(([name]) => testMatrixCurrentResults.has(name))
       .map(([name]) => {
         const result = testMatrixCurrentResults.get(name);
-        return result.status === 'PASS' ? `✅ ${name}` : `❌ ${name}: ${result.detail}`;
+        return result.status === 'PASS' ? `✅ ${name}` :
+          result.status === 'INCOMPLETE' ? `⚠️ ${name}: ${result.detail}` :
+          `❌ ${name}: ${result.detail}`;
       });
   }
 
@@ -22061,7 +22078,7 @@ Image elapsed: ${formatDuration(imageElapsed)} — Completed: ${imageCompleted}/
         if (name === 'CSC Worker stream + directory') continue;
         if (name === 'CSC dual clone + Worker') continue;
         if (name === 'Worker + Zstd/CSP') continue;
-        if (type !== 'Visual') await executeBuiltInTest(name, fn);
+        if (type !== 'Visual' && type !== 'Action') await executeBuiltInTest(name, fn);
       }
     } finally {
       testInProgress = false;
@@ -23380,13 +23397,13 @@ Image elapsed: ${formatDuration(imageElapsed)} — Completed: ${imageCompleted}/
   /** #297-only AICC127_NAV_KEY state; no private payload is persisted. */
   const AICC127_NAV_KEY = 'dc-issue127-live-nav-v2';
   /** #297-only AICC127_PROVIDER_SHA state; no private payload is persisted. */
-  const AICC127_PROVIDER_SHA = 'db7e3450aac94eb2990fba0de54d090e377dafa3';
+  const AICC127_PROVIDER_SHA = 'b9aa20df9d109b79022e5062e788758d2dbd3cc3';
   /** #297-only AICC127_PROVIDER_BLOB state; no private payload is persisted. */
-  const AICC127_PROVIDER_BLOB = 'c731721005aefbc14a61bfc97270d7270aa80ea0';
+  const AICC127_PROVIDER_BLOB = 'ba2f0c2571a56cdf005f59da6e248496fa725925';
   /** #297-only AICC127_CORE_SHA state; no private payload is persisted. */
-  const AICC127_CORE_SHA = '80b3e1354005e381c4fc1a81a26be3c45b45dd30';
+  const AICC127_CORE_SHA = '629c86284b7db5fb412bb083178eaee8c06f796c';
   /** #297-only AICC127_SOURCE_SHA state; no private payload is persisted. */
-  const AICC127_SOURCE_SHA = 'bff52f9996365e996e3dbe1a56b0c5fcb7a231b2';
+  const AICC127_SOURCE_SHA = null; // Git SHA is not provable at runtime.
   /** #297-only aicc127Runtime state; no private payload is persisted. */
   let aicc127Runtime = null;
   /** #297-only aicc127StartPending state; no private payload is persisted. */
@@ -23670,10 +23687,12 @@ Image elapsed: ${formatDuration(imageElapsed)} — Completed: ${imageCompleted}/
       if (evidence?.schema !== 'aicc127-queued-witness-v2') evidence = null;
     } catch {}
     evidence ??= { schema: 'aicc127-queued-witness-v2',
-      source_sha: AICC127_SOURCE_SHA, core_sha: AICC127_CORE_SHA,
+      source_sha: AICC127_SOURCE_SHA, source_version: VERSION,
+      core_sha: AICC127_CORE_SHA,
       provider_sha: AICC127_PROVIDER_SHA, provider_blob_sha1: AICC127_PROVIDER_BLOB,
+      provider_identity_attestation: 'runtime-version-only',
       started_at: new Date().toISOString(), navigation_steps: [],
-      notes: 'No names, IDs, URLs, headers, credentials or messages exported' };
+      notes: 'Expected pins are not runtime byte verification. No names, IDs, URLs, headers, credentials or messages exported' };
     const s = { evidence, nav, agent: null, unsubscribe: null, callbacks: 0,
       observed: null, requests: new Map(), groupKey: null };
     aicc127Runtime = s;
@@ -23692,17 +23711,23 @@ Image elapsed: ${formatDuration(imageElapsed)} — Completed: ${imageCompleted}/
     aicc127Prepare();
     if (!aicc127StartPending) aicc127StartPending = (async () => {
       const core = canonicalCore();
-      assert(core.getVersion() === '1.1.0-issue.127.22',
-        'AICC Core .127.22 is required.');
-      const descriptor = core.getAgentPluginArtifact('chatgpt-web');
-      assert(descriptor.commit === AICC127_PROVIDER_SHA &&
-        descriptor.gitBlobSha1 === AICC127_PROVIDER_BLOB,
-      'Core catalogue must pin the exact private provider artifact.');
+      assert(core.getVersion() === '1.1.1',
+        'Released AICC Core 1.1.1 is required.');
+      assert(typeof core.createAgent === 'function' &&
+        core.getAgentPlugin('chatgpt-web')?.id === 'chatgpt-web',
+        'ChatGPT provider must be registered through Core.');
       const agent = await ensureChatGPTCanonicalAgent();
       aicc127AttachAgentEarly(agent);
-      assert(agent.version().version === '0.1.0-issue.1.29',
-        'Private provider version mismatch.');
-      assert(chatGPTSubjectHost, 'No shared canonical provider host.');
+      const identity = agent.version();
+      assert(identity.plugin === 'chatgpt-web' &&
+        identity.apiVersion === 1 &&
+        identity.version === '0.1.2-issue.11.1',
+        'Registered private provider identity mismatch.');
+      assert(typeof agent.connectChatGPTSubjectHost === 'function' &&
+        chatGPTSubjectHost &&
+        ['navigation', 'request', 'response', 'dispose'].every(
+          key => typeof chatGPTSubjectHost[key] === 'function'),
+        'Registered agent did not attach private identity host.');
       return aicc127Runtime;
     })();
     try { return await aicc127StartPending; }
@@ -23859,7 +23884,7 @@ Image elapsed: ${formatDuration(imageElapsed)} — Completed: ${imageCompleted}/
    */
   function aicc127ExportEvidence() {
     const s = aicc127Runtime;
-    if (!s) return;
+    if (!s) throw new Error('Arm AICC #127 before exporting evidence.');
     aicc127Save();
     const blob = new Blob([JSON.stringify(s.evidence, null, 2) + '\n'],
       { type: 'application/json' });
