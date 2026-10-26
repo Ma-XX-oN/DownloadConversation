@@ -2,6 +2,8 @@
   let chatGPTAgent = null;
   /** Core-owned canonical session associated with the selected agent. */
   let chatGPTCanonicalSession = null;
+  /** Private provider-owned subject host leased through the registered agent. */
+  let chatGPTSubjectHost = null;
 
   /**
    * Recognizes the current source through AICC and creates its registered agent.
@@ -9,7 +11,11 @@
    * @returns {Promise<Object>} Validated agent with its Core-owned session retained.
    */
   async function ensureChatGPTCanonicalAgent() {
-    if (chatGPTAgent) return chatGPTAgent;
+    if (chatGPTAgent) {
+      if (typeof aicc127AttachAgentEarly === 'function') aicc127AttachAgentEarly(chatGPTAgent);
+      reconnectChatGPTSubjectHost();
+      return chatGPTAgent;
+    }
     const core = canonicalCore();
     assert(typeof core.recognizeAgentPlugin === 'function'
       && typeof core.createAgent === 'function',
@@ -28,6 +34,9 @@
     const identity = loaded.agent.version();
     chatGPTAgent = loaded.agent;
     chatGPTCanonicalSession = loaded.session;
+    // #297's observer must be armed BEFORE the #310 backlog attaches/drains.
+    if (typeof aicc127AttachAgentEarly === 'function') aicc127AttachAgentEarly(chatGPTAgent);
+    reconnectChatGPTSubjectHost();
     logDiagnostic('debug', 'agent-plugin-ready', {
       plugin_id: identity?.plugin ?? 'unknown',
       ref: identity?.ref ?? 'unknown',
@@ -35,6 +44,52 @@
       api_version: identity?.apiVersion ?? null
     });
     return chatGPTAgent;
+  }
+
+  /**
+   * Connect one existing CSC backlog to the private host on the actual
+   * AICC-registered ChatGPT agent; never import private code from public DC.
+   * @returns {void} No value is returned.
+   */
+  function reconnectChatGPTSubjectHost() {
+    if (chatGPTSubjectHost || !chatGPTAgent) return;
+    if (typeof chatGPTAgent.connectChatGPTSubjectHost !== 'function') {
+      logDiagnostic('warnings', 'agent-plugin-navigation-interface-unavailable', {
+        reason: 'Registered provider does not expose subject host'
+      });
+      return;
+    }
+    const host = chatGPTAgent.connectChatGPTSubjectHost({
+      origin: agentPluginPageWindow.location.origin,
+      conversationId: null
+    });
+    if (!host || ['navigation', 'request', 'response', 'dispose'].some(
+      name => typeof host[name] !== 'function')) {
+      host?.dispose?.();
+      throw new TypeError('Registered provider returned invalid subject host');
+    }
+    try {
+      cscEnsureEarlyNavigationIngress();
+      cscPluginQueueConnect(host);
+    } catch (error) {
+      cscPluginQueueDisconnect(host);
+      host.dispose();
+      throw error;
+    }
+    chatGPTSubjectHost = host;
+  }
+
+  /**
+   * Detach the queue before disposal, invalidating pending asynchronous drain.
+   * @returns {void} No value is returned.
+   */
+  function disconnectChatGPTSubjectHost() {
+    cscDisposeEarlyNavigationIngress();
+    if (chatGPTSubjectHost) {
+      cscPluginQueueDisconnect(chatGPTSubjectHost);
+      chatGPTSubjectHost.dispose();
+    }
+    chatGPTSubjectHost = null;
   }
 
   /**

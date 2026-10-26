@@ -3,6 +3,7 @@ on:
   push:
     branches:
       - verify-rebase-dc297-20261024
+      - verify-dc297-registration-host-20261025
 permissions:
   contents: read
 jobs:
