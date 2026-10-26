@@ -2,14 +2,21 @@
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import test from 'node:test';
+const schemaSource = readFileSync(new URL(
+  '../src/userscript/07-panel-launcher/03-csc-schema.js',
+  import.meta.url), 'utf8');
+const singletonSource = readFileSync(new URL(
+  '../src/userscript/07-panel-launcher/03-csc-singleton.js',
+  import.meta.url), 'utf8');
+
 import vm from 'node:vm';
 
 const sharedSource = readFileSync(new URL(
   '../src/userscript/07-panel-launcher/03-csc-shared-settings.js',
   import.meta.url), 'utf8');
-const source = readFileSync(new URL(
+const source = schemaSource + readFileSync(new URL(
   '../src/userscript/07-panel-launcher/03-csc-control-plane.js',
-  import.meta.url), 'utf8');
+  import.meta.url), 'utf8') + singletonSource;
 
 function fixture(raw = null) {
   const context = vm.createContext({ location: { origin: 'https://chatgpt.com' },
