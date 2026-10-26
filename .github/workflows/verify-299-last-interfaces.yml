@@ -1,0 +1,19 @@
+name: Independent DC 299 Last interface preparation
+on:
+  push:
+    branches:
+      - verify-299-last-registration-composition-20261025
+permissions:
+  contents: read
+jobs:
+  synthetic-cgp-core-interface:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: false
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - name: Verify pinned current registered-provider handoff
+        run: node --test tests/issue299-last-interface-fixture.test.mjs
