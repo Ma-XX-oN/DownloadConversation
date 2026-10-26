@@ -74,6 +74,7 @@
       if (!settingsStorageAvailable) {
         return reject('csc-settings-storage-unavailable');
       }
+      if (service) await refreshKey();
       const sensitive = settings.mode === 'everything' ||
         settings.binary || settings.cross_origin ||
         settings.auth_headers || settings.all;
@@ -285,7 +286,7 @@
             Date.parse(event.key_restart) !== event.occurred_at_ms) {
           throw new Error('csc-cycle-invalid');
         }
-        // Historical cycles are not replayed into a newer immutable fragment.
+        // No replay into later fragments.
         const commExists = await comm.hasCycle(event.id);
         const genExists = await gen.hasCycle(event.id);
         if (commExists === true && genExists === true) continue;
@@ -391,7 +392,7 @@
       return schedule(async () => {
         try {
           await pause();
-          // Persist the old key's journal BEFORE a new key can commit.
+          // Commit old journal before rotation.
           await reconcileCycles();
           const drained = await comm.drain();
           if (drained?.durable !== true) throw new Error('csc-drain-not-durable');
