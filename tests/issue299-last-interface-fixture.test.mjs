@@ -1,5 +1,6 @@
 import assert from 'node:assert/strict';
 import { createHash } from 'node:crypto';
+import { readFile } from 'node:fs/promises';
 import test from 'node:test';
 import vm from 'node:vm';
 
@@ -18,11 +19,11 @@ function blobIdentity(source) {
 }
 
 async function exactPlugin(path, expectedBlob) {
-  const url = `https://raw.githubusercontent.com/Ma-XX-oN/Chat-Gpt-Plugin-2/${CGP_COMMIT}/${path}`;
-  const response = await fetch(url);
-  assert.equal(response.status, 200, `Unreachable exact plugin artifact ${path}`);
-  const source = await response.text();
-  assert.equal(blobIdentity(source), expectedBlob);
+  const basename = path.split('/').at(-1);
+  const source = await readFile(new URL(`./fixtures/issue299/${basename}`, import.meta.url),
+    'utf8');
+  assert.equal(blobIdentity(source), expectedBlob,
+    `Pinned provider binary fixture changed: ${path} at ${CGP_COMMIT}`);
   return source;
 }
 
