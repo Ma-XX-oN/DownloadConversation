@@ -110,3 +110,31 @@ test('remote HMAC drain unseen by cached state blocks settings-triggered resume'
       'settings notifications must never resume using stale HMAC status');
     f.controller.dispose();
   });
+
+test('HMAC draining while Worker configure ACK is in flight prevents resume',
+  async () => {
+    const f = fixture();
+    await f.controller.init();
+    await f.controller.bindWorker(f.worker);
+    const initialResumes = f.calls.resumes;
+    let respond;
+    f.worker.configure = async r => new Promise(resolve => {
+      respond = () => resolve({ type: 'csc-comm-configured',
+        schema: r.schema, request_id: r.request_id });
+    });
+    const next = { schema: 1, mode: 'replay-essentials',
+      binary: false, cross_origin: false, auth_headers: false, all: false };
+    const change = f.controller.setOptions(next, false);
+    for (let i=0; i<30 && !respond; i++) {
+      await new Promise(resolve => setImmediate(resolve));
+    }
+    assert.equal(typeof respond, 'function',
+      'configure request must reach asynchronous ACK boundary');
+    f.drain();
+    respond();
+    await assert.rejects(change, /csc-settings-apply-failed|csc-key-status-failed/,
+      'pending settings cannot resume capture after producer begins drain');
+    assert.equal(f.calls.resumes, initialResumes);
+    assert.equal(f.controller.snapshot().settings_applied, false);
+    f.controller.dispose();
+  });
