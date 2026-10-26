@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         ChatGPT Conversation Markdown Recorder
 // @namespace    https://chatgpt.com/
-// @version      1.11.16-issue.297.6
+// @version      1.11.16-issue.297.7
 // @description  Exports the current ChatGPT conversation directly from the Conversation API as Markdown or JSONL.
 // @match        https://chatgpt.com/*
 // @match        https://chat.openai.com/*
@@ -22222,10 +22222,10 @@ Image elapsed: ${formatDuration(imageElapsed)} — Completed: ${imageCompleted}/
               ${tests.map(([name, , type]) => `
                 <tr data-test-name="${escapeHtmlAttribute(name)}">
                   <td>${escapeHtmlText(name)}</td>
-                  <td>${type === 'Visual' ? 'Visual' : 'Automatic'}</td>
+                  <td>${type === 'Visual' ? 'Visual' : type === 'Action' ? 'Action' : 'Automatic'}</td>
                   <td data-role="previous-result">—</td>
                   <td data-role="current-result">—</td>
-                  <td><button type="button" data-role="run-test">${type === 'Visual' ? 'Show' : 'Run'}</button></td>
+                  <td><button type="button" data-role="run-test">${type === 'Visual' ? 'Show' : type === 'Action' ? 'Export' : 'Run'}</button></td>
                 </tr>`).join('')}
             </tbody>
           </table>
