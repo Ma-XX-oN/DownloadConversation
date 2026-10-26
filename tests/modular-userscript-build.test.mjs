@@ -82,7 +82,24 @@ test(
       ],
       'identity and segment runtime must remain at verified top-level source boundaries'
     );
-    assert.equal(sourcePaths.length, 86);
+    // Stable #150 inventory plus ten explicitly reviewed CSC/identity segments.
+    const cscModules = [
+      'src/userscript/04-conversation-rendering/08e-generic-browser-navigation.js',
+      'src/userscript/02-network-communication/03-csc-canonical-ingress.js',
+      'src/userscript/02-network-communication/03-csc-issue127-witness-ingress.js',
+      'src/userscript/02-network-communication/03-csc-plugin-backlog.js',
+      'src/userscript/02-network-communication/03-csc-provider-navigation-ingress.js',
+      'src/userscript/06-image-export-tests/07-worker-zstd-csp-probe.js',
+      'src/userscript/06-image-export-tests/08-csc-worker-boundary-probe.js',
+      'src/userscript/06-image-export-tests/09-csc-dual-body-clone-probe.js',
+      'src/userscript/06-image-export-tests/07-issue127-queued-witness.js',
+      'src/userscript/06-image-export-tests/07a-issue127-queued-witness.js',
+    ];
+    assert.equal(sourcePaths.length, 86 + cscModules.length);
+    for (const sourcePath of cscModules) {
+      assert.ok(sourcePaths.includes(sourcePath),
+        `Rebased CSC source absent from manifest: ${sourcePath}`);
+    }
     assert.equal(new Set(sourcePaths).size, sourcePaths.length);
     assert.ok(sourcePaths.every(sourcePath => {
       return sourcePath.startsWith('src/userscript/');
