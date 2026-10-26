@@ -166,3 +166,29 @@ test('dispose during in-flight Worker config cannot resume capture',
     assert.ok(f.calls.pauses>beforePauses);
     assert.equal(f.controller.snapshot().settings_applied,false);
   });
+
+test('late Worker resume completion after disposal is followed by final pause',
+  async () => {
+    const f = fixture();
+    await f.controller.init();
+    await f.controller.bindWorker(f.worker);
+    const events = [];
+    let releaseResume;
+    f.worker.pause = async () => { events.push('pause'); };
+    f.worker.resume = async () => new Promise(resolve => {
+      releaseResume = () => { events.push('resume'); resolve(); };
+    });
+    const settings = { schema:1, mode:'replay-essentials',
+      binary:false, cross_origin:false, auth_headers:false, all:false };
+    const change = f.controller.setOptions(settings,false);
+    for(let i=0;i<30&&!releaseResume;i++) {
+      await new Promise(resolve=>setImmediate(resolve));
+    }
+    assert.equal(typeof releaseResume,'function');
+    f.controller.dispose();
+    releaseResume();
+    await assert.rejects(change,/csc-settings-apply-failed|csc-controls-disposed/);
+    assert.equal(events.at(-1),'pause',
+      'a late resume must be followed by a final Worker pause');
+    assert.equal(f.controller.snapshot().settings_applied,false);
+  });
