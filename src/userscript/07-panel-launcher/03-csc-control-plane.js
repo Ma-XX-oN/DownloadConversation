@@ -81,6 +81,9 @@
         !confirmedSensitive ||
         JSON.stringify(confirmedSensitive) !== JSON.stringify(settings)
       )) {
+        // Already-active capture must stop before new consent is requested.
+        try { await pause(); }
+        catch { return reject('csc-settings-pause-failed'); }
         state = 'pending';
         applied = false;
         lastError = 'csc-sensitive-reconfirmation-required';
