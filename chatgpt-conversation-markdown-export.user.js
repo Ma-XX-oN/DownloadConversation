@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         ChatGPT Conversation Markdown Recorder
 // @namespace    https://chatgpt.com/
-// @version      1.11.16-issue.297.3
+// @version      1.11.16-issue.297.4
 // @description  Exports the current ChatGPT conversation directly from the Conversation API as Markdown or JSONL.
 // @match        https://chatgpt.com/*
 // @match        https://chat.openai.com/*
@@ -21963,7 +21963,7 @@ Image elapsed: ${formatDuration(imageElapsed)} — Completed: ${imageCompleted}/
    * @returns {string} The string produced by `testMatrixResultText`.
    */
   function testMatrixResultText(result) {
-    return result?.status || '—';
+    return result ? result.status + (result.detail ? `: ${result.detail}` : '') : '—';
   }
 
   /**
@@ -21996,8 +21996,10 @@ Image elapsed: ${formatDuration(imageElapsed)} — Completed: ${imageCompleted}/
    */
   async function executeBuiltInTest(name, fn) {
     try {
-      await fn();
-      testMatrixCurrentResults.set(name, { status: 'PASS', detail: '' });
+      const detail = await fn();
+      testMatrixCurrentResults.set(name, {
+        status: 'PASS', detail: typeof detail === 'string' ? detail : ''
+      });
       return `✅ ${name}`;
     } catch (error) {
       const detail = errorMessage(error);
