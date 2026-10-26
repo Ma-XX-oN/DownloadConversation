@@ -81,7 +81,7 @@
         !confirmedSensitive ||
         JSON.stringify(confirmedSensitive) !== JSON.stringify(settings)
       )) {
-        // Already-active capture must stop before new consent is requested.
+        // Pause old capture pending consent.
         try { await pause(); }
         catch { return reject('csc-settings-pause-failed'); }
         state = 'pending';
@@ -89,6 +89,12 @@
         lastError = 'csc-sensitive-reconfirmation-required';
         notify();
         return false;
+      }
+      if (keyState === 'draining' || keyState === 'DRAINING' ||
+          keyState === 'failed') {
+        try { await pause(); }
+        catch { return reject('csc-settings-pause-failed'); }
+        return keyState === 'failed' ? reject('csc-key-status-failed') : false;
       }
       if (!worker) {
         state = 'pending';
@@ -263,7 +269,6 @@
       notify();
       return snapshot();
     }
-    /** Require each journal event to be durable in BOTH sinks before cursor. */
     /**
      * Reconcile committed key-cycle journal entries across both sinks.
      * @returns {Promise<number>} Reconcile committed key-cycle journal entries across both sinks.
@@ -287,7 +292,7 @@
         if (commExists !== false || genExists !== false) {
           throw new Error('csc-cycle-recovery-requires-parent');
         }
-        // Never resurrect an old key's segment after a newer scope exists.
+        // Never recreate an older key segment.
         if (event.key_restart !== publicKey) {
           throw new Error('csc-cycle-history-not-durable');
         }
