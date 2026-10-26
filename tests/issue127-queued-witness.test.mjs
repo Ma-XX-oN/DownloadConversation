@@ -22,6 +22,7 @@ function harness(storage = new Map(), page = 'page-1') {
   const group = { enabled: true, ready: true, uuid: 'one-tab-group' };
   const agent = {
     version() { return { plugin: 'chatgpt-web', version: '0.1.2-issue.11.1', apiVersion: 1 }; },
+    connectChatGPTSubjectHost() { if (!host) host = makeHost(); return host; },
     observeState(callback) {
       subscriber = callback;
       callback({ readiness: 'unresolved',
@@ -87,7 +88,7 @@ function harness(storage = new Map(), page = 'page-1') {
   };
   const context = {
     URL, Date, Map, Set, JSON, Math, Promise, Object, Number, Blob,
-    VERSION: '1.11.16-issue.297.5',
+    VERSION: '1.11.16-issue.297.6',
     crypto: webcrypto, location, document, sessionStorage: {
       getItem: key => storage.get(key) ?? null,
       setItem: (key, value) => storage.set(key, value),
@@ -110,7 +111,7 @@ function harness(storage = new Map(), page = 'page-1') {
     async ensureChatGPTCanonicalAgent() {
       context.c.attach(agent);
       if (!host) {
-        host = makeHost();
+        host = agent.connectChatGPTSubjectHost();
         context.c.connect(host);
       }
       return agent;
