@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         ChatGPT Conversation Markdown Recorder
 // @namespace    https://chatgpt.com/
-// @version      1.11.15-issue.318.11
+// @version      1.11.15-issue.318.12
 // @description  Exports the current ChatGPT conversation directly from the Conversation API as Markdown or JSONL.
 // @match        https://chatgpt.com/*
 // @match        https://chat.openai.com/*
@@ -24929,7 +24929,7 @@ Image elapsed: ${formatDuration(imageElapsed)} — Completed: ${imageCompleted}/
     }
     /**
      * Apply persisted options and verify a correlated Worker acknowledgement.
-     * @returns {Promise<boolean>} Apply persisted options and verify a correlated Worker acknowledgement.
+     * @returns {Promise<boolean>} Worker ACK status.
      */
     async function apply() {
       if (!settingsStorageAvailable) {
@@ -24997,7 +24997,7 @@ Image elapsed: ${formatDuration(imageElapsed)} — Completed: ${imageCompleted}/
     }
     /**
      * Load shared preferences and initialize the HMAC service once.
-     * @returns {Promise<Object>} Load shared preferences and initialize the HMAC service once.
+     * @returns {Promise<Object>} Initial state.
      */
     async function init() {
       if (initPromise) return initPromise;
@@ -25105,8 +25105,8 @@ Image elapsed: ${formatDuration(imageElapsed)} — Completed: ${imageCompleted}/
       notify();
     }
     /**
-     * Read authoritative HMAC status without disclosing key bytes.
-     * @returns {Promise<Object>} Read authoritative HMAC status without disclosing key bytes.
+     * Read the nonsecret HMAC status.
+     * @returns {Promise<Object>} Current status.
      */
     async function refreshKey() {
       if (!service) {
@@ -25183,13 +25183,14 @@ Image elapsed: ${formatDuration(imageElapsed)} — Completed: ${imageCompleted}/
       return events.length;
     }
     /**
-     * Admit one capture only after settings and HMAC provisioning.
-     * @returns {Promise<Object>} Admit one capture only after settings and HMAC provisioning.
+     * Admit capture after settings and HMAC.
+     * @returns {Promise<Object>} Key-bound admission.
      */
     async function prepareCapture() {
       if (!applied || !service || !worker || !gen || !comm) {
         throw new Error('csc-capture-not-ready');
       }
+      const captureSeq = seq;
       await refreshKey();
       if (!applied || keyState === 'failed' ||
           keyState === 'draining' || keyState === 'DRAINING') {
@@ -25208,6 +25209,11 @@ Image elapsed: ${formatDuration(imageElapsed)} — Completed: ${imageCompleted}/
         if (ack?.type !== 'csc-comm-key-ready' ||
             ack.token !== admission.token) {
           throw new Error('csc-key-provision-unacknowledged');
+        }
+        await refreshKey();
+        if (!applied || seq !== captureSeq || keyState !== 'open' ||
+            publicKey !== admission.metadata.key_restart) {
+          throw new Error('csc-capture-settings-changed');
         }
         return admission;
       } catch (error) {
