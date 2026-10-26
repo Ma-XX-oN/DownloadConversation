@@ -35,9 +35,9 @@
     let evidence = null;
     try {
       evidence = JSON.parse(sessionStorage.getItem(AICC127_EVIDENCE_KEY) || 'null');
-      if (evidence?.schema !== 'aicc127-queued-witness-v2') evidence = null;
+      if (evidence?.schema !== 'aicc127-queued-witness-v3') evidence = null;
     } catch {}
-    evidence ??= { schema: 'aicc127-queued-witness-v2',
+    evidence ??= { schema: 'aicc127-queued-witness-v3',
       source_sha: AICC127_SOURCE_SHA, source_version: VERSION,
       core_sha: AICC127_CORE_SHA,
       provider_sha: AICC127_PROVIDER_SHA, provider_blob_sha1: AICC127_PROVIDER_BLOB,
