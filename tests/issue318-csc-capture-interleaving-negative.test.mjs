@@ -59,7 +59,7 @@ test('capture admission in-flight cannot survive a changed Worker configuration'
     };
     const controller=ctx.create({
       store,serviceFactory:()=>service,origin:'https://chatgpt.com',
-      version:'1.11.15-issue.318.11'
+      version:'1.11.15-issue.318.12'
     });
     await controller.init();
     controller.bindSinks({gen:sink,comm:sink});
