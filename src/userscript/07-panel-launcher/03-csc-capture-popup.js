@@ -122,6 +122,7 @@
     const randomize = dialog.querySelector('[data-csc-randomize]');
     const apply = dialog.querySelector('[data-csc-apply]');
     const closeButton = dialog.querySelector('[data-csc-close]');
+    let renderedSettings = null;
     /**
      * Render saved options and only nonsecret HMAC state.
      * @param {Object} model - Current controller snapshot
@@ -130,10 +131,14 @@
     function render(model) {
       const { settings, settings_state, key_state, key_restart,
         expires_at_ms, error, can_randomize } = model;
-      for (const input of modes) input.checked = input.dataset.cscMode === settings.mode;
-      for (const input of flags) {
-        input.checked = settings[input.dataset.cscFlag] ||
-          (settings.all && input !== allFlags);
+      const settingsKey = JSON.stringify(settings);
+      if (settingsKey !== renderedSettings) {
+        for (const input of modes) input.checked = input.dataset.cscMode === settings.mode;
+        for (const input of flags) {
+          input.checked = settings[input.dataset.cscFlag] ||
+            (settings.all && input !== allFlags);
+        }
+        renderedSettings = settingsKey;
       }
       status.textContent = 'Worker configuration: ' + settings_state +
         (error ? ' (' + error + ')' : '');
@@ -187,6 +192,7 @@
         'Expanded COMM recording can retain credentials and private data. ' +
         'Do you explicitly authorize these capture options?');
       if (!confirmed) {
+        renderedSettings = null;
         render(controls.snapshot());
         return;
       }
