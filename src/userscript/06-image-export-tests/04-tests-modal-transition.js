@@ -90,6 +90,10 @@
       ['Generated sandbox download link', testGeneratedSandboxDownloadLink],
       ['Jump identifier resolution', testJumpIdentifierResolution],
       ['Conversation API access/schema', testConversationApiAccessAndSchema],
+      // Opt-in browser capability probes. They must never run automatically.
+      ['CSC dual clone + Worker', testCscDualCloneOwnership],
+      ['Worker + Zstd/CSP', testWorkerZstdCsp],
+      ['CSC Worker stream + directory', testCscWorkerBoundary],
       ['Favicon source comparison', null, 'Visual']
     ];
   }
@@ -222,6 +226,9 @@
     refreshTestMatrix();
     try {
       for (const [name, fn, type] of builtInTests()) {
+        if (name === 'CSC Worker stream + directory') continue;
+        if (name === 'CSC dual clone + Worker') continue;
+        if (name === 'Worker + Zstd/CSP') continue;
         if (type !== 'Visual') await executeBuiltInTest(name, fn);
       }
     } finally {
