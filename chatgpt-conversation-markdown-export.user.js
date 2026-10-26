@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         ChatGPT Conversation Markdown Recorder
 // @namespace    https://chatgpt.com/
-// @version      1.11.15-issue.318.3
+// @version      1.11.15-issue.318.4
 // @description  Exports the current ChatGPT conversation directly from the Conversation API as Markdown or JSONL.
 // @match        https://chatgpt.com/*
 // @match        https://chat.openai.com/*
@@ -24771,9 +24771,14 @@ Image elapsed: ${formatDuration(imageElapsed)} — Completed: ${imageCompleted}/
         const transaction = database.transaction(table, 'readwrite');
         transaction.objectStore(table).put(value, key);
         transaction.oncomplete = () => {
-          channel?.postMessage({
-            type: 'settings-committed-v1', key, owner
-          });
+          try {
+            channel?.postMessage({
+              type: 'settings-committed-v1', key, owner
+            });
+          } catch {
+            // Already durable: peers reread IndexedDB on focus/visibility.
+            // Failed notification must not strand this committed write.
+          }
           resolve();
         };
         transaction.onabort = () => reject(
