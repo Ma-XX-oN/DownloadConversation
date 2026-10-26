@@ -8,6 +8,7 @@ const read = path => readFileSync(new URL('../src/userscript/' + path,
 const menu = read('06-image-export-tests/04-tests-modal-transition.js');
 const witness = read('06-image-export-tests/07-issue127-queued-witness.js');
 const observer = read('06-image-export-tests/07a-issue127-queued-witness.js');
+const modal = read('06-image-export-tests/05-modal-contract.js');
 
 test('live witness requires current registered plugin, not legacy catalogue', () => {
   assert.match(observer, /core\.getVersion\(\) === '1\.1\.1'/);
@@ -62,4 +63,11 @@ test('actual Test runner treats INCOMPLETE as INCOMPLETE, not PASS', async () =>
 });
 test('evidence cannot be exported without a real armed witness', () => {
   assert.match(observer, /if \(!s\) throw new Error\('Arm AICC #127 before exporting evidence/);
+});
+
+test('evidence action appears as Export, never as an automatic Run All item', () => {
+  assert.match(modal, /type === 'Action' \? 'Action' : 'Automatic'/);
+  assert.match(modal, /type === 'Action' \? 'Export' : 'Run'/);
+  assert.match(menu, /type !== 'Visual' && type !== 'Action'/);
+  assert.match(modal, /else if \(test\) void runOneTest\(test\[0\], test\[1\]\)/);
 });
