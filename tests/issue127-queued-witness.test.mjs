@@ -21,7 +21,7 @@ function harness(storage = new Map(), page = 'page-1') {
   const requestUrls = new Map(), cache = new Map(), logs = [];
   const group = { enabled: true, ready: true, uuid: 'one-tab-group' };
   const agent = {
-    version() { return { version: '0.1.0-issue.1.29' }; },
+    version() { return { plugin: 'chatgpt-web', version: '0.1.2-issue.11.1', apiVersion: 1 }; },
     observeState(callback) {
       subscriber = callback;
       callback({ readiness: 'unresolved',
@@ -87,6 +87,7 @@ function harness(storage = new Map(), page = 'page-1') {
   };
   const context = {
     URL, Date, Map, Set, JSON, Math, Promise, Object, Number, Blob,
+    VERSION: '1.11.16-issue.297.5',
     crypto: webcrypto, location, document, sessionStorage: {
       getItem: key => storage.get(key) ?? null,
       setItem: (key, value) => storage.set(key, value),
@@ -100,11 +101,9 @@ function harness(storage = new Map(), page = 'page-1') {
     boundedDiagnosticText: String, errorMessage: String,
     recordingGroupState: () => group,
     canonicalCore: () => ({
-      getVersion: () => '1.1.0-issue.127.22',
-      getAgentPluginArtifact: () => ({
-        commit: 'db7e3450aac94eb2990fba0de54d090e377dafa3',
-        gitBlobSha1: 'c731721005aefbc14a61bfc97270d7270aa80ea0'
-      })
+      getVersion: () => '1.1.1',
+      createAgent: () => ({}),
+      getAgentPlugin: () => ({ id: 'chatgpt-web' })
     }),
     assert(condition, message) { assert.ok(condition, message); },
     setTimeout, clearTimeout,

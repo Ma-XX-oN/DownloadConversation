@@ -38,10 +38,12 @@
       if (evidence?.schema !== 'aicc127-queued-witness-v2') evidence = null;
     } catch {}
     evidence ??= { schema: 'aicc127-queued-witness-v2',
-      source_sha: AICC127_SOURCE_SHA, core_sha: AICC127_CORE_SHA,
+      source_sha: AICC127_SOURCE_SHA, source_version: VERSION,
+      core_sha: AICC127_CORE_SHA,
       provider_sha: AICC127_PROVIDER_SHA, provider_blob_sha1: AICC127_PROVIDER_BLOB,
+      provider_identity_attestation: 'runtime-version-only',
       started_at: new Date().toISOString(), navigation_steps: [],
-      notes: 'No names, IDs, URLs, headers, credentials or messages exported' };
+      notes: 'Expected pins are not runtime byte verification. No names, IDs, URLs, headers, credentials or messages exported' };
     const s = { evidence, nav, agent: null, unsubscribe: null, callbacks: 0,
       observed: null, requests: new Map(), groupKey: null };
     aicc127Runtime = s;
@@ -60,17 +62,23 @@
     aicc127Prepare();
     if (!aicc127StartPending) aicc127StartPending = (async () => {
       const core = canonicalCore();
-      assert(core.getVersion() === '1.1.0-issue.127.22',
-        'AICC Core .127.22 is required.');
-      const descriptor = core.getAgentPluginArtifact('chatgpt-web');
-      assert(descriptor.commit === AICC127_PROVIDER_SHA &&
-        descriptor.gitBlobSha1 === AICC127_PROVIDER_BLOB,
-      'Core catalogue must pin the exact private provider artifact.');
+      assert(core.getVersion() === '1.1.1',
+        'Released AICC Core 1.1.1 is required.');
+      assert(typeof core.createAgent === 'function' &&
+        core.getAgentPlugin('chatgpt-web')?.id === 'chatgpt-web',
+        'ChatGPT provider must be registered through Core.');
       const agent = await ensureChatGPTCanonicalAgent();
       aicc127AttachAgentEarly(agent);
-      assert(agent.version().version === '0.1.0-issue.1.29',
-        'Private provider version mismatch.');
-      assert(chatGPTSubjectHost, 'No shared canonical provider host.');
+      const identity = agent.version();
+      assert(identity.plugin === 'chatgpt-web' &&
+        identity.apiVersion === 1 &&
+        identity.version === '0.1.2-issue.11.1',
+        'Registered private provider identity mismatch.');
+      assert(typeof agent.connectChatGPTSubjectHost === 'function' &&
+        chatGPTSubjectHost &&
+        ['navigation', 'request', 'response', 'dispose'].every(
+          key => typeof chatGPTSubjectHost[key] === 'function'),
+        'Registered agent did not attach private identity host.');
       return aicc127Runtime;
     })();
     try { return await aicc127StartPending; }
@@ -227,7 +235,7 @@
    */
   function aicc127ExportEvidence() {
     const s = aicc127Runtime;
-    if (!s) return;
+    if (!s) throw new Error('Arm AICC #127 before exporting evidence.');
     aicc127Save();
     const blob = new Blob([JSON.stringify(s.evidence, null, 2) + '\n'],
       { type: 'application/json' });

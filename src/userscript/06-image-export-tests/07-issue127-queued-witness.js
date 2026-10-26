@@ -6,13 +6,13 @@
   /** #297-only AICC127_NAV_KEY state; no private payload is persisted. */
   const AICC127_NAV_KEY = 'dc-issue127-live-nav-v2';
   /** #297-only AICC127_PROVIDER_SHA state; no private payload is persisted. */
-  const AICC127_PROVIDER_SHA = 'db7e3450aac94eb2990fba0de54d090e377dafa3';
+  const AICC127_PROVIDER_SHA = 'b9aa20df9d109b79022e5062e788758d2dbd3cc3';
   /** #297-only AICC127_PROVIDER_BLOB state; no private payload is persisted. */
-  const AICC127_PROVIDER_BLOB = 'c731721005aefbc14a61bfc97270d7270aa80ea0';
+  const AICC127_PROVIDER_BLOB = 'ba2f0c2571a56cdf005f59da6e248496fa725925';
   /** #297-only AICC127_CORE_SHA state; no private payload is persisted. */
-  const AICC127_CORE_SHA = '80b3e1354005e381c4fc1a81a26be3c45b45dd30';
+  const AICC127_CORE_SHA = '629c86284b7db5fb412bb083178eaee8c06f796c';
   /** #297-only AICC127_SOURCE_SHA state; no private payload is persisted. */
-  const AICC127_SOURCE_SHA = 'bff52f9996365e996e3dbe1a56b0c5fcb7a231b2';
+  const AICC127_SOURCE_SHA = null; // Git SHA is not provable at runtime.
   /** #297-only aicc127Runtime state; no private payload is persisted. */
   let aicc127Runtime = null;
   /** #297-only aicc127StartPending state; no private payload is persisted. */

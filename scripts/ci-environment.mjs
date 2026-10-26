@@ -64,6 +64,7 @@ const ordinaryStages = [
   ['DC #314 and #316 Worker archive acceptance', nodeCommand, ['--test',
     'tests/issue314-worker-zstd-csp-probe.test.mjs',
     'tests/issue316-worker-stream-directory.test.mjs']],
+  ['DC #297 live witness UI and provenance contract', nodeCommand, ['--test', 'tests/issue297-live-ui-contract.test.mjs']],
   ['Actions policy regression', nodeCommand, ['--test', 'tests/actions-policy.test.mjs']],
   ['RepoWorkflow adoption contract', nodeCommand, ['--test', 'tests/repoworkflow-adoption.test.mjs']],
   ['Development branch/version identity', nodeCommand, ['scripts/check-development-version.mjs']],

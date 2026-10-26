@@ -94,6 +94,15 @@
       ['CSC dual clone + Worker', testCscDualCloneOwnership],
       ['Worker + Zstd/CSP', testWorkerZstdCsp],
       ['CSC Worker stream + directory', testCscWorkerBoundary],
+      // Live observer rows are only evidence from the actual browser.
+      ['AICC #127 staged registered host', testAicc127StagedArtifact],
+      ['AICC #127 verified project identity', testAicc127LiveProject],
+      ['AICC #127 standalone gizmo null', testAicc127LiveStandalone],
+      ['AICC #127 zero-network A-B-A', testAicc127Navigation],
+      ['AICC #127 stale response safety', testAicc127StaleResponse],
+      ['AICC #127 reload and rebind', testAicc127ReloadRebind],
+      ['AICC #127 recording group 1', testAicc127GroupOne],
+      ['AICC #127 export evidence', aicc127ExportEvidence, 'Action'],
       ['Favicon source comparison', null, 'Visual']
     ];
   }
@@ -107,7 +116,7 @@
     try {
       const parsed = JSON.parse(localStorage.getItem(TEST_RESULT_HISTORY_KEY) || '{}');
       if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) return new Map();
-      return new Map(Object.entries(parsed).filter(([, value]) => value === 'PASS' || value === 'FAIL'));
+      return new Map(Object.entries(parsed).filter(([, value]) => value === 'PASS' || value === 'FAIL' || value === 'INCOMPLETE'));
     } catch {
       return new Map();
     }
@@ -166,11 +175,17 @@
    */
   async function executeBuiltInTest(name, fn) {
     try {
-      const detail = await fn();
-      testMatrixCurrentResults.set(name, {
-        status: 'PASS', detail: typeof detail === 'string' ? detail : ''
-      });
-      return `✅ ${name}`;
+      const outcome = await fn();
+      const status = outcome && typeof outcome === 'object' &&
+        typeof outcome.status === 'string' ? outcome.status : 'PASS';
+      if (!['PASS', 'FAIL', 'INCOMPLETE'].includes(status)) {
+        throw new TypeError('Invalid built-in test status');
+      }
+      const detail = typeof outcome === 'string' ? outcome :
+        typeof outcome?.detail === 'string' ? outcome.detail : '';
+      testMatrixCurrentResults.set(name, { status, detail });
+      return (status === 'PASS' ? '✅ ' :
+        status === 'INCOMPLETE' ? '⚠️ ' : '❌ ') + name;
     } catch (error) {
       const detail = errorMessage(error);
       testMatrixCurrentResults.set(name, { status: 'FAIL', detail });
@@ -191,7 +206,9 @@
       .filter(([name]) => testMatrixCurrentResults.has(name))
       .map(([name]) => {
         const result = testMatrixCurrentResults.get(name);
-        return result.status === 'PASS' ? `✅ ${name}` : `❌ ${name}: ${result.detail}`;
+        return result.status === 'PASS' ? `✅ ${name}` :
+          result.status === 'INCOMPLETE' ? `⚠️ ${name}: ${result.detail}` :
+          `❌ ${name}: ${result.detail}`;
       });
   }
 
@@ -231,7 +248,7 @@
         if (name === 'CSC Worker stream + directory') continue;
         if (name === 'CSC dual clone + Worker') continue;
         if (name === 'Worker + Zstd/CSP') continue;
-        if (type !== 'Visual') await executeBuiltInTest(name, fn);
+        if (type !== 'Visual' && type !== 'Action') await executeBuiltInTest(name, fn);
       }
     } finally {
       testInProgress = false;
