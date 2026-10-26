@@ -92,9 +92,14 @@
         const transaction = database.transaction(table, 'readwrite');
         transaction.objectStore(table).put(value, key);
         transaction.oncomplete = () => {
-          channel?.postMessage({
-            type: 'settings-committed-v1', key, owner
-          });
+          try {
+            channel?.postMessage({
+              type: 'settings-committed-v1', key, owner
+            });
+          } catch {
+            // Already durable: peers reread IndexedDB on focus/visibility.
+            // Failed notification must not strand this committed write.
+          }
           resolve();
         };
         transaction.onabort = () => reject(
