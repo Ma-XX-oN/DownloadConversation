@@ -80,7 +80,7 @@ function harness({ pageWorks = true, sandboxWorks = true, messageError = null } 
 
 test('Worker probe is registered exactly once, under existing Test button', () => {
   assert.equal(registry.split("['Worker + Zstd/CSP', testWorkerZstdCsp]").length - 1, 1);
-  assert.match(registry, /const detail = await fn\(\)/);
+  assert.match(registry, /const outcome = await fn\(\)/);
   assert.match(registry, /result\.status \+ \(result\.detail/);
   assert.match(readiness, /name !== 'Worker \+ Zstd\/CSP'/);
   const files = manifest.modules.flatMap(module => module.files);

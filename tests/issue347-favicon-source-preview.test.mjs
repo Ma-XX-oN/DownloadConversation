@@ -90,7 +90,7 @@ test('favicon comparison draws a complete outline outside each icon, without a s
 
 test('built-in Test matrix treats preview as Visual and excludes it from Run All', () => {
   assert.match(testMatrix, /\['Favicon source comparison', null, 'Visual'\]/);
-  assert.match(testMatrix, /if \(type !== 'Visual'\) await executeBuiltInTest\(name, fn\)/);
+  assert.match(testMatrix, /if \(type !== 'Visual' && type !== 'Action'\) await executeBuiltInTest\(name, fn\)/);
   assert.match(testMenu, /type === 'Visual' \? 'Visual' : 'Automatic'/);
   assert.match(testMenu, /type === 'Visual' \? 'Show' : 'Run'/);
   assert.match(testMenu, /test\?\.\[2\] === 'Visual'\) showFaviconSourceComparison\(row\)/);
