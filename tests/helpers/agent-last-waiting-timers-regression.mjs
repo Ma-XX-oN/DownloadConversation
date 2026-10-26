@@ -367,7 +367,7 @@ test('pinned AICC registered Core drives identical Last consumer through public 
     filename: 'aiconversationcore.chatgpt.browser.js'
   });
   const core = coreContext.AIConversationCore;
-  assert.equal(core.getVersion(), '1.1.2-issue.132.2');
+  assert.equal(core.getVersion(), '1.1.2-issue.132.5');
   assert.equal(typeof core.createAgent, 'function');
   let publishActivity = null;
   core.registerAgentPlugin({

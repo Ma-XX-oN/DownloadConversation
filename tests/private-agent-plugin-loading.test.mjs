@@ -23,7 +23,7 @@ test('provider selection remains owned by AICC, not DownloadConversation', () =>
   assert.equal(Object.hasOwn(manifest, 'agent_plugins'), false);
   assert.deepEqual(manifest.dependencies.map(entry => entry.name),
     ['AIConversationCore']);
-  assert.equal(manifest.dependencies[0].commit, '7c6b48729a670dc0eb163370f0e412d1a4a67a82');
+  assert.equal(manifest.dependencies[0].commit, '2f9b916835f82668ed26d87b07840787b17f5b6c');
   assert.doesNotMatch(JSON.stringify(manifest), /Chat-Gpt-Plugin-2/);
   assert.doesNotMatch(build, /manifest\.agent_plugins/);
   assert.doesNotMatch(buildLib, /DC_AGENT_PLUGIN_DESCRIPTORS/);
