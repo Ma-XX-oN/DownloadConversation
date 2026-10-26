@@ -1,5 +1,5 @@
 name: DC #298 isolated generated-artifact rebase builder
-# Rebuild version 1.11.16-issue.298.2 after updated Core interface fixtures
+# Rebuild version 1.11.16-issue.298.3 with tested AICC late registration V1
 on:
   push:
     branches:
