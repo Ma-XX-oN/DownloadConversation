@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         ChatGPT Conversation Markdown Recorder
 // @namespace    https://chatgpt.com/
-// @version      1.11.15-issue.318.26
+// @version      1.11.15-issue.318.28
 // @description  Exports the current ChatGPT conversation directly from the Conversation API as Markdown or JSONL.
 // @match        https://chatgpt.com/*
 // @match        https://chat.openai.com/*
@@ -24904,7 +24904,10 @@ Image elapsed: ${formatDuration(imageElapsed)} — Completed: ${imageCompleted}/
      */
     function notify() {
       const value = snapshot();
-      for (const listener of listeners) listener(value);
+      for (const listener of listeners) {
+        try { listener(value); }
+        catch { /* UI failure cannot disrupt Worker safety fences. */ }
+      }
     }
     /**
      * Fail closed.
