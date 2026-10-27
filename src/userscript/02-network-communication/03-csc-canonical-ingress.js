@@ -125,7 +125,8 @@
     // Original capture-time envelope precedes all body cloning and queues.
     if (cscMetadataIngress) {
       try {
-        cscMetadataIngress(envelope);
+        const { headers, body, value, ...metadataOnly } = envelope;
+        cscMetadataIngress(Object.freeze(metadataOnly));
       } catch (error) {
         cscIngressFailure(stamp, 'metadata-delivery', error);
       }
