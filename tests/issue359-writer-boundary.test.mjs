@@ -98,7 +98,20 @@ function fixture({ corrupt = false, recoveredCycle = null } = {}) {
   return {
     files, events, api,
     port: () => createPort({
-      postMessage: payload => receive({ data: payload }),
+      postMessage: payload => {
+        if (payload.type === 'csc-comm-drain') {
+          queueMicrotask(() => {
+            for (const listener of mainListeners) listener({
+              data: {
+                type: 'csc-comm-drained', request_id: payload.request_id,
+                durable: false
+              }
+            });
+          });
+          return;
+        }
+        receive({ data: payload });
+      },
       addEventListener: (name, listener) => {
         if (name === 'message') mainListeners.add(listener);
       },
