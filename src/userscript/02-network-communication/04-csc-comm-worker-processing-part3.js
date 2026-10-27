@@ -29,19 +29,16 @@
       }
       let reader;
       try {
-        if (event.hmac_token != null) {
-          if (typeof event.hmac_token !== 'string' ||
-              !stagedKeys.has(event.hmac_token)) fail('csc-key-token-unavailable');
-          key = stagedKeys.get(event.hmac_token);
-          scopeId = event.redaction_scope;
-          keyGeneration = event.redaction_key_generation;
-        }
-        if (!key || !scopeId || event.redaction_scope !== scopeId ||
-            event.redaction_key_generation !== keyGeneration ||
-            event.redaction_scope !== event.redaction_key_generation ||
+        if (typeof event.hmac_token !== 'string' ||
+            !stagedKeys.has(event.hmac_token)) fail('csc-key-token-unavailable');
+        key = stagedKeys.get(event.hmac_token);
+        if (!key || typeof event.key_restart !== 'string' ||
+            !/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z$/.test(event.key_restart) ||
+            !Number.isFinite(Date.parse(event.key_restart)) ||
+            new Date(Date.parse(event.key_restart)).toISOString() !== event.key_restart ||
             !Number.isSafeInteger(event.redaction_key_epoch) ||
             event.redaction_key_epoch < 1 ||
-            event.redaction_key_storage !== 'tampermonkey-script-installation' ||
+            event.redaction_key_storage !== 'chatgpt-origin-indexeddb' ||
             event.redaction_format !== 'dc-secret-marker/2') fail('csc-key-scope-mismatch'); const url = await safeUrl(String(event.url ?? event.request_url ??
           event.response_url ?? '')); const headers = await safeHeaders(event.headers); await writeFrame({
           kind: 'csc-comm-start', schema: 1, capture_id: String(event.capture_id),
@@ -55,8 +52,7 @@
           direction: String(event.direction ?? ''), url,
           headers: headers.safe, omitted_headers: headers.omitted,
           redaction_format: event.redaction_format,
-          redaction_scope: scopeId,
-          redaction_key_generation: keyGeneration,
+          key_restart: event.key_restart,
           redaction_key_epoch: event.redaction_key_epoch,
           redaction_key_storage: event.redaction_key_storage,
           binary_encoding: choice.kind === 'binary' ? 'base64' : 'utf8',
