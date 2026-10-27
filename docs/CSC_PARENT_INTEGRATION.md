@@ -630,3 +630,15 @@ Original exclusive #359 claim #6364342545 and issue-359-csc-integration branch p
 **GEN gap:** current branch tree and manifest have no CSC GEN physical sink or accepted #318 control-plane source. Existing GEN version/provenance tests concern diagnostic-log storage, not physical GEN beginSegment/writeCycle/hasCycle. Parent #359 must integrate a real approved GEN sink after exact owner contract and #318 acceptance. No fallback shim was created.
 
 **Other RED:** Parent pinned AICC 9e18441a supplies loadAgent, not released registered recognizeAgentPlugin/createAgent; old GM header contrasts with current raw/no-grant runtime. CGP2 #11 registered subject-host export remains separately owned and not accepted main. Exact host/Core coordination remains required. Hosted #359 CI still FAILS RWF historical PR #380 undeclared second-parent ancestry before prepare/validate/finalize; #379 owner coordination pending. Genuine full artifact, physical GEN/COMM, HMAC rotation, #232 performance and #319 independent certification INCOMPLETE.
+
+## 19. 2026-10-27 speculative early-metadata ingress, P/H/A/L
+
+Problem: #360's producer-to-Core heartbeat path remains absent, and the existing #310 plugin queue plus COMM Worker are body-owning/filtering consumers; network HTTP errors, unmatched poll responses and inbound WebSocket metadata must not disappear because those queues filter. #360 source owner independently suggested an early metadata-only fanout in DC #359 issue comment 6449054537.
+
+Hypothesis: a separate bindable metadata-only observer at the beginning of cscFanOut can deliver original capture clock, identity and metadata before native body cloning or queuing without creating a second interceptor or page-thread body queue.
+
+Action: In the existing non-release #359 parent only, commits 0854718d and c4247258 add cscBindMetadataIngress(listener|null), frozen capture-time metadata delivery before COMM/plugin, omit headers/body/value and isolate listener exceptions. tests/issue359-metadata-fanout.test.mjs committed 46cee247 and registered under scripts/ci-environment.mjs at 80932820.
+
+Learning: Focused source-execution 3/3 PASS: original HTTP 503 response time/identity before clones, metadata survives both clone failures, listener exception cannot suppress COMM or plugin. This is speculative interface evidence, not a real installed provider, #360 Core heartbeat path, or #299 certification. No #360 branch or main modified. Original #360 owner review requested in comment 6449837405. Do not bind to an unaccepted #360 implementation or assert producer integration until exact approved owner handoff.
+
+Other outstanding RED/INCOMPLETE: parent legacy AICC pin and GM registered-host conflict, #318 independently unaccepted and GEN physical sink absent, historical #380 branch policy failure, no full artifact/installed physical validation/#232 performance/#319 certification. Parent integrated acceptance ledger remains 10 PASS, 4 FAIL, 6 INCOMPLETE, 1 DEFERRED; isolated test pass does not change whole-criterion completion.
