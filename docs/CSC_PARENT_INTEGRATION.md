@@ -38,7 +38,9 @@ any child directly into `main`.  Existing leaves were created from
 `main`; their prior Git identity is historical and cannot be
 retroactively changed merely by editing a pull-request base.
 Integrate reviewed source into this parent without forging ancestry.
-Keep all source-owner restrictions and explicit merge approval gates.
+Keep all source-owner restrictions. Internal reviewed child-to-parent assembly
+is authorised under the standing RWF parent-owner rule; explicit operator
+approval applies to destination promotion, not routine non-release imports.
 
 ## 2. Source inventory: every entry is UNINTEGRATED here
 
@@ -112,6 +114,19 @@ the corresponding integration operation.
    file readback and the newly aligned decoder.  Test full body sizes,
    errors, backpressure, CPU and UI responsiveness as documented.
 
+**Authority clarification (2026-10-27, user-approved):** The exclusive DC #359
+owner may perform ordinary owner-reviewed source imports of individually
+accepted leaves into this dedicated parent branch without a separate user
+permission request each time. Earlier statements that this issue does
+not *itself* authorize import or that operator merge authorization is
+required *before any integration* are superseded for this non-release
+parent assembly step. Owner reviews, acceptance gates, exact SHA provenance,
+scope restrictions and assembled regression remain mandatory. An
+incomplete #318 candidate supports only bounded speculation until accepted;
+it must not be represented as accepted or used for parent DONE. No
+authority to merge to `main`, submit PRELIM without its own gate,
+or activate production is granted.
+
 ## 4. Child-to-parent execution (per candidate)
 
 1. Check claim/owner, actual RWF Git parent marker, source HEAD and
@@ -124,8 +139,12 @@ the corresponding integration operation.
    reviewable parent candidate, without modifying `main`.
 5. Run focused regression and full tests for the exact assembled
    parent SHA.  Record failures and continue independent checks.
-6. Obtain needed operator merge authorization before any integration.
-   Record landed SHA, source SHA, test evidence and conflict owner.
+6. The existing #359 parent owner has standing authority for routine,
+   reviewed, independently accepted child-source imports into the non-release
+   `issue-359-csc-integration` parent branch; no per-import operator approval
+   is required. Record landed SHA, source SHA, test evidence and conflict owner.
+   Preserve source-owner review and any separately explicit restriction.
+   Operator approval remains required for PRELIM/main promotion and release.
 
 Never treat a source-only CI PASS as physical installed Chrome or
 durable file-write acceptance.  No hidden compensating legacy writer.
