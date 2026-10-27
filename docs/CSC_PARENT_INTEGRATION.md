@@ -532,3 +532,31 @@ Authority: RWF PR #750 merged 2026-10-27T14:02:25Z and DC PR #380 merged 2026-10
 **Required before executable assembly:** integrate and test affected existing released source callsites, reconcile canonical #313 key_restart with #311 worker cycle validation, implement correlated settings ACK and durable #317/GEN key boundaries, preserve two native clones and plugin queue startup ordering, reconstruct the manifest and generated userscript, then test exact assembled SHA. For any semantic conflict, coordinate adaptations with affected source owners and record dispositions. DC #232/#319 are not entitled to an exact assembled handoff yet.
 
 Ledger for this source-staging operation: PASS standing authority and exact staging/provenance; FAIL known incompatible interfaces (pre-existing); INCOMPLETE executable assembly/manifest/build parity, #318 independent acceptance, installed/physical behaviour and downstream certification; DEFERRED release/main. Historical text above referring to mandatory per-import operator consent remains superseded by this section and RWF §13.5.
+
+
+## 14. October 27, 2026 — parent Worker adapter tests and CI blocker
+
+Owner: DC #359 original exclusive claim 6364342545. DC #318 remains OPEN and provisional; no #318 import. Original child branches and main remain untouched.
+
+### Executed exact-source V8 checks, not browser/disk acceptance
+
+The current three #311 Worker processor modules were retrieved from the parent, concatenated in source order and compiled/executed in V8 with minimal simulated TextEncoder/TextDecoder, URL, WebCrypto, Worker event listener and asynchronous sink. No installed browser, actual native Worker, physical filesystem or complete userscript was used.
+
+- Worker configure ACK: valid schema 1/request_id correlated positive; wrong schema and malformed ID receive negative acknowledgements (3 observed matching responses).
+- Committed canonical HMAC cycle: six rejected malformed/retired events, one valid event written. The first exact-source execution exposed the queue dropping key_restart. Corrected in parent commit 466a2cce; subsequent exact-source execution emitted matching key_restart and reported durable:false.
+- Canonical admitted JSON capture: 5/5 checks PASS; positive start/body/end with identical key_restart, and legacy storage, missing admission token, malformed UTC time, retired scope fail closed. This is mock-sink proof, NOT actual Worker/GEN/COMM disk durability.
+
+Parent-only #311 changes: 91f1c04c (correlated ACK), 57a389ea (cycle shape), 7dbe7311 and 4a3a0ac8 (UTC validation), ed26faa7 (canonical HMAC admission) and 466a2cce (cycle queue projection). Original source-owner review requests and coordination evidence: #311 comments 6445790635 / 6446084095, #317 comments 6445791743 / 6446085033, #318 comment 6445793145.
+
+### Hosted CI exact result, not waived
+
+Run https://github.com/Ma-XX-oN/DownloadConversation/actions/runs/40529719614 triggered by parent SHA 7357b3b7faaa4e159fc4dd5a246bcd04fdb9d9dd. Policy job 122278885790 FAIL: merge c3d349c8f2b38b3e6f15b7a01db4bf58d6e0cb5b (the authorized #380 merge into this parent) imports undeclared second-parent history 97abd5c24fb8f0522eab83ce249733060b32f105. Prepare, validate and finalize SKIPPED. #379 source branch is absent from live branch search; pinned RWF engine requires an extant declared remote dependency ref. No force rewrite, history deletion, policy bypass or invented branch was used. Exact request to original #379/policy owner: issue comment 6446053454.
+
+### Open exact assembly requirements
+
+- Integrate accepted modules and their current released-main hooks into an executable source/manifest/generated artifact without overwriting unrelated 1.11.15 main functionality.
+- Reconcile durable #317 COMM first-header/boundary and recovered hasCycle/drain, coupled GEN segment and committed cycles with final independently accepted #318 UI/control source.
+- Resolve everything-mode browser-accessible text streaming sanitization without leaking credentials or silently discarding selected data.
+- Obtain an authorized provenance-preserving policy correction, run the complete hosted suite against the actual assembled SHA, validate physical installed browser disk readback/replay and hand exact accepted candidate to independent #232 performance and #319 certification owners.
+
+Classification: PASS standing source import authority and staged-file provenance; PASS focused V8 tests with simulated ports; FAIL hosted policy ancestry and not-yet-compatible real Worker/GEN/COMM interface; INCOMPLETE executable assembly, full CI, installed physical proof and #318 prerequisite; DEFERRED PRELIM/main/production promotion. No exact-source candidate handoff issued.
