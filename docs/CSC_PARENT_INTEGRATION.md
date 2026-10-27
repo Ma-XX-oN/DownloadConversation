@@ -560,3 +560,18 @@ Run https://github.com/Ma-XX-oN/DownloadConversation/actions/runs/40529719614 tr
 - Obtain an authorized provenance-preserving policy correction, run the complete hosted suite against the actual assembled SHA, validate physical installed browser disk readback/replay and hand exact accepted candidate to independent #232 performance and #319 certification owners.
 
 Classification: PASS standing source import authority and staged-file provenance; PASS focused V8 tests with simulated ports; FAIL hosted policy ancestry and not-yet-compatible real Worker/GEN/COMM interface; INCOMPLETE executable assembly, full CI, installed physical proof and #318 prerequisite; DEFERRED PRELIM/main/production promotion. No exact-source candidate handoff issued.
+
+
+## 15. 2026-10-27 current-window source-test expansion (non-release, NOT accepted assembly)
+
+The #359 parent-owner continued without taking any child claim. The currently tested parent includes 101 unique declared source modules (85 pre-existing + 16 accepted CSC leaf imports); #318 remains unimported and OPEN. A dedicated Node test source file tests/issue359-parent-worker-contract.test.mjs and a separate tests/issue359-writer-boundary.test.mjs are registered in scripts/ci-environment.mjs, so top-level CI inventory does not omit them.
+
+Both test files were fetched from the exact current parent branch, converted from ESM imports only for V8 isolate execution with simulated Node module interfaces, and exercised against the **actual parent file bytes** for #311 processor and #317 writer. This mode is NOT genuine Node --test, hosted provider matrix, actual Worker/OPFS/Tampermonkey, authenticated browser or real archive readback.
+
+- Current Worker contract suite: **4/4 PASS** (correlated configuration schema/request_id, canonical key_restart cycle framing, six invalid cycle rejections, admitted JSON capture and non-durable status).
+- Current Writer boundary suite: **3/3 PASS** (persisted-version/key_restart header readback across initial and rotated boundaries; corrupt-header refusal/poison and durable:false; correlated Worker boundary ready and cycle-history query).
+- The new parent-owned #317 method beginKeyBoundary commits a first fragment header, verifies physical bytes through the Writer handle before returning durable:true, and poisons on corruption. hasCycle reads the existing recovered/durable knownCycles index. Commands csc-writer-begin-key-boundary / csc-writer-has-cycle reply with request_id correlations. The fixture simulates file bytes; no real physical durability claim is implied.
+- Source-owner #306 request comment 6446781555 documents the nontrivial released-main merge conflict in src/userscript/03-agent-lifecycle/09-network-install-api-transition.js. Older accepted whole-file overwrite was not applied.
+- Actual current-parent hosted CI run 40535175533 at 57f4dea327856dd1f8a03450ffcacf2cd012fcdc failed branch policy only: historical PR #380 merge c3d349c8 imports undeclared second-parent 97abd5c2. Its prepare/validate/finalize are SKIPPED. This is not a behavioural test of new Writer source. The policy owner #379 has been contacted; no bypass or owner takeover.
+
+Outstanding: resolve source-owner interface reviews, finish full main callsite integration and build/generated artifact parity; real Worker queue-to-Writer-to-GEN HMAC key and cycle boundary parity; current independently accepted #318 revision (its last fully green .33 was superseded by new owner-local fixes), installed Chrome/Tampermonkey physical output, 10/23/40/>100 MiB sustained #232 tests, independent #319 certification. The original parent marker, main and child PRs remain unchanged. The live branch HEAD and acceptance ledger must be rechecked after each new commit.
