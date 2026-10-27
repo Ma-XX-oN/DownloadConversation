@@ -267,3 +267,7 @@ The original .360.3 run 40531630332 failed the unrelated #333 Chromium dark-them
 ### RED proof request .360.5 — unresolved native producer wiring
 
 Independent DC #299 exact-source audit found that parent source has no real receipt or JSON activity fanout. The owner added `tests/issue360-native-receipt-feed.test.mjs` on this same branch. This is a required native fetch response integration RED test using the production wrapper and stock response observer, fake unrelated HTTP 503 and original response identity, with independent oracle requiring a dispatched CGP2 `server_receipt`. The current candidate is expected to FAIL; do not call it a completed regression. Full hosted validation of this exact changed source is requested to establish RED before source-owner approved repair. No provider/CSC #359 branch modified. This candidate is development-only, not a #299 handoff.
+
+### RED iteration .360.5 CI discovery and .360.6 correction
+
+The first .360.5 hosted run 40556916912 validated a new top-level native ingress test but test inventory rejected it as omitted from scripts/ci-environment.mjs. The structured validator artifact 12757897366 recorded ONLY `CI test inventory regression: FAILED`; no native test assertion ran. New .360.6 registers test in the explicit CI stage under the #360 parent and requests validation on an unused iteration. The production native-to-CGP2 callback remains missing by independent #299 source audit; this is test-first RED evidence, not release acceptance. No CSC #359 or CGP2 owners' source has been modified.

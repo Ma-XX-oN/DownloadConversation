@@ -108,6 +108,8 @@ const ordinaryStages = [
   ['#330 shared COMM directory authorisation regression', nodeCommand, ['--test', 'tests/issue330-comm-directory-cross-tab.test.mjs']],
   ['#338 malformed COMM manifest recovery regression', nodeCommand, ['--test', 'tests/issue338-comm-malformed-manifest.test.mjs']],
   ['Console lifecycle and provenance controls', nodeCommand, ['--test', 'tests/console-diagnostics.test.mjs']],
+  ['DC #360 native incoming receipt-to-CGP2 production RED', nodeCommand, ['--test',
+    'tests/issue360-native-receipt-feed.test.mjs']],
   ['Registered Last Core observer regressions', nodeCommand, ['--test',
     'tests/issue298-aicc-bridge.test.mjs',
     'tests/helpers/agent-last-waiting-timers-regression.mjs']],
