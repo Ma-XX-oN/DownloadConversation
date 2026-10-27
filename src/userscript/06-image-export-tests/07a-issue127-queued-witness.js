@@ -72,7 +72,7 @@
       const identity = agent.version();
       assert(identity.plugin === 'chatgpt-web' &&
         identity.apiVersion === 1 &&
-        identity.version === '0.1.2-issue.11.1',
+        identity.version === '0.1.2-issue.11.6',
         'Registered private provider identity mismatch.');
       assert(typeof agent.connectChatGPTSubjectHost === 'function' &&
         chatGPTSubjectHost &&
