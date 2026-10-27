@@ -234,7 +234,8 @@
         }
       });
       chain = operation.catch(error => message('csc-writer-error', {
-        operation: value.type, reason: errorCode(error), durable: false
+        operation: value.type, request_id: value.request_id ?? null,
+        reason: errorCode(error), durable: false
       }));
     });
     return api;
