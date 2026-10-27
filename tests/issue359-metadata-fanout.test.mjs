@@ -5,6 +5,10 @@ const source = readFileSync(new URL('../src/userscript/02-network-communication/
 const start = source.indexOf('  function cscFanOut('), end = source.indexOf('\n  /**', start);
 assert.ok(start >= 0 && end > start);
 const fanoutSource = source.slice(start, end);
+const bindStart = source.indexOf('  function cscBindMetadataIngress(');
+const bindEnd = source.indexOf('\n  /**', bindStart);
+assert.ok(bindStart >= 0 && bindEnd > bindStart);
+const bindSource = source.slice(bindStart, bindEnd);
 function fixture({ cloneFailure = false, listenerFailure = false } = {}) {
   const order = [], observations = [], failures = [];
   const prefix = [
@@ -16,8 +20,8 @@ function fixture({ cloneFailure = false, listenerFailure = false } = {}) {
     "const cancelReadableBodyQuietly = async () => {};",
     "const structuredClone = value => value;"
   ].join('\n');
-  const make = new Function('order','observations','failures','cloneFailure','listenerFailure', prefix + '\n' + fanoutSource + '\nreturn cscFanOut;');
-  return {publish:make(order,observations,failures,cloneFailure,listenerFailure),order,observations,failures};
+  const make = new Function('assert','order','observations','failures','cloneFailure','listenerFailure', prefix + '\n' + bindSource + '\n' + fanoutSource + '\nreturn {publish:cscFanOut,bind:cscBindMetadataIngress};');
+  return {...make(assert,order,observations,failures,cloneFailure,listenerFailure),order,observations,failures};
 }
 test('early metadata before clones preserves timestamp and excludes raw headers', () => {
   const f=fixture();
@@ -51,4 +55,17 @@ test('nonprimitive metadata cannot escape to early observer', () => {
   assert.equal(f.observations[0].status,503);
   for(const name of ['request','nested','body','headers','value'])
     assert.equal(f.observations[0][name],undefined);
+});
+test('unbinding metadata listener stops delivery and permits rebinding', () => {
+  const f=fixture();
+  f.bind(null);
+  f.publish({capture_id:'c11',network_sequence:11},{status:201},null);
+  assert.equal(f.observations.length,0);
+  f.bind(event=>{f.observations.push(event);});
+  f.publish({capture_id:'c12',network_sequence:12},{status:202},null);
+  assert.equal(f.observations.length,1);
+  assert.equal(f.observations[0].capture_id,'c12');
+  f.bind(null);
+  f.publish({capture_id:'c13',network_sequence:13},{status:203},null);
+  assert.equal(f.observations.length,1);
 });
