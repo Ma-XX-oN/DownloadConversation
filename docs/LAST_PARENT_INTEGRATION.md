@@ -247,3 +247,7 @@ Initial assembled merge `962c5a622e45bf8ce95bc8818d250172a4b53e7b` failed hosted
 ### RWF source-pin provenance (2026-10-27)
 
 The source import automatically marked PR #377 merged into parent PR #376 at merge SHA `962c5a622e45bf8ce95bc8818d250172a4b53e7b` and GitHub deleted the accepted child branch ref. As a result the policy could no longer resolve the accepted child by branch name even though the exact SHA was preserved in the merge's second parent. Parent-owned source provenance pin `issue-360-accepted-298-source-pin-20261027` references the SAME immutable accepted child commit `5e3eb3ccfcb60dcb2a97f828b91b8852ddff25af` without modifying its source tree. The parent branch's explicit `allowedDependencies` lists that pin. This remains solely non-release assembly; no main merge.
+
+### Exact parent CI iteration
+
+Set parent-owned development iteration `1.11.16-issue.360.1` for branch `issue-360-last-main-rebase-20261025`. The `.ci/run-ci-request` matches the authoritative `src/userscript-header.js` version. RepoWorkflow hosted artifact preparation is responsible for regenerating and committing the built userscript on the parent (if changed); the parent must verify the resulting source SHA and generated blob and run full tests. Historic #298.3 tests do not satisfy this new parent CI requirement.
