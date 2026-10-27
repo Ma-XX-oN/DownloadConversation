@@ -69,3 +69,11 @@ test('unbinding metadata listener stops delivery and permits rebinding', () => {
   f.publish({capture_id:'c13',network_sequence:13},{status:203},null);
   assert.equal(f.observations.length,1);
 });
+test('earliest capture identity cannot be replaced by later metadata', () => {
+  const f=fixture();
+  f.publish({capture_id:'original',network_sequence:9,captured_at_epoch_ms:111},
+    {capture_id:'late',network_sequence:99,captured_at_epoch_ms:999,status:503},null);
+  assert.equal(f.observations[0].capture_id,'original');
+  assert.equal(f.observations[0].network_sequence,9);
+  assert.equal(f.observations[0].captured_at_epoch_ms,111);
+});
