@@ -41,3 +41,14 @@ test('observer throw never suppresses COMM or plugin paths', () => {
   assert.deepEqual(f.order.filter(x=>x==='comm'||x==='plugin'),['comm','plugin']);
   assert.ok(f.failures.includes('metadata-delivery'));
 });
+
+test('nonprimitive metadata cannot escape to early observer', () => {
+  const f=fixture();
+  const secret={credentials:'secret'};
+  f.publish({capture_id:'c10',network_sequence:10},
+    {status:503,request:secret,nested:[secret],body:secret,headers:secret,value:secret},null);
+  assert.equal(f.observations[0].capture_id,'c10');
+  assert.equal(f.observations[0].status,503);
+  for(const name of ['request','nested','body','headers','value'])
+    assert.equal(f.observations[0][name],undefined);
+});
