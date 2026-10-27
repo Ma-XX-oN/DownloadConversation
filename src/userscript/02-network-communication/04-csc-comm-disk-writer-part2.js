@@ -206,6 +206,16 @@
         if (value.type === 'csc-writer-open') await open(value);
         else if (value.type === 'csc-writer-key-restart') {
           await setRestart(value.key_restart);
+        } else if (value.type === 'csc-writer-begin-key-boundary') {
+          const result = await beginKeyBoundary(value.key_restart);
+          message('csc-writer-key-boundary-ready', {
+            request_id: value.request_id ?? null, ...result
+          });
+        } else if (value.type === 'csc-writer-has-cycle') {
+          message('csc-writer-cycle-history', {
+            request_id: value.request_id ?? null,
+            id: value.id ?? null, durable: hasCycle(value.id)
+          });
         } else if (value.type === 'csc-writer-close') await close();
         else if (value.type === 'csc-writer-rename') {
           await renameLogical(value.logical_name);
