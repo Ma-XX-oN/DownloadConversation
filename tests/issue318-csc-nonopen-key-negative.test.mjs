@@ -47,3 +47,39 @@ for (const status of ['unavailable', 'pending', 'unknown']) {
     controls.dispose();
   });
 }
+
+test('HMAC status becomes unavailable after resume: Worker must be paused', async () => {
+  const context = vm.createContext({});
+  vm.runInContext(schema + control +
+    '\nthis.create=cscCaptureControlPlane;', context);
+  let statusReads=0, resumed=0, paused=0;
+  const service = {
+    status:async () => ({
+      state:++statusReads >= 4 ? 'unavailable' : 'open',
+      key_restart:'2026-10-27T15:00:00.000Z'
+    }),
+    dispose() {}
+  };
+  const controls = context.create({
+    store:{read:async()=>null,subscribe:()=>()=>{},dispose(){}},
+    serviceFactory:()=>service,version:'1.11.15-issue.318.34',
+    origin:'https://chatgpt.com'
+  });
+  const worker = {
+    pause:async()=>{paused++;},
+    resume:async()=>{resumed++;},
+    configure:async request=>({
+      type:'csc-comm-configured',schema:request.schema,
+      request_id:request.request_id
+    }),
+    provisionTarget:{postMessage(){}},
+    awaitKey:async()=>({})
+  };
+  await controls.init();
+  await assert.rejects(controls.bindWorker(worker),
+    /csc-settings-apply-failed/);
+  assert.equal(resumed,1,'late key state changed after Worker resume');
+  assert.ok(paused>=2,'final pause must follow a completed resume');
+  assert.equal(controls.snapshot().settings_applied,false);
+  controls.dispose();
+});
