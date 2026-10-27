@@ -182,7 +182,7 @@
       }
       pendingCycleIds.add(item.id);
       records.push({ cycle_record: true, event: {
-        type: item.type, id: item.id, generation: item.generation,
+        type: item.type, id: item.id, key_restart: item.key_restart,
         epoch: item.epoch, occurred_at_ms: item.occurred_at_ms,
         reason: item.reason
       } });
