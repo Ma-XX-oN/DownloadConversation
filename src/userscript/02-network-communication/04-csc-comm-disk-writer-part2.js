@@ -180,7 +180,8 @@
       manifest.release();
       message('csc-writer-closed', { durable: true });
     }
-    const api = Object.freeze({ open, write, setRestart, seal, close,
+    const api = Object.freeze({ open, write, setRestart,
+      beginKeyBoundary, hasCycle, seal, close,
       snapshot, renameLogical, duplicate, reset,
       get committedBytes() { return committed; },
       get queueBytes() { return queuedBytes; },
