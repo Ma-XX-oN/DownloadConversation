@@ -64,7 +64,7 @@ test('unsupported provider host is disposed without queue connection', () => {
   assert.equal(f.events.filter(v => v === 'dispose-host').length, 1);
   assert.equal(f.events.filter(v => v === 'queue-connect').length, 0);
   assert.equal(f.events.some(v =>
-    Array.isArray(v) && v[1] === 'agent-plugin-navigation-interface-unavailable'), true);
+    Array.isArray(v) && v[2] === 'agent-plugin-navigation-interface-unavailable'), true);
 });
 
 test('provider without navigation interface never attaches queue', () => {
@@ -73,5 +73,5 @@ test('provider without navigation interface never attaches queue', () => {
   assert.equal(f.hostConnections, 0);
   assert.equal(f.events.filter(v => v === 'queue-connect').length, 0);
   assert.equal(f.events.some(v =>
-    Array.isArray(v) && v[1] === 'agent-plugin-navigation-interface-unavailable'), true);
+    Array.isArray(v) && v[2] === 'agent-plugin-navigation-interface-unavailable'), true);
 });
