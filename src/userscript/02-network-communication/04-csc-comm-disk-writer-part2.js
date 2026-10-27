@@ -180,8 +180,50 @@
       manifest.release();
       message('csc-writer-closed', { durable: true });
     }
+    /**
+     * Await the complete serialized Writer queue before a key boundary.
+     * The returned promise is not a durable ACK for any unclosed capture.
+     * @returns {Promise<{durable:true}>} Drained physical queue.
+     */
+    async function drain() {
+      await chain;
+      check(directory !== null && !poisoned, 'csc-writer-not-open');
+      check(queuedRecords === 0 && activeCapture === null,
+        'csc-writer-drain-incomplete');
+      return Object.freeze({ durable: true });
+    }
+    /**
+     * Persist one exact #313 nonsecret cycle through the Writer byte queue.
+     * Only Writer readback, never Worker enqueue, produces durable:true.
+     * @param {Object} event - Committed producer journal record.
+     * @returns {Promise<{durable:true,id:string}>} Physical append ACK.
+     */
+    async function writeCycle(event) {
+      check(directory !== null && !poisoned && activeName !== null,
+        'csc-writer-boundary-not-durable');
+      const fields = ['type','id','key_restart','epoch','occurred_at_ms','reason'];
+      check(event && typeof event === 'object' && !Array.isArray(event) &&
+        Object.keys(event).length === fields.length &&
+        Object.keys(event).every(name => fields.includes(name)) &&
+        event.type === 'hmac-key-cycle' &&
+        event.id === 'hmac-key-cycle:' + event.key_restart &&
+        event.key_restart === keyRestart &&
+        validRestart(event.key_restart) &&
+        Number.isSafeInteger(event.epoch) && event.epoch > 0 &&
+        event.occurred_at_ms === Date.parse(event.key_restart) &&
+        ['initial','scheduled','overdue','manual'].includes(event.reason),
+        'csc-writer-invalid-cycle');
+      const bytes = encoder.encode(JSON.stringify({
+        kind: 'hmac-key-cycle', type: event.type, id: event.id,
+        key_restart: event.key_restart, epoch: event.epoch,
+        occurred_at_ms: event.occurred_at_ms, reason: event.reason
+      }) + '\n');
+      await scope.cscCommWriteChunk(bytes);
+      check(knownCycles.has(event.id), 'csc-writer-cycle-not-durable');
+      return Object.freeze({ durable: true, id: event.id });
+    }
     const api = Object.freeze({ open, write, setRestart,
-      beginKeyBoundary, hasCycle, seal, close,
+      beginKeyBoundary, hasCycle, drain, writeCycle, seal, close,
       snapshot, renameLogical, duplicate, reset,
       get committedBytes() { return committed; },
       get queueBytes() { return queuedBytes; },
