@@ -312,8 +312,21 @@
       if (value.type === 'csc-comm-capture') enqueue(value.envelope);
       else if (value.type === 'csc-comm-key-cycle') enqueueCycle(value.event);
       else if (value.type === 'csc-comm-configure') {
-        try { options(value.options); scope.postMessage({ type: 'csc-comm-configured' }); }
-        catch { scope.postMessage({ type: 'csc-comm-configuration-failed' }); }
+        const validId = typeof value.request_id === 'string' &&
+          /^csc-options-[1-9][0-9]*$/.test(value.request_id);
+        if (value.schema !== 1 || !validId) {
+          scope.postMessage({ type: 'csc-comm-configuration-failed',
+            schema: 1, request_id: value.request_id ?? null });
+        } else {
+          try {
+            options(value.options);
+            scope.postMessage({ type: 'csc-comm-configured',
+              schema: 1, request_id: value.request_id });
+          } catch {
+            scope.postMessage({ type: 'csc-comm-configuration-failed',
+              schema: 1, request_id: value.request_id });
+          }
+        }
       } else if (value.type === 'csc-comm-provision' ||
                  value.type === 'dc-hmac-key-v2') {
         void provision(value).catch(() => {
