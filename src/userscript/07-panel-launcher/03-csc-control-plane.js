@@ -70,10 +70,6 @@
       notify();
       if (worker) await worker.pause();
     }
-    /**
-     * Apply persisted options and verify a correlated Worker acknowledgement.
-     * @returns {Promise<boolean>} Worker ACK status.
-     */
     async function apply() {
       if (disposed) return reject('csc-controls-disposed');
       if (!settingsStorageAvailable) {
@@ -105,6 +101,10 @@
         try { await pause(); }
         catch { return reject('csc-settings-pause-failed'); }
         return keyState === 'failed' ? reject('csc-key-status-failed') : false;
+      }
+      if (keyState === 'uninitialized') {
+        await pause();
+        return false;
       }
       if (keyState !== 'open') {
         try { await pause(); }
@@ -350,21 +350,27 @@
       }
       return events.length;
     }
-    /**
-     * Admit capture after settings and HMAC.
-     * @returns {Promise<Object>} Key-bound admission.
-     */
     async function prepareCapture() {
-      if (!applied || !service || !worker || !gen || !comm) {
+      if (!service || !worker || !gen || !comm) {
         throw new Error('csc-capture-not-ready');
       }
-      const captureSeq = seq;
-      await refreshKey();
-      if (!applied || keyState !== 'open') {
-        throw new Error('csc-capture-not-ready');
-      }
-      const admission = await service.admit();
+      let admission = null;
       try {
+        await refreshKey();
+        if (!applied && keyState === 'uninitialized') {
+          admission = await service.admit();
+          await refreshKey();
+          if (keyState !== 'open') {
+            throw new Error('csc-key-admission-scope-changed');
+          }
+          await reconcileCycles();
+          await apply();
+        }
+        if (!applied || keyState !== 'open') {
+          throw new Error('csc-capture-not-ready');
+        }
+        const captureSeq = seq;
+        if (!admission) admission = await service.admit();
         await refreshKey();
         if (!applied || keyState !== 'open' ||
             publicKey !== admission.metadata.key_restart) {
@@ -384,10 +390,12 @@
         }
         return admission;
       } catch (error) {
-        try { await service.complete(admission.token); }
-        catch {
-          await pause().catch(() => {});
-          return reject('csc-admission-release-failed');
+        if (admission) {
+          try { await service.complete(admission.token); }
+          catch {
+            await pause().catch(() => {});
+            return reject('csc-admission-release-failed');
+          }
         }
         await pause().catch(() => {});
         throw error;
