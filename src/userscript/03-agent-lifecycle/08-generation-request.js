@@ -276,6 +276,7 @@
       const originalFetch = pageWindow.fetch;
       originalPageFetch = originalFetch;
       pageWindow.fetch = function(...args) {
+        const requestStamp = cscCaptureNow('fetch', 'request');
         const input = args[0];
         const init = args[1] || {};
         let request = null;
@@ -284,9 +285,15 @@
           request = input instanceof PageRequest ? input : new PageRequest(input, init);
         } catch {}
         const requestUrl = request?.url ?? String(input);
-        const stockTrace = stockNetworkTraceFetchStart(request, requestUrl);
-        void communicationLogFetchRequest(request, stockTrace)
-          .catch(communicationError => communicationLogReportFailure('fetch-request', communicationError));
+        const stockTrace = stockNetworkTraceFetchStart(request, requestUrl, requestStamp);
+        cscPublishFetch(requestStamp, request, {
+          method: String(request?.method ?? init.method ?? 'GET').toUpperCase(),
+          request_url: requestUrl
+        });
+        if (!cscCommWorker) {
+          void communicationLogFetchRequest(request, stockTrace)
+            .catch(communicationError => communicationLogReportFailure('fetch-request', communicationError));
+        }
         rememberApiRequestContext(requestUrl, request?.headers, init.headers);
         recordClickDiagnosticNetworkRequest(requestUrl, 'fetch');
         const requestMethod = String(request?.method ?? init.method ?? 'GET').toUpperCase();
@@ -303,16 +310,29 @@
           ? captureGenerationStreamRequest(request, generationSubmittedAtMs)
           : null;
         const resumeRequestClone = resumeRequest && request ? cloneSafely(request) : null;
-        const responsePromise = originalFetch.apply(this, args);
+        const responsePromise = cscDispatchObservedFetch(
+          originalFetch, this, args, requestStamp, stockTrace, requestUrl);
         return responsePromise.then(response => {
+          const responseStamp = cscCaptureNow('fetch', 'response',
+            requestStamp.connection_id, requestStamp);
           const generationResponse = capturePromise ? cloneSafely(response) : null;
           const resumeResponse = resumeRequest ? cloneSafely(response) : null;
           const stopwatchConversationResponse = stopwatchConversationRequest
             ? cloneSafely(response)
             : null;
           stockNetworkTraceFetchResponse(response, stockTrace);
-          void communicationLogFetchResponse(response, stockTrace)
-            .catch(communicationError => communicationLogReportFailure('fetch-response', communicationError));
+          cscPublishFetch(responseStamp, response, {
+            method: stockTrace.method,
+            request_url: requestUrl,
+            response_url: response.url,
+            status: response.status,
+            redirected: response.redirected,
+            ok: response.ok
+          });
+          if (!cscCommWorker) {
+            void communicationLogFetchResponse(response, stockTrace)
+              .catch(communicationError => communicationLogReportFailure('fetch-response', communicationError));
+          }
           if (stopwatchConversationRequest && !stopwatchConversationResponse) {
             logDiagnostic('warnings', 'agent-stopwatch-recovery-response-clone-failure', {
               url: boundedDiagnosticText(response?.url ?? requestUrl, 320)
