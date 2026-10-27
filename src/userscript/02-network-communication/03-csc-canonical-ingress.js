@@ -121,7 +121,7 @@
    * @returns {void} No value is returned.
    */
   function cscFanOut(stamp, meta, nativeBodyOwner = null, availableValue = null) {
-    const envelope = Object.freeze({ ...stamp, ...meta });
+    const envelope = Object.freeze({ ...meta, ...stamp });
     // Original capture-time envelope precedes all body cloning and queues.
     if (cscMetadataIngress) {
       try {
