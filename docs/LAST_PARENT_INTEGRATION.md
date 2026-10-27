@@ -228,3 +228,14 @@ Authoritative evidence:
 - Exact composed CI and authenticated browser certification are still
   required; parent documentation is NOT evidence of runtime integration.
 - Do not merge to main without a separate explicit approval.
+
+## 13. Reviewed Last source assembly (2026-10-27)
+
+- RWF standing non-release child-to-parent import authority: WORK_GRAPH_SCHEDULING.md §13.5, merged PR #750 (9cadfeef19cd7d074f993a798b9a6e457ac7d155). This is NOT main/promotion approval.
+- Direct prerequisite DC #298 independently accepted: https://github.com/Ma-XX-oN/DownloadConversation/issues/298#issuecomment-6428443607; formal handoff https://github.com/Ma-XX-oN/DownloadConversation/issues/360#issuecomment-6428458798 (13 PASS, 0 FAIL/INCOMPLETE/DEFERRED).
+- Parent branch `issue-360-last-main-rebase-20261025` at original reviewed `ccdca378170af19af4520f31b1246284c973fb71` (PR #376); exact accepted child `issue-298-registration-rebase-20261025` at `5e3eb3ccfcb60dcb2a97f828b91b8852ddff25af` (PR #377), which physically descends from parent. The child branch remains unchanged.
+- Source import is a two-parent integration merge, first parent previous #360 HEAD and second parent exact #298 accepted HEAD. The resulting source tree starts with the exact accepted child tree `6255998ee4fe145201a79ce6972ef086d19d6d9f` and adds only this parent-owned documentation entry. This is a NON-RELEASE assembly, not a direct child-to-main merge.
+- Selected CGP2 #9/#10 PR #46: `190e9ddeb42786abb7f200272fd4bfa7991a5543` (producer bundle blob `56d5256b35d3ad7aa7c638e87f06327566534a85`). Selected AICC #132 PR #138: `2f9b916835f82668ed26d87b07840787b17f5b6c` (Core classic blob `5fadf486d044c1a396aad10f435b862eed93db9a`). DC manifest pins exact AICC source; CGP2 remains its independently installed producer artifact.
+- Source overlap: accepted child diff is 18 files; #360 parent diff to main is only this document and `.repoworkflow/tickets.csv`. No path collision; no source-owner conflict to resolve.
+- Accepted leaf PUSH CI: DC run 40255566995 / 710 tests, Core run 40255175837 / 258 PASS 2 expected SKIP, producer run 40157478428 / 77 tests. These are leaf evidence ONLY. New exact assembled-source CI, generated-user-script parity and genuine signed-in Chrome are required; independent DC #299 owns final browser certification.
+- CSC #359 source, branches and claims are untouched; no duplicate native interception is authorized.

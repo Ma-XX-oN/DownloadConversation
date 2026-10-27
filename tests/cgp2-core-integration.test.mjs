@@ -159,7 +159,14 @@ test('production bridge publishes through the real registered Core session and p
     assert: (ok, message) => assert.ok(ok, message),
     currentConversationId: () => null,
     logDiagnostic() {},
-    canonicalEnrichRecoveredImages: event => event
+    canonicalEnrichRecoveredImages: event => event,
+    agentTimingBindActivityObserver(registry, agent) {
+      assert.equal(registry, core);
+      assert.ok(registry.activityState(agent));
+      return registry.observeActivity(agent, () => {});
+    },
+    agentTimingUnbindActivityObserver() {},
+    window: { addEventListener() {} }
   };
   vm.runInNewContext(bridgeSource + `
     this.ready = ensureChatGPTCanonicalAgent;
