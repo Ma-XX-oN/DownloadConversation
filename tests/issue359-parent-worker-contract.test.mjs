@@ -13,6 +13,11 @@ const source = files.map(file => readFileSync(
   'utf8'
 )).join('\n');
 const create = new Function(source + '\nreturn cscCommWorkerProcessing;')();
+const controlSource = readFileSync(new URL(
+  '../src/userscript/02-network-communication/04-csc-comm-durable-port.js',
+  import.meta.url), 'utf8');
+const createDurablePort = new Function('assert', controlSource +
+  '\nreturn cscCommDurablePort;')(assert);
 
 function harness() {
   const replies = [];
@@ -156,4 +161,51 @@ test('processor drain ACK waits until in-flight cycle write resolves', async () 
   const ack = messages.find(event => event.type === 'csc-comm-drained');
   assert.equal(ack.request_id, 'drain-1');
   assert.equal(ack.durable, false);
+});
+
+test('full COMM port waits for live processor before Writer durable ACK', async () => {
+  const listeners = new Map(), orders = [];
+  const put = (kind, fn) => {
+    const set = listeners.get(kind) ?? new Set();
+    set.add(fn); listeners.set(kind, set);
+  };
+  const emit = message => {
+    for (const fn of listeners.get('message') ?? []) fn({ data: message });
+  };
+  let releaseWrite;
+  const gate = new Promise(resolve => { releaseWrite = resolve; });
+  const worker = {
+    addEventListener: put,
+    removeEventListener: (kind, fn) => listeners.get(kind)?.delete(fn),
+    postMessage(message) {
+      orders.push(message.type);
+      emit(message);
+    }
+  };
+  create({
+    addEventListener: put,
+    postMessage: emit
+  }, { write: async () => { await gate; } });
+  put('message', event => {
+    const message = event.data;
+    if (message.type === 'csc-writer-drain') {
+      emit({ type: 'csc-writer-drained',
+        request_id: message.request_id, durable: true });
+    }
+  });
+  const port = createDurablePort(worker, 1000);
+  try {
+    const restart = '2026-10-27T15:24:00.000Z';
+    emit({ type: 'csc-comm-key-cycle', event: {
+      type: 'hmac-key-cycle', id: 'hmac-key-cycle:' + restart,
+      key_restart: restart, epoch: 1,
+      occurred_at_ms: Date.parse(restart), reason: 'initial'
+    } });
+    const promise = port.drain();
+    for (let n = 0; n < 15; n++) await Promise.resolve();
+    assert.deepEqual(orders, ['csc-comm-drain']);
+    releaseWrite();
+    assert.deepEqual(await promise, { durable: true });
+    assert.deepEqual(orders, ['csc-comm-drain', 'csc-writer-drain']);
+  } finally { port.dispose(); }
 });
