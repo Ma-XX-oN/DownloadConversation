@@ -34,12 +34,14 @@
       const request = typeof value?.request_id === 'string'
         ? pending.get(value.request_id) : null;
       if (!request) return;
-      if (value.type !== request.expected && value.type !== 'csc-writer-error') {
+      if (value.type !== request.expected && value.type !== 'csc-writer-error' &&
+          value.type !== 'csc-comm-drain-failed') {
         return;
       }
       pending.delete(value.request_id);
       clearTimeout(request.timer);
-      if (value.type === 'csc-writer-error') {
+      if (value.type === 'csc-writer-error' ||
+          value.type === 'csc-comm-drain-failed') {
         request.reject(new Error(value.reason || 'csc-writer-control-failed'));
         return;
       }
@@ -87,7 +89,14 @@
     /**
      * @returns {Promise<{durable:true}>} Drained physical write queue.
      */
-    function drain() {
+    async function drain() {
+      await request('csc-comm-drain', 'csc-comm-drained', {},
+        ack => {
+          if (ack.durable !== false) {
+            throw Error('csc-comm-drain-ack-invalid');
+          }
+          return true;
+        });
       return request('csc-writer-drain', 'csc-writer-drained', {},
         ack => {
           if (ack.durable !== true) throw Error('csc-writer-drain-unconfirmed');
