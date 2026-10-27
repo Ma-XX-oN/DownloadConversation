@@ -255,3 +255,7 @@ Set parent-owned development iteration `1.11.16-issue.360.1` for branch `issue-3
 ### CI failure and corrective regression expectation
 
 At assembled candidate `fd40dde47fc5cd536ac3a1ad9a22d00bb31aedef`, full hosted run 40530131160 executed validation; RepoWorkflow adoption contract failed because `tests/repoworkflow-adoption.test.mjs` still expected the historical branch-policy table without the new #360 allowed dependency. Structured artifact 12746026723 records returncode 1 and exact failed stage. Parent #360 owns the added branch-policy entry; this correction adds its explicit expected rule to the repository policy regression and preserves all existing expected entries. New validation request: `1.11.16-issue.360.2`. Historical FAIL result `v1.11.16-issue.360.1-CI-FAIL` is retained, not relabeled.
+
+### Preflight iteration collision
+
+The `.360.2` request failed preflight in run 40531225190 because historical annotated `v1.11.16-issue.360.2-CI-FAIL` already exists and points to old commit `6bd687516f330854ba3967979ceb882fd8f73688` from October 25. That tag was not created by the assembled candidate; the .2 validation stage did not run. Both success and failure tags for `.360.3` were checked absent before establishing the new request.
