@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         ChatGPT Conversation Markdown Recorder
 // @namespace    https://chatgpt.com/
-// @version      1.11.15-issue.318.37
+// @version      1.11.15-issue.318.38
 // @description  Exports the current ChatGPT conversation directly from the Conversation API as Markdown or JSONL.
 // @match        https://chatgpt.com/*
 // @match        https://chat.openai.com/*
@@ -24931,10 +24931,6 @@ Image elapsed: ${formatDuration(imageElapsed)} — Completed: ${imageCompleted}/
       notify();
       if (worker) await worker.pause();
     }
-    /**
-     * Apply persisted options and verify a correlated Worker acknowledgement.
-     * @returns {Promise<boolean>} Worker ACK status.
-     */
     async function apply() {
       if (disposed) return reject('csc-controls-disposed');
       if (!settingsStorageAvailable) {
@@ -24966,6 +24962,10 @@ Image elapsed: ${formatDuration(imageElapsed)} — Completed: ${imageCompleted}/
         try { await pause(); }
         catch { return reject('csc-settings-pause-failed'); }
         return keyState === 'failed' ? reject('csc-key-status-failed') : false;
+      }
+      if (keyState === 'uninitialized') {
+        await pause();
+        return false;
       }
       if (keyState !== 'open') {
         try { await pause(); }
@@ -25008,11 +25008,6 @@ Image elapsed: ${formatDuration(imageElapsed)} — Completed: ${imageCompleted}/
       notify();
       return true;
     }
-    /**
-     * Serialize mutations.
-     * @param {Function} operation - Asynchronous control mutation to serialize
-     * @returns {Promise<unknown>} Serialize mutations.
-     */
     function schedule(operation) {
       const result = chain.then(operation);
       chain = result.catch(() => undefined);
@@ -25064,12 +25059,6 @@ Image elapsed: ${formatDuration(imageElapsed)} — Completed: ${imageCompleted}/
       })();
       return initPromise;
     }
-    /**
-     * Persist and apply settings.
-     * @param {Object} next - Versioned user-selected capture options
-     * @param {boolean} confirmed - Sensitive-capture consent
-     * @returns {Promise<boolean>} Persist and apply settings.
-     */
     async function setOptions(next, confirmed) {
       const options = cscControlValidateOptions(next);
       const broadened = options.mode === 'everything' ||
@@ -25211,21 +25200,27 @@ Image elapsed: ${formatDuration(imageElapsed)} — Completed: ${imageCompleted}/
       }
       return events.length;
     }
-    /**
-     * Admit capture after settings and HMAC.
-     * @returns {Promise<Object>} Key-bound admission.
-     */
     async function prepareCapture() {
-      if (!applied || !service || !worker || !gen || !comm) {
+      if (!service || !worker || !gen || !comm) {
         throw new Error('csc-capture-not-ready');
       }
-      const captureSeq = seq;
-      await refreshKey();
-      if (!applied || keyState !== 'open') {
-        throw new Error('csc-capture-not-ready');
-      }
-      const admission = await service.admit();
+      let admission = null;
       try {
+        await refreshKey();
+        if (!applied && keyState === 'uninitialized') {
+          admission = await service.admit();
+          await refreshKey();
+          if (keyState !== 'open') {
+            throw new Error('csc-key-admission-scope-changed');
+          }
+          await reconcileCycles();
+          await apply();
+        }
+        if (!applied || keyState !== 'open') {
+          throw new Error('csc-capture-not-ready');
+        }
+        const captureSeq = seq;
+        if (!admission) admission = await service.admit();
         await refreshKey();
         if (!applied || keyState !== 'open' ||
             publicKey !== admission.metadata.key_restart) {
@@ -25245,10 +25240,12 @@ Image elapsed: ${formatDuration(imageElapsed)} — Completed: ${imageCompleted}/
         }
         return admission;
       } catch (error) {
-        try { await service.complete(admission.token); }
-        catch {
-          await pause().catch(() => {});
-          return reject('csc-admission-release-failed');
+        if (admission) {
+          try { await service.complete(admission.token); }
+          catch {
+            await pause().catch(() => {});
+            return reject('csc-admission-release-failed');
+          }
         }
         await pause().catch(() => {});
         throw error;
@@ -25274,11 +25271,6 @@ Image elapsed: ${formatDuration(imageElapsed)} — Completed: ${imageCompleted}/
         return reject('csc-key-completion-failed');
       }
     }
-    /**
-     * Rotate after durable drain.
-     * @param {boolean} confirmed - Explicit confirmation supplied by the UI
-     * @returns {Promise<Object>} Rotate after durable drain.
-     */
     async function randomize(confirmed) {
       if (confirmed !== true) throw new Error('csc-randomize-unconfirmed');
       if (!service || !worker || !gen || !comm || !applied) {
