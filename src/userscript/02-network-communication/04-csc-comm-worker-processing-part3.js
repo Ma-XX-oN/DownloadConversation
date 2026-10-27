@@ -241,12 +241,15 @@
      * Drains the Worker queue in preserved insertion order.
      * @returns {Promise<void>} Output from drain.
      */
-    async function drain() {
-      if (working) return;
+    function drain() {
+      if (working) return activeDrain;
       working = true;
-      try {
-        while (records.length) await process(records.shift());
-      } finally { working = false; }
+      activeDrain = (async () => {
+        try {
+          while (records.length) await process(records.shift());
+        } finally { working = false; }
+      })();
+      return activeDrain;
     }
     /**
      * Adds a validated message to the bounded Worker-owned queue.
@@ -305,7 +308,15 @@
     scope.addEventListener('message', event => {
       const value = event.data;
       if (!value || typeof value.type !== 'string') return;
-      if (value.type === 'csc-comm-capture') enqueue(value.envelope);
+      if (value.type === 'csc-comm-drain') {
+        void drain().then(() => scope.postMessage({
+          type: 'csc-comm-drained', request_id: value.request_id,
+          durable: false
+        })).catch(() => scope.postMessage({
+          type: 'csc-comm-drain-failed', request_id: value.request_id,
+          durable: false
+        }));
+      } else if (value.type === 'csc-comm-capture') enqueue(value.envelope);
       else if (value.type === 'csc-comm-key-cycle') enqueueCycle(value.event);
       else if (value.type === 'csc-comm-configure') {
         const validId = typeof value.request_id === 'string' &&
