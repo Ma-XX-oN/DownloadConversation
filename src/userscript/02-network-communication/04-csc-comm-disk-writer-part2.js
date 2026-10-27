@@ -207,7 +207,7 @@
         else if (value.type === 'csc-writer-key-restart') {
           await setRestart(value.key_restart);
         } else if (value.type === 'csc-writer-begin-key-boundary') {
-          const result = await beginKeyBoundary(value.key_restart);
+          const result = await beginKeyBoundary(value.header);
           message('csc-writer-key-boundary-ready', {
             request_id: value.request_id ?? null, ...result
           });
