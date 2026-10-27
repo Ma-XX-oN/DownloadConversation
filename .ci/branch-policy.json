@@ -26,6 +26,13 @@
       "parent": "issue-360-last-main-rebase-20261025",
       "allowedDependencies": [],
       "integrationTarget": "issue-360-last-main-rebase-20261025"
+    },
+    "issue-360-last-main-rebase-20261025": {
+      "parent": "main",
+      "allowedDependencies": [
+        "issue-298-registration-rebase-20261025"
+      ],
+      "integrationTarget": "main"
     }
   },
   "patterns": [

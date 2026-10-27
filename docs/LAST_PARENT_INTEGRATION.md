@@ -239,3 +239,7 @@ Authoritative evidence:
 - Source overlap: accepted child diff is 18 files; #360 parent diff to main is only this document and `.repoworkflow/tickets.csv`. No path collision; no source-owner conflict to resolve.
 - Accepted leaf PUSH CI: DC run 40255566995 / 710 tests, Core run 40255175837 / 258 PASS 2 expected SKIP, producer run 40157478428 / 77 tests. These are leaf evidence ONLY. New exact assembled-source CI, generated-user-script parity and genuine signed-in Chrome are required; independent DC #299 owns final browser certification.
 - CSC #359 source, branches and claims are untouched; no duplicate native interception is authorized.
+
+### Parent branch-policy registration repair
+
+Initial assembled merge `962c5a622e45bf8ce95bc8818d250172a4b53e7b` failed hosted branch policy because the parent omitted an explicit allowedDependencies declaration for its accepted physical child. The failed policy job is 122276312194 in Actions run 40529001403; prepare/validate/finalize were skipped and are not behavioral failures. The parent now registers `issue-298-registration-rebase-20261025` as its *sole allowed Git history dependency* under `.ci/branch-policy.json`. The original source merge is retained without rewriting history; rerun exact host CI at the repaired candidate before acceptance.
