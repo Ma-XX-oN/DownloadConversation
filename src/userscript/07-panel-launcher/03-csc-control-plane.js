@@ -147,11 +147,6 @@
       notify();
       return true;
     }
-    /**
-     * Serialize mutations.
-     * @param {Function} operation - Asynchronous control mutation to serialize
-     * @returns {Promise<unknown>} Serialize mutations.
-     */
     function schedule(operation) {
       const result = chain.then(operation);
       chain = result.catch(() => undefined);
@@ -203,12 +198,6 @@
       })();
       return initPromise;
     }
-    /**
-     * Persist and apply settings.
-     * @param {Object} next - Versioned user-selected capture options
-     * @param {boolean} confirmed - Sensitive-capture consent
-     * @returns {Promise<boolean>} Persist and apply settings.
-     */
     async function setOptions(next, confirmed) {
       const options = cscControlValidateOptions(next);
       const broadened = options.mode === 'everything' ||
@@ -421,11 +410,6 @@
         return reject('csc-key-completion-failed');
       }
     }
-    /**
-     * Rotate after durable drain.
-     * @param {boolean} confirmed - Explicit confirmation supplied by the UI
-     * @returns {Promise<Object>} Rotate after durable drain.
-     */
     async function randomize(confirmed) {
       if (confirmed !== true) throw new Error('csc-randomize-unconfirmed');
       if (!service || !worker || !gen || !comm || !applied) {
