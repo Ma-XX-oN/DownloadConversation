@@ -91,9 +91,9 @@ function fixture({ corrupt = false, recoveredCycle = null } = {}) {
 test('first header is read back before durable key-boundary result', async () => {
   const f = fixture();
   await f.open();
-  const first = await f.api.beginKeyBoundary(restartA);
+  const first = await f.api.beginKeyBoundary({ version: '2', key_restart: restartA });
   assert.deepEqual(first, { durable: true, key_restart: restartA });
-  const next = await f.api.beginKeyBoundary(restartB);
+  const next = await f.api.beginKeyBoundary({ version: '2', key_restart: restartB });
   assert.deepEqual(next, { durable: true, key_restart: restartB });
   assert.equal(f.files.size, 2);
   for (const [name, bytes] of f.files) {
@@ -110,13 +110,13 @@ test('corrupt first-header readback cannot acknowledge durability', async () => 
   const f = fixture({ corrupt: true });
   await f.open();
   await assert.rejects(
-    () => f.api.beginKeyBoundary(restartA),
+    () => f.api.beginKeyBoundary({ version: '2', key_restart: restartA }),
     /csc-writer-readback-mismatch/
   );
   assert.equal(f.events.some(event =>
     event.type === 'csc-writer-incomplete' && event.durable === false), true);
   await assert.rejects(
-    () => f.api.beginKeyBoundary(restartA),
+    () => f.api.beginKeyBoundary({ version: '2', key_restart: restartA }),
     /csc-writer-not-open/
   );
 });
@@ -125,7 +125,7 @@ test('correlated Worker protocol returns only verified boundary status', async (
   const f = fixture();
   await f.open();
   f.send({ type: 'csc-writer-begin-key-boundary',
-    request_id: 'boundary-1', key_restart: restartA });
+    request_id: 'boundary-1', header: { version: '2', key_restart: restartA } });
   for (let n = 0; n < 30; n++) await new Promise(setImmediate);
   const ready = f.events.find(event =>
     event.type === 'csc-writer-key-boundary-ready');
@@ -147,7 +147,7 @@ test('failed Worker boundary reply keeps request correlation and no durability',
   const f = fixture();
   await f.open();
   f.send({ type: 'csc-writer-begin-key-boundary',
-    request_id: 'boundary-invalid', key_restart: 'invalid' });
+    request_id: 'boundary-invalid', header: { version: '2', key_restart: 'invalid' } });
   for (let n = 0; n < 30; n++) await new Promise(setImmediate);
   const failed = f.events.find(event =>
     event.type === 'csc-writer-error' &&
