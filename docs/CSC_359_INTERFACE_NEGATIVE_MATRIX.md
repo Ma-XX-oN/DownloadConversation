@@ -229,3 +229,80 @@ INCOMPLETE; no policy change was committed.
 - #317: comment 6378799788.
 - #318: comment 6378799137.
 None of these requests is approval.  No source has been imported.
+
+
+## 2026-10-27 V1 speculative-parent revalidation
+
+Execution resumed under the existing #359 owner claim.  This section is
+READ/REVIEW preparation only; it imports no application source and grants no
+merge, release or production authority.
+
+### Live exact identities
+
+- DC main: `e6a083cd883e99e9d30e7ba440062bea6060b9be`.
+- #359 parent before this documentation-only update:
+  `5ebebc47c57788e816c20c60e44748792c5e5ef0`.
+- Accepted #306: `bff52f9996365e996e3dbe1a56b0c5fcb7a231b2`.
+- Accepted #309: `22a889e9872a1eb21fb750de9cf8619c2b3fb0c7`.
+- Accepted #310: `68515bfd38afad6d7eba389a7bc39e51d35d3584`.
+- Accepted #311: `a0b06f94033d321970b7781ccfb0b47b663433ef`.
+- Accepted #313: `6020d4bd9e811a46efe9a14074002cfa16862f05`.
+- Accepted #317: `197b346b505b2318e3155bf2557df416dd1702e3`.
+- Current #318 verification candidate:
+  `882c6322be425a07b4259a9764e1ba668d68e6cf`,
+  tag `v1.11.15-issue.318.33`, canonical run 40410069001,
+  47/47 focused tests PASS.  #318 remains NOT DONE and its handoff is
+  READ/REVIEW-only.
+- RWF scheduling source inspected from main:
+  `WORK_GRAPH_SCHEDULING.md` blob `9603ee910880fed303c9b4db336e65ea7b6366ce`.
+
+### Scheduling/speculation gate
+
+The authoritative #308 graph retains `#318 -> #359`; accepted #306/#310/
+#311/#313/#317 are additional direct #359 inputs.  Because #318 is unfinished,
+#359 remains speculative/blocked for final completion.  Per current RWF
+scheduling rules, speculative preparation cannot advance #359, #232 or #319
+to DONE, and all affected checks must be revalidated against #318's final
+accepted revision.
+
+### Final-.318.33 interface readback
+
+Exact source inspection confirms the previously recorded RED seams still apply
+to the current #318 candidate:
+
+- #318 requires `csc-comm-configured` with matching `schema:1` and
+  `request_id`; accepted #311 still acknowledges only the message type.
+- #318 requires COMM `drain/beginKeyBoundary/writeCycle/hasCycle` and GEN
+  `beginSegment/writeCycle/hasCycle`.
+- Accepted #317 still exposes `setRestart`; it does not expose the required
+  durable `beginKeyBoundary`/recovered `hasCycle` control-port contract.
+  Its durable-cycle acknowledgement remains valid evidence only after its own
+  append/readback path.
+- #318 validates canonical `hmac-key-cycle:<key_restart>` events and
+  `key_restart`; accepted #311 still validates the retired
+  generation/scope event shape.
+
+These are parent-assembly corrections, not reasons to reopen the independently
+accepted leaves.
+
+### Import gate and current ledger
+
+Operator non-release source-import authorization is still NOT VERIFIED.
+The latest #318 owner handoff explicitly states NO import/merge authority, and
+the existing #306/#309/#310/#311/#313/#317 review requests have no recorded
+positive source-import approval.  Therefore this execution performed no
+application-source import.
+
+Current #359 preparation status:
+- PASS: exclusive owner/branch identity; authoritative graph; live source
+  identities; accepted-leaf inventory; current #318 candidate identity;
+  exact source-contract mismatch reproduction; RWF speculation-rule readback.
+- FAIL: executable cross-leaf #311/#313/#317/#318 interface remains
+  unreconciled on any assembled candidate.
+- INCOMPLETE: operator import gate; source-owner approvals; final #318
+  acceptance; exact #359 assembled source and full hosted/browser/GEN+COMM
+  verification; downstream #232 performance and #319 certification.
+- DEFERRED: PRELIM/INT-ATTEMPT/main promotion and any production activation.
+
+Revalidate this entire section after #318 reaches independent DONE or any
+listed source revision changes.
