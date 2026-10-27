@@ -116,3 +116,15 @@ test('missing Writer acknowledgement rejects at explicit timeout', async () => {
     f.port.dispose();
   }
 });
+
+test('RED: COMM drain must wait for processor queue before Writer queue', async () => {
+  const f = fixture();
+  const operation = f.port.drain();
+  try {
+    assert.equal(f.sent[0].type, 'csc-comm-drain',
+      'Processor queue must be drained before Writer can certify durability.');
+  } finally {
+    f.port.dispose();
+    await assert.rejects(operation, /csc-writer-control-disposed/);
+  }
+});
