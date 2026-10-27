@@ -130,3 +130,30 @@ test('canonical admission emits matching start and completion, not durability', 
   assert.equal(status.status, 'completed');
   assert.equal(status.durable, false);
 });
+
+test('processor drain ACK waits until in-flight cycle write resolves', async () => {
+  let releaseWrite;
+  const gate = new Promise(resolve => { releaseWrite = resolve; });
+  const messages = [];
+  let receive;
+  create({
+    addEventListener: (_type, handler) => { receive = handler; },
+    postMessage: event => messages.push(event)
+  }, { write: async () => { await gate; } });
+  const key_restart = '2026-10-27T15:24:00.000Z';
+  const cycle = {
+    type: 'hmac-key-cycle', id: 'hmac-key-cycle:' + key_restart,
+    key_restart, epoch: 1, occurred_at_ms: Date.parse(key_restart),
+    reason: 'initial'
+  };
+  receive({ data: { type: 'csc-comm-key-cycle', event: cycle } });
+  receive({ data: { type: 'csc-comm-drain', request_id: 'drain-1' } });
+  for (let n = 0; n < 15; n++) await Promise.resolve();
+  assert.equal(messages.some(event =>
+    event.type === 'csc-comm-drained'), false);
+  releaseWrite();
+  for (let n = 0; n < 30; n++) await new Promise(setImmediate);
+  const ack = messages.find(event => event.type === 'csc-comm-drained');
+  assert.equal(ack.request_id, 'drain-1');
+  assert.equal(ack.durable, false);
+});
