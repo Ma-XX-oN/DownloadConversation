@@ -331,6 +331,42 @@
       keyRestart = restart;
     }
     /**
+     * Commits and reads back the first physical fragment header for one key.
+     * Never returns a durability acknowledgement for an in-memory restart.
+     * @param {string} restart - Canonical committed producer key_restart.
+     * @returns {Promise<Object>} Verified durable boundary identity.
+     */
+    async function beginKeyBoundary(restart) {
+      check(directory !== null && !poisoned, 'csc-writer-not-open');
+      check(validRestart(restart), 'csc-writer-invalid-restart');
+      check(activeCapture === null, 'csc-writer-capture-in-progress');
+      try {
+        await setRestart(restart);
+        if (activeName === null) await createFragment();
+        const expected = header(restart);
+        const actual = await bytesFrom(await file(activeName));
+        check(actual.byteLength >= expected.byteLength &&
+          equal(actual.subarray(0, expected.byteLength), expected),
+        'csc-writer-boundary-readback-mismatch');
+        return Object.freeze({ durable: true, key_restart: restart });
+      } catch (error) {
+        poisoned = true;
+        message('csc-writer-incomplete', {
+          capture_id: activeCapture, reason: errorCode(error), durable: false
+        });
+        throw error;
+      }
+    }
+    /**
+     * Checks the previously recovered or durably appended cycle journal.
+     * @param {string} id - Stable canonical cycle ID.
+     * @returns {boolean} Whether the cycle is in the durable index.
+     */
+    function hasCycle(id) {
+      check(directory !== null && !poisoned, 'csc-writer-not-open');
+      return typeof id === 'string' && knownCycles.has(id);
+    }
+    /**
      * Performs write in the isolated COMM writer.
      * @param {Uint8Array} bytes - bytes input.
      * @returns {Promise<any>} write result.
