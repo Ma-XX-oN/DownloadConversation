@@ -21,7 +21,7 @@ function harness(storage = new Map(), page = 'page-1') {
   const requestUrls = new Map(), cache = new Map(), logs = [];
   const group = { enabled: true, ready: true, uuid: 'one-tab-group' };
   const agent = {
-    version() { return { plugin: 'chatgpt-web', version: '0.1.2-issue.11.1', apiVersion: 1 }; },
+    version() { return { plugin: 'chatgpt-web', version: '0.1.2-issue.11.6', apiVersion: 1 }; },
     connectChatGPTSubjectHost() { if (!host) host = makeHost(); return host; },
     observeState(callback) {
       subscriber = callback;
@@ -88,7 +88,7 @@ function harness(storage = new Map(), page = 'page-1') {
   };
   const context = {
     URL, Date, Map, Set, JSON, Math, Promise, Object, Number, Blob,
-    VERSION: '1.11.16-issue.297.6',
+    VERSION: '1.11.16-issue.297.9',
     crypto: webcrypto, location, document, sessionStorage: {
       getItem: key => storage.get(key) ?? null,
       setItem: (key, value) => storage.set(key, value),
