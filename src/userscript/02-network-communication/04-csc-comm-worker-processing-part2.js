@@ -146,8 +146,10 @@
         typeof item.key_restart === 'string' &&
         Number.isSafeInteger(item.epoch) && item.epoch > 0 &&
         Number.isSafeInteger(item.occurred_at_ms) && item.occurred_at_ms > 0 &&
-        Date.parse(item.key_restart) === item.occurred_at_ms &&
         /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z$/.test(item.key_restart) &&
+        Number.isFinite(Date.parse(item.key_restart)) &&
+        Date.parse(item.key_restart) === item.occurred_at_ms &&
+        new Date(item.occurred_at_ms).toISOString() === item.key_restart &&
         item.id === 'hmac-key-cycle:' + item.key_restart &&
         ['initial', 'scheduled', 'overdue', 'manual'].includes(item.reason);
     }
