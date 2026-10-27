@@ -8,6 +8,10 @@ const source = ['04-csc-comm-disk-writer.js',
   .map(name => readFileSync(new URL(path + name, import.meta.url), 'utf8'))
   .join('\n');
 const create = new Function(source + '\nreturn cscCommDiskWriter;')();
+const portSource = readFileSync(new URL(path + '04-csc-comm-durable-port.js',
+  import.meta.url), 'utf8');
+const createPort = new Function('assert', portSource +
+  '\nreturn cscCommDurablePort;')(assert);
 const restartA = '2026-10-27T15:24:00.000Z';
 const restartB = '2026-10-27T15:24:00.001Z';
 
@@ -23,6 +27,7 @@ function fixture({ corrupt = false, recoveredCycle = null } = {}) {
   }
   const events = [];
   let receive;
+  const mainListeners = new Set();
   const directory = {
     async getFileHandle(name, options) {
       if (!files.has(name)) {
@@ -74,7 +79,10 @@ function fixture({ corrupt = false, recoveredCycle = null } = {}) {
     }
   };
   const scope = {
-    postMessage: event => events.push(event),
+    postMessage: event => {
+      events.push(event);
+      for (const listener of mainListeners) listener({ data: event });
+    },
     addEventListener: (_type, callback) => { receive = callback; },
     __cscWriterLease: { acquire: async () => {}, release: async () => {} },
     __cscWriterManifest: {
@@ -89,6 +97,15 @@ function fixture({ corrupt = false, recoveredCycle = null } = {}) {
   });
   return {
     files, events, api,
+    port: () => createPort({
+      postMessage: payload => receive({ data: payload }),
+      addEventListener: (name, listener) => {
+        if (name === 'message') mainListeners.add(listener);
+      },
+      removeEventListener: (name, listener) => {
+        if (name === 'message') mainListeners.delete(listener);
+      }
+    }, 1000),
     send: payload => receive({ data: payload }),
     open: () => api.open({
       handle: { getDirectoryHandle: async () => directory },
@@ -225,4 +242,29 @@ test('COMM rejects invalid-version boundary and cycle before any durable ACK', a
   );
   assert.equal(f.events.some(event =>
     event.type === 'csc-writer-durable-cycle'), false);
+});
+
+test('actual parent port and Writer message loop satisfy #318 four-method contract', async () => {
+  const f = fixture();
+  await f.open();
+  const port = f.port();
+  try {
+    assert.deepEqual(await port.drain(), { durable: true });
+    assert.deepEqual(await port.beginKeyBoundary({
+      version: '2', key_restart: restartA
+    }), { durable: true, key_restart: restartA });
+    const event = {
+      type: 'hmac-key-cycle', id: 'hmac-key-cycle:' + restartA,
+      key_restart: restartA, epoch: 1,
+      occurred_at_ms: Date.parse(restartA), reason: 'initial'
+    };
+    assert.deepEqual(await port.writeCycle(event),
+      { durable: true, id: event.id });
+    assert.equal(await port.hasCycle(event.id), true);
+    assert.equal(await port.hasCycle('hmac-key-cycle:' + restartB), false);
+    assert.equal(f.events.filter(item =>
+      item.type === 'csc-writer-cycle-written' && item.durable).length, 1);
+  } finally {
+    port.dispose();
+  }
 });
