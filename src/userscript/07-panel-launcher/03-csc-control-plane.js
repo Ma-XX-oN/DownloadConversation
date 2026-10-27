@@ -450,7 +450,8 @@
      */
     function onChange(listener) {
       listeners.add(listener);
-      listener(snapshot());
+      try { listener(snapshot()); }
+      catch { /* Initial UI failure cannot interrupt control registration. */ }
       return () => listeners.delete(listener);
     }
     /**
