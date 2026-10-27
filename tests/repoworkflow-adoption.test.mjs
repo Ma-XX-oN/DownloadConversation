@@ -99,6 +99,11 @@ test('GitHub runner projection and branch ancestry are repository facts', async 
     schema: 1,
     integrationBranch: 'main',
     branches: {
+      'issue-360-last-main-rebase-20261025': {
+        parent: 'main',
+        allowedDependencies: ['issue-360-accepted-298-source-pin-20261027'],
+        integrationTarget: 'main'
+      },
       'issue-298-registration-rebase-20261025': {
         parent: 'issue-360-last-main-rebase-20261025',
         allowedDependencies: [], integrationTarget: 'issue-360-last-main-rebase-20261025'
