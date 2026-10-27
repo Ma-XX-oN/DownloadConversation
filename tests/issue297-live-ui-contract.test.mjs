@@ -13,12 +13,13 @@ const modal = read('06-image-export-tests/05-modal-contract.js');
 test('live witness requires current registered plugin, not legacy catalogue', () => {
   assert.match(observer, /core\.getVersion\(\) === '1\.1\.1'/);
   assert.match(observer, /core\.getAgentPlugin\('chatgpt-web'\)/);
-  assert.match(observer, /identity\.version === '0\.1\.2-issue\.11\.1'/);
+  assert.match(observer, /identity\.version === '0\.1\.2-issue\.11\.6'/);
   assert.match(observer, /chatGPTSubjectHost\[key\]/);
   assert.doesNotMatch(observer, /getAgentPluginArtifact\(/);
   assert.doesNotMatch(observer, /1\.1\.0-issue\.127|0\.1\.0-issue\.1\.29/);
   assert.match(witness, /629c86284b7db5fb412bb083178eaee8c06f796c/);
-  assert.match(witness, /b9aa20df9d109b79022e5062e788758d2dbd3cc3/);
+  assert.match(witness, /fad4a74c4bbe410f7f71aa06f69b9ed8ec8ffcb8/);
+  assert.match(witness, /3d0203dacc02764e3d560993908d4d5c372a630b/);
   assert.match(observer, /provider_identity_attestation: 'runtime-version-only'/);
   assert.match(observer, /source_sha: AICC127_SOURCE_SHA, source_version: VERSION/);
   assert.match(witness, /AICC127_SOURCE_SHA = null/);
