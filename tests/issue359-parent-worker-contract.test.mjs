@@ -12,8 +12,7 @@ const source = files.map(file => readFileSync(
   new URL('../src/userscript/02-network-communication/' + file, import.meta.url),
   'utf8'
 )).join('\n');
-const create = new Function('return (' + source +
-  '\n cscCommWorkerProcessing);')();
+const create = new Function(source + '\nreturn cscCommWorkerProcessing;')();
 
 function harness() {
   const replies = [];
