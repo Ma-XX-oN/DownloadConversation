@@ -243,3 +243,7 @@ Authoritative evidence:
 ### Parent branch-policy registration repair
 
 Initial assembled merge `962c5a622e45bf8ce95bc8818d250172a4b53e7b` failed hosted branch policy because the parent omitted an explicit allowedDependencies declaration for its accepted physical child. The failed policy job is 122276312194 in Actions run 40529001403; prepare/validate/finalize were skipped and are not behavioral failures. The parent now registers `issue-298-registration-rebase-20261025` as its *sole allowed Git history dependency* under `.ci/branch-policy.json`. The original source merge is retained without rewriting history; rerun exact host CI at the repaired candidate before acceptance.
+
+### RWF source-pin provenance (2026-10-27)
+
+The source import automatically marked PR #377 merged into parent PR #376 at merge SHA `962c5a622e45bf8ce95bc8818d250172a4b53e7b` and GitHub deleted the accepted child branch ref. As a result the policy could no longer resolve the accepted child by branch name even though the exact SHA was preserved in the merge's second parent. Parent-owned source provenance pin `issue-360-accepted-298-source-pin-20261027` references the SAME immutable accepted child commit `5e3eb3ccfcb60dcb2a97f828b91b8852ddff25af` without modifying its source tree. The parent branch's explicit `allowedDependencies` lists that pin. This remains solely non-release assembly; no main merge.
