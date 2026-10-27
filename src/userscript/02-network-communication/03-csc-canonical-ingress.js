@@ -7,6 +7,18 @@
   let cscCommWorker = null;
   /** Main-thread plugin-queue ingress supplied by #310, not a COMM queue. */
   let cscPluginIngress = null;
+  /** Separate early metadata observer; never receives native body owners. */
+  let cscMetadataIngress = null;
+
+  /**
+   * Attach one synchronous metadata-only observer, independent of plugin/COMM.
+   * @param {Function|null} listener - Null unregisters the observer.
+   */
+  function cscBindMetadataIngress(listener) {
+    assert(listener === null || typeof listener === 'function',
+      'CSC metadata ingress must be a function.');
+    cscMetadataIngress = listener;
+  }
 
   /**
    * Attaches the dedicated COMM Worker without changing the main-thread plugin.
@@ -110,6 +122,14 @@
    */
   function cscFanOut(stamp, meta, nativeBodyOwner = null, availableValue = null) {
     const envelope = Object.freeze({ ...stamp, ...meta });
+    // Original capture-time envelope precedes all body cloning and queues.
+    if (cscMetadataIngress) {
+      try {
+        cscMetadataIngress(envelope);
+      } catch (error) {
+        cscIngressFailure(stamp, 'metadata-delivery', error);
+      }
+    }
     if (cscCommWorker) {
       let cloned = null;
       try {
