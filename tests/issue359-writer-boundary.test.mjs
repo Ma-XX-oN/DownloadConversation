@@ -14,6 +14,7 @@ const restartB = '2026-10-27T15:24:00.001Z';
 function fixture({ corrupt = false } = {}) {
   const files = new Map();
   const events = [];
+  let receive;
   const directory = {
     async getFileHandle(name, options) {
       if (!files.has(name)) {
@@ -57,7 +58,7 @@ function fixture({ corrupt = false } = {}) {
   };
   const scope = {
     postMessage: event => events.push(event),
-    addEventListener: () => {},
+    addEventListener: (_type, callback) => { receive = callback; },
     __cscWriterLease: { acquire: async () => {}, release: async () => {} },
     __cscWriterManifest: {
       open: async () => {}, record: async () => {}, release: () => {}
@@ -71,6 +72,7 @@ function fixture({ corrupt = false } = {}) {
   });
   return {
     files, events, api,
+    send: payload => receive({ data: payload }),
     open: () => api.open({
       handle: { getDirectoryHandle: async () => directory },
       namespace: 'fixture', version: '2', key_restart: restartA
@@ -109,4 +111,26 @@ test('corrupt first-header readback cannot acknowledge durability', async () => 
     () => f.api.beginKeyBoundary(restartA),
     /csc-writer-not-open/
   );
+});
+
+test('correlated Worker protocol returns only verified boundary status', async () => {
+  const f = fixture();
+  await f.open();
+  f.send({ type: 'csc-writer-begin-key-boundary',
+    request_id: 'boundary-1', key_restart: restartA });
+  for (let n = 0; n < 30; n++) await new Promise(setImmediate);
+  const ready = f.events.find(event =>
+    event.type === 'csc-writer-key-boundary-ready');
+  assert.equal(ready.request_id, 'boundary-1');
+  assert.equal(ready.key_restart, restartA);
+  assert.equal(ready.durable, true);
+  f.send({ type: 'csc-writer-has-cycle', request_id: 'query-1',
+    id: 'hmac-key-cycle:' + restartA });
+  for (let n = 0; n < 30; n++) await new Promise(setImmediate);
+  const history = f.events.find(event =>
+    event.type === 'csc-writer-cycle-history');
+  assert.deepEqual(history, {
+    type: 'csc-writer-cycle-history', request_id: 'query-1',
+    id: 'hmac-key-cycle:' + restartA, durable: false
+  });
 });
