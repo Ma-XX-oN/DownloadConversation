@@ -268,3 +268,21 @@ test('actual parent port and Writer message loop satisfy #318 four-method contra
     port.dispose();
   }
 });
+
+test('correlated COMM port rejects wrong-version boundary without a durable success', async () => {
+  const f = fixture();
+  await f.open();
+  const port = f.port();
+  try {
+    await assert.rejects(
+      () => port.beginKeyBoundary({ version: 'WRONG', key_restart: restartA }),
+      /csc-writer-boundary-version-mismatch/
+    );
+    assert.equal(f.events.some(event =>
+      event.type === 'csc-writer-key-boundary-ready'), false);
+    assert.equal(f.events.some(event =>
+      event.type === 'csc-writer-error' &&
+      event.durable === false &&
+      typeof event.request_id === 'string'), true);
+  } finally { port.dispose(); }
+});
