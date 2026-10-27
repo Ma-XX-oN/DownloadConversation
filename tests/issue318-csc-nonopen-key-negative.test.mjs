@@ -37,8 +37,8 @@ for (const status of ['unavailable', 'pending', 'unknown']) {
       origin:'https://chatgpt.com'
     });
     await controls.init();
-    await assert.rejects(controls.bindWorker(worker),
-      /csc-key-status-not-open/);
+    await controls.bindWorker(worker);
+    assert.equal(controls.snapshot().error,'csc-key-status-not-open');
     assert.equal(controls.snapshot().settings_applied,false);
     assert.equal(controls.snapshot().settings_state,'failed');
     assert.equal(configured,0);
@@ -76,8 +76,8 @@ test('HMAC status becomes unavailable after resume: Worker must be paused', asyn
     awaitKey:async()=>({})
   };
   await controls.init();
-  await assert.rejects(controls.bindWorker(worker),
-    /csc-settings-apply-failed/);
+  await controls.bindWorker(worker);
+  assert.equal(controls.snapshot().error,'csc-settings-apply-failed');
   assert.equal(resumed,1,'late key state changed after Worker resume');
   assert.ok(paused>=2,'final pause must follow a completed resume');
   assert.equal(controls.snapshot().settings_applied,false);
