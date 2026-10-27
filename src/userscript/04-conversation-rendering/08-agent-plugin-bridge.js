@@ -9,6 +9,10 @@
   let chatGPTAgent = null;
   /** Core-owned canonical session associated with `chatGPTAgent`. */
   let chatGPTCanonicalSession = null;
+  let chatGPTPluginModule = null;
+  let chatGPTSubjectHost = null;
+  let chatGPTAgentPromise = null;
+  const agentPluginPageWindow = typeof unsafeWindow !== 'undefined' ? unsafeWindow : window;
 
   /**
    * Converts bytes to lowercase hexadecimal text.
@@ -160,7 +164,9 @@
         const bytes = await loadAgentPlugin(descriptor);
         const blobUrl = URL.createObjectURL(new Blob([bytes], { type: 'text/javascript' }));
         try {
-          return await import(blobUrl);
+          const module = await import(blobUrl);
+          chatGPTPluginModule = module;
+          return module;
         } finally {
           URL.revokeObjectURL(blobUrl);
         }
@@ -182,29 +188,97 @@
    */
   async function ensureChatGPTCanonicalAgent() {
     if (chatGPTAgent) return chatGPTAgent;
-    const core = canonicalCore();
-    assert(typeof core.loadAgent === 'function',
-      'AIConversationCore agent loader is unavailable.');
-    const loaded = await core.loadAgent('chatgpt-web', {
-      loadModule: importAgentPluginModule,
-      context: {
-        conversationId: typeof currentConversationId === 'function'
-          ? currentConversationId()
-          : null
+    if (chatGPTAgentPromise) return chatGPTAgentPromise;
+    chatGPTAgentPromise = (async () => {
+      const core = canonicalCore();
+      assert(typeof core.loadAgent === 'function',
+        'AIConversationCore agent loader is unavailable.');
+      const loaded = await core.loadAgent('chatgpt-web', {
+        loadModule: importAgentPluginModule,
+        context: {
+          conversationId: typeof currentConversationId === 'function'
+            ? currentConversationId()
+            : null
+        }
+      });
+      const agent = loaded?.agent ?? null;
+      const session = loaded?.session ?? null;
+      assert(agent && session,
+        'AIConversationCore did not create the ChatGPT agent and canonical session.');
+      chatGPTAgent = agent;
+      chatGPTCanonicalSession = session;
+      try {
+        reconnectChatGPTSubjectHost();
+      } catch (error) {
+        chatGPTAgent = null;
+        chatGPTCanonicalSession = null;
+        throw error;
       }
+      const identity = chatGPTAgent.version();
+      logDiagnostic('debug', 'agent-plugin-ready', {
+        plugin_id: identity?.plugin ?? 'unknown',
+        ref: identity?.ref ?? 'unknown',
+        version: identity?.version ?? 'unknown',
+        api_version: identity?.apiVersion ?? null
+      });
+      return agent;
+    })();
+    try {
+      return await chatGPTAgentPromise;
+    } finally {
+      chatGPTAgentPromise = null;
+    }
+  }
+
+  /**
+   * Rebinds the same Core-owned agent to a fresh provider host after page restore.
+   * @returns {void} No value is returned.
+   */
+  function reconnectChatGPTSubjectHost() {
+    if (chatGPTSubjectHost || !chatGPTAgent) return;
+    if (typeof chatGPTPluginModule?.connectChatGPTSubjectHost !== 'function') {
+      logDiagnostic('warnings', 'agent-plugin-navigation-interface-unavailable', {
+        reason: 'Core catalogue does not yet pin the navigation-capable private provider'
+      });
+      return;
+    }
+    const host = chatGPTPluginModule.connectChatGPTSubjectHost({
+      agent: chatGPTAgent,
+      origin: agentPluginPageWindow.location.origin,
+      conversationId: null
     });
-    chatGPTAgent = loaded?.agent ?? null;
-    chatGPTCanonicalSession = loaded?.session ?? null;
-    assert(chatGPTAgent && chatGPTCanonicalSession,
-      'AIConversationCore did not create the ChatGPT agent and canonical session.');
-    const identity = chatGPTAgent.version();
-    logDiagnostic('debug', 'agent-plugin-ready', {
-      plugin_id: identity?.plugin ?? 'unknown',
-      ref: identity?.ref ?? 'unknown',
-      version: identity?.version ?? 'unknown',
-      api_version: identity?.apiVersion ?? null
-    });
-    return chatGPTAgent;
+    if (!host || typeof host.navigation !== 'function'
+        || typeof host.request !== 'function'
+        || typeof host.response !== 'function'
+        || typeof host.dispose !== 'function') {
+      host?.dispose?.();
+      logDiagnostic('warnings', 'agent-plugin-navigation-interface-unavailable', {
+        reason: 'Core catalogue selected an older provider navigation interface'
+      });
+      return;
+    }
+    try {
+      cscEnsureEarlyNavigationIngress();
+      cscPluginQueueConnect(host);
+    } catch (error) {
+      cscPluginQueueDisconnect(host);
+      host.dispose();
+      throw error;
+    }
+    chatGPTSubjectHost = host;
+  }
+
+  /**
+   * Releases provider-owned cached identity and restores browser listeners.
+   * @returns {void} No value is returned.
+   */
+  function disconnectChatGPTSubjectHost() {
+    cscDisposeEarlyNavigationIngress();
+    if (chatGPTSubjectHost) {
+      cscPluginQueueDisconnect(chatGPTSubjectHost);
+      chatGPTSubjectHost.dispose();
+    }
+    chatGPTSubjectHost = null;
   }
 
   /**
