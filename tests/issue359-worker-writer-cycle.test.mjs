@@ -97,7 +97,7 @@ test('Worker queue becomes durable only after physical Writer readback', async (
     handle: { getDirectoryHandle: async () => fs.directory },
     namespace: 'fixture', version: '1.11.15', key_restart
   });
-  assert.deepEqual(await writer.beginKeyBoundary(key_restart),
+  assert.deepEqual(await writer.beginKeyBoundary({ version: '1.11.15', key_restart }),
     { durable: true, key_restart });
 
   let receiver;
