@@ -26,6 +26,7 @@
   // Record the current version once per page initialization, unfiltered.
   logDiagnostic('lifecycle', 'dc-version-transition', { version: VERSION });
   communicationLogInitializationPromise = initializeCommunicationDiskRecorder();
+  cscControlsRegisterHmacFactory(communicationPersistentHmacCurrentTabService);
   void cscControlsCurrent().init();
   installLiveTailTracking();
   /** Persisted scalar volume present when the userscript was initialized. */
