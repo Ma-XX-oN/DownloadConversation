@@ -32,6 +32,12 @@ test('four COMM methods require correlated writer durability', async () => {
     version: '1.11.15', key_restart: '2026-10-27T17:00:00.000Z'
   };
   const drained = f.port.drain();
+  const processor = f.sent.at(-1);
+  assert.equal(processor.type, 'csc-comm-drain');
+  f.worker.receive({
+    type: 'csc-comm-drained', request_id: processor.request_id, durable: false
+  });
+  await Promise.resolve();
   const one = f.sent.at(-1);
   assert.equal(one.type, 'csc-writer-drain');
   f.worker.receive({
@@ -67,7 +73,7 @@ test('four COMM methods require correlated writer durability', async () => {
     id: event.id, durable: false
   });
   assert.equal(await existing, false);
-  assert.equal(new Set(f.sent.map(x => x.request_id)).size, 4);
+  assert.equal(new Set(f.sent.map(x => x.request_id)).size, 5);
   f.port.dispose();
 });
 
@@ -76,13 +82,13 @@ test('unrelated and invalid durability responses never complete a request', asyn
   const operation = f.port.drain();
   const request = f.sent.at(-1);
   f.worker.receive({
-    type: 'csc-writer-drained', request_id: 'stale', durable: true
+    type: 'csc-comm-drained', request_id: 'stale', durable: false
   });
   f.worker.receive({
-    type: 'csc-writer-drained',
-    request_id: request.request_id, durable: false
+    type: 'csc-comm-drained',
+    request_id: request.request_id, durable: true
   });
-  await assert.rejects(operation, /csc-writer-drain-unconfirmed/);
+  await assert.rejects(operation, /csc-comm-drain-ack-invalid/);
   f.port.dispose();
 });
 
@@ -91,7 +97,7 @@ test('explicit worker errors reject corresponding operation without success', as
   const operation = f.port.drain();
   const request = f.sent.at(-1);
   f.worker.receive({
-    type: 'csc-writer-error', request_id: request.request_id,
+    type: 'csc-comm-drain-failed', request_id: request.request_id,
     reason: 'csc-writer-readback-mismatch', durable: false
   });
   await assert.rejects(operation, /csc-writer-readback-mismatch/);
