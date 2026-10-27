@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         ChatGPT Conversation Markdown Recorder
 // @namespace    https://chatgpt.com/
-// @version      1.11.15-issue.318.33
+// @version      1.11.15-issue.318.35
 // @description  Exports the current ChatGPT conversation directly from the Conversation API as Markdown or JSONL.
 // @match        https://chatgpt.com/*
 // @match        https://chat.openai.com/*
@@ -24967,6 +24967,11 @@ Image elapsed: ${formatDuration(imageElapsed)} — Completed: ${imageCompleted}/
         catch { return reject('csc-settings-pause-failed'); }
         return keyState === 'failed' ? reject('csc-key-status-failed') : false;
       }
+      if (keyState !== 'open') {
+        try { await pause(); }
+        catch { return reject('csc-settings-pause-failed'); }
+        return reject('csc-key-status-not-open');
+      }
       if (!worker) {
         state = 'pending';
         applied = false;
@@ -24985,12 +24990,12 @@ Image elapsed: ${formatDuration(imageElapsed)} — Completed: ${imageCompleted}/
             ack.schema !== CSC_CONTROL_SCHEMA ||
             ack.request_id !== requestId) return reject('csc-settings-ack-invalid');
         if (service) await refreshKey();
-        if (disposed || ['draining', 'DRAINING', 'failed'].includes(keyState)) {
+        if (disposed || keyState !== 'open') {
           return reject('csc-settings-restart-denied');
         }
         await worker.resume();
         if (service) await refreshKey();
-        if (disposed || ['draining', 'DRAINING', 'failed'].includes(keyState)) {
+        if (disposed || keyState !== 'open') {
           await pause();
           return reject('csc-settings-restart-denied');
         }
@@ -25216,8 +25221,7 @@ Image elapsed: ${formatDuration(imageElapsed)} — Completed: ${imageCompleted}/
       }
       const captureSeq = seq;
       await refreshKey();
-      if (!applied || keyState === 'failed' ||
-          keyState === 'draining' || keyState === 'DRAINING') {
+      if (!applied || keyState !== 'open') {
         throw new Error('csc-capture-not-ready');
       }
       const admission = await service.admit();
@@ -25311,7 +25315,8 @@ Image elapsed: ${formatDuration(imageElapsed)} — Completed: ${imageCompleted}/
      */
     function onChange(listener) {
       listeners.add(listener);
-      listener(snapshot());
+      try { listener(snapshot()); }
+      catch { /* Initial UI failure cannot interrupt control registration. */ }
       return () => listeners.delete(listener);
     }
     /**
