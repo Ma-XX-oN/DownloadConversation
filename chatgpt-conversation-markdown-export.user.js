@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         ChatGPT Conversation Markdown Recorder
 // @namespace    https://chatgpt.com/
-// @version      1.11.15-issue.318.39
+// @version      1.11.15-issue.318.40
 // @description  Exports the current ChatGPT conversation directly from the Conversation API as Markdown or JSONL.
 // @match        https://chatgpt.com/*
 // @match        https://chat.openai.com/*
@@ -24931,7 +24931,9 @@ Image elapsed: ${formatDuration(imageElapsed)} — Completed: ${imageCompleted}/
       notify();
       if (worker) await worker.pause();
     }
-    /** @returns {Promise<boolean>} Applied settings. */
+    /**
+     * @returns {Promise<boolean>} Applied settings.
+     */
     async function apply() {
       if (disposed) return reject('csc-controls-disposed');
       if (!settingsStorageAvailable) {
@@ -24959,7 +24961,7 @@ Image elapsed: ${formatDuration(imageElapsed)} — Completed: ${imageCompleted}/
       return false;
       }
       if (keyState === 'draining' || keyState === 'DRAINING' ||
-        keyState === 'failed') {
+      keyState === 'failed') {
       try { await pause(); }
       catch { return reject('csc-settings-pause-failed'); }
       return keyState === 'failed' ? reject('csc-key-status-failed') : false;
@@ -24983,22 +24985,22 @@ Image elapsed: ${formatDuration(imageElapsed)} — Completed: ${imageCompleted}/
       await pause();
       const requestId = 'csc-options-' + ++seq;
       const payload = {
-        type: 'csc-comm-configure', schema: CSC_CONTROL_SCHEMA,
-        request_id: requestId, options: { ...settings, origin }
+      type: 'csc-comm-configure', schema: CSC_CONTROL_SCHEMA,
+      request_id: requestId, options: { ...settings, origin }
       };
       const ack = await worker.configure(payload);
       if (ack?.type !== 'csc-comm-configured' ||
-          ack.schema !== CSC_CONTROL_SCHEMA ||
-          ack.request_id !== requestId) return reject('csc-settings-ack-invalid');
+        ack.schema !== CSC_CONTROL_SCHEMA ||
+        ack.request_id !== requestId) return reject('csc-settings-ack-invalid');
       if (service) await refreshKey();
       if (disposed || keyState !== 'open') {
-        return reject('csc-settings-restart-denied');
+      return reject('csc-settings-restart-denied');
       }
       await worker.resume();
       if (service) await refreshKey();
       if (disposed || keyState !== 'open') {
-        await pause();
-        return reject('csc-settings-restart-denied');
+      await pause();
+      return reject('csc-settings-restart-denied');
       }
       } catch {
       return reject('csc-settings-apply-failed');
@@ -25009,8 +25011,10 @@ Image elapsed: ${formatDuration(imageElapsed)} — Completed: ${imageCompleted}/
       notify();
       return true;
     }
-    /** @param {Function} operation - Queued mutation
-     * @returns {Promise<unknown>} Queued result. */
+    /**
+     * @param {Function} operation - Queued mutation
+     * @returns {Promise<unknown>} Queued result.
+     */
     function schedule(operation) {
       const result = chain.then(operation);
       chain = result.catch(() => undefined);
@@ -25025,13 +25029,13 @@ Image elapsed: ${formatDuration(imageElapsed)} — Completed: ${imageCompleted}/
       initPromise = (async () => {
       try {
       unsubscribe = store.subscribe(() => {
-        void schedule(async () => {
-          try {
-            const latest = cscControlValidateOptions(await store.read());
-            if (JSON.stringify(latest) !== JSON.stringify(settings)) {
-              confirmedSensitive = null;
-            }
-            settings = latest;
+      void schedule(async () => {
+        try {
+          const latest = cscControlValidateOptions(await store.read());
+          if (JSON.stringify(latest) !== JSON.stringify(settings)) {
+            confirmedSensitive = null;
+          }
+          settings = latest;
             await apply();
           } catch {
             await pause().catch(() => {});
@@ -25062,9 +25066,11 @@ Image elapsed: ${formatDuration(imageElapsed)} — Completed: ${imageCompleted}/
       })();
       return initPromise;
     }
-    /** @param {Object} next - Selected settings
+    /**
+     * @param {Object} next - Selected settings
      * @param {boolean} confirmed - User confirmation
-     * @returns {Promise<boolean>} Applied state. */
+     * @returns {Promise<boolean>} Applied state.
+     */
     async function setOptions(next, confirmed) {
       const options = cscControlValidateOptions(next);
       const broadened = options.mode === 'everything' ||
@@ -25206,7 +25212,9 @@ Image elapsed: ${formatDuration(imageElapsed)} — Completed: ${imageCompleted}/
       }
       return events.length;
     }
-    /** @returns {Promise<Object>} Admitted capture. */
+    /**
+     * @returns {Promise<Object>} Admitted capture.
+     */
     async function prepareCapture() {
       if (!service || !worker || !gen || !comm) {
         throw new Error('csc-capture-not-ready');
@@ -25278,8 +25286,10 @@ Image elapsed: ${formatDuration(imageElapsed)} — Completed: ${imageCompleted}/
         return reject('csc-key-completion-failed');
       }
     }
-    /** @param {boolean} confirmed - User confirmation
-     * @returns {Promise<Object>} Rotation result. */
+    /**
+     * @param {boolean} confirmed - User confirmation
+     * @returns {Promise<Object>} Rotation result.
+     */
     async function randomize(confirmed) {
       if (confirmed !== true) throw new Error('csc-randomize-unconfirmed');
       if (!service || !worker || !gen || !comm || !applied) {
