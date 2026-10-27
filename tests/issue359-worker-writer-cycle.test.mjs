@@ -123,4 +123,11 @@ test('Worker queue becomes durable only after physical Writer readback', async (
   assert.equal(records[0].version.comm, '1.11.15');
   assert.equal(records[1].key_restart, key_restart);
   assert.equal(records[1].id, cycle.id);
+
+  receiver({ data: { type: 'csc-comm-key-cycle', event: cycle } });
+  for (let i = 0; i < 25; i++) await new Promise(setImmediate);
+  assert.equal(workerEvents[1].status, 'duplicate');
+  assert.equal(workerEvents[1].durable, false);
+  assert.equal(writerEvents.filter(event =>
+    event.type === 'csc-writer-durable-cycle').length, 1);
 });
