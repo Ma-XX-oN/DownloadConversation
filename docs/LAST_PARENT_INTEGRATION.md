@@ -259,3 +259,7 @@ At assembled candidate `fd40dde47fc5cd536ac3a1ad9a22d00bb31aedef`, full hosted r
 ### Preflight iteration collision
 
 The `.360.2` request failed preflight in run 40531225190 because historical annotated `v1.11.16-issue.360.2-CI-FAIL` already exists and points to old commit `6bd687516f330854ba3967979ceb882fd8f73688` from October 25. That tag was not created by the assembled candidate; the .2 validation stage did not run. Both success and failure tags for `.360.3` were checked absent before establishing the new request.
+
+### Exact-source full regression re-execution, iteration .360.4
+
+The original .360.3 run 40531630332 failed the unrelated #333 Chromium dark-theme first-sequence fixture. Attempt-2 re-run of validation job 122286026187 did NOT rerun the assertion: preflight returned exit 2 because `v1.11.16-issue.360.3-CI-FAIL` already existed. Therefore the second job failure is preflight, not independent reproduction of the #333 issue. A fresh unused .360.4 version is requested to perform another full, immutable exact-source regression. The generated artifact will be rematerialized by hosted CI. Source changes are confined to version, CI request and this ledger; the test implementation is unchanged.
