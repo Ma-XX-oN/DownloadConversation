@@ -44,10 +44,19 @@ function fixture({ corrupt = false, recoveredCycle = null } = {}) {
             })
           };
         },
-        async createWritable() {
-          let written;
+        async createWritable({ keepExistingData } = {}) {
+          let written = keepExistingData ? files.get(name).slice() : new Uint8Array();
+          let cursor = 0;
           return {
-            write: async bytes => { written = bytes.slice(); },
+            seek: async offset => { cursor = offset; },
+            write: async bytes => {
+              const combined = new Uint8Array(Math.max(written.length,
+                cursor + bytes.length));
+              combined.set(written);
+              combined.set(bytes, cursor);
+              written = combined;
+              cursor += bytes.length;
+            },
             close: async () => {
               if (corrupt) written[0] ^= 1;
               files.set(name, written);
@@ -172,4 +181,48 @@ test('recovered journal answers hasCycle before new writes', async () => {
     message.type === 'csc-writer-cycle-history');
   assert.equal(response.request_id, 'recover-1');
   assert.equal(response.durable, true);
+});
+
+test('accepted #318 COMM ports drain and durably persist exact producer cycle', async () => {
+  const f = fixture();
+  await f.open();
+  assert.deepEqual(await f.api.drain(), { durable: true });
+  const boundary = await f.api.beginKeyBoundary({
+    version: '2', key_restart: restartA
+  });
+  assert.equal(boundary.durable, true);
+  const cycle = {
+    type: 'hmac-key-cycle', id: 'hmac-key-cycle:' + restartA,
+    key_restart: restartA, epoch: 1,
+    occurred_at_ms: Date.parse(restartA), reason: 'initial'
+  };
+  const ack = await f.api.writeCycle(cycle);
+  assert.deepEqual(ack, { durable: true, id: cycle.id });
+  assert.equal(f.api.hasCycle(cycle.id), true);
+  const bytes = f.files.values().next().value;
+  const rows = new TextDecoder().decode(bytes).trimEnd()
+    .split('\n').map(JSON.parse);
+  assert.equal(rows.length, 2);
+  assert.equal(rows[0].key_restart, restartA);
+  assert.equal(rows[1].id, cycle.id);
+  assert.equal(rows[1].key_restart, restartA);
+});
+
+test('COMM rejects invalid-version boundary and cycle before any durable ACK', async () => {
+  const f = fixture();
+  await f.open();
+  await assert.rejects(
+    () => f.api.beginKeyBoundary({ version: 'WRONG', key_restart: restartA }),
+    /csc-writer-boundary-version-mismatch/
+  );
+  await assert.rejects(
+    () => f.api.writeCycle({
+      type: 'hmac-key-cycle', id: 'hmac-key-cycle:' + restartA,
+      key_restart: restartA, epoch: 1,
+      occurred_at_ms: Date.parse(restartA), reason: 'manual'
+    }),
+    /csc-writer-boundary-not-durable/
+  );
+  assert.equal(f.events.some(event =>
+    event.type === 'csc-writer-durable-cycle'), false);
 });
