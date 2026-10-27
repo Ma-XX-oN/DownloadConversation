@@ -134,3 +134,18 @@ test('correlated Worker protocol returns only verified boundary status', async (
     id: 'hmac-key-cycle:' + restartA, durable: false
   });
 });
+
+test('failed Worker boundary reply keeps request correlation and no durability', async () => {
+  const f = fixture();
+  await f.open();
+  f.send({ type: 'csc-writer-begin-key-boundary',
+    request_id: 'boundary-invalid', key_restart: 'invalid' });
+  for (let n = 0; n < 30; n++) await new Promise(setImmediate);
+  const failed = f.events.find(event =>
+    event.type === 'csc-writer-error' &&
+    event.operation === 'csc-writer-begin-key-boundary');
+  assert.equal(failed.request_id, 'boundary-invalid');
+  assert.equal(failed.durable, false);
+  assert.equal(f.events.some(event =>
+    event.type === 'csc-writer-key-boundary-ready'), false);
+});
