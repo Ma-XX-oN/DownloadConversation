@@ -46,6 +46,8 @@ const ordinaryStages = [
     'tests/issue347-log-category-settings.test.mjs',
     'tests/issue347-startup-order.test.mjs',
     'tests/issue347-favicon-source-preview.test.mjs']],
+  ['DC #359 parent Worker contract regression', nodeCommand, ['--test',
+    'tests/issue359-parent-worker-contract.test.mjs']],
   ['CI test inventory regression', nodeCommand, ['--test', 'tests/ci-test-inventory.test.mjs']],
   ['Actions policy regression', nodeCommand, ['--test', 'tests/actions-policy.test.mjs']],
   ['RepoWorkflow adoption contract', nodeCommand, ['--test', 'tests/repoworkflow-adoption.test.mjs']],
