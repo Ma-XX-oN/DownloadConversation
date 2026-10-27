@@ -11,8 +11,16 @@ const create = new Function(source + '\nreturn cscCommDiskWriter;')();
 const restartA = '2026-10-27T15:24:00.000Z';
 const restartB = '2026-10-27T15:24:00.001Z';
 
-function fixture({ corrupt = false } = {}) {
+function fixture({ corrupt = false, recoveredCycle = null } = {}) {
   const files = new Map();
+  if (recoveredCycle !== null) {
+    const rows = [
+      { version: { comm: '2', gen: '2' }, key_restart: restartA },
+      recoveredCycle
+    ];
+    files.set('fragment-00000001.jsonl', new TextEncoder().encode(
+      rows.map(row => JSON.stringify(row)).join('\n') + '\n'));
+  }
   const events = [];
   let receive;
   const directory = {
@@ -148,4 +156,20 @@ test('failed Worker boundary reply keeps request correlation and no durability',
   assert.equal(failed.durable, false);
   assert.equal(f.events.some(event =>
     event.type === 'csc-writer-key-boundary-ready'), false);
+});
+
+test('recovered journal answers hasCycle before new writes', async () => {
+  const event = { kind: 'hmac-key-cycle', type: 'hmac-key-cycle',
+    id: 'hmac-key-cycle:' + restartA, key_restart: restartA,
+    epoch: 1, occurred_at_ms: Date.parse(restartA), reason: 'initial' };
+  const f = fixture({ recoveredCycle: event });
+  await f.open();
+  assert.equal(f.api.hasCycle(event.id), true);
+  assert.equal(f.api.hasCycle('hmac-key-cycle:' + restartB), false);
+  f.send({ type: 'csc-writer-has-cycle', request_id: 'recover-1', id: event.id });
+  for (let n = 0; n < 30; n++) await new Promise(setImmediate);
+  const response = f.events.find(message =>
+    message.type === 'csc-writer-cycle-history');
+  assert.equal(response.request_id, 'recover-1');
+  assert.equal(response.durable, true);
 });
