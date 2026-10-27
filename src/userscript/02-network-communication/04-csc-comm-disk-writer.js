@@ -333,11 +333,15 @@
     /**
      * Commits and reads back the first physical fragment header for one key.
      * Never returns a durability acknowledgement for an in-memory restart.
-     * @param {string} restart - Canonical committed producer key_restart.
+     * @param {{version:string,key_restart:string}} boundary - GEN/COMM shared physical header.
      * @returns {Promise<Object>} Verified durable boundary identity.
      */
-    async function beginKeyBoundary(restart) {
+    async function beginKeyBoundary(boundary) {
       check(directory !== null && !poisoned, 'csc-writer-not-open');
+      check(boundary && typeof boundary === 'object' &&
+        !Array.isArray(boundary) && boundary.version === version,
+      'csc-writer-boundary-version-mismatch');
+      const restart = boundary.key_restart;
       check(validRestart(restart), 'csc-writer-invalid-restart');
       check(activeCapture === null, 'csc-writer-capture-in-progress');
       try {
