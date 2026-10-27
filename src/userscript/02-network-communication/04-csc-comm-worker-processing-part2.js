@@ -138,15 +138,16 @@
      */
     function validCycle(item) {
       if (!item || typeof item !== 'object' || Array.isArray(item)) return false;
-      const fields = ['type', 'id', 'generation', 'epoch',
+      const fields = ['type', 'id', 'key_restart', 'epoch',
         'occurred_at_ms', 'reason'];
       return Object.keys(item).length === fields.length &&
         Object.keys(item).every(name => fields.includes(name)) &&
         item.type === 'hmac-key-cycle' &&
-        /^[a-f0-9]{32}$/.test(item.generation) &&
+        typeof item.key_restart === 'string' &&
         Number.isSafeInteger(item.epoch) && item.epoch > 0 &&
-        item.id === 'hmac-key-cycle:' + item.epoch + ':' + item.generation &&
         Number.isSafeInteger(item.occurred_at_ms) && item.occurred_at_ms > 0 &&
+        new Date(item.occurred_at_ms).toISOString() === item.key_restart &&
+        item.id === 'hmac-key-cycle:' + item.key_restart &&
         ['initial', 'scheduled', 'overdue', 'manual'].includes(item.reason);
     }
     /**
@@ -193,7 +194,7 @@
       try {
         await writeFrame({
           kind: 'hmac-key-cycle', type: item.type, id: item.id,
-          generation: item.generation, epoch: item.epoch,
+          key_restart: item.key_restart, epoch: item.epoch,
           occurred_at_ms: item.occurred_at_ms, reason: item.reason
         }, { emitted: 0 });
         emittedCycleIds.add(item.id);
