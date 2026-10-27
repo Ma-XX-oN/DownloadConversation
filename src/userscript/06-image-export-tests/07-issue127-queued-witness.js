@@ -6,9 +6,9 @@
   /** #297-only AICC127_NAV_KEY state; no private payload is persisted. */
   const AICC127_NAV_KEY = 'dc-issue127-live-nav-v3';
   /** #297-only AICC127_PROVIDER_SHA state; no private payload is persisted. */
-  const AICC127_PROVIDER_SHA = 'b9aa20df9d109b79022e5062e788758d2dbd3cc3';
+  const AICC127_PROVIDER_SHA = 'fad4a74c4bbe410f7f71aa06f69b9ed8ec8ffcb8';
   /** #297-only AICC127_PROVIDER_BLOB state; no private payload is persisted. */
-  const AICC127_PROVIDER_BLOB = '77ab1a10399148afafd4e7096cebfc464ada6f73';
+  const AICC127_PROVIDER_BLOB = '3d0203dacc02764e3d560993908d4d5c372a630b';
   /** #297-only AICC127_CORE_SHA state; no private payload is persisted. */
   const AICC127_CORE_SHA = '629c86284b7db5fb412bb083178eaee8c06f796c';
   /** #297-only AICC127_SOURCE_SHA state; no private payload is persisted. */
