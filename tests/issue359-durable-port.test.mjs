@@ -7,7 +7,7 @@ const source = readFileSync(new URL(
   import.meta.url), 'utf8');
 const factory = new Function('assert', source + '\nreturn cscCommDurablePort;');
 
-function fixture() {
+function fixture(timeoutMs = 1000) {
   const listeners = new Map();
   const sent = [];
   const worker = {
@@ -23,7 +23,7 @@ function fixture() {
       for (const fn of listeners.get('error') ?? []) fn(new Error('worker failed'));
     }
   };
-  const port = factory(assert)(worker, 1000);
+  const port = factory(assert)(worker, timeoutMs);
   return { worker, sent, port };
 }
 
@@ -106,4 +106,13 @@ test('worker crash and disposal reject pending durable operations', async () => 
   const pending = f.port.drain();
   f.port.dispose();
   await assert.rejects(pending, /csc-writer-control-disposed/);
+});
+
+test('missing Writer acknowledgement rejects at explicit timeout', async () => {
+  const f = fixture(10);
+  try {
+    await assert.rejects(f.port.drain(), /csc-writer-control-timeout/);
+  } finally {
+    f.port.dispose();
+  }
 });
