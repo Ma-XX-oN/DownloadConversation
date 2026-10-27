@@ -36,11 +36,11 @@
    * @param {Object} info - Captured XHR method/URL/header metadata.
    * @returns {Object} Correlation state for loadend.
    */
-  function stockNetworkTraceXhrStart(xhr, info) {
-    const sequence = ++stockNetworkSequence;
+  function stockNetworkTraceXhrStart(xhr, info, captured = null) {
+    const sequence = captured?.network_sequence ?? ++stockNetworkSequence;
     const trace = {
       sequence,
-      started_at: performance.now(),
+      started_at: captured?.captured_at_mono_ms ?? performance.now(),
       method: String(info?.method ?? 'GET').toUpperCase(),
       url: stockNetworkSafeUrl(info?.url ?? '')
     };
