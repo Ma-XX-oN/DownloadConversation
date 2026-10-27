@@ -510,3 +510,25 @@ See [exact hosted failure analysis](CSC_359_11115_REBASE_CI_DIAGNOSIS.md).
 The #359 test-only matrix had 4 PASS / 1 FAIL jobs; #318 had
 6 PASS / 1 FAIL.  Old GM grants conflict with released raw/no-grant
 registration.  No source import or final candidate is authorised.
+
+
+## 13. 2026-10-27 non-release accepted-source staging under RWF §13.5
+
+Authority: RWF PR #750 merged 2026-10-27T14:02:25Z and DC PR #380 merged 2026-10-27T14:02:34Z. The earlier requirement for separate operator permission on each ordinary accepted-source import is superseded. Destination promotion, release and production activation remain separately gated. Existing exclusive #359 claim #6364342545 and branch identity are unchanged.
+
+**Staged source is not yet assembled or runnable**: source modules below are exact-byte copies at their accepted revisions, not inserted into the executable build manifest or combined with current released main network path. No browser or physical GEN/COMM acceptance is asserted. The current source contract REDs remain until approved parent-owned adapters and full exact-built tests.
+
+| Accepted leaf | Original revision | Source blob/file staging |
+| --- | --- | --- |
+| #310 | 68515bfd38afad6d7eba389a7bc39e51d35d3584 | 03-csc-plugin-backlog.js; blob 4a5954fa12a8ab1371a58b594bf2f97388ad464a |
+| #306 | bff52f9996365e996e3dbe1a56b0c5fcb7a231b2 | 03-csc-provider-navigation-ingress.js; blob 7f9c32f077260c6436b70389da5432d9a563b4ac |
+| #309 | 22a889e9872a1eb21fb750de9cf8619c2b3fb0c7 | 03-csc-canonical-ingress.js; blob 61cd5e92006847b0d53d0dc89d27b0f8e935df75 |
+| #313 | 6020d4bd9e811a46efe9a14074002cfa16862f05 | 04b, 04ba, 04c, 04d persistent-HMAC modules; blobs b8f54530, 6c2d8a3e, b1aa7a5c, d9650c98 |
+| #311 | a0b06f94033d321970b7781ccfb0b47b663433ef | 04-csc-comm-worker-processing.js and part2/part3; blobs 7ea591ba, 749057a4, 739e67a5 |
+| #317 | 197b346b505b2318e3155bf2557df416dd1702e3 | Worker disk bridge/lock/manifest/copy/writer/part2; blobs ecec6240, e8fb505e, 9846d575, aabd7d8f, c57509c8, 21e84520 |
+
+**Stacking/overlap:** #306 inherits #310; #317 inherits #311. The above leaf-specific module paths were staged only once. No generated userscript, shared manifest, shared released code, branch markers, original child branches, or main were overwritten. #318 remains incomplete at provisional revision 882c6322be425a07b4259a9764e1ba668d68e6cf and was not imported.
+
+**Required before executable assembly:** integrate and test affected existing released source callsites, reconcile canonical #313 key_restart with #311 worker cycle validation, implement correlated settings ACK and durable #317/GEN key boundaries, preserve two native clones and plugin queue startup ordering, reconstruct the manifest and generated userscript, then test exact assembled SHA. For any semantic conflict, coordinate adaptations with affected source owners and record dispositions. DC #232/#319 are not entitled to an exact assembled handoff yet.
+
+Ledger for this source-staging operation: PASS standing authority and exact staging/provenance; FAIL known incompatible interfaces (pre-existing); INCOMPLETE executable assembly/manifest/build parity, #318 independent acceptance, installed/physical behaviour and downstream certification; DEFERRED release/main. Historical text above referring to mandatory per-import operator consent remains superseded by this section and RWF §13.5.
