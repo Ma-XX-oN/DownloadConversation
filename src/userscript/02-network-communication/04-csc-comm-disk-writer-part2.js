@@ -198,7 +198,7 @@
      * @param {Object} event - Committed producer journal record.
      * @returns {Promise<{durable:true,id:string}>} Physical append ACK.
      */
-    async function writeCycle(event) {
+    function cycleBytes(event) {
       check(directory !== null && !poisoned && activeName !== null,
         'csc-writer-boundary-not-durable');
       const fields = ['type','id','key_restart','epoch','occurred_at_ms','reason'];
@@ -218,6 +218,10 @@
         key_restart: event.key_restart, epoch: event.epoch,
         occurred_at_ms: event.occurred_at_ms, reason: event.reason
       }) + '\n');
+      return bytes;
+    }
+    async function writeCycle(event) {
+      const bytes = cycleBytes(event);
       await scope.cscCommWriteChunk(bytes);
       check(knownCycles.has(event.id), 'csc-writer-cycle-not-durable');
       return Object.freeze({ durable: true, id: event.id });
@@ -257,6 +261,19 @@
           message('csc-writer-cycle-history', {
             request_id: value.request_id ?? null,
             id: value.id ?? null, durable: hasCycle(value.id)
+          });
+        } else if (value.type === 'csc-writer-drain') {
+          check(directory !== null && !poisoned &&
+            queuedRecords === 0 && activeCapture === null,
+            'csc-writer-drain-incomplete');
+          message('csc-writer-drained', {
+            request_id: value.request_id ?? null, durable: true
+          });
+        } else if (value.type === 'csc-writer-write-cycle') {
+          await write(cycleBytes(value.event));
+          message('csc-writer-cycle-written', {
+            request_id: value.request_id ?? null,
+            id: value.event.id, durable: true
           });
         } else if (value.type === 'csc-writer-close') await close();
         else if (value.type === 'csc-writer-rename') {
