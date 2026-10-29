@@ -279,3 +279,7 @@ The .360.6 hosted native fetch-response receipt test RED is confirmed by run 405
 ### .360.8 first GREEN candidate: immutable CGP2 #9 receipt implementation imported by exact blob, no producer rewrite
 
 Use existing stock fetch/XHR/WebSocket callbacks; the exact source-owned V1 receipt producer is pinned in vendor/cgp2 and validated by the build. The parent supplies synchronous envelope input, newest incoming pending buffer before Core registration, registered agent commTraffic relay, and JSON-entry timing from the first response callback. This is not yet accepted. Exact-source full CI and independently verified native transport coverage required, including stream chunks; no edits to CSC #359 or CGP2 branch.
+
+### .360.9 artifact validator repair and JSDoc acceptance
+
+The .360.8 generated artifact preparation reported userscript verifier failed because scripts/verify-userscript-artifact.mjs assumed compressor directly followed Core bridge. This corrected verifier independently pins and validates the exact CGP2 receipt source bytes and checks transformed classic prelude ordering before compressor/rendering. Runtime adapter source now includes mandatory typed JSDoc and top-level declarations' comments; no producer semantics or native interception ownership changed. New unused .360.9 iteration must pass full focused and hosted exact CI before #299 review.

@@ -1,11 +1,21 @@
 
   // Reuse immutable CGP2 #9 producer; never a second interceptor.
+  /** Exact source-owned CGP2 V1 synchronous receipt normalizer. */
   const nativeReceiptIngressV1 = nativeReceiptProducerV1.createChatGPTReceiptIngress();
+  /** Unique browser page observation identity. */
   const nativeReceiptPageId = crypto.randomUUID();
+  /** Independent monotonically increasing metadata identity. */
   let nativeReceiptSequence = 0;
+  /** Newest normalized receipt pending registered agent creation. */
   let nativePendingReceipt = null;
+  /** Newest parsed JSON-entry stamp pending registered agent creation. */
   let nativePendingJson = null;
 
+  /**
+   * Deliver one already-normalized CGP2 V1 event without restamping.
+   * @param {Object} event - Source-owned receipt or JSON-entry metadata.
+   * @returns {void} Delivery is synchronous or retained for agent creation.
+   */
   function nativeReceiptDeliver(event) {
     try {
       if (chatGPTAgent && typeof chatGPTAgent.commTraffic === 'function') {
@@ -28,6 +38,11 @@
     }
   }
 
+  /**
+   * Capture a body-free native event through the pinned provider normalizer.
+   * @param {Object} envelope - Original transport metadata at native observation.
+   * @returns {Object|null} Accepted immutable receipt or null for non-incoming.
+   */
   function nativeReceiptCapture(envelope = {}) {
     try {
       const observation = Object.freeze({
@@ -46,6 +61,11 @@
     }
   }
 
+  /**
+   * Preserve the earlier response epoch for independently parsed JSON entries.
+   * @param {Object} trace - Native correlation state with received epoch.
+   * @returns {boolean} True when the source observation has a valid epoch.
+   */
   function nativeJsonEntryCapture(trace) {
     const timestamp = trace?.incoming_received_epoch_ms;
     if (!Number.isSafeInteger(timestamp) || timestamp <= 0 || timestamp > Date.now()) return false;
@@ -56,6 +76,10 @@
     return true;
   }
 
+  /**
+   * Replay bounded pending V1 metadata after registered agent initialization.
+   * @returns {boolean} True when a live agent accepted replay attempts.
+   */
   function nativeReceiptFlush() {
     if (!chatGPTAgent || typeof chatGPTAgent.commTraffic !== 'function') return false;
     const events = [];
