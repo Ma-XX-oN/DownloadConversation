@@ -160,3 +160,35 @@ test('existing unbounded generation/resume stream consumer publishes after diagn
     x.receipt?.phase==='body_chunk' && x.receipt?.transport==='fetch'));
   assert(logs.some(x=>x[1]==='conversation-stream-response-observed'));
 });
+
+test('late registered agent replays only newest original-time inbound metadata', () => {
+  const originalTime = Date.now() - 60000;
+  const events = [];
+  const context = {
+    chatGPTAgent: null,
+    Date,
+    logDiagnostic() {}
+  };
+  executeNative(
+    'globalThis.capture = nativeReceiptCapture;\n' +
+    'globalThis.captureJson = nativeJsonEntryCapture;\n' +
+    'globalThis.flush = nativeReceiptFlush;', context);
+  context.capture({transport:'fetch',direction:'response',status:503,
+    captured_at_epoch_ms:originalTime});
+  context.capture({transport:'fetch',direction:'request',
+    captured_at_epoch_ms:originalTime + 10});
+  context.capture({transport:'websocket',direction:'incoming',
+    captured_at_epoch_ms:originalTime + 100});
+  assert.equal(context.captureJson({incoming_received_epoch_ms:originalTime + 200}),true);
+  assert.equal(context.flush(),false);
+  context.chatGPTAgent = {commTraffic:event=>events.push(event)};
+  assert.equal(context.flush(),true);
+  assert.equal(events.length,2,'A bounded source-time buffer must retain latest metadata');
+  assert.equal(events[0].type,'server_receipt');
+  assert.equal(events[0].receipt.phase,'frame');
+  assert.equal(events[0].receipt.timestamp_ms,originalTime + 100);
+  assert.equal(events[1].type,'received_json_entry');
+  assert.equal(events[1].timestamp_ms,originalTime + 200);
+  assert.equal(context.flush(),true);
+  assert.equal(events.length,2,'Flushing twice must not replay old activity');
+});

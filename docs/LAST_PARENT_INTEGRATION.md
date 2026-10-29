@@ -295,3 +295,7 @@ The prior native producer source passes isolated receipt and JSON event executio
 ### .360.12 generation/resume beyond diagnostics cap
 
 The original captured generation/resume SSE clone reader is already unbounded to handle the full response and owns its single reader. It now forwards body-free metadata for each observed nonempty read through the exact pinned producer. This covers generation/resume streams past 1 MiB without adding another clone, interceptor or buffering raw response bytes for heartbeat. Added direct three-chunk 600 KiB source test (1.8 MiB total) as independent acceptance oracle. General unrelated polling beyond bounded diagnostics may still need a distinct authorized source observation design; do not claim arbitrary-stream full coverage from this. No provider or CSC source owner changed.
+
+### .360.13 independent delayed-registration & outgoing exclusion test
+
+Add canonical hosted test of actual pinned source + native adapter running without an agent, with HTTP 503, outgoing-only request, incoming WebSocket, parsed JSON and 60-second older original timestamps. Bind later, verify latest source epoch unchanged and replay exactly once; this tests previously simulated fixture in repository-owned CI. No production logic change from .360.12.
