@@ -153,6 +153,7 @@
         "src/userscript/07-panel-launcher/03-csc-schema.js",
         "src/userscript/07-panel-launcher/03-csc-control-plane.js",
         "src/userscript/07-panel-launcher/03-csc-singleton.js",
+        "src/userscript/07-panel-launcher/03-csc-parent-assembly.js",
         "src/userscript/07-panel-launcher/03-csc-capture-popup.js",
         "src/userscript/07-panel-launcher/01-panel-diagnostics.js",
         "src/userscript/07-panel-launcher/01-panel-diagnostics-part2.js",
