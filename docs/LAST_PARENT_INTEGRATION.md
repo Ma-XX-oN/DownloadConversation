@@ -291,3 +291,7 @@ Extended the original bounded fetch clone reader (no second fetch interception) 
 ### .360.11 exact hosted diagnostics corrections
 
 The prior native producer source passes isolated receipt and JSON event executions, but .360.9 hosted testing found module-count, TypeScript prelude, diagnostic fixture source-boundary and VM context test errors. Corrected manifest ordering moves adapter beyond the legacy stock diagnostic block, TypeScript checks exact pinned producer source, expected module count reflects new source, and JSON fixture shares its instrumented context. RED assertions are not waived. Fresh exact full CI required.
+
+### .360.12 generation/resume beyond diagnostics cap
+
+The original captured generation/resume SSE clone reader is already unbounded to handle the full response and owns its single reader. It now forwards body-free metadata for each observed nonempty read through the exact pinned producer. This covers generation/resume streams past 1 MiB without adding another clone, interceptor or buffering raw response bytes for heartbeat. Added direct three-chunk 600 KiB source test (1.8 MiB total) as independent acceptance oracle. General unrelated polling beyond bounded diagnostics may still need a distinct authorized source observation design; do not claim arbitrary-stream full coverage from this. No provider or CSC source owner changed.

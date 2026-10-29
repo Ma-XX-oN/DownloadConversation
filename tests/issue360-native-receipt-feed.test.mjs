@@ -126,3 +126,37 @@ test('native bounded body reader reports two distinct inbound chunks', async () 
   assert(events.every(e=>e?.type==='server_receipt' &&
     e.receipt?.transport==='fetch' && e.receipt?.phase==='body_chunk'));
 });
+
+test('existing unbounded generation/resume stream consumer publishes after diagnostic cap', async () => {
+  const source = read('src/userscript/03-agent-lifecycle/08-generation-request.js');
+  const start = source.indexOf('  async function consumeObservedConversationStreamResponse(');
+  const end = source.indexOf('  async function captureGenerationStreamResponse(',start);
+  assert(start >= 0 && end > start, 'Production generation consumer must exist');
+  const body = source.slice(start,end);
+  const events = [];
+  const logs = [];
+  const context = {
+    chatGPTAgent: { commTraffic: e => events.push(e) },
+    TextDecoder, Date,
+    consumeStreamTailSseChunk(){},
+    streamTailPersistCapture(){},
+    logDiagnostic:(...args)=>logs.push(args),
+    releaseReaderLockQuietly(){},
+    errorMessage:String
+  };
+  executeNative(body+'\n globalThis.consume=consumeObservedConversationStreamResponse;',context);
+  const chunk = new Uint8Array(600*1024);
+  let i=0;
+  const capture = {conversation_id:'c1',stream_messages:[],handed_off:false,
+    handoff_topic_id:null,complete:false};
+  const response = {body:{getReader:()=>({
+    read:async()=>i++<3 ? {done:false,value:chunk} : {done:true},
+    releaseLock(){}
+  })}};
+  await context.consume(response,capture,{persistCapture:false,source:'generation'});
+  assert.equal(events.length,3,
+    'Each observed stream chunk, including bytes after 1 MiB, must count as incoming');
+  assert(events.every(x=>x?.type==='server_receipt' &&
+    x.receipt?.phase==='body_chunk' && x.receipt?.transport==='fetch'));
+  assert(logs.some(x=>x[1]==='conversation-stream-response-observed'));
+});

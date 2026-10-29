@@ -51,6 +51,12 @@
       for (;;) {
         const { value, done } = await reader.read();
         if (done) break;
+        // This already owned generation/resume stream reader observes every chunk,
+        // including bytes beyond the bounded stock diagnostic reader's cap.
+        if (value?.byteLength && typeof nativeReceiptCapture === 'function') {
+          nativeReceiptCapture({ transport: 'fetch', direction: 'incoming',
+            phase: 'body_chunk', captured_at_epoch_ms: Date.now() });
+        }
         consumeStreamTailSseChunk(capture, decoder.decode(value, { stream: true }), false, false);
       }
       consumeStreamTailSseChunk(capture, decoder.decode(), true, false);
