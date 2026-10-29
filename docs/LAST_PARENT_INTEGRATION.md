@@ -287,3 +287,7 @@ The .360.8 generated artifact preparation reported userscript verifier failed be
 ### .360.10 additional observed incoming byte/progress source path
 
 Extended the original bounded fetch clone reader (no second fetch interception) and original XHR progress callback to publish metadata using the pinned accepted CGP2 #9 producer. New two-chunk fixture checks actual reader callsite. The bounded inspector observes at most 1MiB; full long-stream receipt coverage remains INCOMPLETE, and no final #299 acceptance follows from this subset.
+
+### .360.11 exact hosted diagnostics corrections
+
+The prior native producer source passes isolated receipt and JSON event executions, but .360.9 hosted testing found module-count, TypeScript prelude, diagnostic fixture source-boundary and VM context test errors. Corrected manifest ordering moves adapter beyond the legacy stock diagnostic block, TypeScript checks exact pinned producer source, expected module count reflects new source, and JSON fixture shares its instrumented context. RED assertions are not waived. Fresh exact full CI required.

@@ -20,8 +20,7 @@
       "files": [
         "src/userscript/01-runtime/01-bootstrap.js",
         "src/userscript/01-runtime/01-bootstrap-restore.js",
-        "src/userscript/01-runtime/02-shared-network-transition.js",
-        "src/userscript/01-runtime/04-native-receipt-adapter.js"
+        "src/userscript/01-runtime/02-shared-network-transition.js"
       ]
     },
     {
@@ -47,6 +46,7 @@
     {
       "name": "agent-lifecycle",
       "files": [
+        "src/userscript/01-runtime/04-native-receipt-adapter.js",
         "src/userscript/03-agent-lifecycle/12-last-waiting-timers.js",
         "src/userscript/03-agent-lifecycle/01-click-sound-transition.js",
         "src/userscript/03-agent-lifecycle/02-terminal-events.js",

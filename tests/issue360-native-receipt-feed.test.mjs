@@ -24,10 +24,10 @@ const pinnedProducer = read('vendor/cgp2/receipt-observation.js')
   .replace(/^export (?=(?:const|function) \w+)/gm, '');
 const producerPrelude = 'const nativeReceiptProducerV1 = (() => {\n' +
   pinnedProducer + '\nreturn {createChatGPTReceiptIngress};\n})();\n';
-const executeNative = (code, context) => vm.runInNewContext(
-  producerPrelude + adapterSource + '\n' + code, {
-    ...context, crypto: { randomUUID:()=> 'test-page-1' }
-  });
+const executeNative = (code, context) => {
+  context.crypto = { randomUUID:()=> 'test-page-1' };
+  return vm.runInNewContext(producerPrelude + adapterSource + '\n' + code, context);
+};
 
 class FakeRequest {
   constructor(url, init = {}) {
