@@ -95,3 +95,19 @@ test('writer open wrong-key acknowledgement rejects and never enables ingress',a
   assert.equal(f.bridge.enabled,false);
   f.bridge.dispose();
 });
+
+test('historical cycle query after current key opens is permitted read-only',async()=>{
+ const f=fixture();
+ const current='2026-10-29T04:30:01.000Z';
+ const old='2026-10-29T04:30:00.000Z';
+ const opening=f.bridge.comm.hasCycle('hmac-key-cycle:'+current);
+ f.receive({type:'csc-writer-ready',durable:true,key_restart:current});
+ assert.equal(await opening,false);
+ const history=f.bridge.comm.hasCycle('hmac-key-cycle:'+old);
+ const request=f.outbound.at(-1);
+ assert.equal(request.type,'csc-writer-has-cycle');
+ f.receive({type:'csc-writer-cycle-history',
+  request_id:request.request_id,id:'hmac-key-cycle:'+old,durable:true});
+ assert.equal(await history,true);
+ f.bridge.dispose();
+});
