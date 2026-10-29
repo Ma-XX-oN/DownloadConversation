@@ -228,3 +228,38 @@ test('native WebSocket wrapper counts incoming and not outgoing frames', () => {
   assert.equal(events[0].receipt.phase,'frame');
   assert.equal(events[0].receipt.transport,'websocket');
 });
+
+test('generation fetch captures receipt before native response clone', async () => {
+  const steps=[],events=[];
+  const response={status:503,url:'https://chatgpt.com/backend-api/f/conversation',
+    headers:{get:()=>null},
+    clone(){steps.push('clone');return {body:null};}};
+  const pageWindow={Request:FakeRequest,fetch:null};
+  const context={
+    pageWindow,Request:FakeRequest,originalFetch:async()=>response,
+    performance:{now:()=>1000},
+    stockNetworkTraceFetchStart:()=>({sequence:1,started_at:1000,
+      method:'POST',url:response.url,same_origin:true}),
+    communicationLogFetchRequest:async()=>{},
+    communicationLogFetchResponse:async()=>{},
+    rememberApiRequestContext(){},recordClickDiagnosticNetworkRequest(){},
+    agentTerminalObserveStatsRequest(){},
+    isGenerationStreamUrl:()=>true,isConversationResumeUrl:()=>false,
+    isSteerTurnUrl:()=>false,agentStopwatchIsInitialConversationUrl:()=>false,
+    agentFaviconObserveProcessing(){},agentStopwatchObserveSteerTurn(){},
+    captureGenerationStreamRequest:()=>Promise.resolve({id:'capture'}),
+    captureGenerationStreamResponse:async()=>{},
+    cloneSafely:x=>x.clone(),logDiagnostic(){},
+    boundedDiagnosticText:String,errorMessage:String,
+    stockNetworkSafeUrl:x=>x,stockNetworkSafeResponseHeaders:()=>({}),
+    stockNetworkInspectFetchBody:async()=>{},
+    chatGPTAgent:{commTraffic:e=>{events.push(e);steps.push('receipt');}}
+  };
+  executeNative(source(),context);
+  assert.equal(await pageWindow.fetch(response.url,{method:'POST'}),response);
+  assert(steps.includes('clone'),'Generation response clone must still run');
+  assert.equal(steps[0],'receipt',
+    'CGP2 source-owned receipt must observe incoming before any body clone');
+  assert.equal(events.filter(e=>e?.type==='server_receipt').length,1,
+    'Early capture and later stock diagnostics must not double-count response');
+});

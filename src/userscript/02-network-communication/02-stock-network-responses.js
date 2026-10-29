@@ -6,12 +6,16 @@
    * @returns {void} No value is returned.
    */
   function stockNetworkTraceFetchResponse(response, trace) {
-    const incomingAt = Date.now();
-    trace.incoming_received_epoch_ms = incomingAt;
-    if (typeof nativeReceiptCapture === 'function') nativeReceiptCapture({
-      transport: 'fetch', direction: 'response', status: response?.status ?? null,
-      captured_at_epoch_ms: incomingAt
-    });
+    // Standalone stock-observer callers still capture once; production fetch
+    // has already stamped and published before acquiring any body clone.
+    if (!Number.isSafeInteger(trace.incoming_received_epoch_ms)) {
+      const incomingAt = Date.now();
+      trace.incoming_received_epoch_ms = incomingAt;
+      if (typeof nativeReceiptCapture === 'function') nativeReceiptCapture({
+        transport: 'fetch', direction: 'response', status: response?.status ?? null,
+        captured_at_epoch_ms: incomingAt
+      });
+    }
     const contentType = response?.headers?.get?.('content-type') ?? '';
     logDiagnostic('debug', 'stock-network-fetch-response', {
       network_sequence: trace.sequence,

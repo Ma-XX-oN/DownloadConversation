@@ -311,6 +311,13 @@
         const resumeRequestClone = resumeRequest && request ? cloneSafely(request) : null;
         const responsePromise = originalFetch.apply(this, args);
         return responsePromise.then(response => {
+          // Record original receipt before any response clone, parse or queue.
+          const observedAt = Date.now();
+          stockTrace.incoming_received_epoch_ms = observedAt;
+          if (typeof nativeReceiptCapture === 'function') nativeReceiptCapture({
+            transport: 'fetch', direction: 'response',
+            status: response?.status ?? null, captured_at_epoch_ms: observedAt
+          });
           const generationResponse = capturePromise ? cloneSafely(response) : null;
           const resumeResponse = resumeRequest ? cloneSafely(response) : null;
           const stopwatchConversationResponse = stopwatchConversationRequest

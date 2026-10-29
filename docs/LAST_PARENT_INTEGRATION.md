@@ -303,3 +303,7 @@ Add canonical hosted test of actual pinned source + native adapter running witho
 ### .360.14 native WebSocket outgoing/incoming regression
 
 Independently exercise the existing production wrapped WebSocket constructor with a fake transport. Verify original send return and sent payload preserved, outgoing sends do not publish CGP2 activity, and one incoming message publishes exactly one source-owned frame receipt. No other owner branch touched. Rebuild and full CI required.
+
+### .360.15 correction: first native response capture BEFORE cloning
+
+CGP2 producer V1 explicitly mandates first synchronous capture before any response clone, parsing or async queue. Earlier .360.14 stock observer was called after generation/resume response clones, violating this contract. The existing fetch wrapper now invokes provider-owned V1 ingress at native promise fulfillment, records original epoch on the stock trace, then clones. The stock diagnostic response function accepts already-captured trace and does not duplicate, while standalone observer callers retain fallback. A dedicated real wrapper behavioral test checks receipt callback precedes clone and exactly one receipt. No new interceptor or clone. Full exact hosted regression required.
