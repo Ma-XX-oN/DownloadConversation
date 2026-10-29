@@ -307,3 +307,7 @@ Independently exercise the existing production wrapped WebSocket constructor wit
 ### .360.15 correction: first native response capture BEFORE cloning
 
 CGP2 producer V1 explicitly mandates first synchronous capture before any response clone, parsing or async queue. Earlier .360.14 stock observer was called after generation/resume response clones, violating this contract. The existing fetch wrapper now invokes provider-owned V1 ingress at native promise fulfillment, records original epoch on the stock trace, then clones. The stock diagnostic response function accepts already-captured trace and does not duplicate, while standalone observer callers retain fallback. A dedicated real wrapper behavioral test checks receipt callback precedes clone and exactly one receipt. No new interceptor or clone. Full exact hosted regression required.
+
+### .360.16 XHR abort/network failure false-Last correction
+
+The parent XHR loadend path previously marked status zero as response message. Native abort/network error loadend means no received HTTP response, so the existing callback now requires status >=100 before emitting server receipt, while preserving source-owned HTTP 503. New native XHR hook fixture tests zero vs 503. No CGP2 normalization policy rewritten.

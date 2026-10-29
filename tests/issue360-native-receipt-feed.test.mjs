@@ -263,3 +263,42 @@ test('generation fetch captures receipt before native response clone', async () 
   assert.equal(events.filter(e=>e?.type==='server_receipt').length,1,
     'Early capture and later stock diagnostics must not double-count response');
 });
+
+test('XHR abort status zero cannot fabricate server activity', () => {
+  const src=read('src/userscript/03-agent-lifecycle/09-network-install-api-transition.js');
+  const start=src.indexOf('    const XHR = pageWindow.XMLHttpRequest;');
+  const end=src.indexOf("    if (typeof pageWindow.WebSocket === 'function')",start);
+  assert(start >= 0 && end > start);
+  class FakeXHR {
+    constructor(){this.handlers={};this.status=0;}
+    open(){return 'opened';}
+    setRequestHeader(){}
+    send(){return 'sent';}
+    addEventListener(name,fn){this.handlers[name]=fn;}
+  }
+  const events=[];
+  const ctx={
+    pageWindow:{XMLHttpRequest:FakeXHR},
+    chatGPTAgent:{commTraffic:e=>events.push(e)},
+    Date,performance:{now:()=>500},
+    stockNetworkTraceXhrStart:()=>({sequence:1,started_at:1}),
+    stockNetworkTraceXhrResponse(){},
+    communicationLogXhrRequest:async()=>{},
+    communicationLogXhrResponse:async()=>{},
+    rememberApiRequestContext(){},recordClickDiagnosticNetworkRequest(){},
+    communicationLogReportFailure(){},logDiagnostic(){}
+  };
+  executeNative(src.slice(start,end),ctx);
+  const failed=new ctx.pageWindow.XMLHttpRequest();
+  failed.open('GET','/backend-api/x');
+  assert.equal(failed.send(),'sent');
+  failed.handlers.loadend();
+  assert.equal(events.length,0,'No server response occurred for status 0');
+  const real=new ctx.pageWindow.XMLHttpRequest();
+  real.status=503;
+  real.open('GET','/backend-api/x');
+  real.send();
+  real.handlers.loadend();
+  assert.equal(events.length,1,'HTTP 503 remains an inbound receipt');
+  assert.equal(events[0].receipt.phase,'server_error');
+});

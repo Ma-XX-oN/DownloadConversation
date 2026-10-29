@@ -58,7 +58,9 @@
         this.addEventListener('loadend', () => {
           const incomingAt = Date.now();
           stockTrace.incoming_received_epoch_ms = incomingAt;
-          if (typeof nativeReceiptCapture === 'function') nativeReceiptCapture({
+          // loadend also fires for abort/network failures with HTTP status zero.
+          if (Number.isInteger(this.status) && this.status >= 100 &&
+              typeof nativeReceiptCapture === 'function') nativeReceiptCapture({
             transport: 'xhr', direction: 'response', status: this.status,
             captured_at_epoch_ms: incomingAt
           });
