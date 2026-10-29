@@ -55,3 +55,34 @@ test('native incoming non-200 unrelated fetch reaches producer heartbeat',async(
   assert(events.some(x=>x?.type==='server_receipt'),
     'Every observed incoming response, including unrelated HTTP 503, must reach CGP2');
 });
+
+test('native parsed incoming JSON reaches provider JSON-entry heartbeat', async () => {
+  const identitySource = read('src/userscript/02-network-communication/01-stock-network-identities.js');
+  const marker = '  async function stockNetworkInspectFetchBody(response, trace) {';
+  const start = identitySource.indexOf(marker);
+  assert(start >= 0, 'Production native JSON-response observer must exist');
+  const observer = identitySource.slice(start);
+  const events = [];
+  const diagnostics = [];
+  const context = {
+    stockNetworkReadBoundedText: async () => ({
+      text: '{"message":{"id":"server-message","author":{"role":"assistant"}}}',
+      byte_count: 65, truncated: false
+    }),
+    stockNetworkBodyIdentity: () => ({
+      json_identity: { message_ids: ['server-message'] }
+    }),
+    boundedDiagnosticText: String,
+    logDiagnostic: (...args) => diagnostics.push(args),
+    errorMessage: error => String(error?.message ?? error),
+    chatGPTAgent: { commTraffic: value => events.push(value) }
+  };
+  vm.runInNewContext(observer + '\n globalThis.inspect = stockNetworkInspectFetchBody;', context);
+  await context.inspect({
+    headers: { get: () => 'application/json' }
+  }, { network_sequence: 19, url: 'https://chatgpt.com/backend-api/conversation' });
+  assert(diagnostics.some(event => event[1] === 'stock-network-fetch-body-summary'),
+    'Production body observer must parse and classify incoming JSON');
+  assert(events.some(event => event?.type === 'received_json_entry'),
+    'Each incoming parsed JSON entry must reach CGP2 independently of persisted records');
+});
