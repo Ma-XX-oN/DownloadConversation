@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         ChatGPT Conversation Markdown Recorder
 // @namespace    https://chatgpt.com/
-// @version      1.11.16-issue.360.16
+// @version      1.11.16-issue.360.17
 // @description  Exports the current ChatGPT conversation directly from the Conversation API as Markdown or JSONL.
 // @match        https://chatgpt.com/*
 // @match        https://chat.openai.com/*
@@ -12163,19 +12163,20 @@ return Object.freeze({renderFaviconPulseSequence});
         chatGPTAgent.commTraffic(event);
         return;
       }
-      if (event.type === 'server_receipt') {
-        if (!nativePendingReceipt || event.receipt.timestamp_ms >= nativePendingReceipt.timestamp_ms) {
-          nativePendingReceipt = event.receipt;
-        }
-      } else if (event.type === 'received_json_entry') {
-        if (!nativePendingJson || event.timestamp_ms >= nativePendingJson.timestamp_ms) {
-          nativePendingJson = event;
-        }
-      }
     } catch (error) {
       logDiagnostic('warnings', 'last-native-ingress-delivery-failed', {
         reason: String(error?.message ?? error)
       });
+      // Keep original normalized timestamps for the next registered agent.
+    }
+    if (event.type === 'server_receipt') {
+      if (!nativePendingReceipt || event.receipt.timestamp_ms >= nativePendingReceipt.timestamp_ms) {
+        nativePendingReceipt = event.receipt;
+      }
+    } else if (event.type === 'received_json_entry') {
+      if (!nativePendingJson || event.timestamp_ms >= nativePendingJson.timestamp_ms) {
+        nativePendingJson = event;
+      }
     }
   }
 
