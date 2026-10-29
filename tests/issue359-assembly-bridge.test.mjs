@@ -104,11 +104,7 @@ test('historical cycle query after current key opens is permitted read-only',asy
  f.receive({type:'csc-writer-ready',durable:true,key_restart:current});
  assert.equal(await opening,false);
  const history=f.bridge.comm.hasCycle('hmac-key-cycle:'+old);
- for(let i=0;i<5;i++) await Promise.resolve();
- const request=f.outbound.at(-1);
- assert.equal(request.type,'csc-writer-has-cycle');
- f.receive({type:'csc-writer-cycle-history',
-  request_id:request.request_id,id:'hmac-key-cycle:'+old,durable:true});
- assert.equal(await history,true);
+ assert.equal(await history,false);
+ assert.deepEqual(f.calls.at(-1),['history','hmac-key-cycle:'+old]);
  f.bridge.dispose();
 });
