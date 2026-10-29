@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         ChatGPT Conversation Markdown Recorder
 // @namespace    https://chatgpt.com/
-// @version      1.11.16-issue.360.9
+// @version      1.11.16-issue.360.10
 // @description  Exports the current ChatGPT conversation directly from the Conversation API as Markdown or JSONL.
 // @match        https://chatgpt.com/*
 // @match        https://chat.openai.com/*
@@ -8520,6 +8520,11 @@ return Object.freeze({renderFaviconPulseSequence});
         const { done, value } = await reader.read();
         if (done) break;
         if (!value?.byteLength) continue;
+        // Emit receipt metadata at the existing observed stream read.
+        if (typeof nativeReceiptCapture === 'function') nativeReceiptCapture({
+          transport: 'fetch', direction: 'incoming', phase: 'body_chunk',
+          captured_at_epoch_ms: Date.now()
+        });
         const remaining = STOCK_NETWORK_JSON_BYTE_LIMIT - byteCount;
         if (remaining <= 0) {
           truncated = true;
@@ -16659,6 +16664,13 @@ return Object.freeze({renderFaviconPulseSequence});
         const stockTrace = stockNetworkTraceXhrStart(this, info);
         void communicationLogXhrRequest(info, body, stockTrace)
           .catch(communicationError => communicationLogReportFailure('xhr-request', communicationError));
+        // XHR progress events are inbound data observation without body access.
+        this.addEventListener('progress', () => {
+          if (typeof nativeReceiptCapture === 'function') nativeReceiptCapture({
+            transport: 'xhr', direction: 'incoming', phase: 'body_chunk',
+            captured_at_epoch_ms: Date.now()
+          });
+        });
         this.addEventListener('loadend', () => {
           const incomingAt = Date.now();
           stockTrace.incoming_received_epoch_ms = incomingAt;
