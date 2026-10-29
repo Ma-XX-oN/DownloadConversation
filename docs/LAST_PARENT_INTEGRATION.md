@@ -311,3 +311,7 @@ CGP2 producer V1 explicitly mandates first synchronous capture before any respon
 ### .360.16 XHR abort/network failure false-Last correction
 
 The parent XHR loadend path previously marked status zero as response message. Native abort/network error loadend means no received HTTP response, so the existing callback now requires status >=100 before emitting server receipt, while preserving source-owned HTTP 503. New native XHR hook fixture tests zero vs 503. No CGP2 normalization policy rewritten.
+
+### .360.17 disposed-agent delivery failure does not lose receipt
+
+A registered agent may throw during replacement. Previously nativeReceiptDeliver caught/logged and then dropped that already-normalized incoming metadata. It now falls through to the bounded original-time pending queue after a failed delivery, so the next registered agent can flush without restamping; successful delivery remains immediate. New direct canonical native source regression injects throwing agent, rebinds to a healthy agent, proves one exact original timestamp and no duplicate flush. No provider semantics changed, no other owner branch modified.

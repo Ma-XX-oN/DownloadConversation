@@ -22,19 +22,20 @@
         chatGPTAgent.commTraffic(event);
         return;
       }
-      if (event.type === 'server_receipt') {
-        if (!nativePendingReceipt || event.receipt.timestamp_ms >= nativePendingReceipt.timestamp_ms) {
-          nativePendingReceipt = event.receipt;
-        }
-      } else if (event.type === 'received_json_entry') {
-        if (!nativePendingJson || event.timestamp_ms >= nativePendingJson.timestamp_ms) {
-          nativePendingJson = event;
-        }
-      }
     } catch (error) {
       logDiagnostic('warnings', 'last-native-ingress-delivery-failed', {
         reason: String(error?.message ?? error)
       });
+      // Keep original normalized timestamps for the next registered agent.
+    }
+    if (event.type === 'server_receipt') {
+      if (!nativePendingReceipt || event.receipt.timestamp_ms >= nativePendingReceipt.timestamp_ms) {
+        nativePendingReceipt = event.receipt;
+      }
+    } else if (event.type === 'received_json_entry') {
+      if (!nativePendingJson || event.timestamp_ms >= nativePendingJson.timestamp_ms) {
+        nativePendingJson = event;
+      }
     }
   }
 

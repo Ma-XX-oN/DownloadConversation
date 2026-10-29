@@ -302,3 +302,24 @@ test('XHR abort status zero cannot fabricate server activity', () => {
   assert.equal(events.length,1,'HTTP 503 remains an inbound receipt');
   assert.equal(events[0].receipt.phase,'server_error');
 });
+
+test('failing registered agent does not drop original-time receipt before rebind', () => {
+  const firstTimestamp=Date.now()-30000;
+  const events=[],logs=[];
+  const context={
+    chatGPTAgent:{commTraffic(){throw new Error('disposed during replacement');}},
+    Date,logDiagnostic:(...x)=>logs.push(x)
+  };
+  executeNative('globalThis.capture=nativeReceiptCapture;\n'+
+    'globalThis.flush=nativeReceiptFlush;',context);
+  context.capture({transport:'fetch',direction:'response',status:503,
+    captured_at_epoch_ms:firstTimestamp});
+  assert(logs.some(x=>x[1]==='last-native-ingress-delivery-failed'),
+    'Failure should be logged without throwing into native page');
+  context.chatGPTAgent={commTraffic:x=>events.push(x)};
+  assert.equal(context.flush(),true);
+  assert.equal(events.length,1,'Source receipt must survive failed first agent');
+  assert.equal(events[0].receipt.timestamp_ms,firstTimestamp);
+  assert.equal(context.flush(),true);
+  assert.equal(events.length,1,'Later bindings must not replay duplicate receipt');
+});
