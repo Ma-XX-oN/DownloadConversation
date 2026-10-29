@@ -62,6 +62,14 @@
     });
     communicationLogReady = true;
     communicationLogStorageFailed = false;
+    try {
+      await cscAttachPhysicalDirectory(handle);
+    } catch (error) {
+      // Stock recorder stays operational. CSC control remains fail-closed.
+      logDiagnostic('error', 'csc-assembly-not-ready', {
+        reason: String(error?.message ?? 'unknown').slice(0, 160)
+      });
+    }
     const recoveredDuplicateRequest =
       communicationLogSegmentManifest?.duplicate_request
         ? { ...communicationLogSegmentManifest.duplicate_request }
