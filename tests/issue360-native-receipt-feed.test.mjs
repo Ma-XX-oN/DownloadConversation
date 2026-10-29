@@ -192,3 +192,39 @@ test('late registered agent replays only newest original-time inbound metadata',
   assert.equal(context.flush(),true);
   assert.equal(events.length,2,'Flushing twice must not replay old activity');
 });
+
+test('native WebSocket wrapper counts incoming and not outgoing frames', () => {
+  const src=read('src/userscript/03-agent-lifecycle/09-network-install-api-transition.js');
+  const start=src.indexOf("    if (typeof pageWindow.WebSocket === 'function')");
+  const end=src.indexOf("    if (typeof pageWindow.open === 'function')",start);
+  assert(start>=0 && end>start,'Production native WebSocket hook must exist');
+  class Socket {
+    constructor(){this.events={};this.sent=[];}
+    addEventListener(name,fn){this.events[name]=fn;}
+    send(payload){this.sent.push(payload);return 'sent';}
+  }
+  const events=[];
+  const context={
+    pageWindow:{WebSocket:Socket},
+    chatGPTAgent:{commTraffic:x=>events.push(x)},
+    Date,
+    Reflect,
+    Proxy,
+    communicationLogWebSocketSend:async()=>{},
+    communicationLogWebSocketMessage:async()=>{},
+    communicationLogReportFailure(){},
+    communicationLogRecord:async()=>{},
+    stockNetworkSafeUrl:String,
+    captureGenerationWebSocketFrame(){}
+  };
+  executeNative(src.slice(start,end),context);
+  const socket=new context.pageWindow.WebSocket('wss://chatgpt.com/ws');
+  assert.equal(socket.send('outgoing'),'sent');
+  assert.deepEqual(socket.sent,['outgoing']);
+  assert.equal(events.length,0,'Outgoing frame must not refresh Last');
+  socket.events.message({data:'incoming'});
+  assert.equal(events.length,1,'Incoming frame must generate one receipt');
+  assert.equal(events[0].type,'server_receipt');
+  assert.equal(events[0].receipt.phase,'frame');
+  assert.equal(events[0].receipt.transport,'websocket');
+});

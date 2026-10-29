@@ -299,3 +299,7 @@ The original captured generation/resume SSE clone reader is already unbounded to
 ### .360.13 independent delayed-registration & outgoing exclusion test
 
 Add canonical hosted test of actual pinned source + native adapter running without an agent, with HTTP 503, outgoing-only request, incoming WebSocket, parsed JSON and 60-second older original timestamps. Bind later, verify latest source epoch unchanged and replay exactly once; this tests previously simulated fixture in repository-owned CI. No production logic change from .360.12.
+
+### .360.14 native WebSocket outgoing/incoming regression
+
+Independently exercise the existing production wrapped WebSocket constructor with a fake transport. Verify original send return and sent payload preserved, outgoing sends do not publish CGP2 activity, and one incoming message publishes exactly one source-owned frame receipt. No other owner branch touched. Rebuild and full CI required.
