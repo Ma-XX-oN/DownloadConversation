@@ -98,3 +98,31 @@ test('native parsed incoming JSON reaches provider JSON-entry heartbeat', async 
   assert(events.some(event => event?.type === 'received_json_entry'),
     'Each incoming parsed JSON entry must reach CGP2 independently of persisted records');
 });
+
+test('native bounded body reader reports two distinct inbound chunks', async () => {
+  const identity = read('src/userscript/02-network-communication/01-stock-network-identities.js');
+  const start = identity.indexOf('  async function stockNetworkReadBoundedText(response) {');
+  const end = identity.indexOf('  async function stockNetworkInspectFetchBody(response, trace) {', start);
+  assert(start >= 0 && end > start, 'Production reader must be present');
+  const events=[];
+  const source = identity.slice(start,end);
+  const context = {
+    chatGPTAgent:{commTraffic:e=>events.push(e)},
+    TextDecoder,
+    Date,
+    STOCK_NETWORK_JSON_BYTE_LIMIT: 1048576,
+    releaseReaderLockQuietly(){}
+  };
+  executeNative(source + '\n globalThis.readBody = stockNetworkReadBoundedText;',context);
+  const chunks=[new Uint8Array([65]),new Uint8Array([66])];
+  let index=0;
+  const result=await context.readBody({body:{getReader:()=>({
+    read:async()=>index<chunks.length
+      ? {done:false,value:chunks[index++]} : {done:true},
+    releaseLock(){}
+  })}});
+  assert.equal(result.text,'AB');
+  assert.equal(events.length,2,'Every observed incoming chunk must publish metadata');
+  assert(events.every(e=>e?.type==='server_receipt' &&
+    e.receipt?.transport==='fetch' && e.receipt?.phase==='body_chunk'));
+});

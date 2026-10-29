@@ -283,3 +283,7 @@ Use existing stock fetch/XHR/WebSocket callbacks; the exact source-owned V1 rece
 ### .360.9 artifact validator repair and JSDoc acceptance
 
 The .360.8 generated artifact preparation reported userscript verifier failed because scripts/verify-userscript-artifact.mjs assumed compressor directly followed Core bridge. This corrected verifier independently pins and validates the exact CGP2 receipt source bytes and checks transformed classic prelude ordering before compressor/rendering. Runtime adapter source now includes mandatory typed JSDoc and top-level declarations' comments; no producer semantics or native interception ownership changed. New unused .360.9 iteration must pass full focused and hosted exact CI before #299 review.
+
+### .360.10 additional observed incoming byte/progress source path
+
+Extended the original bounded fetch clone reader (no second fetch interception) and original XHR progress callback to publish metadata using the pinned accepted CGP2 #9 producer. New two-chunk fixture checks actual reader callsite. The bounded inspector observes at most 1MiB; full long-stream receipt coverage remains INCOMPLETE, and no final #299 acceptance follows from this subset.

@@ -48,6 +48,13 @@
         const stockTrace = stockNetworkTraceXhrStart(this, info);
         void communicationLogXhrRequest(info, body, stockTrace)
           .catch(communicationError => communicationLogReportFailure('xhr-request', communicationError));
+        // XHR progress events are inbound data observation without body access.
+        this.addEventListener('progress', () => {
+          if (typeof nativeReceiptCapture === 'function') nativeReceiptCapture({
+            transport: 'xhr', direction: 'incoming', phase: 'body_chunk',
+            captured_at_epoch_ms: Date.now()
+          });
+        });
         this.addEventListener('loadend', () => {
           const incomingAt = Date.now();
           stockTrace.incoming_received_epoch_ms = incomingAt;

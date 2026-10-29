@@ -191,6 +191,11 @@
         const { done, value } = await reader.read();
         if (done) break;
         if (!value?.byteLength) continue;
+        // Emit receipt metadata at the existing observed stream read.
+        if (typeof nativeReceiptCapture === 'function') nativeReceiptCapture({
+          transport: 'fetch', direction: 'incoming', phase: 'body_chunk',
+          captured_at_epoch_ms: Date.now()
+        });
         const remaining = STOCK_NETWORK_JSON_BYTE_LIMIT - byteCount;
         if (remaining <= 0) {
           truncated = true;
