@@ -103,3 +103,27 @@ test('accepted #318 capture admission waits for genuine Worker key-ready token',
  assert.ok(f.messages.some(x=>x.type==='dc-hmac-key-v2'&&x.token===admission.token));
  await f.app.ctrl().completeCapture(admission.token);
 });
+
+test('COMM-only journal fails closed without forging GEN recovery',async()=>{
+ const f=fixture();
+ f.comm.set(cycle.id,cycle);
+ await f.app.attach(f.root);
+ await assert.rejects(()=>f.app.ctrl().reconcileCycles(),
+  /csc-cycle-recovery-requires-parent/);
+ assert.equal(f.disk.size,0);
+ assert.equal(f.messages.some(x=>x.type==='csc-writer-write-cycle'),false);
+});
+test('GEN-only recovered journal fails closed without forging COMM',async()=>{
+ const f=fixture();
+ const rows=[
+  {version:{gen:'1.11.15',comm:'1.11.15'},key_restart:restart},
+  cycle
+ ];
+ f.disk.set('gen-key-00000001.jsonl',
+  new TextEncoder().encode(rows.map(x=>JSON.stringify(x)).join('\n')+'\n'));
+ await f.app.attach(f.root);
+ await assert.rejects(()=>f.app.ctrl().reconcileCycles(),
+  /csc-cycle-recovery-requires-parent/);
+ assert.equal(f.comm.size,0);
+ assert.equal(f.messages.some(x=>x.type==='csc-writer-write-cycle'),false);
+});
