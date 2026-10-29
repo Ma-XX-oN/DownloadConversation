@@ -93,6 +93,26 @@ async function buildFaviconRendererPrelude() {
     + '// END bundled V2 renderer\n';
 }
 
+
+async function buildPinnedReceiptPrelude() {
+  const location = path.join(root, 'vendor', 'cgp2');
+  const manifest = JSON.parse(await readFile(path.join(location, 'receipt-manifest.json'), 'utf8'));
+  const content = await readFile(path.join(location, 'receipt-observation.js'), 'utf8');
+  validatePinnedDependency(manifest, content);
+  const names = [...content.matchAll(/^export (?:const|function) (\w+)/gm)].map(x => x[1]);
+  const required = ['RECEIPT_OBSERVATION_VERSION', 'sanitizeChatGPTReceipt',
+    'createChatGPTReceiptIngress'];
+  if (names.length !== required.length || required.some(x => !names.includes(x))) {
+    throw new Error('Pinned CGP2 receipt producer exports changed.');
+  }
+  const classic = content.replace(/^export (?=(?:const|function) \w+)/gm, '');
+  if (/^\s*(?:import|export)\b/m.test(classic)) throw new Error('Unexpected CGP2 ESM syntax.');
+  return '// BEGIN exact pinned CGP2 receipt producer blob=' + manifest.git_blob_sha1 + '\n'
+    + 'const nativeReceiptProducerV1 = (() => {\n' + classic
+    + '\nreturn Object.freeze({createChatGPTReceiptIngress});\n})();\n'
+    + '// END exact pinned CGP2 receipt producer\n';
+}
+
 async function buildCompressorPrelude() {
   const vendor = path.join(root, 'vendor', 'compressor');
   const manifest = JSON.parse(await readFile(path.join(vendor, 'manifest.json'), 'utf8'));
@@ -157,13 +177,14 @@ async function main() {
     dependencies.push(await fetchPinnedDependency(dependency));
   }
   const agentPluginPrelude = await readAgentPluginPrelude();
+  const receiptPrelude = await buildPinnedReceiptPrelude();
   const compressorPrelude = await buildCompressorPrelude();
   const faviconRendererPrelude = await buildFaviconRendererPrelude();
   const built = assembleUserscript(
     header,
     dependencies,
     source,
-    agentPluginPrelude + compressorPrelude + faviconRendererPrelude
+    agentPluginPrelude + receiptPrelude + compressorPrelude + faviconRendererPrelude
   );
 
   if (args.check) {

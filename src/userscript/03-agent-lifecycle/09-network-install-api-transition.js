@@ -49,6 +49,12 @@
         void communicationLogXhrRequest(info, body, stockTrace)
           .catch(communicationError => communicationLogReportFailure('xhr-request', communicationError));
         this.addEventListener('loadend', () => {
+          const incomingAt = Date.now();
+          stockTrace.incoming_received_epoch_ms = incomingAt;
+          if (typeof nativeReceiptCapture === 'function') nativeReceiptCapture({
+            transport: 'xhr', direction: 'response', status: this.status,
+            captured_at_epoch_ms: incomingAt
+          });
           stockNetworkTraceXhrResponse(this, stockTrace);
           void communicationLogXhrResponse(this, stockTrace)
             .catch(communicationError => communicationLogReportFailure('xhr-response', communicationError));
@@ -75,6 +81,10 @@
             void communicationLogRecord('communication_websocket_open', { url: stockNetworkSafeUrl(socketUrl) });
           });
           socket.addEventListener('message', event => {
+            if (typeof nativeReceiptCapture === 'function') nativeReceiptCapture({
+              transport: 'websocket', direction: 'incoming',
+              captured_at_epoch_ms: Date.now()
+            });
             captureGenerationWebSocketFrame(event.data);
             void communicationLogWebSocketMessage(socketUrl, event.data)
               .catch(communicationError => communicationLogReportFailure('websocket-message', communicationError));

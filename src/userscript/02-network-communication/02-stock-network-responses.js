@@ -6,6 +6,12 @@
    * @returns {void} No value is returned.
    */
   function stockNetworkTraceFetchResponse(response, trace) {
+    const incomingAt = Date.now();
+    trace.incoming_received_epoch_ms = incomingAt;
+    if (typeof nativeReceiptCapture === 'function') nativeReceiptCapture({
+      transport: 'fetch', direction: 'response', status: response?.status ?? null,
+      captured_at_epoch_ms: incomingAt
+    });
     const contentType = response?.headers?.get?.('content-type') ?? '';
     logDiagnostic('debug', 'stock-network-fetch-response', {
       network_sequence: trace.sequence,
@@ -95,6 +101,9 @@
         };
       }
     } catch {}
+    if (bodyIdentity?.json_identity && typeof nativeJsonEntryCapture === 'function') {
+      nativeJsonEntryCapture(trace);
+    }
     logDiagnostic('debug', 'stock-network-xhr-response', {
       network_sequence: trace.sequence,
       method: trace.method,

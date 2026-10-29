@@ -275,3 +275,7 @@ The first .360.5 hosted run 40556916912 validated a new top-level native ingress
 ### .360.7 CI RED verification for distinct native JSON-entry source contract
 
 The .360.6 hosted native fetch-response receipt test RED is confirmed by run 40558114685. Added a second independent JSON-entry RED assertion to tests/issue360-native-receipt-feed.test.mjs, exercising the actual existing stock response JSON inspection function and demanding a downstream CGP2 received_json_entry publication, independently of persisted_records. This checks separate acceptance requirement. New unused iteration .360.7 runs full canonical CI against exactly this test-first source without production changes; no fake GREEN claim or provider/CSC branch modification. CSC #359 source metadata API has been reviewed as shape-compatible, not yet imported/accepted; CGP2 installed registered receipt-ingest ABI remains outstanding.
+
+### .360.8 first GREEN candidate: immutable CGP2 #9 receipt implementation imported by exact blob, no producer rewrite
+
+Use existing stock fetch/XHR/WebSocket callbacks; the exact source-owned V1 receipt producer is pinned in vendor/cgp2 and validated by the build. The parent supplies synchronous envelope input, newest incoming pending buffer before Core registration, registered agent commTraffic relay, and JSON-entry timing from the first response callback. This is not yet accepted. Exact-source full CI and independently verified native transport coverage required, including stream chunks; no edits to CSC #359 or CGP2 branch.

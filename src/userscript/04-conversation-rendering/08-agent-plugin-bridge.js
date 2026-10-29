@@ -28,6 +28,7 @@
     const identity = loaded.agent.version();
     chatGPTAgent = loaded.agent;
     chatGPTCanonicalSession = loaded.session;
+    if (typeof nativeReceiptFlush === 'function') nativeReceiptFlush();
     // The new registered-agent API exposes activity directly on public Core.
     if (typeof core.activityState === 'function' &&
         typeof core.observeActivity === 'function') {

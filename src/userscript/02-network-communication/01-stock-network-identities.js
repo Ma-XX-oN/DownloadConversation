@@ -225,6 +225,9 @@
       const bounded = await stockNetworkReadBoundedText(response);
       const contentType = response.headers?.get?.('content-type') ?? '';
       const identity = stockNetworkBodyIdentity(bounded.text, contentType);
+      if (identity.json_identity && typeof nativeJsonEntryCapture === 'function') {
+        nativeJsonEntryCapture(trace);
+      }
       logDiagnostic('debug', 'stock-network-fetch-body-summary', {
         network_sequence: trace.sequence,
         url: trace.url,

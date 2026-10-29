@@ -20,7 +20,8 @@
       "files": [
         "src/userscript/01-runtime/01-bootstrap.js",
         "src/userscript/01-runtime/01-bootstrap-restore.js",
-        "src/userscript/01-runtime/02-shared-network-transition.js"
+        "src/userscript/01-runtime/02-shared-network-transition.js",
+        "src/userscript/01-runtime/04-native-receipt-adapter.js"
       ]
     },
     {

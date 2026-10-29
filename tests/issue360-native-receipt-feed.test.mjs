@@ -18,6 +18,17 @@ function source() {
   return trace.slice(observerStart,observerEnd) + '\n' +
     network.slice(start,close+'\n      };'.length);
 }
+
+const adapterSource = read('src/userscript/01-runtime/04-native-receipt-adapter.js');
+const pinnedProducer = read('vendor/cgp2/receipt-observation.js')
+  .replace(/^export (?=(?:const|function) \w+)/gm, '');
+const producerPrelude = 'const nativeReceiptProducerV1 = (() => {\n' +
+  pinnedProducer + '\nreturn {createChatGPTReceiptIngress};\n})();\n';
+const executeNative = (code, context) => vm.runInNewContext(
+  producerPrelude + adapterSource + '\n' + code, {
+    ...context, crypto: { randomUUID:()=> 'test-page-1' }
+  });
+
 class FakeRequest {
   constructor(url, init = {}) {
     this.url=String(url); this.method=init.method ?? 'GET';
@@ -48,7 +59,7 @@ test('native incoming non-200 unrelated fetch reaches producer heartbeat',async(
     stockNetworkInspectFetchBody:async()=>{},
     chatGPTAgent:{commTraffic:x=>events.push(x)}
   };
-  vm.runInNewContext(source(),context);
+  executeNative(source(),context);
   assert.equal(await pageWindow.fetch(response.url,{method:'GET'}),response);
   assert(diagnostics.some(x=>x[1]==='stock-network-fetch-response'),
     'Real production stock response observer must run');
@@ -77,10 +88,11 @@ test('native parsed incoming JSON reaches provider JSON-entry heartbeat', async 
     errorMessage: error => String(error?.message ?? error),
     chatGPTAgent: { commTraffic: value => events.push(value) }
   };
-  vm.runInNewContext(observer + '\n globalThis.inspect = stockNetworkInspectFetchBody;', context);
+  executeNative(observer + '\n globalThis.inspect = stockNetworkInspectFetchBody;', context);
   await context.inspect({
     headers: { get: () => 'application/json' }
-  }, { network_sequence: 19, url: 'https://chatgpt.com/backend-api/conversation' });
+  }, { network_sequence: 19, url: 'https://chatgpt.com/backend-api/conversation',
+    incoming_received_epoch_ms: Date.now() - 10 });
   assert(diagnostics.some(event => event[1] === 'stock-network-fetch-body-summary'),
     'Production body observer must parse and classify incoming JSON');
   assert(events.some(event => event?.type === 'received_json_entry'),
