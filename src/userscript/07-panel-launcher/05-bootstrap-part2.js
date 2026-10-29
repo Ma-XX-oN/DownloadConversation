@@ -1,6 +1,14 @@
 
   window.addEventListener('pageshow', event => {
-    if (event.persisted) reconnectChatGPTSubjectHost();
+    if (event.persisted) {
+      reconnectChatGPTSubjectHost();
+      if (communicationLogDirectoryHandle) {
+        void cscAttachPhysicalDirectory(communicationLogDirectoryHandle)
+          .catch(error => logDiagnostic('error', 'csc-assembly-rebind-failed', {
+            reason: String(error?.message ?? 'unknown').slice(0, 160)
+          }));
+      }
+    }
   });
 
   document.addEventListener('visibilitychange', () => {
@@ -11,6 +19,7 @@
   document.addEventListener('click', captureConversationClickDiagnostic, true);
   window.addEventListener('pagehide', () => {
     disconnectChatGPTSubjectHost();
+    cscDisposePhysicalDirectory();
     finishConversationClickDiagnostic(activeClickDiagnostic, 'pagehide');
     if (diagnosticPersistTimer !== null) {
       clearTimeout(diagnosticPersistTimer);
