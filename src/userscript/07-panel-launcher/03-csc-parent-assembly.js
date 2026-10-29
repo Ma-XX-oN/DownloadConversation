@@ -1,6 +1,7 @@
   /** Original #359 parent owns the page's non-release physical CSC assembly. */
   let cscParentAssembly = null;
   let cscParentAssemblyHandle = null;
+  let cscParentAssemblyNamespace = null;
 
   /**
    * Connect the accepted #313/#318 controller to real GEN and COMM disk ports.
@@ -17,13 +18,15 @@
     const namespace = raw.replace(/[^A-Za-z0-9._-]/g, '-')
       .slice(0, 72).replace(/^-+/, '') || 'conversation';
     if (cscParentAssembly &&
-        cscParentAssemblyHandle === handle) {
+        cscParentAssemblyHandle === handle &&
+        cscParentAssemblyNamespace === namespace) {
       return Object.freeze({ attached: true, namespace });
     }
     if (cscParentAssembly) {
       cscParentAssembly.dispose();
       cscParentAssembly = null;
       cscParentAssemblyHandle = null;
+      cscParentAssemblyNamespace = null;
     }
     const bridge = cscAssemblyBridge(handle, namespace, VERSION);
     try {
@@ -38,6 +41,7 @@
       await controller.bindWorker(bridge.controllerWorker);
       cscParentAssembly = bridge;
       cscParentAssemblyHandle = handle;
+      cscParentAssemblyNamespace = namespace;
       return Object.freeze({ attached: true, namespace });
     } catch (error) {
       bridge.dispose();
@@ -50,4 +54,5 @@
     cscParentAssembly?.dispose();
     cscParentAssembly = null;
     cscParentAssemblyHandle = null;
+    cscParentAssemblyNamespace = null;
   }
