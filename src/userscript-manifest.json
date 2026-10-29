@@ -59,7 +59,8 @@
         "src/userscript/02-network-communication/04-csc-comm-disk-writer-part2.js",
         "src/userscript/02-network-communication/04-csc-comm-disk-bridge.js",
         "src/userscript/02-network-communication/04-csc-comm-durable-port.js",
-        "src/userscript/02-network-communication/04-csc-gen-durable-port.js"
+        "src/userscript/02-network-communication/04-csc-gen-durable-port.js",
+        "src/userscript/02-network-communication/04-csc-assembly-bridge.js"
       ]
     },
     {
