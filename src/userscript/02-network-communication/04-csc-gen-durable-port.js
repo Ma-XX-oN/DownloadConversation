@@ -16,6 +16,7 @@
     let poisoned = false;
     let recovered = false;
     const cycles = new Map();
+    const knownRestarts = new Set();
     function check(condition, code) { if (!condition) throw Error(code); }
     function validRestart(value) {
       return typeof value === 'string' &&
@@ -55,6 +56,7 @@
     }
     async function scan() {
       cycles.clear();
+      knownRestarts.clear();
       const names = [];
       for await (const [name, handle] of directory.entries()) {
         if (handle?.kind === 'file' && /^gen-key-[0-9]{8}\.jsonl$/.test(name)) {
@@ -88,6 +90,12 @@
             'csc-gen-conflicting-cycle');
           cycles.set(record.id, record);
         }
+        check(!latest || first.key_restart >= latest.restart,
+          'csc-gen-disk-key-restart-regression');
+        check(!knownRestarts.has(first.key_restart) ||
+          latest?.restart === first.key_restart,
+          'csc-gen-noncontiguous-key-restart');
+        knownRestarts.add(first.key_restart);
         latest = { name, restart: first.key_restart };
       }
       activeName = latest?.name ?? null;
@@ -112,6 +120,8 @@
           'csc-gen-header-readback-mismatch');
           return Object.freeze({ durable: true, key_restart: restart });
         }
+        check((activeRestart === null || restart > activeRestart) &&
+          !knownRestarts.has(restart), 'csc-gen-stale-key-restart');
         // Never attach a new key to a nonempty old-key GEN file.
         const existingNames = [];
         for await (const [name,handle] of directory.entries()) {
@@ -137,6 +147,7 @@
         'csc-gen-header-readback-mismatch');
         activeName = name;
         activeRestart = restart;
+        knownRestarts.add(restart);
         return Object.freeze({ durable: true, key_restart: restart });
       }).catch(error => { poisoned = true; throw error; });
     }
