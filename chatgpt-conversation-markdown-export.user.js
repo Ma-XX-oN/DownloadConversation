@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         ChatGPT Conversation Markdown Recorder
 // @namespace    https://chatgpt.com/
-// @version      1.11.16-issue.360.7
+// @version      1.11.16-issue.360.9
 // @description  Exports the current ChatGPT conversation directly from the Conversation API as Markdown or JSONL.
 // @match        https://chatgpt.com/*
 // @match        https://chat.openai.com/*
@@ -6934,6 +6934,7 @@ function observeAgentPluginRegistrations(listener) {
     const identity = loaded.agent.version();
     chatGPTAgent = loaded.agent;
     chatGPTCanonicalSession = loaded.session;
+    if (typeof nativeReceiptFlush === 'function') nativeReceiptFlush();
     // The new registered-agent API exposes activity directly on public Core.
     if (typeof core.activityState === 'function' &&
         typeof core.observeActivity === 'function') {
@@ -7099,6 +7100,171 @@ function observeAgentPluginRegistrations(listener) {
       chatGPTTryBindRegisteredAgent();
     }
   }
+// BEGIN exact pinned CGP2 receipt producer blob=b2cd4df1992fecf339273699a48e47f5d149034f
+const nativeReceiptProducerV1 = (() => {
+// Provider-owned receipt contract V1. Called synchronously at CSC capture,
+// never when a queued envelope is consumed by an agent or Worker.
+const RECEIPT_OBSERVATION_VERSION = 1;
+const TRANSPORTS = new Set(['fetch', 'xhr', 'websocket', 'sse', 'polling', 'keepalive', 'other']);
+const PHASES = new Set([
+  'response_headers', 'body_chunk', 'frame', 'message',
+  'server_keepalive', 'server_error'
+]);
+const MAX_IDENTITIES = 2048;
+const ID_PATTERN = /^[A-Za-z0-9_.-]{1,128}$/;
+const CAPTURE_ID_PATTERN = /^[A-Za-z0-9_.:-]{1,200}$/;
+const ISO_WITH_ZONE = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d{1,3})?(?:Z|[+-]\d{2}:\d{2})$/;
+
+function safeId(value) {
+  return typeof value === 'string' && ID_PATTERN.test(value) ? value : null;
+}
+
+function safeCaptureId(value) {
+  return typeof value === 'string' && CAPTURE_ID_PATTERN.test(value)
+    ? value : null;
+}
+
+function phaseOf(event) {
+  if (event.direction === 'response' &&
+      (event.transport === 'fetch' || event.transport === 'xhr')) {
+    if (PHASES.has(event.phase)) return event.phase;
+    if (Number.isInteger(event.status) && event.status >= 400) {
+      return 'server_error';
+    }
+    return event.transport === 'fetch' ? 'response_headers' : 'message';
+  }
+  if (event.direction === 'incoming') {
+    if (event.transport === 'websocket' && event.phase == null) {
+      return 'frame';
+    }
+    return PHASES.has(event.phase) ? event.phase : null;
+  }
+  return null;
+}
+
+function validEpochMs(value, observedAt) {
+  let parsed = value;
+  if (typeof value === 'string' && ISO_WITH_ZONE.test(value)) {
+    parsed = Date.parse(value);
+  }
+  return Number.isSafeInteger(parsed) && parsed > 0 && parsed <= observedAt
+    ? parsed : null;
+}
+
+function sourceTimestamp(event, observedAt) {
+  for (const key of ['received_at_epoch_ms', 'captured_at_epoch_ms']) {
+    const value = validEpochMs(event[key], observedAt);
+    if (value !== null) return value;
+  }
+  if (event.timestamp_clock_domain === 'unix_epoch_ms') {
+    return validEpochMs(event.timestamp, observedAt);
+  }
+  return null;
+}
+
+// Whitelisting prevents arbitrary network content from traversing the
+// provider heartbeat metadata boundary, including with a forged envelope.
+function sanitizeChatGPTReceipt(receipt) {
+  if (!receipt || typeof receipt !== 'object' ||
+      receipt.type !== 'server_receipt' ||
+      receipt.version !== RECEIPT_OBSERVATION_VERSION ||
+      !TRANSPORTS.has(receipt.transport) || !PHASES.has(receipt.phase) ||
+      !Number.isSafeInteger(receipt.timestamp_ms) || receipt.timestamp_ms <= 0 ||
+      !['source', 'local_observation'].includes(receipt.timestamp_origin) ||
+      receipt.clock_domain !== 'unix_epoch_ms') {
+    throw new TypeError('Invalid V1 incoming receipt metadata');
+  }
+  const result = {
+    type: 'server_receipt',
+    version: RECEIPT_OBSERVATION_VERSION,
+    timestamp_ms: receipt.timestamp_ms,
+    timestamp_origin: receipt.timestamp_origin,
+    clock_domain: 'unix_epoch_ms',
+    transport: receipt.transport,
+    phase: receipt.phase
+  };
+  for (const key of ['page_instance_id', 'connection_id', 'correlation_id']) {
+    const id = safeId(receipt[key]);
+    if (id !== null) result[key] = id;
+  }
+  for (const key of ['capture_id', 'request_capture_id']) {
+    const id = safeCaptureId(receipt[key]);
+    if (id !== null) result[key] = id;
+  }
+  if (Number.isSafeInteger(receipt.capture_order) && receipt.capture_order > 0) {
+    result.capture_order = receipt.capture_order;
+  }
+  if (Number.isSafeInteger(receipt.network_sequence) && receipt.network_sequence >= 0) {
+    result.network_sequence = receipt.network_sequence;
+  }
+  if (Number.isFinite(receipt.captured_at_mono_ms) && receipt.captured_at_mono_ms >= 0) {
+    result.captured_at_mono_ms = receipt.captured_at_mono_ms;
+  }
+  const clockId = safeId(receipt.clock_id);
+  if (clockId !== null) result.clock_id = clockId;
+  return Object.freeze(result);
+}
+
+function createChatGPTReceiptIngress({ now = Date.now } = {}) {
+  if (typeof now !== 'function') throw new TypeError('now must be a function');
+  const seen = new Set();
+  return Object.freeze({
+    capture(event) {
+      // This is the first synchronous observation step. No queue, await,
+      // parsing, body clone, response read or deferred callback precedes it.
+      const observedAt = now();
+      if (!Number.isSafeInteger(observedAt) || observedAt <= 0) {
+        throw new TypeError('Observation clock must return epoch milliseconds');
+      }
+      if (!event || typeof event !== 'object') {
+        throw new TypeError('Canonical CSC envelope is required');
+      }
+      // CSC #309 sends { envelope, source } through its plugin fanout.
+      // Fetch/XHR 'response' and WebSocket 'incoming' are actual native
+      // directions; 'request', 'outgoing', 'error' and 'event' are not receipts.
+      const canonical = event.envelope ?? event;
+      if (!canonical || typeof canonical !== 'object') {
+        throw new TypeError('Canonical CSC envelope is required');
+      }
+      const phase = phaseOf(canonical);
+      if (!TRANSPORTS.has(canonical.transport) || phase === null) return null;
+      const page = safeId(canonical.page_instance_id);
+      const sequence = Number.isSafeInteger(canonical.network_sequence) &&
+        canonical.network_sequence >= 0 ? canonical.network_sequence : null;
+      const identity = page !== null && sequence !== null
+        ? page + ':' + sequence : null;
+      if (identity !== null && seen.has(identity)) return null;
+      const supplied = sourceTimestamp(canonical, observedAt);
+      const receipt = sanitizeChatGPTReceipt({
+        type: 'server_receipt',
+        version: RECEIPT_OBSERVATION_VERSION,
+        timestamp_ms: supplied ?? observedAt,
+        timestamp_origin: supplied === null ? 'local_observation' : 'source',
+        clock_domain: 'unix_epoch_ms',
+        transport: canonical.transport,
+        phase,
+        page_instance_id: page,
+        connection_id: canonical.connection_id,
+        correlation_id: canonical.correlation_id,
+        capture_id: canonical.capture_id,
+        request_capture_id: canonical.request_capture_id,
+        capture_order: canonical.capture_order,
+        network_sequence: sequence,
+        captured_at_mono_ms: canonical.captured_at_mono_ms,
+        clock_id: canonical.clock_id ?? canonical.clock_domain
+      });
+      if (identity !== null) {
+        seen.add(identity);
+        if (seen.size > MAX_IDENTITIES) seen.delete(seen.values().next().value);
+      }
+      return receipt;
+    }
+  });
+}
+
+return Object.freeze({createChatGPTReceiptIngress});
+})();
+// END exact pinned CGP2 receipt producer
 // BEGIN bundled compressor name=zstd source=01b7154f1172432f8abe9b3bb9909e14a1176b7d
 let __dcCompressorModule = null;
 
@@ -8067,6 +8233,100 @@ return Object.freeze({renderFaviconPulseSequence});
       ['cf-ray', 'cf_ray']
     ];
     for (const [headerName, outputName] of allowed) {
+
+  // Reuse immutable CGP2 #9 producer; never a second interceptor.
+  /** Exact source-owned CGP2 V1 synchronous receipt normalizer. */
+  const nativeReceiptIngressV1 = nativeReceiptProducerV1.createChatGPTReceiptIngress();
+  /** Unique browser page observation identity. */
+  const nativeReceiptPageId = crypto.randomUUID();
+  /** Independent monotonically increasing metadata identity. */
+  let nativeReceiptSequence = 0;
+  /** Newest normalized receipt pending registered agent creation. */
+  let nativePendingReceipt = null;
+  /** Newest parsed JSON-entry stamp pending registered agent creation. */
+  let nativePendingJson = null;
+
+  /**
+   * Deliver one already-normalized CGP2 V1 event without restamping.
+   * @param {Object} event - Source-owned receipt or JSON-entry metadata.
+   * @returns {void} Delivery is synchronous or retained for agent creation.
+   */
+  function nativeReceiptDeliver(event) {
+    try {
+      if (chatGPTAgent && typeof chatGPTAgent.commTraffic === 'function') {
+        chatGPTAgent.commTraffic(event);
+        return;
+      }
+      if (event.type === 'server_receipt') {
+        if (!nativePendingReceipt || event.receipt.timestamp_ms >= nativePendingReceipt.timestamp_ms) {
+          nativePendingReceipt = event.receipt;
+        }
+      } else if (event.type === 'received_json_entry') {
+        if (!nativePendingJson || event.timestamp_ms >= nativePendingJson.timestamp_ms) {
+          nativePendingJson = event;
+        }
+      }
+    } catch (error) {
+      logDiagnostic('warnings', 'last-native-ingress-delivery-failed', {
+        reason: String(error?.message ?? error)
+      });
+    }
+  }
+
+  /**
+   * Capture a body-free native event through the pinned provider normalizer.
+   * @param {Object} envelope - Original transport metadata at native observation.
+   * @returns {Object|null} Accepted immutable receipt or null for non-incoming.
+   */
+  function nativeReceiptCapture(envelope = {}) {
+    try {
+      const observation = Object.freeze({
+        ...envelope,
+        page_instance_id: nativeReceiptPageId,
+        network_sequence: ++nativeReceiptSequence
+      });
+      const receipt = nativeReceiptIngressV1.capture(observation);
+      if (receipt) nativeReceiptDeliver({ type: 'server_receipt', receipt });
+      return receipt;
+    } catch (error) {
+      logDiagnostic('warnings', 'last-native-ingress-capture-failed', {
+        reason: String(error?.message ?? error)
+      });
+      return null;
+    }
+  }
+
+  /**
+   * Preserve the earlier response epoch for independently parsed JSON entries.
+   * @param {Object} trace - Native correlation state with received epoch.
+   * @returns {boolean} True when the source observation has a valid epoch.
+   */
+  function nativeJsonEntryCapture(trace) {
+    const timestamp = trace?.incoming_received_epoch_ms;
+    if (!Number.isSafeInteger(timestamp) || timestamp <= 0 || timestamp > Date.now()) return false;
+    nativeReceiptDeliver(Object.freeze({
+      type: 'received_json_entry', version: 1,
+      clock_domain: 'unix_epoch_ms', timestamp_ms: timestamp
+    }));
+    return true;
+  }
+
+  /**
+   * Replay bounded pending V1 metadata after registered agent initialization.
+   * @returns {boolean} True when a live agent accepted replay attempts.
+   */
+  function nativeReceiptFlush() {
+    if (!chatGPTAgent || typeof chatGPTAgent.commTraffic !== 'function') return false;
+    const events = [];
+    if (nativePendingReceipt) events.push({type:'server_receipt',receipt:nativePendingReceipt});
+    if (nativePendingJson) events.push(nativePendingJson);
+    events.sort((a,b)=>(a.receipt?.timestamp_ms??a.timestamp_ms)-
+      (b.receipt?.timestamp_ms??b.timestamp_ms));
+    nativePendingReceipt = null;
+    nativePendingJson = null;
+    for(const event of events) nativeReceiptDeliver(event);
+    return true;
+  }
       let value = null;
       try { value = headers?.get?.(headerName) ?? null; } catch {}
       if (value) result[outputName] = boundedDiagnosticText(value, 1000);
@@ -8294,6 +8554,9 @@ return Object.freeze({renderFaviconPulseSequence});
       const bounded = await stockNetworkReadBoundedText(response);
       const contentType = response.headers?.get?.('content-type') ?? '';
       const identity = stockNetworkBodyIdentity(bounded.text, contentType);
+      if (identity.json_identity && typeof nativeJsonEntryCapture === 'function') {
+        nativeJsonEntryCapture(trace);
+      }
       logDiagnostic('debug', 'stock-network-fetch-body-summary', {
         network_sequence: trace.sequence,
         url: trace.url,
@@ -8320,6 +8583,12 @@ return Object.freeze({renderFaviconPulseSequence});
    * @returns {void} No value is returned.
    */
   function stockNetworkTraceFetchResponse(response, trace) {
+    const incomingAt = Date.now();
+    trace.incoming_received_epoch_ms = incomingAt;
+    if (typeof nativeReceiptCapture === 'function') nativeReceiptCapture({
+      transport: 'fetch', direction: 'response', status: response?.status ?? null,
+      captured_at_epoch_ms: incomingAt
+    });
     const contentType = response?.headers?.get?.('content-type') ?? '';
     logDiagnostic('debug', 'stock-network-fetch-response', {
       network_sequence: trace.sequence,
@@ -8409,6 +8678,9 @@ return Object.freeze({renderFaviconPulseSequence});
         };
       }
     } catch {}
+    if (bodyIdentity?.json_identity && typeof nativeJsonEntryCapture === 'function') {
+      nativeJsonEntryCapture(trace);
+    }
     logDiagnostic('debug', 'stock-network-xhr-response', {
       network_sequence: trace.sequence,
       method: trace.method,
@@ -16388,6 +16660,12 @@ return Object.freeze({renderFaviconPulseSequence});
         void communicationLogXhrRequest(info, body, stockTrace)
           .catch(communicationError => communicationLogReportFailure('xhr-request', communicationError));
         this.addEventListener('loadend', () => {
+          const incomingAt = Date.now();
+          stockTrace.incoming_received_epoch_ms = incomingAt;
+          if (typeof nativeReceiptCapture === 'function') nativeReceiptCapture({
+            transport: 'xhr', direction: 'response', status: this.status,
+            captured_at_epoch_ms: incomingAt
+          });
           stockNetworkTraceXhrResponse(this, stockTrace);
           void communicationLogXhrResponse(this, stockTrace)
             .catch(communicationError => communicationLogReportFailure('xhr-response', communicationError));
@@ -16414,6 +16692,10 @@ return Object.freeze({renderFaviconPulseSequence});
             void communicationLogRecord('communication_websocket_open', { url: stockNetworkSafeUrl(socketUrl) });
           });
           socket.addEventListener('message', event => {
+            if (typeof nativeReceiptCapture === 'function') nativeReceiptCapture({
+              transport: 'websocket', direction: 'incoming',
+              captured_at_epoch_ms: Date.now()
+            });
             captureGenerationWebSocketFrame(event.data);
             void communicationLogWebSocketMessage(socketUrl, event.data)
               .catch(communicationError => communicationLogReportFailure('websocket-message', communicationError));
