@@ -14,6 +14,7 @@
     let activeName = null;
     let activeRestart = null;
     let poisoned = false;
+    let recovered = false;
     const cycles = new Map();
     function check(condition, code) { if (!condition) throw Error(code); }
     function validRestart(value) {
@@ -91,10 +92,12 @@
       }
       activeName = latest?.name ?? null;
       activeRestart = latest?.restart ?? null;
+      recovered = true;
       return { files: names.length, key_restart: activeRestart };
     }
     async function beginSegment(boundary) {
       return withQueue(async () => {
+        if (!recovered) await scan();
         check(boundary && typeof boundary === 'object' &&
           !Array.isArray(boundary) && boundary.version === version &&
           validRestart(boundary.key_restart),
@@ -139,6 +142,7 @@
     }
     async function writeCycle(event) {
       return withQueue(async () => {
+        if (!recovered) await scan();
         check(cycleValid(event), 'csc-gen-invalid-cycle');
         check(activeName && activeRestart === event.key_restart,
           'csc-gen-key-boundary-not-committed');
@@ -166,6 +170,7 @@
       }).catch(error => { poisoned = true; throw error; });
     }
     async function hasCycle(id) {
+      if (!recovered) await withQueue(scan);
       await tail;
       check(!poisoned, 'csc-gen-poisoned');
       return typeof id === 'string' && cycles.has(id);
