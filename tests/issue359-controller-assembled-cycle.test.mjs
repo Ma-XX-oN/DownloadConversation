@@ -51,6 +51,7 @@ function fixture(){
    if(type==='csc-writer-begin-key-boundary')emit({type:'csc-writer-key-boundary-ready',request_id:id,key_restart:v.header.key_restart,durable:true});
    if(type==='csc-writer-write-cycle'){comm.set(v.event.id,v.event);emit({type:'csc-writer-cycle-written',request_id:id,id:v.event.id,durable:true});}
    if(type==='csc-comm-configure')emit({type:'csc-comm-configured',request_id:id,schema:1});
+   if(type==='dc-hmac-key-v2')emit({type:'csc-comm-key-ready',token:v.token});
   }
  }
  class URLStub{}
@@ -58,7 +59,7 @@ function fixture(){
  const service={
   status:async()=>({state:'open',key_restart:restart,redaction_key_epoch:1,expires_at_ms:Date.now()+300000}),
   cycleEvents:async()=>[cycle],dispose:()=>{},admit:async()=>({token:'test-token-12345678',metadata:{key_restart:restart}}),
-  provision:()=>{},complete:async()=>{}
+  provision:(token,target)=>target.postMessage({type:'dc-hmac-key-v2',token,key_bytes:new Uint8Array(32)}),complete:async()=>{}
  };
  const store={subscribe:()=>()=>{},read:async()=>null,write:async()=>{},dispose:()=>{}};
  const make=new Function('assert','Worker','Blob','URL','globalThis',
@@ -91,4 +92,14 @@ test('real accepted controller reconciles one cycle to both GEN and COMM',async(
   ['csc-comm-drain','csc-writer-drain','csc-writer-begin-key-boundary',
    'csc-writer-write-cycle']);
  assert.equal(f.binds.some(Boolean),true);
+});
+
+test('accepted #318 capture admission waits for genuine Worker key-ready token',async()=>{
+ const f=fixture();
+ await f.app.attach(f.root);
+ await f.app.ctrl().reconcileCycles();
+ const admission=await f.app.ctrl().prepareCapture();
+ assert.equal(admission.token,'test-token-12345678');
+ assert.ok(f.messages.some(x=>x.type==='dc-hmac-key-v2'&&x.token===admission.token));
+ await f.app.ctrl().completeCapture(admission.token);
 });
