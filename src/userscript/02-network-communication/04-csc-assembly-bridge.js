@@ -115,7 +115,9 @@
       async hasCycle(id) {
         assert(typeof id === 'string' &&
           id.startsWith('hmac-key-cycle:'), 'csc-assembly-cycle-id-invalid');
-        await ensureOpen(id.slice('hmac-key-cycle:'.length));
+        if (opened) await opened;
+        else await ensureOpen(id.slice('hmac-key-cycle:'.length));
+        // Historical membership is read-only; it never reopens an old key.
         return durable.hasCycle(id);
       },
       async drain() {
