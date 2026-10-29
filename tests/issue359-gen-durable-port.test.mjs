@@ -120,3 +120,37 @@ test('GEN contradictory same-cycle payload is rejected', async () => {
   await assert.rejects(() => gen.writeCycle({...event(keyA),reason:'manual'}),
     /csc-gen-cycle-conflict/);
 });
+
+test('GEN queries existing on-disk history without explicit recovery call', async () => {
+  const f = fixture();
+  const first = f.create();
+  await first.beginSegment({version,key_restart:keyA});
+  await first.writeCycle(event(keyA));
+  const second = f.create();
+  assert.equal(await second.hasCycle(event(keyA).id),true);
+  assert.deepEqual(await second.beginSegment({version,key_restart:keyA}),
+    {durable:true,key_restart:keyA});
+  assert.equal(f.files.size,1);
+});
+test('GEN rejects truncated prior segment rather than starting a new key', async () => {
+  const f = fixture();
+  f.files.set('gen-key-00000001.jsonl',
+    new TextEncoder().encode('{"version":'));
+  const gen = f.create();
+  await assert.rejects(
+    () => gen.beginSegment({version,key_restart:keyB}),
+    /csc-gen-truncated-file/
+  );
+  assert.equal(f.files.size,1);
+});
+test('GEN refuses a historical key downgrade after recovery', async () => {
+  const f=fixture(), first=f.create();
+  await first.beginSegment({version,key_restart:keyB});
+  const second=f.create();
+  await second.recover();
+  await assert.rejects(
+    () => second.beginSegment({version,key_restart:keyA}),
+    /csc-gen-stale-key-restart/
+  );
+  assert.equal(f.files.size,1);
+});
