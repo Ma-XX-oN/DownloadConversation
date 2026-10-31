@@ -327,3 +327,7 @@ For a parsed response completed after headers, a received JSON entry's local fal
 ### .360.20 — preserve timely diagnostics while observing long-lived streams
 
 The .360.18 long-stream fix drained every clone to EOF before emitting the pre-existing bounded diagnostic summary; for an unending response this was a regression. The same existing clone reader now transfers ownership to an async body-free receipt tail observer immediately after the 1 MiB cap, returns diagnostic text promptly, and releases its reader only upon EOF/error. No extra clone, interceptor, unbounded retained content, or double-read. New focused test proves diagnostic return with an indefinitely unresolved subsequent read; previous four-chunk test waits for tail observer completion. Exact hosted CI and resource overhead still required.
+
+### .360.21 — transferred-reader failure cleanup
+
+The .360.20 tail helper transfers the original response clone reader after the diagnostic cap. A focused direct source test injects reader.read rejection, checks the error is isolated and reported exactly once, and verifies reader lock release exactly once without disturbing the already-returned diagnostic summary. No production source change from .360.20; full canonical CI must independently revalidate the changed test inventory.

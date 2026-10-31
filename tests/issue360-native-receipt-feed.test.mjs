@@ -425,3 +425,32 @@ test('bounded stock diagnostics return while long-lived receipt tail remains act
   assert.equal(events.length,2,'Only currently observed chunks have counted');
   resolvePending({done:true});
 });
+
+test('transferred receipt-tail reader releases lock and reports read failure once', async () => {
+  const identity=read('src/userscript/02-network-communication/01-stock-network-identities.js');
+  const start=identity.indexOf('  async function stockNetworkObserveReceiptTail(reader, trace) {');
+  const end=identity.indexOf('  async function stockNetworkInspectFetchBody(response, trace) {',start);
+  assert(start>=0 && end>start,'Actual transferred-tail owner must exist');
+  let released=0, reads=0;
+  const diagnostics=[];
+  let tailFinished;
+  const finished=new Promise(resolve=>{tailFinished=resolve;});
+  const context={
+    Date,
+    logDiagnostic:(...entry)=>diagnostics.push(entry),
+    boundedDiagnosticText:String,errorMessage:error=>error.message,
+    releaseReaderLockQuietly(){released++;tailFinished();}
+  };
+  const vmContext={...context};
+  vm.runInNewContext(identity.slice(start,end)+
+    '\n globalThis.observeTail=stockNetworkObserveReceiptTail;',vmContext);
+  await vmContext.observeTail({
+    read:async()=>{reads++;throw new Error('broken native clone stream');},
+    releaseLock(){}
+  },null);
+  await finished;
+  assert.equal(reads,1);
+  assert.equal(released,1,'Reader lock must be released even on failure');
+  assert.equal(diagnostics.length,1,'One tail error should be diagnosed once');
+  assert.equal(diagnostics[0][1],'stock-network-receipt-tail-observation-failed');
+});
