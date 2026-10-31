@@ -289,7 +289,7 @@
       }
       expiry = status.expires_at_ms ?? null;
       epoch = status.redaction_key_epoch ?? 0;
-      if (keyState === 'draining' || keyState === 'DRAINING') await pause();
+      if (keyState !== 'open') await pause();
       } catch {
       keyState = 'failed';
       lastError = 'csc-key-status-failed';
