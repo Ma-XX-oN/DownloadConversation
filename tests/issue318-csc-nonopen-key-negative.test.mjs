@@ -107,3 +107,27 @@ test('refresh to unavailable pauses applied Worker', async () => {
   assert.equal(controls.snapshot().settings_applied,false);
   controls.dispose();
 });
+
+test('key restart changes while open: active Worker is paused', async () => {
+  const context=vm.createContext({});
+  vm.runInContext(schema+control+'\nthis.create=cscCaptureControlPlane;',context);
+  let keyRestart='2026-10-27T15:00:00.000Z', pauses=0;
+  const controls=context.create({
+    store:{read:async()=>null,subscribe:()=>()=>{},dispose(){}},
+    serviceFactory:()=>({status:async()=>({state:'open',key_restart:keyRestart}),dispose(){}}),
+    version:'test',origin:'https://chatgpt.com'
+  });
+  await controls.init();
+  await controls.bindWorker({
+    pause:async()=>{pauses++;},resume:async()=>{},
+    configure:async x=>({type:'csc-comm-configured',schema:x.schema,request_id:x.request_id}),
+    awaitKey:async()=>({}),provisionTarget:{postMessage(){}}
+  });
+  assert.equal(controls.snapshot().settings_applied,true);
+  const before=pauses;
+  keyRestart='2026-10-27T16:00:00.000Z';
+  await controls.refreshKey();
+  assert.ok(pauses>before);
+  assert.equal(controls.snapshot().settings_applied,false);
+  controls.dispose();
+});
