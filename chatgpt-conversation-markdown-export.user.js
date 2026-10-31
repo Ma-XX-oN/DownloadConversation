@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         ChatGPT Conversation Markdown Recorder
 // @namespace    https://chatgpt.com/
-// @version      1.11.16-issue.360.17
+// @version      1.11.16-issue.360.18
 // @description  Exports the current ChatGPT conversation directly from the Conversation API as Markdown or JSONL.
 // @match        https://chatgpt.com/*
 // @match        https://chat.openai.com/*
@@ -8433,17 +8433,16 @@ return Object.freeze({renderFaviconPulseSequence});
         });
         const remaining = STOCK_NETWORK_JSON_BYTE_LIMIT - byteCount;
         if (remaining <= 0) {
+          // Keep observing the already-owned clone for heartbeat metadata,
+          // but never retain more than the diagnostic byte limit.
           truncated = true;
-          try { await reader.cancel(); } catch {}
-          break;
+          continue;
         }
         const accepted = value.byteLength <= remaining ? value : value.slice(0, remaining);
         text += decoder.decode(accepted, { stream: true });
         byteCount += accepted.byteLength;
         if (accepted.byteLength < value.byteLength) {
           truncated = true;
-          try { await reader.cancel(); } catch {}
-          break;
         }
       }
       text += decoder.decode();
