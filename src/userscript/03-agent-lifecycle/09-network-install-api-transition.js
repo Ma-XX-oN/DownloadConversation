@@ -1,4 +1,24 @@
+                message: boundedDiagnosticText(errorMessage(error), 1000)
+              }));
           }
+          if (resumeRequest && !resumeRequestClone) {
+            logDiagnostic('warnings', 'conversation-resume-request-clone-failure', {
+              url: boundedDiagnosticText(requestUrl, 320)
+            });
+          }
+          if (resumeRequest && !resumeResponse) {
+            logDiagnostic('warnings', 'conversation-resume-response-clone-failure', {
+              url: boundedDiagnosticText(response?.url ?? requestUrl, 320)
+            });
+          }
+          if (resumeRequestClone && resumeResponse) {
+            void captureConversationResumeStreamResponse(
+              resumeResponse, resumeRequestClone, !stockBodyObserved);
+          }
+          if (capturePromise && !generationResponse) {
+            logDiagnostic('warnings', 'conversation-stream-tail-response-clone-failure', {
+              url: boundedDiagnosticText(response?.url ?? requestUrl, 320)
+            });          }
           if (capturePromise && generationResponse) {
             void capturePromise.then(capture => {
               if (!capture) {

@@ -174,13 +174,6 @@
   }
 
   /**
-   * Reads at most the configured diagnostic byte limit from a cloned response.
-   *
-   * @param {Response} response - Cloned page response.
-   * @param {Object|null} trace - Native response correlation state for chunk epoch.
-   * @returns {Promise<Object>} Bounded text plus byte/truncation metadata.
-   */
-  /**
    * Observe the remainder of the existing response clone without storing bytes.
    * @param {ReadableStreamDefaultReader} reader - Transferred clone reader.
    * @param {Object|null} trace - Original native correlation state.
@@ -207,6 +200,14 @@
       releaseReaderLockQuietly(reader);
     }
   }
+
+  /**
+   * Reads at most the configured diagnostic byte limit from a cloned response.
+   *
+   * @param {Response} response - Cloned page response.
+   * @param {Object|null} trace - Native response correlation state for chunk epoch.
+   * @returns {Promise<Object>} Bounded text plus byte/truncation metadata.
+   */
 
   async function stockNetworkReadBoundedText(response, trace = null) {
     if (!response?.body) return { text: '', byte_count: 0, truncated: false };
