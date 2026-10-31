@@ -180,6 +180,34 @@
    * @param {Object|null} trace - Native response correlation state for chunk epoch.
    * @returns {Promise<Object>} Bounded text plus byte/truncation metadata.
    */
+  /**
+   * Observe the remainder of the existing response clone without storing bytes.
+   * @param {ReadableStreamDefaultReader} reader - Transferred clone reader.
+   * @param {Object|null} trace - Original native correlation state.
+   * @returns {Promise<void>} Resolves when the original clone stream ends.
+   */
+  async function stockNetworkObserveReceiptTail(reader, trace) {
+    try {
+      for (;;) {
+        const { done, value } = await reader.read();
+        if (done) break;
+        if (!value?.byteLength) continue;
+        const observedAt = Date.now();
+        if (trace) trace.incoming_last_body_epoch_ms = observedAt;
+        if (typeof nativeReceiptCapture === 'function') nativeReceiptCapture({
+          transport: 'fetch', direction: 'incoming', phase: 'body_chunk',
+          captured_at_epoch_ms: observedAt
+        });
+      }
+    } catch (error) {
+      logDiagnostic('debug', 'stock-network-receipt-tail-observation-failed', {
+        error: boundedDiagnosticText(errorMessage(error), 1000)
+      });
+    } finally {
+      releaseReaderLockQuietly(reader);
+    }
+  }
+
   async function stockNetworkReadBoundedText(response, trace = null) {
     if (!response?.body) return { text: '', byte_count: 0, truncated: false };
     const reader = response.body.getReader();
@@ -187,6 +215,7 @@
     let text = '';
     let byteCount = 0;
     let truncated = false;
+    let tailTransferred = false;
     try {
       for (;;) {
         const { done, value } = await reader.read();
@@ -201,21 +230,24 @@
         });
         const remaining = STOCK_NETWORK_JSON_BYTE_LIMIT - byteCount;
         if (remaining <= 0) {
-          // Keep observing the already-owned clone for heartbeat metadata,
-          // but never retain more than the diagnostic byte limit.
           truncated = true;
-          continue;
+          tailTransferred = true;
+          void stockNetworkObserveReceiptTail(reader, trace);
+          break;
         }
         const accepted = value.byteLength <= remaining ? value : value.slice(0, remaining);
         text += decoder.decode(accepted, { stream: true });
         byteCount += accepted.byteLength;
         if (accepted.byteLength < value.byteLength) {
           truncated = true;
+          tailTransferred = true;
+          void stockNetworkObserveReceiptTail(reader, trace);
+          break;
         }
       }
       text += decoder.decode();
     } finally {
-      releaseReaderLockQuietly(reader);
+      if (!tailTransferred) releaseReaderLockQuietly(reader);
     }
     return { text, byte_count: byteCount, truncated };
   }

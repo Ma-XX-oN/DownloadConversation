@@ -326,15 +326,18 @@ test('failing registered agent does not drop original-time receipt before rebind
 
 test('unrelated fetch stream keeps receipts beyond 1 MiB without payload retention', async () => {
   const identity=read('src/userscript/02-network-communication/01-stock-network-identities.js');
-  const begin=identity.indexOf('  async function stockNetworkReadBoundedText(response) {');
+  const begin=identity.indexOf('  async function stockNetworkObserveReceiptTail(reader, trace) {');
   const end=identity.indexOf('  async function stockNetworkInspectFetchBody(response, trace) {',begin);
   assert(begin>=0 && end>begin);
   const events=[];
   let reads=0, cancelCount=0;
+  let resolveTail;
+  const tailDone=new Promise(resolve=>{resolveTail=resolve;});
   const context={
     chatGPTAgent:{commTraffic:e=>events.push(e)},
     TextDecoder,Date,STOCK_NETWORK_JSON_BYTE_LIMIT:1024*1024,
-    releaseReaderLockQuietly(){}
+    logDiagnostic(){},boundedDiagnosticText:String,errorMessage:String,
+    releaseReaderLockQuietly(){resolveTail();}
   };
   executeNative(identity.slice(begin,end)+
     '\n globalThis.readBody=stockNetworkReadBoundedText;',context);
@@ -347,6 +350,7 @@ test('unrelated fetch stream keeps receipts beyond 1 MiB without payload retenti
   })}};
   const result=await context.readBody(response);
   assert.equal(result.byte_count,1024*1024,'Diagnostic storage must remain bounded');
+  await tailDone;
   assert.equal(result.text.length,1024*1024);
   assert.equal(result.truncated,true);
   assert.equal(cancelCount,0,'Observed clone must not cancel after 1MiB');
@@ -390,4 +394,34 @@ test('parsed JSON fallback uses original final chunk epoch instead of earlier he
   assert(json,'Parsed JSON must reach the reducer');
   assert.equal(json.timestamp_ms,first+1000,
     'The final byte observation is authoritative over earlier HTTP headers');
+});
+
+test('bounded stock diagnostics return while long-lived receipt tail remains active', async () => {
+  const identity=read('src/userscript/02-network-communication/01-stock-network-identities.js');
+  const begin=identity.indexOf('  async function stockNetworkObserveReceiptTail(reader, trace) {');
+  const end=identity.indexOf('  async function stockNetworkInspectFetchBody(response, trace) {',begin);
+  assert(begin>=0 && end>begin);
+  const events=[];
+  let resolvePending;
+  const pending=new Promise(resolve=>{resolvePending=resolve;});
+  let count=0;
+  const ctx={
+    chatGPTAgent:{commTraffic:e=>events.push(e)},
+    TextDecoder,Date,STOCK_NETWORK_JSON_BYTE_LIMIT:1024*1024,
+    logDiagnostic(){},boundedDiagnosticText:String,errorMessage:String,
+    releaseReaderLockQuietly(){}
+  };
+  executeNative(identity.slice(begin,end)+
+    '\n globalThis.readBody=stockNetworkReadBoundedText;',ctx);
+  const result=await ctx.readBody({body:{getReader:()=>({
+    read:async()=>++count<=2
+      ? {done:false,value:new Uint8Array(600*1024)}
+      : pending,
+    releaseLock(){}
+  })}});
+  assert.equal(result.truncated,true,
+    'Diagnostic report must finish at cap despite a still-live stream');
+  assert.equal(result.byte_count,1024*1024);
+  assert.equal(events.length,2,'Only currently observed chunks have counted');
+  resolvePending({done:true});
 });

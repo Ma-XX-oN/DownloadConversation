@@ -323,3 +323,7 @@ The stock diagnostic reader previously cancelled its existing response clone aft
 ### .360.19 — original JSON body chunk epoch precedence
 
 For a parsed response completed after headers, a received JSON entry's local fallback is its last observed body chunk time rather than the earlier response-header time or later decode/queue time. The already-owned diagnostic clone reader records incoming_last_body_epoch_ms before decoding and nativeJsonEntryCapture uses that timestamp, falling back to header only when no body chunk exists. Added direct source test with header, first byte, final byte 500ms apart, requiring the exact second chunk time; preserves accepted CGP2 reducer and does not invent nested provider-message timestamp parsing.
+
+### .360.20 — preserve timely diagnostics while observing long-lived streams
+
+The .360.18 long-stream fix drained every clone to EOF before emitting the pre-existing bounded diagnostic summary; for an unending response this was a regression. The same existing clone reader now transfers ownership to an async body-free receipt tail observer immediately after the 1 MiB cap, returns diagnostic text promptly, and releases its reader only upon EOF/error. No extra clone, interceptor, unbounded retained content, or double-read. New focused test proves diagnostic return with an indefinitely unresolved subsequent read; previous four-chunk test waits for tail observer completion. Exact hosted CI and resource overhead still required.
