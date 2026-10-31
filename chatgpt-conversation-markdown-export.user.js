@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         ChatGPT Conversation Markdown Recorder
 // @namespace    https://chatgpt.com/
-// @version      1.11.16-issue.360.23
+// @version      1.11.16-issue.360.24
 // @description  Exports the current ChatGPT conversation directly from the Conversation API as Markdown or JSONL.
 // @match        https://chatgpt.com/*
 // @match        https://chat.openai.com/*
@@ -8525,7 +8525,7 @@ return Object.freeze({renderFaviconPulseSequence});
    *
    * @param {Response} response - Original page response, left untouched for ChatGPT.
    * @param {Object} trace - Request/response correlation state.
-   * @returns {void} No value is returned.
+   * @returns {boolean} Whether stock owns a response body observer clone.
    */
   function stockNetworkTraceFetchResponse(response, trace) {
     // Standalone stock-observer callers still capture once; production fetch
@@ -8557,9 +8557,11 @@ return Object.freeze({renderFaviconPulseSequence});
       /(?:json|text|event-stream|x-component|javascript)/i.test(contentType) ||
       /\/backend-api\/(?:conversation|conversations|f\/conversation)(?:\/|\?|$)/.test(trace.url)
     );
-    if (!inspectable) return;
+    if (!inspectable) return false;
     const cloned = cloneSafely(response);
-    if (cloned) void stockNetworkInspectFetchBody(cloned, trace);
+    if (!cloned) return false;
+    void stockNetworkInspectFetchBody(cloned, trace);
+    return true;
   }
 
   /**
@@ -16352,12 +16354,13 @@ return Object.freeze({renderFaviconPulseSequence});
    * @param {Object} options2 - Stream-consumption options.
    * @param {boolean} options2.persistCapture - Whether this stream is authoritative tail-recovery state.
    * @param {string} options2.source - Diagnostic source label.
+   * @param {boolean} options2.observeReceiptChunks - Whether this clone owns heartbeat observation.
    * @returns {Promise<void>} Resolves after the cloned response stream ends.
    */
   async function consumeObservedConversationStreamResponse(
     response,
     capture,
-    { persistCapture, source }
+    { persistCapture, source, observeReceiptChunks = true }
   ) {
     if (!capture || !response?.body) return;
     const reader = response.body.getReader();
@@ -16368,7 +16371,8 @@ return Object.freeze({renderFaviconPulseSequence});
         if (done) break;
         // This already owned generation/resume stream reader observes every chunk,
         // including bytes beyond the bounded stock diagnostic reader's cap.
-        if (value?.byteLength && typeof nativeReceiptCapture === 'function') {
+        if (observeReceiptChunks && value?.byteLength &&
+            typeof nativeReceiptCapture === 'function') {
           nativeReceiptCapture({ transport: 'fetch', direction: 'incoming',
             phase: 'body_chunk', captured_at_epoch_ms: Date.now() });
         }
@@ -16402,12 +16406,14 @@ return Object.freeze({renderFaviconPulseSequence});
    *
    * @param {Response} response - Cloned stock response.
    * @param {Object} capture - Capture associated with the request.
+   * @param {boolean} observeReceiptChunks - Whether stock lacks a body observer.
    * @returns {Promise<void>} Resolves after the cloned response stream ends.
    */
-  async function captureGenerationStreamResponse(response, capture) {
+  async function captureGenerationStreamResponse(response, capture, observeReceiptChunks = true) {
     await consumeObservedConversationStreamResponse(response, capture, {
       persistCapture: true,
-      source: 'generation'
+      source: 'generation',
+      observeReceiptChunks
     });
   }
 
@@ -16419,9 +16425,10 @@ return Object.freeze({renderFaviconPulseSequence});
    *
    * @param {Response} response - Independently owned resume response clone.
    * @param {Request} request - Independently owned resume request clone.
+   * @param {boolean} observeReceiptChunks - Whether stock lacks a body observer.
    * @returns {Promise<void>} Resolves after the cloned resume stream ends.
    */
-  async function captureConversationResumeStreamResponse(response, request) {
+  async function captureConversationResumeStreamResponse(response, request, observeReceiptChunks = true) {
     if (!response?.body || !request) return;
     try {
       const body = JSON.parse(await request.text());
@@ -16435,7 +16442,8 @@ return Object.freeze({renderFaviconPulseSequence});
       agentTerminalRegisterLifecycleCapture(capture);
       await consumeObservedConversationStreamResponse(response, capture, {
         persistCapture: false,
-        source: 'resume'
+        source: 'resume',
+        observeReceiptChunks
       });
     } catch (error) {
       logDiagnostic('warnings', 'conversation-resume-stream-observation-failure', {
@@ -16639,7 +16647,7 @@ return Object.freeze({renderFaviconPulseSequence});
           const stopwatchConversationResponse = stopwatchConversationRequest
             ? cloneSafely(response)
             : null;
-          stockNetworkTraceFetchResponse(response, stockTrace);
+          const stockBodyObserved = stockNetworkTraceFetchResponse(response, stockTrace);
           void communicationLogFetchResponse(response, stockTrace)
             .catch(communicationError => communicationLogReportFailure('fetch-response', communicationError));
           if (stopwatchConversationRequest && !stopwatchConversationResponse) {
@@ -16664,7 +16672,8 @@ return Object.freeze({renderFaviconPulseSequence});
             });
           }
           if (resumeRequestClone && resumeResponse) {
-            void captureConversationResumeStreamResponse(resumeResponse, resumeRequestClone);
+            void captureConversationResumeStreamResponse(
+              resumeResponse, resumeRequestClone, !stockBodyObserved);
           }
           if (capturePromise && !generationResponse) {
             logDiagnostic('warnings', 'conversation-stream-tail-response-clone-failure', {
@@ -16679,7 +16688,7 @@ return Object.freeze({renderFaviconPulseSequence});
                 }
                 return;
               }
-              void captureGenerationStreamResponse(generationResponse, capture);
+              void captureGenerationStreamResponse(generationResponse, capture, !stockBodyObserved);
             });
           }
           return response;
