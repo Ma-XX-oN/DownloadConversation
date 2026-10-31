@@ -280,6 +280,7 @@
       return snapshot();
       }
       try {
+      const oldKey = publicKey;
       const status = await service.status();
       keyState = status.state;
       publicKey = status.key_restart || null;
@@ -289,7 +290,7 @@
       }
       expiry = status.expires_at_ms ?? null;
       epoch = status.redaction_key_epoch ?? 0;
-      if (keyState !== 'open') await pause();
+      if (keyState !== 'open' || (applied && oldKey !== publicKey)) await pause();
       } catch {
       keyState = 'failed';
       lastError = 'csc-key-status-failed';
