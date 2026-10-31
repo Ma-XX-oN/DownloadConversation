@@ -483,3 +483,30 @@ test('opaque fetch status zero returns original response without fake server act
   assert.equal(await pageWindow.fetch(response.url),response);
   assert.equal(events.length,0,'Opaque status-0 response is not observed server data');
 });
+
+test('generation parser runs but second clone cannot duplicate stock heartbeat',async()=>{
+  const source=read('src/userscript/03-agent-lifecycle/08-generation-request.js');
+  const start=source.indexOf('  async function consumeObservedConversationStreamResponse(');
+  const end=source.indexOf('  async function captureGenerationStreamResponse(',start);
+  assert(start>=0&&end>start);
+  let parsed=0;const events=[];
+  const ctx={
+    chatGPTAgent:{commTraffic:e=>events.push(e)},
+    TextDecoder,Date,consumeStreamTailSseChunk(){parsed++;},
+    streamTailPersistCapture(){},releaseReaderLockQuietly(){},
+    logDiagnostic(){},errorMessage:String
+  };
+  executeNative(source.slice(start,end)+
+    '\n globalThis.consume=consumeObservedConversationStreamResponse;',ctx);
+  let reads=0;
+  const response={body:{getReader:()=>({
+    read:async()=>++reads<=2?{done:false,value:new Uint8Array([65])}:{done:true},
+    releaseLock(){}
+  })}};
+  const capture={conversation_id:'c',stream_messages:[],complete:false,
+    handed_off:false,handoff_topic_id:null};
+  await ctx.consume(response,capture,
+    {persistCapture:false,source:'generation',observeReceiptChunks:false});
+  assert.equal(events.length,0,'Second clone must not publish duplicate heartbeat');
+  assert.equal(parsed,3,'Functional generation stream parser remains active');
+});

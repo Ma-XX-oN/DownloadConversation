@@ -3,7 +3,7 @@
    *
    * @param {Response} response - Original page response, left untouched for ChatGPT.
    * @param {Object} trace - Request/response correlation state.
-   * @returns {void} No value is returned.
+   * @returns {boolean} Whether stock owns a response body observer clone.
    */
   function stockNetworkTraceFetchResponse(response, trace) {
     // Standalone stock-observer callers still capture once; production fetch
@@ -35,9 +35,11 @@
       /(?:json|text|event-stream|x-component|javascript)/i.test(contentType) ||
       /\/backend-api\/(?:conversation|conversations|f\/conversation)(?:\/|\?|$)/.test(trace.url)
     );
-    if (!inspectable) return;
+    if (!inspectable) return false;
     const cloned = cloneSafely(response);
-    if (cloned) void stockNetworkInspectFetchBody(cloned, trace);
+    if (!cloned) return false;
+    void stockNetworkInspectFetchBody(cloned, trace);
+    return true;
   }
 
   /**

@@ -8,7 +8,7 @@
                 }
                 return;
               }
-              void captureGenerationStreamResponse(generationResponse, capture);
+              void captureGenerationStreamResponse(generationResponse, capture, !stockBodyObserved);
             });
           }
           return response;

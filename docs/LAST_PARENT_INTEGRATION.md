@@ -339,3 +339,7 @@ The native fetch completion wrapper previously sent status 0 (opaque browser res
 ### .360.23 stale native reader fixture selector repair
 
 Hosted .360.19 and .360.20 structured validators observed actual native source checks and separate long-stream tests mostly PASS, but the old two-chunk test still searched for the former `stockNetworkReadBoundedText(response)` declaration after .360.19 introduced optional `trace = null`. It failed before behavior execution. Selector updated to the exact current production signature; all substantive two-chunk assertions retained. This is a test harness repair, not source acceptance. Rebuild/reverify new exact candidate in full CI, do not claim prior CI FAIL as PASS.
+
+### .360.24 — single body-receipt owner across response clones
+
+Independent exact-source fixture demonstrated duplicate body_chunk activity for one physical incoming chunk when the stock diagnostic and generation/resume response clones both publish CGP2 events at different read epochs. Parent stock body observer now reports a boolean lease; when it starts, generation/resume clones continue functional parsing without duplicate heartbeat. If stock cannot obtain its clone, generation/resume retains heartbeat fallback. Added direct test asserting parser runs but duplicate heartbeat disabled. No new network interception/clone or provider source change. Full exact CI required.

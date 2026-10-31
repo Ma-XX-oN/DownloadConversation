@@ -37,12 +37,13 @@
    * @param {Object} options2 - Stream-consumption options.
    * @param {boolean} options2.persistCapture - Whether this stream is authoritative tail-recovery state.
    * @param {string} options2.source - Diagnostic source label.
+   * @param {boolean} options2.observeReceiptChunks - Whether this clone owns heartbeat observation.
    * @returns {Promise<void>} Resolves after the cloned response stream ends.
    */
   async function consumeObservedConversationStreamResponse(
     response,
     capture,
-    { persistCapture, source }
+    { persistCapture, source, observeReceiptChunks = true }
   ) {
     if (!capture || !response?.body) return;
     const reader = response.body.getReader();
@@ -53,7 +54,8 @@
         if (done) break;
         // This already owned generation/resume stream reader observes every chunk,
         // including bytes beyond the bounded stock diagnostic reader's cap.
-        if (value?.byteLength && typeof nativeReceiptCapture === 'function') {
+        if (observeReceiptChunks && value?.byteLength &&
+            typeof nativeReceiptCapture === 'function') {
           nativeReceiptCapture({ transport: 'fetch', direction: 'incoming',
             phase: 'body_chunk', captured_at_epoch_ms: Date.now() });
         }
@@ -87,12 +89,14 @@
    *
    * @param {Response} response - Cloned stock response.
    * @param {Object} capture - Capture associated with the request.
+   * @param {boolean} observeReceiptChunks - Whether stock lacks a body observer.
    * @returns {Promise<void>} Resolves after the cloned response stream ends.
    */
-  async function captureGenerationStreamResponse(response, capture) {
+  async function captureGenerationStreamResponse(response, capture, observeReceiptChunks = true) {
     await consumeObservedConversationStreamResponse(response, capture, {
       persistCapture: true,
-      source: 'generation'
+      source: 'generation',
+      observeReceiptChunks
     });
   }
 
@@ -104,9 +108,10 @@
    *
    * @param {Response} response - Independently owned resume response clone.
    * @param {Request} request - Independently owned resume request clone.
+   * @param {boolean} observeReceiptChunks - Whether stock lacks a body observer.
    * @returns {Promise<void>} Resolves after the cloned resume stream ends.
    */
-  async function captureConversationResumeStreamResponse(response, request) {
+  async function captureConversationResumeStreamResponse(response, request, observeReceiptChunks = true) {
     if (!response?.body || !request) return;
     try {
       const body = JSON.parse(await request.text());
@@ -120,7 +125,8 @@
       agentTerminalRegisterLifecycleCapture(capture);
       await consumeObservedConversationStreamResponse(response, capture, {
         persistCapture: false,
-        source: 'resume'
+        source: 'resume',
+        observeReceiptChunks
       });
     } catch (error) {
       logDiagnostic('warnings', 'conversation-resume-stream-observation-failure', {
@@ -324,7 +330,7 @@
           const stopwatchConversationResponse = stopwatchConversationRequest
             ? cloneSafely(response)
             : null;
-          stockNetworkTraceFetchResponse(response, stockTrace);
+          const stockBodyObserved = stockNetworkTraceFetchResponse(response, stockTrace);
           void communicationLogFetchResponse(response, stockTrace)
             .catch(communicationError => communicationLogReportFailure('fetch-response', communicationError));
           if (stopwatchConversationRequest && !stopwatchConversationResponse) {
@@ -349,7 +355,8 @@
             });
           }
           if (resumeRequestClone && resumeResponse) {
-            void captureConversationResumeStreamResponse(resumeResponse, resumeRequestClone);
+            void captureConversationResumeStreamResponse(
+              resumeResponse, resumeRequestClone, !stockBodyObserved);
           }
           if (capturePromise && !generationResponse) {
             logDiagnostic('warnings', 'conversation-stream-tail-response-clone-failure', {
