@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         ChatGPT Conversation Markdown Recorder
 // @namespace    https://chatgpt.com/
-// @version      1.11.16-issue.360.21
+// @version      1.11.16-issue.360.22
 // @description  Exports the current ChatGPT conversation directly from the Conversation API as Markdown or JSONL.
 // @match        https://chatgpt.com/*
 // @match        https://chat.openai.com/*
@@ -8533,8 +8533,9 @@ return Object.freeze({renderFaviconPulseSequence});
     if (!Number.isSafeInteger(trace.incoming_received_epoch_ms)) {
       const incomingAt = Date.now();
       trace.incoming_received_epoch_ms = incomingAt;
-      if (typeof nativeReceiptCapture === 'function') nativeReceiptCapture({
-        transport: 'fetch', direction: 'response', status: response?.status ?? null,
+      if (Number.isInteger(response?.status) && response.status >= 100 &&
+          typeof nativeReceiptCapture === 'function') nativeReceiptCapture({
+        transport: 'fetch', direction: 'response', status: response.status,
         captured_at_epoch_ms: incomingAt
       });
     }
@@ -16628,9 +16629,10 @@ return Object.freeze({renderFaviconPulseSequence});
           // Record original receipt before any response clone, parse or queue.
           const observedAt = Date.now();
           stockTrace.incoming_received_epoch_ms = observedAt;
-          if (typeof nativeReceiptCapture === 'function') nativeReceiptCapture({
+          if (Number.isInteger(response?.status) && response.status >= 100 &&
+              typeof nativeReceiptCapture === 'function') nativeReceiptCapture({
             transport: 'fetch', direction: 'response',
-            status: response?.status ?? null, captured_at_epoch_ms: observedAt
+            status: response.status, captured_at_epoch_ms: observedAt
           });
           const generationResponse = capturePromise ? cloneSafely(response) : null;
           const resumeResponse = resumeRequest ? cloneSafely(response) : null;
