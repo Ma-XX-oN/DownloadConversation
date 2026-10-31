@@ -319,3 +319,7 @@ A registered agent may throw during replacement. Previously nativeReceiptDeliver
 ### .360.18 — long unrelated stream receipt observation
 
 The stock diagnostic reader previously cancelled its existing response clone after storing 1 MiB of text. This prevented receipt observation of later chunks on unrelated long-running responses. The single existing clone is now drained to completion for body-free CGP2 receipt observations while diagnostic text retention remains strictly capped at 1 MiB. No additional response clones/interceptors or raw payload history. New source-backed test reads four 600 KiB chunks, verifies four source-owned receipts, exact 1 MiB retention, truncation true, and no reader cancellation. This changes resource consumption for very long or unending streams and requires CPU/long-lived-resource regression and exact hosted full CI before acceptance.
+
+### .360.19 — original JSON body chunk epoch precedence
+
+For a parsed response completed after headers, a received JSON entry's local fallback is its last observed body chunk time rather than the earlier response-header time or later decode/queue time. The already-owned diagnostic clone reader records incoming_last_body_epoch_ms before decoding and nativeJsonEntryCapture uses that timestamp, falling back to header only when no body chunk exists. Added direct source test with header, first byte, final byte 500ms apart, requiring the exact second chunk time; preserves accepted CGP2 reducer and does not invent nested provider-message timestamp parsing.

@@ -353,3 +353,41 @@ test('unrelated fetch stream keeps receipts beyond 1 MiB without payload retenti
   assert.equal(reads,5,'Continue observing all four chunks to stream end');
   assert.equal(events.length,4,'Every incoming chunk must reach CGP2');
 });
+
+test('parsed JSON fallback uses original final chunk epoch instead of earlier header', async () => {
+  const identity=read('src/userscript/02-network-communication/01-stock-network-identities.js');
+  const start=identity.indexOf('  async function stockNetworkReadBoundedText(response, trace = null) {');
+  const end=identity.indexOf('  async function stockNetworkInspectFetchBody(response, trace) {',start);
+  assert(start>=0 && end>start,'Actual stock reader with trace must exist');
+  const events=[];
+  const first=Date.now()-20000;
+  let now=first;
+  const context={
+    chatGPTAgent:{commTraffic:e=>events.push(e)},
+    Date:{now:()=>now},
+    TextDecoder,
+    STOCK_NETWORK_JSON_BYTE_LIMIT:1024*1024,
+    releaseReaderLockQuietly(){}
+  };
+  executeNative(identity.slice(start,end)+
+    '\n globalThis.readBody=stockNetworkReadBoundedText;\n'+
+    'globalThis.captureJson=nativeJsonEntryCapture;',context);
+  const trace={incoming_received_epoch_ms:first};
+  let reads=0;
+  const response={body:{getReader:()=>({
+    read:async()=>{
+      reads++;
+      if(reads===1){now=first+500;return {done:false,value:new Uint8Array([123])};}
+      if(reads===2){now=first+1000;return {done:false,value:new Uint8Array([125])};}
+      return {done:true};
+    },
+    releaseLock(){}
+  })}};
+  await context.readBody(response,trace);
+  assert.equal(trace.incoming_last_body_epoch_ms,first+1000);
+  assert.equal(context.captureJson(trace),true);
+  const json=events.find(e=>e.type==='received_json_entry');
+  assert(json,'Parsed JSON must reach the reducer');
+  assert.equal(json.timestamp_ms,first+1000,
+    'The final byte observation is authoritative over earlier HTTP headers');
+});

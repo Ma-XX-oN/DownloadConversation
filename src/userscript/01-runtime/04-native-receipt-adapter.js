@@ -68,7 +68,8 @@
    * @returns {boolean} True when the source observation has a valid epoch.
    */
   function nativeJsonEntryCapture(trace) {
-    const timestamp = trace?.incoming_received_epoch_ms;
+    const timestamp = trace?.incoming_last_body_epoch_ms ??
+      trace?.incoming_received_epoch_ms;
     if (!Number.isSafeInteger(timestamp) || timestamp <= 0 || timestamp > Date.now()) return false;
     nativeReceiptDeliver(Object.freeze({
       type: 'received_json_entry', version: 1,
