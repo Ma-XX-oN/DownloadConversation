@@ -510,3 +510,45 @@ test('generation parser runs but second clone cannot duplicate stock heartbeat',
   assert.equal(events.length,0,'Second clone must not publish duplicate heartbeat');
   assert.equal(parsed,3,'Functional generation stream parser remains active');
 });
+
+test('native generation wrapper selects one heartbeat owner with clone fallback',async()=>{
+  async function run(cloneFailsAt) {
+    const response={status:200,url:'https://chatgpt.com/backend-api/f/conversation',
+      headers:{get:()=> 'text/event-stream'},clone:()=>({body:null})};
+    let clones=0;
+    const observed=[];
+    const pageWindow={Request:FakeRequest,fetch:null};
+    const ctx={
+      pageWindow,Request:FakeRequest,originalFetch:async()=>response,
+      performance:{now:()=>300},
+      stockNetworkTraceFetchStart:()=>({sequence:1,started_at:0,method:'POST',
+        url:response.url,same_origin:true}),
+      communicationLogFetchRequest:async()=>{},
+      communicationLogFetchResponse:async()=>{},
+      rememberApiRequestContext(){},recordClickDiagnosticNetworkRequest(){},
+      agentTerminalObserveStatsRequest(){},
+      isGenerationStreamUrl:()=>true,isConversationResumeUrl:()=>false,
+      isSteerTurnUrl:()=>false,agentStopwatchIsInitialConversationUrl:()=>false,
+      agentFaviconObserveProcessing(){},agentStopwatchObserveSteerTurn(){},
+      captureGenerationStreamRequest:()=>Promise.resolve({id:'capture'}),
+      captureGenerationStreamResponse:async(_r,_c,heartbeat)=>observed.push(heartbeat),
+      cloneSafely:()=>++clones===cloneFailsAt?null:{body:null},
+      logDiagnostic(){},boundedDiagnosticText:String,errorMessage:String,
+      stockNetworkSafeUrl:String,stockNetworkSafeResponseHeaders:()=>({}),
+      stockNetworkInspectFetchBody:async()=>{},
+      chatGPTAgent:{commTraffic(){}}
+    };
+    executeNative(source(),ctx);
+    assert.equal(await pageWindow.fetch(response.url,{method:'POST'}),response);
+    await Promise.resolve();
+    await Promise.resolve();
+    assert.equal(observed.length,1);
+    return {clones,heartbeat:observed[0]};
+  }
+  const normal=await run(0);
+  assert.equal(normal.heartbeat,false,
+    'When stock observer owns body clone, generation clone must not duplicate');
+  const fallback=await run(2);
+  assert.equal(fallback.heartbeat,true,
+    'If stock observer cannot clone, generation reader must retain heartbeat');
+});

@@ -347,3 +347,7 @@ Independent exact-source fixture demonstrated duplicate body_chunk activity for 
 ### .360.25 — fix verified whole-repository contracts without weakening assertions
 
 The .360.23 exact full CI reported 14/14 native PASS but whole-validator FAIL on independent source-size and immediate JSDoc contracts. The newly inserted tail observer had been placed between the bounded reader's JSDoc and declaration; moved the ORIGINAL reader documentation immediately before its function. The generation-request module exceeded 16KiB after observer-selection changes; moved only its final source bytes to the START of adjacent 09-network-install-api-transition.js, preserving the exact concatenated runtime source byte-for-byte (verified local string equality), leaving both source segments <16KiB. No JSDoc assertions loosened, no source behavior altered by boundary relocation. New exact hosted CI required.
+
+### .360.26 — full native wrapper single-observer and fallback regression
+
+Follow-up to duplicate-clone correction. Canonical source-backed test runs actual combined stock response observer and production fetch wrapper with same-origin event-stream generation response. If stock obtains its clone, generation parser's observeReceiptChunks argument must be false; if stock clone fails, generation parser must receive true to avoid losing heartbeat. This checks actual callback propagation rather than only downstream parser options, without rewriting upstream owner source. Full exact-source CI and immutable artifact still required.
