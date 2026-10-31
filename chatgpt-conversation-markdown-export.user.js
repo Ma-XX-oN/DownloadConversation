@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         ChatGPT Conversation Markdown Recorder
 // @namespace    https://chatgpt.com/
-// @version      1.11.16-issue.360.24
+// @version      1.11.16-issue.360.25
 // @description  Exports the current ChatGPT conversation directly from the Conversation API as Markdown or JSONL.
 // @match        https://chatgpt.com/*
 // @match        https://chat.openai.com/*
@@ -8409,13 +8409,6 @@ return Object.freeze({renderFaviconPulseSequence});
   }
 
   /**
-   * Reads at most the configured diagnostic byte limit from a cloned response.
-   *
-   * @param {Response} response - Cloned page response.
-   * @param {Object|null} trace - Native response correlation state for chunk epoch.
-   * @returns {Promise<Object>} Bounded text plus byte/truncation metadata.
-   */
-  /**
    * Observe the remainder of the existing response clone without storing bytes.
    * @param {ReadableStreamDefaultReader} reader - Transferred clone reader.
    * @param {Object|null} trace - Original native correlation state.
@@ -8442,6 +8435,14 @@ return Object.freeze({renderFaviconPulseSequence});
       releaseReaderLockQuietly(reader);
     }
   }
+
+  /**
+   * Reads at most the configured diagnostic byte limit from a cloned response.
+   *
+   * @param {Response} response - Cloned page response.
+   * @param {Object|null} trace - Native response correlation state for chunk epoch.
+   * @returns {Promise<Object>} Bounded text plus byte/truncation metadata.
+   */
 
   async function stockNetworkReadBoundedText(response, trace = null) {
     if (!response?.body) return { text: '', byte_count: 0, truncated: false };
