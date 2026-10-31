@@ -83,3 +83,27 @@ test('HMAC status becomes unavailable after resume: Worker must be paused', asyn
   assert.equal(controls.snapshot().settings_applied,false);
   controls.dispose();
 });
+
+test('refresh to unavailable pauses applied Worker', async () => {
+  const context=vm.createContext({});
+  vm.runInContext(schema+control+'\nthis.create=cscCaptureControlPlane;',context);
+  let state='open', pauses=0;
+  const controls=context.create({
+    store:{read:async()=>null,subscribe:()=>()=>{},dispose(){}},
+    serviceFactory:()=>({status:async()=>({state,key_restart:'2026-10-27T15:00:00.000Z'}),dispose(){}}),
+    version:'test',origin:'https://chatgpt.com'
+  });
+  await controls.init();
+  await controls.bindWorker({
+    pause:async()=>{pauses++;},resume:async()=>{},
+    configure:async x=>({type:'csc-comm-configured',schema:x.schema,request_id:x.request_id}),
+    awaitKey:async()=>({}),provisionTarget:{postMessage(){}}
+  });
+  assert.equal(controls.snapshot().settings_applied,true);
+  const before=pauses;
+  state='unavailable';
+  await controls.refreshKey();
+  assert.ok(pauses>before);
+  assert.equal(controls.snapshot().settings_applied,false);
+  controls.dispose();
+});
