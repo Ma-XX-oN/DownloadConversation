@@ -21,6 +21,18 @@
       "parent": "issue-366-v3-20261024T225646Z",
       "allowedDependencies": [],
       "integrationTarget": "main"
+    },
+    "issue-298-registration-rebase-20261025": {
+      "parent": "issue-360-last-main-rebase-20261025",
+      "allowedDependencies": [],
+      "integrationTarget": "issue-360-last-main-rebase-20261025"
+    },
+    "issue-360-last-main-rebase-20261025": {
+      "parent": "main",
+      "allowedDependencies": [
+        "issue-360-accepted-298-source-pin-20261027"
+      ],
+      "integrationTarget": "main"
     }
   },
   "patterns": [

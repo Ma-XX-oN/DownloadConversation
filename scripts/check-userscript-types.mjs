@@ -121,7 +121,13 @@ function unresolvedDiagnostics(result) {
 
 const manifest = await readUserscriptManifest(root);
 const source = await readDownloadConversationSource(root, manifest);
-const currentPrelude = readFileSync(path.join(root, BRIDGE_PATH), 'utf8');
+const receiptSource = readFileSync(path.join(root,
+  'vendor/cgp2/receipt-observation.js'), 'utf8')
+  .replace(/^export (?=(?:const|function) \w+)/gm, '');
+const receiptPrelude = 'const nativeReceiptProducerV1 = (() => {\n'
+  + receiptSource + '\nreturn Object.freeze({createChatGPTReceiptIngress});\n})();\n';
+const currentPrelude = readFileSync(path.join(root, BRIDGE_PATH), 'utf8')
+  + receiptPrelude;
 const currentSource = injectUserscriptPrelude(source, currentPrelude);
 const current = runTsc(currentSource, 'current');
 if (current.error) {

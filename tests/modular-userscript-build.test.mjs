@@ -19,9 +19,9 @@ const root = path.resolve(
   '..'
 );
 const CORE_COMMIT =
-  '629c86284b7db5fb412bb083178eaee8c06f796c';
+  '2f9b916835f82668ed26d87b07840787b17f5b6c';
 const CORE_BLOB =
-  '2279b31f7760222a1486f641636eaab74702de1f';
+  '5fadf486d044c1a396aad10f435b862eed93db9a';
 const LEGACY_BLOB =
   '44a4ab373a6515caed5527aeb19cbdff7ce91e07';
 const MIGRATION_SNAPSHOT_COMMIT =
@@ -82,7 +82,7 @@ test(
       ],
       'identity and segment runtime must remain at verified top-level source boundaries'
     );
-    assert.equal(sourcePaths.length, 86);
+    assert.equal(sourcePaths.length, 87);
     assert.equal(new Set(sourcePaths).size, sourcePaths.length);
     assert.ok(sourcePaths.every(sourcePath => {
       return sourcePath.startsWith('src/userscript/');
@@ -129,7 +129,7 @@ test(
     assert.equal(dependency.name, 'AIConversationCore');
     assert.equal(dependency.commit, CORE_COMMIT);
     assert.equal(dependency.git_blob_sha1, CORE_BLOB);
-    assert.equal(dependency.byte_length, 291372);
+    assert.equal(dependency.byte_length, 301965);
     assert.equal(
       dependency.repository,
       'Ma-XX-oN/AIConversationCore'

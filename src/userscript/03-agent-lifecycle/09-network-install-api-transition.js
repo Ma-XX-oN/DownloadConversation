@@ -1,4 +1,24 @@
+                message: boundedDiagnosticText(errorMessage(error), 1000)
+              }));
           }
+          if (resumeRequest && !resumeRequestClone) {
+            logDiagnostic('warnings', 'conversation-resume-request-clone-failure', {
+              url: boundedDiagnosticText(requestUrl, 320)
+            });
+          }
+          if (resumeRequest && !resumeResponse) {
+            logDiagnostic('warnings', 'conversation-resume-response-clone-failure', {
+              url: boundedDiagnosticText(response?.url ?? requestUrl, 320)
+            });
+          }
+          if (resumeRequestClone && resumeResponse) {
+            void captureConversationResumeStreamResponse(
+              resumeResponse, resumeRequestClone, !stockBodyObserved);
+          }
+          if (capturePromise && !generationResponse) {
+            logDiagnostic('warnings', 'conversation-stream-tail-response-clone-failure', {
+              url: boundedDiagnosticText(response?.url ?? requestUrl, 320)
+            });          }
           if (capturePromise && generationResponse) {
             void capturePromise.then(capture => {
               if (!capture) {
@@ -8,7 +28,7 @@
                 }
                 return;
               }
-              void captureGenerationStreamResponse(generationResponse, capture);
+              void captureGenerationStreamResponse(generationResponse, capture, !stockBodyObserved);
             });
           }
           return response;
@@ -48,7 +68,22 @@
         const stockTrace = stockNetworkTraceXhrStart(this, info);
         void communicationLogXhrRequest(info, body, stockTrace)
           .catch(communicationError => communicationLogReportFailure('xhr-request', communicationError));
+        // XHR progress events are inbound data observation without body access.
+        this.addEventListener('progress', () => {
+          if (typeof nativeReceiptCapture === 'function') nativeReceiptCapture({
+            transport: 'xhr', direction: 'incoming', phase: 'body_chunk',
+            captured_at_epoch_ms: Date.now()
+          });
+        });
         this.addEventListener('loadend', () => {
+          const incomingAt = Date.now();
+          stockTrace.incoming_received_epoch_ms = incomingAt;
+          // loadend also fires for abort/network failures with HTTP status zero.
+          if (Number.isInteger(this.status) && this.status >= 100 &&
+              typeof nativeReceiptCapture === 'function') nativeReceiptCapture({
+            transport: 'xhr', direction: 'response', status: this.status,
+            captured_at_epoch_ms: incomingAt
+          });
           stockNetworkTraceXhrResponse(this, stockTrace);
           void communicationLogXhrResponse(this, stockTrace)
             .catch(communicationError => communicationLogReportFailure('xhr-response', communicationError));
@@ -75,6 +110,10 @@
             void communicationLogRecord('communication_websocket_open', { url: stockNetworkSafeUrl(socketUrl) });
           });
           socket.addEventListener('message', event => {
+            if (typeof nativeReceiptCapture === 'function') nativeReceiptCapture({
+              transport: 'websocket', direction: 'incoming',
+              captured_at_epoch_ms: Date.now()
+            });
             captureGenerationWebSocketFrame(event.data);
             void communicationLogWebSocketMessage(socketUrl, event.data)
               .catch(communicationError => communicationLogReportFailure('websocket-message', communicationError));

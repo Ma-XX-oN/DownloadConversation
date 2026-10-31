@@ -3,9 +3,20 @@
    *
    * @param {Response} response - Original page response, left untouched for ChatGPT.
    * @param {Object} trace - Request/response correlation state.
-   * @returns {void} No value is returned.
+   * @returns {boolean} Whether stock owns a response body observer clone.
    */
   function stockNetworkTraceFetchResponse(response, trace) {
+    // Standalone stock-observer callers still capture once; production fetch
+    // has already stamped and published before acquiring any body clone.
+    if (!Number.isSafeInteger(trace.incoming_received_epoch_ms)) {
+      const incomingAt = Date.now();
+      trace.incoming_received_epoch_ms = incomingAt;
+      if (Number.isInteger(response?.status) && response.status >= 100 &&
+          typeof nativeReceiptCapture === 'function') nativeReceiptCapture({
+        transport: 'fetch', direction: 'response', status: response.status,
+        captured_at_epoch_ms: incomingAt
+      });
+    }
     const contentType = response?.headers?.get?.('content-type') ?? '';
     logDiagnostic('debug', 'stock-network-fetch-response', {
       network_sequence: trace.sequence,
@@ -24,9 +35,11 @@
       /(?:json|text|event-stream|x-component|javascript)/i.test(contentType) ||
       /\/backend-api\/(?:conversation|conversations|f\/conversation)(?:\/|\?|$)/.test(trace.url)
     );
-    if (!inspectable) return;
+    if (!inspectable) return false;
     const cloned = cloneSafely(response);
-    if (cloned) void stockNetworkInspectFetchBody(cloned, trace);
+    if (!cloned) return false;
+    void stockNetworkInspectFetchBody(cloned, trace);
+    return true;
   }
 
   /**
@@ -95,6 +108,9 @@
         };
       }
     } catch {}
+    if (bodyIdentity?.json_identity && typeof nativeJsonEntryCapture === 'function') {
+      nativeJsonEntryCapture(trace);
+    }
     logDiagnostic('debug', 'stock-network-xhr-response', {
       network_sequence: trace.sequence,
       method: trace.method,

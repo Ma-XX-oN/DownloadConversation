@@ -135,8 +135,42 @@ async function main() {
     fail('Generated generic Core agent bridge differs from repository source.');
   }
 
+
+  // Validate the exact source-owned CGP2 receipt module before accepting its
+  // classic prelude; no handwritten replacement of producer semantics is allowed.
+  const receiptLocation = path.join(root, 'vendor', 'cgp2');
+  const receiptManifest = JSON.parse(await readFile(
+    path.join(receiptLocation, 'receipt-manifest.json'), 'utf8'));
+  const receiptBytes = await readFile(path.join(receiptLocation, 'receipt-observation.js'));
+  if (receiptBytes.length !== receiptManifest.byte_length ||
+      gitBlobSha1(receiptBytes) !== receiptManifest.git_blob_sha1) {
+    fail('Pinned CGP2 receipt producer bytes/provenance mismatch.');
+  }
+  const receiptText = receiptBytes.toString('utf8');
+  const exportsFound = [...receiptText.matchAll(/^export (?:const|function) (\w+)/gm)]
+    .map(match => match[1]);
+  const requiredExports = ['RECEIPT_OBSERVATION_VERSION',
+    'sanitizeChatGPTReceipt', 'createChatGPTReceiptIngress'];
+  if (exportsFound.length !== requiredExports.length ||
+      requiredExports.some(name => !exportsFound.includes(name))) {
+    fail('Pinned CGP2 V1 producer exports changed.');
+  }
+  const receiptClassic = receiptText.replace(/^export (?=(?:const|function) \w+)/gm, '');
+  if (/^\s*(?:import|export)\b/m.test(receiptClassic)) {
+    fail('Pinned CGP2 producer contains unresolved ESM syntax.');
+  }
+  const receiptPrelude = '// BEGIN exact pinned CGP2 receipt producer blob='
+    + receiptManifest.git_blob_sha1 + '\n'
+    + 'const nativeReceiptProducerV1 = (() => {\n' + receiptClassic
+    + '\nreturn Object.freeze({createChatGPTReceiptIngress});\n})();\n'
+    + '// END exact pinned CGP2 receipt producer\n';
+  const receiptExpectedOffset = bridgeOffset + bridgeText.length;
+  if (!artifactTail.startsWith(receiptPrelude, receiptExpectedOffset)) {
+    fail('Generated CGP2 producer prelude differs from immutable pinned source.');
+  }
+
   const compressorStartMarker = '// BEGIN bundled compressor name=';
-  const compressorExpectedOffset = bridgeOffset + bridgeText.length;
+  const compressorExpectedOffset = receiptExpectedOffset + receiptPrelude.length;
   const compressorStart = artifactTail.indexOf(compressorStartMarker, compressorExpectedOffset);
   if (compressorStart !== compressorExpectedOffset) {
     fail('Generated compressor runtime does not immediately follow the generic plugin runtime prelude.');
@@ -187,6 +221,7 @@ async function main() {
     + '// END bundled V2 renderer\n';
   const expectedTail = iifePrefix
     + bridgeText
+    + receiptPrelude
     + compressorPrelude
     + rendererPrelude
     + sourceBody;
