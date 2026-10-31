@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         ChatGPT Conversation Markdown Recorder
 // @namespace    https://chatgpt.com/
-// @version      1.11.16-issue.360.18
+// @version      1.11.16-issue.360.19
 // @description  Exports the current ChatGPT conversation directly from the Conversation API as Markdown or JSONL.
 // @match        https://chatgpt.com/*
 // @match        https://chat.openai.com/*
@@ -8412,9 +8412,10 @@ return Object.freeze({renderFaviconPulseSequence});
    * Reads at most the configured diagnostic byte limit from a cloned response.
    *
    * @param {Response} response - Cloned page response.
+   * @param {Object|null} trace - Native response correlation state for chunk epoch.
    * @returns {Promise<Object>} Bounded text plus byte/truncation metadata.
    */
-  async function stockNetworkReadBoundedText(response) {
+  async function stockNetworkReadBoundedText(response, trace = null) {
     if (!response?.body) return { text: '', byte_count: 0, truncated: false };
     const reader = response.body.getReader();
     const decoder = new TextDecoder();
@@ -8426,10 +8427,12 @@ return Object.freeze({renderFaviconPulseSequence});
         const { done, value } = await reader.read();
         if (done) break;
         if (!value?.byteLength) continue;
-        // Emit receipt metadata at the existing observed stream read.
+        // Record the actual incoming chunk observation time, not parse time.
+        const chunkObservedAt = Date.now();
+        if (trace) trace.incoming_last_body_epoch_ms = chunkObservedAt;
         if (typeof nativeReceiptCapture === 'function') nativeReceiptCapture({
           transport: 'fetch', direction: 'incoming', phase: 'body_chunk',
-          captured_at_epoch_ms: Date.now()
+          captured_at_epoch_ms: chunkObservedAt
         });
         const remaining = STOCK_NETWORK_JSON_BYTE_LIMIT - byteCount;
         if (remaining <= 0) {
@@ -8461,7 +8464,7 @@ return Object.freeze({renderFaviconPulseSequence});
    */
   async function stockNetworkInspectFetchBody(response, trace) {
     try {
-      const bounded = await stockNetworkReadBoundedText(response);
+      const bounded = await stockNetworkReadBoundedText(response, trace);
       const contentType = response.headers?.get?.('content-type') ?? '';
       const identity = stockNetworkBodyIdentity(bounded.text, contentType);
       if (identity.json_identity && typeof nativeJsonEntryCapture === 'function') {
@@ -12208,7 +12211,8 @@ return Object.freeze({renderFaviconPulseSequence});
    * @returns {boolean} True when the source observation has a valid epoch.
    */
   function nativeJsonEntryCapture(trace) {
-    const timestamp = trace?.incoming_received_epoch_ms;
+    const timestamp = trace?.incoming_last_body_epoch_ms ??
+      trace?.incoming_received_epoch_ms;
     if (!Number.isSafeInteger(timestamp) || timestamp <= 0 || timestamp > Date.now()) return false;
     nativeReceiptDeliver(Object.freeze({
       type: 'received_json_entry', version: 1,
