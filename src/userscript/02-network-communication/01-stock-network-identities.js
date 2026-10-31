@@ -198,17 +198,16 @@
         });
         const remaining = STOCK_NETWORK_JSON_BYTE_LIMIT - byteCount;
         if (remaining <= 0) {
+          // Keep observing the already-owned clone for heartbeat metadata,
+          // but never retain more than the diagnostic byte limit.
           truncated = true;
-          try { await reader.cancel(); } catch {}
-          break;
+          continue;
         }
         const accepted = value.byteLength <= remaining ? value : value.slice(0, remaining);
         text += decoder.decode(accepted, { stream: true });
         byteCount += accepted.byteLength;
         if (accepted.byteLength < value.byteLength) {
           truncated = true;
-          try { await reader.cancel(); } catch {}
-          break;
         }
       }
       text += decoder.decode();

@@ -323,3 +323,33 @@ test('failing registered agent does not drop original-time receipt before rebind
   assert.equal(context.flush(),true);
   assert.equal(events.length,1,'Later bindings must not replay duplicate receipt');
 });
+
+test('unrelated fetch stream keeps receipts beyond 1 MiB without payload retention', async () => {
+  const identity=read('src/userscript/02-network-communication/01-stock-network-identities.js');
+  const begin=identity.indexOf('  async function stockNetworkReadBoundedText(response) {');
+  const end=identity.indexOf('  async function stockNetworkInspectFetchBody(response, trace) {',begin);
+  assert(begin>=0 && end>begin);
+  const events=[];
+  let reads=0, cancelCount=0;
+  const context={
+    chatGPTAgent:{commTraffic:e=>events.push(e)},
+    TextDecoder,Date,STOCK_NETWORK_JSON_BYTE_LIMIT:1024*1024,
+    releaseReaderLockQuietly(){}
+  };
+  executeNative(identity.slice(begin,end)+
+    '\n globalThis.readBody=stockNetworkReadBoundedText;',context);
+  const response={body:{getReader:()=>({
+    read:async()=>++reads<=4
+      ? {done:false,value:new Uint8Array(600*1024).fill(65)}
+      : {done:true},
+    cancel:async()=>{cancelCount++},
+    releaseLock(){}
+  })}};
+  const result=await context.readBody(response);
+  assert.equal(result.byte_count,1024*1024,'Diagnostic storage must remain bounded');
+  assert.equal(result.text.length,1024*1024);
+  assert.equal(result.truncated,true);
+  assert.equal(cancelCount,0,'Observed clone must not cancel after 1MiB');
+  assert.equal(reads,5,'Continue observing all four chunks to stream end');
+  assert.equal(events.length,4,'Every incoming chunk must reach CGP2');
+});

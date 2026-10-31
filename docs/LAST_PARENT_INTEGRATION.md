@@ -315,3 +315,7 @@ The parent XHR loadend path previously marked status zero as response message. N
 ### .360.17 disposed-agent delivery failure does not lose receipt
 
 A registered agent may throw during replacement. Previously nativeReceiptDeliver caught/logged and then dropped that already-normalized incoming metadata. It now falls through to the bounded original-time pending queue after a failed delivery, so the next registered agent can flush without restamping; successful delivery remains immediate. New direct canonical native source regression injects throwing agent, rebinds to a healthy agent, proves one exact original timestamp and no duplicate flush. No provider semantics changed, no other owner branch modified.
+
+### .360.18 — long unrelated stream receipt observation
+
+The stock diagnostic reader previously cancelled its existing response clone after storing 1 MiB of text. This prevented receipt observation of later chunks on unrelated long-running responses. The single existing clone is now drained to completion for body-free CGP2 receipt observations while diagnostic text retention remains strictly capped at 1 MiB. No additional response clones/interceptors or raw payload history. New source-backed test reads four 600 KiB chunks, verifies four source-owned receipts, exact 1 MiB retention, truncation true, and no reader cancellation. This changes resource consumption for very long or unending streams and requires CPU/long-lived-resource regression and exact hosted full CI before acceptance.
