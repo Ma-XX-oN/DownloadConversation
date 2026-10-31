@@ -101,7 +101,7 @@ test('native parsed incoming JSON reaches provider JSON-entry heartbeat', async 
 
 test('native bounded body reader reports two distinct inbound chunks', async () => {
   const identity = read('src/userscript/02-network-communication/01-stock-network-identities.js');
-  const start = identity.indexOf('  async function stockNetworkReadBoundedText(response) {');
+  const start = identity.indexOf('  async function stockNetworkReadBoundedText(response, trace = null) {');
   const end = identity.indexOf('  async function stockNetworkInspectFetchBody(response, trace) {', start);
   assert(start >= 0 && end > start, 'Production reader must be present');
   const events=[];
