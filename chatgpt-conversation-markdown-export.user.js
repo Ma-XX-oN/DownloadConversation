@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         ChatGPT Conversation Markdown Recorder
 // @namespace    https://chatgpt.com/
-// @version      1.11.15-issue.318.41
+// @version      1.11.15-issue.318.42
 // @description  Exports the current ChatGPT conversation directly from the Conversation API as Markdown or JSONL.
 // @match        https://chatgpt.com/*
 // @match        https://chat.openai.com/*
@@ -25141,6 +25141,7 @@ Image elapsed: ${formatDuration(imageElapsed)} — Completed: ${imageCompleted}/
       return snapshot();
       }
       try {
+      const oldKey = publicKey;
       const status = await service.status();
       keyState = status.state;
       publicKey = status.key_restart || null;
@@ -25150,7 +25151,7 @@ Image elapsed: ${formatDuration(imageElapsed)} — Completed: ${imageCompleted}/
       }
       expiry = status.expires_at_ms ?? null;
       epoch = status.redaction_key_epoch ?? 0;
-      if (keyState !== 'open') await pause();
+      if (keyState !== 'open' || (applied && oldKey !== publicKey)) await pause();
       } catch {
       keyState = 'failed';
       lastError = 'csc-key-status-failed';
