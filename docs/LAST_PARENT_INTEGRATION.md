@@ -331,3 +331,7 @@ The .360.18 long-stream fix drained every clone to EOF before emitting the pre-e
 ### .360.21 — transferred-reader failure cleanup
 
 The .360.20 tail helper transfers the original response clone reader after the diagnostic cap. A focused direct source test injects reader.read rejection, checks the error is isolated and reported exactly once, and verifies reader lock release exactly once without disturbing the already-returned diagnostic summary. No production source change from .360.20; full canonical CI must independently revalidate the changed test inventory.
+
+### .360.22 — status-zero opaque fetch cannot fabricate server activity
+
+The native fetch completion wrapper previously sent status 0 (opaque browser response with no readable server data) to CGP2 as a message. The existing wrapper and diagnostic fallback now require an integer HTTP status >=100 before publishing a header receipt; actual HTTP 503 remains covered and return of original Response unchanged. Canonical source test verifies opaque status-0 negative; no extra interceptor, clone or provider normalization policy change. New exact hosted full CI required.

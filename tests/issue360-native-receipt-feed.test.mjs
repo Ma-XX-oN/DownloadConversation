@@ -454,3 +454,32 @@ test('transferred receipt-tail reader releases lock and reports read failure onc
   assert.equal(diagnostics.length,1,'One tail error should be diagnosed once');
   assert.equal(diagnostics[0][1],'stock-network-receipt-tail-observation-failed');
 });
+
+test('opaque fetch status zero returns original response without fake server activity',async()=>{
+  const events=[];
+  const response={status:0,type:'opaque',url:'https://third-party.example/poll',
+    headers:{get:()=>null},clone:()=>({body:null})};
+  const pageWindow={Request:FakeRequest,fetch:null};
+  const ctx={
+    pageWindow,Request:FakeRequest,originalFetch:async()=>response,
+    performance:{now:()=>1000},
+    stockNetworkTraceFetchStart:()=>({sequence:1,started_at:0,
+      method:'GET',url:response.url,same_origin:false}),
+    communicationLogFetchRequest:async()=>{},
+    communicationLogFetchResponse:async()=>{},
+    rememberApiRequestContext(){},recordClickDiagnosticNetworkRequest(){},
+    agentTerminalObserveStatsRequest(){},
+    isGenerationStreamUrl:()=>false,isConversationResumeUrl:()=>false,
+    isSteerTurnUrl:()=>false,agentStopwatchIsInitialConversationUrl:()=>false,
+    agentFaviconObserveProcessing(){},agentStopwatchObserveSteerTurn(){},
+    captureGenerationStreamRequest:()=>null,
+    cloneSafely:x=>x.clone(),logDiagnostic(){},
+    boundedDiagnosticText:String,errorMessage:String,
+    stockNetworkSafeUrl:String,stockNetworkSafeResponseHeaders:()=>({}),
+    stockNetworkInspectFetchBody:async()=>{},
+    chatGPTAgent:{commTraffic:e=>events.push(e)}
+  };
+  executeNative(source(),ctx);
+  assert.equal(await pageWindow.fetch(response.url),response);
+  assert.equal(events.length,0,'Opaque status-0 response is not observed server data');
+});

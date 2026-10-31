@@ -314,9 +314,10 @@
           // Record original receipt before any response clone, parse or queue.
           const observedAt = Date.now();
           stockTrace.incoming_received_epoch_ms = observedAt;
-          if (typeof nativeReceiptCapture === 'function') nativeReceiptCapture({
+          if (Number.isInteger(response?.status) && response.status >= 100 &&
+              typeof nativeReceiptCapture === 'function') nativeReceiptCapture({
             transport: 'fetch', direction: 'response',
-            status: response?.status ?? null, captured_at_epoch_ms: observedAt
+            status: response.status, captured_at_epoch_ms: observedAt
           });
           const generationResponse = capturePromise ? cloneSafely(response) : null;
           const resumeResponse = resumeRequest ? cloneSafely(response) : null;

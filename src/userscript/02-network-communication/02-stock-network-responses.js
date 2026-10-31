@@ -11,8 +11,9 @@
     if (!Number.isSafeInteger(trace.incoming_received_epoch_ms)) {
       const incomingAt = Date.now();
       trace.incoming_received_epoch_ms = incomingAt;
-      if (typeof nativeReceiptCapture === 'function') nativeReceiptCapture({
-        transport: 'fetch', direction: 'response', status: response?.status ?? null,
+      if (Number.isInteger(response?.status) && response.status >= 100 &&
+          typeof nativeReceiptCapture === 'function') nativeReceiptCapture({
+        transport: 'fetch', direction: 'response', status: response.status,
         captured_at_epoch_ms: incomingAt
       });
     }
